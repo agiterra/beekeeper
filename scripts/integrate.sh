@@ -13,6 +13,7 @@ set -euo pipefail
 # Feature stack in merge order. Stacked branches list their base after ':'
 # (a branch rebases onto its base; base defaults to main).
 FEATURES=(
+  "fix/git-sign-oa-pubkey-validation"
   "feature/project-containers"
   "feature/project-access:feature/project-containers"
 )
