@@ -1,0 +1,45 @@
+# Nightly heavy suite on `integrated`: DB-bound Rust tests + browser e2e.
+# Requires a Woodpecker cron named "nightly" targeting branch `integrated`.
+# Best-effort on shared 8-core host — expect iteration on timeouts/deps.
+when:
+  - event: cron
+    cron: nightly
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: buzz
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: buzz_dev
+  redis:
+    image: redis:7-alpine
+    commands: ["redis-server", "--requirepass", "buzz_dev"]
+
+steps:
+  rust-db:
+    image: ubuntu:24.04
+    volumes:
+      - /srv/ci-cache/cargo-registry:/root/.cargo/registry
+      - /srv/ci-cache/hermit:/root/.cache/hermit
+    environment:
+      DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
+      BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
+      REDIS_URL: redis://:buzz_dev@redis:6379
+    commands:
+      - apt-get update -qq && apt-get install -y -qq curl git build-essential cmake perl clang pkg-config libssl-dev >/dev/null
+      - export PATH="$CI_WORKSPACE/bin:$PATH"
+      # DB-backed suites deadlock in parallel (DROP SCHEMA) — single-threaded.
+      - cargo test -p buzz-db -- --ignored --test-threads=1
+
+  desktop-e2e:
+    image: mcr.microsoft.com/playwright:v1.49.0-noble
+    volumes:
+      - /srv/ci-cache/hermit:/root/.cache/hermit
+      - /srv/ci-cache/pnpm-store:/root/.local/share/pnpm/store
+    commands:
+      - export PATH="$CI_WORKSPACE/bin:$PATH"
+      - cd desktop
+      - pnpm install --frozen-lockfile
+      - pnpm build:e2e
+      - pnpm exec playwright test

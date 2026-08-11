@@ -1,0 +1,31 @@
+# Gate: unit-level checks on every push to `integrated` and every PR.
+# DB-bound (`--ignored`) tests and browser e2e live in nightly.yml.
+when:
+  - event: push
+    branch: integrated
+  - event: pull_request
+
+steps:
+  rust:
+    image: ubuntu:24.04
+    # Cache mounts require the repo to be marked "trusted" in Woodpecker admin.
+    volumes:
+      - /srv/ci-cache/cargo-registry:/root/.cargo/registry
+      - /srv/ci-cache/hermit:/root/.cache/hermit
+    commands:
+      - apt-get update -qq && apt-get install -y -qq curl git build-essential cmake perl clang pkg-config libssl-dev >/dev/null
+      # The repo pins its toolchain via hermit shims in bin/
+      - export PATH="$CI_WORKSPACE/bin:$PATH"
+      - cargo test --workspace
+
+  desktop:
+    image: ubuntu:24.04
+    volumes:
+      - /srv/ci-cache/hermit:/root/.cache/hermit
+      - /srv/ci-cache/pnpm-store:/root/.local/share/pnpm/store
+    commands:
+      - apt-get update -qq && apt-get install -y -qq curl git unzip >/dev/null
+      - export PATH="$CI_WORKSPACE/bin:$PATH"
+      - just desktop-check
+      - just desktop-test
+      - cd desktop && pnpm typecheck
