@@ -3263,6 +3263,7 @@ mod sec005_read_gate_tests {
             None,
             &creator_pk,
             None,
+            None,
         )
         .await
         .expect("channel");

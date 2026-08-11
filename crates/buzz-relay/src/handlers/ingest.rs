@@ -1329,11 +1329,16 @@ const PROJECT_METADATA_TAG_MAX_LEN: usize = 256;
 const PROJECT_SINGLETON_METADATA_TAGS: [&str; 4] =
     ["name", "description", "buzz-channel", "buzz-visibility"];
 
-/// The kind segment every project member coordinate must carry: a project groups
-/// repository *announcements*, so a coordinate naming any other kind (notably
-/// kind:30618 repository state) is malformed.
-const PROJECT_MEMBER_KIND_SEGMENT: &str = "30617";
+/// The kind segments a project member coordinate may carry. NIP-MP proper
+/// allows only repository *announcements* (30617) — notably not kind:30618
+/// repository state. The Buzz container extension additionally accepts the
+/// agent-surface kinds (30175 persona / 30176 team / 30177 managed agent) as
+/// owner-curated members.
+const PROJECT_MEMBER_KIND_SEGMENTS: [&str; 4] = ["30617", "30175", "30176", "30177"];
 const _: () = assert!(KIND_GIT_REPO_ANNOUNCEMENT == 30617);
+const _: () = assert!(KIND_PERSONA == 30175);
+const _: () = assert!(KIND_TEAM == 30176);
+const _: () = assert!(KIND_MANAGED_AGENT == 30177);
 
 /// A validation failure from [`validate_project_envelope`] or
 /// [`parse_project_member_coordinate`].
@@ -1390,6 +1395,7 @@ impl ProjectRejection {
 fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
     let mut d_tags: Vec<&str> = Vec::new();
     let mut members: Vec<&str> = Vec::new();
+    let mut channels: Vec<&str> = Vec::new();
     let mut name: Option<&str> = None;
     let mut description: Option<&str> = None;
     let mut buzz_channel: Option<&str> = None;
@@ -1405,6 +1411,8 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
         match tag_name {
             "d" => d_tags.push(value),
             "a" => members.push(value),
+            // Buzz container extension: member channels/forums by channel id.
+            "channel" => channels.push(value),
             _ => {
                 if let Some(i) = PROJECT_SINGLETON_METADATA_TAGS
                     .iter()
@@ -1481,6 +1489,15 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
             ));
         }
     }
+    // Buzz container extension: `channel` member tags must be channel UUIDs.
+    for channel in &channels {
+        if Uuid::parse_str(channel).is_err() {
+            return Err(ProjectRejection::new(
+                "member-coordinate-malformed",
+                format!("project event `channel` tag must be a UUID (got {channel:?})"),
+            ));
+        }
+    }
 
     for (i, count) in singleton_counts.iter().enumerate() {
         if *count > 1 {
@@ -1552,7 +1569,7 @@ fn parse_project_member_coordinate(coordinate: &str) -> Result<(), ProjectReject
             "member-coordinate-malformed",
             format!(
                 "project event member `a` tag must be \
-                 `{PROJECT_MEMBER_KIND_SEGMENT}:<lowercase-64-hex-owner>:<repo-d>` (got {coordinate:?})"
+                 `<30617|30175|30176|30177>:<lowercase-64-hex-owner>:<member-d>` (got {coordinate:?})"
             ),
         )
     };
@@ -1562,7 +1579,7 @@ fn parse_project_member_coordinate(coordinate: &str) -> Result<(), ProjectReject
     else {
         return Err(malformed());
     };
-    if kind != PROJECT_MEMBER_KIND_SEGMENT {
+    if !PROJECT_MEMBER_KIND_SEGMENTS.contains(&kind) {
         return Err(malformed());
     }
     // Lowercase-only: `#a` filter matching is byte-exact, so an uppercase-owner
@@ -1576,6 +1593,58 @@ fn parse_project_member_coordinate(coordinate: &str) -> Result<(), ProjectReject
     }
     if repo_d.is_empty() {
         return Err(malformed());
+    }
+    Ok(())
+}
+
+/// Validate an optional `["project", "<coordinate>"]` tag on a channel-create
+/// (kind:9007) or edit-metadata (kind:9002) event:
+/// `30621:<64-hex-pubkey>:<project-d>`, where kind must be [`KIND_PROJECT`]
+/// and the `d` segment follows the same envelope rules as
+/// [`validate_project_envelope`] (non-empty, bounded, no control characters —
+/// not the stricter client slug grammar, so a channel can reference any
+/// project a relay would accept).
+///
+/// This checks shape only — soft enforcement, per VISION_PROJECTS.md: the
+/// relay never verifies the referenced project event exists. `pub(crate)`
+/// so `handlers::side_effects` can reuse it for the kind:9002 "move to
+/// project" tag.
+pub(crate) fn validate_project_ref_tag(value: &str) -> Result<(), String> {
+    let mut parts = value.splitn(3, ':');
+    let (Some(kind_str), Some(pubkey), Some(slug)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(format!(
+            "project tag must be `{KIND_PROJECT}:pubkey:slug` (got {value:?})"
+        ));
+    };
+    let kind: u32 = kind_str
+        .parse()
+        .map_err(|_| format!("project tag kind must be an integer (got {value:?})"))?;
+    if kind != KIND_PROJECT {
+        return Err(format!(
+            "project tag kind must be {KIND_PROJECT} (got {value:?})"
+        ));
+    }
+    if pubkey.len() != 64 || !pubkey.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "project tag pubkey must be 64 hex chars (got {value:?})"
+        ));
+    }
+    if slug.is_empty() {
+        return Err(format!(
+            "project tag slug must not be empty (got {value:?})"
+        ));
+    }
+    if slug.chars().count() > 64 {
+        return Err(format!(
+            "project tag slug too long ({} chars, max 64) (got {value:?})",
+            slug.chars().count()
+        ));
+    }
+    if slug.chars().any(char::is_control) {
+        return Err(format!(
+            "project tag slug must not contain control characters (got {value:?})"
+        ));
     }
     Ok(())
 }
@@ -2625,6 +2694,21 @@ async fn ingest_event_inner(
                 IngestError::Rejected(format!("invalid channel_type: {channel_type_str}"))
             })?;
 
+        // Optional project-container association. Absence is fine; presence must
+        // be a well-formed `30621:<pubkey>:<slug>` coordinate — malformed input
+        // is rejected before any DB work, same as visibility/channel_type above.
+        let project_ref = event.tags.iter().find_map(|t| {
+            if t.kind().to_string() == "project" {
+                t.content().map(|s| s.to_string())
+            } else {
+                None
+            }
+        });
+        if let Some(ref project_ref) = project_ref {
+            validate_project_ref_tag(project_ref)
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        }
+
         if let Some(client_uuid) = channel_id {
             let name = create_name.unwrap_or_default();
             let name = buzz_core::channel::canonical_channel_name(&name);
@@ -2651,6 +2735,7 @@ async fn ingest_event_inner(
                     description.as_deref(),
                     &actor_bytes,
                     ttl_seconds,
+                    project_ref.as_deref(),
                 )
                 .await
                 .map_err(|e| IngestError::Internal(format!("error: {e}")))?;
@@ -5093,6 +5178,110 @@ mod tests {
                     other, case.name
                 ),
             }
+        }
+    }
+
+    // ─── Buzz container-extension tests (agents + channels as members) ───────
+
+    const HEX64: &str = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    #[test]
+    fn project_envelope_accepts_agent_and_channel_members() {
+        // The Buzz container extension: agent-surface coordinates ride in the
+        // same `a` member tags, and channels join via `channel` UUID tags.
+        let repo = format!("30617:{HEX64}:my-repo");
+        let persona = format!("30175:{HEX64}:helper");
+        let team = format!("30176:{HEX64}:crew");
+        let managed = format!("30177:{HEX64}:{HEX64}");
+        let ev = make_project(&[
+            &["d", "platform"],
+            &["name", "Platform"],
+            &["a", &repo],
+            &["a", &persona],
+            &["a", &team],
+            &["a", &managed],
+            &["channel", "6f7a4e6e-3f0e-4bfb-9a3e-27a2e5f6a111"],
+        ]);
+        assert!(validate_project_envelope(&ev).is_ok());
+    }
+
+    #[test]
+    fn project_envelope_rejects_bad_channel_ref() {
+        let ev = make_project(&[&["d", "p"], &["name", "P"], &["channel", "not-a-uuid"]]);
+        let err = validate_project_envelope(&ev).unwrap_err();
+        assert!(
+            err.to_string().contains("UUID"),
+            "expected UUID error, got: {err}"
+        );
+    }
+
+    // ─── kind:9007/9002 `project` tag (channel↔project association) ─────────
+
+    #[test]
+    fn project_ref_tag_accepts_well_formed_coordinate() {
+        let coord = format!("30621:{HEX64}:general");
+        assert!(validate_project_ref_tag(&coord).is_ok());
+    }
+
+    #[test]
+    fn project_ref_tag_rejects_wrong_kind() {
+        // 30178 is the retired container number (now the team catalog); refs
+        // must use the NIP-MP project kind.
+        for wrong in ["30617", "30178"] {
+            let coord = format!("{wrong}:{HEX64}:general");
+            let err = validate_project_ref_tag(&coord).unwrap_err();
+            assert!(err.contains("kind"), "expected kind error, got: {err}");
+        }
+    }
+
+    #[test]
+    fn project_ref_tag_rejects_non_integer_kind() {
+        let coord = format!("abc:{HEX64}:general");
+        assert!(validate_project_ref_tag(&coord).is_err());
+    }
+
+    #[test]
+    fn project_ref_tag_rejects_short_pubkey() {
+        let coord = "30621:deadbeef:general".to_string();
+        let err = validate_project_ref_tag(&coord).unwrap_err();
+        assert!(err.contains("pubkey"), "expected pubkey error, got: {err}");
+    }
+
+    #[test]
+    fn project_ref_tag_rejects_non_hex_pubkey() {
+        let non_hex = "g".repeat(64);
+        let coord = format!("30621:{non_hex}:general");
+        assert!(validate_project_ref_tag(&coord).is_err());
+    }
+
+    #[test]
+    fn project_ref_tag_matches_envelope_d_rules() {
+        // The ref check mirrors the envelope's `d` rules rather than the
+        // client slug grammar: any project a relay would accept stays
+        // referenceable by a channel.
+        for ok in ["general", "UPPER", "has space", "dot.dot"] {
+            let coord = format!("30621:{HEX64}:{ok}");
+            assert!(
+                validate_project_ref_tag(&coord).is_ok(),
+                "slug {ok:?} should be accepted"
+            );
+        }
+        for bad in ["", "line\nbreak"] {
+            let coord = format!("30621:{HEX64}:{bad}");
+            assert!(
+                validate_project_ref_tag(&coord).is_err(),
+                "slug {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn project_ref_tag_rejects_missing_parts() {
+        for bad in ["30621", "30621:only-pubkey", "not-a-coordinate-at-all"] {
+            assert!(
+                validate_project_ref_tag(bad).is_err(),
+                "malformed coordinate {bad:?} should be rejected"
+            );
         }
     }
 

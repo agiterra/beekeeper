@@ -2315,6 +2315,7 @@ impl Db {
         description: Option<&str>,
         created_by: &[u8],
         ttl_seconds: Option<i32>,
+        project_ref: Option<&str>,
     ) -> Result<channel::ChannelRecord> {
         channel::create_channel(
             &self.pool,
@@ -2325,6 +2326,7 @@ impl Db {
             description,
             created_by,
             ttl_seconds,
+            project_ref,
         )
         .await
     }
@@ -2344,6 +2346,7 @@ impl Db {
         description: Option<&str>,
         created_by: &[u8],
         ttl_seconds: Option<i32>,
+        project_ref: Option<&str>,
     ) -> Result<(channel::ChannelRecord, bool)> {
         channel::create_channel_with_id(
             &self.pool,
@@ -2355,6 +2358,7 @@ impl Db {
             description,
             created_by,
             ttl_seconds,
+            project_ref,
         )
         .await
     }
@@ -6972,6 +6976,7 @@ mod tests {
             crate::channel::ChannelVisibility::Open,
             None,
             author.public_key().to_bytes().as_slice(),
+            None,
             None,
         )
         .await

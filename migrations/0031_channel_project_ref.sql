@@ -1,0 +1,12 @@
+-- Optional project-container association for channels (VISION_PROJECTS.md).
+--
+-- A project is a Nostr coordinate string `30621:<64-hex-pubkey>:<slug>`
+-- (kind:30621 KIND_PROJECT, addressable event). `project_ref` is plain TEXT
+-- with no foreign key — the coordinate is resolved client-side by querying
+-- for the kind:30621 event, the same pattern used for other `a`-tag
+-- references in this codebase. Soft enforcement only: the ingest path
+-- validates the coordinate *shape* when present (kind/pubkey/slug grammar)
+-- but never requires it and never verifies the referenced project exists.
+--
+-- Additive migration: previously applied files must not change checksum.
+ALTER TABLE channels ADD COLUMN project_ref TEXT;
