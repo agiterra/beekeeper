@@ -18,6 +18,8 @@ export type Repository = {
   status: string;
   defaultBranch: string;
   repoAddress: string;
+  /** Project-container coordinate back-reference (`project` tag). */
+  projectRef: string | null;
   maintainers?: string[];
   channelId?: string | null;
   eventContent?: string;
@@ -277,6 +279,7 @@ export function eventToRepository(
     status: getTag(event, "status") ?? "active",
     defaultBranch: getTag(event, "default-branch") ?? "main",
     repoAddress: `${KIND_REPO_ANNOUNCEMENT}:${owner}:${dtag}`,
+    projectRef: getTag(event, "project") ?? null,
     channelId: channel && isValidProjectChannelId(channel) ? channel : null,
     eventContent: event.content,
     eventTags: event.tags.map((tag) => [...tag]),

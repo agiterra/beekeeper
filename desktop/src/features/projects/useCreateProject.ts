@@ -22,6 +22,9 @@ export type CreateProjectInput = {
   description?: string;
   cloneUrl?: string;
   webUrl?: string;
+  /** Project container coordinate (`30621:<owner>:<slug>`) this repo is
+   * created inside — becomes the announcement's `project` tag. */
+  projectRef?: string;
 };
 
 export type CreateProjectResult = {

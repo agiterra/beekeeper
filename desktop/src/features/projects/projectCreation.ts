@@ -37,6 +37,7 @@ export function buildInitialProjectEventTemplates({
   description,
   name,
   ownerPubkey,
+  projectRef,
   webUrl,
 }: {
   accessChannelId: string;
@@ -44,6 +45,9 @@ export function buildInitialProjectEventTemplates({
   description?: string;
   name: string;
   ownerPubkey: string;
+  /** Project container coordinate (`30621:<owner>:<slug>`) this repo is
+   * created inside — becomes the announcement's `project` tag. */
+  projectRef?: string;
   webUrl?: string;
 }): InitialProjectEventTemplates {
   const normalizedName = name.trim();
@@ -91,6 +95,10 @@ export function buildInitialProjectEventTemplates({
   const normalizedWebUrl = webUrl?.trim();
   if (normalizedWebUrl) {
     repositoryTags.push(["web", normalizedWebUrl]);
+  }
+  const normalizedProjectRef = projectRef?.trim();
+  if (normalizedProjectRef) {
+    repositoryTags.push(["project", normalizedProjectRef]);
   }
 
   const repositoryAddress = `${KIND_REPO_ANNOUNCEMENT}:${normalizedOwner}:${dtag}`;

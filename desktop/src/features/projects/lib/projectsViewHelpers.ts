@@ -20,6 +20,7 @@ export type ProjectsRepositoryScope =
 export type ProjectsWorkItemScope = "all" | "mine" | "assigned";
 export type ProjectsFilter =
   | "all"
+  | "projects"
   | "mine"
   | "local"
   | "projects"
@@ -28,6 +29,31 @@ export type ProjectsFilter =
   | "issues"
   | "agents"
   | "users";
+
+export const REPOSITORY_SCOPE_OPTIONS: Array<{
+  label: string;
+  value: ProjectsRepositoryScope;
+}> = [
+  { label: "All", value: "all" },
+  { label: "My Repositories", value: "mine" },
+  { label: "Local", value: "local" },
+  { label: "Buzz-hosted", value: "buzz" },
+  { label: "Linked", value: "linked" },
+];
+export const PULL_REQUEST_SCOPE_OPTIONS: Array<{
+  label: string;
+  value: ProjectsWorkItemScope;
+}> = [
+  { label: "All", value: "all" },
+  { label: "My Pull Requests", value: "mine" },
+];
+export const ISSUE_SCOPE_OPTIONS: Array<{
+  label: string;
+  value: ProjectsWorkItemScope;
+}> = [
+  { label: "All", value: "all" },
+  { label: "My Issues", value: "mine" },
+];
 export type ProjectsSort = "updated" | "created" | "name";
 
 const PROJECTS_VIEW_MODE_STORAGE_KEY = "buzz.projects.viewMode";
@@ -60,7 +86,8 @@ export function writeStoredViewMode(viewMode: ProjectsViewMode) {
 export function readStoredFilter(): ProjectsFilter {
   try {
     const value = globalThis.localStorage?.getItem(PROJECTS_FILTER_STORAGE_KEY);
-    return value === "mine" ||
+    return value === "projects" ||
+      value === "mine" ||
       value === "local" ||
       value === "projects" ||
       value === "repositories" ||
@@ -80,6 +107,29 @@ export function writeStoredFilter(filter: ProjectsFilter) {
     globalThis.localStorage?.setItem(PROJECTS_FILTER_STORAGE_KEY, filter);
   } catch {
     // Persistence is best-effort; the in-memory toggle still works.
+  }
+}
+
+const PROJECTS_PROJECT_SCOPE_STORAGE_KEY = "buzz.projects.projectScope";
+
+/** Selected project-container filter: "all" or a container id (`owner:dtag`).
+ * Unknown/stale ids are tolerated by the dropdown (falls back to All). */
+export function readStoredProjectScope(): string {
+  try {
+    return (
+      globalThis.localStorage?.getItem(PROJECTS_PROJECT_SCOPE_STORAGE_KEY) ??
+      "all"
+    );
+  } catch {
+    return "all";
+  }
+}
+
+export function writeStoredProjectScope(value: string): void {
+  try {
+    globalThis.localStorage?.setItem(PROJECTS_PROJECT_SCOPE_STORAGE_KEY, value);
+  } catch {
+    // Ignore unavailable storage.
   }
 }
 

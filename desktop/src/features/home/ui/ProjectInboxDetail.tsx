@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { useRepoContainerId } from "@/features/projects-container/hooks";
 import type { InboxItem } from "@/features/home/lib/inbox";
 import { resolveProjectInboxWorkItem } from "@/features/home/lib/projectInbox";
 import { ProjectInboxDetailPane } from "@/features/home/ui/ProjectInboxDetailPane";
@@ -61,7 +62,8 @@ export function ProjectInboxDetail({
   onBack,
   profiles,
 }: ProjectInboxDetailProps) {
-  const { goProject } = useAppNavigation();
+  const { goProjectRepo } = useAppNavigation();
+  const repoContainerId = useRepoContainerId();
   const projectsQuery = useProjectsQuery();
   const projectsWorkItemsQuery = useProjectsWorkItemsQuery(
     projectsQuery.data ?? [],
@@ -120,10 +122,11 @@ export function ProjectInboxDetail({
           workItem.type === "pull-request"
             ? { pullRequestId: workItem.pullRequest.id }
             : { issueId: workItem.issue.id };
-        void goProject(workItem.project.id, {
-          ...workItemId,
-          repositoryId: workItem.repository.id,
-        });
+        void goProjectRepo(
+          repoContainerId(workItem.project.repositories[0]),
+          workItem.project.id,
+          { ...workItemId, repositoryId: workItem.repository.id },
+        );
       }}
       profiles={profiles}
       workItem={workItem}

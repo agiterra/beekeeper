@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { LOCAL_GENERAL_ID } from "@/features/projects-container/lib/projectContainerModel";
 import {
   entityLinkProjectRouteId,
   isEntityLink,
@@ -49,14 +50,19 @@ function entityLinkPresentation(link: ParsedEntityLink) {
  * route id, so no read-model resolution is needed.
  */
 export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
-  const { goProject } = useAppNavigation();
+  const { goProjectRepo } = useAppNavigation();
   return React.useCallback(
     (link: ParsedEntityLink) => {
       const tab =
         (link.type === "repo" || link.type === "project") && link.tab
           ? link.tab
           : undefined;
-      void goProject(entityLinkProjectRouteId(link), {
+      const repoAddress = entityLinkProjectRouteId(link);
+      // TODO(project-containers): resolve the claiming container for the
+      // route crumb (needs container data this markdown context doesn't
+      // have). The repo detail itself renders correctly under the General
+      // fallback either way.
+      void goProjectRepo(LOCAL_GENERAL_ID, repoAddress, {
         entityNavigationId: crypto.randomUUID(),
         ...(tab
           ? {
@@ -67,7 +73,7 @@ export function useOpenEntityLink(): (link: ParsedEntityLink) => void {
         ...(link.type === "issue" ? { issueId: link.id } : {}),
       });
     },
-    [goProject],
+    [goProjectRepo],
   );
 }
 

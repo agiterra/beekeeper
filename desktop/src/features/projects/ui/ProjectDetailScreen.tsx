@@ -90,6 +90,9 @@ import {
 type ProjectDetailScreenProps = {
   commitHash?: string;
   entityNavigationId?: string;
+  /** Project container id (`<owner>:<dtag>` of the kind:30621 container)
+   * this repo screen is nested under, from the route params. */
+  containerId: string;
   projectId: string;
   pullRequestId?: string;
   issueId?: string;
@@ -113,6 +116,7 @@ const PROJECT_REPOSITORY_SEARCH_KEYS = [
 export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
   const {
     commitHash,
+    containerId,
     entityNavigationId,
     projectId,
     pullRequestId,
@@ -120,7 +124,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     repositoryId,
     tab,
   } = props;
-  const { goChannel, goProject, goProjects } = useAppNavigation();
+  const { goChannel, goProjectRepo, goProjects } = useAppNavigation();
   const { activeCommunity } = useCommunities();
   const mainInsetRef = useMainInsetRef();
   const projectDetailHeaderChromeRef = useMeasuredCssVariable({
@@ -621,10 +625,7 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
       pullRequestId: string,
     ) => {
       if (createdProject.id !== projectId) {
-        await goProject(createdProject.id, {
-          pullRequestId,
-          repositoryId: createdRepository.id,
-        });
+        await goProjectRepo(containerId, createdProject.id, { pullRequestId });
         return;
       }
       if (createdRepository.id === repository?.id) {
@@ -636,7 +637,8 @@ export function ProjectDetailScreen(props: ProjectDetailScreenProps) {
     },
     [
       applyRepositorySearch,
-      goProject,
+      containerId,
+      goProjectRepo,
       projectId,
       pullRequestsQuery,
       repository?.id,

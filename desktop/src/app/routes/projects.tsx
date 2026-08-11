@@ -11,13 +11,19 @@ const ProjectsScreen = React.lazy(async () => {
 
 export const Route = createFileRoute("/projects")({
   component: ProjectsRouteComponent,
+  validateSearch: (search: Record<string, unknown>) => ({
+    // Only the management tab is deep-linked today (the sidebar heading);
+    // any other value falls back to the stored tab.
+    filter: search.filter === "projects" ? ("projects" as const) : undefined,
+  }),
 });
 
 function ProjectsRouteComponent() {
   usePreviewFeatureWarning("projects");
+  const { filter } = Route.useSearch();
   return (
     <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
-      <ProjectsScreen />
+      <ProjectsScreen initialFilter={filter} />
     </React.Suspense>
   );
 }

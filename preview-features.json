@@ -10,7 +10,7 @@
     {
       "id": "projects",
       "name": "Projects",
-      "description": "Git repository browser and collaboration",
+      "description": "Group agents, channels, code, and forums into collapsible sidebar projects",
       "platforms": ["desktop"]
     },
     {
