@@ -43,7 +43,10 @@ steps:
       - apt-get update -qq && apt-get install -y -qq curl git build-essential cmake perl clang pkg-config libssl-dev >/dev/null
       # The repo pins its toolchain via hermit shims in bin/
       - export PATH="$CI_WORKSPACE/bin:$PATH"
-      - cargo test --workspace
+      # buzz-agent's regressions harness is CPU-load sensitive (5s canned-LLM
+      # timeouts): run it after the parallel bulk, when the cores are free.
+      - cargo test --workspace --exclude buzz-agent
+      - cargo test -p buzz-agent
 
   desktop:
     image: ubuntu:24.04
