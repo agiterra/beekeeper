@@ -1,7 +1,7 @@
 # Integration workflow — agiterra/buzz
 
 How this fork tracks upstream `block/buzz` while keeping each feature separately
-maintainable and upstreamable.
+maintainable and upstreamable. Quick version: [CONTRIBUTING-FORK.md](../CONTRIBUTING-FORK.md).
 
 ## Branch roles
 
