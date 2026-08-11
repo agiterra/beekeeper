@@ -65,6 +65,12 @@ nothing (or to a small residual diff). Delete the branch, remove it from
 are validated locally by `integrate.sh`'s gate — they intentionally carry no CI
 files so they stay upstream-clean.
 
+Known runner-environment limitation: `buzz-relay`'s
+`api::mesh_demo::…round_trips_echo` cannot complete its loopback-QUIC echo
+inside the docker-in-incus runner and is excluded from the gate (it self-skips
+on redis-less dev machines anyway; upstream CI covers it). Re-check if the
+runner topology changes.
+
 Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
 `/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
 host; the forge is additive infrastructure.
