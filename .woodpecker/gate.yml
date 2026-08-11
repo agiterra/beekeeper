@@ -48,7 +48,10 @@ steps:
       - cargo run -p buzz-admin -- migrate
       # buzz-agent's regressions harness is CPU-load sensitive (5s canned-LLM
       # timeouts): run it after the parallel bulk, when the cores are free.
-      - cargo test --workspace --exclude buzz-agent
+      # mesh_demo's QUIC echo is schedule-sensitive under parallel load
+      # (also flakes on dev machines at clean upstream) — isolate it too.
+      - cargo test --workspace --exclude buzz-agent -- --skip api::mesh_demo
+      - cargo test -p buzz-relay --lib api::mesh_demo
       - cargo test -p buzz-agent
 
   desktop:
