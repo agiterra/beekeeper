@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge } from "../helpers/bridge";
+import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const SHOTS = "test-results/projects-sidebar";
 
@@ -234,4 +234,113 @@ test("workflows move under projects when the experiment is on", async ({
   await expect(workflowRow).toBeVisible({ timeout: 10_000 });
   await workflowRow.click();
   await expect(page).toHaveURL(/\/workflows\/[^/]+$/);
+});
+
+// Creating a private project publishes buzz-access/p tags, shows a lock badge
+// everywhere the project is listed, and the Edit dialog pre-fills the
+// visibility and invited-member state from the published event.
+test("private projects publish access tags and show a lock badge", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "buzz-feature-overrides-v1",
+      JSON.stringify({ projects: true }),
+    );
+  });
+  await installMockBridge(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const alicePubkey = TEST_IDENTITIES.alice.pubkey;
+
+  await page.getByTestId("open-projects-view").click();
+  await expect(page.getByTestId("projects-manage-panel")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  // Create a private project, inviting Alice by pasting her raw hex pubkey
+  // (exercises PersonaShareRecipients' allowDirectPubkeyEntry path).
+  await page.getByTestId("projects-create-menu").click();
+  await page.getByTestId("projects-create-menu-project").click();
+  await page.getByTestId("create-project-container-name").fill("Skunkworks");
+  await page.getByTestId("create-project-container-visibility").click();
+  await page
+    .getByTestId("create-project-container-visibility-option-private")
+    .click();
+  const memberSearch = page.getByTestId(
+    "create-project-container-members-recipient-search",
+  );
+  const aliceOption = page.getByTestId(
+    `create-project-container-members-recipient-option-${alicePubkey}`,
+  );
+  // The picker popover can close mid-interaction (Radix's outside-click
+  // dismissal racing the preceding visibility-dropdown close) and the mock
+  // search directory re-ranks/re-fetches for a bit after typing settles —
+  // retry the whole "focus, fill, find the row" sequence rather than relying
+  // on one long actionability wait, which can lose either race.
+  await expect
+    .poll(
+      async () => {
+        try {
+          await memberSearch.click({ timeout: 2_000 });
+          await memberSearch.fill(alicePubkey, { timeout: 2_000 });
+          await aliceOption.click({ timeout: 2_000 });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  // Selecting a member re-opens the picker popover (so more people can be
+  // added) — close it before it can intercept the submit click.
+  await page.keyboard.press("Escape");
+  await page.getByTestId("create-project-container-submit").click();
+
+  const findPublishedEvent = () =>
+    page.evaluate(
+      () =>
+        window.__BUZZ_E2E_SIGNED_EVENTS__?.find(
+          (event) =>
+            event.kind === 30621 &&
+            event.tags.some((tag) => tag[0] === "d" && tag[1] === "skunkworks"),
+        ) ?? null,
+    );
+
+  await expect.poll(findPublishedEvent).not.toBeNull();
+  const published = await findPublishedEvent();
+  expect(
+    published?.tags.some(
+      (tag) => tag[0] === "buzz-access" && tag[1] === "private",
+    ),
+  ).toBe(true);
+  expect(
+    published?.tags.some((tag) => tag[0] === "p" && tag[1] === alicePubkey),
+  ).toBe(true);
+
+  // Lock badge on the manage-panel card.
+  await expect(
+    page.getByTestId("manage-project-lock-skunkworks"),
+  ).toBeVisible();
+
+  // Lock badge in the sidebar group too.
+  await expect(page.getByTestId("project-lock-skunkworks")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  // Edit dialog pre-fills visibility and the invited member chip.
+  await page.getByTestId("manage-project-actions-skunkworks").click();
+  await page.getByRole("menuitem", { name: "Edit project" }).click();
+  await expect(page.getByTestId("edit-project-container-name")).toHaveValue(
+    "Skunkworks",
+  );
+  await expect(
+    page.getByTestId("edit-project-container-visibility"),
+  ).toHaveText(/Private/);
+  await expect(
+    page.getByTestId(
+      `edit-project-container-members-recipient-chip-${alicePubkey}`,
+    ),
+  ).toBeVisible();
 });

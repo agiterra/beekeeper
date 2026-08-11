@@ -6,6 +6,7 @@ import {
   FolderGit2,
   FolderKanban,
   Hash,
+  Lock,
   Pencil,
   Plus,
   Trash2,
@@ -282,10 +283,25 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
             <h1 className="flex items-center gap-2 text-xl font-semibold">
               <FolderKanban className="size-5" />
               {project.name}
+              {project.visibility === "private" ? (
+                <Lock
+                  aria-label="Private project"
+                  className="size-4 shrink-0 text-muted-foreground"
+                  data-testid="project-container-lock"
+                />
+              ) : null}
             </h1>
             {project.description ? (
               <p className="mt-1 text-sm text-muted-foreground">
                 {project.description}
+              </p>
+            ) : null}
+            {project.visibility === "private" ? (
+              <p
+                className="mt-1 text-xs text-muted-foreground"
+                data-testid="project-container-member-count"
+              >
+                Private · {project.members.length + 1} members
               </p>
             ) : null}
           </div>
@@ -494,6 +510,8 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
         }}
         onDeleted={() => void goProjects({ filter: "projects" })}
       />
+
+      {moves.confirmDialog}
 
       <ProjectsScreenCreateDialogs
         kind={createKind}

@@ -10,11 +10,17 @@ import {
   projectContainersQueryKey,
   type ProjectContainer,
 } from "./hooks";
-import { eventToProjectContainer } from "./lib/projectContainerModel";
+import {
+  eventToProjectContainer,
+  GENERAL_PROJECT_DTAG,
+  PROJECT_ACCESS_TAG,
+} from "./lib/projectContainerModel";
 
 export type CreateProjectContainerInput = {
   name: string;
   description?: string;
+  visibility?: ProjectContainer["visibility"];
+  memberPubkeys?: string[];
 };
 
 function slugFromName(name: string): string {
@@ -29,14 +35,32 @@ function slugFromName(name: string): string {
  * Publishes a project container event. `extraTags` carries the membership
  * refs (`a`/`channel`) — used by the General migration sweep; the plain
  * create dialog publishes with none.
+ *
+ * ⚠️ Rebuilds the visibility/`p`-member tags from `visibility`/`memberPubkeys`
+ * on every call — every caller that republishes an existing project (add/
+ * remove-member, organize mutations, the legacy-kind migration) MUST pass the
+ * project's current `visibility`/`members` through, or the republish silently
+ * drops them and a private project goes public.
  */
 export async function publishProjectContainer(input: {
   name: string;
   dtag: string;
   description?: string;
+  visibility?: ProjectContainer["visibility"];
+  memberPubkeys?: string[];
   extraTags?: string[][];
   createdAt?: number;
 }): Promise<ProjectContainer> {
+  // The reserved `general` project must always stay public — guarded here
+  // (not just at the UI layer) so no call site can accidentally privatize it.
+  const isGeneral = input.dtag === GENERAL_PROJECT_DTAG;
+  const visibility: ProjectContainer["visibility"] = isGeneral
+    ? "public"
+    : (input.visibility ?? "public");
+
+  const identity = await getIdentity();
+  const ownerPubkey = identity.pubkey.toLowerCase();
+
   const tags: string[][] = [
     ["d", input.dtag],
     ["name", input.name],
@@ -44,6 +68,19 @@ export async function publishProjectContainer(input: {
   const description = input.description?.trim() ?? "";
   if (description) {
     tags.push(["description", description]);
+  }
+  if (visibility === "private") {
+    tags.push([PROJECT_ACCESS_TAG, "private"]);
+    const members = [
+      ...new Set(
+        (input.memberPubkeys ?? [])
+          .map((pubkey) => pubkey.toLowerCase())
+          .filter(
+            (pubkey) => /^[0-9a-f]{64}$/.test(pubkey) && pubkey !== ownerPubkey,
+          ),
+      ),
+    ];
+    tags.push(...members.map((pubkey) => ["p", pubkey]));
   }
   tags.push(...(input.extraTags ?? []));
 
@@ -93,6 +130,8 @@ async function createProjectContainer(
     name,
     dtag,
     description: input.description,
+    visibility: input.visibility,
+    memberPubkeys: input.memberPubkeys,
   });
 }
 
@@ -116,6 +155,8 @@ export async function addProjectMembers(
     name: project.name,
     dtag: project.dtag,
     description: project.description,
+    visibility: project.visibility,
+    memberPubkeys: project.members,
     extraTags: [
       ...repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),
@@ -138,6 +179,8 @@ export async function removeProjectMembers(
     name: project.name,
     dtag: project.dtag,
     description: project.description,
+    visibility: project.visibility,
+    memberPubkeys: project.members,
     extraTags: [
       ...project.repoAddrs
         .filter((addr) => !dropRepos.has(addr))
