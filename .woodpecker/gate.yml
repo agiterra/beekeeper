@@ -7,6 +7,16 @@ when:
     branch: integrated
   - event: pull_request
 
+# Full clone: the default partial/blobless clone lazily fetches objects on
+# demand, which fails in command steps (no credentials there). The ratchet
+# needs real history back to the stamped base commit.
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 0
+
 services:
   postgres:
     image: postgres:17-alpine
