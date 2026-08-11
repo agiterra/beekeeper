@@ -1408,6 +1408,14 @@ fn parse_envelope(json_str: &str) -> Result<Envelope, String> {
         validate_hex_field(owner, 64, "oa[0]")?;
         validate_hex_field(owner_sig, 128, "oa[2]")?;
 
+        // Hex shape alone is not enough: oa[0] must decode to a real x-only
+        // curve point or verification would accept an unusable owner
+        // credential (nostr's PublicKey parses lazily and skips this).
+        let owner_bytes = hex::decode(owner).map_err(|_| "oa[0] is not valid hex".to_string())?;
+        if nostr::secp256k1::XOnlyPublicKey::from_slice(&owner_bytes).is_err() {
+            return Err("oa[0] is not a valid BIP-340 public key".to_string());
+        }
+
         // Validate conditions character class — MUST be checked during parsing
         // because build_envelope() interpolates conditions into JSON without
         // escaping. Characters outside the allowed set (alphanumeric, _=<>&)
