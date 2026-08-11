@@ -631,6 +631,69 @@ pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 /// announcement, never a project. See `docs/nips/NIP-MP.md`.
 pub const KIND_PROJECT: u32 = 30621;
 
+/// Tag carrying a project's access level (Buzz container extension).
+///
+/// `["buzz-access", "private"]` restricts the project container to its author
+/// plus the pubkeys listed in the event's `p` tags; `["buzz-access", "public"]`
+/// or an absent tag means community-readable (the default, matching all
+/// pre-extension events). Distinct from `buzz-visibility` (listed/unlisted),
+/// which is a client-side display filter and grants no access control.
+///
+/// Ingest enforces a singleton tag with exactly these two values; unknown
+/// values are rejected rather than falling open to public — an access typo
+/// must not silently publish a private project.
+pub const PROJECT_ACCESS_TAG: &str = "buzz-access";
+/// `buzz-access` value restricting the project to author + `p`-tag members.
+pub const PROJECT_ACCESS_PRIVATE: &str = "private";
+/// `buzz-access` value (also the absent-tag default): community-readable.
+pub const PROJECT_ACCESS_PUBLIC: &str = "public";
+
+/// Returns `true` if the event is a project container marked private.
+///
+/// Fails closed: any `buzz-access` tag whose value is `"private"` marks the
+/// event private regardless of extra tag elements or duplicate tags —
+/// ingest rejects those shapes, but a malformed head must hide, not leak.
+pub fn is_private_project_event(event: &nostr::Event) -> bool {
+    if event_kind_u32(event) != KIND_PROJECT {
+        return false;
+    }
+    event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.len() >= 2
+            && parts[0].as_str() == PROJECT_ACCESS_TAG
+            && parts[1].as_str() == PROJECT_ACCESS_PRIVATE
+    })
+}
+
+/// Returns `true` if the event is a private project container that must be
+/// withheld from this reader: kind 30621 with `["buzz-access","private"]`
+/// where the reader is neither the author nor listed in a `p` tag.
+///
+/// This is the container half of project visibility (NIP-MP Buzz extension);
+/// contents (channels/forums) are gated separately through the project ACL
+/// projection in `buzz-db`. Enforced at every read chokepoint via
+/// [`crate::filter::reader_authorized_for_event`], plus a dedicated live
+/// fan-out branch in the relay.
+pub fn project_container_hidden_from(event: &nostr::Event, reader_pubkey_hex: &str) -> bool {
+    if !is_private_project_event(event) {
+        return false;
+    }
+    // Author reads are always allowed.
+    if event
+        .pubkey
+        .to_hex()
+        .eq_ignore_ascii_case(reader_pubkey_hex)
+    {
+        return false;
+    }
+    // Foreign reader: allowed only when invited via a `p` tag.
+    let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
+    !event.tags.filter(nostr::TagKind::SingleLetter(p)).any(|t| {
+        t.content()
+            .is_some_and(|c| c.eq_ignore_ascii_case(reader_pubkey_hex))
+    })
+}
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -950,6 +1013,83 @@ mod tests {
 
     fn make_persona_event(tags: &[&[&str]]) -> nostr::Event {
         make_event_of_kind(KIND_PERSONA, tags)
+    }
+
+    // ── is_private_project_event / project_container_hidden_from ─────────
+
+    fn make_project_event(tags: &[&[&str]]) -> nostr::Event {
+        make_event_of_kind(KIND_PROJECT, tags)
+    }
+
+    const FOREIGN_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn private_project_event_detected() {
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        assert!(is_private_project_event(&ev));
+    }
+
+    #[test]
+    fn public_or_tagless_project_not_private() {
+        let public = make_project_event(&[&["d", "proj"], &["buzz-access", "public"]]);
+        assert!(!is_private_project_event(&public));
+        let tagless = make_project_event(&[&["d", "proj"]]);
+        assert!(!is_private_project_event(&tagless));
+    }
+
+    #[test]
+    fn private_tag_on_other_kind_not_private_project() {
+        let ev = make_persona_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        assert!(!is_private_project_event(&ev));
+    }
+
+    #[test]
+    fn malformed_private_tag_fails_closed() {
+        // Extra tag element must still count as private — hide, never leak.
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private", "x"]]);
+        assert!(is_private_project_event(&ev));
+        assert!(project_container_hidden_from(&ev, FOREIGN_HEX));
+    }
+
+    #[test]
+    fn private_project_hidden_from_foreign_reader() {
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        assert!(project_container_hidden_from(&ev, FOREIGN_HEX));
+    }
+
+    #[test]
+    fn private_project_visible_to_author() {
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "private"]]);
+        assert!(!project_container_hidden_from(&ev, &ev.pubkey.to_hex()));
+    }
+
+    #[test]
+    fn private_project_visible_to_invited_member() {
+        let ev = make_project_event(&[
+            &["d", "proj"],
+            &["buzz-access", "private"],
+            &["p", FOREIGN_HEX],
+        ]);
+        assert!(!project_container_hidden_from(&ev, FOREIGN_HEX));
+    }
+
+    #[test]
+    fn private_project_hidden_from_uninvited_when_others_invited() {
+        let ev = make_project_event(&[
+            &["d", "proj"],
+            &["buzz-access", "private"],
+            &["p", FOREIGN_HEX],
+        ]);
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(project_container_hidden_from(&ev, other));
+    }
+
+    #[test]
+    fn public_project_never_hidden() {
+        let ev = make_project_event(&[&["d", "proj"], &["buzz-access", "public"]]);
+        assert!(!project_container_hidden_from(&ev, FOREIGN_HEX));
+        let tagless = make_project_event(&[&["d", "proj"]]);
+        assert!(!project_container_hidden_from(&tagless, FOREIGN_HEX));
     }
 
     #[test]

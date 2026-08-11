@@ -625,7 +625,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 31);
+        assert_eq!(migrations.len(), 32);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1044,6 +1044,23 @@ mod tests {
         let project_ref = migrations[30].sql.as_str();
         assert!(project_ref.contains("ALTER TABLE channels ADD COLUMN project_ref"));
         assert!(!migrations[0].sql.as_str().contains("project_ref"));
+
+        // Project ACL projection (NIP-MP Buzz access extension): additive
+        // migration, its own version — same brownfield checksum rule. The
+        // LWW guard and the members CASCADE are load-bearing for the private-
+        // project read gate, so their shapes are pinned here.
+        assert_eq!(migrations[31].version, 32);
+        let project_acl = migrations[31].sql.as_str();
+        assert!(project_acl.contains("CREATE TABLE project_acl"));
+        assert!(project_acl.contains("CREATE TABLE project_acl_members"));
+        assert!(project_acl.contains("CHECK (visibility IN ('public', 'private'))"));
+        assert!(project_acl.contains("ON DELETE CASCADE"));
+        assert!(project_acl.contains("idx_project_acl_coordinate"));
+        assert!(project_acl.contains("idx_project_acl_members_pubkey"));
+        assert!(
+            project_acl.contains("WHERE EXCLUDED.head_created_at >= project_acl.head_created_at")
+        );
+        assert!(!migrations[0].sql.as_str().contains("project_acl"));
     }
 
     #[test]

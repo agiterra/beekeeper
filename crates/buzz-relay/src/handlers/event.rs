@@ -174,6 +174,27 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // Private-project container gate (fan-out): a kind:30621 head carrying
+    // ["buzz-access","private"] is delivered only to the author's and invited
+    // members' connections, matching REQ semantics
+    // (buzz_core::filter::reader_authorized_for_event).
+    let matches = if buzz_core::kind::is_private_project_event(&stored_event.event) {
+        matches
+            .into_iter()
+            .filter(|(conn_id, _)| {
+                let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                    return false;
+                };
+                !buzz_core::kind::project_container_hidden_from(
+                    &stored_event.event,
+                    &hex::encode(pk),
+                )
+            })
+            .collect()
+    } else {
+        matches
+    };
+
     let Some(channel_id) = stored_event.channel_id else {
         return matches;
     };
@@ -192,7 +213,46 @@ pub async fn filter_fanout_by_access(
         }
     };
     match visibility {
-        Ok(v) if v != "private" => return matches,
+        Ok(v) if v != "private" => {
+            // Open channel — normally zero-cost, but an open channel inside a
+            // private project (NIP-MP Buzz access extension) fans out only to
+            // the project's owner, invited members, and explicit channel
+            // members. The gate lookup is one cached read per channel; the
+            // common no-gate case stays a fast return.
+            let gate = match state
+                .channel_project_gate_cached(community_id, channel_id)
+                .await
+            {
+                Ok(None) => return matches,
+                Ok(Some(gate)) => gate,
+                Err(e) => {
+                    // Fail closed, mirroring the visibility-lookup failure arm.
+                    warn!(%channel_id, "fan-out access filter: project gate lookup failed: {e}");
+                    return Vec::new();
+                }
+            };
+            let mut allowed = Vec::with_capacity(matches.len());
+            for (conn_id, sub_id) in matches {
+                let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
+                    continue;
+                };
+                if gate.admits(&pubkey) {
+                    allowed.push((conn_id, sub_id));
+                    continue;
+                }
+                match state
+                    .is_member_cached(community_id, channel_id, &pubkey)
+                    .await
+                {
+                    Ok(true) => allowed.push((conn_id, sub_id)),
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!(%channel_id, "fan-out access filter: membership lookup failed: {e}");
+                    }
+                }
+            }
+            return allowed;
+        }
         Ok(_) => {}
         Err(e) => {
             // Fail closed: if we cannot determine visibility, do not leak a

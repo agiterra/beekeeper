@@ -102,6 +102,17 @@ pub struct EventQuery {
     /// SQL pushdown is sound.  Keeping `event_visible_to_reader` as post-filter
     /// defense-in-depth catches any residual mismatch.
     pub shared_gated_reader: Option<Vec<u8>>,
+    /// Private-project visibility pushdown (NIP-MP Buzz access extension).
+    ///
+    /// When set, `query_events` appends a pre-`LIMIT` clause excluding
+    /// kind:30621 heads that carry `["buzz-access","private"]` unless the
+    /// reader is the author or named in a `p` tag:
+    /// `AND (kind <> 30621 OR NOT tags @> '[["buzz-access","private"]]'
+    ///       OR pubkey = $reader OR tags @> '[["p","<reader-hex>"]]')`.
+    /// Same starvation rationale and GIN-index mechanics as
+    /// [`Self::shared_gated_reader`]; `event_visible_to_reader` stays as
+    /// post-filter defense-in-depth.
+    pub project_gated_reader: Option<Vec<u8>>,
 }
 
 impl EventQuery {
@@ -132,6 +143,7 @@ impl EventQuery {
             channel_ids_include_global: true,
             max_limit: None,
             shared_gated_reader: None,
+            project_gated_reader: None,
         }
     }
 }
@@ -558,6 +570,26 @@ pub(crate) async fn query_events_on(
         qb.push_bind(reader_bytes.clone());
         qb.push(format!(" OR {col_prefix}tags @> "));
         qb.push_bind(shared_containment);
+        qb.push(")");
+    }
+
+    // Private-project visibility pushdown: exclude kind:30621 heads carrying
+    // ["buzz-access","private"] that the reader neither authored nor is
+    // invited to via a `p` tag.  Applied BEFORE ORDER/LIMIT for the same
+    // starvation reason as the shared-gated clause above.  Both containment
+    // probes are served by idx_events_tags_gin; ingest guarantees `p` values
+    // are lowercase 64-hex, so the reader-hex containment is byte-exact.
+    if let Some(ref reader_bytes) = q.project_gated_reader {
+        let private_containment = serde_json::json!([["buzz-access", "private"]]);
+        let reader_p_containment = serde_json::json!([["p", hex::encode(reader_bytes)]]);
+        qb.push(format!(" AND ({col_prefix}kind <> "));
+        qb.push_bind(buzz_core::kind::KIND_PROJECT as i32);
+        qb.push(format!(" OR NOT {col_prefix}tags @> "));
+        qb.push_bind(private_containment);
+        qb.push(format!(" OR {col_prefix}pubkey = "));
+        qb.push_bind(reader_bytes.clone());
+        qb.push(format!(" OR {col_prefix}tags @> "));
+        qb.push_bind(reader_p_containment);
         qb.push(")");
     }
 

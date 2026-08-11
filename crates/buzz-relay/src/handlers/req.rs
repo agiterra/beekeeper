@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 use buzz_core::filter::filters_match;
 use buzz_core::kind::{
     is_unshared_gated_event, AUTHOR_ONLY_KINDS, KIND_AGENT_ENGRAM, KIND_AGENT_TURN_METRIC,
-    KIND_DM_VISIBILITY, P_GATED_KINDS, RESULT_GATED_KINDS, SHARED_GATED_KINDS,
+    KIND_DM_VISIBILITY, KIND_PROJECT, P_GATED_KINDS, RESULT_GATED_KINDS, SHARED_GATED_KINDS,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_db::EventQuery;
@@ -353,6 +353,10 @@ pub async fn handle_req(
             // newer private events from starving older shared ones off the page.
             if filter_can_match_shared_gated_kinds(filter) {
                 params.shared_gated_reader = Some(pubkey_bytes.clone());
+            }
+            // Private-project visibility pushdown, same starvation rationale.
+            if filter_can_match_project_kind(filter) {
+                params.project_gated_reader = Some(pubkey_bytes.clone());
             }
             (idx, per_filter_channel, params)
         })
@@ -1295,6 +1299,23 @@ pub(crate) fn filter_can_match_shared_gated_kinds(filter: &Filter) -> bool {
         ks.iter()
             .any(|k| SHARED_GATED_KINDS.contains(&(k.as_u16() as u32)))
     })
+}
+
+/// Returns `true` if the filter CAN match `KIND_PROJECT` (kind 30621) —
+/// meaning it either has no `kinds` constraint (wildcard) or explicitly
+/// includes it.
+///
+/// Used to (a) arm the private-project SQL visibility pushdown
+/// (`EventQuery::project_gated_reader`) on REQ/COUNT/HTTP queries, and (b)
+/// force the COUNT per-event fallback path, which applies
+/// `event_visible_to_reader` per row. The fast SQL `count_events()` has no
+/// per-event access check, so it would count foreign private project heads —
+/// leaking their existence even without returning content.
+pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
+    filter
+        .kinds
+        .as_ref()
+        .is_none_or(|ks| ks.iter().any(|k| k.as_u16() as u32 == KIND_PROJECT))
 }
 
 /// Returns `true` if the filter CAN match result-gated kinds — meaning it

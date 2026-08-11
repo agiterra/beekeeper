@@ -692,6 +692,15 @@ pub struct AppState {
     /// Per-community channel visibility string, used to gate the private-channel fan-out
     /// access check so open channels stay zero-cost. Invalidated on a flip.
     pub channel_visibility_cache: Arc<moka::sync::Cache<(CommunityId, Uuid), String>>,
+    /// Per-channel private-project gate (NIP-MP Buzz access extension):
+    /// (community_id, channel_id) → the project's owner + invited members when
+    /// the channel's `project_ref` resolves to a private project, else `None`
+    /// ("no gate"). Lets live fan-out and the ingest open-channel fallback
+    /// filter by project membership in memory. Short TTL (10s); flushed with
+    /// the accessible-channels cache on every 30621 ACL change.
+    #[allow(clippy::type_complexity)]
+    pub project_gate_cache:
+        Arc<moka::sync::Cache<(CommunityId, Uuid), Option<Arc<buzz_db::project_acl::ProjectGate>>>>,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
     pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
@@ -901,6 +910,13 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            project_gate_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             audit_tx: audit_enabled.then_some(audit_tx),
             media_storage: Arc::new(media_storage),
             storage_sweep: Arc::new(tokio::sync::Mutex::new(
@@ -984,6 +1000,31 @@ impl AppState {
         Ok(result)
     }
 
+    /// Resolve a channel's private-project gate with a 10-second cache.
+    ///
+    /// `None` means "no gate" (no project, or the project is public/unknown).
+    /// The cache is flushed with the accessible-channels cache whenever a
+    /// 30621 ACL projection changes, so staleness is bounded the same way —
+    /// and the stale direction after a channel *leaves* a private project is
+    /// over-restrictive, never a leak.
+    pub async fn channel_project_gate_cached(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Result<Option<Arc<buzz_db::project_acl::ProjectGate>>, buzz_db::DbError> {
+        let key = (community_id, channel_id);
+        if let Some(cached) = self.project_gate_cache.get(&key) {
+            return Ok(cached);
+        }
+        let gate = self
+            .db
+            .get_channel_project_gate(community_id, channel_id)
+            .await?
+            .map(Arc::new);
+        self.project_gate_cache.insert(key, gate.clone());
+        Ok(gate)
+    }
+
     /// Invalidate caches after a membership change (add/remove member).
     ///
     /// Drops the local moka entries AND fire-and-forget publishes the same drop
@@ -1035,6 +1076,18 @@ impl AppState {
                 "community-scoped accessible-channel invalidation unavailable; falling back to full invalidation"
             );
             self.accessible_channels_cache.invalidate_all();
+        }
+        // Project ACL changes ride the same invalidation (fired on every 30621
+        // ingest/deletion), so the per-channel project gate must flush with it.
+        if let Err(error) = self
+            .project_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped project-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.project_gate_cache.invalidate_all();
         }
     }
 
@@ -1099,6 +1152,16 @@ impl AppState {
                 "community-scoped visibility invalidation unavailable; falling back to full invalidation"
             );
             self.channel_visibility_cache.invalidate_all();
+        }
+        if let Err(error) = self
+            .project_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped project-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.project_gate_cache.invalidate_all();
         }
     }
 

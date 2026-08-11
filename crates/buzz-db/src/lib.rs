@@ -37,6 +37,7 @@ pub mod moderation;
 pub mod partition;
 /// Buzz product-feedback sidecar persistence.
 pub mod product_feedback;
+pub mod project_acl;
 /// Community-scoped push lease and durable wake-outbox persistence.
 pub mod push;
 /// Reaction persistence.
@@ -2685,6 +2686,63 @@ impl Db {
             delivery_stamp,
         )
         .await
+    }
+
+    /// Upsert the project ACL projection row + invited-member set from an
+    /// ingested 30621 head (store+project side effect; republish-latest,
+    /// stale replays ignored).
+    pub async fn upsert_project_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        visibility: &str,
+        member_pubkeys: &[Vec<u8>],
+        head_created_at: i64,
+    ) -> Result<()> {
+        project_acl::upsert_project_acl(
+            &self.pool,
+            community,
+            owner,
+            dtag,
+            visibility,
+            member_pubkeys,
+            head_created_at,
+        )
+        .await
+    }
+
+    /// Drop the project ACL row for a NIP-09-deleted 30621 coordinate
+    /// (members cascade). Returns whether a row was removed.
+    pub async fn delete_project_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        deleted_at: i64,
+    ) -> Result<bool> {
+        project_acl::delete_project_acl(&self.pool, community, owner, dtag, deleted_at).await
+    }
+
+    /// Returns whether `pubkey` may access contents of the project at
+    /// `coordinate` (unknown/public project, owner, or invited member).
+    pub async fn can_access_project_contents(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::can_access_project_contents(&self.pool, community, coordinate, pubkey).await
+    }
+
+    /// Resolve a channel's private-project gate (owner + invited members),
+    /// or `None` when the channel's project is absent, unknown, or public.
+    pub async fn get_channel_project_gate(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_channel_project_gate(&self.pool, community, channel_id).await
     }
 
     /// Ensure a user record exists (upsert).

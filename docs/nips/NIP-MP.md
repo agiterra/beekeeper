@@ -92,6 +92,8 @@ Both external registries are advisory, not authoritative allocators: neither res
 | `a` | 0 to 64 | One member repository coordinate each. Order is not significant. |
 | `buzz-channel` | 0 or 1 | UUID of the channel this project's discussion lives in. Metadata only — see [Authority](#authority). At most 256 bytes. |
 | `buzz-visibility` | 0 or 1 | `listed` (default) or `unlisted`. Feeds [listing eligibility](#listing-eligibility). At most 256 bytes. |
+| `buzz-access` | 0 or 1 | `public` (default) or `private`. Buzz access extension — see [Access levels](#access-levels-buzz-extension). |
+| `p` | 0 to 256 | One invited-member pubkey each (lowercase 64-hex, optional NIP-01 relay hint). Meaningful only with `buzz-access` `private`. |
 
 `content` carries no meaning. Writers SHOULD emit the empty string. Readers and relays MUST ignore whatever it holds: a non-empty `content` is not a rejection cause, and no consumer may parse semantics from it. Reserving it costs nothing and keeps a future writer that fills it from invalidating its events for today's readers.
 
@@ -104,6 +106,22 @@ Ingest bounds metadata cardinality and length; it interprets no metadata value. 
 - `name` absent → clients display the `d` value.
 - `buzz-visibility` absent or holding any value other than `listed` or `unlisted` → treated as `listed`. An unrecognized token MUST NOT hide a project: a typo in a metadata field is not a privacy signal, and treating it as one would make a project vanish for reasons its author cannot see.
 - `buzz-channel` absent, or naming a channel the viewer cannot resolve or read → the project renders without a channel link. It MUST NOT be dropped from the collection, and the unresolvable value MUST NOT be surfaced as a broken link.
+
+### Access levels (Buzz extension)
+
+`buzz-access` sets who may **read** the project container and, on the Buzz relay, its contained channels and forums. It is the one metadata tag the relay interprets rather than treats as opaque, because it is an access-control input, not a display hint.
+
+- Absent or `public` — the container is community-readable. This is the default and describes every pre-extension event.
+- `private` — the relay withholds the container from every reader except the **author** and the pubkeys named in the event's `p` tags (invited members). Enforcement covers every read surface: REQ historical delivery, live fan-out, COUNT, `ids` lookup, the HTTP bridge, and FTS search. Channels bound to a private project (via `project_ref`) are additionally excluded from non-members' accessible-channel sets, hiding their messages and forums and refusing writes.
+
+The owner is an implicit member and never appears in `p` tags. `buzz-visibility` is orthogonal: it filters what a client *lists* among events the reader already received; `buzz-access` controls what the relay *delivers* at all.
+
+Two deliberate asymmetries with the rest of this NIP:
+
+- **Unknown values are rejected at ingest** (`access-value`), unlike `buzz-visibility`'s fall-back-to-default rule. A display-hint typo is harmless; an access typo that silently fell open to public would be a privacy leak.
+- **Member repositories are not read-gated by the project.** Consistent with [Authority](#authority), a project grants and removes nothing on its members: repository events and git transport keep their own access rules. Clients MUST NOT present a private project as hiding its repositories.
+
+Because only the owner can replace the event, invitations are owner-curated republishes. A relay hint in element 3 of a `p` tag is permitted and ignored, mirroring member `a` tags. Vanilla relays that do not implement this extension deliver private containers like any addressable event — writers targeting such relays must not rely on `buzz-access`.
 
 ### Member coordinates
 
@@ -179,9 +197,17 @@ A relay accepting `kind:30621` MUST validate the envelope at ingest. The rule na
 7. **`metadata-cardinality`** — at most one each of `name`, `description`, `buzz-channel`, `buzz-visibility`. Duplicates would make the effective value reader-dependent.
 8. **`metadata-length`** — `name` at most 256 bytes; `description` at most 2048 bytes; `buzz-channel` at most 256 bytes; `buzz-visibility` at most 256 bytes. The two `buzz-` bounds are generous by design: neither value has a semantic length, and the bound exists only so an unbounded string cannot ride into storage on a tag ingest does not interpret.
 
-Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built.
+The Buzz access extension adds five rules over `buzz-access` and invited-member `p` tags:
 
-The Buzz validator enforces all eight rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
+9. **`access-value`** — a `buzz-access` tag holds exactly `private` or `public`. Unknown values are rejected rather than defaulted; see [Access levels](#access-levels-buzz-extension). Duplicate `buzz-access` tags fall under `metadata-cardinality` (rule 7).
+10. **`invite-cap`** — at most 256 invited-member `p` tags, counting every raw tag, same rationale as `member-cap`. Inclusive: 256 accepted, 257 not.
+11. **`invite-tag-arity`** — every `p` tag has two or three elements (pubkey plus optional relay hint).
+12. **`invite-malformed`** — every `p` value is 64 lowercase hex characters. The read gate compares byte-exact against the authenticated reader's pubkey, so an uppercase invite would never match.
+13. **`invite-duplicate`** — no two `p` tags hold the same pubkey.
+
+Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built; rules 10 through 13 follow the same count-before-parse discipline.
+
+The Buzz validator enforces all thirteen rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
 
 **Duplicates are rejected, never normalized.** A relay cannot dedupe tags inside a signed event: rewriting the tag array changes the event id and invalidates the signature. The choices are reject, or accept and require every present and future consumer to apply a first-wins interpretation rule. Rejecting keeps every stored head canonical and spares all consumers a defensive parse.
 

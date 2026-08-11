@@ -672,10 +672,21 @@ pub(crate) async fn check_channel_membership(
             .map(|ch| ch.visibility == "open")
             .unwrap_or(false),
     };
-    if is_open {
-        Ok(())
-    } else {
-        Err("restricted: not a channel member".to_string())
+    if !is_open {
+        return Err("restricted: not a channel member".to_string());
+    }
+    // Open channel — but an open channel inside a private project must not
+    // fall open to non-members of the project (NIP-MP Buzz access extension).
+    // Explicit channel members were admitted above; here only the project's
+    // owner and invited members may write. Fail closed on lookup errors.
+    match state
+        .channel_project_gate_cached(tenant.community(), ch_id)
+        .await
+    {
+        Ok(None) => Ok(()),
+        Ok(Some(gate)) if gate.admits(pubkey_bytes) => Ok(()),
+        Ok(Some(_)) => Err("restricted: channel belongs to a private project".to_string()),
+        Err(e) => Err(format!("error: database error: {e}")),
     }
 }
 
@@ -1325,9 +1336,24 @@ const PROJECT_METADATA_TAG_MAX_LEN: usize = 256;
 /// Metadata tags a project may carry at most once each.
 ///
 /// Duplicates would make the effective value reader-dependent — one client
-/// taking the first, another the last.
-const PROJECT_SINGLETON_METADATA_TAGS: [&str; 4] =
-    ["name", "description", "buzz-channel", "buzz-visibility"];
+/// taking the first, another the last. For `buzz-access` a duplicate would be
+/// worse than ambiguous display — it would make the *access level* itself
+/// reader-dependent.
+const PROJECT_SINGLETON_METADATA_TAGS: [&str; 5] = [
+    "name",
+    "description",
+    "buzz-channel",
+    "buzz-visibility",
+    "buzz-access",
+];
+
+/// Maximum number of invited-member `p` tags on a kind:30621 project.
+///
+/// Separate from [`PROJECT_MEMBER_CAP`] (which bounds `a` member coordinates):
+/// invites bound who can *read* a private project, members bound what is *in*
+/// it. Counted over raw tags before per-tag work, same rationale as
+/// `member-cap`.
+const PROJECT_INVITE_CAP: usize = 256;
 
 /// The kind segments a project member coordinate may carry. NIP-MP proper
 /// allows only repository *announcements* (30617) — notably not kind:30618
@@ -1349,10 +1375,11 @@ const _: () = assert!(KIND_MANAGED_AGENT == 30177);
 /// that rejection occurred — an implementation cannot pass a reject fixture by
 /// refusing for an unrelated reason.
 ///
-/// The eight IDs match the `reject_rules` strings in `NIP-MP.fixtures.json`
+/// The IDs match the `reject_rules` strings in `NIP-MP.fixtures.json`
 /// exactly: `d-cardinality`, `d-empty`, `member-cap`, `member-tag-arity`,
 /// `member-coordinate-malformed`, `member-duplicate`, `metadata-cardinality`,
-/// `metadata-length`.
+/// `metadata-length`, plus the Buzz access-extension rules `access-value`,
+/// `invite-cap`, `invite-tag-arity`, `invite-malformed`, `invite-duplicate`.
 #[derive(Debug)]
 struct ProjectRejection {
     /// Stable rule identifier matching the fixture file's `reject_rules` set.
@@ -1396,10 +1423,12 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
     let mut d_tags: Vec<&str> = Vec::new();
     let mut members: Vec<&str> = Vec::new();
     let mut channels: Vec<&str> = Vec::new();
+    let mut invites: Vec<&str> = Vec::new();
     let mut name: Option<&str> = None;
     let mut description: Option<&str> = None;
     let mut buzz_channel: Option<&str> = None;
     let mut buzz_visibility: Option<&str> = None;
+    let mut buzz_access: Option<&str> = None;
     let mut singleton_counts = [0usize; PROJECT_SINGLETON_METADATA_TAGS.len()];
 
     for tag in event.tags.iter() {
@@ -1413,6 +1442,8 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
             "a" => members.push(value),
             // Buzz container extension: member channels/forums by channel id.
             "channel" => channels.push(value),
+            // Buzz access extension: invited-member pubkeys on private projects.
+            "p" => invites.push(value),
             _ => {
                 if let Some(i) = PROJECT_SINGLETON_METADATA_TAGS
                     .iter()
@@ -1424,6 +1455,7 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
                         "description" => description = Some(value),
                         "buzz-channel" => buzz_channel = Some(value),
                         "buzz-visibility" => buzz_visibility = Some(value),
+                        "buzz-access" => buzz_access = Some(value),
                         _ => {}
                     }
                 }
@@ -1551,6 +1583,69 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
                     "project event `buzz-visibility` tag too long ({} bytes, max {PROJECT_METADATA_TAG_MAX_LEN})",
                     buzz_visibility.len()
                 ),
+            ));
+        }
+    }
+    // `access-value`: unlike `buzz-visibility` (a display hint where an
+    // unrecognized value harmlessly falls back to the default), `buzz-access`
+    // is an access-control input — a typo that silently fell open to public
+    // would be a privacy leak, so unknown values are rejected at ingest.
+    if let Some(buzz_access) = buzz_access {
+        if buzz_access != buzz_core::kind::PROJECT_ACCESS_PRIVATE
+            && buzz_access != buzz_core::kind::PROJECT_ACCESS_PUBLIC
+        {
+            return Err(ProjectRejection::new(
+                "access-value",
+                format!(
+                    "project event `buzz-access` tag must be \"private\" or \"public\" (got {buzz_access:?})"
+                ),
+            ));
+        }
+    }
+    // `invite-cap` before per-tag work, same rationale as `member-cap`.
+    if invites.len() > PROJECT_INVITE_CAP {
+        return Err(ProjectRejection::new(
+            "invite-cap",
+            format!(
+                "project event must have at most {PROJECT_INVITE_CAP} invited-member `p` tags (got {})",
+                invites.len()
+            ),
+        ));
+    }
+    // `invite-tag-arity`: `["p", pubkey]` plus NIP-01's optional relay hint.
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.first().map(|s| s.as_str()) == Some("p") && !(2..=3).contains(&parts.len()) {
+            return Err(ProjectRejection::new(
+                "invite-tag-arity",
+                format!(
+                    "project event invited-member `p` tag must have 2 or 3 elements (got {})",
+                    parts.len()
+                ),
+            ));
+        }
+    }
+    // `invite-malformed` / `invite-duplicate`: lowercase-only for the same
+    // byte-exact-matching reason as member coordinates — the read gate compares
+    // `p` values against the authenticated reader's lowercase hex pubkey.
+    let mut seen_invites = std::collections::HashSet::with_capacity(invites.len());
+    for invite in &invites {
+        if invite.len() != 64
+            || !invite
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(ProjectRejection::new(
+                "invite-malformed",
+                format!(
+                    "project event invited-member `p` tag must be a lowercase 64-hex pubkey (got {invite:?})"
+                ),
+            ));
+        }
+        if !seen_invites.insert(*invite) {
+            return Err(ProjectRejection::new(
+                "invite-duplicate",
+                format!("project event has duplicate invited-member `p` tag {invite:?}"),
             ));
         }
     }
@@ -5114,7 +5209,7 @@ mod tests {
     }
 
     /// Drive every case in the shared NIP-MP fixture file against
-    /// `validate_project_envelope`. All 11 accept cases must pass; all 20
+    /// `validate_project_envelope`. All 15 accept cases must pass; all 27
     /// reject cases must return an error whose rule is in the case's allowed
     /// `reject_rules` set — an implementation cannot pass by rejecting for an
     /// unrelated reason. This is the machine-readable oracle the spec promises.

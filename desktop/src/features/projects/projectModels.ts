@@ -104,6 +104,9 @@ function isValidProjectMemberOwner(value: string): boolean {
 
 /** NIP-MP rule `member-cap`: a project may carry at most 64 member `a` tags. */
 export const MAX_PROJECT_MEMBERS = 64;
+/** Invite cap for private-project `p` tags — mirrors the relay's
+ * PROJECT_INVITE_CAP. */
+export const MAX_PROJECT_INVITES = 256;
 
 export function isValidProjectChannelId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -202,6 +205,54 @@ export function validateProjectEventEnvelope(
       throw new Error(`NIP-MP: duplicate repository address '${address}'.`);
     }
     seenAddresses.add(address);
+  }
+
+  // Buzz extension `buzz-access`: singleton access tag, `public` or
+  // `private` only — mirrors the relay's ingest validation (PROJECT_ACCESS_TAG
+  // in buzz-core's kind.rs) so desktop and relay agree on head validity.
+  const accessTags = tags.filter((tag) => tag[0] === "buzz-access");
+  if (accessTags.length > 1) {
+    throw new Error(
+      "NIP-MP: duplicate 'buzz-access' tag — at most one is permitted.",
+    );
+  }
+  const accessValue = accessTags[0]?.[1];
+  if (
+    accessValue !== undefined &&
+    accessValue !== "public" &&
+    accessValue !== "private"
+  ) {
+    throw new Error(
+      `NIP-MP: unknown 'buzz-access' value '${accessValue}' — expected 'public' or 'private'.`,
+    );
+  }
+
+  // Buzz extension: invited-member `p` tags gate private-project read access.
+  // Mirrors the relay's `invite-cap`/`invite-tag-arity`/`invite-malformed`/
+  // `invite-duplicate` rules (buzz-relay ingest.rs).
+  const inviteTags = tags.filter((tag) => tag[0] === "p");
+  if (inviteTags.length > MAX_PROJECT_INVITES) {
+    throw new Error(
+      `NIP-MP: project exceeds the ${MAX_PROJECT_INVITES}-invite limit.`,
+    );
+  }
+  const seenInvites = new Set<string>();
+  for (const tag of inviteTags) {
+    if (tag.length !== 2 && tag.length !== 3) {
+      throw new Error(
+        "NIP-MP: invited-member 'p' tag must have 2 or 3 elements.",
+      );
+    }
+    const pubkey = tag[1] ?? "";
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) {
+      throw new Error(
+        `NIP-MP: invited-member 'p' tag must be a lowercase 64-hex pubkey (got '${pubkey}').`,
+      );
+    }
+    if (seenInvites.has(pubkey)) {
+      throw new Error(`NIP-MP: duplicate invited-member '${pubkey}'.`);
+    }
+    seenInvites.add(pubkey);
   }
 
   void content; // content is preserved verbatim; no constraint in NIP-MP.

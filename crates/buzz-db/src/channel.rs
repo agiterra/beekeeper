@@ -758,6 +758,15 @@ pub async fn get_members_bulk(
 ///
 /// Includes channels where the pubkey is an active member AND all open channels.
 /// Open channels must be included in REQ filter resolution.
+///
+/// Private-project gate (NIP-MP Buzz access extension): an *open* channel whose
+/// `project_ref` resolves to a `project_acl` row with `visibility = 'private'`
+/// is accessible only to the project's owner and invited members. Explicit
+/// channel membership still grants access (the member arm is ungated) — being
+/// added to a channel is deliberate consent by its owner/admin, and it keeps a
+/// channel owner from being locked out of their own channel by pointing its
+/// `project_ref` at someone else's private project. An unresolvable
+/// `project_ref` (deleted or never-published project) means no gate.
 pub async fn get_accessible_channel_ids(
     pool: &PgPool,
     community_id: CommunityId,
@@ -770,9 +779,25 @@ pub async fn get_accessible_channel_ids(
         JOIN channels c ON cm.community_id = c.community_id AND cm.channel_id = c.id AND c.deleted_at IS NULL
         WHERE cm.community_id = $1 AND cm.pubkey = $2 AND cm.removed_at IS NULL
         UNION
-        SELECT id AS channel_id
-        FROM channels
-        WHERE community_id = $1 AND visibility = 'open' AND deleted_at IS NULL
+        SELECT c.id AS channel_id
+        FROM channels c
+        WHERE c.community_id = $1 AND c.visibility = 'open' AND c.deleted_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM project_acl pa
+              WHERE pa.community_id = c.community_id
+                AND pa.coordinate = c.project_ref
+                AND pa.visibility = 'private'
+                AND pa.owner <> $2
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM project_acl_members pam
+                    WHERE pam.community_id = pa.community_id
+                      AND pam.owner = pa.owner
+                      AND pam.dtag = pa.dtag
+                      AND pam.pubkey = $2
+                )
+          )
         "#,
     )
     .bind(community_id.as_uuid())

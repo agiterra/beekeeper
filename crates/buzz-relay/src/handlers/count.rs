@@ -121,6 +121,11 @@ pub async fn handle_count(
         // reader's own pubkey.
         let needs_result_gated_filtering = filter_can_match_result_gated_kinds(filter)
             && !result_gated_count_safe_for_pushdown(filter, &authed_pubkey_hex);
+        // Determine if this filter can match kind:30621 projects — private
+        // heads (NIP-MP Buzz access extension) must not be counted for
+        // readers who are neither the author nor invited, so the fast path
+        // is bypassed and the fallback applies event_visible_to_reader.
+        let needs_project_gate_filtering = super::req::filter_can_match_project_kind(filter);
 
         if let Some(requested_channels) = requested_channels {
             for &ch_id in &requested_channels {
@@ -185,6 +190,9 @@ pub async fn handle_count(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
                     && authors
@@ -195,6 +203,7 @@ pub async fn handle_count(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
             {
                 match state.db.count_events_routed("count_req", &query).await {
                     Ok(n) => total += n as u64,
@@ -257,6 +266,9 @@ pub async fn handle_count(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
 
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
@@ -268,6 +280,7 @@ pub async fn handle_count(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
             {
                 query.limit = None; // COUNT doesn't need a row limit
                 match state.db.count_events_routed("count_req", &query).await {

@@ -10,8 +10,8 @@ use buzz_core::kind::{
     event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
-    KIND_THREAD_SUMMARY,
+    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
+    KIND_REACTION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -33,7 +33,7 @@ pub fn is_admin_kind(kind: u32) -> bool {
 /// handled in `ingest_event()` before storage so we can short-circuit on
 /// duplicates without storing the event at all.
 pub fn is_side_effect_kind(kind: u32) -> bool {
-    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | 41001..=41003 | 40099)
+    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | KIND_PROJECT | 41001..=41003 | 40099)
 }
 
 async fn evict_live_channel_subscriptions(
@@ -216,6 +216,10 @@ pub async fn handle_side_effects(
         // NIP-34: Git repo announcement → reserve name + seed manifest pointer.
         KIND_GIT_REPO_ANNOUNCEMENT => handle_git_repo_announcement(tenant, event, state).await,
         KIND_AGENT_PROFILE => handle_agent_profile(tenant, event, state).await,
+        // NIP-MP Buzz access extension: project the head's access level and
+        // invited-member `p` tags into `project_acl` (store+project) so the
+        // accessible-channels query can gate private-project channels in SQL.
+        KIND_PROJECT => handle_project_acl_projection(tenant, event, state).await,
         // kind:7 (reaction) handled inline in ingest_event() before storage.
         _ => Ok(()),
     }
@@ -2151,6 +2155,62 @@ async fn handle_leave_request(
 
 /// Handle NIP-09 deletion via `a` tag (addressable/parameterized-replaceable events).
 /// Parses "kind:pubkey:d-tag" and deletes the corresponding DB record.
+/// Handle a kind:30621 project head (NIP-MP Buzz access extension).
+///
+/// Projects the head's `buzz-access` level and invited-member `p` tags into
+/// `project_acl` / `project_acl_members`. The event stays authoritative
+/// (owner-curated republish); the projection backs the accessible-channels
+/// SQL gate and the write-path project-membership check. Stale replays are
+/// ignored by the projection's `head_created_at` guard.
+async fn handle_project_acl_projection(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let dtag =
+        extract_tag_value(event, "d").ok_or_else(|| anyhow::anyhow!("kind:30621 missing d tag"))?;
+    let visibility = if buzz_core::kind::is_private_project_event(event) {
+        "private"
+    } else {
+        "public"
+    };
+    // Ingest validated each `p` value as lowercase 64-hex with no duplicates.
+    let members: Vec<Vec<u8>> = event
+        .tags
+        .iter()
+        .filter_map(|t| {
+            let parts = t.as_slice();
+            if parts.first().map(|s| s.as_str()) == Some("p") {
+                parts.get(1).and_then(|v| hex::decode(v.as_str()).ok())
+            } else {
+                None
+            }
+        })
+        .collect();
+    state
+        .db
+        .upsert_project_acl(
+            tenant.community(),
+            &event.pubkey.to_bytes(),
+            &dtag,
+            visibility,
+            &members,
+            event.created_at.as_secs() as i64,
+        )
+        .await?;
+    // The accessible-channel set of every non-member changes when a project
+    // flips visibility or its invite list; 30621 writes are rare relative to
+    // reads, so the coarse community-wide flush is the right trade.
+    state.invalidate_all_accessible_channels(tenant);
+    info!(
+        d_tag = %dtag,
+        visibility,
+        members = members.len(),
+        "kind:30621 project ACL projected"
+    );
+    Ok(())
+}
+
 async fn handle_a_tag_deletion(
     tenant: &TenantContext,
     event: &Event,
@@ -2275,6 +2335,22 @@ async fn handle_a_tag_deletion(
                     d_tag = d_tag,
                     "NIP-09 a-tag deletion: no live row matched coordinate"
                 );
+            }
+            // A deleted project's ACL row must go with it (same created_at
+            // scoping), so its channels revert to their own access rules.
+            if k == KIND_PROJECT {
+                let acl_dropped = state
+                    .db
+                    .delete_project_acl(
+                        tenant.community(),
+                        &pubkey_bytes,
+                        d_tag,
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if acl_dropped {
+                    state.invalidate_all_accessible_channels(tenant);
+                }
             }
         }
         _ => {

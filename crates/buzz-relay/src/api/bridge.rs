@@ -1255,6 +1255,10 @@ async fn query_events_authed(
         if crate::handlers::req::filter_can_match_shared_gated_kinds(filter) {
             query.shared_gated_reader = Some(pubkey_bytes.clone());
         }
+        // Private-project visibility pushdown, same starvation rationale.
+        if crate::handlers::req::filter_can_match_project_kind(filter) {
+            query.project_gated_reader = Some(pubkey_bytes.clone());
+        }
 
         match extract_before_id(raw) {
             BeforeId::Malformed => {
@@ -1515,6 +1519,10 @@ async fn count_events_authed(
         // would over-count foreign unshared events (existence leak).
         let needs_shared_gate_filtering =
             crate::handlers::req::filter_can_match_shared_gated_kinds(filter);
+        // Private kind:30621 heads must not be counted for readers who are
+        // neither the author nor invited — mirrors the WS COUNT handler.
+        let needs_project_gate_filtering =
+            crate::handlers::req::filter_can_match_project_kind(filter);
 
         // If filter targets a specific channel, verify access.
         if crate::handlers::req::extract_channel_ids_from_filters(std::slice::from_ref(filter))
@@ -1550,6 +1558,9 @@ async fn count_events_authed(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
                     && authors
@@ -1560,6 +1571,7 @@ async fn count_events_authed(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
             {
                 match state.db.count_events_routed("bridge_count", &query).await {
                     Ok(n) => total += n as u64,
@@ -1619,6 +1631,9 @@ async fn count_events_authed(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
 
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
@@ -1630,6 +1645,7 @@ async fn count_events_authed(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
             {
                 query.limit = None;
                 match state.db.count_events_routed("bridge_count", &query).await {
