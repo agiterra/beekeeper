@@ -65,11 +65,16 @@ nothing (or to a small residual diff). Delete the branch, remove it from
 are validated locally by `integrate.sh`'s gate — they intentionally carry no CI
 files so they stay upstream-clean.
 
-Known runner-environment limitation: `buzz-relay`'s
-`api::mesh_demo::…round_trips_echo` cannot complete its loopback-QUIC echo
-inside the docker-in-incus runner and is excluded from the gate (it self-skips
-on redis-less dev machines anyway; upstream CI covers it). Re-check if the
-runner topology changes.
+Known runner-environment limitations (excluded from the gate, still run on
+dev machines; both are upstream-issue candidates):
+- `buzz-relay` `api::mesh_demo::…round_trips_echo` — loopback QUIC cannot
+  complete inside the docker-in-incus runner (10s ECHO_TIMEOUT expires; the
+  test self-skips on redis-less dev machines anyway).
+- `buzz-agent` `fake_llm::cancelled_turn_with_usage_emits_notification_before_response`
+  — the test releases its gated LLM round right after sending cancel, assuming
+  stdin wins the race; on loaded cores round 2 completes first and the turn
+  legitimately ends `end_turn`, not `cancelled`. Test-design race.
+Re-check both if the runner topology changes.
 
 Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
 `/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
