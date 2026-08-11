@@ -694,6 +694,177 @@ pub fn project_container_hidden_from(event: &nostr::Event, reader_pubkey_hex: &s
     })
 }
 
+/// Kinds whose visibility follows the repo → project link (NIP-MP Buzz
+/// access extension, phase 2): the NIP-34 repo surface. When a repo's 30617
+/// carries a `["project", …]` back-reference into a private project, the
+/// announcement itself, the relay-signed 30618 ref state, and every child
+/// event that `a`-tags the repo are hidden from readers outside the project.
+///
+/// Enforcement is DB-backed (the project's ACL lives on a different event),
+/// so unlike [`SHARED_GATED_KINDS`] there is no stateless per-event
+/// predicate: the relay resolves a per-reader hidden-repo set
+/// (`buzz_db::git_repo::hidden_repos_for_reader`, cached) and applies
+/// [`repo_event_hidden_from`] at each chokepoint, plus an SQL pushdown
+/// (`EventQuery::git_gated_reader`).
+pub const GIT_PROJECT_GATED_KINDS: &[u32] = &[
+    KIND_GIT_REPO_ANNOUNCEMENT,
+    KIND_GIT_REPO_STATE,
+    KIND_GIT_PATCH,
+    KIND_GIT_PULL_REQUEST,
+    KIND_GIT_PR_UPDATE,
+    KIND_GIT_ISSUE,
+    KIND_GIT_STATUS_OPEN,
+    KIND_GIT_STATUS_MERGED,
+    KIND_GIT_STATUS_CLOSED,
+    KIND_GIT_STATUS_DRAFT,
+];
+
+/// Returns `true` for kinds in [`GIT_PROJECT_GATED_KINDS`].
+pub fn is_git_project_gated_kind(kind: u32) -> bool {
+    GIT_PROJECT_GATED_KINDS.contains(&kind)
+}
+
+/// Extract and normalize the `["project", …]` back-reference from a repo
+/// announcement (kind:30617): `Some("30621:<lowercase-hex-owner>:<dtag>")`
+/// when the first `project` tag carries a well-formed project coordinate,
+/// else `None`.
+///
+/// Normalization lowercases the owner hex, matching the projection in
+/// migration 0031. Malformed values return `None` — fail-open to public for
+/// legacy stored events (they predate gating and were always visible);
+/// go-forward ingest rejects malformed tags outright.
+pub fn repo_project_ref(event: &nostr::Event) -> Option<String> {
+    if event_kind_u32(event) != KIND_GIT_REPO_ANNOUNCEMENT {
+        return None;
+    }
+    let value = event.tags.iter().find_map(|tag| {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) == Some("project") {
+            parts.get(1).map(String::as_str)
+        } else {
+            None
+        }
+    })?;
+    normalize_project_coordinate(value)
+}
+
+/// Normalize a project coordinate string to `30621:<lowercase-hex>:<dtag>`,
+/// or `None` if it is not a well-formed 30621 coordinate. Shared by
+/// [`repo_project_ref`] and the ingest-side validation so they cannot drift.
+///
+/// Only the live project kind is accepted: this relay never stored the
+/// fork-era `30178:` project coordinates, and 30178 is the team-catalog kind
+/// here — accepting it would alias an unrelated kind into project refs.
+pub fn normalize_project_coordinate(value: &str) -> Option<String> {
+    let mut parts = value.splitn(3, ':');
+    let kind = parts.next()?;
+    let pubkey = parts.next()?;
+    let dtag = parts.next()?;
+    if kind != "30621" {
+        return None;
+    }
+    if pubkey.len() != 64 || !pubkey.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if dtag.is_empty() || dtag.chars().count() > 64 || dtag.chars().any(char::is_control) {
+        return None;
+    }
+    Some(format!("30621:{}:{dtag}", pubkey.to_ascii_lowercase()))
+}
+
+/// The community-unique repo names a git-gated event belongs to.
+///
+/// - kind 30617/30618: the event's own `d` tag (repo names are unique per
+///   community, so the name alone identifies the repo — necessary for 30618,
+///   which is relay-signed and carries no owner reference);
+/// - child kinds (patches/PRs/issues/status): the `<repo-d>` segment of every
+///   well-formed `30617:<hex>:<repo-d>` `a` tag.
+///
+/// Parsing is tolerant (hex case-insensitive) so a case-variant coordinate
+/// cannot dodge the per-event check even though the SQL pushdown's exact
+/// containment probe would miss it.
+pub fn git_event_repo_names(event: &nostr::Event) -> Vec<String> {
+    let kind = event_kind_u32(event);
+    if !is_git_project_gated_kind(kind) {
+        return Vec::new();
+    }
+    if kind == KIND_GIT_REPO_ANNOUNCEMENT || kind == KIND_GIT_REPO_STATE {
+        let d = nostr::SingleLetterTag::lowercase(nostr::Alphabet::D);
+        return event
+            .tags
+            .filter(nostr::TagKind::SingleLetter(d))
+            .filter_map(|t| t.content())
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+            .take(1)
+            .collect();
+    }
+    let a = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    event
+        .tags
+        .filter(nostr::TagKind::SingleLetter(a))
+        .filter_map(|t| t.content())
+        .filter_map(|value| {
+            let mut parts = value.splitn(3, ':');
+            let kind = parts.next()?;
+            let pubkey = parts.next()?;
+            let repo = parts.next()?;
+            if kind != "30617"
+                || pubkey.len() != 64
+                || !pubkey.bytes().all(|b| b.is_ascii_hexdigit())
+                || repo.is_empty()
+            {
+                return None;
+            }
+            Some(repo.to_owned())
+        })
+        .collect()
+}
+
+/// Returns `true` if a git-gated event must be withheld from this reader:
+/// the event belongs to (any) repo in the reader's hidden set and the reader
+/// is not its author.
+///
+/// Both sets come from the per-reader resolution in
+/// `buzz_db::git_repo::hidden_repos_for_reader`: `hidden_repo_names` holds
+/// the names of repos linked to a private project that does not admit the
+/// reader; `hidden_project_coordinates` holds the coordinates of those
+/// private projects themselves, matched against a 30617's **own** `project`
+/// tag — defense-in-depth for an announcement whose projection never landed
+/// (failed side effect), whose intent is still legible on the event. Empty
+/// sets (the common case) hide nothing.
+pub fn repo_event_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    hidden_repo_names: &std::collections::HashSet<String>,
+    hidden_project_coordinates: &std::collections::HashSet<String>,
+) -> bool {
+    let kind = event_kind_u32(event);
+    if (hidden_repo_names.is_empty() && hidden_project_coordinates.is_empty())
+        || !is_git_project_gated_kind(kind)
+    {
+        return false;
+    }
+    // Authors always see their own events.
+    if event
+        .pubkey
+        .to_hex()
+        .eq_ignore_ascii_case(reader_pubkey_hex)
+    {
+        return false;
+    }
+    if kind == KIND_GIT_REPO_ANNOUNCEMENT && !hidden_project_coordinates.is_empty() {
+        if let Some(coord) = repo_project_ref(event) {
+            if hidden_project_coordinates.contains(&coord) {
+                return true;
+            }
+        }
+    }
+    git_event_repo_names(event)
+        .iter()
+        .any(|name| hidden_repo_names.contains(name))
+}
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -1090,6 +1261,167 @@ mod tests {
         assert!(!project_container_hidden_from(&ev, FOREIGN_HEX));
         let tagless = make_project_event(&[&["d", "proj"]]);
         assert!(!project_container_hidden_from(&tagless, FOREIGN_HEX));
+    }
+
+    // ── repo_project_ref / git_event_repo_names / repo_event_hidden_from ──
+
+    #[test]
+    fn repo_project_ref_normalizes_and_validates() {
+        let coord = format!("30621:{FOREIGN_HEX}:my-proj");
+        let ev = make_event_of_kind(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            &[&["d", "repo"], &["project", &coord]],
+        );
+        assert_eq!(repo_project_ref(&ev), Some(coord.clone()));
+
+        // Uppercase hex normalizes to lowercase.
+        let upper = FOREIGN_HEX.to_ascii_uppercase();
+        let mixed = format!("30621:{upper}:my-proj");
+        let ev = make_event_of_kind(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            &[&["d", "repo"], &["project", &mixed]],
+        );
+        assert_eq!(repo_project_ref(&ev), Some(coord));
+
+        // Malformed values fail open to "no project" (legacy stored events
+        // predate gating; go-forward ingest rejects them). 30178 is the
+        // team-catalog kind on this relay, never a project coordinate.
+        for bad in [
+            "30621:short:proj",
+            "9999:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:p",
+            "30178:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:p",
+            "not-a-coordinate",
+            "30621::proj",
+        ] {
+            let ev = make_event_of_kind(
+                KIND_GIT_REPO_ANNOUNCEMENT,
+                &[&["d", "repo"], &["project", bad]],
+            );
+            assert_eq!(repo_project_ref(&ev), None, "value {bad:?} must not parse");
+        }
+
+        // Wrong kind / no tag → None.
+        let no_tag = make_event_of_kind(KIND_GIT_REPO_ANNOUNCEMENT, &[&["d", "repo"]]);
+        assert_eq!(repo_project_ref(&no_tag), None);
+        let coord = format!("30621:{FOREIGN_HEX}:my-proj");
+        let wrong_kind = make_project_event(&[&["d", "x"], &["project", &coord]]);
+        assert_eq!(repo_project_ref(&wrong_kind), None);
+    }
+
+    #[test]
+    fn git_event_repo_names_covers_all_surfaces() {
+        // 30617/30618: own d tag.
+        let ann = make_event_of_kind(KIND_GIT_REPO_ANNOUNCEMENT, &[&["d", "repo-a"]]);
+        assert_eq!(git_event_repo_names(&ann), vec!["repo-a".to_string()]);
+        let state = make_event_of_kind(KIND_GIT_REPO_STATE, &[&["d", "repo-a"]]);
+        assert_eq!(git_event_repo_names(&state), vec!["repo-a".to_string()]);
+
+        // Child kinds: a-tag coordinates, hex case-insensitive.
+        let coord_lower = format!("30617:{FOREIGN_HEX}:repo-b");
+        let coord_upper = format!("30617:{}:repo-c", FOREIGN_HEX.to_ascii_uppercase());
+        let issue = make_event_of_kind(
+            KIND_GIT_ISSUE,
+            &[&["a", &coord_lower], &["a", &coord_upper]],
+        );
+        assert_eq!(
+            git_event_repo_names(&issue),
+            vec!["repo-b".to_string(), "repo-c".to_string()]
+        );
+
+        // Malformed a tags and non-repo coordinates are ignored.
+        let noise = make_event_of_kind(
+            KIND_GIT_PATCH,
+            &[&["a", "30621:aaaa:proj"], &["a", "junk"], &["e", "beef"]],
+        );
+        assert!(git_event_repo_names(&noise).is_empty());
+
+        // Non-git kinds resolve to no repos at all.
+        let note = make_event_of_kind(1, &[&["a", &coord_lower]]);
+        assert!(git_event_repo_names(&note).is_empty());
+    }
+
+    #[test]
+    fn repo_event_hidden_from_gates_by_name_set() {
+        let hidden: std::collections::HashSet<String> =
+            ["secret-repo".to_string()].into_iter().collect();
+        let empty: std::collections::HashSet<String> = Default::default();
+
+        let ann = make_event_of_kind(KIND_GIT_REPO_ANNOUNCEMENT, &[&["d", "secret-repo"]]);
+        // Hidden from a stranger, never from its author, never with an empty set.
+        assert!(repo_event_hidden_from(&ann, FOREIGN_HEX, &hidden, &empty));
+        assert!(!repo_event_hidden_from(
+            &ann,
+            &ann.pubkey.to_hex(),
+            &hidden,
+            &empty
+        ));
+        assert!(!repo_event_hidden_from(&ann, FOREIGN_HEX, &empty, &empty));
+
+        // Child event referencing the hidden repo is hidden; one referencing
+        // another repo is not.
+        let coord = format!("30617:{FOREIGN_HEX}:secret-repo");
+        let issue = make_event_of_kind(KIND_GIT_ISSUE, &[&["a", &coord]]);
+        assert!(repo_event_hidden_from(&issue, FOREIGN_HEX, &hidden, &empty));
+        let other = make_event_of_kind(
+            KIND_GIT_ISSUE,
+            &[&["a", &format!("30617:{FOREIGN_HEX}:open-repo")]],
+        );
+        assert!(!repo_event_hidden_from(
+            &other,
+            FOREIGN_HEX,
+            &hidden,
+            &empty
+        ));
+
+        // Case-variant coordinate cannot dodge the check.
+        let upper = format!("30617:{}:secret-repo", FOREIGN_HEX.to_ascii_uppercase());
+        let dodgy = make_event_of_kind(KIND_GIT_PATCH, &[&["a", &upper]]);
+        assert!(repo_event_hidden_from(&dodgy, FOREIGN_HEX, &hidden, &empty));
+
+        // Non-git kinds are never gated here.
+        let note = make_event_of_kind(1, &[&["d", "secret-repo"], &["a", &coord]]);
+        assert!(!repo_event_hidden_from(&note, FOREIGN_HEX, &hidden, &empty));
+    }
+
+    #[test]
+    fn repo_announcement_hidden_by_its_own_project_tag() {
+        // Defense-in-depth: a 30617 whose projection never landed (failed
+        // side effect) is still hidden through the coordinate on the event.
+        let proj_coord = format!("30621:{FOREIGN_HEX}:secret-proj");
+        let hidden_projects: std::collections::HashSet<String> =
+            [proj_coord.clone()].into_iter().collect();
+        let no_names: std::collections::HashSet<String> = Default::default();
+
+        let ann = make_event_of_kind(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            &[&["d", "unprojected"], &["project", &proj_coord]],
+        );
+        assert!(repo_event_hidden_from(
+            &ann,
+            FOREIGN_HEX,
+            &no_names,
+            &hidden_projects
+        ));
+        // Author still sees it; a repo tagged into some other project does not hide.
+        assert!(!repo_event_hidden_from(
+            &ann,
+            &ann.pubkey.to_hex(),
+            &no_names,
+            &hidden_projects
+        ));
+        let other = make_event_of_kind(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            &[
+                &["d", "open"],
+                &["project", &format!("30621:{FOREIGN_HEX}:open-proj")],
+            ],
+        );
+        assert!(!repo_event_hidden_from(
+            &other,
+            FOREIGN_HEX,
+            &no_names,
+            &hidden_projects
+        ));
     }
 
     #[test]

@@ -625,7 +625,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 32);
+        assert_eq!(migrations.len(), 33);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1061,6 +1061,16 @@ mod tests {
             project_acl.contains("WHERE EXCLUDED.head_created_at >= project_acl.head_created_at")
         );
         assert!(!migrations[0].sql.as_str().contains("project_acl"));
+
+        // Repo → project link projection (NIP-MP access extension phase 2):
+        // additive migration, its own version. The LWW guard column and the
+        // partial index back the hidden-repo read gate, so they are pinned.
+        assert_eq!(migrations[32].version, 33);
+        let repo_project_ref = migrations[32].sql.as_str();
+        assert!(repo_project_ref.contains("ALTER TABLE git_repo_names ADD COLUMN project_ref"));
+        assert!(repo_project_ref.contains("ADD COLUMN head_created_at BIGINT NOT NULL DEFAULT 0"));
+        assert!(repo_project_ref.contains("idx_git_repo_names_project_ref"));
+        assert!(!migrations[0].sql.as_str().contains("git_repo_names"));
     }
 
     #[test]

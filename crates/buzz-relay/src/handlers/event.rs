@@ -195,6 +195,76 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // Private-project repo gate (fan-out): NIP-34 repo-surface events
+    // (announcement/ref-state/patches/PRs/issues/status) are delivered past
+    // the author only to connections admitted by every referenced repo's
+    // gate — repo owner, project owner, or invited member — matching REQ
+    // semantics (`repo_event_hidden_from`). One cached gate lookup per
+    // referenced repo; the common no-gate case falls straight through.
+    // Necessary here because these are global (channel-less) events, so the
+    // channel-membership filtering below never sees them.
+    let matches = if buzz_core::kind::is_git_project_gated_kind(event_kind_u32(&stored_event.event))
+    {
+        let repo_names = buzz_core::kind::git_event_repo_names(&stored_event.event);
+        let mut gates = Vec::new();
+        let mut lookup_failed = false;
+        for name in &repo_names {
+            match state.repo_project_gate_cached(community_id, name).await {
+                Ok(Some(gate)) => gates.push(gate),
+                Ok(None) => {}
+                Err(e) => {
+                    // Fail closed, mirroring the visibility-lookup failure arm.
+                    warn!(repo = %name, "fan-out access filter: repo gate lookup failed: {e}");
+                    lookup_failed = true;
+                }
+            }
+        }
+        // A 30617's own `project` tag is checked directly against the
+        // project ACL as well: if the announcement's side-effect projection
+        // failed, the name-based gate above resolves to nothing, but the
+        // event's intent to sit inside a private project must still gate its
+        // delivery. Announcements are rare, so the uncached lookup is fine.
+        if let Some(coordinate) = buzz_core::kind::repo_project_ref(&stored_event.event) {
+            match state
+                .db
+                .get_project_gate_by_coordinate(community_id, &coordinate)
+                .await
+            {
+                Ok(Some(project)) => {
+                    gates.push(std::sync::Arc::new(buzz_db::git_repo::RepoProjectGate {
+                        repo_owner_hex: stored_event.event.pubkey.to_hex(),
+                        project,
+                    }))
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: project gate lookup failed: {e}");
+                    lookup_failed = true;
+                }
+            }
+        }
+        if lookup_failed {
+            return Vec::new();
+        }
+        if gates.is_empty() {
+            matches
+        } else {
+            let author = stored_event.event.pubkey.to_bytes();
+            matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                        return false;
+                    };
+                    // Authors always receive their own events.
+                    pk == author || gates.iter().all(|gate| gate.admits(&pk))
+                })
+                .collect()
+        }
+    } else {
+        matches
+    };
+
     let Some(channel_id) = stored_event.channel_id else {
         return matches;
     };

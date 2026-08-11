@@ -113,6 +113,31 @@ pub struct EventQuery {
     /// [`Self::shared_gated_reader`]; `event_visible_to_reader` stays as
     /// post-filter defense-in-depth.
     pub project_gated_reader: Option<Vec<u8>>,
+    /// Private-project **repo** visibility pushdown (NIP-MP access extension
+    /// phase 2).
+    ///
+    /// When set and the hidden set is non-empty, `query_events` appends a
+    /// pre-`LIMIT` clause excluding NIP-34 repo-surface events
+    /// ([`buzz_core::kind::GIT_PROJECT_GATED_KINDS`]) that belong to a repo
+    /// the reader may not see: 30617/30618 match by `d_tag` against
+    /// [`crate::git_repo::HiddenRepos::names`] (repo names are
+    /// community-unique), child kinds by `a`-tag coordinate against
+    /// [`crate::git_repo::HiddenRepos::coordinates`]. The reader's own events
+    /// are always visible. Callers skip setting this when the reader's hidden
+    /// set is empty — the common case stays zero-cost. The per-event
+    /// `repo_event_hidden_from` re-check stays as post-filter
+    /// defense-in-depth (it also normalizes case-variant coordinates the
+    /// exact SQL probe would miss).
+    pub git_gated_reader: Option<GitGatedReader>,
+}
+
+/// Reader identity + hidden-repo set for [`EventQuery::git_gated_reader`].
+#[derive(Debug, Clone)]
+pub struct GitGatedReader {
+    /// The authenticated reader's 32-byte pubkey.
+    pub reader: Vec<u8>,
+    /// The repos hidden from this reader (see [`crate::git_repo::HiddenRepos`]).
+    pub hidden: crate::git_repo::HiddenRepos,
 }
 
 impl EventQuery {
@@ -144,6 +169,7 @@ impl EventQuery {
             max_limit: None,
             shared_gated_reader: None,
             project_gated_reader: None,
+            git_gated_reader: None,
         }
     }
 }
@@ -591,6 +617,76 @@ pub(crate) async fn query_events_on(
         qb.push(format!(" OR {col_prefix}tags @> "));
         qb.push_bind(reader_p_containment);
         qb.push(")");
+    }
+
+    // Private-project repo visibility pushdown: exclude NIP-34 repo-surface
+    // events belonging to repos hidden from the reader.  30617/30618 are
+    // matched by repo name (their `d_tag`; community-unique, and 30618 is
+    // relay-signed so its pubkey never identifies the owner), child kinds by
+    // `a`-tag coordinate containment probed per hidden repo (served by
+    // idx_events_tags_gin).  The leading kind guard short-circuits every
+    // non-git row.  Applied BEFORE ORDER/LIMIT for the same starvation
+    // reason as the clauses above.
+    if let Some(ref git_gate) = q.git_gated_reader {
+        if !git_gate.hidden.is_empty() {
+            let hidden_names: Vec<String> = git_gate.hidden.names.iter().cloned().collect();
+            qb.push(format!(" AND ({col_prefix}kind NOT IN ("));
+            let mut sep = qb.separated(", ");
+            for kind in buzz_core::kind::GIT_PROJECT_GATED_KINDS {
+                sep.push_bind(*kind as i32);
+            }
+            qb.push(format!(") OR {col_prefix}pubkey = "));
+            qb.push_bind(git_gate.reader.clone());
+            // Announcement + ref-state: hidden when the d_tag names a hidden repo.
+            qb.push(format!(" OR (({col_prefix}kind NOT IN ("));
+            qb.push_bind(buzz_core::kind::KIND_GIT_REPO_ANNOUNCEMENT as i32);
+            qb.push(", ");
+            qb.push_bind(buzz_core::kind::KIND_GIT_REPO_STATE as i32);
+            qb.push(format!(
+                ") OR {col_prefix}d_tag IS NULL OR NOT ({col_prefix}d_tag = ANY("
+            ));
+            qb.push_bind(hidden_names);
+            qb.push(")))");
+            // Child kinds: hidden when any `a` tag carries a hidden coordinate.
+            qb.push(format!(" AND ({col_prefix}kind IN ("));
+            qb.push_bind(buzz_core::kind::KIND_GIT_REPO_ANNOUNCEMENT as i32);
+            qb.push(", ");
+            qb.push_bind(buzz_core::kind::KIND_GIT_REPO_STATE as i32);
+            qb.push(") OR NOT (");
+            let mut first = true;
+            for coordinate in &git_gate.hidden.coordinates {
+                if !first {
+                    qb.push(" OR ");
+                }
+                first = false;
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(serde_json::json!([["a", coordinate]]));
+            }
+            if first {
+                qb.push("FALSE");
+            }
+            qb.push("))");
+            // Announcement's own `project` tag: hidden when it names a
+            // private project that does not admit the reader — covers a
+            // 30617 whose side-effect projection never landed (its name is
+            // then absent from the hidden-names set above).
+            qb.push(format!(" AND ({col_prefix}kind <> "));
+            qb.push_bind(buzz_core::kind::KIND_GIT_REPO_ANNOUNCEMENT as i32);
+            qb.push(" OR NOT (");
+            let mut first = true;
+            for coordinate in &git_gate.hidden.project_coordinates {
+                if !first {
+                    qb.push(" OR ");
+                }
+                first = false;
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(serde_json::json!([["project", coordinate]]));
+            }
+            if first {
+                qb.push("FALSE");
+            }
+            qb.push("))))");
+        }
     }
 
     // Composite ordering for deterministic pagination across ALL callers of

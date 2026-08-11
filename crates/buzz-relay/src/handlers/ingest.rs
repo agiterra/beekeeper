@@ -1744,6 +1744,42 @@ pub(crate) fn validate_project_ref_tag(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate the optional `["project", "<coordinate>"]` back-reference on a
+/// repo announcement (kind:30617), returning the **normalized** coordinate
+/// (`30621:<lowercase-hex>:<dtag>`) when present.
+///
+/// Stricter than [`validate_project_ref_tag`] in shape (exact two-element
+/// arity, singleton) because this tag carries access-control weight — it is
+/// what places the repo behind a private project's ACL (NIP-MP access
+/// extension phase 2), so a malformed value is rejected rather than ignored:
+/// an ignored tag would silently publish a repo its author believes is
+/// private. Like the channel variant, this checks shape only; whether the
+/// author may join a *private* project is the caller's DB check.
+fn validate_repo_announcement_project_tag(event: &Event) -> Result<Option<String>, String> {
+    let mut found: Option<String> = None;
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) != Some("project") {
+            continue;
+        }
+        if found.is_some() {
+            return Err("repo announcement must carry at most one project tag".to_string());
+        }
+        if parts.len() != 2 {
+            return Err(format!(
+                "project tag must be [\"project\", \"<coordinate>\"] ({} elements)",
+                parts.len()
+            ));
+        }
+        let value = parts[1].as_str();
+        let normalized = buzz_core::kind::normalize_project_coordinate(value).ok_or_else(|| {
+            format!("project tag must be `{KIND_PROJECT}:pubkey:slug` (got {value:?})")
+        })?;
+        found = Some(normalized);
+    }
+    Ok(found)
+}
+
 /// Validate that `content` is a syntactically plausible NIP-44 v2 ciphertext.
 ///
 /// Checks:
@@ -2728,6 +2764,73 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_PROJECT {
         validate_project_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
+        // NIP-MP access extension phase 2: the `project` back-reference is
+        // what hides a repo's events behind a private project, so its shape
+        // is validated fail-closed (a malformed coordinate is rejected, not
+        // silently ignored — silently ignoring would publish a repo its
+        // author believes is private).
+        let project_ref = validate_repo_announcement_project_tag(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        // Linking a repo into a *private* project additionally requires the
+        // author to be admitted to it (owner or invited member): the link
+        // both grants the repo that project's ACL and surfaces the repo in
+        // the project's Code view, neither of which an outsider may do.
+        // Public/unknown projects stay soft references (never verified to
+        // exist), matching the channel `project` tag semantics.
+        if let Some(ref coord) = project_ref {
+            let author_bytes = event.pubkey.to_bytes();
+            let allowed = state
+                .db
+                .can_access_project_contents(tenant.community(), coord, &author_bytes)
+                .await
+                .map_err(|e| {
+                    IngestError::Internal(format!("error: project gate lookup failed: {e}"))
+                })?;
+            if !allowed {
+                return Err(IngestError::Rejected(
+                    "restricted: project is private".into(),
+                ));
+            }
+        }
+    }
+
+    // NIP-MP access extension phase 2, write gate: ref state (30618) and the
+    // NIP-34 child kinds (patches/PRs/issues/status) targeting a repo inside
+    // a private project may only be written by identities the repo gate
+    // admits — the repo owner, the project owner, or an invited member. The
+    // relay's own key is exempt: relay-signed 30618 emissions must succeed
+    // for private repos. Repo-name resolution is tolerant of coordinate case
+    // so a case-variant `a` tag cannot dodge the gate. (30617 itself is the
+    // owner's own announcement, gated above via its project tag instead.)
+    if buzz_core::kind::is_git_project_gated_kind(kind_u32)
+        && kind_u32 != KIND_GIT_REPO_ANNOUNCEMENT
+        && event.pubkey != state.relay_keypair.public_key()
+    {
+        let author_bytes = event.pubkey.to_bytes();
+        for repo_name in buzz_core::kind::git_event_repo_names(&event) {
+            match state
+                .repo_project_gate_cached(tenant.community(), &repo_name)
+                .await
+            {
+                Ok(None) => {}
+                Ok(Some(gate)) => {
+                    if !gate.admits(&author_bytes) {
+                        return Err(IngestError::Rejected(
+                            "restricted: repository belongs to a private project".into(),
+                        ));
+                    }
+                }
+                // Fail closed: an unknown gate must not admit a write.
+                Err(e) => {
+                    return Err(IngestError::Internal(format!(
+                        "error: repo gate lookup failed: {e}"
+                    )));
+                }
+            }
+        }
     }
 
     // Track pre-created channel UUID for compensation on insert failure.
@@ -4873,6 +4976,72 @@ mod tests {
     fn team_catalog_is_global_only() {
         assert!(is_global_only_kind(KIND_TEAM_CATALOG));
         assert!(!requires_h_channel_scope(KIND_TEAM_CATALOG));
+    }
+
+    // ─── repo announcement (kind:30617) project-tag tests (NIP-MP phase 2) ───
+
+    #[test]
+    fn repo_project_tag_absent_is_ok() {
+        let ev = make_event_with_tags(KIND_GIT_REPO_ANNOUNCEMENT, "", &[&["d", "repo"]]);
+        assert_eq!(validate_repo_announcement_project_tag(&ev).unwrap(), None);
+    }
+
+    #[test]
+    fn repo_project_tag_valid_is_normalized() {
+        let coord = format!("30621:{OWNER_A}:platform");
+        let upper = format!("30621:{}:platform", OWNER_A.to_ascii_uppercase());
+        for (value, expect) in [(coord.clone(), coord.clone()), (upper, coord)] {
+            let ev = make_event_with_tags(
+                KIND_GIT_REPO_ANNOUNCEMENT,
+                "",
+                &[&["d", "repo"], &["project", &value]],
+            );
+            assert_eq!(
+                validate_repo_announcement_project_tag(&ev).unwrap(),
+                Some(expect.clone()),
+                "value {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repo_project_tag_rejects_malformed_coordinate() {
+        for bad in [
+            "junk",
+            "30621:short:x",
+            "30622:aaaa:x",
+            "",
+            // 30178 is the team-catalog kind on this relay, not a project.
+            "30178:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:x",
+        ] {
+            let ev = make_event_with_tags(
+                KIND_GIT_REPO_ANNOUNCEMENT,
+                "",
+                &[&["d", "repo"], &["project", bad]],
+            );
+            let err = validate_repo_announcement_project_tag(&ev).unwrap_err();
+            assert!(err.contains("project tag"), "value {bad:?} got: {err}");
+        }
+    }
+
+    #[test]
+    fn repo_project_tag_rejects_duplicates_and_bad_arity() {
+        let coord = format!("30621:{OWNER_A}:platform");
+        let dup = make_event_with_tags(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            "",
+            &[&["d", "repo"], &["project", &coord], &["project", &coord]],
+        );
+        let err = validate_repo_announcement_project_tag(&dup).unwrap_err();
+        assert!(err.contains("at most one"), "got: {err}");
+
+        let arity = make_event_with_tags(
+            KIND_GIT_REPO_ANNOUNCEMENT,
+            "",
+            &[&["d", "repo"], &["project", &coord, "extra"]],
+        );
+        let err = validate_repo_announcement_project_tag(&arity).unwrap_err();
+        assert!(err.contains("elements"), "got: {err}");
     }
 
     // ─── project (NIP-MP kind:30621) envelope tests ──────────────────────────

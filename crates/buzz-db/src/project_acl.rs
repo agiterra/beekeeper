@@ -171,6 +171,76 @@ pub async fn get_channel_project_gate(
     Ok(row.map(|(owner, members)| ProjectGate { owner, members }))
 }
 
+/// Resolve the gate of the **private** project at `coordinate`, or `None`
+/// when the coordinate is unknown or the project is public ("no gate").
+///
+/// Used by live fan-out for a 30617 announcement's own `project` tag —
+/// the defense-in-depth path that still gates an announcement whose
+/// `git_repo_names` projection never landed.
+pub async fn get_project_gate_by_coordinate(
+    pool: &PgPool,
+    community: CommunityId,
+    coordinate: &str,
+) -> Result<Option<ProjectGate>> {
+    let row: Option<(Vec<u8>, Vec<Vec<u8>>)> = sqlx::query_as(
+        r#"
+        SELECT pa.owner,
+               COALESCE(
+                   array_agg(pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
+                   '{}'
+               ) AS members
+        FROM project_acl pa
+        LEFT JOIN project_acl_members pam
+          ON pam.community_id = pa.community_id
+         AND pam.owner = pa.owner
+         AND pam.dtag = pa.dtag
+        WHERE pa.community_id = $1 AND pa.coordinate = $2 AND pa.visibility = 'private'
+        GROUP BY pa.owner
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(coordinate)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(owner, members)| ProjectGate { owner, members }))
+}
+
+/// Returns `true` if `pubkey` is positively admitted to the **private**
+/// project at `coordinate` — its owner or an invited member.
+///
+/// Unlike [`can_access_project_contents`] this is a positive membership
+/// grant, not a gate: an unknown or public project returns `false` (there is
+/// no private membership to grant). Used by the git smart-HTTP read gate to
+/// let project members clone a private project's repos without bound-channel
+/// membership.
+pub async fn is_private_project_member(
+    pool: &PgPool,
+    community: CommunityId,
+    coordinate: &str,
+    pubkey: &[u8],
+) -> Result<bool> {
+    let row: Option<(bool,)> = sqlx::query_as(
+        r#"
+        SELECT (pa.owner = $3
+                OR EXISTS (
+                    SELECT 1 FROM project_acl_members pam
+                    WHERE pam.community_id = pa.community_id
+                      AND pam.owner = pa.owner
+                      AND pam.dtag = pa.dtag
+                      AND pam.pubkey = $3
+                ))
+        FROM project_acl pa
+        WHERE pa.community_id = $1 AND pa.coordinate = $2 AND pa.visibility = 'private'
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(coordinate)
+    .bind(pubkey)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(ok,)| ok).unwrap_or(false))
+}
+
 /// Returns `true` if `pubkey` may read contents of the project at
 /// `coordinate`: the project is unknown/public, or the reader is its owner or
 /// an invited member. Fail direction on an absent row is open — an

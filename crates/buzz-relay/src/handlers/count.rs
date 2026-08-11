@@ -101,6 +101,29 @@ pub async fn handle_count(
         accessible_channels.retain(|channel_id| allowed.contains(channel_id));
     }
 
+    // NIP-MP access extension phase 2: resolve the reader's hidden-repo set
+    // once per COUNT (10s cache) when any filter could match a git-gated
+    // kind; empty disables all git gating below. Fails closed like the
+    // accessible-channels error path.
+    let hidden_repos = if filters
+        .iter()
+        .any(super::req::filter_can_match_git_gated_kinds)
+    {
+        match state
+            .hidden_repos_cached(conn.tenant.community(), &pubkey_bytes)
+            .await
+        {
+            Ok(hidden) => hidden,
+            Err(e) => {
+                warn!(sub_id = %sub_id, "hidden-repo set lookup failed: {e}");
+                conn.send(RelayMessage::closed(&sub_id, "error: database error"));
+                return;
+            }
+        }
+    } else {
+        std::sync::Arc::new(buzz_db::git_repo::HiddenRepos::default())
+    };
+
     // For each filter, count matching events with channel access enforcement.
     let mut total: u64 = 0;
     for (filter, requested_channels) in filters.iter().zip(requested_channel_sets) {
@@ -126,6 +149,12 @@ pub async fn handle_count(
         // readers who are neither the author nor invited, so the fast path
         // is bypassed and the fallback applies event_visible_to_reader.
         let needs_project_gate_filtering = super::req::filter_can_match_project_kind(filter);
+        // Private-project repo events (NIP-MP phase 2): the fast path has no
+        // per-event repo-gate check, so it would count a private project's
+        // repo activity for outsiders. Only relevant when this reader
+        // actually has hidden repos.
+        let needs_git_gate_filtering =
+            !hidden_repos.is_empty() && super::req::filter_can_match_git_gated_kinds(filter);
 
         if let Some(requested_channels) = requested_channels {
             for &ch_id in &requested_channels {
@@ -193,6 +222,12 @@ pub async fn handle_count(
             if needs_project_gate_filtering {
                 query.project_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_git_gate_filtering {
+                query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    hidden: (*hidden_repos).clone(),
+                });
+            }
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
                     && authors
@@ -204,6 +239,7 @@ pub async fn handle_count(
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
+                && !needs_git_gate_filtering
             {
                 match state.db.count_events_routed("count_req", &query).await {
                     Ok(n) => total += n as u64,
@@ -235,7 +271,7 @@ pub async fn handle_count(
                             {
                                 continue;
                             }
-                            if !event_visible_to_reader(&se.event, &pubkey_bytes) {
+                            if !event_visible_to_reader(&se.event, &pubkey_bytes, &hidden_repos) {
                                 continue;
                             }
                             total += 1;
@@ -269,6 +305,12 @@ pub async fn handle_count(
             if needs_project_gate_filtering {
                 query.project_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_git_gate_filtering {
+                query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    hidden: (*hidden_repos).clone(),
+                });
+            }
 
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
@@ -281,6 +323,7 @@ pub async fn handle_count(
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
+                && !needs_git_gate_filtering
             {
                 query.limit = None; // COUNT doesn't need a row limit
                 match state.db.count_events_routed("count_req", &query).await {
@@ -312,7 +355,7 @@ pub async fn handle_count(
                             {
                                 continue;
                             }
-                            if !event_visible_to_reader(&se.event, &pubkey_bytes) {
+                            if !event_visible_to_reader(&se.event, &pubkey_bytes, &hidden_repos) {
                                 continue;
                             }
                             total += 1;

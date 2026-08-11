@@ -4813,6 +4813,83 @@ impl Db {
         git_repo::release_repo_name(&self.pool, community, repo_id, owner_pubkey).await
     }
 
+    /// Project the repo → project link of a 30617 head into `git_repo_names`
+    /// (LWW-guarded; `None` clears the link). Returns whether the link value
+    /// changed.
+    pub async fn set_repo_project_ref(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+        owner_pubkey: &str,
+        project_ref: Option<&str>,
+        head_created_at: i64,
+    ) -> Result<bool> {
+        git_repo::set_repo_project_ref(
+            &self.pool,
+            community,
+            repo_id,
+            owner_pubkey,
+            project_ref,
+            head_created_at,
+        )
+        .await
+    }
+
+    /// Clear a repo's project link after a NIP-09 deletion of its 30617
+    /// coordinate (same `created_at` scoping). Returns whether it applied.
+    pub async fn clear_repo_project_ref(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+        owner_pubkey: &str,
+        deleted_at: i64,
+    ) -> Result<bool> {
+        git_repo::clear_repo_project_ref(&self.pool, community, repo_id, owner_pubkey, deleted_at)
+            .await
+    }
+
+    /// The repos hidden from `reader`: linked to a private project the reader
+    /// is not admitted to. See [`git_repo::HiddenRepos`].
+    pub async fn hidden_repos_for_reader(
+        &self,
+        community: CommunityId,
+        reader: &[u8],
+    ) -> Result<git_repo::HiddenRepos> {
+        git_repo::hidden_repos_for_reader(&self.pool, community, reader).await
+    }
+
+    /// Resolve the private-project gate of the repo named `repo_id`, or
+    /// `None` when the repo has no gate. See [`git_repo::get_repo_project_gate`].
+    pub async fn get_repo_project_gate(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+    ) -> Result<Option<git_repo::RepoProjectGate>> {
+        git_repo::get_repo_project_gate(&self.pool, community, repo_id).await
+    }
+
+    /// Resolve the gate of the **private** project at `coordinate`, or
+    /// `None` for public/unknown. See [`project_acl::get_project_gate_by_coordinate`].
+    pub async fn get_project_gate_by_coordinate(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_project_gate_by_coordinate(&self.pool, community, coordinate).await
+    }
+
+    /// Returns `true` if `pubkey` is the owner or an invited member of the
+    /// **private** project at `coordinate` (positive grant; public/unknown
+    /// projects return `false`). See [`project_acl::is_private_project_member`].
+    pub async fn is_private_project_member(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::is_private_project_member(&self.pool, community, coordinate, pubkey).await
+    }
+
     /// Returns `true` if `pubkey` (64-char hex) is archived in `community_id`.
     #[datastore_span(name = "is_archived", system = "postgresql")]
     pub async fn is_archived(&self, community_id: CommunityId, pubkey: &str) -> Result<bool> {

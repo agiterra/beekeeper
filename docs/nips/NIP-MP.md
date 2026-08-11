@@ -119,9 +119,21 @@ The owner is an implicit member and never appears in `p` tags. `buzz-visibility`
 Two deliberate asymmetries with the rest of this NIP:
 
 - **Unknown values are rejected at ingest** (`access-value`), unlike `buzz-visibility`'s fall-back-to-default rule. A display-hint typo is harmless; an access typo that silently fell open to public would be a privacy leak.
-- **Member repositories are not read-gated by the project.** Consistent with [Authority](#authority), a project grants and removes nothing on its members: repository events and git transport keep their own access rules. Clients MUST NOT present a private project as hiding its repositories.
+- **A project's member list never gates repositories.** Consistent with [Authority](#authority), forward-referencing another owner's repository via an `a` tag grants and removes nothing on it. Repository gating exists (below), but it is opted into exclusively by the **repository owner's own** `project` back-reference on their `kind:30617`.
 
 Because only the owner can replace the event, invitations are owner-curated republishes. A relay hint in element 3 of a `p` tag is permitted and ignored, mirroring member `a` tags. Vanilla relays that do not implement this extension deliver private containers like any addressable event — writers targeting such relays must not rely on `buzz-access`.
+
+#### Repository access (phase 2)
+
+A repository joins a project by carrying `["project", "30621:<owner>:<project-d>"]` on its own `kind:30617` announcement — the repo owner's assertion, so gating on it never lets a stranger's project hide someone else's repository. When that coordinate resolves to a **private** project, the Buzz relay:
+
+- **Hides the repository's event surface** from readers outside the project: the `kind:30617` announcement, the relay-signed `kind:30618` ref state, and every NIP-34 child event that `a`-tags the repository (`1617` patches, `1618`/`1619` PRs, `1621` issues, `1630`–`1633` status), across the same read surfaces as the container gate. An event's own author always sees it; the repository owner is always admitted.
+- **Gates writes**: `kind:30618` and the child kinds targeting the repository are rejected (`restricted:`) unless the author is the repository owner, the project owner, or an invited member. The relay's own key is exempt so relay-signed ref state can be emitted.
+- **Extends git smart-HTTP reads**: the project's owner and invited members may `clone`/`fetch` the repository even without membership in its `buzz-channel`-bound channel — a purely additive grant. Explicit channel members keep read access (phase-1 consent rule; they can operate on the code but do not see the project's event surface unless invited), and push authorization is unchanged (bound-channel roles + `buzz-protect` rules).
+
+The `project` tag on `kind:30617` is validated at ingest, fail-closed like `access-value`: singleton, exactly two elements, and a well-formed coordinate (`repo-project-ref`) — a malformed value is rejected rather than silently ignored, because silently ignoring would publish a repository its author believes is private. Linking a repository **into a private project** additionally requires the announcement author to be admitted to that project (`repo-project-membership`); public or unresolvable coordinates stay soft references, matching channel `project_ref` semantics.
+
+An unresolvable link fails open: a `project` coordinate naming a deleted or unknown project gates nothing, and a NIP-09 deletion of either the project head or the repository announcement reverts the repository's events to their own access rules — mirroring the container semantics above.
 
 ### Member coordinates
 
@@ -211,7 +223,7 @@ The Buzz validator enforces all thirteen rules. The shared fixtures in [`NIP-MP.
 
 **Duplicates are rejected, never normalized.** A relay cannot dedupe tags inside a signed event: rewriting the tag array changes the event id and invalidates the signature. The choices are reject, or accept and require every present and future consumer to apply a first-wins interpretation rule. Rejecting keeps every stored head canonical and spares all consumers a defensive parse.
 
-**No membership authorization.** The relay MUST NOT check whether the signer owns, maintains, or has any relationship to a member repository. Referencing another owner's repository is legal and is the point of the kind. Because membership grants nothing ([Authority](#authority)), there is nothing to authorize.
+**No membership authorization.** The relay MUST NOT check whether the signer owns, maintains, or has any relationship to a member repository. Referencing another owner's repository is legal and is the point of the kind. Because membership grants nothing ([Authority](#authority)), there is nothing to authorize. (The inverse direction is different: a repository's own `kind:30617` back-reference **into a private project** is authorized at 30617 ingest — `repo-project-ref` / `repo-project-membership`, [Repository access](#repository-access-phase-2) — because that link places the repository behind the project's ACL.)
 
 **Routing.** `kind:30621` is global-only, like every other NIP-34 kind in Buzz: it is addressed by `(pubkey, kind, d)` and is never channel-scoped. A stray `h` tag MUST NOT scope it to a channel — the `buzz-channel` tag is a metadata reference, not a routing directive.
 

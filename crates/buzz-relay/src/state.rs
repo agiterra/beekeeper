@@ -701,6 +701,23 @@ pub struct AppState {
     #[allow(clippy::type_complexity)]
     pub project_gate_cache:
         Arc<moka::sync::Cache<(CommunityId, Uuid), Option<Arc<buzz_db::project_acl::ProjectGate>>>>,
+    /// Per-reader hidden-repo set (NIP-MP access extension phase 2):
+    /// (community_id, reader pubkey) → the repos linked to a private project
+    /// the reader is not admitted to. Empty for almost every reader — read
+    /// paths skip all git gating when it is. Short TTL (10s); flushed with
+    /// the accessible-channels cache on every 30621 ACL or 30617 link change.
+    #[allow(clippy::type_complexity)]
+    pub hidden_repos_cache:
+        Arc<moka::sync::Cache<(CommunityId, Vec<u8>), Arc<buzz_db::git_repo::HiddenRepos>>>,
+    /// Per-repo private-project gate: (community_id, repo name) maps to the
+    /// admitted set (repo owner, project owner, invited members) when the
+    /// repo's `project_ref` resolves to a private project, else `None`
+    /// ("no gate"). Lets live fan-out and the ingest write gate filter in
+    /// memory. Same TTL/flush discipline as [`Self::project_gate_cache`].
+    #[allow(clippy::type_complexity)]
+    pub repo_gate_cache: Arc<
+        moka::sync::Cache<(CommunityId, String), Option<Arc<buzz_db::git_repo::RepoProjectGate>>>,
+    >,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
     pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
@@ -917,6 +934,20 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            hidden_repos_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
+            repo_gate_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             audit_tx: audit_enabled.then_some(audit_tx),
             media_storage: Arc::new(media_storage),
             storage_sweep: Arc::new(tokio::sync::Mutex::new(
@@ -1025,6 +1056,54 @@ impl AppState {
         Ok(gate)
     }
 
+    /// Resolve the reader's hidden-repo set with a 10-second cache.
+    ///
+    /// Empty means "no repo is hidden from this reader" — the overwhelmingly
+    /// common case, letting read paths skip git gating entirely. Flushed with
+    /// the accessible-channels cache on every 30621 ACL or 30617 project-link
+    /// change; the stale direction after a membership grant is
+    /// over-restrictive (≤10s), never a leak.
+    pub async fn hidden_repos_cached(
+        &self,
+        community_id: CommunityId,
+        reader: &[u8],
+    ) -> Result<Arc<buzz_db::git_repo::HiddenRepos>, buzz_db::DbError> {
+        let key = (community_id, reader.to_vec());
+        if let Some(cached) = self.hidden_repos_cache.get(&key) {
+            return Ok(cached);
+        }
+        let hidden = Arc::new(
+            self.db
+                .hidden_repos_for_reader(community_id, reader)
+                .await?,
+        );
+        self.hidden_repos_cache.insert(key, hidden.clone());
+        Ok(hidden)
+    }
+
+    /// Resolve a repo's private-project gate with a 10-second cache.
+    ///
+    /// `None` means "no gate" (unknown repo, no project link, or the project
+    /// is public/unknown). Same flush discipline as
+    /// [`Self::channel_project_gate_cached`].
+    pub async fn repo_project_gate_cached(
+        &self,
+        community_id: CommunityId,
+        repo_name: &str,
+    ) -> Result<Option<Arc<buzz_db::git_repo::RepoProjectGate>>, buzz_db::DbError> {
+        let key = (community_id, repo_name.to_owned());
+        if let Some(cached) = self.repo_gate_cache.get(&key) {
+            return Ok(cached);
+        }
+        let gate = self
+            .db
+            .get_repo_project_gate(community_id, repo_name)
+            .await?
+            .map(Arc::new);
+        self.repo_gate_cache.insert(key, gate.clone());
+        Ok(gate)
+    }
+
     /// Invalidate caches after a membership change (add/remove member).
     ///
     /// Drops the local moka entries AND fire-and-forget publishes the same drop
@@ -1088,6 +1167,34 @@ impl AppState {
                 "community-scoped project-gate invalidation unavailable; falling back to full invalidation"
             );
             self.project_gate_cache.invalidate_all();
+        }
+        self.invalidate_repo_gates_local(community_id);
+    }
+
+    /// Local-only drop of the repo-gating caches (hidden-repo sets + per-repo
+    /// gates). Rides every invalidation that flushes the project gates —
+    /// 30621 ACL changes and 30617 project-link changes both funnel through
+    /// [`Self::invalidate_all_accessible_channels`].
+    pub(crate) fn invalidate_repo_gates_local(&self, community_id: CommunityId) {
+        if let Err(error) = self
+            .hidden_repos_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped hidden-repo invalidation unavailable; falling back to full invalidation"
+            );
+            self.hidden_repos_cache.invalidate_all();
+        }
+        if let Err(error) = self
+            .repo_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped repo-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.repo_gate_cache.invalidate_all();
         }
     }
 
@@ -1163,6 +1270,7 @@ impl AppState {
             );
             self.project_gate_cache.invalidate_all();
         }
+        self.invalidate_repo_gates_local(community_id);
     }
 
     /// Fire-and-forget publish of a cache-key drop to all other pods. Failures

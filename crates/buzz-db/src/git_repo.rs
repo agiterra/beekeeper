@@ -155,6 +155,241 @@ pub async fn count_repos_for_owner(
     row.try_get("n").map_err(crate::error::DbError::from)
 }
 
+/// Project the repo → project link of a freshly-ingested 30617 head
+/// (NIP-MP Buzz access extension, phase 2).
+///
+/// `project_ref` is the head's normalized `["project", …]` coordinate
+/// (`30621:<owner-hex>:<dtag>`), or `None` when the head carries no valid
+/// project tag — clearing any previous link. Republish-latest: guarded by
+/// `head_created_at` like [`crate::project_acl::upsert_project_acl`], so a
+/// replayed stale head can never overwrite a newer link. Returns whether the
+/// link **value changed** (callers use this to skip community-wide cache
+/// flushes on plain re-announces).
+pub async fn set_repo_project_ref(
+    pool: &PgPool,
+    community: CommunityId,
+    repo_id: &str,
+    owner_pubkey: &str,
+    project_ref: Option<&str>,
+    head_created_at: i64,
+) -> Result<bool> {
+    // The FROM self-join snapshots the pre-update value so RETURNING can
+    // report whether the link actually changed (RETURNING alone sees only
+    // the new row).
+    let row: Option<(bool,)> = sqlx::query_as(
+        r#"
+        UPDATE git_repo_names g
+           SET project_ref = $4, head_created_at = $5
+          FROM (
+                SELECT community_id, repo_id, owner_pubkey, project_ref AS old_ref
+                  FROM git_repo_names
+                 WHERE community_id = $1 AND repo_id = $2 AND owner_pubkey = $3
+                   FOR UPDATE
+               ) o
+         WHERE g.community_id = o.community_id
+           AND g.repo_id = o.repo_id
+           AND g.owner_pubkey = o.owner_pubkey
+           AND g.head_created_at <= $5
+        RETURNING (o.old_ref IS DISTINCT FROM $4) AS changed
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(repo_id)
+    .bind(owner_pubkey)
+    .bind(project_ref)
+    .bind(head_created_at)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(changed,)| changed).unwrap_or(false))
+}
+
+/// Clear the repo → project link after a NIP-09 deletion of the 30617
+/// coordinate: with the announcement gone, the repo's child events revert to
+/// their own access rules (public), mirroring project-deletion semantics.
+///
+/// Scoped to heads at or before the deletion's `created_at` so a stale
+/// tombstone cannot clear the link of a newer replacement head. Returns
+/// whether a link was cleared.
+pub async fn clear_repo_project_ref(
+    pool: &PgPool,
+    community: CommunityId,
+    repo_id: &str,
+    owner_pubkey: &str,
+    deleted_at: i64,
+) -> Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE git_repo_names \
+         SET project_ref = NULL, head_created_at = $4 \
+         WHERE community_id = $1 AND repo_id = $2 AND owner_pubkey = $3 \
+           AND project_ref IS NOT NULL AND head_created_at <= $4",
+    )
+    .bind(community.as_uuid())
+    .bind(repo_id)
+    .bind(owner_pubkey)
+    .bind(deleted_at)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(updated > 0)
+}
+
+/// The repos `reader` may NOT see: every repo whose `project_ref` resolves to
+/// a private project ([`crate::project_acl`]) where the reader is neither the
+/// project owner, an invited member, nor the repo owner.
+///
+/// [`HiddenRepos::coordinates`] carries `30617:<owner-hex>:<repo-id>` strings
+/// (the exact `a`-tag value NIP-34 child events use) and
+/// [`HiddenRepos::names`] the bare repo ids (the `d` tag of 30617/30618 —
+/// repo names are community-unique, so a name identifies one repo). The read
+/// path pushes both into SQL ([`crate::event::EventQuery::git_gated`]) and
+/// re-checks per event; empty means "nothing hidden", the common case.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HiddenRepos {
+    /// `30617:<owner-hex>:<repo-id>` coordinates, matched against child-event `a` tags.
+    pub coordinates: Vec<String>,
+    /// Bare repo ids, matched against 30617/30618 `d` tags.
+    pub names: std::collections::HashSet<String>,
+    /// `30621:<owner-hex>:<dtag>` coordinates of every private project that
+    /// does not admit the reader. Matched against a 30617's **own**
+    /// `project` tag as defense-in-depth: an announcement whose side-effect
+    /// projection failed (name collision, object-store outage) has no
+    /// `git_repo_names` link, but its intent to sit inside a private project
+    /// is on the event itself and must still hide it.
+    pub project_coordinates: std::collections::HashSet<String>,
+}
+
+impl HiddenRepos {
+    /// `true` when nothing is hidden from this reader — gating can be skipped.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.coordinates.is_empty() && self.names.is_empty() && self.project_coordinates.is_empty()
+    }
+}
+
+/// Compute [`HiddenRepos`] for `reader` in `community`. See the struct docs.
+pub async fn hidden_repos_for_reader(
+    pool: &PgPool,
+    community: CommunityId,
+    reader: &[u8],
+) -> Result<HiddenRepos> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT grn.owner_pubkey, grn.repo_id
+        FROM git_repo_names grn
+        JOIN project_acl pa
+          ON pa.community_id = grn.community_id
+         AND pa.coordinate = grn.project_ref
+         AND pa.visibility = 'private'
+        WHERE grn.community_id = $1
+          AND grn.owner_pubkey <> encode($2, 'hex')
+          AND pa.owner <> $2
+          AND NOT EXISTS (
+              SELECT 1 FROM project_acl_members pam
+              WHERE pam.community_id = pa.community_id
+                AND pam.owner = pa.owner
+                AND pam.dtag = pa.dtag
+                AND pam.pubkey = $2
+          )
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(reader)
+    .fetch_all(pool)
+    .await?;
+    let mut hidden = HiddenRepos::default();
+    for (owner_hex, repo_id) in rows {
+        hidden
+            .coordinates
+            .push(format!("30617:{owner_hex}:{repo_id}"));
+        hidden.names.insert(repo_id);
+    }
+    let project_rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT pa.coordinate
+        FROM project_acl pa
+        WHERE pa.community_id = $1
+          AND pa.visibility = 'private'
+          AND pa.owner <> $2
+          AND NOT EXISTS (
+              SELECT 1 FROM project_acl_members pam
+              WHERE pam.community_id = pa.community_id
+                AND pam.owner = pa.owner
+                AND pam.dtag = pa.dtag
+                AND pam.pubkey = $2
+          )
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(reader)
+    .fetch_all(pool)
+    .await?;
+    hidden.project_coordinates = project_rows.into_iter().map(|(c,)| c).collect();
+    Ok(hidden)
+}
+
+/// The resolved private-project gate of one repo: the repo owner plus the
+/// project's owner and invited members. Mirrors
+/// [`crate::project_acl::ProjectGate`] for channels; used by live fan-out and
+/// the ingest write gate so both filter in memory off one cached row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoProjectGate {
+    /// The repo announcement author (hex, as stored in `git_repo_names`).
+    pub repo_owner_hex: String,
+    /// The private project's gate (owner + invited members).
+    pub project: crate::project_acl::ProjectGate,
+}
+
+impl RepoProjectGate {
+    /// Returns `true` if `pubkey` may see/write this repo's events: the repo
+    /// owner, the project owner, or an invited project member.
+    #[must_use]
+    pub fn admits(&self, pubkey: &[u8]) -> bool {
+        hex::encode(pubkey) == self.repo_owner_hex || self.project.admits(pubkey)
+    }
+}
+
+/// Resolve the private-project gate of the repo named `repo_id`, if any.
+///
+/// `None` when the repo is unknown, has no project link, or its project is
+/// unknown/public — all meaning "no gate" (fail-open matches
+/// [`crate::project_acl::can_access_project_contents`] semantics: contents of
+/// deleted/unknown projects revert to visible).
+pub async fn get_repo_project_gate(
+    pool: &PgPool,
+    community: CommunityId,
+    repo_id: &str,
+) -> Result<Option<RepoProjectGate>> {
+    let row: Option<(String, Vec<u8>, Vec<Vec<u8>>)> = sqlx::query_as(
+        r#"
+        SELECT grn.owner_pubkey,
+               pa.owner,
+               COALESCE(
+                   array_agg(pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
+                   '{}'
+               ) AS members
+        FROM git_repo_names grn
+        JOIN project_acl pa
+          ON pa.community_id = grn.community_id
+         AND pa.coordinate = grn.project_ref
+         AND pa.visibility = 'private'
+        LEFT JOIN project_acl_members pam
+          ON pam.community_id = pa.community_id
+         AND pam.owner = pa.owner
+         AND pam.dtag = pa.dtag
+        WHERE grn.community_id = $1 AND grn.repo_id = $2
+        GROUP BY grn.owner_pubkey, pa.owner
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(repo_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(repo_owner_hex, owner, members)| RepoProjectGate {
+        repo_owner_hex,
+        project: crate::project_acl::ProjectGate { owner, members },
+    }))
+}
+
 /// Release a reservation held by `owner_pubkey` (rollback path).
 ///
 /// Used only when seeding the manifest pointer fails *after* a fresh

@@ -241,6 +241,27 @@ pub async fn handle_req(
         }
     }
 
+    // NIP-MP access extension phase 2: resolve the reader's hidden-repo set
+    // once per REQ (10s cache) when any filter could match a git-gated kind.
+    // Empty — the overwhelmingly common case — disables every git-gating
+    // branch below. Lookup failure fails closed, mirroring the
+    // accessible-channels error path.
+    let hidden_repos = if filters.iter().any(filter_can_match_git_gated_kinds) {
+        match state
+            .hidden_repos_cached(conn.tenant.community(), &pubkey_bytes)
+            .await
+        {
+            Ok(hidden) => hidden,
+            Err(e) => {
+                warn!(conn_id = %conn_id, "hidden-repo set lookup failed: {e}");
+                conn.send(RelayMessage::closed(&sub_id, "error: database error"));
+                return;
+            }
+        }
+    } else {
+        std::sync::Arc::new(buzz_db::git_repo::HiddenRepos::default())
+    };
+
     // Search filters hit Postgres FTS and return historical hits, then EOSE.
     // They are not registered for fan-out. The sensitive-kind gates above
     // already ran, so an authed member cannot use search to bypass author/#p
@@ -261,6 +282,7 @@ pub async fn handle_req(
             token_channel_ids.is_none(),
             &conn.tenant,
             &pubkey_bytes,
+            &hidden_repos,
             &conn,
             &state,
             trace_state.as_ref(),
@@ -358,6 +380,14 @@ pub async fn handle_req(
             if filter_can_match_project_kind(filter) {
                 params.project_gated_reader = Some(pubkey_bytes.clone());
             }
+            // Private-project *repo* pushdown (NIP-MP phase 2) — armed only
+            // when this reader actually has hidden repos.
+            if !hidden_repos.is_empty() && filter_can_match_git_gated_kinds(filter) {
+                params.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    hidden: (*hidden_repos).clone(),
+                });
+            }
             (idx, per_filter_channel, params)
         })
         .collect();
@@ -449,10 +479,11 @@ pub async fn handle_req(
             // Result-level read auth: a viewer-private snapshot (kind:30622) is
             // delivered only to its owner, even if reached via a kindless
             // `ids:[…]` subscription that skips the filter-level `#p` gate.
-            // Also enforces author-only kinds (30300/30350) and the persona
-            // shared-gate (kind:30175 without ["shared","true"]). Single call
-            // covers all three gated event classes.
-            if !event_visible_to_reader(&stored.event, &pubkey_bytes) {
+            // Also enforces author-only kinds (30300/30350), the persona
+            // shared-gate (kind:30175 without ["shared","true"]), and
+            // private-project repo events. Single call covers all gated
+            // event classes.
+            if !event_visible_to_reader(&stored.event, &pubkey_bytes, &hidden_repos) {
                 continue;
             }
 
@@ -592,6 +623,7 @@ async fn handle_search_req(
     include_global: bool,
     tenant: &TenantContext,
     reader_pubkey_bytes: &[u8],
+    hidden_repos: &buzz_db::git_repo::HiddenRepos,
     conn: &ConnectionState,
     state: &AppState,
     trace_state: Option<&crate::conformance::AbstractState>,
@@ -784,8 +816,9 @@ async fn handle_search_req(
                         }
                     }
                     // Result-level gate: covers author-only, persona shared-gate,
-                    // and result-gated kinds in one call.
-                    if !event_visible_to_reader(&stored.event, reader_pubkey_bytes) {
+                    // result-gated kinds, and private-project repo events in
+                    // one call.
+                    if !event_visible_to_reader(&stored.event, reader_pubkey_bytes, hidden_repos) {
                         continue;
                     }
                     // Dedup AFTER acceptance — an event that fails filter A's constraints
@@ -1318,6 +1351,23 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
         .is_none_or(|ks| ks.iter().any(|k| k.as_u16() as u32 == KIND_PROJECT))
 }
 
+/// Returns `true` if the filter CAN match any kind in
+/// [`buzz_core::kind::GIT_PROJECT_GATED_KINDS`] — no `kinds` constraint
+/// (wildcard) or at least one NIP-34 repo-surface kind.
+///
+/// Used to (a) decide whether a REQ/COUNT/HTTP read needs the reader's
+/// hidden-repo set resolved at all, (b) arm the SQL pushdown
+/// (`EventQuery::git_gated_reader`), and (c) force the COUNT per-event
+/// fallback — the fast SQL `count_events()` has no per-event access check,
+/// so it would count a private project's repo activity, leaking its
+/// existence even without returning content.
+pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
+    filter.kinds.as_ref().is_none_or(|ks| {
+        ks.iter()
+            .any(|k| buzz_core::kind::is_git_project_gated_kind(k.as_u16() as u32))
+    })
+}
+
 /// Returns `true` if the filter CAN match result-gated kinds — meaning it
 /// either has no `kinds` constraint (wildcard) or includes at least one kind
 /// that carries a per-event result-level read gate (currently
@@ -1379,14 +1429,22 @@ pub(crate) fn is_author_only_event(event: &nostr::Event, requester_pubkey_bytes:
 ///    explicitly opted into sharing.
 /// 3. **Result-gated kinds** (kind 44200/30622 etc.): `reader_authorized_for_event`
 ///    carries the per-event ownership check.
+/// 4. **Private-project repo events** (NIP-MP phase 2): NIP-34 events
+///    belonging to a repo in `hidden_repos` — the reader's DB-resolved
+///    hidden set ([`crate::state::AppState::hidden_repos_cached`]); pass an
+///    empty set when the reader can see everything.
 ///
 /// The hex representation required by `reader_authorized_for_event` is derived
 /// internally so callers cannot supply inconsistent byte/hex identities.
 ///
 /// Call this from every read surface — both WS (REQ/COUNT/fan-out) and HTTP
-/// (NIP-98 `/query`, `/count`, FTS search) — instead of inlining the three
+/// (NIP-98 `/query`, `/count`, FTS search) — instead of inlining the
 /// individual predicates at each site.
-pub(crate) fn event_visible_to_reader(event: &nostr::Event, requester_pubkey_bytes: &[u8]) -> bool {
+pub(crate) fn event_visible_to_reader(
+    event: &nostr::Event,
+    requester_pubkey_bytes: &[u8],
+    hidden_repos: &buzz_db::git_repo::HiddenRepos,
+) -> bool {
     if is_author_only_event(event, requester_pubkey_bytes) {
         return false;
     }
@@ -1395,6 +1453,14 @@ pub(crate) fn event_visible_to_reader(event: &nostr::Event, requester_pubkey_byt
     }
     let requester_pubkey_hex = hex::encode(requester_pubkey_bytes);
     if !buzz_core::filter::reader_authorized_for_event(event, &requester_pubkey_hex) {
+        return false;
+    }
+    if buzz_core::kind::repo_event_hidden_from(
+        event,
+        &requester_pubkey_hex,
+        &hidden_repos.names,
+        &hidden_repos.project_coordinates,
+    ) {
         return false;
     }
     true

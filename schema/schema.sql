@@ -566,6 +566,13 @@ CREATE UNIQUE INDEX idx_reactions_source_event ON reactions (community_id, react
 -- rationale. One row per (community_id, owner, dtag); republish-latest by
 -- head_created_at. The accessible-channels query and the ingest write path
 -- join here to gate channels inside private projects.
+--
+-- Phase 2 (migration 0031): git_repo_names (migration 0002) gains
+-- `project_ref TEXT` + `head_created_at BIGINT` — the projected 30617
+-- `["project", …]` back-reference. The per-reader hidden-repo query joins
+-- git_repo_names.project_ref = project_acl.coordinate to gate the NIP-34
+-- repo event surface (30617/30618/1617/1618/1619/1621/1630-1633) and git
+-- smart-HTTP reads behind private projects.
 
 CREATE TABLE project_acl (
     community_id    UUID   NOT NULL REFERENCES communities(id),

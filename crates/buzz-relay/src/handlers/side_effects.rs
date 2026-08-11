@@ -2352,6 +2352,26 @@ async fn handle_a_tag_deletion(
                     state.invalidate_all_accessible_channels(tenant);
                 }
             }
+            // A deleted repo announcement drops its project link (same
+            // created_at scoping): with the 30617 gone the repo's child
+            // events revert to their own access rules, mirroring
+            // project-deletion semantics. The name reservation itself stays —
+            // deletion never frees a name for another owner to squat.
+            if k == KIND_GIT_REPO_ANNOUNCEMENT {
+                let link_cleared = state
+                    .db
+                    .clear_repo_project_ref(
+                        tenant.community(),
+                        d_tag,
+                        // git_repo_names stores the owner lowercase-hex.
+                        &pubkey_hex.to_ascii_lowercase(),
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if link_cleared {
+                    state.invalidate_all_accessible_channels(tenant);
+                }
+            }
         }
         _ => {
             tracing::debug!(
@@ -2819,10 +2839,32 @@ async fn handle_git_repo_announcement(
         ));
     }
 
+    // Project the repo → project link (NIP-MP access extension phase 2).
+    // Ingest already validated the tag's shape and the author's project
+    // membership, so a `None` here means "no (valid) project tag" and clears
+    // any previous link. LWW-guarded like the project ACL projection; the
+    // repo-gating caches flush community-wide because a link change alters
+    // the hidden-repo set of every non-member.
+    let project_ref = buzz_core::kind::repo_project_ref(event);
+    let link_changed = state
+        .db
+        .set_repo_project_ref(
+            community,
+            &repo_id,
+            &owner_hex,
+            project_ref.as_deref(),
+            event.created_at.as_secs() as i64,
+        )
+        .await?;
+    if link_changed {
+        state.invalidate_all_accessible_channels(tenant);
+    }
+
     info!(
         repo_id = %repo_id,
         owner = %owner_hex,
         reserved = reserved_by_this_attempt,
+        project_ref = project_ref.as_deref().unwrap_or(""),
         "kind:30617 repo announced (name reserved, manifest pointer ensured)"
     );
 
