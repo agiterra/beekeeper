@@ -58,6 +58,17 @@ done
 git checkout "$GLUE"
 git rebase --onto main "$(git merge-base "$GLUE" main)" "$GLUE"
 
+# ── 2b. stamp the CI base ref on the glue branch ─────────────────────────────
+# The gate's file-size ratchet diffs against this commit (the CI clone has no
+# origin/main ref and no credentials to fetch it).
+git checkout "$GLUE"
+mkdir -p .ci
+if [[ "$(cat .ci/base-ref 2>/dev/null)" != "$(git rev-parse main)" ]]; then
+  git rev-parse main > .ci/base-ref
+  git add .ci/base-ref
+  git commit -s -m "chore(integration): stamp CI base ref $(git rev-parse --short main)"
+fi
+
 # ── 3. rebuild integrated ────────────────────────────────────────────────────
 git checkout -B integrated main
 for entry in "${FEATURES[@]}"; do

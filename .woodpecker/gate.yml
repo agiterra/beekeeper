@@ -69,9 +69,10 @@ steps:
       - apt-get update -qq && apt-get install -y -qq curl git unzip libatomic1 >/dev/null
       # The clone step runs as a different uid than this container's root.
       - git config --global --add safe.directory "$CI_WORKSPACE"
-      # The file-size ratchet diffs against origin/main; the CI clone is
-      # single-ref, so fetch the mirror branch explicitly.
-      - git fetch origin main
+      # The file-size ratchet needs a base commit; the CI clone is single-ref
+      # and command steps get no git credentials, so integrate.sh stamps the
+      # mirror tip into .ci/base-ref (an ancestor already present in the clone).
+      - export CHECK_FILE_SIZES_BASE=$(cat .ci/base-ref)
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       - just desktop-check
       - just desktop-test
