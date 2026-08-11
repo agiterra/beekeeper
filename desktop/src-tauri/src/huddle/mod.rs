@@ -249,10 +249,10 @@ pub async fn start_huddle(
             "stream",
             None,
             Some(3600),
+            None,
         )?;
         submit_event(create_builder, &state).await?;
         channel_was_created = true;
-
         // 2. Post voice-mode guidelines as kind:48106 BEFORE adding agents.
         //    Agents auto-subscribe on membership notification (kind:9000) and may
         //    complete EOSE before guidelines are stored if we post them after.

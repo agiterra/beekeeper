@@ -30,6 +30,7 @@ export type RawChannel = {
   is_member?: boolean;
   ttl_seconds: number | null;
   ttl_deadline: string | null;
+  project_ref?: string | null;
 };
 
 /**
@@ -92,6 +93,7 @@ export function fromRawChannel(channel: RawChannel): Channel {
     isMember: channel.is_member ?? true,
     ttlSeconds: channel.ttl_seconds,
     ttlDeadline: channel.ttl_deadline,
+    projectRef: channel.project_ref ?? null,
   };
 }
 
