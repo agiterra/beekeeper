@@ -64,6 +64,8 @@ steps:
       - /srv/ci-cache/pnpm-store:/root/.local/share/pnpm/store
     commands:
       - apt-get update -qq && apt-get install -y -qq curl git unzip libatomic1 >/dev/null
+      # The clone step runs as a different uid than this container's root.
+      - git config --global --add safe.directory "$CI_WORKSPACE"
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       - just desktop-check
       - just desktop-test
