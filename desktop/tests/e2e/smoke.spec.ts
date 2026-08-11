@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, openCreateChannelDialog } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 async function getTimelineMetrics(page: import("@playwright/test").Page) {
   return page.getByTestId("message-timeline").evaluate((element) => {
@@ -82,6 +83,10 @@ async function selectHomeInboxFilter(
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
+  // This suite exercises the flat channel sections (stream-list), which only
+  // exist with the Projects experiment off (projects fold channels into
+  // per-project sidebar groups — covered by projects-sidebar.spec.ts).
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 test("loads the app shell with mocked channels", async ({ page }) => {

@@ -1,9 +1,15 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
+  // This suite exercises the standalone /workflows surface. With the
+  // Projects experiment on (the bridge seeds every preview feature),
+  // workflows fold into the per-project sidebar groups and the global menu
+  // item this suite navigates by is intentionally absent.
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 async function navigateToWorkflows(page: import("@playwright/test").Page) {

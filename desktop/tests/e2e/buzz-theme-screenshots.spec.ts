@@ -2,6 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
+
+// The sidebar shots assert the flat Channels/custom sections, which only
+// exist with the Projects experiment off (projects fold channels into
+// per-project groups). Order-safe: the bridge's seeding merges the pin.
+test.beforeEach(async ({ page }) => {
+  await overridePreviewFeatures(page, { projects: false });
+});
 
 const SHOTS = "test-results/buzz-theme";
 const THEME_STORAGE_KEY = "buzz-theme";
@@ -94,6 +102,12 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
   );
   expect(pinnedSpacerColor).toBe("rgba(0, 0, 0, 0)");
   await expect(sidebarScroller.getByTestId("open-agents-view")).toBeVisible();
+  // The primary menu scrolls with the sidebar content (only the search row
+  // stays pinned) and mount auto-scrolls to the active channel — reset to
+  // the top so the header geometry below is deterministic.
+  await sidebarScroller.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   const searchBox = await search.boundingBox();
   const pinnedHeaderBox = await pinnedHeader.boundingBox();
   const primaryMenuBox = await primaryMenu.boundingBox();

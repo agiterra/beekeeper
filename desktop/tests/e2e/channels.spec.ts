@@ -12,6 +12,7 @@ import {
   openCreateChannelDialog,
   openNewMessagePage,
 } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const RANDOM_CHANNEL_ID = "9dae0116-799b-5071-a0a8-fdd30a91a35d";
@@ -496,6 +497,9 @@ test.beforeEach(async ({ page }, testInfo) => {
       ? { usersBatchDelayMs: 10_000 }
       : undefined,
   );
+  // This suite exercises the global channel sections, which only exist
+  // with the Projects experiment off (projects fold channels into groups).
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 test("sidebar shows all channel types", async ({ page }) => {

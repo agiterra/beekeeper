@@ -19,8 +19,7 @@ type SidebarSelectedView =
   | "agents"
   | "workflows"
   | "pulse"
-  | "projects"
-  | "sessions";
+  | "projects";
 
 type AppSidebarPinnedHeaderProps = {
   channelLabels: Record<string, string>;

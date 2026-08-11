@@ -1,7 +1,11 @@
 import type { Page } from "@playwright/test";
 import type { ChannelTemplate, RelayEvent } from "../../src/shared/api/types";
 import type { MockManagedAgentSeed } from "../../src/testing/e2eBridge";
-import { FEATURE_OVERRIDES_STORAGE_KEY, PREVIEW_FEATURE_IDS } from "./features";
+import {
+  FEATURE_OVERRIDE_PIN_KEY,
+  FEATURE_OVERRIDES_STORAGE_KEY,
+  PREVIEW_FEATURE_IDS,
+} from "./features";
 
 export const TEST_IDENTITIES = {
   tyler: {
@@ -812,12 +816,24 @@ async function seedDefaultCommunity(
 
 async function seedPreviewFeaturesEnabled(page: Page) {
   await page.addInitScript(
-    ({ key, ids }) => {
+    ({ key, pinKey, ids }) => {
       const overrides: Record<string, boolean> = {};
       for (const id of ids) overrides[id] = true;
+      // A suite-level pin (overridePreviewFeatures) wins regardless of
+      // init-script registration order.
+      try {
+        const pinned = window.localStorage.getItem(pinKey);
+        if (pinned) Object.assign(overrides, JSON.parse(pinned));
+      } catch {
+        // Ignore malformed pins.
+      }
       window.localStorage.setItem(key, JSON.stringify(overrides));
     },
-    { key: FEATURE_OVERRIDES_STORAGE_KEY, ids: PREVIEW_FEATURE_IDS },
+    {
+      key: FEATURE_OVERRIDES_STORAGE_KEY,
+      pinKey: FEATURE_OVERRIDE_PIN_KEY,
+      ids: PREVIEW_FEATURE_IDS,
+    },
   );
 }
 

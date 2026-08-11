@@ -44,6 +44,7 @@ import {
   KIND_MEMBER_ADDED_NOTIFICATION,
   KIND_MEMBER_REMOVED_NOTIFICATION,
   KIND_PERSONA,
+  KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -5412,6 +5413,7 @@ const MOCK_PROJECT_SUBJECTS = [
 ];
 
 const MOCK_PROJECT_KINDS = new Set<number>([
+  KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
@@ -5607,6 +5609,17 @@ function getMockProjectEventStore(): RelayEvent[] {
  * a repo-address `a` tag instead of a channel `h` tag — store them with the
  * seeded project events so refetches see them. */
 function isMockProjectScopedEvent(event: RelayEvent): boolean {
+  // Project container events (kind:30621) are global — no repo `a`-tag needed.
+  if (event.kind === KIND_PROJECT) return true;
+  // NIP-09 deletion of a project container (kind:5 with a 30621 `a` tag).
+  if (
+    event.kind === KIND_DELETION &&
+    event.tags.some(
+      (tag) => tag[0] === "a" && (tag[1] ?? "").startsWith(`${KIND_PROJECT}:`),
+    )
+  ) {
+    return true;
+  }
   const hasRepoAddressTag = event.tags.some(
     (tag) => tag[0] === "a" && (tag[1] ?? "").startsWith("30617:"),
   );
@@ -9955,13 +9968,17 @@ function sendToMockSocket(args: {
       return;
     }
 
-    // Project queries: NIP-34 kinds, or kind:1 comments scoped by repo `a`
+    // Project queries: NIP-34 kinds; kind:1 comments scoped by repo `a`
     // tag or by issue/PR root `e` tag (discussions, approvals, review
-    // requests, assignment operations). Channel messages are kind 9, so a
-    // kind:1 `#e` query can only target project discussion events.
+    // requests, assignment operations — channel messages are kind 9, so a
+    // kind:1 `#e` query can only target project discussion events); or bare
+    // deletion sweeps (project/persona deletions; channel windows query
+    // kind:5 with `#h` and stay on the channel path, and Inbox hydration
+    // looks deletions up by `#e` over message ids — both stay general).
     if (
       filter.kinds?.some((kind) => MOCK_PROJECT_KINDS.has(kind)) ||
-      (filter.kinds?.includes(1) && (filter["#a"] || filter["#e"]))
+      (filter.kinds?.includes(1) && (filter["#a"] || filter["#e"])) ||
+      (filter.kinds?.includes(KIND_DELETION) && !filter["#h"] && !filter["#e"])
     ) {
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__ ??= [];
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__.push(filter);

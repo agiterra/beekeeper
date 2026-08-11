@@ -59,6 +59,10 @@ export const projectContainersQueryKey = ["project-containers"] as const;
  * device with multiple local identities on the same relay could flash one
  * identity's project list (including private project names) while switched
  * to another.
+ *
+ * Registered in LOCAL_STORAGE_SWEEP_RULES (shared/lib/localStorageSweep.ts):
+ * the payload carries a root `updatedAt` so relay+identity combinations that
+ * have not been opened in 14 days are swept instead of accreting forever.
  */
 const CONTAINER_SNAPSHOT_PREFIX = "buzz.projects.containers.v1:";
 
@@ -78,7 +82,14 @@ function readContainerSnapshot(
     const raw = globalThis.localStorage?.getItem(key);
     if (!raw) return undefined;
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as ProjectContainer[]) : undefined;
+    // Legacy shape: a bare array (pre-sweep-registration). Still readable;
+    // the next successful fetch rewrites it in the swept shape.
+    if (Array.isArray(parsed)) return parsed as ProjectContainer[];
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const projects = (parsed as { projects?: unknown }).projects;
+    return Array.isArray(projects)
+      ? (projects as ProjectContainer[])
+      : undefined;
   } catch {
     return undefined;
   }
@@ -90,7 +101,11 @@ function writeContainerSnapshot(
 ): void {
   if (!key) return;
   try {
-    globalThis.localStorage?.setItem(key, JSON.stringify(projects));
+    // Root `updatedAt` is what LOCAL_STORAGE_SWEEP_RULES keys the TTL on.
+    globalThis.localStorage?.setItem(
+      key,
+      JSON.stringify({ updatedAt: Date.now(), projects }),
+    );
   } catch {
     // Best-effort cache — quota/serialization failures just lose the
     // fast first paint, never the live data.

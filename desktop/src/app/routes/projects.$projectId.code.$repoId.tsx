@@ -20,6 +20,9 @@ export const Route = createFileRoute("/projects/$projectId/code/$repoId")({
         ? search.pullRequestId
         : undefined,
     issueId: typeof search.issueId === "string" ? search.issueId : undefined,
+    // Active repository within a multi-repo project. Without this the
+    // repository picker (and add-repo activation) cannot switch repos —
+    // ProjectDetailScreen patches this key into the URL and reads it back.
     repositoryId:
       typeof search.repositoryId === "string" ? search.repositoryId : undefined,
     tab: isEntityLinkTab(search.tab) ? search.tab : undefined,
