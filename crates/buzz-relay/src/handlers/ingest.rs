@@ -14,27 +14,29 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN,
-    KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT,
-    KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-    KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE,
-    KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN,
-    KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED,
-    KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED, KIND_IA_ARCHIVE_REQUEST,
-    KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
-    KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST,
-    KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT, KIND_NIP29_DELETE_GROUP,
-    KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST, KIND_NIP29_LEAVE_REQUEST,
-    KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER, KIND_NIP43_LEAVE_REQUEST,
-    KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST, KIND_PRESENCE_UPDATE,
-    KIND_PRIVATE_MANAGED_AGENT, KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION,
-    KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED,
-    KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED,
-    KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM,
-    KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
-    RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER,
-    RELAY_ADMIN_SET_WORKSPACE_PROFILE,
+    KIND_CANVAS, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
+    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+    KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
+    KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
+    KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN,
+    KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN,
+    KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT,
+    KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST,
+    KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
+    KIND_NIP43_LEAVE_REQUEST, KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST,
+    KIND_PRESENCE_UPDATE, KIND_PRIVATE_MANAGED_AGENT, KIND_PRODUCT_FEEDBACK, KIND_PROFILE,
+    KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE,
+    KIND_STREAM_MESSAGE_BOOKMARKED, KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT,
+    KIND_STREAM_MESSAGE_PINNED, KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2,
+    KIND_STREAM_REMINDER, KIND_TEAM, KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS,
+    KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE,
+    RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
@@ -353,6 +355,17 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
+        // Coding sessions: operator-authored commands (44220/44221) and the
+        // provider-authored facts they produce (44222-44225). All are durable,
+        // channel-scoped writes consumed by an out-of-relay provider adapter —
+        // the relay validates and stores them, and deliberately never executes
+        // them. See docs/nips/NIP-CSC.md, NIP-CSL.md, NIP-CSPC.md, NIP-CST.md.
+        KIND_CODING_SESSION_COMMAND
+        | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+        | KIND_CODING_SESSION_PROVIDER_CATALOG
+        | KIND_CODING_SESSION_METADATA
+        | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+        | KIND_CODING_SESSION_TRANSCRIPT => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -637,7 +650,86 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_HUDDLE_PARTICIPANT_LEFT
             | KIND_HUDDLE_ENDED
             | KIND_HUDDLE_GUIDELINES
+            // Coding sessions live inside a channel: the channel's ACL is the
+            // *only* thing standing between a session transcript and anyone on
+            // the relay, and h-scoped events inherit private-project access
+            // through `get_accessible_channel_ids`. Require `h` so a command or
+            // a transcript item can never become a stray global event readable
+            // by every authenticated pubkey.
+            | KIND_CODING_SESSION_COMMAND
+            | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+            | KIND_CODING_SESSION_PROVIDER_CATALOG
+            | KIND_CODING_SESSION_METADATA
+            | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            | KIND_CODING_SESSION_TRANSCRIPT
     )
+}
+
+/// Returns `true` for the six coding-session kinds (44220–44225).
+///
+/// One predicate for the strict-membership gate and the tests, so a seventh
+/// kind cannot be added to one gate and forgotten by another.
+pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_CODING_SESSION_COMMAND
+            | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+            | KIND_CODING_SESSION_PROVIDER_CATALOG
+            | KIND_CODING_SESSION_METADATA
+            | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            | KIND_CODING_SESSION_TRANSCRIPT
+    )
+}
+
+/// Maximum signed content size for each coding-session kind, in bytes.
+///
+/// 44220 and 44221 are bounded by their payload contracts in `buzz-core`
+/// instead (12 KiB of turn text, 16 KiB of signed content), so they are absent
+/// here. The four provider-authored kinds carry no envelope validator — the
+/// relay does not parse a provider's facts — so a size cap is the whole of
+/// their bound, and each one is sized to its job: a catalog enumerates every
+/// provider and model an instance offers, a transcript item carries one
+/// coalesced chunk of agent output, a receipt carries a status and a code.
+fn coding_session_content_cap(kind: u32) -> Option<usize> {
+    match kind {
+        KIND_CODING_SESSION_PROVIDER_CATALOG => Some(256 * 1024),
+        KIND_CODING_SESSION_METADATA => Some(32 * 1024),
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT => Some(16 * 1024),
+        KIND_CODING_SESSION_TRANSCRIPT => Some(32 * 1024),
+        _ => None,
+    }
+}
+
+/// Require active membership without the open-channel fallback used for normal
+/// conversational writes.
+///
+/// [`check_channel_membership`] admits any authenticated pubkey in an *open*
+/// channel. That is the right rule for talking, and the wrong rule here in both
+/// directions: on the command side, permission to read a room is not authority
+/// to steer an agent that runs shell commands against someone's checkout; on
+/// the provider side, it is not authority to write transcripts and receipts
+/// that consumers treat as the session's record of what happened.
+async fn check_coding_session_membership(
+    tenant: &TenantContext,
+    state: &AppState,
+    channel_id: Uuid,
+    pubkey_bytes: &[u8],
+) -> Result<(), String> {
+    match state
+        .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
+        .await
+    {
+        Ok(is_member) => coding_session_membership_verdict(is_member),
+        Err(error) => Err(format!("error: database error: {error}")),
+    }
+}
+
+fn coding_session_membership_verdict(is_member: bool) -> Result<(), String> {
+    if is_member {
+        Ok(())
+    } else {
+        Err("restricted: coding-session events require channel membership".into())
+    }
 }
 
 /// Check channel membership: member OR open-visibility channel.
@@ -1727,6 +1819,101 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
     Ok(())
 }
 
+/// Validate the exact public envelope for a coding-session command (44220).
+///
+/// The signed event pubkey is the operator authority. The payload deliberately
+/// carries no actor attribution and the relay does not execute this kind. The
+/// `cs-target` tag is re-derived from the decoded payload rather than trusted,
+/// so a command cannot be addressed to one session generation in its tag and
+/// another in its content — the tag is what adapters route on.
+fn validate_coding_session_command_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_command::{
+        coding_session_target_key, CodingSessionCommandPayload, CODING_SESSION_COMMAND_TAG_VERSION,
+    };
+
+    let payload: CodingSessionCommandPayload = serde_json::from_str(&event.content)
+        .map_err(|_| "malformed coding-session command payload".to_string())?;
+    payload.validate()?;
+    let expected_target = coding_session_target_key(&payload.target);
+    let mut h_count = 0_u8;
+    let mut version_count = 0_u8;
+    let mut target_count = 0_u8;
+
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.len() != 2 {
+            return Err("coding-session command tags must have exactly two fields".into());
+        }
+        match parts[0].as_str() {
+            "h" => {
+                h_count = h_count.saturating_add(1);
+                if parts[1].parse::<Uuid>().is_err() {
+                    return Err("coding-session command h tag must be a channel UUID".into());
+                }
+            }
+            "cs-v" => {
+                version_count = version_count.saturating_add(1);
+                if parts[1] != CODING_SESSION_COMMAND_TAG_VERSION {
+                    return Err("unsupported coding-session command tag version".into());
+                }
+            }
+            "cs-target" => {
+                target_count = target_count.saturating_add(1);
+                if parts[1] != expected_target {
+                    return Err(
+                        "coding-session command cs-target does not match payload target".into(),
+                    );
+                }
+            }
+            _ => return Err("unsupported coding-session command tag".into()),
+        }
+    }
+
+    if h_count != 1 || version_count != 1 || target_count != 1 {
+        return Err(
+            "coding-session command requires exactly one h, cs-v, and cs-target tag".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate the exact public envelope for a coding-session lifecycle command (44221).
+///
+/// The signed event pubkey is the operator authority. Tags are ordered and
+/// payload-derived so adapters can reject ambiguous or substituted commands.
+///
+/// Fork amendment: the decoded payload's `projectRef` may be absent
+/// (standalone session). No tag carries the project reference, so nothing here
+/// changes shape — `decode_coding_session_lifecycle_command` owns the rule that
+/// a *present* reference must be a `30621:` project coordinate.
+fn validate_coding_session_lifecycle_command_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_lifecycle_command::{
+        decode_coding_session_lifecycle_command, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_lifecycle_command(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err(
+            "coding-session lifecycle command requires exactly three two-field tags".into(),
+        );
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err(
+            "coding-session lifecycle command first tag must be a channel UUID h tag".into(),
+        );
+    }
+    if tags[1][0] != "csl-v" || tags[1][1] != CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION {
+        return Err("unsupported coding-session lifecycle command tag version".into());
+    }
+    if tags[2][0] != "csl-command" || tags[2][1] != payload.command_id {
+        return Err(
+            "coding-session lifecycle command csl-command does not match payload commandId".into(),
+        );
+    }
+    Ok(())
+}
+
 /// Parse a NIP-ER `not_before` tag value into a Unix timestamp.
 ///
 /// The value MUST be a decimal integer string containing only ASCII digits, with
@@ -2330,6 +2517,14 @@ async fn ingest_event_inner(
             );
             auth_result.map_err(IngestError::Rejected)?;
         }
+        // Coding sessions take a strictly stronger gate than the one above:
+        // active membership, with no open-channel fallback. Visibility is not
+        // authority to steer a session, nor to author its record.
+        if is_coding_session_kind(kind_u32) {
+            check_coding_session_membership(tenant, state, ch_id, &pubkey_bytes)
+                .await
+                .map_err(IngestError::Rejected)?;
+        }
     }
 
     // Handled directly — these mutate relay_members and do NOT get stored.
@@ -2543,6 +2738,30 @@ async fn ingest_event_inner(
                 "restricted: agent-turn-metric `p` tag must be the registered owner of this agent"
                     .into(),
             ));
+        }
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_COMMAND {
+        validate_coding_session_command_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_LIFECYCLE_COMMAND {
+        validate_coding_session_lifecycle_command_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    // The four provider-authored coding-session kinds get no envelope
+    // validator: their content is the provider's own account of what a session
+    // did, and a relay that parsed it would be asserting authority over facts
+    // it did not observe. Consumers verify signatures and shapes at their own
+    // trusted-ingress boundary. What the relay owes them is a bound on storage.
+    if let Some(max) = coding_session_content_cap(kind_u32) {
+        let got = event.content.len();
+        if got > max {
+            return Err(IngestError::Rejected(format!(
+                "invalid: coding-session kind {kind_u32} content exceeds {max} bytes (got {got})"
+            )));
         }
     }
 
@@ -5244,5 +5463,316 @@ mod tests {
             counts.get(&("ws".to_owned(), "invalid".to_owned())),
             Some(&1)
         );
+    }
+
+    // ---- Coding sessions (44220–44225) -------------------------------------
+
+    /// Every coding-session kind, in kind order. Kept next to the tests that
+    /// sweep it so a seventh kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 6] = [
+        KIND_CODING_SESSION_COMMAND,
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        KIND_CODING_SESSION_PROVIDER_CATALOG,
+        KIND_CODING_SESSION_METADATA,
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        KIND_CODING_SESSION_TRANSCRIPT,
+    ];
+
+    #[test]
+    fn coding_session_predicate_covers_exactly_44220_to_44225() {
+        for kind in 0..=u16::MAX as u32 {
+            assert_eq!(
+                is_coding_session_kind(kind),
+                (44220..=44225).contains(&kind),
+                "is_coding_session_kind disagrees at kind {kind}"
+            );
+        }
+        for kind in CODING_SESSION_TEST_KINDS {
+            assert!(is_coding_session_kind(kind));
+        }
+    }
+
+    /// All six are channel-scoped message writes, and none is global-only —
+    /// their whole containment story is the channel ACL, which only applies to
+    /// h-scoped events.
+    #[test]
+    fn coding_session_kinds_are_channel_scoped_message_writes() {
+        let dummy = make_dummy_event();
+        for kind in CODING_SESSION_TEST_KINDS {
+            assert_eq!(
+                required_scope_for_kind(kind, &dummy).unwrap(),
+                Scope::MessagesWrite,
+                "kind {kind} must be a message write",
+            );
+            assert!(
+                requires_h_channel_scope(kind),
+                "kind {kind} must require an h tag",
+            );
+            assert!(
+                !is_global_only_kind(kind),
+                "kind {kind} must never be global-only",
+            );
+        }
+    }
+
+    /// Unlike `check_channel_membership`, this verdict has no visibility
+    /// fallback: an outsider in an *open* channel is still denied. Reading a
+    /// room is not authority to steer an agent inside it, nor to author the
+    /// record of what that agent did.
+    #[test]
+    fn coding_session_membership_rejects_open_channel_outsider() {
+        assert!(coding_session_membership_verdict(true).is_ok());
+        let denial = coding_session_membership_verdict(false).unwrap_err();
+        assert!(denial.starts_with("restricted:"), "got {denial:?}");
+    }
+
+    #[test]
+    fn coding_session_command_requires_exact_content_and_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-command/v1",
+            "commandId": "cmd-1",
+            "target": {
+                "driver": "provider-a",
+                "instanceId": "instance-1",
+                "sessionId": "session-1",
+                "generation": 2,
+            },
+            "action": { "type": "thread.turn.start", "text": "Steer" },
+        })
+        .to_string();
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let event = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&event).is_ok());
+
+        // The tag is what adapters route on, so it must be re-derivable from
+        // the content it claims to address.
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", "coding-session/v1|wrong"],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&mismatched).is_err());
+
+        // A generation swap in the tag alone would steer a different session.
+        let wrong_generation = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &[
+                    "cs-target",
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:3",
+                ],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&wrong_generation).is_err());
+
+        let extra_tag = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&extra_tag).is_err());
+
+        let missing_target = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[&["h", &channel], &["cs-v", "csc1-1"]],
+        );
+        assert!(validate_coding_session_command_envelope(&missing_target).is_err());
+
+        let bad_version = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-0"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&bad_version).is_err());
+    }
+
+    fn lifecycle_content(project_ref: serde_json::Value) -> String {
+        serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.create",
+                "projectRef": project_ref,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+                "model": null,
+                "title": "Advance Buzz live sessions",
+                "initialTurn": null,
+            },
+        })
+        .to_string()
+    }
+
+    fn lifecycle_event(content: &str, channel: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            content,
+            &[
+                &["h", channel],
+                &["csl-v", "csl1-1"],
+                &["csl-command", "create-1"],
+            ],
+        )
+    }
+
+    #[test]
+    fn coding_session_lifecycle_command_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let project = format!("30621:{}:amas-redux", "cd".repeat(32));
+        let content = lifecycle_content(serde_json::Value::String(project));
+        let event = lifecycle_event(&content, &channel);
+        assert!(validate_coding_session_lifecycle_command_envelope(&event).is_ok());
+
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["csl-v", "csl1-1"],
+                &["csl-command", "create-2"],
+            ],
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&mismatched).is_err());
+
+        // Ordered, not merely present: adapters read tags positionally.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            &content,
+            &[
+                &["csl-v", "csl1-1"],
+                &["h", &channel],
+                &["csl-command", "create-1"],
+            ],
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&reordered).is_err());
+    }
+
+    /// Fork amendment: a standalone session (no project) is a first-class,
+    /// accepted shape — the relay must not require a project binding.
+    #[test]
+    fn coding_session_lifecycle_command_accepts_a_null_project_ref() {
+        let channel = Uuid::new_v4().to_string();
+        let content = lifecycle_content(serde_json::Value::Null);
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                &content, &channel
+            ))
+            .is_ok()
+        );
+    }
+
+    /// Optional is not unvalidated. A present reference must be a NIP-MP
+    /// project coordinate; the donor-era `30178:` team-catalog form and a bare
+    /// slug are both rejected, so a project-bound session cannot be quietly
+    /// pointed at something that is not a project.
+    #[test]
+    fn coding_session_lifecycle_command_rejects_non_project_refs() {
+        let channel = Uuid::new_v4().to_string();
+        let owner = "cd".repeat(32);
+        for rejected in [
+            format!("30178:{owner}:amas-redux"),
+            format!("30617:{owner}:amas-redux"),
+            "amas-redux".to_string(),
+        ] {
+            let content = lifecycle_content(serde_json::Value::String(rejected.clone()));
+            assert!(
+                validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                    &content, &channel
+                ))
+                .is_err(),
+                "should reject projectRef {rejected:?}"
+            );
+        }
+    }
+
+    /// A host filesystem path must never ride along inside signed content —
+    /// the working directory is machine-local state, resolved by the producer.
+    #[test]
+    fn coding_session_lifecycle_command_rejects_unknown_payload_fields() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+                "model": null,
+                "title": null,
+                "initialTurn": null,
+                "cwd": "/Users/someone/checkout",
+            },
+        })
+        .to_string();
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                &content, &channel
+            ))
+            .is_err()
+        );
+    }
+
+    /// The four provider-authored kinds are bounded by size alone — the relay
+    /// does not parse a provider's account of its own session. These are the
+    /// exact caps the producer writes against.
+    #[test]
+    fn provider_authored_coding_session_kinds_have_size_caps() {
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_PROVIDER_CATALOG),
+            Some(256 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_METADATA),
+            Some(32 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_LIFECYCLE_RECEIPT),
+            Some(16 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_TRANSCRIPT),
+            Some(32 * 1024)
+        );
+        // The two operator commands are bounded by their payload contracts in
+        // buzz-core instead, so they must not also carry a cap here.
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_COMMAND),
+            None
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_LIFECYCLE_COMMAND),
+            None
+        );
+        // And no other kind is bounded by this table.
+        assert_eq!(coding_session_content_cap(KIND_STREAM_MESSAGE), None);
     }
 }
