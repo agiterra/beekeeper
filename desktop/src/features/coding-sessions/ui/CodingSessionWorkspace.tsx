@@ -27,6 +27,8 @@ import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSe
 import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { useCodingSessionProject } from "@/features/projects-container/hooks";
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
@@ -437,6 +439,11 @@ function ReadyCodingSessionWorkspace({
     [taskRailOpen, taskRailPreferenceKey],
   );
 
+  // The project a session belongs to is resolved by the same rule the projects
+  // sidebar files it under, so the crumb and the sidebar always agree.
+  const { goProject } = useAppNavigation();
+  const owningProject = useCodingSessionProject(channelId, session.projectRef);
+
   const exportEnabled = useFeatureEnabled("coding-session-export");
   const exportSession = React.useMemo(
     () => (sessionName ? { ...session, title: authoritativeTitle } : session),
@@ -474,6 +481,13 @@ function ReadyCodingSessionWorkspace({
           onBack={onBack}
           onCloseSession={onCloseSession}
           onExport={exportEnabled ? exportTranscript : undefined}
+          onOpenProject={
+            // A pop-out is its own window with no app shell to navigate; the
+            // project still shows, it just is not a link there.
+            owningProject && surface === "main"
+              ? () => void goProject(owningProject.id)
+              : undefined
+          }
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
           onReopenSession={onReopenSession}
@@ -485,6 +499,7 @@ function ReadyCodingSessionWorkspace({
             setTaskRailOpen(false);
             surfaceHost.toggle(id);
           }}
+          projectName={owningProject?.name ?? null}
           providerAuthorityPubkey={session.providerAuthorityPubkey}
           runtimeLabel={runtimeLabel}
           sessionTitle={authoritativeTitle}

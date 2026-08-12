@@ -83,6 +83,7 @@ export function CodingSessionHeader({
   onBack,
   onCloseSession,
   onExport,
+  onOpenProject,
   onPopout,
   onRename,
   onReopenSession,
@@ -102,8 +103,11 @@ export function CodingSessionHeader({
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
+  const linkedProject = onOpenProject ? projectName?.trim() || null : null;
   const contextLabels = uniqueNonemptyLabels([
-    projectName,
+    // A linked project is rendered on its own so it stays clickable; only an
+    // unlinked one folds into the plain context line.
+    linkedProject ? null : projectName,
     repoName,
     runtimeLabel,
     model,
@@ -146,11 +150,28 @@ export function CodingSessionHeader({
           ) : null}
         </div>
         <p className="truncate text-xs text-muted-foreground">
-          {contextLabels.length > 0
-            ? contextLabels.join(" · ")
-            : channelName
-              ? `#${channelName}`
-              : generationLabel}
+          {linkedProject ? (
+            <>
+              <button
+                className="rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
+                data-testid="coding-session-project-crumb"
+                onClick={onOpenProject}
+                title={`Open ${linkedProject}`}
+                type="button"
+              >
+                {linkedProject}
+              </button>
+              {contextLabels.length > 0
+                ? ` · ${contextLabels.join(" · ")}`
+                : ""}
+            </>
+          ) : contextLabels.length > 0 ? (
+            contextLabels.join(" · ")
+          ) : channelName ? (
+            `#${channelName}`
+          ) : (
+            generationLabel
+          )}
         </p>
       </div>
       <Badge
@@ -200,6 +221,12 @@ export function CodingSessionHeader({
         <PopoverContent align="end" className="w-72">
           <p className="text-sm font-medium">Shared session details</p>
           <dl className="mt-3 grid gap-2 text-xs">
+            {projectName ? (
+              <div>
+                <dt className="text-muted-foreground">Project</dt>
+                <dd className="mt-0.5 wrap-break-word">{projectName}</dd>
+              </div>
+            ) : null}
             {channelName ? (
               <div>
                 <dt className="text-muted-foreground">Channel</dt>

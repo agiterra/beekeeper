@@ -19,6 +19,7 @@ import {
 } from "@/features/projects/hooks";
 import {
   bucketProjectCodingSessions,
+  resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
   type ProjectCodingSessionShelfEntry,
   type ProjectCodingSessionShelfState,
@@ -411,6 +412,47 @@ export function useProjectCodingSessionBuckets(
       state: shelf.state,
     };
   }, [catalog, channelLabels, placementIndex]);
+}
+
+/**
+ * The project a single coding session belongs to, for the session header's
+ * crumb.
+ *
+ * Deliberately the same `resolveProjectCodingSessionPlacement` the sidebar
+ * buckets with, so the header can never name a project the session is not
+ * filed under.
+ */
+export function useCodingSessionProject(
+  channelId: string | null,
+  projectRef: string | null,
+): { id: string; name: string } | null {
+  const { projects } = useProjectContainers();
+  const channelsQuery = useChannelsQuery();
+  return React.useMemo(() => {
+    if (!channelId) return null;
+    const buckets = partitionChannels(projects, channelsQuery.data ?? []);
+    const projectIdByChannel = new Map<string, string>();
+    for (const [ownerId, owned] of buckets.channelsByProject) {
+      for (const channel of owned) projectIdByChannel.set(channel.id, ownerId);
+    }
+    for (const [ownerId, owned] of buckets.forumsByProject) {
+      for (const forum of owned) projectIdByChannel.set(forum.id, ownerId);
+    }
+    const { projectId } = resolveProjectCodingSessionPlacement(
+      projectRef,
+      channelId,
+      {
+        projectIdByRef: new Map(
+          projects.map((project) => [project.address, project.id]),
+        ),
+        projectIdByChannel,
+      },
+    );
+    const owner = projectId
+      ? projects.find((project) => project.id === projectId)
+      : undefined;
+    return owner ? { id: owner.id, name: owner.name } : null;
+  }, [channelId, channelsQuery.data, projectRef, projects]);
 }
 
 /**
