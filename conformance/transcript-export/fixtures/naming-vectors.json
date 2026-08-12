@@ -1,0 +1,66 @@
+{
+  "schema": "buzz.conformance.hive/transcript-export-naming@1",
+  "donor": {
+    "repo": "hive",
+    "pin": "e0b8198bd14438d94e3198862a9c0835904ee1b5",
+    "path": "src/server/standalone-export.ts",
+    "authority": "sanitizeFileNameSegment / formatExportTimestamp / resolveUniqueExportDir"
+  },
+  "law": "Segments: trim, collapse runs outside [A-Za-z0-9_.-] to one dash, strip edge dashes. Directory: <sanitized(title || chatId) or 'chat'>-<ISO with colon->dash, milliseconds stripped>; collisions append -2, -3, ...; never overwrite.",
+  "sanitize_cases": [
+    { "input": "Release Review", "expected": "Release-Review" },
+    { "input": "  spaced out  ", "expected": "spaced-out" },
+    { "input": "a/b\\c", "expected": "a-b-c" },
+    { "input": "üñïçode", "expected": "ode" },
+    { "input": "---x---", "expected": "x" },
+    { "input": "...dots...", "expected": "...dots..." },
+    { "input": "!!!", "expected": "" },
+    { "input": "", "expected": "" }
+  ],
+  "timestamp_cases": [
+    { "input": "2026-04-23T12:34:56.000Z", "expected": "2026-04-23T12-34-56Z" },
+    { "input": "2026-12-31T23:59:59.999Z", "expected": "2026-12-31T23-59-59Z" }
+  ],
+  "directory_cases": [
+    {
+      "name": "sanitized title plus timestamp",
+      "title": "Release Review",
+      "chatId": "chat-1",
+      "timestamp": "2026-04-23T12:34:56.000Z",
+      "taken": [],
+      "expected": "Release-Review-2026-04-23T12-34-56Z"
+    },
+    {
+      "name": "empty title falls back to chatId before sanitizing",
+      "title": "",
+      "chatId": "chat 9!",
+      "timestamp": "2026-04-23T12:34:56.000Z",
+      "taken": [],
+      "expected": "chat-9-2026-04-23T12-34-56Z"
+    },
+    {
+      "name": "truthy title that sanitizes to nothing falls back to the chat literal, not chatId",
+      "title": "!!!",
+      "chatId": "chat-1",
+      "timestamp": "2026-04-23T12:34:56.000Z",
+      "taken": [],
+      "expected": "chat-2026-04-23T12-34-56Z"
+    },
+    {
+      "name": "first collision appends -2",
+      "title": "Release Review",
+      "chatId": "chat-1",
+      "timestamp": "2026-04-23T12:34:56.000Z",
+      "taken": ["Release-Review-2026-04-23T12-34-56Z"],
+      "expected": "Release-Review-2026-04-23T12-34-56Z-2"
+    },
+    {
+      "name": "suffixes keep counting until a free candidate",
+      "title": "Release Review",
+      "chatId": "chat-1",
+      "timestamp": "2026-04-23T12:34:56.000Z",
+      "taken": ["Release-Review-2026-04-23T12-34-56Z", "Release-Review-2026-04-23T12-34-56Z-2"],
+      "expected": "Release-Review-2026-04-23T12-34-56Z-3"
+    }
+  ]
+}

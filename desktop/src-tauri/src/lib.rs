@@ -42,6 +42,7 @@ mod templates;
 mod terminal_runtime;
 #[cfg_attr(not(test), allow(dead_code))]
 mod terminal_transport;
+mod transcript_export;
 #[cfg(target_os = "macos")]
 mod tray_menu;
 mod util;
@@ -780,6 +781,8 @@ pub fn run() {
             coding_sessions::workdir_store::clear_coding_session_create_hint,
             coding_sessions::workdir_store::validate_coding_session_workdir,
             coding_sessions::workdir_store::pick_coding_session_workdir,
+            commands::coding_session_export::begin_coding_session_transcript_export,
+            commands::coding_session_export::write_coding_session_transcript_export,
             mesh_start_node,
             mesh_stop_node,
             mesh_node_status,

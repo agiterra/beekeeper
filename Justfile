@@ -119,6 +119,18 @@ clippy:
 desktop-install:
     pnpm install
 
+# Re-derive every banked conformance corpus against this repo's own
+# implementation. Deliberately not wired into `just ci` here — CI wiring is
+# the glue phase's call, and a corpus that gates the build before its owner
+# has agreed to that is a surprise, not a guarantee.
+conformance-check:
+    node --test "conformance/**/*.test.mjs"
+
+# The export-viewer release manifest script, checked on its own because the
+# conformance corpus binds it and nothing else runs it.
+export-viewer-manifest-test:
+    node --test "scripts/export-viewer-release-manifest.test.mjs"
+
 # Install JS dependencies reproducibly for CI (pnpm workspace)
 desktop-install-ci:
     pnpm install --frozen-lockfile

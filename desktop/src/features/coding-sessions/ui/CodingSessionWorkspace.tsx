@@ -15,6 +15,7 @@ import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/cod
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { Button } from "@/shared/ui/button";
@@ -22,6 +23,7 @@ import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { useCodingSessionExport } from "./useCodingSessionExport";
 import {
   codingSessionTaskRailPreferenceKey,
   type CodingSessionTaskRailPreference,
@@ -165,6 +167,12 @@ function ReadyCodingSessionWorkspace({
     [taskRailOpen, taskRailPreferenceKey],
   );
 
+  const exportEnabled = useFeatureEnabled("coding-session-export");
+  const { exportTranscript, isExporting } = useCodingSessionExport(
+    generationId,
+    session,
+  );
+
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
       toast.error(
@@ -185,8 +193,10 @@ function ReadyCodingSessionWorkspace({
         channelName={channelName}
         compact={isNarrow}
         generationLabel={session.label}
+        isExporting={isExporting}
         model={session.model}
         onBack={onBack}
+        onExport={exportEnabled ? exportTranscript : undefined}
         onPopout={surface === "main" ? handlePopout : undefined}
         onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
         providerAuthorityPubkey={session.providerAuthorityPubkey}
