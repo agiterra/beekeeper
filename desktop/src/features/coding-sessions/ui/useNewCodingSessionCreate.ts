@@ -92,12 +92,29 @@ export function useNewCodingSessionCreate({
 
   React.useEffect(() => {
     let cancelled = false;
-    void getCodingSessionProviderStatus()
+    void loadOrProvisionCodingSessionProvider({
+      onProvisioning: () => {
+        if (!cancelled) setHostPhase("provisioning");
+      },
+    })
       .then((status) => {
-        if (!cancelled) setProviderStatus(status);
+        if (!cancelled) {
+          setProviderStatus(status);
+          setHostPhase("idle");
+        }
       })
-      .catch(() => {
-        if (!cancelled) setProviderStatus(null);
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setProviderStatus(null);
+          setHostPhase("idle");
+          setPublishError(
+            typeof error === "string"
+              ? error
+              : error instanceof Error
+                ? error.message
+                : "Unable to set up this computer's coding-session provider.",
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -295,6 +312,26 @@ export function useNewCodingSessionCreate({
     submit,
     transaction: scoped,
   };
+}
+
+/**
+ * Read this relay's local provider, provisioning it on the first visit to the
+ * create screen. Keeping this out of app startup means people who never use
+ * coding sessions never mint a provider identity.
+ */
+export async function loadOrProvisionCodingSessionProvider({
+  getStatus = getCodingSessionProviderStatus,
+  onProvisioning = () => {},
+  provision = provisionCodingSessionProvider,
+}: {
+  getStatus?: () => Promise<CodingSessionProviderStatus>;
+  onProvisioning?: () => void;
+  provision?: () => Promise<CodingSessionProviderStatus>;
+} = {}): Promise<CodingSessionProviderStatus> {
+  const status = await getStatus();
+  if (status.provisioned) return status;
+  onProvisioning();
+  return provision();
 }
 
 /**

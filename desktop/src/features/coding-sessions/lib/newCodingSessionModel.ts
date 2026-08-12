@@ -96,26 +96,29 @@ export function selectInitialNewCodingSessionTarget(
 export function localCodingSessionProviderTarget(input: {
   channelId: string;
   providerPubkey: string;
-  instanceId: string;
 }): NewCodingSessionTarget {
+  // `providerInstanceRef` routes a create to a catalog entry. It is not the
+  // pubkey-derived `instanceId` that later appears in a session's cs-target.
+  // The bundled provider advertises this fixed catalog coordinate.
+  const providerInstanceRef = "claude-primary";
   return {
     selectionKey: encodeTargetSelectionKey(
       input.channelId,
       input.providerPubkey,
-      input.instanceId,
+      providerInstanceRef,
     ),
     channelId: input.channelId,
     signerPubkey: input.providerPubkey,
     provider: {
-      providerInstanceRef: input.instanceId,
+      providerInstanceRef,
       driver: "claude-agent-acp",
-      runtime: "claude-agent-acp",
+      runtime: "claude",
       defaultModel: "",
       allowedModels: [],
       capabilities: {
         threadTurnStart: true,
         threadTurnInterrupt: true,
-        threadSteer: true,
+        threadSteer: false,
         context: false,
         diff: false,
         plan: true,

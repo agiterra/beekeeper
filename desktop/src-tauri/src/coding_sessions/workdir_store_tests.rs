@@ -102,7 +102,7 @@ fn the_mru_evicts_the_least_recently_used_entry() {
         !store
             .mru
             .iter()
-            .any(|entry| entry.path == PathBuf::from("/src/0")),
+            .any(|entry| entry.path == std::path::Path::new("/src/0")),
         "the oldest directory must have aged out",
     );
 }

@@ -27,6 +27,8 @@ use crate::util::now_iso;
 /// other Buzz-spawned binary uses (`resolve_command`), which covers a dev build
 /// in `target/{debug,release}` and a bundled sidecar next to the app executable.
 pub(crate) const PROVIDER_BINARY: &str = "buzz-session-provider";
+/// ACP adapter spawned by the provider for each coding session.
+const PROVIDER_AGENT_BINARY: &str = "claude-agent-acp";
 
 /// First restart delay. Doubles per consecutive failure.
 pub(crate) const BASE_RESTART_DELAY: Duration = Duration::from_secs(2);
@@ -88,6 +90,10 @@ pub(crate) fn plan_restart(failures_in_window: u32, window_elapsed: Duration) ->
 /// Tauri-managed handle to the running supervisor, if any.
 #[derive(Default)]
 pub struct CodingSessionProviderState {
+    /// Serializes start/stop decisions around the separately locked handle.
+    /// Without this gate, two concurrent `ensure_running` calls can both see
+    /// an empty handle, spawn a child, and then overwrite each other's slot.
+    lifecycle: Mutex<()>,
     inner: Mutex<Option<SupervisorHandle>>,
     next_id: AtomicU64,
 }
@@ -188,6 +194,10 @@ pub(crate) fn ensure_running(
     state: &CodingSessionProviderState,
     relay_url: &str,
 ) -> Result<bool, String> {
+    let _lifecycle_guard = state
+        .lifecycle
+        .lock()
+        .map_err(|_| "coding-session provider lifecycle lock is poisoned".to_string())?;
     let store = load_provider_store(app)?;
     let Some(record) = store.get(relay_url) else {
         return Ok(false);
@@ -206,7 +216,7 @@ pub(crate) fn ensure_running(
     if let Err(error) = trust::seed_provider_trust(app, &record.provider_pubkey) {
         eprintln!("buzz-desktop: session-provider: failed to seed bridge trust: {error}");
     }
-    stop_provider(state);
+    stop_provider_locked(state);
     start_supervisor(app, state, record.clone(), relay_url.to_string())?;
     Ok(true)
 }
@@ -487,6 +497,7 @@ fn spawn_provider_child(
         record,
         relay_url,
         state_dir,
+        agent_command: resolve_command(PROVIDER_AGENT_BINARY),
         claude_code_executable: resolve_claude_code_executable(),
     });
     for (key, value) in env {
@@ -525,6 +536,15 @@ fn resolve_claude_code_executable() -> Option<PathBuf> {
 
 /// Stop the supervisor and its child. Safe to call when nothing is running.
 pub(crate) fn stop_provider(state: &CodingSessionProviderState) {
+    let _lifecycle_guard = state
+        .lifecycle
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    stop_provider_locked(state);
+}
+
+/// Stop while the caller owns `CodingSessionProviderState::lifecycle`.
+fn stop_provider_locked(state: &CodingSessionProviderState) {
     if let Some(pid) = state.request_stop() {
         terminate_gracefully_blocking(pid);
     }

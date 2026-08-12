@@ -21,6 +21,11 @@ use crate::session_provider::supervisor::{
 use crate::session_provider::trust;
 use crate::util::now_iso;
 
+/// Serialize the load-mint-save sequence. React development mode may issue the
+/// provisioning command twice while checking effect cleanup; without a lock,
+/// both calls can observe an empty store and mint competing identities.
+static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Number of hex characters of the provider pubkey used as the instance id.
 ///
 /// Must match `buzz_session_provider::config::INSTANCE_ID_PUBKEY_PREFIX_LEN`:
@@ -53,6 +58,9 @@ pub async fn provision_coding_session_provider(
     state: State<'_, AppState>,
     provider: State<'_, CodingSessionProviderState>,
 ) -> Result<CodingSessionProviderStatus, String> {
+    let _provision_guard = PROVISION_LOCK
+        .lock()
+        .map_err(|_| "coding-session provider provisioning lock is poisoned".to_string())?;
     let relay_url = relay_ws_url_with_override(&state);
     let mut store = load_provider_store(&app)?;
     if store.get(&relay_url).is_none() {

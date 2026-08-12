@@ -129,6 +129,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         record,
         relay_url: RELAY,
         state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
     })
 }
@@ -159,6 +160,10 @@ fn env_carries_the_required_provider_contract() {
     assert_eq!(
         env.get("BUZZ_CSP_INSTANCE_ID").map(String::as_str),
         Some(record.instance_id.as_str())
+    );
+    assert_eq!(
+        env.get("BUZZ_CSP_AGENT_COMMAND").map(String::as_str),
+        Some("/opt/buzz/bin/claude-agent-acp")
     );
     assert_eq!(
         env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),

@@ -26,6 +26,7 @@ nostr = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Serialization
 serde = { workspace = true }

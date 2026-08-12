@@ -102,22 +102,16 @@ export function NewCodingSessionScreen({
     // No catalog for this channel yet. That is the ordinary state before the
     // provider has ever been added to it, not an error — offer this computer's
     // own provider so the first session is possible at all.
-    if (!providerStatus?.providerPubkey || !providerStatus.instanceId) {
+    if (!providerStatus?.providerPubkey) {
       return [];
     }
     return [
       localCodingSessionProviderTarget({
         channelId,
         providerPubkey: providerStatus.providerPubkey,
-        instanceId: providerStatus.instanceId,
       }),
     ];
-  }, [
-    catalogTargets,
-    channelId,
-    providerStatus?.instanceId,
-    providerStatus?.providerPubkey,
-  ]);
+  }, [catalogTargets, channelId, providerStatus?.providerPubkey]);
 
   const [targetSelection, setTargetSelection] = React.useState<{
     key: string | null;
@@ -317,10 +311,10 @@ export function NewCodingSessionScreen({
           </p>
         ) : null}
 
-        {targets.length === 0 && channelId !== null ? (
+        {targets.length === 0 && channelId !== null && hostPhase === "idle" ? (
           <p className="text-sm text-muted-foreground">
-            No coding-session provider is available yet. Buzz will set this
-            computer's provider up on the first session it creates.
+            No coding-session provider is available. Reopen this screen to retry
+            setting up this computer's provider.
           </p>
         ) : null}
 

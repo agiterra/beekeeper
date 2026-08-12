@@ -32,6 +32,9 @@ pub(crate) struct ProviderEnvInputs<'a> {
     pub relay_url: &'a str,
     /// `BUZZ_CSP_STATE_DIR`.
     pub state_dir: &'a Path,
+    /// Resolved ACP adapter executable. The managed Node tools directory is not
+    /// guaranteed to be on the desktop process's inherited PATH.
+    pub agent_command: Option<PathBuf>,
     /// Resolved Claude Code CLI, exported as `CLAUDE_CODE_EXECUTABLE` so the
     /// ACP adapter the provider spawns per session finds the same binary
     /// managed agents use. `None` leaves the adapter's own PATH lookup in
@@ -41,11 +44,10 @@ pub(crate) struct ProviderEnvInputs<'a> {
 
 /// Build the child's Buzz-owned environment.
 ///
-/// Only variables the host is authoritative for are set. Everything the
-/// provider defaults sensibly (`BUZZ_CSP_AGENT_COMMAND`, model list, caps,
-/// timeouts) is deliberately left unset so the provider's own defaults stay
-/// the single source of truth — a host that echoed them would silently pin
-/// stale values across upgrades.
+/// Only variables the host is authoritative for are set. The ACP command is
+/// included only after the desktop resolves the provider's default binary to
+/// an installed path; model lists, caps, and timeouts remain provider-owned so
+/// the host cannot silently pin stale defaults across upgrades.
 pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert(
@@ -75,6 +77,12 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
         "BUZZ_CSP_INSTANCE_ID".to_string(),
         inputs.record.instance_id.clone(),
     );
+    if let Some(agent_command) = &inputs.agent_command {
+        env.insert(
+            "BUZZ_CSP_AGENT_COMMAND".to_string(),
+            agent_command.to_string_lossy().into_owned(),
+        );
+    }
     env.insert("RUST_LOG".to_string(), DEFAULT_RUST_LOG.to_string());
     if let Some(cli) = &inputs.claude_code_executable {
         env.insert(
