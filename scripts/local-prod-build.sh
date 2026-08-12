@@ -74,11 +74,17 @@ pnpm install
 
 APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Buzz.app"
 
-# ── verify ───────────────────────────────────────────────────────────────────
+# ── seal + verify ────────────────────────────────────────────────────────────
 [[ -d "$APP" ]] || { echo "bundle missing: $APP" >&2; exit 1; }
 [[ -x "$APP/Contents/MacOS/buzz-session-provider" ]] \
   || { echo "buzz-session-provider missing from bundle" >&2; exit 1; }
-codesign --verify "$APP" || { echo "ad-hoc signature verification failed" >&2; exit 1; }
+# Tauri leaves the bundle unsigned (only per-binary linker ad-hoc signatures,
+# no CodeResources seal). Ad-hoc sign the whole bundle so it verifies as a
+# unit; the signature still changes every build, hence the per-update keychain
+# prompt.
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP" \
+  || { echo "bundle signature verification failed" >&2; exit 1; }
 echo "==> bundle OK: $APP"
 
 # ── install ──────────────────────────────────────────────────────────────────
