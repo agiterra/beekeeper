@@ -83,6 +83,21 @@ host; the forge is additive infrastructure.
 
 ## Deploying
 
-Build the relay image from an `integrated` build tag (image tag = build tag)
-via the agincus in-container build loop; see the ops runbook. Desktop dev runs
-`just desktop-standalone` from `integrated`.
+The relay deploys itself: `buzz-autodeploy.timer` on the agincus host polls
+Woodpecker every 5 minutes, and when the newest `integrated` push pipeline is
+green it exports the source from the forge git mirror at that commit, builds
+`buzz-relay:<short-sha>` inside the `buzz` instance, takes a `pg_dump` backup
+(`/opt/buzz/backup-pre-*.sql.gz`), flips `BUZZ_IMAGE` in
+`/opt/buzz/compose/.env`, and restarts with compose health-wait. An unhealthy
+relay rolls back to the previous image automatically. Red pipelines never
+deploy; a failed attempt leaves `/opt/buzz/autodeploy-failed-<short-sha>` in
+the instance so it will not rebuild in a loop (remove the marker to retry).
+
+Paper trail: `journalctl -u buzz-autodeploy` on the host,
+`/opt/buzz/deploy.log` and `/opt/buzz/build-<short-sha>.log` in the instance.
+The deployer itself lives at `/usr/local/sbin/buzz-autodeploy` on the host —
+CI has no credentials for (or access to) the prod instance; the deployer only
+pulls from Woodpecker's status DB and the read-only mirror.
+
+`build/*` tags remain the pins for reproducing or manually rolling to a known
+build. Desktop dev runs `just desktop-standalone` from `integrated`.
