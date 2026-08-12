@@ -51,7 +51,7 @@ import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
 import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
-
+import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
 import {
   linkedRepoCloneUrl,
@@ -200,10 +200,18 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     ...(reposByProject.get(project.id) ?? []),
     ...(isGeneral ? unclaimedRepos : []),
   ];
-  const streamChannels = [
-    ...(channelBuckets.channelsByProject.get(project.id) ?? []),
-    ...(isGeneral ? channelBuckets.globalChannels : []),
+  const codingSessions = [
+    ...(sessionBuckets.byProject.get(project.id) ?? []),
+    ...(isGeneral ? sessionBuckets.unclaimed : []),
   ];
+  const streamChannels = withoutProjectSessionTransportChannels({
+    projectName: project.name,
+    channels: [
+      ...(channelBuckets.channelsByProject.get(project.id) ?? []),
+      ...(isGeneral ? channelBuckets.globalChannels : []),
+    ],
+    codingSessions,
+  });
   const forums = [
     ...(channelBuckets.forumsByProject.get(project.id) ?? []),
     ...(isGeneral ? channelBuckets.unclaimedForums : []),
@@ -215,11 +223,6 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
       ]
     : [];
   const agents = projectAgentRows(project, personasById, managedAgentsByPubkey);
-  const codingSessions = [
-    ...(sessionBuckets.byProject.get(project.id) ?? []),
-    ...(isGeneral ? sessionBuckets.unclaimed : []),
-  ];
-
   const actionIconButton = (
     label: string,
     testid: string,

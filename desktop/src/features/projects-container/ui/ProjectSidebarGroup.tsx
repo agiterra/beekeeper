@@ -45,6 +45,7 @@ import {
   projectChildKey,
   type ProjectAgentRow,
 } from "../lib/projectChildren";
+import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
 import { ProjectChildRowItem } from "./ProjectChildRowItem";
 
 /**
@@ -154,20 +155,29 @@ export function ProjectSidebarGroup({
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
+  const visibleStreamChannels = React.useMemo(
+    () =>
+      withoutProjectSessionTransportChannels({
+        projectName: project.name,
+        channels: streamChannels,
+        codingSessions: codingSessions ?? [],
+      }),
+    [codingSessions, project.name, streamChannels],
+  );
 
   const hasUnread = React.useMemo(
     () =>
-      [...streamChannels, ...forumChannels].some((channel) =>
+      [...visibleStreamChannels, ...forumChannels].some((channel) =>
         unreadChannelIds.has(channel.id),
       ),
-    [streamChannels, forumChannels, unreadChannelIds],
+    [visibleStreamChannels, forumChannels, unreadChannelIds],
   );
 
   const markAllRead = React.useCallback(() => {
-    for (const channel of [...streamChannels, ...forumChannels]) {
+    for (const channel of [...visibleStreamChannels, ...forumChannels]) {
       onMarkChannelRead(channel.id, channel.lastMessageAt);
     }
-  }, [streamChannels, forumChannels, onMarkChannelRead]);
+  }, [visibleStreamChannels, forumChannels, onMarkChannelRead]);
 
   const children = React.useMemo(
     () =>
@@ -176,7 +186,7 @@ export function ProjectSidebarGroup({
           0,
           PROJECT_SIDEBAR_SESSION_LIMIT,
         ),
-        streamChannels,
+        streamChannels: visibleStreamChannels,
         forumChannels,
         repos,
         workflows: workflows ?? [],
@@ -186,7 +196,7 @@ export function ProjectSidebarGroup({
       }),
     [
       codingSessions,
-      streamChannels,
+      visibleStreamChannels,
       forumChannels,
       repos,
       workflows,

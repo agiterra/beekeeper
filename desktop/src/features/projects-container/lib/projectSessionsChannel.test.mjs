@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   projectSessionActivityByChannel,
+  projectSessionsChannelDescription,
   projectSessionsChannelName,
   resolveProjectSessionsChannel,
+  withoutProjectSessionTransportChannels,
 } from "./projectSessionsChannel.ts";
 
 test("the canonical name is the project name plus 'sessions'", () => {
@@ -14,6 +16,82 @@ test("the canonical name is the project name plus 'sessions'", () => {
     "spaced out sessions",
   );
   assert.equal(projectSessionsChannelName("   "), "sessions");
+});
+
+test("the canonical description identifies a generated session transport", () => {
+  assert.equal(
+    projectSessionsChannelDescription("  Buzz   Glue "),
+    "Coding sessions for Buzz Glue.",
+  );
+  assert.equal(projectSessionsChannelDescription("   "), "Coding sessions.");
+});
+
+test("a dedicated transport disappears once its session row can replace it", () => {
+  const channels = [
+    {
+      id: "sessions",
+      name: "Buzz Glue sessions",
+      description: "Coding sessions for Buzz Glue.",
+    },
+    { id: "general", name: "general", description: "Team chat" },
+  ];
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels,
+      codingSessions: [{ channelId: "sessions" }],
+    }),
+    [channels[1]],
+  );
+});
+
+test("a generated transport remains visible until a session row exists", () => {
+  const channels = [
+    {
+      id: "sessions",
+      name: "Buzz Glue sessions",
+      description: "Coding sessions for Buzz Glue.",
+    },
+  ];
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels,
+      codingSessions: [],
+    }),
+    channels,
+  );
+});
+
+test("an ordinary chat channel stays visible when it also hosts a session", () => {
+  const channels = [
+    { id: "general", name: "general", description: "Team chat" },
+  ];
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels,
+      codingSessions: [{ channelId: "general" }],
+    }),
+    channels,
+  );
+});
+
+test("the generated description still identifies a renamed transport", () => {
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels: [
+        {
+          id: "sessions",
+          name: "agent work",
+          description: "Coding sessions for Buzz Glue.",
+        },
+      ],
+      codingSessions: [{ channelId: "sessions" }],
+    }),
+    [],
+  );
 });
 
 test("the named channel wins regardless of case and spacing", () => {

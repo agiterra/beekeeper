@@ -26,6 +26,7 @@ import {
 } from "../lib/projectContainerModel";
 import {
   projectSessionActivityByChannel,
+  projectSessionsChannelDescription,
   projectSessionsChannelName,
   resolveProjectSessionsChannel,
 } from "../lib/projectSessionsChannel";
@@ -109,7 +110,7 @@ export function ProjectNewCodingSessionScreen({
       // strict-membership anyway — an open channel would advertise it to the
       // whole community without making it any more readable.
       visibility: "private",
-      description: `Coding sessions for ${target.name}.`,
+      description: projectSessionsChannelDescription(target.name),
       projectRef: target.address,
     });
     if (target.owner === (selfPubkey ?? "")) {

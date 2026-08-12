@@ -30,6 +30,12 @@ export function projectSessionsChannelName(projectName: string): string {
   return base.length > 0 ? `${base} sessions` : "sessions";
 }
 
+/** Description stamped on a channel created solely to carry session events. */
+export function projectSessionsChannelDescription(projectName: string): string {
+  const base = collapseWhitespace(projectName);
+  return base.length > 0 ? `Coding sessions for ${base}.` : "Coding sessions.";
+}
+
 function collapseWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -40,6 +46,44 @@ function namesMatch(left: string, right: string): boolean {
   return (
     collapseWhitespace(left).toLocaleLowerCase() ===
     collapseWhitespace(right).toLocaleLowerCase()
+  );
+}
+
+type ProjectSessionTransportCandidate = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+/**
+ * Remove a project's dedicated session transport once a real session row can
+ * represent it.
+ *
+ * Project-scoped creates publish an ordinary stream channel because 442xx
+ * events are `h`-scoped. Showing that implementation channel beside the
+ * session gives two plausible doors: one opens the workspace and the other an
+ * empty chat timeline. Only a canonical generated name or description is
+ * hidden; an ordinary chat channel hosting a standalone session stays visible.
+ */
+export function withoutProjectSessionTransportChannels<
+  T extends ProjectSessionTransportCandidate,
+>(input: {
+  projectName: string;
+  channels: readonly T[];
+  codingSessions: readonly { channelId: string }[];
+}): T[] {
+  const sessionChannelIds = new Set(
+    input.codingSessions.map((session) => session.channelId),
+  );
+  const canonicalName = projectSessionsChannelName(input.projectName);
+  const canonicalDescription = projectSessionsChannelDescription(
+    input.projectName,
+  );
+  return input.channels.filter(
+    (channel) =>
+      !sessionChannelIds.has(channel.id) ||
+      (!namesMatch(channel.name, canonicalName) &&
+        channel.description?.trim() !== canonicalDescription),
   );
 }
 
