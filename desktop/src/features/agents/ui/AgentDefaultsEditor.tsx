@@ -19,7 +19,11 @@ import {
 } from "@/shared/api/tauriGlobalAgentConfig";
 import type { GlobalAgentConfig } from "@/shared/api/types";
 import { getBakedBuildEnv, type BakedEnvEntry } from "@/shared/api/tauri";
-import { globalAgentConfigQueryKey } from "@/features/agents/useGlobalAgentConfig";
+import {
+  globalAgentConfigQueryKey,
+  publishSavedGlobalAgentConfig,
+} from "@/features/agents/useGlobalAgentConfig";
+import { CodingSessionTrustFields } from "@/features/coding-sessions/ui/CodingSessionTrustFields";
 import {
   useAcpRuntimesQuery,
   useRuntimeFileConfigQuery,
@@ -63,6 +67,16 @@ type AgentDefaultsEditorProps = {
   onSaveSuccess?: (result: GlobalAgentConfigSaveResult) => void;
   onSavingChange?: (saving: boolean) => void;
   secondaryAction?: React.ReactNode;
+  /**
+   * Render the coding-session provider allowlist alongside the defaults.
+   *
+   * Off by default: the mid-flow dialogs that reuse this editor are about the
+   * agent being created, and a trust decision does not belong in that moment.
+   * It rides on this editor rather than owning a card of its own because a save
+   * writes the WHOLE global config — two independent editors of one document
+   * would let the second save silently revert the first.
+   */
+  showCodingSessionTrust?: boolean;
 };
 
 export function AgentDefaultsEditor({
@@ -71,6 +85,7 @@ export function AgentDefaultsEditor({
   onSaveSuccess,
   onSavingChange,
   secondaryAction,
+  showCodingSessionTrust = false,
 }: AgentDefaultsEditorProps) {
   const flatLayout = layout === "flat";
   const shouldReduceMotion = useReducedMotion();
@@ -85,6 +100,7 @@ export function AgentDefaultsEditor({
   const [isLoading, setIsLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState(false);
   const [configIsValid, setConfigIsValid] = React.useState(true);
+  const [trustIsValid, setTrustIsValid] = React.useState(true);
   const [isCustomProvider, setIsCustomProvider] = React.useState(false);
   const [isCustomModelEditing, setIsCustomModelEditing] = React.useState(false);
   const savedTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
@@ -219,8 +235,10 @@ export function AgentDefaultsEditor({
       setSaveState("saved");
       // Seed the shared TanStack Query cache with the canonical saved value so
       // all open dialogs (and any that open afterward) see the new config
-      // synchronously — no second IPC round-trip needed.
-      queryClient.setQueryData(globalAgentConfigQueryKey, result.config);
+      // synchronously — no second IPC round-trip needed — and invalidate it so
+      // the fail-closed coding-session trust readers reconcile with the file
+      // rather than with this render's snapshot of it.
+      publishSavedGlobalAgentConfig(queryClient, result.config);
       if (savedCurrentDraft) onSaveSuccess?.(result);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
       // Partial restart failures require an explicit acknowledgment in the
@@ -313,6 +331,19 @@ export function AgentDefaultsEditor({
           ) : (
             configFields
           )}
+          {showCodingSessionTrust ? (
+            <CodingSessionTrustFields
+              disabled={saveState === "saving"}
+              entries={config["allowed-bridge-pubkeys"]}
+              onChange={(next) =>
+                handleConfigChange({
+                  ...configRef.current,
+                  "allowed-bridge-pubkeys": next,
+                })
+              }
+              onValidityChange={setTrustIsValid}
+            />
+          ) : null}
         </>
       )}
 
@@ -341,6 +372,7 @@ export function AgentDefaultsEditor({
               disabled={
                 !dirty ||
                 !configIsValid ||
+                !trustIsValid ||
                 selectedRuntime === undefined ||
                 saveState === "saving"
               }
