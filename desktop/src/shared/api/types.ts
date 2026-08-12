@@ -996,12 +996,10 @@ export type ChannelMessagesPageResponse = {
 // ── Global agent configuration ────────────────────────────────────────────────
 
 /**
- * Global agent configuration defaults applied to ALL agents.
- *
- * Lowest user-settable layer — per-agent and persona values win on any key
- * collision. Mirrors the Rust `GlobalAgentConfig` struct.
- *
- * Precedence: baked floor < global < persona < per-agent.
+ * Global agent configuration defaults applied to ALL agents. Mirrors the Rust
+ * `GlobalAgentConfig` struct. Precedence: baked floor < global < persona <
+ * per-agent — the lowest user-settable layer, so per-agent and persona values
+ * win any key collision.
  */
 export type GlobalAgentConfig = {
   /** Global env vars injected into all agents unconditionally. */
@@ -1012,6 +1010,8 @@ export type GlobalAgentConfig = {
   model: string | null;
   /** Preferred ACP runtime for agents without a persona-specific runtime. */
   preferred_runtime: string | null;
+  /** Signers whose coding-session events this client admits; empty = none. */
+  "allowed-bridge-pubkeys": Array<{ pubkey: string; label: string }>;
 };
 
 /**

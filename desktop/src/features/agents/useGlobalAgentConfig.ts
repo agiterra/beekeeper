@@ -19,6 +19,8 @@ const EMPTY_CONFIG: GlobalAgentConfig = {
   provider: null,
   model: null,
   preferred_runtime: null,
+  // Fail-closed: with no persisted config, no signer is trusted.
+  "allowed-bridge-pubkeys": [],
 };
 
 export const globalAgentConfigQueryKey = ["globalAgentConfig"] as const;

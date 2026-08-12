@@ -69,6 +69,7 @@ export const EMPTY_GLOBAL_CONFIG: GlobalAgentConfig = {
   provider: null,
   model: null,
   preferred_runtime: null,
+  "allowed-bridge-pubkeys": [],
 };
 
 const BAKED_STRUCTURED_KEYS = new Set([

@@ -1,0 +1,620 @@
+/**
+ * Per-kind mapping: one decoded transcript item -> one `TranscriptItem`.
+ *
+ * Split out of `codingSessionTranscriptProjection.ts`, which owns the envelope
+ * layer (identity, turn presentation, tool pairing) and calls into these.
+ * Every builder is TOTAL and bounded: it reads defensively, never assumes a
+ * field is present or well-typed, and never throws.
+ */
+
+import { normalizeToolNameText } from "@/features/agents/ui/agentSessionToolCatalog";
+import { classifyTool } from "@/features/agents/ui/agentSessionToolClassifier";
+import type {
+  ToolStatus,
+  TranscriptItem,
+} from "@/features/agents/ui/agentSessionTypes";
+import {
+  boundEntries,
+  capArray,
+  isPrimitive,
+  isQuarantineItem,
+  isRecord,
+  MAX_METADATA_ARRAY_ITEM_LENGTH,
+  MAX_METADATA_ARRAY_ITEMS,
+  MAX_METADATA_FIELD_LENGTH,
+  normalizeToolResultContent,
+  safeString,
+  safeStringArray,
+  stringifyToolResultContent,
+} from "./codingSessionDefensive";
+import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
+
+/** Display identity for the signer whose events these are. */
+export type CodingSessionBridgeSource = { pubkey: string; label: string };
+
+/** Everything a builder needs that does not come from the item itself. */
+export type CodingSessionItemIdentity = {
+  id: string;
+  sessionId: string;
+  targetKey: string;
+  channelId: string | null;
+  timestamp: string;
+  turnId?: string;
+  hasDeclaredTurn?: boolean;
+  declaredTurnId?: string;
+  acpSource?: string;
+  bridgeSource?: CodingSessionBridgeSource | null;
+};
+
+/** Stamp the signer's display identity onto a finished item. */
+export function finalizeCodingSessionItem(
+  item: TranscriptItem,
+  ctx: Identity,
+): TranscriptItem {
+  return ctx.bridgeSource ? { ...item, bridgeSource: ctx.bridgeSource } : item;
+}
+
+type Identity = CodingSessionItemIdentity;
+
+export function buildBaseTranscriptItem(
+  item: unknown,
+  ctx: Identity,
+): TranscriptItem {
+  if (isQuarantineItem(item)) {
+    return buildQuarantineStatusItem(item, ctx);
+  }
+
+  if (!isRecord(item) || typeof item.kind !== "string") {
+    return buildStatusItem(ctx, "Unrecognized transcript item", [
+      "Received a transcript item with no recognized `kind` field. No content is surfaced.",
+    ]);
+  }
+
+  switch (item.kind) {
+    case "user_prompt":
+      return buildUserPromptMessage(item, ctx);
+    case "assistant_text":
+      return buildAssistantTextMessage(item, ctx);
+    case "tool_call":
+      return (
+        buildPlanFromExitPlanModeToolCall(item, ctx) ??
+        buildToolCallItem(item, ctx)
+      );
+    case "tool_result":
+      return buildToolResultItem(item, ctx);
+    case "result":
+      return buildResultLifecycleItem(item, ctx);
+    case "status":
+      return buildStatusLifecycleItem(item, ctx);
+    case "system_init":
+      return buildSystemInitStatusItem(item, ctx);
+    case "account_info":
+      return buildAccountInfoStatusItem(item, ctx);
+    case "context_window_updated":
+      return buildContextWindowStatusItem(item, ctx);
+    case "compact_boundary":
+      return buildSimpleLifecycleItem(ctx, "Context compact boundary", "");
+    case "compact_summary":
+      return buildSimpleLifecycleItem(
+        ctx,
+        "Context compacted",
+        typeof item.summary === "string" ? item.summary : "",
+      );
+    case "context_cleared":
+      return buildSimpleLifecycleItem(ctx, "Context cleared", "");
+    case "interrupted":
+      return buildSimpleLifecycleItem(ctx, "Interrupted", "");
+    case "plan":
+      return buildPlanItem(item, ctx);
+    case "elided":
+      return buildElidedStatusItem(item, ctx);
+    case "reasoning":
+      return buildReasoningItem(item, ctx);
+    default:
+      return buildStatusItem(
+        ctx,
+        `Unrecognized item kind: ${safeString(item.kind, 80)}`,
+        [
+          `kind="${safeString(item.kind, 80)}" is not a recognized coding-session item kind. No payload content is surfaced.`,
+        ],
+      );
+  }
+}
+
+function buildUserPromptMessage(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const content = typeof item.content === "string" ? item.content : "";
+  const suffixes: string[] = [];
+  if (typeof item.attachmentCount === "number" && item.attachmentCount > 0) {
+    suffixes.push(
+      `${item.attachmentCount} attachment${item.attachmentCount === 1 ? "" : "s"}`,
+    );
+  }
+  const text =
+    suffixes.length > 0 ? `${content}\n\n(${suffixes.join(", ")})` : content;
+
+  return {
+    id: ctx.id,
+    type: "message",
+    renderClass: "message",
+    role: "user",
+    title: item.steered === true ? "Steered prompt" : "Prompt",
+    text,
+    timestamp: ctx.timestamp,
+    messageId: typeof item.messageId === "string" ? item.messageId : undefined,
+    turnId: ctx.turnId,
+    acpSource: ctx.acpSource,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+function buildAssistantTextMessage(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  return {
+    id: ctx.id,
+    type: "message",
+    renderClass: "message",
+    role: "assistant",
+    title: "Response",
+    text: typeof item.text === "string" ? item.text : "",
+    timestamp: ctx.timestamp,
+    messageId: typeof item.messageId === "string" ? item.messageId : undefined,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+export function buildToolCallItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const tool = isRecord(item.tool) ? item.tool : {};
+  const toolName =
+    typeof tool.toolName === "string" && tool.toolName.length > 0
+      ? safeString(tool.toolName, MAX_METADATA_FIELD_LENGTH)
+      : "unknown_tool";
+  const args = isRecord(tool.input) ? tool.input : {};
+  const descriptor = classifyTool({
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    args,
+    result: "",
+    isError: false,
+  });
+
+  return {
+    id: ctx.id,
+    type: "tool",
+    renderClass: descriptor.renderClass,
+    descriptor,
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    status: "executing" satisfies ToolStatus,
+    args,
+    result: "",
+    isError: false,
+    timestamp: ctx.timestamp,
+    startedAt: ctx.timestamp,
+    completedAt: null,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+export function buildToolResultItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const toolId =
+    typeof item.toolId === "string" && item.toolId.length > 0
+      ? safeString(item.toolId, MAX_METADATA_FIELD_LENGTH)
+      : "unknown-tool";
+  const toolName =
+    typeof item.toolName === "string" && item.toolName.length > 0
+      ? safeString(item.toolName, MAX_METADATA_FIELD_LENGTH)
+      : toolId;
+  const args = isRecord(item.input) ? item.input : {};
+  const isError = item.isError === true;
+  const result = stringifyToolResultContent(
+    normalizeToolResultContent(item.content, args),
+  );
+  const descriptor = classifyTool({
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    args,
+    result,
+    isError,
+  });
+
+  return {
+    id: ctx.id,
+    type: "tool",
+    renderClass: descriptor.renderClass,
+    descriptor,
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    status: (isError ? "failed" : "completed") satisfies ToolStatus,
+    args,
+    result,
+    isError,
+    timestamp: ctx.timestamp,
+    startedAt: ctx.timestamp,
+    completedAt: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+export function buildPairedToolResultItem(
+  callItem: Record<string, unknown>,
+  callCtx: Identity,
+  resultItem: Record<string, unknown>,
+  resultCtx: Identity,
+): TranscriptItem {
+  const callTool = isRecord(callItem.tool) ? callItem.tool : {};
+  const toolName =
+    typeof callTool.toolName === "string" && callTool.toolName.length > 0
+      ? safeString(callTool.toolName, MAX_METADATA_FIELD_LENGTH)
+      : "unknown_tool";
+  const args = isRecord(callTool.input) ? callTool.input : {};
+  const isError = resultItem.isError === true;
+  const result = stringifyToolResultContent(
+    normalizeToolResultContent(resultItem.content, args),
+  );
+  const descriptor = classifyTool({
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    args,
+    result,
+    isError,
+  });
+
+  return {
+    id: callCtx.id,
+    type: "tool",
+    renderClass: descriptor.renderClass,
+    descriptor,
+    title: toolName,
+    toolName,
+    buzzToolName: null,
+    status: (isError ? "failed" : "completed") satisfies ToolStatus,
+    args,
+    result,
+    isError,
+    timestamp: callCtx.timestamp,
+    startedAt: callCtx.timestamp,
+    completedAt: resultCtx.timestamp,
+    turnId: callCtx.turnId,
+    sessionId: callCtx.sessionId,
+    channelId: callCtx.channelId,
+  };
+}
+
+export function buildPlanFromExitPlanModeToolCall(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem | null {
+  const tool = isRecord(item.tool) ? item.tool : {};
+  const toolName = typeof tool.toolName === "string" ? tool.toolName : "";
+  if (normalizeToolNameText(toolName) !== "exit_plan_mode") {
+    return null;
+  }
+  const input = isRecord(tool.input) ? tool.input : {};
+  const text =
+    typeof input.plan === "string"
+      ? input.plan
+      : typeof input.text === "string"
+        ? input.text
+        : null;
+  if (text === null) {
+    return null;
+  }
+  return {
+    id: ctx.id,
+    type: "plan",
+    renderClass: "plan",
+    title: "Plan proposal",
+    text,
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+/**
+ * A first-class `plan` item: a replacement snapshot of the agent's plan.
+ *
+ * `text` is the producer's rendered markdown checklist and is what the task
+ * rail parses, so it is preferred verbatim. When it is missing the checklist
+ * is re-rendered from `entries` in the same format rather than leaving an
+ * empty plan card behind.
+ */
+function buildPlanItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const declared = typeof item.text === "string" ? item.text : "";
+  const text =
+    declared.trim().length > 0 ? declared : renderPlanChecklist(item.entries);
+  return {
+    id: ctx.id,
+    type: "plan",
+    renderClass: "plan",
+    title: "Plan",
+    text,
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+function renderPlanChecklist(entries: unknown): string {
+  if (!Array.isArray(entries)) {
+    return "";
+  }
+  return capArray(
+    entries.filter(isRecord).flatMap((entry) => {
+      const content =
+        typeof entry.content === "string"
+          ? safeString(entry.content, MAX_METADATA_FIELD_LENGTH)
+          : "";
+      if (content.length === 0) {
+        return [];
+      }
+      const status = typeof entry.status === "string" ? entry.status : "";
+      const checkbox = status === "completed" ? "[x]" : "[ ]";
+      const suffix = status === "in_progress" ? " (in progress)" : "";
+      return [`- ${checkbox} ${content}${suffix}`];
+    }),
+    MAX_METADATA_ARRAY_ITEMS,
+    (overflowCount) => `- [ ] … (+${overflowCount} more)`,
+  ).join("\n");
+}
+
+/**
+ * An item the producer had to drop whole because it would not fit the
+ * envelope cap. Surfaced as a visible placeholder — the reader must be able
+ * to see that something existed here, and how much of it.
+ */
+function buildElidedStatusItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  return buildStatusItem(ctx, "Content elided", [
+    `reason: ${safeString(item.reason ?? "unknown", 80)}`,
+    `byteCount: ${typeof item.byteCount === "number" ? item.byteCount : "unknown"}`,
+    `contentDigest: ${safeString(item.contentDigest ?? "unknown", 120)}`,
+  ]);
+}
+
+/**
+ * The agent's chain of reasoning.
+ *
+ * The donor contract forbade this outright; this fork admits it deliberately
+ * (the producer emits it by default) because reasoning is one of the things
+ * sessions are stored to analyse. It lands in the transcript's `thought` lane
+ * rather than the message lane, so the renderer decides how prominent it is
+ * without the adapter having to drop the content.
+ */
+function buildReasoningItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  return {
+    id: ctx.id,
+    type: "thought",
+    renderClass: "thought",
+    title: "Reasoning",
+    text: typeof item.text === "string" ? item.text : "",
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+export function toolIdFromToolCall(
+  item: Record<string, unknown>,
+): string | null {
+  const tool = isRecord(item.tool) ? item.tool : {};
+  return typeof tool.toolId === "string" && tool.toolId.length > 0
+    ? tool.toolId
+    : null;
+}
+
+export function toolIdFromToolResult(
+  item: Record<string, unknown>,
+): string | null {
+  return typeof item.toolId === "string" && item.toolId.length > 0
+    ? item.toolId
+    : null;
+}
+
+function buildResultLifecycleItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const subtype = safeString(
+    typeof item.subtype === "string" ? item.subtype : "unknown",
+    80,
+  );
+  const isError = item.isError === true;
+  const durationMs =
+    typeof item.durationMs === "number" ? item.durationMs : null;
+  const costUsd = typeof item.costUsd === "number" ? item.costUsd : null;
+  const resultText = typeof item.result === "string" ? item.result : "";
+
+  const parts = [resultText];
+  if (durationMs !== null) parts.push(`(${durationMs}ms)`);
+  if (costUsd !== null) parts.push(`($${costUsd.toFixed(4)})`);
+
+  return {
+    id: ctx.id,
+    type: "lifecycle",
+    renderClass: isError ? "error" : "status",
+    title: "Turn result",
+    text: parts.filter((part) => part.length > 0).join(" "),
+    outcome: subtype,
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+function buildStatusLifecycleItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  return buildSimpleLifecycleItem(
+    ctx,
+    "Status",
+    safeString(typeof item.status === "string" ? item.status : "", 200),
+  );
+}
+
+function buildSimpleLifecycleItem(
+  ctx: Identity,
+  title: string,
+  text: string,
+): TranscriptItem {
+  return {
+    id: ctx.id,
+    type: "lifecycle",
+    renderClass: "status",
+    title,
+    text,
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
+}
+
+/**
+ * Bounded informational items — system/account/context/quarantine markers
+ * and the unrecognized-shape fallbacks. Deliberately a `lifecycle`
+ * (renderClass `"status"`) item, NOT `metadata`/`"raw-rail"`: compact
+ * preview treats `raw-rail` as non-renderable
+ * (`AgentSessionTranscriptList.tsx`'s private `isRenderableCompactItem`),
+ * which would silently hide these rows in that view — exactly the "never
+ * dropped" guarantee this adapter must hold. `lifecycle`/`status` is
+ * compact-renderable and still fully bounded/inert.
+ */
+function buildStatusItem(
+  ctx: Identity,
+  title: string,
+  bodyLines: string[],
+): TranscriptItem {
+  return buildSimpleLifecycleItem(
+    ctx,
+    safeString(title, 160),
+    bodyLines.join("\n"),
+  );
+}
+
+function buildSystemInitStatusItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const provider = safeString(
+    typeof item.provider === "string" ? item.provider : "",
+  );
+  const model = safeString(typeof item.model === "string" ? item.model : "");
+  const tools = safeStringArray(item.tools);
+  const agents = safeStringArray(item.agents);
+  const slashCommands = safeStringArray(item.slashCommands);
+  const mcpServerLabels = (
+    Array.isArray(item.mcpServers) ? item.mcpServers : []
+  )
+    .filter(isRecord)
+    .map((server) => {
+      const name = safeString(
+        typeof server.name === "string" ? server.name : "unknown",
+        MAX_METADATA_ARRAY_ITEM_LENGTH,
+      );
+      const status =
+        typeof server.status === "string"
+          ? ` (${safeString(server.status, MAX_METADATA_ARRAY_ITEM_LENGTH)})`
+          : "";
+      return `${name}${status}`;
+    });
+  // capArray does the slicing itself — it must run on the FULL label list
+  // (not a pre-sliced one) so the overflow marker is derived correctly.
+  const mcpServers = capArray(
+    mcpServerLabels,
+    MAX_METADATA_ARRAY_ITEMS,
+    (overflowCount) => `… (+${overflowCount} more)`,
+  );
+
+  return buildStatusItem(ctx, "System Init", [
+    `provider: ${provider}`,
+    `model: ${model}`,
+    `tools: ${tools.join(", ")}`,
+    `agents: ${agents.join(", ")}`,
+    `slashCommands: ${slashCommands.join(", ")}`,
+    `mcpServers: ${mcpServers.join(", ")}`,
+  ]);
+}
+
+function buildAccountInfoStatusItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const record = isRecord(item.accountInfo) ? item.accountInfo : {};
+  const body = boundEntries(record)
+    .filter(([, value]) => isPrimitive(value))
+    .map(([key, value]) => `${safeString(key, 80)}: ${safeString(value, 120)}`);
+
+  return buildStatusItem(ctx, "Account Info", body);
+}
+
+function buildContextWindowStatusItem(
+  item: Record<string, unknown>,
+  ctx: Identity,
+): TranscriptItem {
+  const usage = isRecord(item.usage) ? item.usage : {};
+  const body = boundEntries(usage)
+    .filter(
+      ([, value]) => typeof value === "number" || typeof value === "boolean",
+    )
+    .map(([key, value]) => `${safeString(key, 80)}: ${safeString(value, 120)}`);
+
+  return buildStatusItem(ctx, "Context Window Updated", body);
+}
+
+function buildQuarantineStatusItem(
+  quarantine: CodingSessionQuarantineItemV1,
+  ctx: Identity,
+): TranscriptItem {
+  return buildStatusItem(ctx, "Quarantined transcript event", [
+    `quarantineClass: ${safeString(quarantine.quarantineClass ?? "unknown")}`,
+    `decodeError: ${safeString(quarantine.decodeError ?? "unknown")}`,
+    `sourceKey: ${safeString(quarantine.sourceKey ?? "unknown")}`,
+    `byteCount: ${
+      typeof quarantine.byteCount === "number"
+        ? quarantine.byteCount
+        : "unknown"
+    }`,
+    `contentDigest: ${safeString(quarantine.contentDigest ?? "unknown")}`,
+    `claimedKind: ${safeString(quarantine.claimedKind ?? "null")}`,
+    `claimedEntrySchema: ${safeString(
+      quarantine.claimedEntrySchema ?? "null",
+    )}`,
+  ]);
+}
