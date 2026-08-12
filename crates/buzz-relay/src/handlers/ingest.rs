@@ -5553,6 +5553,31 @@ mod tests {
         );
         assert!(validate_coding_session_command_envelope(&event).is_ok());
 
+        // Interrupt is the other operator action; the Stop button publishes it
+        // natively, so the envelope validator must accept it.
+        let interrupt_content = serde_json::json!({
+            "schema": "buzz-coding-session-command/v1",
+            "commandId": "cmd-2",
+            "target": {
+                "driver": "provider-a",
+                "instanceId": "instance-1",
+                "sessionId": "session-1",
+                "generation": 2,
+            },
+            "action": { "type": "thread.turn.interrupt" },
+        })
+        .to_string();
+        let interrupt = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &interrupt_content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&interrupt).is_ok());
+
         // The tag is what adapters route on, so it must be re-derivable from
         // the content it claims to address.
         let mismatched = make_event_with_tags(

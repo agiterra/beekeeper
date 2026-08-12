@@ -5,18 +5,9 @@
 //! returns *what to do*, never does it. That is what makes the fencing rules —
 //! the parts that must never regress — cheap to test exhaustively.
 //!
-//! # Why a local 44220 decoder
-//!
-//! The donor's turn-command contract has two actions, `thread.turn.start` and
-//! `thread.turn.interrupt`. The ported `buzz_core::coding_session_command`
-//! models only the first. Rather than advertise an interrupt capability this
-//! provider could not honor, the interrupt shape is decoded here, using the same
-//! bounds `buzz-core` publishes. Turn *starts* still go through the shared
-//! strict type, so the wire contract stays owned in one place.
-//!
-//! Note the standing limitation: the relay's 44220 envelope validator decodes
-//! with the same `buzz-core` type, so an interrupt command cannot currently be
-//! *published*. Closing that gap is a `buzz-core` change, not a provider one.
+//! Both 44220 actions (`thread.turn.start`, `thread.turn.interrupt`) decode
+//! through the shared `buzz_core::coding_session_command` type, so the
+//! provider and the relay can never disagree about what is valid.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +17,6 @@ use uuid::Uuid;
 
 use buzz_core::coding_session_command::{
     CodingSessionAction, CodingSessionCommandPayload, CodingSessionTarget,
-    CODING_SESSION_COMMAND_SCHEMA, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
 };
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
@@ -284,67 +274,20 @@ pub enum TurnAction {
     Interrupt,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct InterruptPayload {
-    schema: String,
-    command_id: String,
-    target: CodingSessionTarget,
-    action: InterruptAction,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
-enum InterruptAction {
-    #[serde(rename = "thread.turn.interrupt")]
-    ThreadTurnInterrupt,
-}
-
 /// Strictly decode a 44220 payload of either action.
 pub fn decode_turn_command(content: &str) -> Result<TurnCommand, String> {
-    // Turn starts are the shared contract; decode them with the shared type so
-    // the provider and the relay can never disagree about what is valid.
-    match serde_json::from_str::<CodingSessionCommandPayload>(content) {
-        Ok(payload) => {
-            payload.validate()?;
-            let CodingSessionAction::ThreadTurnStart { text } = payload.action;
-            Ok(TurnCommand {
-                command_id: payload.command_id,
-                target: payload.target,
-                action: TurnAction::Start { text },
-            })
-        }
-        Err(start_error) => {
-            let payload: InterruptPayload = serde_json::from_str(content)
-                .map_err(|_| format!("malformed coding-session command payload: {start_error}"))?;
-            if payload.schema != CODING_SESSION_COMMAND_SCHEMA {
-                return Err("unsupported coding-session command schema".into());
-            }
-            let InterruptAction::ThreadTurnInterrupt = payload.action;
-            validate_identifier(&payload.command_id, "commandId")?;
-            validate_identifier(&payload.target.driver, "target.driver")?;
-            validate_identifier(&payload.target.instance_id, "target.instanceId")?;
-            validate_identifier(&payload.target.session_id, "target.sessionId")?;
-            if payload.target.generation == 0 || payload.target.generation > MAX_SAFE_GENERATION {
-                return Err("target.generation must be a positive safe integer".into());
-            }
-            Ok(TurnCommand {
-                command_id: payload.command_id,
-                target: payload.target,
-                action: TurnAction::Interrupt,
-            })
-        }
-    }
-}
-
-fn validate_identifier(value: &str, field: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        return Err(format!("{field} must not be empty"));
-    }
-    if value.len() > MAX_IDENTIFIER_BYTES {
-        return Err(format!("{field} exceeds {MAX_IDENTIFIER_BYTES} bytes"));
-    }
-    Ok(())
+    let payload: CodingSessionCommandPayload = serde_json::from_str(content)
+        .map_err(|error| format!("malformed coding-session command payload: {error}"))?;
+    payload.validate()?;
+    let action = match payload.action {
+        CodingSessionAction::ThreadTurnStart { text } => TurnAction::Start { text },
+        CodingSessionAction::ThreadTurnInterrupt => TurnAction::Interrupt,
+    };
+    Ok(TurnCommand {
+        command_id: payload.command_id,
+        target: payload.target,
+        action,
+    })
 }
 
 /// Host-local map from session coordinates to working directories.

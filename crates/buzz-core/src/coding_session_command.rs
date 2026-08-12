@@ -41,6 +41,9 @@ pub enum CodingSessionAction {
         /// Operator-entered turn text.
         text: String,
     },
+    /// Cancel the in-flight turn in the selected session generation.
+    #[serde(rename = "thread.turn.interrupt")]
+    ThreadTurnInterrupt,
 }
 
 /// Durable coding-session command JSON payload.
@@ -79,6 +82,7 @@ impl CodingSessionCommandPayload {
                     return Err(format!("action.text exceeds {MAX_TURN_TEXT_BYTES} bytes"));
                 }
             }
+            CodingSessionAction::ThreadTurnInterrupt => {}
         }
         Ok(())
     }
@@ -142,6 +146,29 @@ mod tests {
     }
 
     #[test]
+    fn interrupt_round_trips_the_donor_wire_shape() {
+        let mut payload = valid_payload();
+        payload.action = CodingSessionAction::ThreadTurnInterrupt;
+        assert!(payload.validate().is_ok());
+        let encoded = serde_json::to_string(&payload.action).unwrap_or_default();
+        assert_eq!(encoded, r#"{"type":"thread.turn.interrupt"}"#);
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(
+            r#"{"schema":"buzz-coding-session-command/v1","commandId":"cmd-2","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":1},"action":{"type":"thread.turn.interrupt"}}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.action, CodingSessionAction::ThreadTurnInterrupt);
+        assert!(decoded.validate().is_ok());
+        // Interrupt tolerates extra action fields (serde internally-tagged unit
+        // variant): a newer client annotating its interrupts must not be
+        // rejected by an older relay. Pin that forward-compatibility here.
+        let lenient: CodingSessionCommandPayload = serde_json::from_str(
+            r#"{"schema":"buzz-coding-session-command/v1","commandId":"cmd-2","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":1},"action":{"type":"thread.turn.interrupt","reason":"user"}}"#,
+        )
+        .unwrap();
+        assert_eq!(lenient.action, CodingSessionAction::ThreadTurnInterrupt);
+    }
+
+    #[test]
     fn rejects_invalid_payloads() {
         let mut payload = valid_payload();
         payload.target.generation = 0;
@@ -160,6 +187,7 @@ mod tests {
         assert_eq!(
             match &payload.action {
                 CodingSessionAction::ThreadTurnStart { text } => text.len(),
+                CodingSessionAction::ThreadTurnInterrupt => unreachable!(),
             },
             MAX_TURN_TEXT_BYTES
         );

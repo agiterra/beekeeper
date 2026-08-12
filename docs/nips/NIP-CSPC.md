@@ -35,7 +35,7 @@ Content is exactly this JSON shape:
     {
       "providerInstanceRef": "claude-primary",
       "driver": "claude-agent-acp",
-      "runtime": "claude-code",
+      "runtime": "claude",
       "defaultModel": "claude-sonnet-4-6",
       "allowedModels": ["claude-sonnet-4-6", "claude-opus-4-1"],
       "capabilities": {
