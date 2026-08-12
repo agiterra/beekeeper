@@ -51,12 +51,27 @@ fi
 # ── 2. rebase the feature stack ──────────────────────────────────────────────
 # rerere replays previously-resolved conflicts; a genuinely new conflict stops
 # the script for human resolution (rerun after `git rebase --continue`).
+# A branch already based on its target is skipped outright; a branch checked
+# out in another linked worktree cannot be checked out here, so its rebase
+# runs inside that worktree (requires it to be clean).
 for entry in "${FEATURES[@]}"; do
   branch="${entry%%:*}"
   base="${entry#*:}"; [[ "$base" == "$entry" ]] && base="main"
   old_base=$(git merge-base "$branch" "$base")
-  git checkout "$branch"
-  git rebase --onto "$base" "$old_base" "$branch"
+  if [[ "$old_base" == "$(git rev-parse "$base")" ]]; then
+    echo "== $branch already based on $base — skipping rebase"
+    continue
+  fi
+  holder="$(git worktree list --porcelain \
+    | awk -v b="refs/heads/$branch" '$1=="worktree"{w=$2} $1=="branch"&&$2==b{print w}')"
+  if [[ -n "$holder" && "$holder" != "$ROOT" ]]; then
+    [[ -z "$(git -C "$holder" status --porcelain)" ]] \
+      || { echo "worktree holding $branch is dirty: $holder" >&2; exit 1; }
+    git -C "$holder" rebase --onto "$base" "$old_base" "$branch"
+  else
+    git checkout "$branch"
+    git rebase --onto "$base" "$old_base" "$branch"
+  fi
 done
 
 # ── 3. rebuild integrated ────────────────────────────────────────────────────
