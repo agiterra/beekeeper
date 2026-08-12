@@ -233,10 +233,18 @@ function deriveTurn(
 
   for (const item of turn.items) {
     if (isTurnResult(item)) {
+      // Structured `durationMs`/`costUsd` on the item are authoritative. The
+      // regex parse remains only for already-published events whose builders
+      // baked the metrics into the display text; on a structured item the
+      // text carries no suffixes, so parsing it is a harmless trim.
       const result = parseTurnResult(item.text);
       completion = {
-        durationMs: result.durationMs,
-        costUsd: result.costUsd,
+        durationMs:
+          typeof item.durationMs === "number"
+            ? item.durationMs
+            : result.durationMs,
+        costUsd:
+          typeof item.costUsd === "number" ? item.costUsd : result.costUsd,
         outcome: item.outcome?.trim() || null,
         timestamp: item.timestamp,
         state: isErrorItem(item) ? "failed" : "completed",

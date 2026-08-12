@@ -11,10 +11,11 @@ import { cn } from "@/shared/lib/cn";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { useNewCodingSessionDraft } from "../lib/newCodingSessionDraft";
 import {
+  codingSessionAuthRemediation,
   formatCodingSessionProviderLabel,
   isCodingSessionAuthFailure,
   isCodingSessionWorkdirFailure,
-  localCodingSessionProviderTarget,
+  isNewCodingSessionTargetReady,
   newCodingSessionStatusMessage,
   resolveNewCodingSessionTargets,
   resolveSelectedNewCodingSessionModel,
@@ -72,7 +73,8 @@ export function NewCodingSessionScreen({
     lifecycleErrorMessage,
     lifecycleIsLoading,
     providerStatus,
-    providerModels,
+    providerRuntimes,
+    providerModelsByInstanceRef,
     publishError,
     retryExact,
     startFresh,
@@ -90,37 +92,31 @@ export function NewCodingSessionScreen({
     },
   });
 
-  const catalogTargets = React.useMemo(
+  // Catalog-discovered providers merged with this computer's own runtimes.
+  // Before any catalog exists for the channel — the ordinary state before the
+  // provider has ever been added to it — the local runtimes alone make the
+  // first session possible at all.
+  const targets = React.useMemo<NewCodingSessionTarget[]>(
     () =>
       resolveNewCodingSessionTargets({
         catalogs: providerCatalog.entries,
         channelId,
+        localProvider: providerStatus?.providerPubkey
+          ? {
+              providerPubkey: providerStatus.providerPubkey,
+              runtimes: providerRuntimes,
+              modelsByInstanceRef: providerModelsByInstanceRef,
+            }
+          : null,
       }),
-    [channelId, providerCatalog.entries],
+    [
+      channelId,
+      providerCatalog.entries,
+      providerModelsByInstanceRef,
+      providerRuntimes,
+      providerStatus?.providerPubkey,
+    ],
   );
-  const targets = React.useMemo<NewCodingSessionTarget[]>(() => {
-    if (catalogTargets.length > 0 || !channelId) return catalogTargets;
-    // No catalog for this channel yet. That is the ordinary state before the
-    // provider has ever been added to it, not an error — offer this computer's
-    // own provider so the first session is possible at all.
-    if (!providerStatus?.providerPubkey) {
-      return [];
-    }
-    return [
-      localCodingSessionProviderTarget({
-        channelId,
-        providerPubkey: providerStatus.providerPubkey,
-        defaultModel: providerModels?.defaultModel,
-        allowedModels: providerModels?.allowedModels,
-      }),
-    ];
-  }, [
-    catalogTargets,
-    channelId,
-    providerModels?.allowedModels,
-    providerModels?.defaultModel,
-    providerStatus?.providerPubkey,
-  ]);
 
   const [targetSelection, setTargetSelection] = React.useState<{
     key: string | null;
@@ -152,11 +148,30 @@ export function NewCodingSessionScreen({
 
   const failureCode =
     lifecycle?.state === "failed" ? lifecycle.error.code : undefined;
+  // The runtime whose sign-in a failed receipt is asking for: the one the
+  // published command targeted, falling back to the current selection.
+  const failedRuntime = React.useMemo(() => {
+    const provider =
+      (transaction
+        ? targets.find(
+            (target) =>
+              target.provider.providerInstanceRef ===
+                transaction.input.providerInstanceRef &&
+              target.signerPubkey === transaction.input.providerAuthorityPubkey,
+          )?.provider
+        : null) ?? selectedTarget?.provider;
+    if (!provider) return null;
+    const availability = targets.find(
+      (target) => target.provider === provider,
+    )?.availability;
+    return { runtime: provider.runtime, label: availability?.label };
+  }, [selectedTarget?.provider, targets, transaction]);
   const status = newCodingSessionStatusMessage({
     hostPhase,
     isPublishing,
     publishError: publishError ?? durabilityError,
     lifecycle,
+    authRuntime: failedRuntime,
   });
   const draftBytes = new TextEncoder().encode(draftText).byteLength;
   const draftOverCap =
@@ -166,6 +181,7 @@ export function NewCodingSessionScreen({
     transaction === null &&
     channelId !== null &&
     selectedTarget !== null &&
+    isNewCodingSessionTargetReady(selectedTarget) &&
     !draftOverCap;
 
   const handleSubmit = React.useCallback(() => {
@@ -298,7 +314,9 @@ export function NewCodingSessionScreen({
           ) : null}
         </div>
 
-        {isCodingSessionAuthFailure(failureCode) ? <ClaudeLoginNeeded /> : null}
+        {isCodingSessionAuthFailure(failureCode) ? (
+          <ProviderLoginNeeded runtime={failedRuntime} />
+        ) : null}
 
         {status ? (
           <p
@@ -430,6 +448,17 @@ export function NewCodingSessionProviderPicker({
   targets: readonly NewCodingSessionTarget[];
 }) {
   const models = selectedTarget?.provider.allowedModels ?? [];
+  // One remediation line per unavailable runtime — disabled options say what
+  // is wrong, but an <option> cannot carry a full sentence.
+  const unavailableHints = [
+    ...new Set(
+      targets.flatMap((target) =>
+        !isNewCodingSessionTargetReady(target) && target.availability?.hint
+          ? [target.availability.hint]
+          : [],
+      ),
+    ),
+  ];
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
       <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -450,15 +479,34 @@ export function NewCodingSessionProviderPicker({
           {targets.length === 0 ? (
             <option value="">No provider available</option>
           ) : null}
-          {targets.map((target) => (
-            <option key={target.selectionKey} value={target.selectionKey}>
-              {formatCodingSessionProviderLabel({
-                runtime: target.provider.runtime,
-                providerInstanceRef: target.provider.providerInstanceRef,
-              })}
-            </option>
-          ))}
+          {targets.map((target) => {
+            const label = formatCodingSessionProviderLabel({
+              runtime: target.provider.runtime,
+              providerInstanceRef: target.provider.providerInstanceRef,
+            });
+            const suffix =
+              target.availability?.state === "needs_auth"
+                ? " (sign-in needed)"
+                : target.availability?.state === "missing"
+                  ? " (not installed)"
+                  : "";
+            return (
+              <option
+                disabled={!isNewCodingSessionTargetReady(target)}
+                key={target.selectionKey}
+                value={target.selectionKey}
+              >
+                {label}
+                {suffix}
+              </option>
+            );
+          })}
         </select>
+        {unavailableHints.map((hint) => (
+          <p className="text-2xs text-muted-foreground" key={hint}>
+            {hint}
+          </p>
+        ))}
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <label
@@ -489,20 +537,34 @@ export function NewCodingSessionProviderPicker({
   );
 }
 
-export function ClaudeLoginNeeded() {
+export function ProviderLoginNeeded({
+  runtime,
+}: {
+  runtime?: { runtime: string; label?: string } | null;
+}) {
+  const remediation = codingSessionAuthRemediation(runtime);
+  // Split the message around the command so it renders as an inline <code>
+  // block; a runtime with no known command shows the sentence as-is.
+  const [before, after] = remediation.command
+    ? remediation.message.split(`\`${remediation.command}\``)
+    : [remediation.message, undefined];
   return (
     <div
       className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm"
       data-testid="new-coding-session-auth-required"
       role="alert"
     >
-      <p className="font-medium">Claude login needed</p>
+      <p className="font-medium">{remediation.title}</p>
       <p className="mt-1 text-muted-foreground">
-        Claude Code is not signed in on this computer. Run{" "}
-        <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-          claude
-        </code>{" "}
-        in a terminal, complete the login, then retry this request.
+        {before}
+        {remediation.command && after !== undefined ? (
+          <>
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+              {remediation.command}
+            </code>
+            {after}
+          </>
+        ) : null}
       </p>
     </div>
   );

@@ -4,9 +4,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  ClaudeLoginNeeded,
   NewCodingSessionChannelPicker,
   NewCodingSessionProviderPicker,
+  ProviderLoginNeeded,
 } from "./NewCodingSessionScreen.tsx";
 import { describeWorkdirProblem } from "./NewCodingSessionWorkdirField.tsx";
 
@@ -106,11 +106,70 @@ test("an empty provider list disables selection rather than pretending to offer 
 });
 
 test("the auth-required state names the exact command that fixes it", () => {
-  const markup = renderToStaticMarkup(React.createElement(ClaudeLoginNeeded));
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderLoginNeeded, {}),
+  );
 
   assert.match(markup, /data-testid="new-coding-session-auth-required"/);
   assert.match(markup, /Claude login needed/);
   assert.match(markup, /<code[^>]*>claude<\/code>/);
+});
+
+test("the auth-required state adapts to the runtime that failed", () => {
+  const codex = renderToStaticMarkup(
+    React.createElement(ProviderLoginNeeded, {
+      runtime: { runtime: "codex", label: "Codex" },
+    }),
+  );
+  assert.match(codex, /Codex login needed/);
+  assert.match(codex, /<code[^>]*>codex login<\/code>/);
+  assert.doesNotMatch(codex, /Claude/);
+
+  // A runtime with no known login command still gets an honest sentence.
+  const goose = renderToStaticMarkup(
+    React.createElement(ProviderLoginNeeded, {
+      runtime: { runtime: "goose", label: "Goose" },
+    }),
+  );
+  assert.match(goose, /Goose login needed/);
+  assert.doesNotMatch(goose, /<code/);
+});
+
+test("a runtime that is not ready renders disabled with an honest hint", () => {
+  const disabledTarget = {
+    selectionKey: "codex-target",
+    channelId: "channel-a",
+    signerPubkey: "a".repeat(64),
+    provider: {
+      providerInstanceRef: "codex-primary",
+      driver: "codex-acp",
+      runtime: "codex",
+      defaultModel: "default",
+      allowedModels: ["default"],
+      capabilities,
+    },
+    availability: {
+      state: "needs_auth",
+      label: "Codex",
+      hint: "Codex is not signed in on this computer. Run `codex login` in a terminal, complete the login, then try again.",
+    },
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(NewCodingSessionProviderPicker, {
+      disabled: false,
+      model: null,
+      onModelChange() {},
+      onTargetChange() {},
+      selectedTarget: targets[0],
+      targets: [...targets, disabledTarget],
+    }),
+  );
+
+  assert.match(markup, /<option disabled[^>]*>Codex[^<]*\(sign-in needed\)</);
+  assert.match(markup, /codex login/);
+  // The ready target stays selectable with no suffix ceremony.
+  assert.match(markup, /value="claude-target"/);
+  assert.doesNotMatch(markup, /Claude[^<]*\(sign-in needed\)/);
 });
 
 test("the working-directory field names the exact reason a path will not work", () => {

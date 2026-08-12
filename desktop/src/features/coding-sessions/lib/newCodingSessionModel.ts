@@ -1,5 +1,10 @@
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import type {
+  CodingSessionProviderRuntime,
+  CodingSessionRuntimeAuthState,
+} from "@/shared/api/tauriSessionProvider";
 
+import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
 import type {
   CodingSessionProviderCatalogProvider,
   TrustedCodingSessionProviderCatalog,
@@ -9,6 +14,21 @@ export {
   formatCodingSessionProviderLabel,
   formatCodingSessionRuntimeLabel,
 } from "./codingSessionLabels";
+
+/**
+ * Host-side availability of the runtime behind a target.
+ *
+ * Only targets served by this computer's own provider carry it — a remote
+ * provider's install/sign-in state is unknowable here, and its catalog is
+ * taken at its word.
+ */
+export type NewCodingSessionTargetAvailability = {
+  state: CodingSessionRuntimeAuthState;
+  /** Human runtime label, e.g. "Claude Code". */
+  label: string;
+  /** Remediation for a non-ready runtime; `null` when ready. */
+  hint: string | null;
+};
 
 /**
  * One creatable (channel, signer, provider) combination.
@@ -24,20 +44,40 @@ export type NewCodingSessionTarget = {
   channelId: string;
   signerPubkey: string;
   provider: CodingSessionProviderCatalogProvider;
+  availability?: NewCodingSessionTargetAvailability;
+};
+
+/** Host-local knowledge that seeds and annotates the target list. */
+export type NewCodingSessionLocalProvider = {
+  providerPubkey: string;
+  runtimes: readonly CodingSessionProviderRuntime[];
+  /** Live per-runtime models, keyed by `instanceRef`, as they resolve. */
+  modelsByInstanceRef?: ReadonlyMap<
+    string,
+    { defaultModel: string; allowedModels: readonly string[] }
+  >;
 };
 
 /**
- * Every provider that can start a turn, across the trusted catalogs.
+ * Every provider that can start a turn: catalog-discovered ones first, then
+ * this computer's own runtimes that no catalog has advertised yet.
  *
  * A provider that cannot start a turn is not a creation target — offering it
- * would produce a session that can never be spoken to.
+ * would produce a session that can never be spoken to. Catalog entries win a
+ * collision with a bootstrap runtime (same channel, signer, and instance ref):
+ * the published catalog is the provider's own signed word about itself.
+ * Catalog entries signed by this computer's provider are annotated with the
+ * host runtime's live availability, so a signed-out runtime reads as such even
+ * after its catalog exists.
  */
 export function resolveNewCodingSessionTargets({
   catalogs,
   channelId = null,
+  localProvider = null,
 }: {
   catalogs: readonly TrustedCodingSessionProviderCatalog[];
   channelId?: string | null;
+  localProvider?: NewCodingSessionLocalProvider | null;
 }): NewCodingSessionTarget[] {
   const targets: NewCodingSessionTarget[] = [];
   const keys = new Set<string>();
@@ -52,12 +92,40 @@ export function resolveNewCodingSessionTargets({
       );
       if (keys.has(selectionKey)) continue;
       keys.add(selectionKey);
+      const availability =
+        localProvider && entry.signerPubkey === localProvider.providerPubkey
+          ? localRuntimeAvailability(
+              localProvider.runtimes,
+              provider.providerInstanceRef,
+              provider.runtime,
+            )
+          : undefined;
       targets.push({
         selectionKey,
         channelId: entry.channelId,
         signerPubkey: entry.signerPubkey,
         provider,
+        ...(availability ? { availability } : {}),
       });
+    }
+  }
+  if (channelId !== null && localProvider) {
+    for (const runtime of localProvider.runtimes) {
+      const selectionKey = encodeTargetSelectionKey(
+        channelId,
+        localProvider.providerPubkey,
+        runtime.instanceRef,
+      );
+      if (keys.has(selectionKey)) continue;
+      keys.add(selectionKey);
+      targets.push(
+        localCodingSessionProviderTarget({
+          channelId,
+          providerPubkey: localProvider.providerPubkey,
+          runtime,
+          models: localProvider.modelsByInstanceRef?.get(runtime.instanceRef),
+        }),
+      );
     }
   }
   return targets.sort((left, right) => {
@@ -74,59 +142,133 @@ export function resolveNewCodingSessionTargets({
   });
 }
 
+/** Whether the runtime behind a target can serve a session right now. */
+export function isNewCodingSessionTargetReady(
+  target: NewCodingSessionTarget,
+): boolean {
+  return !target.availability || target.availability.state === "ready";
+}
+
 export function selectInitialNewCodingSessionTarget(
   targets: readonly NewCodingSessionTarget[],
 ): NewCodingSessionTarget | null {
-  return targets[0] ?? null;
+  return targets.find(isNewCodingSessionTargetReady) ?? null;
 }
 
 /**
- * This computer's own provider, as a target, before it has published anything.
+ * The claude runtime descriptor assumed before (or without) the host runtimes
+ * command answering.
+ *
+ * It matches the sidecar's zero-config default, and `ready` is deliberately
+ * optimistic — exactly the pre-runtimes-command behavior, where a signed-out
+ * Claude surfaced through the failed create receipt rather than up front.
+ */
+export function bootstrapClaudeCodingSessionRuntime(): CodingSessionProviderRuntime {
+  return {
+    instanceRef: "claude-primary",
+    runtime: "claude",
+    driver: "claude-agent-acp",
+    label: "Claude Code",
+    authState: "ready",
+    defaultModel: "",
+    allowedModels: [],
+    capabilities: {
+      threadTurnStart: true,
+      threadTurnInterrupt: true,
+      threadSteer: false,
+      context: false,
+      diff: false,
+      plan: true,
+    },
+  };
+}
+
+/**
+ * This computer's own runtime, as a target, before it has published anything.
  *
  * A provider only advertises its catalog into channels it is already a member
  * of, and it only becomes a member when a create flow adds it. Without this the
  * first session would be impossible: no catalog means no target, and no target
  * means nothing ever adds the provider to a channel.
  *
- * The target is deliberately thin — no model list, no declared capabilities.
- * Everything specific arrives with the catalog the provider publishes once it
- * is in the channel; until then the create publishes `model: null` and lets the
- * provider use its own default.
+ * The target is deliberately thin on models: until the models command answers
+ * for this runtime, the create publishes `model: null` and lets the provider
+ * use its own default.
  */
 export function localCodingSessionProviderTarget(input: {
   channelId: string;
   providerPubkey: string;
-  defaultModel?: string;
-  allowedModels?: readonly string[];
+  runtime: CodingSessionProviderRuntime;
+  models?: { defaultModel: string; allowedModels: readonly string[] };
 }): NewCodingSessionTarget {
-  // `providerInstanceRef` routes a create to a catalog entry. It is not the
+  // `instanceRef` routes a create to a catalog entry. It is not the
   // pubkey-derived `instanceId` that later appears in a session's cs-target.
-  // The bundled provider advertises this fixed catalog coordinate.
-  const providerInstanceRef = "claude-primary";
   return {
     selectionKey: encodeTargetSelectionKey(
       input.channelId,
       input.providerPubkey,
-      providerInstanceRef,
+      input.runtime.instanceRef,
     ),
     channelId: input.channelId,
     signerPubkey: input.providerPubkey,
     provider: {
-      providerInstanceRef,
-      driver: "claude-agent-acp",
-      runtime: "claude",
-      defaultModel: input.defaultModel ?? "",
-      allowedModels: [...(input.allowedModels ?? [])],
-      capabilities: {
-        threadTurnStart: true,
-        threadTurnInterrupt: true,
-        threadSteer: false,
-        context: false,
-        diff: false,
-        plan: true,
-      },
+      providerInstanceRef: input.runtime.instanceRef,
+      driver: input.runtime.driver,
+      runtime: input.runtime.runtime,
+      defaultModel:
+        input.models?.defaultModel ?? input.runtime.defaultModel ?? "",
+      allowedModels: [
+        ...(input.models?.allowedModels ?? input.runtime.allowedModels ?? []),
+      ],
+      capabilities: { ...input.runtime.capabilities },
+    },
+    availability: {
+      state: input.runtime.authState,
+      label: input.runtime.label,
+      hint: codingSessionRuntimeAvailabilityHint(input.runtime),
     },
   };
+}
+
+function localRuntimeAvailability(
+  runtimes: readonly CodingSessionProviderRuntime[],
+  providerInstanceRef: string,
+  runtimeSlug: string,
+): NewCodingSessionTargetAvailability {
+  const runtime = runtimes.find(
+    (candidate) => candidate.instanceRef === providerInstanceRef,
+  );
+  if (!runtime) {
+    // The catalog remembers a runtime the host no longer offers — say so
+    // rather than letting a create against it fail opaquely.
+    const label = formatCodingSessionRuntimeLabel(runtimeSlug);
+    return {
+      state: "missing",
+      label,
+      hint: `${label} is not installed on this computer.`,
+    };
+  }
+  return {
+    state: runtime.authState,
+    label: runtime.label,
+    hint: codingSessionRuntimeAvailabilityHint(runtime),
+  };
+}
+
+/** Honest, actionable one-liner for a runtime that cannot serve right now. */
+export function codingSessionRuntimeAvailabilityHint(runtime: {
+  runtime: string;
+  label: string;
+  authState: CodingSessionRuntimeAuthState;
+}): string | null {
+  if (runtime.authState === "ready") return null;
+  if (runtime.authState === "missing") {
+    return `${runtime.label} is not installed on this computer.`;
+  }
+  return codingSessionAuthRemediation({
+    runtime: runtime.runtime,
+    label: runtime.label,
+  }).message;
 }
 
 /**
@@ -198,6 +340,8 @@ export function newCodingSessionStatusMessage(input: {
       }
     | { state: "conflict" }
     | null;
+  /** The runtime the failed command targeted, for auth-failure copy. */
+  authRuntime?: { runtime: string; label?: string } | null;
 }): { tone: "muted" | "destructive"; message: string } | null {
   if (input.publishError) {
     return { tone: "destructive", message: input.publishError };
@@ -230,7 +374,10 @@ export function newCodingSessionStatusMessage(input: {
     case "failed":
       return {
         tone: "destructive",
-        message: newCodingSessionFailureMessage(input.lifecycle.error),
+        message: newCodingSessionFailureMessage(
+          input.lifecycle.error,
+          input.authRuntime,
+        ),
       };
     case "awaiting-metadata":
       return {
@@ -261,22 +408,88 @@ export function newCodingSessionStatusMessage(input: {
 }
 
 /**
- * The two failure codes a person can actually do something about.
+ * The failure codes a person can actually do something about.
  *
  * Everything else passes the provider's own message through — inventing
  * friendlier copy for a code we do not recognize would hide what happened.
  */
-export function newCodingSessionFailureMessage(error: {
-  code?: string;
-  message: string;
-}): string {
+export function newCodingSessionFailureMessage(
+  error: {
+    code?: string;
+    message: string;
+  },
+  authRuntime?: { runtime: string; label?: string } | null,
+): string {
   if (error.code === "PROJECT_CWD_UNRESOLVED") {
     return "The provider could not resolve a working directory for this session. Choose one below and try again.";
   }
   if (error.code === "PROVIDER_AUTH_REQUIRED") {
-    return "Claude Code is not signed in on this computer. Run `claude` in a terminal, complete the login, then try again.";
+    return codingSessionAuthRemediation(authRuntime).message;
+  }
+  if (
+    error.code === "PROVIDER_UNAVAILABLE" &&
+    error.message.includes("unknown providerInstanceRef")
+  ) {
+    // The running provider offers the runtime set it was spawned with; a
+    // runtime installed afterwards shows as ready in the picker but is not in
+    // that offer until the provider restarts. Without this line the raw
+    // receipt reads like a dead end, when a restart is the whole fix.
+    return `${error.message}. This usually means the runtime was installed after the provider started — restart Buzz to refresh its available runtimes, then try again.`;
   }
   return error.message;
+}
+
+/** What a signed-out runtime needs a person to do, in that runtime's terms. */
+export type CodingSessionAuthRemediation = {
+  /** Alert heading, e.g. "Claude login needed". */
+  title: string;
+  /** Full remediation sentence, terminal command in backticks when known. */
+  message: string;
+  /** The exact terminal command that fixes it, when one is known. */
+  command: string | null;
+};
+
+/**
+ * Provider-appropriate sign-in copy for `PROVIDER_AUTH_REQUIRED`.
+ *
+ * With no runtime context — a receipt observed without knowing which target
+ * it addressed — this falls back to the bundled default runtime, claude,
+ * which is also the pre-multi-runtime behavior.
+ */
+export function codingSessionAuthRemediation(
+  runtime?: { runtime: string; label?: string } | null,
+): CodingSessionAuthRemediation {
+  const tokens = new Set(
+    (runtime?.runtime ?? "claude")
+      .toLowerCase()
+      .split(/[-_\s]+/)
+      .filter(Boolean),
+  );
+  if (tokens.has("claude") || tokens.has("cc")) {
+    return {
+      title: "Claude login needed",
+      message:
+        "Claude Code is not signed in on this computer. Run `claude` in a terminal, complete the login, then try again.",
+      command: "claude",
+    };
+  }
+  if (tokens.has("codex")) {
+    return {
+      title: "Codex login needed",
+      message:
+        "Codex is not signed in on this computer. Run `codex login` in a terminal, complete the login, then try again.",
+      command: "codex login",
+    };
+  }
+  const label =
+    runtime?.label && runtime.label.trim().length > 0
+      ? runtime.label
+      : formatCodingSessionRuntimeLabel(runtime?.runtime ?? "");
+  return {
+    title: `${label} login needed`,
+    message: `${label} is not signed in on this computer. Complete its sign-in, then try again.`,
+    command: null,
+  };
 }
 
 /** Whether a failed receipt is asking for a working directory specifically. */
@@ -284,7 +497,7 @@ export function isCodingSessionWorkdirFailure(code: string | undefined) {
   return code === "PROJECT_CWD_UNRESOLVED";
 }
 
-/** Whether a failed receipt is asking for a Claude Code login specifically. */
+/** Whether a failed receipt is asking for a runtime sign-in specifically. */
 export function isCodingSessionAuthFailure(code: string | undefined) {
   return code === "PROVIDER_AUTH_REQUIRED";
 }

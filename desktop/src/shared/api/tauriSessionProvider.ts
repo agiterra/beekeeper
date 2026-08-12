@@ -23,10 +23,55 @@ export type CodingSessionProviderStatus = {
   instanceId?: string;
 };
 
-/** Live model selections exposed by this computer's Claude Code adapter. */
+/** Live model selections exposed by one of this computer's runtime adapters. */
 export type CodingSessionProviderModels = {
+  /** Echoes the runtime instance the models belong to. */
+  instanceRef: string;
   defaultModel: string;
   allowedModels: string[];
+};
+
+/**
+ * Whether a host runtime can serve a session right now.
+ *
+ * `needs_auth` and `missing` runtimes still appear in the create flow —
+ * disabled, with honest remediation — because hiding them would make an
+ * installed-but-signed-out runtime indistinguishable from one that does not
+ * exist.
+ */
+export type CodingSessionRuntimeAuthState = "ready" | "needs_auth" | "missing";
+
+/** Capability vector one runtime advertises before its catalog is published. */
+export type CodingSessionProviderRuntimeCapabilities = {
+  threadTurnStart: boolean;
+  threadTurnInterrupt: boolean;
+  threadSteer: boolean;
+  context: boolean;
+  diff: boolean;
+  plan: boolean;
+};
+
+/**
+ * One agent runtime this computer's coding-session provider offers.
+ *
+ * Mirrors the Rust host runtime table in
+ * `desktop/src-tauri/src/session_provider/runtimes.rs`. Every table row is
+ * returned, including uninstalled ones, sorted by `instanceRef`.
+ */
+export type CodingSessionProviderRuntime = {
+  /** Catalog coordinate a 44221 create names, e.g. `claude-primary`. */
+  instanceRef: string;
+  /** Runtime slug: `claude`, `codex`, `goose`. */
+  runtime: string;
+  /** Driver slug minted into every cs-target for this runtime's sessions. */
+  driver: string;
+  /** Human label from the managed-agent registry, e.g. `Claude Code`. */
+  label: string;
+  authState: CodingSessionRuntimeAuthState;
+  /** Static default (`default`); live models come from the models command. */
+  defaultModel: string;
+  allowedModels: string[];
+  capabilities: CodingSessionProviderRuntimeCapabilities;
 };
 
 /** Read the provider's provisioning and supervision state. */
@@ -36,10 +81,32 @@ export async function getCodingSessionProviderStatus(): Promise<CodingSessionPro
   );
 }
 
-/** Discover every Claude Code model selectable through the installed adapter. */
-export async function getCodingSessionProviderModels(): Promise<CodingSessionProviderModels> {
+/**
+ * Discover the models one runtime accepts.
+ *
+ * `claude-primary` (the default when `instanceRef` is absent) probes the live
+ * adapter; runtimes without model discovery answer with their static defaults
+ * without spawning anything.
+ */
+export async function getCodingSessionProviderModels(
+  instanceRef?: string,
+): Promise<CodingSessionProviderModels> {
   return invokeTauri<CodingSessionProviderModels>(
     "coding_session_provider_models",
+    instanceRef === undefined ? undefined : { instanceRef },
+  );
+}
+
+/**
+ * List every runtime this computer's provider knows how to run, with its
+ * installation and sign-in state. Fast — auth probes are CLI exit-code checks,
+ * never ACP adapter spawns.
+ */
+export async function getCodingSessionProviderRuntimes(): Promise<
+  CodingSessionProviderRuntime[]
+> {
+  return invokeTauri<CodingSessionProviderRuntime[]>(
+    "coding_session_provider_runtimes",
   );
 }
 

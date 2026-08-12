@@ -122,6 +122,10 @@ export type TranscriptItem =
       text: string;
       /** Resolved outcome for permission items (e.g. "Approved (allow_once)", "Denied (reject_once)", "Cancelled"). */
       outcome?: string;
+      /** Structured turn duration for coding-session "Turn result" items. */
+      durationMs?: number | null;
+      /** Structured turn cost (USD) for coding-session "Turn result" items. */
+      costUsd?: number | null;
       timestamp: string;
       descriptor?: AgentActivityDescriptor;
       acpSource?: TranscriptAcpSource;

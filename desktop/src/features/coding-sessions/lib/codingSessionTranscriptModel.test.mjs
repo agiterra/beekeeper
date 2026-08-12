@@ -153,6 +153,105 @@ test("deduplicates result echoes without dropping completion duration and cost",
   });
 });
 
+test("structured duration and cost win over the legacy text-baked suffixes", () => {
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Say hello" }),
+      message({ id: "answer", role: "assistant", text: "Hey Brian." }),
+      // A structured item: clean text, metrics as fields — what the builder
+      // now emits for every event that carries them on the wire.
+      {
+        ...lifecycle({
+          id: "result",
+          title: "Turn result",
+          text: "Hey Brian.",
+        }),
+        durationMs: 3557,
+        costUsd: 0.3209,
+      },
+    ],
+    { isWorking: false },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.kind, "turn");
+  assert.deepEqual(turn.completion, {
+    durationMs: 3557,
+    costUsd: 0.3209,
+    outcome: null,
+    timestamp,
+    state: "completed",
+  });
+  // Presentation identical to the legacy path: the echo is deduplicated and
+  // no metric suffix leaks into any visible row.
+  assert.equal(
+    turn.entries.filter(
+      (entry) =>
+        entry.kind === "item" &&
+        entry.item.type === "message" &&
+        entry.item.role === "assistant",
+    ).length,
+    1,
+  );
+  for (const entry of turn.entries) {
+    if (entry.kind === "item") {
+      assert.doesNotMatch(entry.item.text, /\(3557ms\)|\(\$0\.3209\)/);
+    }
+  }
+});
+
+test("structured fields beat mismatched legacy suffixes on the same item", () => {
+  // A hybrid should never occur, but if it does the structured claim is the
+  // authoritative one and the text suffix is treated as prose to strip.
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Say hello" }),
+      {
+        ...lifecycle({
+          id: "result",
+          title: "Turn result",
+          text: "Done. (999ms) ($0.9999)",
+        }),
+        durationMs: 3557,
+        costUsd: 0.3209,
+      },
+    ],
+    { isWorking: false },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.completion.durationMs, 3557);
+  assert.equal(turn.completion.costUsd, 0.3209);
+});
+
+test("a structured error result keeps its clean text and fails the turn", () => {
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Build it" }),
+      {
+        ...lifecycle({
+          id: "result",
+          title: "Turn result",
+          text: "Compiler exited with status 1",
+          renderClass: "error",
+        }),
+        durationMs: 900,
+        costUsd: 0.004,
+      },
+    ],
+    { isWorking: false },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.completion.state, "failed");
+  assert.equal(turn.completion.durationMs, 900);
+  assert.equal(turn.completion.costUsd, 0.004);
+  const errorRow = turn.entries.find(
+    (entry) => entry.kind === "item" && entry.item.type === "lifecycle",
+  );
+  assert.equal(errorRow.item.text, "Compiler exited with status 1");
+});
+
 test("coalesces an unscoped signed terminal cycle and removes its result echo", () => {
   const sessionId = "generation-2";
   const answer = {

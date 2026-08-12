@@ -12,9 +12,11 @@ import {
 import {
   ensureCodingSessionProviderRunning,
   getCodingSessionProviderModels,
+  getCodingSessionProviderRuntimes,
   getCodingSessionProviderStatus,
   provisionCodingSessionProvider,
   type CodingSessionProviderModels,
+  type CodingSessionProviderRuntime,
   type CodingSessionProviderStatus,
 } from "@/shared/api/tauriSessionProvider";
 import { useCodingSessionCatalog } from "../useCodingSessionCatalog";
@@ -25,6 +27,7 @@ import {
   publishDurableCodingSessionCreate,
   type DurableCodingSessionCreateTransaction,
 } from "../lib/durableCodingSessionCreate";
+import { bootstrapClaudeCodingSessionRuntime } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionHostPhase } from "../lib/newCodingSessionModel";
 
@@ -56,7 +59,11 @@ export type NewCodingSessionCreateState = {
   lifecycleErrorMessage: string | null;
   resolvedGenerationId: string | null;
   providerStatus: CodingSessionProviderStatus | null;
-  providerModels: CodingSessionProviderModels | null;
+  providerRuntimes: CodingSessionProviderRuntime[];
+  providerModelsByInstanceRef: Map<
+    string,
+    { defaultModel: string; allowedModels: string[] }
+  >;
 };
 
 export function useNewCodingSessionCreate({
@@ -83,8 +90,13 @@ export function useNewCodingSessionCreate({
     React.useState<NewCodingSessionHostPhase>("idle");
   const [providerStatus, setProviderStatus] =
     React.useState<CodingSessionProviderStatus | null>(null);
-  const [providerModels, setProviderModels] =
-    React.useState<CodingSessionProviderModels | null>(null);
+  const [providerRuntimes, setProviderRuntimes] = React.useState<
+    CodingSessionProviderRuntime[]
+  >(() => [bootstrapClaudeCodingSessionRuntime()]);
+  const [providerModelsByInstanceRef, setProviderModelsByInstanceRef] =
+    React.useState<
+      Map<string, { defaultModel: string; allowedModels: string[] }>
+    >(() => new Map());
 
   React.useEffect(() => {
     const loaded = loadDurableCodingSessionCreate(scopeId);
@@ -106,11 +118,22 @@ export function useNewCodingSessionCreate({
         if (!cancelled) {
           setProviderStatus(status);
         }
-        return getCodingSessionProviderModels().catch(() => null);
+        return loadCodingSessionProviderRuntimes({
+          onRuntimes: (runtimes) => {
+            if (!cancelled) setProviderRuntimes(runtimes);
+          },
+          onModels: (instanceRef, models) => {
+            if (cancelled) return;
+            setProviderModelsByInstanceRef((previous) => {
+              const next = new Map(previous);
+              next.set(instanceRef, models);
+              return next;
+            });
+          },
+        });
       })
-      .then((models) => {
+      .then(() => {
         if (!cancelled) {
-          setProviderModels(models);
           setHostPhase("idle");
         }
       })
@@ -316,7 +339,8 @@ export function useNewCodingSessionCreate({
     lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
     lifecycleIsLoading: lifecycleSnapshot.isLoading,
     providerStatus,
-    providerModels,
+    providerRuntimes,
+    providerModelsByInstanceRef,
     publishError,
     resolvedGenerationId,
     retryExact,
@@ -324,6 +348,50 @@ export function useNewCodingSessionCreate({
     submit,
     transaction: scoped,
   };
+}
+
+/**
+ * Load the host runtime table, then each ready runtime's models.
+ *
+ * The runtimes command failing (an older desktop backend without it) degrades
+ * to the bundled claude-only descriptor — exactly the pre-runtimes behavior.
+ * Model lookups run per runtime and each failure is swallowed independently:
+ * one broken adapter must not cost the others their model lists.
+ */
+export async function loadCodingSessionProviderRuntimes({
+  getRuntimes = getCodingSessionProviderRuntimes,
+  getModels = getCodingSessionProviderModels,
+  onRuntimes,
+  onModels,
+}: {
+  getRuntimes?: () => Promise<CodingSessionProviderRuntime[]>;
+  getModels?: (instanceRef: string) => Promise<CodingSessionProviderModels>;
+  onRuntimes: (runtimes: CodingSessionProviderRuntime[]) => void;
+  onModels: (
+    instanceRef: string,
+    models: { defaultModel: string; allowedModels: string[] },
+  ) => void;
+}): Promise<void> {
+  const runtimes = await getRuntimes()
+    .then((listed) =>
+      listed.length > 0 ? listed : [bootstrapClaudeCodingSessionRuntime()],
+    )
+    .catch(() => [bootstrapClaudeCodingSessionRuntime()]);
+  onRuntimes(runtimes);
+  await Promise.all(
+    runtimes
+      .filter((runtime) => runtime.authState === "ready")
+      .map((runtime) =>
+        getModels(runtime.instanceRef)
+          .then((models) => {
+            onModels(runtime.instanceRef, {
+              defaultModel: models.defaultModel,
+              allowedModels: models.allowedModels,
+            });
+          })
+          .catch(() => {}),
+      ),
+  );
 }
 
 /**

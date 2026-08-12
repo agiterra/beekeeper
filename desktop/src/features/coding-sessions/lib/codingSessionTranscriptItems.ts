@@ -459,17 +459,17 @@ function buildResultLifecycleItem(
   const costUsd = typeof item.costUsd === "number" ? item.costUsd : null;
   const resultText = typeof item.result === "string" ? item.result : "";
 
-  const parts = [resultText];
-  if (durationMs !== null) parts.push(`(${durationMs}ms)`);
-  if (costUsd !== null) parts.push(`($${costUsd.toFixed(4)})`);
-
+  // Duration and cost travel as structured fields, never baked into `text` —
+  // the model reads them directly and the result prose stays clean.
   return {
     id: ctx.id,
     type: "lifecycle",
     renderClass: isError ? "error" : "status",
     title: "Turn result",
-    text: parts.filter((part) => part.length > 0).join(" "),
+    text: resultText,
     outcome: subtype,
+    durationMs,
+    costUsd,
     timestamp: ctx.timestamp,
     turnId: ctx.turnId,
     sessionId: ctx.sessionId,

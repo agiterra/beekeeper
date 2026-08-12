@@ -109,6 +109,35 @@ test("every recognized kind maps to exactly one TranscriptItem (TOTAL, no throw)
   }
 });
 
+test("a result item carries structured metrics, never baked into its text", () => {
+  const item = projectCodingSessionTranscriptItem(
+    envelope({
+      item: {
+        kind: "result",
+        subtype: "success",
+        isError: false,
+        durationMs: 3557,
+        costUsd: 0.3209,
+        result: "done",
+      },
+    }),
+  );
+
+  assert.equal(item.type, "lifecycle");
+  assert.equal(item.title, "Turn result");
+  assert.equal(item.text, "done");
+  assert.equal(item.durationMs, 3557);
+  assert.equal(item.costUsd, 0.3209);
+
+  // A result with no metrics on the wire declares that absence explicitly.
+  const bare = projectCodingSessionTranscriptItem(
+    envelope({ item: { kind: "result", subtype: "success", result: "ok" } }),
+  );
+  assert.equal(bare.text, "ok");
+  assert.equal(bare.durationMs, null);
+  assert.equal(bare.costUsd, null);
+});
+
 test("adapter is TOTAL over a mixed batch: N inputs -> N outputs", () => {
   const envelopes = RECOGNIZED_KIND_FIXTURES.map((item) => envelope({ item }));
   assert.equal(
