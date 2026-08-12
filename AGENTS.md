@@ -1,5 +1,10 @@
 # AGENTS.md — AI Agent Contributor Guide
 
+> **This repo is a fork of [block/buzz](https://github.com/block/buzz).** Before
+> landing new features or fixes, read [docs/INTEGRATION.md](docs/INTEGRATION.md)
+> to understand the branch model (`main` mirror, `feature/*` branches,
+> `integration/glue`, rebuilt `integrated`) and how work gets integrated.
+
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,
 code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
