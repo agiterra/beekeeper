@@ -1567,7 +1567,16 @@ export function createMarkdownComponents(
       return <p>{children}</p>;
     },
     pre: ({ children }) => {
-      if (!interactive) return <span>{children}</span>;
+      // Non-interactive surfaces still need a real block wrapper — a bare
+      // <span> collapses the per-line code spans onto one line (README
+      // panel); only the copy-button chrome is interactive-gated.
+      if (!interactive) {
+        return (
+          <pre className="overflow-x-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5">
+            {children}
+          </pre>
+        );
+      }
       let language = "";
       React.Children.forEach(children, (child) => {
         if (
