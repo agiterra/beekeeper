@@ -171,6 +171,32 @@ Two follow-ons Brian has called for explicitly (2026-08-12):
   author), loop budgets, cost governance. Do not start this before the
   umbrella surface has proven itself in daily use.
 
+### Managed-agent ↔ session interop (Brian, 2026-08-12: "seamless")
+
+Upstream built persistent managed agents (30177 identities, 30174 engram
+memory, 30175 personas) and coding sessions on the same fabric but
+deliberately uncoupled (`agent_ref` held null). The seam is the Step 4
+conversation lane: it is kind:9 + mentions — the exact protocol managed
+agents already speak. Two convergence directions, in order:
+
+1. **Managed agents INTO sessions (near-term, Step 4.5-sized).** Example:
+   a merge-captain agent. Invite it to the host channel; @mention it in
+   the session lane with the session's `buzz://` deep link; it reads the
+   signed transcripts via the CLI's read-only sessions surface, does repo
+   work with its existing tools (git signed with its Nostr key), and
+   reports in the lane as an attributable participant. Zero new wire
+   concepts; needs only lane p-tag mentions + a session-context link
+   convention. Crucially it never authors 44220s — it works on the repo
+   and talks in the lane, so no new authority model is required.
+2. **Session executions INTO managed agents (later = the persistent
+   session agents step).** Wire `agent_ref` → 30177 so executions gain
+   durable identity, engram memory, and mentionability. Only here do
+   delegation grammar, loop budgets, and cost governance become
+   prerequisites (already listed in SESSION_STEP4_DESIGN.md).
+
+Do 1 before 2; it delivers the "buzz agent in charge of merges" experience
+while the dangerous powers stay parked.
+
 ### Step 5 — continuity and control (later, ordered by demand)
 
 - **Workspace checkpointing at turn boundaries** (T3's
