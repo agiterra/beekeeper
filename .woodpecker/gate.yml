@@ -92,4 +92,12 @@ steps:
       - (cd desktop && pnpm install) || (sleep 15 && cd desktop && pnpm install)
       - just desktop-check
       - just desktop-test
+      # The banked donor corpora, re-derived against this repo's own
+      # implementation. Absorption's rule is that a corpus is only a guarantee
+      # once something re-runs it — until now nothing did, so a green build said
+      # nothing about whether the donor laws still held. Both are plain
+      # `node --test` over node builtins: no install, no services, seconds.
+      - just conformance-check
+      - just export-viewer-manifest-test
+      # Keep last: this `cd` persists for the rest of the step.
       - cd desktop && pnpm typecheck
