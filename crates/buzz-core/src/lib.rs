@@ -13,6 +13,9 @@ pub mod channel;
 pub mod coding_session_command;
 /// NIP-CSL: Coding-session lifecycle command — session creation payload.
 pub mod coding_session_lifecycle_command;
+/// Provider-authored coding-session facts: receipts (44224), metadata (44223),
+/// and transcript envelopes (44225).
+pub mod coding_session_payload;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

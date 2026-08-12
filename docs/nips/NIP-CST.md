@@ -111,11 +111,26 @@ transcript items never appear as chat. The coding-session workspace consumes
 them through the provider-neutral projection; the compact, immersive, and
 pop-out surfaces all read the same record.
 
+## Analysis
+
+Storing these facts is the point: the relay's `events` table is the analysis
+database, and no export step stands between a finished session and a query about
+it. See [Analyzing recorded coding sessions](../coding-session-analysis.md) for
+the `buzz sessions` command surface and direct-SQL recipes (tool frequency,
+error rate by tool, sessions per project, whole-transcript dump).
+
+Two things a reader must get right: order by `cst-seq` **numerically** — it is a
+decimal string on the wire, so a lexicographic sort puts item 10 before item 9 —
+and carry explicit `kinds` on every `/query` filter, or the relay's p-gate
+answers 403.
+
 ## Implementation
 
 | Concern | Location |
 | --- | --- |
 | Kind constant | `crates/buzz-core/src/kind.rs` |
+| Payload structs | `crates/buzz-core/src/coding_session_payload.rs` |
 | Membership, size cap | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Builder | `crates/buzz-sdk/src/builders.rs` |
 | Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |
+| Analysis CLI | `crates/buzz-cli/src/commands/sessions.rs` |

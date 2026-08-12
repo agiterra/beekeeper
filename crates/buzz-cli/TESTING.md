@@ -482,6 +482,54 @@ buzz notes get --name dco-check   # exits non-zero: not found
 buzz notes rm --name does-not-exist   # exits non-zero
 ```
 
+### 6.13 Coding Sessions (kinds 44223/44224/44225)
+
+Read-only analysis over a channel that a coding-session provider has published
+into. Nothing here writes; a channel with no sessions returns `[]` rather than
+an error. See `docs/coding-session-analysis.md` for the direct-SQL equivalents.
+
+```bash
+# list (empty channel → [])
+buzz sessions list --channel "$CHANNEL_ID" | jq .
+buzz --format compact sessions list --channel "$CHANNEL_ID" | jq .
+# → [{"target":"coding-session/v1|...","title":...,"status":...,"model":...,"createdAt":"..."}]
+
+# Save a target key for the commands below
+TARGET=$(buzz sessions list --channel "$CHANNEL_ID" | jq -r '.[0].target')
+SESSION=$(buzz sessions list --channel "$CHANNEL_ID" | jq -r '.[0].sessionId')
+
+# transcript by target (markdown) and by session id (resolved through list)
+buzz sessions transcript --channel "$CHANNEL_ID" --target "$TARGET"
+buzz sessions transcript --channel "$CHANNEL_ID" --session "$SESSION"
+
+# transcript as raw signed events — one per line, signature included
+buzz sessions transcript --channel "$CHANNEL_ID" --target "$TARGET" --format jsonl | head -3
+# Every line must verify independently; seq order is numeric (10 after 9)
+buzz sessions transcript --channel "$CHANNEL_ID" --target "$TARGET" --format jsonl \
+  | jq -r '.content | fromjson | .eventSeq' | sort -c -n && echo "seq ordered"
+
+# tools — whole channel, then one generation
+buzz sessions tools --channel "$CHANNEL_ID" | jq .
+buzz sessions tools --channel "$CHANNEL_ID" --target "$TARGET" | jq '.tools'
+buzz --format compact sessions tools --channel "$CHANNEL_ID" | jq .
+
+# export — refuses a non-empty directory
+rm -rf /tmp/buzz-sessions-export
+buzz sessions export --channel "$CHANNEL_ID" --out /tmp/buzz-sessions-export | jq .
+ls /tmp/buzz-sessions-export
+buzz sessions export --channel "$CHANNEL_ID" --out /tmp/buzz-sessions-export; echo "exit: $?"
+# stderr: {"error":"user_error","message":"--out ... is not empty; exports never overwrite ..."}
+# exit: 1
+
+# Neither --target nor --session → clap refuses before any relay call
+buzz sessions transcript --channel "$CHANNEL_ID" 2>&1; echo "exit: $?"
+# exit: 1
+
+# Unknown session id → NotFound
+buzz sessions transcript --channel "$CHANNEL_ID" --session no-such-session 2>&1; echo "exit: $?"
+# exit: 1
+```
+
 ---
 
 ## 7. Error Path Testing
@@ -621,3 +669,7 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
+| 63 | `sessions list` | ☐ | Empty channel → `[]`; compact keeps target/title/status/model/createdAt |
+| 64 | `sessions transcript` | ☐ | `--target` and `--session`; md turns + tool outcomes; jsonl seq numerically ordered |
+| 65 | `sessions tools` | ☐ | Call/error counts, error rate, `itemKinds` incl. `other`; `--target` narrows |
+| 66 | `sessions export` | ☐ | Files + manifest.json; non-empty `--out` refused with exit 1 |

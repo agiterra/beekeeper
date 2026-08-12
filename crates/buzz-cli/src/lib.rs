@@ -160,6 +160,23 @@ impl std::fmt::Display for PresenceStatus {
     }
 }
 
+/// Output format for `sessions transcript`.
+///
+/// Distinct from [`OutputFormat`] because a transcript has two useful shapes
+/// and neither is "the same JSON with fewer fields": `jsonl` is the archival
+/// one (whole signed events, one per line, verifiable offline) and `md` is the
+/// one a person reads.
+#[derive(Clone, Copy, clap::ValueEnum, Default)]
+pub enum TranscriptFormat {
+    /// Rendered turns, tool calls, and results as markdown (default)
+    #[default]
+    #[value(name = "md")]
+    Md,
+    /// One raw signed event per line, signature included
+    #[value(name = "jsonl")]
+    Jsonl,
+}
+
 /// Output format for read commands.
 #[derive(Clone, clap::ValueEnum, Default)]
 pub enum OutputFormat {
@@ -240,6 +257,9 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// Read and analyze recorded coding sessions (NIP-CSL/CSM/CST)
+    #[command(subcommand)]
+    Sessions(SessionsCmd),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1954,6 +1974,66 @@ pub enum ModerationCmd {
     },
 }
 
+/// Read-side analysis over recorded coding sessions.
+///
+/// The relay's stored 442xx rows are the analysis database; these commands are
+/// the shortest path into them. `docs/coding-session-analysis.md` covers the
+/// direct-SQL equivalents for questions this surface does not answer.
+#[derive(Subcommand)]
+pub enum SessionsCmd {
+    /// List the coding-session generations recorded in a channel
+    #[command(
+        after_help = "Examples:\n  buzz sessions list --channel <uuid>\n  buzz --format compact sessions list --channel <uuid>"
+    )]
+    List {
+        /// Channel UUID the sessions were published into
+        #[arg(long)]
+        channel: String,
+    },
+    /// Print one generation's transcript in sequence order
+    #[command(
+        after_help = "Examples:\n  buzz sessions transcript --channel <uuid> --session <session-id>\n  buzz sessions transcript --channel <uuid> --target '<cs-target>' --format jsonl"
+    )]
+    Transcript {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Exact `cs-target` key (from `sessions list`)
+        #[arg(long, conflicts_with = "session", required_unless_present = "session")]
+        target: Option<String>,
+        /// Provider-minted session id; resolved through `sessions list`
+        #[arg(long)]
+        session: Option<String>,
+        /// Transcript shape: 'md' (default, rendered) or 'jsonl' (raw signed events)
+        #[arg(long, value_enum, default_value = "md")]
+        format: TranscriptFormat,
+    },
+    /// Aggregate tool usage and error rates across transcripts
+    #[command(
+        after_help = "Examples:\n  buzz sessions tools --channel <uuid>\n  buzz sessions tools --channel <uuid> --target '<cs-target>'"
+    )]
+    Tools {
+        /// Channel UUID to aggregate over
+        #[arg(long)]
+        channel: String,
+        /// Restrict the aggregate to one generation's `cs-target` key
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Write every generation's raw events to a directory, with a manifest
+    #[command(
+        after_help = "Examples:\n  buzz sessions export --channel <uuid> --out ./session-archive\n\nThe directory must be absent or empty — an export never overwrites."
+    )]
+    Export {
+        /// Channel UUID to export
+        #[arg(long)]
+        channel: String,
+        /// Destination directory; created if absent, refused if non-empty
+        #[arg(long)]
+        out: String,
+    },
+}
+
 /// Normalize hand-authored `BUZZ_AUTH_TAG` input to strict JSON.
 ///
 /// `.env` files and shell exports sometimes carry the tag in the unquoted
@@ -2059,6 +2139,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::Sessions(sub) => commands::sessions::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
@@ -2164,6 +2245,7 @@ mod tests {
             "projects",
             "reactions",
             "repos",
+            "sessions",
             "social",
             "upload",
             "users",
@@ -2333,6 +2415,10 @@ mod tests {
             names(&cmd, "issues"),
             vec!["assign", "create", "get", "list", "status", "unassign"]
         );
+        assert_eq!(
+            names(&cmd, "sessions"),
+            vec!["export", "list", "tools", "transcript"]
+        );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
         assert_eq!(names(&cmd, "pack"), vec!["inspect", "validate"]);
@@ -2369,6 +2455,7 @@ mod tests {
             ("projects", 7),
             ("reactions", 3),
             ("repos", 5),
+            ("sessions", 4),
             ("social", 7),
             ("upload", 1),
             ("users", 5),
