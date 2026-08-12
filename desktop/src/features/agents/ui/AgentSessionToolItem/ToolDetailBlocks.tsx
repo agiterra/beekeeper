@@ -51,7 +51,11 @@ export function ToolDetailBlocks({
         />
       ) : null}
       {showShellCommand ? (
-        <ShellCommandBlock command={shellCommand} result={result} />
+        <ShellCommandBlock
+          command={shellCommand}
+          isError={isError}
+          result={result}
+        />
       ) : showParameters ? (
         <ToolCodeBlock
           label="Parameters"

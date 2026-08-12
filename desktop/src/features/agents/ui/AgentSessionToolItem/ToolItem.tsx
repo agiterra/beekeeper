@@ -36,6 +36,11 @@ export function ToolItem({
   const [isExpanded, setIsExpanded] = React.useState(false);
   const hasArgs = Object.keys(item.args).length > 0;
   const hasResult = item.result.trim().length > 0;
+  // `isError` is the tool's own claim; `status === "failed"` is the harness's.
+  // Either one means the call failed, and both must reach the detail blocks —
+  // passing only `isError` below is what left failed shell calls rendering an
+  // empty output panel.
+  const failed = item.isError || item.status === "failed";
   const canonicalToolName = item.buzzToolName ?? item.toolName;
   const buzzTool = getBuzzToolInfo(canonicalToolName);
   const compactSummary = buildCompactToolSummary(item);
@@ -72,7 +77,7 @@ export function ToolItem({
           duration={duration}
           hasArgs={hasArgs}
           hasResult={hasResult}
-          isError={item.isError || item.status === "failed"}
+          isError={failed}
           label={compactSummary.label}
           messageLink={messageLink}
           preview={compactSummary.preview}
@@ -114,12 +119,13 @@ export function ToolItem({
         <summary
           className={cn(
             "group/row flex min-h-6 max-w-full cursor-pointer list-none items-center gap-1.5",
-            compactSummaryTone(),
+            compactSummaryTone(failed),
           )}
         >
           <CompactToolSummaryRow
             action={compactSummary.action}
             duration={duration}
+            failed={failed}
             fileEditSummary={compactSummary.fileEditSummary}
             kind={compactSummary.kind}
             preview={compactSummary.preview}
@@ -143,7 +149,7 @@ export function ToolItem({
                 }
               : null
           }
-          isError={item.isError}
+          isError={failed}
           result={item.result}
           shellCommand={compactSummary.shellContent}
         />

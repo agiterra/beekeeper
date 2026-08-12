@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, CircleX } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
 import { useAgentSessionTranscriptVariant } from "../agentSessionTranscriptContext";
@@ -15,13 +15,23 @@ import {
   type ActivityRowLabelParts,
 } from "../activityRenderClasses/ActivityRow";
 
-export function compactSummaryTone() {
-  return "text-muted-foreground/60 transition-colors group-hover/row:text-foreground group-open:text-foreground";
+/**
+ * Tone for a collapsed tool row.
+ *
+ * A failed call keeps its destructive tone in every state — the usual
+ * hover/open brightening would make failure read as an ordinary row the moment
+ * the pointer crossed it.
+ */
+export function compactSummaryTone(failed = false) {
+  return failed
+    ? "text-destructive transition-colors"
+    : "text-muted-foreground/60 transition-colors group-hover/row:text-foreground group-open:text-foreground";
 }
 
 export function CompactToolSummaryRow({
   action,
   duration,
+  failed,
   fileEditSummary,
   kind,
   label,
@@ -30,6 +40,7 @@ export function CompactToolSummaryRow({
 }: {
   action: AgentActivityAction | null;
   duration: string | null;
+  failed: boolean;
   fileEditSummary: CompactFileEditSummary | null;
   kind: CompactToolKind;
   label: string;
@@ -39,7 +50,7 @@ export function CompactToolSummaryRow({
   const [thumbnailFailed, setThumbnailFailed] = React.useState(false);
   const variant = useAgentSessionTranscriptVariant();
   const isCompactPreview = variant === "compactPreview";
-  const mutedTone = compactSummaryTone();
+  const tone = compactSummaryTone(failed);
   const resolvedThumbnail = React.useMemo(() => {
     if (!thumbnailSrc || thumbnailFailed) return null;
     return resolveToolImageSrc(thumbnailSrc);
@@ -50,7 +61,17 @@ export function CompactToolSummaryRow({
 
   return (
     <>
-      {fileEditSummary ? (
+      {failed ? (
+        <span className="inline-flex min-w-0 items-center gap-1.5 font-semibold text-destructive">
+          <CircleX className="size-3.5 shrink-0" />
+          <span className="shrink-0">Tool call failed</span>
+          {preview ? (
+            <span className="min-w-0 truncate font-normal" title={preview}>
+              {preview}
+            </span>
+          ) : null}
+        </span>
+      ) : fileEditSummary ? (
         <CompactFileEditSummaryView summary={fileEditSummary} />
       ) : actionLabel ? (
         <ActivityRowLabel
@@ -64,7 +85,7 @@ export function CompactToolSummaryRow({
           className={cn(
             "shrink-0 font-semibold",
             isCompactPreview ? "text-xs" : "text-sm",
-            mutedTone,
+            tone,
           )}
         >
           {label}
@@ -85,7 +106,7 @@ export function CompactToolSummaryRow({
           className={cn(
             "min-w-0 max-w-48 truncate",
             isCompactPreview ? "text-xs" : "text-sm",
-            mutedTone,
+            tone,
           )}
           title={preview}
         >
@@ -93,12 +114,12 @@ export function CompactToolSummaryRow({
         </span>
       ) : null}
       {duration ? (
-        <span className={cn("shrink-0 text-xs", mutedTone)}>{duration}</span>
+        <span className={cn("shrink-0 text-xs", tone)}>{duration}</span>
       ) : null}
       <ChevronDown
         className={cn(
           "h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180",
-          mutedTone,
+          tone,
         )}
       />
     </>
