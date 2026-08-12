@@ -611,12 +611,14 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     fi
     trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
     echo "Starting standalone desktop on Vite port ${BUZZ_VITE_PORT}; no relay services were started"
-    CARGO_ARGS=()
+    TAURI_FLAGS=()
     if [[ -n "{{nokeyring}}" ]]; then
         echo "system-keyring OFF: secrets live in 0600 files under the app-data dir"
-        CARGO_ARGS=(-- --no-default-features)
+        # tauri-cli re-adds crate default features explicitly, so the feature
+        # is stripped by a cargo runner wrapper rather than runner args.
+        TAURI_FLAGS=(-r "{{justfile_directory()}}/scripts/cargo-strip-keyring.sh")
     fi
-    pnpm exec tauri dev --config "$BUZZ_TAURI_CONFIG" {{ARGS}} ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"}
+    pnpm exec tauri dev ${TAURI_FLAGS[@]+"${TAURI_FLAGS[@]}"} --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
 
 # Run the desktop app against the internal staging relay (installs deps + builds agent tools automatically)
 staging *ARGS: bootstrap _ensure-sidecar-stubs

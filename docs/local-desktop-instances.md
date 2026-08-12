@@ -50,8 +50,10 @@ cd ~/Code/lightyear/buzz          # main checkout, parked on integrated
 just desktop-standalone
 ```
 
-With `nokeyring` active the desktop is built `--no-default-features` (drops
-the `system-keyring` cargo feature): identity lives in
+With `nokeyring` active the desktop is compiled without the `system-keyring`
+cargo feature (via the `scripts/cargo-strip-keyring.sh` runner wrapper —
+tauri-cli re-adds crate default features explicitly, so plain cargo flags
+cannot drop one): identity lives in
 `<app-data>/identity.key`, agent/provider keys inline in their record files —
 all 0600, no keychain access, no prompts, regardless of how often you rebuild.
 Toggling the env var flips the cargo feature fingerprint (full desktop-crate
