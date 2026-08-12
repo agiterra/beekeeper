@@ -32,6 +32,7 @@ pub mod payload;
 pub mod publish;
 pub mod session;
 pub mod state;
+pub mod transcript;
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -55,7 +56,7 @@ use buzz_sdk::builders::{
 };
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
-    coding_session_transcript_semantic_key,
+    coding_session_transcript_semantic_key, MAX_TRANSCRIPT_CONTENT_BYTES,
 };
 
 use commands::{
@@ -385,6 +386,7 @@ impl Provider {
             idle_timeout: self.config.idle_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
+            include_thoughts: self.config.include_thoughts,
         };
 
         let startup = match self.sessions.create(request).await {
@@ -620,7 +622,21 @@ impl Provider {
         let Some(event_seq) = self.state.allocate_seq(&target.session_id)? else {
             return Ok(None);
         };
-        let envelope = TranscriptEnvelope::new(target, event_seq, now_ms(), turn_id, item);
+        let timestamp = now_ms();
+        // Measure the envelope around an empty item, then shrink the item to
+        // whatever is left. Doing it here rather than in the translator keeps the
+        // cap honest: it is the *signed event* that must fit 32 KiB, and only
+        // this layer knows what the envelope costs.
+        let overhead = serde_json::to_string(&TranscriptEnvelope::new(
+            target,
+            event_seq,
+            timestamp,
+            turn_id,
+            serde_json::Value::Null,
+        ))?
+        .len();
+        let item = transcript::fit_item(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES);
+        let envelope = TranscriptEnvelope::new(target, event_seq, timestamp, turn_id, item);
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
             .sign_with_keys(&self.config.keys)?;
@@ -671,6 +687,24 @@ impl Provider {
                     record.closed |= fatal;
                 })?;
                 self.publish_metadata(channel_id, &target, status)?;
+            }
+            SessionEvent::TranscriptItems {
+                session_id,
+                turn_id,
+                items,
+            } => {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                for item in items {
+                    self.enqueue_transcript(
+                        channel_id,
+                        &target,
+                        Some(&turn_id),
+                        item,
+                        Priority::Normal,
+                    )?;
+                }
             }
             SessionEvent::TurnDropped {
                 session_id,
@@ -893,6 +927,40 @@ mod tests {
 
     fn state_dir_parent(state_dir: &Path) -> &Path {
         state_dir.parent().unwrap_or(state_dir)
+    }
+
+    /// Transcript items as the *record* orders them — by sequence — which is
+    /// what a consumer sorts on. Publish order differs deliberately: terminal
+    /// items are high priority and drain first.
+    fn transcript_items_in_sequence(sink: &CollectingSink) -> Vec<serde_json::Value> {
+        let mut items = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        items.sort_by_key(|item| item["eventSeq"].as_u64().unwrap_or(0));
+        items
+    }
+
+    /// Record every actor report that is already available.
+    async fn pump_available(provider: &mut Provider) {
+        while let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(250), provider.next_session_event()).await
+        {
+            provider.handle_session_event(event).expect("record");
+        }
+    }
+
+    /// Drain and record actor reports until a turn has finished.
+    async fn pump_until_turn_finished(provider: &mut Provider) {
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("session event within timeout")
+                    .expect("channel open");
+            let finished = matches!(event, session::SessionEvent::TurnFinished { .. });
+            provider.handle_session_event(event).expect("record");
+            if finished {
+                return;
+            }
+        }
     }
 
     fn write_projects(dir: &Path, channel_id: Uuid, cwd: &Path) -> std::path::PathBuf {
@@ -1185,6 +1253,10 @@ mod tests {
                 .expect("turn start")
                 .expect("event");
             first.handle_session_event(started).expect("record");
+            // The turn is genuinely open: the agent will never answer it. Record
+            // its opening items so the synthesized result continues the
+            // sequence rather than starting it.
+            pump_available(&mut first).await;
             first.flush(&CollectingSink::new()).await.expect("flush");
             let session_id = first
                 .state()
@@ -1208,7 +1280,7 @@ mod tests {
         let sink = CollectingSink::new();
         restarted.flush(&sink).await.expect("flush");
 
-        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        let transcripts = transcript_items_in_sequence(&sink);
         assert_eq!(transcripts.len(), 1);
         assert_eq!(transcripts[0]["item"]["kind"], "result");
         assert_eq!(transcripts[0]["item"]["subtype"], "error");
@@ -1218,6 +1290,10 @@ mod tests {
             "provider terminated mid-turn"
         );
         assert!(transcripts[0]["turnId"].is_string());
+        assert!(
+            transcripts[0]["eventSeq"].as_u64().expect("seq") > 1,
+            "the synthesized item continues the turn's sequence rather than restarting it"
+        );
 
         let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
         assert_eq!(metadata.last().expect("metadata")["status"], "disconnected");
@@ -1252,24 +1328,36 @@ mod tests {
             .await
             .expect("handle");
 
-        // Drain the actor's report of the turn opening and closing.
-        for _ in 0..2 {
-            let event =
-                tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
-                    .await
-                    .expect("session event")
-                    .expect("event");
-            provider.handle_session_event(event).expect("record");
-        }
+        pump_until_turn_finished(&mut provider).await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
-        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
-        assert_eq!(transcripts.len(), 1);
-        assert_eq!(transcripts[0]["item"]["kind"], "result");
-        assert_eq!(transcripts[0]["item"]["subtype"], "success");
-        assert_eq!(transcripts[0]["item"]["result"], "completed");
-        assert_eq!(transcripts[0]["eventSeq"], 1);
+        let transcripts = transcript_items_in_sequence(&sink);
+        let kinds: Vec<&str> = transcripts
+            .iter()
+            .filter_map(|item| item["item"]["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, vec!["user_prompt", "assistant_text", "result"]);
+
+        // Sequences are dense and start at 1, and every item of the turn shares
+        // the producer-minted turn id the consumer groups on.
+        let seqs: Vec<u64> = transcripts
+            .iter()
+            .filter_map(|item| item["eventSeq"].as_u64())
+            .collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
+        let turn_ids: Vec<&str> = transcripts
+            .iter()
+            .filter_map(|item| item["turnId"].as_str())
+            .collect();
+        assert_eq!(turn_ids.len(), 3);
+        assert!(turn_ids.windows(2).all(|pair| pair[0] == pair[1]));
+
+        let last = transcripts.last().expect("result item");
+        assert_eq!(last["item"]["subtype"], "success");
+        assert_eq!(last["item"]["result"], "completed");
+        assert_eq!(last["item"]["isError"], false);
+        assert!(last["item"]["durationMs"].is_number());
     }
 
     /// An interrupt must produce a `cancelled` terminal item, not a hung turn.
@@ -1313,18 +1401,15 @@ mod tests {
             .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
             .await
             .expect("handle");
-        let finished = tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
-            .await
-            .expect("turn finish")
-            .expect("event");
-        provider.handle_session_event(finished).expect("record");
+        pump_until_turn_finished(&mut provider).await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
-        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
-        assert_eq!(transcripts.len(), 1);
-        assert_eq!(transcripts[0]["item"]["subtype"], "cancelled");
-        assert_eq!(transcripts[0]["item"]["isError"], false);
+        let transcripts = transcript_items_in_sequence(&sink);
+        let last = transcripts.last().expect("result item");
+        assert_eq!(last["item"]["kind"], "result");
+        assert_eq!(last["item"]["subtype"], "cancelled");
+        assert_eq!(last["item"]["isError"], false);
         assert_eq!(
             sink.contents_of(KIND_CODING_SESSION_METADATA)
                 .last()
@@ -1448,6 +1533,61 @@ mod tests {
         assert_eq!(
             provider.state().watermark(channel_id),
             Some(event.created_at.as_secs())
+        );
+    }
+
+    /// The relay caps 44225 at 32 KiB and the SDK re-checks it, so an item the
+    /// agent made too big has to be shrunk here — silently dropping it would
+    /// leave a hole in the record with nothing to explain it.
+    #[tokio::test]
+    async fn an_oversized_item_is_shrunk_to_fit_the_signed_event_cap() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(config::DRIVER, "instance-1");
+
+        provider
+            .enqueue_transcript(
+                channel_id,
+                &target,
+                Some("turn-1"),
+                serde_json::json!({
+                    "kind": "assistant_text",
+                    "text": "w".repeat(MAX_TRANSCRIPT_CONTENT_BYTES * 2),
+                }),
+                Priority::Normal,
+            )
+            .expect("transcript");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let transcripts = transcript_items_in_sequence(&sink);
+        let published = transcripts.last().expect("transcript");
+        assert_eq!(published["item"]["kind"], "assistant_text");
+        assert_eq!(published["item"]["truncated"], true);
+        let text = published["item"]["text"].as_str().expect("text");
+        assert!(
+            text.contains("…[elided "),
+            "the elision is recorded in-band"
+        );
+        assert!(
+            text.contains("sha256:"),
+            "with a digest of what was dropped"
+        );
+        assert!(
+            serde_json::to_string(published).expect("json").len() <= MAX_TRANSCRIPT_CONTENT_BYTES
         );
     }
 

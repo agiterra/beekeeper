@@ -25,12 +25,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use tokio::sync::broadcast;
+
 use buzz_acp::acp::{AcpClient, AcpError, ModelSwitchMethod, StopReason};
-use buzz_acp::observer::{context_for, ObserverHandle};
+use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
 use buzz_core::coding_session_command::CodingSessionTarget;
 
 use crate::payload::{PROVIDER_AUTH_REQUIRED, PROVIDER_UNAVAILABLE};
+use crate::transcript::TranscriptTranslator;
 
 /// Mailbox depth for one session. Turns beyond this are refused rather than
 /// buffered without bound — an operator who cannot see a queue cannot reason
@@ -66,6 +69,8 @@ pub struct CreateRequest {
     pub max_turn_duration: Duration,
     /// Idle window before the subprocess is reclaimed.
     pub idle_shutdown: Duration,
+    /// Whether `agent_thought_chunk` updates become `reasoning` items.
+    pub include_thoughts: bool,
 }
 
 /// Why a session could not be created.
@@ -185,6 +190,19 @@ pub enum SessionEvent {
         /// Usage, when the adapter reported any.
         usage: Option<Box<TurnUsage>>,
     },
+    /// Projected transcript items, in the order they were produced.
+    ///
+    /// Sent from the actor's own task, interleaved with `TurnStarted` and
+    /// `TurnFinished`, so the provider sees the turn's items in narrative order
+    /// rather than in whatever order two tasks happened to race.
+    TranscriptItems {
+        /// Which session.
+        session_id: String,
+        /// The turn these items belong to.
+        turn_id: String,
+        /// The items.
+        items: Vec<serde_json::Value>,
+    },
     /// A turn was refused because the session's queue was full.
     TurnDropped {
         /// Which session.
@@ -279,6 +297,8 @@ impl SessionManager {
             max_turn_duration: request.max_turn_duration,
             idle_shutdown: request.idle_shutdown,
             events: self.events.clone(),
+            observer,
+            translator: TranscriptTranslator::new(request.include_thoughts),
         };
         tokio::spawn(actor.run(rx));
         self.live
@@ -446,6 +466,8 @@ struct SessionActor {
     max_turn_duration: Duration,
     idle_shutdown: Duration,
     events: mpsc::Sender<SessionEvent>,
+    observer: ObserverHandle,
+    translator: TranscriptTranslator,
 }
 
 /// How the select loop around an in-flight prompt ended.
@@ -540,6 +562,13 @@ impl SessionActor {
             })
             .await;
 
+        // Subscribe before the prompt is written: a broadcast receiver only sees
+        // what is sent after it exists, so subscribing afterwards would lose the
+        // opening chunks of every turn.
+        let mut frames = self.observer.subscribe();
+        let opening = self.translator.begin_turn(&text);
+        emit_items(&self.events, &self.session_id, &turn_id, opening).await;
+
         // The prompt future holds `&mut self.client` for the whole turn; it is
         // boxed so the interrupt path can drop it and get the client back.
         let mut prompt = Box::pin(self.client.session_prompt_with_idle_timeout(
@@ -552,6 +581,14 @@ impl SessionActor {
             tokio::select! {
                 biased;
                 result = prompt.as_mut() => break PromptInterruption::Completed(result),
+                frame = frames.recv() => {
+                    let items = translate_frame(
+                        &mut self.translator,
+                        &self.acp_session_id,
+                        frame,
+                    );
+                    emit_items(&self.events, &self.session_id, &turn_id, items).await;
+                }
                 command = rx.recv() => match command {
                     None | Some(SessionCommand::Shutdown) => break PromptInterruption::Shutdown,
                     Some(SessionCommand::Interrupt { .. }) => {
@@ -574,6 +611,25 @@ impl SessionActor {
             }
         };
         drop(prompt);
+
+        // The prompt arm is polled first, so the agent's closing chunks can
+        // still be sitting in the broadcast buffer when it resolves.
+        loop {
+            match frames.try_recv() {
+                Ok(frame) => {
+                    let items =
+                        translate_frame(&mut self.translator, &self.acp_session_id, Ok(frame));
+                    emit_items(&self.events, &self.session_id, &turn_id, items).await;
+                }
+                Err(broadcast::error::TryRecvError::Lagged(dropped)) => {
+                    let items = vec![crate::payload::status_item(&format!(
+                        "transcript_frames_dropped:{dropped}"
+                    ))];
+                    emit_items(&self.events, &self.session_id, &turn_id, items).await;
+                }
+                Err(_) => break,
+            }
+        }
 
         let (outcome, agent_gone) = match interruption {
             PromptInterruption::Completed(Ok(stop_reason)) => {
@@ -608,6 +664,11 @@ impl SessionActor {
                 }
             }
         };
+
+        // Flush before the terminal item so the turn's prose and its final usage
+        // snapshot are on the record ahead of the `result` the provider appends.
+        let tail = self.translator.close_turn();
+        emit_items(&self.events, &self.session_id, &turn_id, tail).await;
 
         let usage = self.client.take_turn_usage().map(Box::new);
         let _ = self
@@ -664,6 +725,68 @@ impl SessionActor {
                 None,
             ),
         }
+    }
+}
+
+/// Forward translated items, skipping the send when there is nothing to say.
+async fn emit_items(
+    events: &mpsc::Sender<SessionEvent>,
+    session_id: &str,
+    turn_id: &str,
+    items: Vec<serde_json::Value>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    let _ = events
+        .send(SessionEvent::TranscriptItems {
+            session_id: session_id.to_owned(),
+            turn_id: turn_id.to_owned(),
+            items,
+        })
+        .await;
+}
+
+/// Turn one observer frame into transcript items.
+///
+/// Only `acp_read` frames carrying a `session/update` notification matter; the
+/// rest of the wire (requests, responses, writes) is machinery, not transcript.
+/// `Closed` is unreachable while the actor lives — it owns the [`ObserverHandle`]
+/// the frames are sent through — so it simply yields nothing.
+fn translate_frame(
+    translator: &mut TranscriptTranslator,
+    acp_session_id: &str,
+    frame: Result<ObserverEvent, broadcast::error::RecvError>,
+) -> Vec<serde_json::Value> {
+    let event = match frame {
+        Ok(event) => event,
+        Err(broadcast::error::RecvError::Lagged(dropped)) => {
+            // Never silently: a gap in the record has to be visible in it.
+            return vec![crate::payload::status_item(&format!(
+                "transcript_frames_dropped:{dropped}"
+            ))];
+        }
+        Err(broadcast::error::RecvError::Closed) => return Vec::new(),
+    };
+    if event.kind != "acp_read" {
+        return Vec::new();
+    }
+    if event.payload.get("method").and_then(|m| m.as_str()) != Some("session/update") {
+        return Vec::new();
+    }
+    let Some(params) = event.payload.get("params") else {
+        return Vec::new();
+    };
+    // One process serves exactly one session, so this can only ever match — but
+    // an adapter that multiplexed would otherwise cross two sessions' records.
+    if let Some(session_id) = params.get("sessionId").and_then(|id| id.as_str()) {
+        if session_id != acp_session_id {
+            return Vec::new();
+        }
+    }
+    match params.get("update") {
+        Some(update) => translator.on_update(update),
+        None => Vec::new(),
     }
 }
 
@@ -779,6 +902,7 @@ mod tests {
             idle_timeout: Duration::from_secs(5),
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
+            include_thoughts: true,
         }
     }
 
@@ -787,6 +911,28 @@ mod tests {
             .await
             .expect("event within timeout")
             .expect("channel open")
+    }
+
+    /// The next lifecycle report, skipping the transcript items that stream
+    /// alongside it — those are the translator's business, tested separately.
+    async fn next_lifecycle_event(rx: &mut mpsc::Receiver<SessionEvent>) -> SessionEvent {
+        loop {
+            match next_event(rx).await {
+                SessionEvent::TranscriptItems { .. } => continue,
+                other => return other,
+            }
+        }
+    }
+
+    async fn collect_items(rx: &mut mpsc::Receiver<SessionEvent>) -> Vec<serde_json::Value> {
+        let mut items = Vec::new();
+        loop {
+            match next_event(rx).await {
+                SessionEvent::TranscriptItems { items: batch, .. } => items.extend(batch),
+                SessionEvent::TurnFinished { .. } => return items,
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
@@ -812,10 +958,10 @@ mod tests {
             .expect("deliver");
 
         assert!(matches!(
-            next_event(&mut rx).await,
+            next_lifecycle_event(&mut rx).await,
             SessionEvent::TurnStarted { ref command_id, .. } if command_id == "turn-1"
         ));
-        match next_event(&mut rx).await {
+        match next_lifecycle_event(&mut rx).await {
             SessionEvent::TurnFinished { outcome, .. } => assert_eq!(
                 outcome,
                 TurnOutcome::Completed {
@@ -824,6 +970,40 @@ mod tests {
             ),
             other => panic!("expected a finished turn, got {other:?}"),
         }
+        manager.shutdown("s1");
+    }
+
+    /// The translator is driven from the actor's own task, so the items of a
+    /// turn arrive in narrative order rather than racing the turn's lifecycle
+    /// reports. This is the end-to-end proof of that wiring: a real subprocess
+    /// emits a real `session/update`, and it comes back as a projected item.
+    #[tokio::test]
+    async fn a_turns_updates_are_translated_into_ordered_transcript_items() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+            })
+            .expect("deliver");
+
+        let items = collect_items(&mut rx).await;
+        let kinds: Vec<&str> = items
+            .iter()
+            .filter_map(|item| item["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, vec!["user_prompt", "assistant_text"]);
+        assert_eq!(items[0]["content"], "go");
+        assert_eq!(items[1]["text"], "working");
         manager.shutdown("s1");
     }
 
@@ -846,7 +1026,7 @@ mod tests {
             })
             .expect("deliver");
         assert!(matches!(
-            next_event(&mut rx).await,
+            next_lifecycle_event(&mut rx).await,
             SessionEvent::TurnStarted { .. }
         ));
         handle
@@ -855,7 +1035,7 @@ mod tests {
             })
             .expect("deliver interrupt");
 
-        match next_event(&mut rx).await {
+        match next_lifecycle_event(&mut rx).await {
             SessionEvent::TurnFinished { outcome, .. } => {
                 assert_eq!(outcome, TurnOutcome::Cancelled)
             }
@@ -887,10 +1067,10 @@ mod tests {
             .expect("deliver");
 
         assert!(matches!(
-            next_event(&mut rx).await,
+            next_lifecycle_event(&mut rx).await,
             SessionEvent::TurnStarted { .. }
         ));
-        match next_event(&mut rx).await {
+        match next_lifecycle_event(&mut rx).await {
             SessionEvent::TurnFinished { outcome, .. } => assert!(
                 matches!(
                     outcome,
@@ -903,7 +1083,7 @@ mod tests {
             ),
             other => panic!("expected a finished turn, got {other:?}"),
         }
-        match next_event(&mut rx).await {
+        match next_lifecycle_event(&mut rx).await {
             SessionEvent::Exited { reason, .. } => {
                 assert!(matches!(reason, ExitReason::AgentGone(_)))
             }
@@ -953,7 +1133,7 @@ mod tests {
         req.idle_shutdown = Duration::from_millis(150);
         manager.create(req).await.expect("create");
 
-        match next_event(&mut rx).await {
+        match next_lifecycle_event(&mut rx).await {
             SessionEvent::Exited { reason, .. } => assert_eq!(reason, ExitReason::Idle),
             other => panic!("expected an idle exit, got {other:?}"),
         }
