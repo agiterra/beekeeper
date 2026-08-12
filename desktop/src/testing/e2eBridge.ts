@@ -516,6 +516,8 @@ type E2eConfig = {
       provider: string | null;
       model: string | null;
       preferred_runtime?: string | null;
+      /** Coding-session ingress authority. Absent means fail-closed. */
+      "allowed-bridge-pubkeys"?: Array<{ pubkey: string; label: string }>;
     };
     /** Explicit owner-only agent-access capability; independent of baked defaults. */
     ownerOnlyAccessBuild?: boolean;
@@ -1175,6 +1177,19 @@ declare global {
       pending?: boolean;
       /** 64-hex id required for the event to be a valid reaction target. */
       id?: string;
+    }) => RelayEvent;
+    /**
+     * Seed one already-signed relay event into a channel's mock store and
+     * fan it out live.
+     *
+     * Unlike `__BUZZ_E2E_EMIT_MOCK_MESSAGE__`, nothing here is synthesized:
+     * the spec supplies the whole event, signature included. Coding-session
+     * kinds are verified signature-first by the consumer, so a mock-built
+     * event would be rejected before it could prove anything.
+     */
+    __BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?: (input: {
+      channelName: string;
+      event: RelayEvent;
     }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
@@ -10350,6 +10365,17 @@ export function maybeInstallE2eTauriMocks() {
       pending,
       id,
     );
+  };
+  window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__ = ({ channelName, event }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) {
+      throw new Error(`Mock channel ${channelName} not found.`);
+    }
+    recordMockMessage(channel.id, event);
+    emitMockLiveEvent(channel.id, event);
+    return event;
   };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({

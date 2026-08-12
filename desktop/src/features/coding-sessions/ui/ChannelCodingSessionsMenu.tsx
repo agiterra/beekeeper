@@ -111,23 +111,37 @@ export function ChannelCodingSessionsMenu({
   );
 }
 
-export function ChannelCodingSessionsTrigger({
-  count,
-  variant,
-}: {
+/**
+ * The Sessions doorway.
+ *
+ * A `forwardRef` because `PopoverTrigger asChild` merges its open/close props
+ * and its ref onto this element — a plain function component would swallow
+ * both, and the popover would never open.
+ */
+type ChannelCodingSessionsTriggerProps = Omit<
+  React.ComponentPropsWithoutRef<typeof Button>,
+  "variant"
+> & {
   count: number;
   variant: "inline" | "compact";
-}) {
+};
+
+export const ChannelCodingSessionsTrigger = React.forwardRef<
+  HTMLButtonElement,
+  ChannelCodingSessionsTriggerProps
+>(function ChannelCodingSessionsTrigger({ count, variant, ...rest }, ref) {
   const compact = variant === "compact";
   return (
     <Button
       aria-label={`Coding sessions (${count})`}
       className={compact ? undefined : "h-8 gap-1.5 px-2.5"}
       data-testid="channel-coding-sessions-trigger"
+      ref={ref}
       size={compact ? "icon" : undefined}
       title={compact ? `Coding sessions (${count})` : undefined}
       type="button"
       variant="outline"
+      {...rest}
     >
       <MessagesSquare />
       {compact ? null : (
@@ -140,7 +154,7 @@ export function ChannelCodingSessionsTrigger({
       )}
     </Button>
   );
-}
+});
 
 export function ChannelCodingSessionList({
   entries,
