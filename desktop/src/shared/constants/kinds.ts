@@ -75,6 +75,43 @@ export const KIND_GIT_STATUS_DRAFT = 1633;
 // h-tags = currently-hidden DM channel ids).
 export const KIND_DM_VISIBILITY = 30622;
 
+// ── Coding sessions (44220–44225) ────────────────────────────────────────────
+//
+// Provider-neutral kinds for driving a coding agent against a working
+// directory. All six are channel-scoped (`h` tag) and never enter
+// CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
+// its own workspace surface, not to the chat timeline. Names mirror
+// crates/buzz-core/src/kind.rs — keep them in sync.
+
+// NIP-CSC: operator-authored durable turn command (`csc1-1`).
+export const KIND_CODING_SESSION_COMMAND = 44220;
+// NIP-CSL: operator-authored request to create a session (`csl1-1`). Kept
+// separate from the turn command because an exact generation target does not
+// exist until the provider creates it.
+export const KIND_CODING_SESSION_LIFECYCLE_COMMAND = 44221;
+// NIP-CSPC: provider-authored availability catalog (`cspc1-1`). Queried
+// separately from chat so message volume cannot age discovery out of a bounded
+// history window.
+export const KIND_CODING_SESSION_PROVIDER_CATALOG = 44222;
+// NIP-CSL: provider-authored immutable facts about one exact generation
+// (`csm1-1`).
+export const KIND_CODING_SESSION_METADATA = 44223;
+// NIP-CSL: provider-authored result of one lifecycle command (`cslr1-1`).
+export const KIND_CODING_SESSION_LIFECYCLE_RECEIPT = 44224;
+// NIP-CST: one provider-authored, sequenced transcript step (`cst1-1`).
+export const KIND_CODING_SESSION_TRANSCRIPT = 44225;
+
+// Every coding-session kind, in one place, so the regression guard keeping them
+// out of the chat timeline cannot silently miss a newly added member.
+export const CODING_SESSION_EVENT_KINDS = [
+  KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_PROVIDER_CATALOG,
+  KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_TRANSCRIPT,
+] as const;
+
 // Human-visible "new content" message kinds. Used as the unread trigger set
 // (sidebar badges, catch-up queries) and as the Home-feed mention query.
 // Reactions, edits, diffs, deletions, and system messages are deliberately

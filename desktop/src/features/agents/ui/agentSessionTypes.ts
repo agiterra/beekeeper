@@ -66,6 +66,19 @@ export type TranscriptItemIdentity = {
   turnId?: string | null;
   sessionId?: string | null;
   channelId?: string | null;
+  /**
+   * The bridge identity that authored this item, when it did not come from a
+   * locally observed ACP stream.
+   *
+   * Coding-session transcripts arrive as signed relay events from a provider,
+   * so the renderer needs to say whose claim it is showing. `label` is display
+   * metadata resolved from the trust allowlist; authority always comes from
+   * `pubkey`.
+   */
+  bridgeSource?: {
+    pubkey: string;
+    label: string;
+  } | null;
 };
 
 export type TranscriptItem =
