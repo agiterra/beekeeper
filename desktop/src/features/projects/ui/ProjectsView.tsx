@@ -1,15 +1,10 @@
-import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
-import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import {
-  projectContainersQueryKey,
   useDisplayProjectContainers,
   useRepoContainerId,
 } from "@/features/projects-container/hooks";
-import { addProjectMembers } from "@/features/projects-container/useCreateProjectContainer";
-import { ensureRealProject } from "@/features/projects-container/useGeneralProjectMigration";
 import { ProjectsManagePanel } from "@/features/projects-container/ui/ProjectsManagePanel";
 import {
   ProjectsScreenCreateDialogs,
@@ -27,7 +22,6 @@ import {
   useProjectsWorkItemsQuery,
 } from "@/features/projects/hooks";
 import { useRepositoryActivitySummariesQuery } from "@/features/projects/repositoryActivityHooks";
-import { useCreateProjectMutation } from "@/features/projects/useCreateProject";
 import { useProjectsRepoSnapshotsQuery } from "@/features/projects/useProjectsRepoSnapshots";
 import { useMemberChannelIds } from "@/features/projects/useRepositoryAccess";
 import {
@@ -39,7 +33,6 @@ import {
   EmptyFilteredState,
   EmptyState,
 } from "@/features/projects/ui/ProjectCards";
-import { CreateProjectDialog } from "@/features/projects/ui/CreateProjectDialog";
 import { CreateProjectIssueDialog } from "@/features/projects/ui/CreateProjectIssueDialog";
 import { CreatePullRequestDialog } from "@/features/projects/ui/CreatePullRequestDialog";
 import { ProjectsCreateMenu } from "@/features/projects/ui/ProjectsCreateMenu";
@@ -149,7 +142,6 @@ export function ProjectsView({
   );
   const projectsQuery = useProjectsQuery();
   const identityQuery = useIdentityQuery();
-  const queryClient = useQueryClient();
   const projects = projectsQuery.data ?? [];
   const localRepositoriesQuery = useProjectLocalRepositoriesQuery(
     activeCommunity?.reposDir,
@@ -245,13 +237,11 @@ export function ProjectsView({
     activeCommunity?.reposDir,
   );
   const memberChannelIds = useMemberChannelIds();
-  const [createProjectOpen, setCreateProjectOpen] = React.useState(false);
   const [screenCreateKind, setScreenCreateKind] =
     React.useState<ProjectsScreenCreateKind | null>(null);
   const [createIssueOpen, setCreateIssueOpen] = React.useState(false);
   const [createPullRequestOpen, setCreatePullRequestOpen] =
     React.useState(false);
-  const createProjectMutation = useCreateProjectMutation();
   const [storedViewMode, setStoredViewMode] =
     React.useState<ProjectsViewMode | null>(() => readStoredViewMode());
   const [sort, setSort] = React.useState<ProjectsSort>(() => readStoredSort());
@@ -735,7 +725,7 @@ export function ProjectsView({
         selectedContainer ? () => setCreatePullRequestOpen(true) : undefined
       }
       onCreateRepository={
-        selectedContainer ? () => setCreateProjectOpen(true) : undefined
+        selectedContainer ? () => setScreenCreateKind("repo") : undefined
       }
       onCreateChannel={
         selectedContainer ? () => setScreenCreateKind("channel") : undefined
@@ -792,55 +782,13 @@ export function ProjectsView({
       <ProjectsScreenCreateDialogs
         kind={screenCreateKind}
         onClose={() => setScreenCreateKind(null)}
-        targetProject={selectedContainer}
-      />
-      <CreateProjectDialog
-        isCreating={createProjectMutation.isPending}
-        onCreate={async (input) => {
-          // The Repository entry only shows with a project selected, so the
-          // new repo lands in it (publishing the real General first when the
-          // selection is the local placeholder).
-          const target = selectedContainer
-            ? await ensureRealProject(selectedContainer)
-            : null;
-          const result = await createProjectMutation.mutateAsync(
-            target ? { ...input, projectRef: target.address } : input,
-          );
-          const project = result.project;
-          const createdRepoAddress =
-            project.repositories[0]?.repoAddress ?? null;
-          if (target) {
-            if (
-              createdRepoAddress &&
-              target.owner === (currentPubkey ?? "").toLowerCase()
-            ) {
-              try {
-                await addProjectMembers(target, {
-                  repoAddrs: [createdRepoAddress],
-                });
-              } catch {
-                // The repo's own back-reference still associates it; the
-                // owner-curated forward ref is best-effort.
-              }
-            }
-            void queryClient.invalidateQueries({
-              queryKey: projectContainersQueryKey,
-            });
-          }
-          if (result.compatibilityWarning) {
-            toast.warning("Created as a standalone project", {
-              description: result.compatibilityWarning,
-            });
-          } else {
-            toast.success(`Project "${project.name}" created.`);
-          }
-          // Land on the list that actually shows the new project — the
+        onRepoCreated={() => {
+          // Land on the list that actually shows the new repo — the
           // Overview only surfaces the top few most-active repositories.
           handleRepositoryScopeChange("all");
           handleFilterChange("projects");
         }}
-        onOpenChange={setCreateProjectOpen}
-        open={createProjectOpen}
+        targetProject={selectedContainer}
       />
       {createPullRequestOpen ? (
         <CreatePullRequestDialog

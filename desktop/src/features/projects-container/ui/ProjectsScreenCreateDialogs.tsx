@@ -8,8 +8,6 @@ import {
   useChannelsQuery,
   useCreateChannelMutation,
 } from "@/features/channels/hooks";
-import { CreateProjectDialog } from "@/features/projects/ui/CreateProjectDialog";
-import { useCreateProjectMutation } from "@/features/projects/useCreateProject";
 import { CreateChannelDialog } from "@/features/sidebar/ui/CreateChannelDialog";
 import { WorkflowDialog } from "@/features/workflows/ui/WorkflowDialog";
 import { useIdentityQuery } from "@/shared/api/hooks";
@@ -21,25 +19,32 @@ import {
   useProjectContainers,
   type ProjectContainer,
 } from "../hooks";
+import { attachableProjectRepos } from "../lib/attachableRepos";
 import {
   GENERAL_PROJECT_DTAG,
   LOCAL_GENERAL_ID,
+  makeLocalGeneral,
 } from "../lib/projectContainerModel";
+import { useMoveRepoToProjectMutation } from "../projectOrganizeMutations";
 import {
   addProjectMembers,
   useCreateProjectContainerMutation,
 } from "../useCreateProjectContainer";
+import { useCreateProjectRepoMutation } from "../useCreateProjectRepo";
 import {
   ensureRealProject,
   useGeneralProjectRefResolver,
 } from "../useGeneralProjectMigration";
+import { AttachProjectRepoDialog } from "./AttachProjectRepoDialog";
 import { CreateProjectContainerDialog } from "./CreateProjectContainerDialog";
+import { CreateProjectRepoDialog } from "./CreateProjectRepoDialog";
 
 export type ProjectsScreenCreateKind =
   | "channel"
   | "forum"
   | "workflow"
   | "repo"
+  | "repo-attach"
   | "project";
 
 /**
@@ -51,13 +56,16 @@ export function ProjectsScreenCreateDialogs({
   kind,
   targetProject,
   onClose,
+  onRepoCreated,
 }: {
   kind: ProjectsScreenCreateKind | null;
   targetProject: ProjectContainer | null;
   onClose: () => void;
+  /** Fires after a repository is created into the target project. */
+  onRepoCreated?: () => void;
 }) {
   const { goChannel } = useAppNavigation();
-  const { projects } = useProjectContainers();
+  const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   const queryClient = useQueryClient();
   const identityQuery = useIdentityQuery();
   const currentPubkey = identityQuery.data?.pubkey;
@@ -66,7 +74,18 @@ export function ProjectsScreenCreateDialogs({
   const resolveGeneralProjectRef = useGeneralProjectRefResolver(projects, true);
   const createChannelMutation = useCreateChannelMutation();
   const createProjectMutation = useCreateProjectContainerMutation();
-  const createRepoMutation = useCreateProjectMutation();
+  const createRepoMutation = useCreateProjectRepoMutation();
+  const moveRepoMutation = useMoveRepoToProjectMutation();
+
+  // Repos, channels, forums, and workflows land in the target project —
+  // falling back to General (published lazily) when the host passes none.
+  const repoTargetProject = React.useMemo(
+    () =>
+      targetProject ??
+      projects.find((project) => project.dtag === GENERAL_PROJECT_DTAG) ??
+      makeLocalGeneral(),
+    [targetProject, projects],
+  );
 
   const channelBuckets = React.useMemo(
     () => partitionChannels(projects, channelsQuery.data ?? []),
@@ -98,6 +117,44 @@ export function ProjectsScreenCreateDialogs({
     toast.error("Add a channel to this project before creating a workflow.");
     onClose();
   }, [kind, channelsQuery.isLoading, workflowChannels.length, onClose]);
+
+  // A repository's access channel can be any channel the user is in; the
+  // default prefers the target project's own channels.
+  const repoAccessChannels = React.useMemo(
+    () =>
+      (channelsQuery.data ?? []).filter(
+        (channel) =>
+          channel.isMember &&
+          !channel.archivedAt &&
+          channel.channelType !== "dm",
+      ),
+    [channelsQuery.data],
+  );
+  const defaultRepoChannelId = React.useMemo(() => {
+    const eligible = new Set(repoAccessChannels.map((channel) => channel.id));
+    return (
+      workflowChannels.find((channel) => eligible.has(channel.id))?.id ??
+      repoAccessChannels[0]?.id
+    );
+  }, [repoAccessChannels, workflowChannels]);
+
+  React.useEffect(() => {
+    if (kind !== "repo") return;
+    if (channelsQuery.isLoading || repoAccessChannels.length > 0) return;
+    toast.error("Add a channel to this project before creating a repository.");
+    onClose();
+  }, [kind, channelsQuery.isLoading, repoAccessChannels.length, onClose]);
+
+  const attachCandidates = React.useMemo(
+    () =>
+      attachableProjectRepos(
+        projects,
+        reposByProject,
+        unclaimedRepos,
+        repoTargetProject,
+      ),
+    [projects, reposByProject, unclaimedRepos, repoTargetProject],
+  );
 
   const handleCreateChannel = React.useCallback(
     async (input: {
@@ -175,50 +232,44 @@ export function ProjectsScreenCreateDialogs({
         open={kind === "workflow" && workflowChannels.length > 0}
       />
 
-      <CreateProjectDialog
+      <CreateProjectRepoDialog
+        channels={repoAccessChannels}
+        defaultChannelId={defaultRepoChannelId}
         isCreating={createRepoMutation.isPending}
         onCreate={async (input) => {
-          // The new repo lands in the target project (publishing the real
-          // General first when the target is the local placeholder).
-          const target = targetProject
-            ? await ensureRealProject(targetProject)
-            : null;
-          const result = await createRepoMutation.mutateAsync(
-            target ? { ...input, projectRef: target.address } : input,
-          );
-          const project = result.project;
-          const createdRepoAddress =
-            project.repositories[0]?.repoAddress ?? null;
-          if (target) {
-            if (
-              createdRepoAddress &&
-              target.owner === (currentPubkey ?? "").toLowerCase()
-            ) {
-              try {
-                await addProjectMembers(target, {
-                  repoAddrs: [createdRepoAddress],
-                });
-              } catch {
-                // The repo's own back-reference still associates it; the
-                // owner-curated forward ref is best-effort.
-              }
-            }
-            void queryClient.invalidateQueries({
-              queryKey: projectContainersQueryKey,
-            });
-          }
-          if (result.compatibilityWarning) {
-            toast.warning("Created as a standalone project", {
-              description: result.compatibilityWarning,
-            });
-          } else {
-            toast.success(`Project "${project.name}" created.`);
-          }
+          // The new repo lands in the target project only — no new project
+          // container is published (the mutation publishes the real General
+          // first when the target is the local placeholder).
+          const result = await createRepoMutation.mutateAsync({
+            project: repoTargetProject,
+            ...input,
+          });
+          toast.success(`Repository "${result.name}" created.`);
+          onRepoCreated?.();
         }}
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
-        open={kind === "repo"}
+        open={kind === "repo" && repoAccessChannels.length > 0}
+        projectName={repoTargetProject.name}
+      />
+
+      <AttachProjectRepoDialog
+        isAttaching={moveRepoMutation.isPending}
+        onAttach={async (repo) => {
+          await moveRepoMutation.mutateAsync({
+            repo,
+            from: attachCandidates.fromByAddress.get(repo.repoAddress) ?? null,
+            to: repoTargetProject,
+          });
+          toast.success(`Moved ${repo.name} to ${repoTargetProject.name}.`);
+        }}
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        open={kind === "repo-attach"}
+        projectName={repoTargetProject.name}
+        repos={attachCandidates.candidates}
       />
 
       <CreateProjectContainerDialog

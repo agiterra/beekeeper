@@ -42,11 +42,13 @@ import {
   displayProjectsWithGeneral,
   makeLocalGeneral,
 } from "../lib/projectContainerModel";
+import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
+import { ProjectSectionRepoAddMenu } from "./ProjectSectionRepoAddMenu";
 import {
   ProjectsScreenCreateDialogs,
   type ProjectsScreenCreateKind,
@@ -159,6 +161,21 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     [displayProjects],
   );
   const moves = useProjectItemMoves(projectById);
+
+  // Hide the "Add existing repository" entry while no repo outside this
+  // project exists to move in.
+  const attachableRepoCount = React.useMemo(
+    () =>
+      project
+        ? attachableProjectRepos(
+            projects,
+            reposByProject,
+            unclaimedRepos,
+            project,
+          ).candidates.length
+        : 0,
+    [projects, reposByProject, unclaimedRepos, project],
+  );
 
   const updateMutation = useUpdateProjectContainerMutation();
   const [editOpen, setEditOpen] = React.useState(false);
@@ -350,7 +367,13 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
             count={repos.length}
             icon={<FolderGit2 className="size-4" />}
             title="Code"
-            action={createButton("repo", "New repository")}
+            action={
+              <ProjectSectionRepoAddMenu
+                attachAvailable={attachableRepoCount > 0}
+                onAttachExisting={() => setCreateKind("repo-attach")}
+                onCreateNew={() => setCreateKind("repo")}
+              />
+            }
           >
             {repos.length === 0 ? (
               <EmptyHint>No repositories in this project.</EmptyHint>

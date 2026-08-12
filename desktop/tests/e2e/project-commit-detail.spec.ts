@@ -193,7 +193,7 @@ test("top-level project lists align dates and overflow actions", async ({
   ).toBe(true);
 });
 
-test("creating a project publishes its initial repository grouping", async ({
+test("creating a repository publishes only the repo announcement into the project", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
@@ -201,22 +201,19 @@ test("creating a project publishes its initial repository grouping", async ({
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
   // Repo creation needs a concrete target project — scope to General first
-  // ("Project" now creates a container; "Repository" opens the repo dialog,
-  // which still publishes the 30617+30621 grouping pair).
+  // ("Project" creates a container; "Repository" opens the repo-only dialog,
+  // which publishes a single 30617 carrying the container back-ref).
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "General" }).click();
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Repository" }).click();
-  await page.getByTestId("create-project-name").fill("multi-repo-demo");
+  await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
   await page
-    .getByTestId("create-project-description")
-    .fill("A grouped project created through the desktop app.");
-  await page
-    .getByTestId("create-project-clone-url")
+    .getByTestId("create-project-repo-clone-url")
     .fill("https://relay.example.com/git/owner/multi-repo-demo.git");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
   await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
@@ -234,24 +231,25 @@ test("creating a project publishes its initial repository grouping", async ({
         ),
       ) ?? [],
   );
-  expect(createdEvents.map((event) => event.kind).sort()).toEqual([
-    30617, 30621,
-  ]);
-  const projectEvent = createdEvents.find((event) => event.kind === 30621);
-  expect(projectEvent?.tags).toContainEqual([
-    "a",
-    `30617:${"deadbeef".repeat(8)}:multi-repo-demo`,
-  ]);
-  expect(projectEvent?.content).toBe("");
+  // Regression: the repo-only flow must not publish a sibling kind:30621
+  // project container for the repo.
+  expect(createdEvents.map((event) => event.kind)).toEqual([30617]);
+  expect(
+    createdEvents[0]?.tags.some(
+      (tag) =>
+        tag[0] === "project" &&
+        /^30621:[0-9a-f]{64}:general$/.test(tag[1] ?? ""),
+    ),
+  ).toBe(true);
 
-  // Still scoped to General — a duplicate name is rejected by the dedupe.
+  // Still scoped to General — a duplicate name is rejected by the guard.
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Repository" }).click();
-  await page.getByTestId("create-project-name").fill("multi-repo-demo");
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
+  await page.getByTestId("create-project-repo-submit").click();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
   await expect(
-    page.getByText('You already have a project named "multi-repo-demo".'),
+    page.getByText(/A repository named "multi-repo-demo" already exists/),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -264,18 +262,16 @@ test("creating a project publishes its initial repository grouping", async ({
           ).length ?? 0,
       ),
     )
-    .toBe(2);
+    .toBe(1);
 });
 
-test("unsupported relays keep the initial repository accessible", async ({
-  page,
-}) => {
+test("unsupported relays keep the repository accessible", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     window.__BUZZ_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__ = true;
     // A real target container: creating into the local General placeholder
-    // would first publish General itself (also a 30621), which this relay
-    // flag would reject before the repo flow under test even runs.
+    // would first publish General itself (a 30621), which this relay flag
+    // would reject before the repo flow under test even runs.
     window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
@@ -299,11 +295,12 @@ test("unsupported relays keep the initial repository accessible", async ({
   await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Repository" }).click();
-  await page.getByTestId("create-project-name").fill("legacy-fallback");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("create-project-repo-name").fill("legacy-fallback");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
-  await expect(page.getByText("Created as a standalone project")).toBeVisible();
+  // The repo publish (30617) succeeds; the owner-curated forward ref on the
+  // container (30621) is best-effort and its rejection stays silent.
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
   await waitForAnimations(page);
   await page.getByTestId("projects-section-repositories").click();
   const projectEntry = page
@@ -336,16 +333,16 @@ test("unsupported relays keep the initial repository accessible", async ({
   expect(acceptedKinds).toEqual([30617]);
 });
 
-test("project creation can retry after its repository publication fails", async ({
+test("repository creation can retry after its publication fails", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    // A real target container: creating into the local General placeholder
-    // would first publish General itself (also a 30621), consuming the
-    // one-shot rejection before the pair publish under test. The rejection
-    // itself is armed post-boot (below) for the same reason: the boot-time
-    // General sweep publishes a 30621 of its own.
+    // The one-shot 30617 rejection can be armed at boot: nothing else in the
+    // boot path publishes a repo announcement (the General sweep is a 30621).
+    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617];
+    // A real target container keeps ensureRealProject from publishing a
+    // General head mid-flow.
     window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
@@ -367,33 +364,16 @@ test("project creation can retry after its repository publication fails", async 
   // real container (see the init script above for why not General).
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "Workbench" }).click();
-  // Wait out the boot-time General sweep's own 30621 publish, then arm the
-  // one-shot rejection so it hits the pair publish under test.
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
-            (event) =>
-              event.kind === 30621 &&
-              event.tags.some((tag) => tag[0] === "d" && tag[1] === "general"),
-          ) ?? false,
-      ),
-    )
-    .toBe(true);
-  await page.evaluate(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30621];
-  });
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Repository" }).click();
-  await page.getByTestId("create-project-name").fill("retry-project");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("create-project-repo-name").fill("retry-project");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
   await expect(page.getByText("mock project event rejection")).toBeVisible();
 
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  await page.getByTestId("create-project-repo-submit").click();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
   await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
@@ -404,16 +384,16 @@ test("project creation can retry after its repository publication fails", async 
   ).toBeVisible();
 });
 
-test("project creation is idempotent after a lost publish acknowledgement", async ({
+test("repository creation recovers from a lost publish acknowledgement", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    // A real target container: creating into the local General placeholder
-    // would first publish General itself (also a 30621), consuming the
-    // one-shot lost-ack before the pair publish under test. The lost-ack
-    // itself is armed post-boot (below) for the same reason: the boot-time
-    // General sweep publishes a 30621 of its own.
+    // The one-shot 30617 lost-ack can be armed at boot: nothing else in the
+    // boot path publishes a repo announcement (the General sweep is a 30621).
+    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
+    // A real target container keeps ensureRealProject from publishing a
+    // General head mid-flow.
     window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
       {
         id: "workbenchseed".padEnd(64, "0"),
@@ -435,35 +415,14 @@ test("project creation is idempotent after a lost publish acknowledgement", asyn
   // real container (see the init script above for why not General).
   await page.getByRole("button", { name: "Filter by project" }).click();
   await page.getByRole("menuitem", { name: "Workbench" }).click();
-  // Wait out the boot-time General sweep's own 30621 publish, then arm the
-  // one-shot lost-ack so it hits the pair publish under test.
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
-            (event) =>
-              event.kind === 30621 &&
-              event.tags.some((tag) => tag[0] === "d" && tag[1] === "general"),
-          ) ?? false,
-      ),
-    )
-    .toBe(true);
-  await page.evaluate(() => {
-    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30621];
-  });
   await page.getByTestId("projects-create-menu").hover();
   await page.getByRole("menuitem", { name: "Repository" }).click();
-  await page.getByTestId("create-project-name").fill("lost-ack-project");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("create-project-repo-name").fill("lost-ack-project");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
-  await expect(
-    page.getByText("mock lost project acknowledgement"),
-  ).toBeVisible();
-
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  // The relay stored the event but the ACK was lost — the id-keyed recovery
+  // query treats the write as a success on the first submit.
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
   await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
@@ -483,7 +442,7 @@ test("project creation is idempotent after a lost publish acknowledgement", asyn
           ).length ?? 0,
       ),
     )
-    .toBe(2);
+    .toBe(1);
 });
 
 test("multi-repository projects switch the active repository", async ({

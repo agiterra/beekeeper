@@ -86,10 +86,15 @@ test("section + buttons create items scoped to the project", async ({
   await boot(page);
   await openProjectScreen(page, "general");
 
-  // Repo: created with the project forward/back refs; no navigation.
+  // Repo: the Code section's + menu opens the repo-only dialog — not the
+  // legacy create-project dialog (which spawned a whole new project
+  // container alongside the repo).
   await page.getByTestId("project-section-create-repo").click();
-  await page.getByTestId("create-project-name").fill("widget-lib");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("project-section-create-repo-new").click();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
+  await expect(page.getByTestId("create-project-dialog")).toHaveCount(0);
+  await page.getByTestId("create-project-repo-name").fill("widget-lib");
+  await page.getByTestId("create-project-repo-submit").click();
   await expect
     .poll(async () =>
       page.evaluate(
@@ -99,17 +104,86 @@ test("section + buttons create items scoped to the project", async ({
               event.kind === 30617 &&
               event.tags.some(
                 (tag) => tag[0] === "d" && tag[1] === "widget-lib",
+              ) &&
+              event.tags.some(
+                (tag) =>
+                  tag[0] === "project" &&
+                  /^30621:[0-9a-f]{64}:general$/.test(tag[1] ?? ""),
               ),
           ).length ?? 0,
       ),
     )
-    .toBeGreaterThan(0);
+    .toBe(1);
+  // Regression: creating a repo inside a project must not publish a sibling
+  // kind:30621 project container carrying the repo's dtag.
+  expect(
+    await page.evaluate(
+      () =>
+        window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+          (event) =>
+            event.kind === 30621 &&
+            event.tags.some((tag) => tag[0] === "d" && tag[1] === "widget-lib"),
+        ).length ?? 0,
+    ),
+  ).toBe(0);
 
   // Channel: creates into the project and navigates to the new channel.
   await page.getByTestId("project-section-create-channel").click();
   await page.getByTestId("create-channel-name").fill("skunk-chat");
   await page.getByTestId("create-channel-submit").click();
   await expect(page).toHaveURL(/\/channels\//, { timeout: 10_000 });
+});
+
+test("the Code section + menu attaches an existing repository", async ({
+  page,
+}) => {
+  // Seed a standalone (unclaimed) repo owned by the mock identity
+  // (deadbeef…, the mock-mode default) so the attach picker has a candidate
+  // and the move can republish its back-ref.
+  await page.addInitScript(() => {
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      {
+        id: "seeded-standalone-repo",
+        kind: 30617,
+        pubkey: "deadbeef".repeat(8),
+        created_at: 1_700_000_000,
+        content: "",
+        tags: [
+          ["d", "drifter"],
+          ["name", "drifter"],
+        ],
+      },
+    ];
+  });
+  await boot(page);
+  await createProject(page, "Attic");
+  await openProjectScreen(page, "attic");
+
+  await page.getByTestId("project-section-create-repo").click();
+  await page.getByTestId("project-section-create-repo-attach").click();
+  await expect(page.getByTestId("attach-project-repo-dialog")).toBeVisible();
+  await page.getByTestId("attach-project-repo-item-drifter").click();
+
+  // The move republished the repo's kind:30617 with the attic back-ref.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          window.__BUZZ_E2E_SIGNED_EVENTS__?.filter(
+            (event) =>
+              event.kind === 30617 &&
+              event.tags.some(
+                (tag) => tag[0] === "d" && tag[1] === "drifter",
+              ) &&
+              event.tags.some(
+                (tag) =>
+                  tag[0] === "project" &&
+                  /^30621:[0-9a-f]{64}:attic$/.test(tag[1] ?? ""),
+              ),
+          ).length ?? 0,
+      ),
+    )
+    .toBeGreaterThan(0);
 });
 
 test("deleting a project from its screen lands on the projects list", async ({
