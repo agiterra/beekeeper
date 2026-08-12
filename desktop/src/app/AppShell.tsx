@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation } from "@tanstack/react-router";
-import { deriveShellRoute, markAllReadSources } from "@/app/AppShell.helpers";
+import { deriveAppSurface, markAllReadSources } from "@/app/AppShell.helpers";
 import { useTerminalContext } from "@/app/useTerminalContext";
 import { AppShellProvider } from "@/app/AppShellContext";
 import { AppShellOverlays, TerminalBootstrap } from "@/app/AppShellOverlays";
@@ -65,7 +65,6 @@ import { SendFeedbackController } from "@/features/settings/ui/SendFeedbackContr
 import {
   DEFAULT_SETTINGS_SECTION,
   type SettingsSection,
-  isSettingsSection,
 } from "@/features/settings/ui/SettingsPanels";
 import { useDueReminderBadgeCount } from "@/features/reminders/hooks";
 import { useReminderNotifications } from "@/features/reminders/useReminderNotifications";
@@ -97,6 +96,7 @@ import { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarR
 import { AppShellTrayMenu } from "@/app/useAppShellTrayMenu";
 import { AppProfilePanelProvider } from "@/app/AppProfilePanelProvider";
 import { LazySettingsScreen } from "@/app/LazySettingsScreen";
+import { CodingSessionPopoutShell } from "@/features/coding-sessions/ui/CodingSessionPopoutShell";
 const EMPTY_CHANNELS: Channel[] = [];
 export function AppShell() {
   useWebviewZoomShortcuts();
@@ -149,10 +149,16 @@ export function AppShell() {
   } = useAppNavigation();
   const { canGoBack, canGoForward, goBack, goForward } =
     useBackForwardControls();
-  const { selectedChannelId, selectedView } = React.useMemo(
-    () => deriveShellRoute(location.pathname),
-    [location.pathname],
-  );
+  const {
+    isCodingSessionPopout,
+    selectedChannelId,
+    selectedView,
+    settingsOpen,
+    settingsSection,
+  } = deriveAppSurface({
+    pathname: location.pathname,
+    search: location.search as Record<string, unknown>,
+  });
   const {
     removeCommunity: handleRemoveCommunity,
     switchCommunity: handleSwitchCommunity,
@@ -162,15 +168,6 @@ export function AppShell() {
     selectedChannelId,
     selectedView,
   });
-  // Settings lives in history so back returns to the previous app entry.
-  const settingsOpen = location.pathname === "/settings";
-  const locationSearchSection = (location.search as { section?: unknown })
-    .section;
-  const settingsSection: SettingsSection = isSettingsSection(
-    locationSearchSection,
-  )
-    ? locationSearchSection
-    : DEFAULT_SETTINGS_SECTION;
   const startupReady = useDeferredStartup();
   const identityQuery = useIdentityQuery();
   const { mutedChannelIds, muteChannel, unmuteChannel } = useChannelMutes(
@@ -670,6 +667,10 @@ export function AppShell() {
     markChannelRead,
     selectedView,
   });
+  if (isCodingSessionPopout) {
+    return <CodingSessionPopoutShell channels={channels} />;
+  }
+
   return (
     <PreventSleepProvider>
       {!isHuddleRoom ? (

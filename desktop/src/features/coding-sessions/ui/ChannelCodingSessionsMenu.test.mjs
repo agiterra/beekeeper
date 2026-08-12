@@ -38,11 +38,12 @@ const entries = [
   },
 ];
 
-test("channel session list renders labels, statuses, and the open action", () => {
+test("channel session list renders labels, statuses, and both actions", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ChannelCodingSessionList, {
       entries,
       onOpen() {},
+      onPopout() {},
     }),
   );
 
@@ -54,22 +55,31 @@ test("channel session list renders labels, statuses, and the open action", () =>
     (markup.match(/data-testid="channel-coding-session-open"/g) ?? []).length,
     2,
   );
+  assert.equal(
+    (markup.match(/data-testid="channel-coding-session-popout"/g) ?? []).length,
+    2,
+  );
   assert.match(markup, /data-generation-id="instance:seat:7"/);
   assert.match(markup, /data-generation-id="instance:seat:6"/);
 });
 
-test("channel session list forwards only the clicked exact generation id", () => {
+test("channel session list forwards only the clicked exact generation ids", () => {
   const opened = [];
+  const poppedOut = [];
   const element = ChannelCodingSessionList({
     entries,
     onOpen: (generationId) => opened.push(generationId),
+    onPopout: (generationId) => poppedOut.push(generationId),
   });
   const rows = element.props.children;
   const newestActions = rows[0].props.children[1].props.children;
+  const olderActions = rows[1].props.children[1].props.children;
 
-  newestActions.props.onClick();
+  newestActions[0].props.onClick();
+  olderActions[1].props.onClick();
 
   assert.deepEqual(opened, ["instance:seat:7"]);
+  assert.deepEqual(poppedOut, ["instance:seat:6"]);
 });
 
 test("an empty channel still explains where sessions will appear", () => {
@@ -77,6 +87,7 @@ test("an empty channel still explains where sessions will appear", () => {
     React.createElement(ChannelCodingSessionList, {
       entries: [],
       onOpen() {},
+      onPopout() {},
     }),
   );
 

@@ -1,9 +1,12 @@
 import * as React from "react";
 import { ArrowDown, CircleAlert } from "lucide-react";
+import { toast } from "sonner";
 
 import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { deriveTranscriptItemBlockIds } from "@/features/agents/ui/agentSessionTranscriptGrouping";
+import type { CodingSessionPopoutBootstrap } from "@/features/coding-sessions/lib/codingSessionBootstrap";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
+import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import {
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
@@ -28,6 +31,8 @@ import {
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 
 type CodingSessionWorkspaceProps = {
+  bootstrap?: CodingSessionPopoutBootstrap | null;
+  requireBootstrap?: boolean;
   channelId: string;
   generationId: string;
   onBack: () => void;
@@ -35,12 +40,16 @@ type CodingSessionWorkspaceProps = {
 };
 
 export function CodingSessionWorkspace({
+  bootstrap = null,
   channelId,
   generationId,
   onBack,
+  requireBootstrap = false,
   surface,
 }: CodingSessionWorkspaceProps) {
-  const catalog = useCodingSessionCatalog(channelId);
+  const catalog = useCodingSessionCatalog(channelId, bootstrap, {
+    requirePopoutBootstrap: requireBootstrap,
+  });
   const channelsQuery = useChannelsQuery({ enabled: true });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
@@ -81,6 +90,7 @@ function ReadyCodingSessionWorkspace({
   isMember,
   onBack,
   session,
+  surface,
 }: {
   channelId: string;
   channelName: string | null;
@@ -155,6 +165,16 @@ function ReadyCodingSessionWorkspace({
     [taskRailOpen, taskRailPreferenceKey],
   );
 
+  const handlePopout = React.useCallback(() => {
+    void openCodingSessionPopout(channelId, generationId).catch((error) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to open the coding-session window.",
+      );
+    });
+  }, [channelId, generationId]);
+
   return (
     <main
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
@@ -167,6 +187,7 @@ function ReadyCodingSessionWorkspace({
         generationLabel={session.label}
         model={session.model}
         onBack={onBack}
+        onPopout={surface === "main" ? handlePopout : undefined}
         onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
         providerAuthorityPubkey={session.providerAuthorityPubkey}
         runtimeLabel={runtimeLabel}

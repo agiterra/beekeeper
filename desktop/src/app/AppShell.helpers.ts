@@ -1,5 +1,11 @@
+import { isCodingSessionPopoutLocation } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { isThreadReply } from "@/features/messages/lib/threading";
 import type { DesktopNotificationTarget } from "@/features/notifications/lib/desktop";
+import {
+  DEFAULT_SETTINGS_SECTION,
+  isSettingsSection,
+  type SettingsSection,
+} from "@/features/settings/ui/SettingsPanels";
 import type { SearchHit } from "@/shared/api/types";
 
 export type AppView =
@@ -201,5 +207,34 @@ export function deriveShellRoute(pathname: string): {
   return {
     selectedChannelId: null,
     selectedView: "home",
+  };
+}
+
+/**
+ * The chrome-level reading of the current location.
+ *
+ * Settings lives in history so back returns to the previous app entry, and a
+ * coding-session pop-out is a whole different shell — both join the selected
+ * view here so `AppShell` reads one value instead of re-deriving route trivia
+ * inline.
+ */
+export function deriveAppSurface(location: {
+  pathname: string;
+  search: Record<string, unknown>;
+}): {
+  isCodingSessionPopout: boolean;
+  selectedChannelId: string | null;
+  selectedView: AppView;
+  settingsOpen: boolean;
+  settingsSection: SettingsSection;
+} {
+  const section = location.search.section;
+  return {
+    ...deriveShellRoute(location.pathname),
+    isCodingSessionPopout: isCodingSessionPopoutLocation(location),
+    settingsOpen: location.pathname === "/settings",
+    settingsSection: isSettingsSection(section)
+      ? section
+      : DEFAULT_SETTINGS_SECTION,
   };
 }

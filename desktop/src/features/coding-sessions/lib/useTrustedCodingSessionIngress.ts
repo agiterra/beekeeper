@@ -16,6 +16,7 @@ import {
   resolveCodingSessionIngressAuthority,
 } from "./codingSessionIngressAuthority";
 import {
+  type CodingSessionGenerationScope,
   type CodingSessionLifecycleResolution,
   isExactProviderAuthorityPubkey,
   TrustedCodingSessionIngressStore,
@@ -49,7 +50,29 @@ export type TrustedCodingSessionIngressHookSnapshot =
     errorMessage: string | null;
     authorityErrorMessage: string | null;
     lifecycle: CodingSessionLifecycleResolution | null;
+    /**
+     * The verified raw events behind one generation, for pop-out bootstrap.
+     *
+     * The store is the only thing that has ever seen these bytes verified, so
+     * the seam hands them out rather than letting a caller re-derive them from
+     * a projection it cannot re-check.
+     */
+    retainedRawEvents: (scope: CodingSessionGenerationScope) => RelayEvent[];
   };
+
+/**
+ * An exact accepted generation snapshot handed to a fresh pop-out webview.
+ *
+ * It is only ever a head start: the receiving store re-classifies every event
+ * against its own configured authority, and a snapshot minted under a
+ * different authority identity is dropped rather than trusted.
+ */
+export type TrustedCodingSessionIngressBootstrap = {
+  authorityIdentity: string;
+  relayEvents: readonly RelayEvent[];
+};
+
+const NO_RETAINED_RAW_EVENTS = (): RelayEvent[] => [];
 
 /**
  * One native filter covers every coding-session kind.
@@ -107,6 +130,7 @@ function emptySnapshot(
     errorMessage: null,
     authorityErrorMessage: null,
     lifecycle,
+    retainedRawEvents: NO_RETAINED_RAW_EVENTS,
   };
 }
 
@@ -121,6 +145,7 @@ export function useTrustedCodingSessionIngress(
   commandId: string | null = null,
   providerAuthorityPubkey: string | null = null,
   client: CodingSessionIngressClient = defaultRelayClient,
+  bootstrap: TrustedCodingSessionIngressBootstrap | null = null,
 ): TrustedCodingSessionIngressHookSnapshot {
   const stableChannelIdentity = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -166,6 +191,20 @@ export function useTrustedCodingSessionIngress(
       };
     }
     const store = storeRef.current.store;
+    // A staged pop-out snapshot is a head start, never a grant: it only enters
+    // the store when it was minted under this window's own authority
+    // identity, and every event still runs the full classifier.
+    if (
+      bootstrap &&
+      bootstrap.authorityIdentity === authorityIdentity &&
+      authority.state === "valid"
+    ) {
+      store.ingestRelayEvents(
+        bootstrap.relayEvents,
+        stableChannelIds,
+        authority,
+      );
+    }
     const resolveLifecycle = (): CodingSessionLifecycleResolution | null =>
       commandId && stableChannelIds.length === 1
         ? isExactProviderAuthorityPubkey(providerAuthorityPubkey)
@@ -227,6 +266,7 @@ export function useTrustedCodingSessionIngress(
             : (historyError ?? liveError),
         authorityErrorMessage: null,
         lifecycle: resolveLifecycle(),
+        retainedRawEvents: (scope) => store.retainedRawEvents(scope),
       });
     };
 
@@ -325,6 +365,7 @@ export function useTrustedCodingSessionIngress(
   }, [
     authority,
     authorityIdentity,
+    bootstrap,
     client,
     commandId,
     isConfigLoading,

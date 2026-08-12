@@ -1,9 +1,11 @@
-import { MessagesSquare } from "lucide-react";
+import { ExternalLink, MessagesSquare } from "lucide-react";
 import * as React from "react";
+import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import type { ChannelCodingSessionIngressEntry } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
 import { resolveChannelCodingSessionIngress } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
+import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
@@ -38,6 +40,20 @@ export function ChannelCodingSessionsMenu({
     },
     [channelId, goCodingSession],
   );
+  const handlePopout = React.useCallback(
+    (generationId: string) => {
+      if (!channelId) return;
+      setOpen(false);
+      void openCodingSessionPopout(channelId, generationId).catch((error) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Unable to open the coding-session window.",
+        );
+      });
+    },
+    [channelId],
+  );
 
   // The donor hid the trigger entirely when a channel had no sessions, which
   // works when a project shelf is the discovery surface. Standalone sessions
@@ -69,7 +85,11 @@ export function ChannelCodingSessionsMenu({
               : "No signed sessions in this channel yet."}
           </p>
         </div>
-        <ChannelCodingSessionList entries={entries} onOpen={handleOpen} />
+        <ChannelCodingSessionList
+          entries={entries}
+          onOpen={handleOpen}
+          onPopout={handlePopout}
+        />
       </PopoverContent>
     </Popover>
   );
@@ -109,9 +129,11 @@ export function ChannelCodingSessionsTrigger({
 export function ChannelCodingSessionList({
   entries,
   onOpen,
+  onPopout,
 }: {
   entries: ChannelCodingSessionIngressEntry[];
   onOpen: (generationId: string) => void;
+  onPopout: (generationId: string) => void;
 }) {
   if (entries.length === 0) {
     return (
@@ -163,6 +185,17 @@ export function ChannelCodingSessionList({
               variant="secondary"
             >
               Open
+            </Button>
+            <Button
+              aria-label={`Pop out ${session.label}`}
+              data-testid="channel-coding-session-popout"
+              onClick={() => onPopout(session.generationId)}
+              size="icon-xs"
+              title="Pop out"
+              type="button"
+              variant="ghost"
+            >
+              <ExternalLink />
             </Button>
           </div>
         </div>

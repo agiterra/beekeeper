@@ -1,5 +1,8 @@
 import * as React from "react";
 
+import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
+import type { CodingSessionPopoutBootstrap } from "./lib/codingSessionBootstrap";
+import { rememberCodingSessionPopoutBootstrap } from "./lib/codingSessionBootstrap";
 import { buildCodingSessionTargetKey } from "./lib/codingSessionCommand";
 import {
   buildCodingSessionTranscriptGenerationId,
@@ -26,13 +29,32 @@ import { useTrustedCodingSessionIngress } from "./lib/useTrustedCodingSessionIng
  */
 export function useCodingSessionCatalog(
   channelId: string | null,
+  popoutBootstrap: CodingSessionPopoutBootstrap | null = null,
+  options: { requirePopoutBootstrap?: boolean } = {},
 ): CodingSessionCatalogSnapshot {
   const ingressChannelIds = React.useMemo(
     () => (channelId ? [channelId] : []),
     [channelId],
   );
-  const trustedIngress = useTrustedCodingSessionIngress(ingressChannelIds);
-  return React.useMemo(
+  const requirePopoutBootstrap = options.requirePopoutBootstrap ?? false;
+  const ingressBootstrap = React.useMemo(
+    () =>
+      popoutBootstrap
+        ? {
+            authorityIdentity: popoutBootstrap.authorityIdentity,
+            relayEvents: popoutBootstrap.relayEvents,
+          }
+        : null,
+    [popoutBootstrap],
+  );
+  const trustedIngress = useTrustedCodingSessionIngress(
+    ingressChannelIds,
+    null,
+    null,
+    defaultRelayClient,
+    ingressBootstrap,
+  );
+  const snapshot = React.useMemo(
     () => ({
       channelId,
       entries: mergeTrustedCodingSessionIngress(
@@ -48,7 +70,75 @@ export function useCodingSessionCatalog(
     }),
     [channelId, trustedIngress],
   );
+
+  useRememberedCodingSessionPopoutBootstraps(
+    channelId,
+    snapshot.entries,
+    trustedIngress.authorityIdentity,
+    trustedIngress.retainedRawEvents,
+  );
+
+  // A pop-out that was opened without a staged snapshot has no way to know it
+  // is looking at the same accepted generation the parent window offered, so
+  // it refuses rather than resolving something that merely shares an id.
+  if (requirePopoutBootstrap && !popoutBootstrap) {
+    return {
+      ...snapshot,
+      entries: [],
+      isLoading: false,
+      authorityErrorMessage:
+        "This pop-out did not receive an exact signed session snapshot. Reopen the generation from the main window.",
+    };
+  }
+  // A snapshot minted under a different configured authority is stale trust,
+  // not weaker trust; it is refused outright rather than merged.
+  if (
+    popoutBootstrap &&
+    trustedIngress.authorityIdentity !== null &&
+    popoutBootstrap.authorityIdentity !== trustedIngress.authorityIdentity
+  ) {
+    return {
+      ...snapshot,
+      entries: [],
+      isLoading: false,
+      authorityErrorMessage:
+        "This pop-out snapshot no longer matches the configured coding-session authority. Reopen the generation from the main window.",
+    };
+  }
+  return snapshot;
 }
+
+/**
+ * Keep the raw signed bytes behind each accepted generation available to a
+ * future pop-out, keyed by the same route coordinates the window will use.
+ */
+function useRememberedCodingSessionPopoutBootstraps(
+  channelId: string | null,
+  entries: readonly CodingSessionCatalogRecord[],
+  authorityIdentity: string | null,
+  retainedRawEvents: TrustedRawEventReader,
+): void {
+  React.useEffect(() => {
+    if (!channelId || !authorityIdentity) return;
+    for (const entry of entries) {
+      if (!entry.commandTarget || !entry.providerAuthorityPubkey) continue;
+      rememberCodingSessionPopoutBootstrap({
+        channelId,
+        generationId: entry.generationId,
+        authorityIdentity,
+        relayEvents: retainedRawEvents({
+          channelId,
+          signerPubkey: entry.providerAuthorityPubkey,
+          targetKey: buildCodingSessionTargetKey(entry.commandTarget),
+        }),
+      });
+    }
+  }, [authorityIdentity, channelId, entries, retainedRawEvents]);
+}
+
+type TrustedRawEventReader = ReturnType<
+  typeof useTrustedCodingSessionIngress
+>["retainedRawEvents"];
 
 /** The trusted session catalog across every source channel. */
 export function useGlobalCodingSessionCatalog(

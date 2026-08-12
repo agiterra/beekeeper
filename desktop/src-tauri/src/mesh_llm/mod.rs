@@ -310,6 +310,36 @@ async fn initialize_mesh_native_runtime() -> anyhow::Result<()> {
 /// app starts, so every command future gets the same headroom.
 pub const MESH_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
 
+/// Install a tokio runtime with [`MESH_WORKER_STACK_SIZE`] worker stacks as
+/// Tauri's command runtime.
+///
+/// mesh-llm's async chains (model download, node start/join) overflow tokio's
+/// default 2 MiB worker stacks — a stack-guard SIGABRT, not a panic. Call this
+/// before anything else touches `tauri::async_runtime`. A failure to build the
+/// runtime is not fatal: the app keeps Tauri's default runtime and only deep
+/// mesh-llm futures stay at risk.
+pub fn install_big_stack_worker_runtime() {
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(MESH_WORKER_STACK_SIZE)
+        .build()
+    {
+        Ok(runtime) => {
+            tauri::async_runtime::set(runtime.handle().clone());
+            // Keep the runtime alive for the process lifetime; dropping it
+            // would shut down the workers Tauri now depends on.
+            std::mem::forget(runtime);
+            eprintln!(
+                "buzz-mesh: installed tokio runtime with {} MiB worker stacks",
+                MESH_WORKER_STACK_SIZE / (1024 * 1024)
+            );
+        }
+        Err(error) => {
+            eprintln!("buzz-mesh: failed to build big-stack tokio runtime, using default: {error}");
+        }
+    }
+}
+
 /// Pre-download the model (with byte progress through the output sink)
 /// before the node starts. Without this the download happens *inside*
 /// `serve::start()` where the UI can only show a frozen "starting…" state.

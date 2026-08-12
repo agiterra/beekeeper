@@ -16,6 +16,7 @@ mod channel_templates;
 mod channel_window;
 mod channels;
 mod clipboard;
+pub mod coding_session_popout;
 mod dms;
 mod engrams;
 mod export_util;
