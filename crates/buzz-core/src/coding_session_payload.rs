@@ -175,8 +175,17 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// The exact capability set this provider offers in v1.
-    pub const fn claude_agent_acp() -> Self {
+    /// The v1 vector for the named runtime slug; unknown slugs get the
+    /// conservative baseline.
+    pub fn v1_for_runtime(runtime: &str) -> Self {
+        match runtime {
+            "claude" => Self::v1_claude(),
+            _ => Self::v1_baseline(),
+        }
+    }
+
+    /// The exact capability set the Claude runtime offers in v1.
+    pub const fn v1_claude() -> Self {
         Self {
             thread_turn_start: true,
             thread_turn_interrupt: true,
@@ -185,6 +194,26 @@ impl Capabilities {
             diff: false,
             plan: true,
         }
+    }
+
+    /// The conservative v1 baseline: like [`Capabilities::v1_claude`] but with
+    /// `plan: false` — a capability turns on only once its transcript path is
+    /// proven end to end for that runtime.
+    pub const fn v1_baseline() -> Self {
+        Self {
+            thread_turn_start: true,
+            thread_turn_interrupt: true,
+            thread_steer: false,
+            context: false,
+            diff: false,
+            plan: false,
+        }
+    }
+
+    /// The exact capability set this provider offers in v1.
+    #[deprecated(note = "renamed to v1_claude")]
+    pub const fn claude_agent_acp() -> Self {
+        Self::v1_claude()
     }
 }
 
@@ -485,7 +514,7 @@ mod tests {
             model: Some("claude-sonnet-4-6".into()),
             status: SessionStatus::Idle,
             branch: None,
-            capabilities: Capabilities::claude_agent_acp(),
+            capabilities: Capabilities::v1_claude(),
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(

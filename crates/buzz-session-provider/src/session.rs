@@ -63,6 +63,10 @@ pub struct CreateRequest {
     pub model: Option<String>,
     /// ACP adapter binary to spawn.
     pub agent_command: String,
+    /// Adapter argv after the command (e.g. `["acp"]` for goose).
+    pub agent_args: Vec<String>,
+    /// Extra environment for the adapter spawn (e.g. `CLAUDE_CODE_EXECUTABLE`).
+    pub agent_env: Vec<(String, String)>,
     /// Per-turn silence budget.
     pub idle_timeout: Duration,
     /// Per-turn wall-clock ceiling.
@@ -334,12 +338,18 @@ async fn start_agent(
     request: &CreateRequest,
     observer: &ObserverHandle,
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
-    // `AcpClient::spawn` inherits this process's environment, which is how
-    // `CLAUDE_CODE_EXECUTABLE` reaches the adapter: the desktop host resolves it
-    // once and exports it, and every session inherits the same answer.
-    let mut client = AcpClient::spawn(&request.agent_command, &[], &[], false)
-        .await
-        .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
+    // `AcpClient::spawn` inherits this process's environment plus the
+    // descriptor's per-runtime `agent_env` — that is how a runtime-specific CLI
+    // override (e.g. `CLAUDE_CODE_EXECUTABLE`) reaches the adapter: the desktop
+    // host resolves it once and every session gets the same answer.
+    let mut client = AcpClient::spawn(
+        &request.agent_command,
+        &request.agent_args,
+        &request.agent_env,
+        false,
+    )
+    .await
+    .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
 
     client.set_observer(Some(observer.clone()), 0);
     client.set_observer_context(context_for(Some(request.channel_id), None, None));
@@ -899,6 +909,8 @@ mod tests {
             title: Some("Ship it".into()),
             model: None,
             agent_command: command,
+            agent_args: Vec::new(),
+            agent_env: Vec::new(),
             idle_timeout: Duration::from_secs(5),
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),

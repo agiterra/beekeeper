@@ -47,6 +47,7 @@ use tauri::{AppHandle, Manager};
 
 pub(crate) mod commands;
 pub(crate) mod env;
+pub(crate) mod runtimes;
 pub(crate) mod store;
 pub(crate) mod supervisor;
 pub(crate) mod trust;

@@ -241,7 +241,7 @@ impl Provider {
             .cloned()
             .collect();
         for record in stranded {
-            let target = record.target(config::DRIVER, &self.config.instance_id);
+            let target = self.target_for(&record);
             if let Some(open_turn) = &record.open_turn {
                 tracing::warn!(
                     target: "csp::recovery",
@@ -465,8 +465,23 @@ impl Provider {
     async fn create_session(&mut self, plan: CreatePlan) -> anyhow::Result<()> {
         self.state.consume_command(&plan.command_id, now_secs())?;
 
+        // Infallible in practice: `decide_lifecycle` only mints a plan whose
+        // ref matched a descriptor, and the runtime list never changes while
+        // the provider runs. Failing the receipt is still better than a panic.
+        let Some(descriptor) = self.config.runtime(&plan.runtime_instance_ref).cloned() else {
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                payload::PROVIDER_UNAVAILABLE,
+                &format!(
+                    "runtime {} disappeared between decision and dispatch",
+                    plan.runtime_instance_ref
+                ),
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        };
+
         let target = CodingSessionTarget {
-            driver: config::DRIVER.to_owned(),
+            driver: descriptor.driver.clone(),
             instance_id: self.config.instance_id.clone(),
             session_id: Uuid::new_v4().to_string(),
             generation: 1,
@@ -477,7 +492,13 @@ impl Provider {
             cwd: plan.cwd.clone(),
             title: plan.title.clone(),
             model: plan.model.clone(),
-            agent_command: self.config.agent_command.clone(),
+            agent_command: descriptor.agent_command.clone(),
+            agent_args: descriptor.agent_args.clone(),
+            agent_env: descriptor
+                .cli_env
+                .iter()
+                .map(|env| (env.name.clone(), env.value.clone()))
+                .collect(),
             idle_timeout: self.config.idle_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
@@ -504,6 +525,9 @@ impl Provider {
             generation: target.generation,
             channel_id: plan.channel_id,
             command_id: plan.command_id.clone(),
+            provider_instance_ref: descriptor.instance_ref.clone(),
+            runtime: descriptor.runtime.clone(),
+            driver: descriptor.driver.clone(),
             cwd: plan.cwd,
             project_ref: plan.project_ref.clone(),
             repo_ref: plan.repo_ref.clone(),
@@ -614,8 +638,7 @@ impl Provider {
     fn context<'a>(&'a self, projects: &'a ProjectsFile) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: &self.pubkey_hex,
-            provider_instance_ref: config::PROVIDER_INSTANCE_REF,
-            driver: config::DRIVER,
+            runtimes: &self.config.runtimes,
             instance_id: &self.config.instance_id,
             now_secs: now_secs(),
             horizon_secs: self.config.command_horizon.as_secs(),
@@ -632,6 +655,25 @@ impl Provider {
         status: SessionStatus,
     ) -> SessionMetadata {
         let record = self.state.session(&target.session_id);
+        // The record is the durable truth about which runtime serves this
+        // session, so metadata stays correct even if the descriptor disappears
+        // across a restart. A target with no record falls back to the first
+        // descriptor — claude in practice, same shape as before.
+        let (provider_ref, runtime_slug) = match record {
+            Some(record) => (record.provider_instance_ref.clone(), record.runtime.clone()),
+            None => {
+                let first = self.config.runtimes.first();
+                (
+                    first
+                        .map(|descriptor| descriptor.instance_ref.clone())
+                        .unwrap_or_else(|| config::PROVIDER_INSTANCE_REF.to_owned()),
+                    first
+                        .map(|descriptor| descriptor.runtime.clone())
+                        .unwrap_or_else(|| config::RUNTIME.to_owned()),
+                )
+            }
+        };
+        let descriptor = self.config.runtime(&provider_ref);
         SessionMetadata {
             schema: METADATA_SCHEMA.to_owned(),
             session: target.clone(),
@@ -639,14 +681,17 @@ impl Provider {
             repo_ref: record.and_then(|record| record.repo_ref.clone()),
             title: payload::nullable(record.and_then(|record| record.title.as_deref())),
             agent_ref: None,
-            provider: Some(config::PROVIDER_INSTANCE_REF.to_owned()),
-            runtime: Some(config::RUNTIME.to_owned()),
+            provider: Some(provider_ref),
+            runtime: Some(runtime_slug.clone()),
             model: record
                 .and_then(|record| record.model.clone())
-                .or_else(|| Some(self.config.default_model.clone())),
+                .or_else(|| descriptor.map(|descriptor| descriptor.default_model.clone()))
+                .or_else(|| Some(config::DEFAULT_MODEL.to_owned())),
             status,
             branch: None,
-            capabilities: Capabilities::claude_agent_acp(),
+            capabilities: descriptor
+                .and_then(|descriptor| descriptor.capabilities)
+                .unwrap_or_else(|| Capabilities::v1_for_runtime(&runtime_slug)),
         }
     }
 
@@ -841,10 +886,17 @@ impl Provider {
     /// Resolve a session id to the channel it publishes into and its wire target.
     fn locate(&self, session_id: &str) -> Option<(Uuid, CodingSessionTarget)> {
         let record = self.state.session(session_id)?;
-        Some((
-            record.channel_id,
-            record.target(config::DRIVER, &self.config.instance_id),
-        ))
+        Some((record.channel_id, self.target_for(record)))
+    }
+
+    /// The wire target for a persisted record, minted with the driver the
+    /// record itself persisted at creation. The live descriptor table is
+    /// deliberately not consulted: a descriptor that disappeared across a
+    /// restart (adapter uninstalled) must not mutate the wire identity of
+    /// events for a session that already published under the original driver —
+    /// consumers match transcripts by the full target, driver included.
+    fn target_for(&self, record: &SessionRecord) -> CodingSessionTarget {
+        record.target(&self.config.instance_id)
     }
 
     /// Drain the outbox into `sink`.
@@ -989,11 +1041,42 @@ mod tests {
         }
     }
 
+    use buzz_core::coding_session_runtime::RuntimeDescriptor;
+
+    fn claude_runtime(agent_command: String) -> RuntimeDescriptor {
+        RuntimeDescriptor {
+            instance_ref: "claude-primary".into(),
+            driver: "claude-agent-acp".into(),
+            runtime: "claude".into(),
+            agent_command,
+            agent_args: Vec::new(),
+            cli_env: None,
+            default_model: "claude-sonnet-4-6".into(),
+            allowed_models: vec!["claude-sonnet-4-6".into()],
+            discover_models: false,
+            capabilities: None,
+        }
+    }
+
     fn config_of(
         keys: Keys,
         state_dir: &Path,
         projects: Option<&Path>,
         agent_command: String,
+    ) -> Config {
+        config_of_runtimes(
+            keys,
+            state_dir,
+            projects,
+            vec![claude_runtime(agent_command)],
+        )
+    }
+
+    fn config_of_runtimes(
+        keys: Keys,
+        state_dir: &Path,
+        projects: Option<&Path>,
+        runtimes: Vec<RuntimeDescriptor>,
     ) -> Config {
         Config {
             keys,
@@ -1002,10 +1085,7 @@ mod tests {
             state_dir: state_dir.to_path_buf(),
             projects_file: projects.map(Path::to_path_buf),
             instance_id: "instance-1".into(),
-            agent_command,
-            default_model: "claude-sonnet-4-6".into(),
-            allowed_models: vec!["claude-sonnet-4-6".into()],
-            discover_models: false,
+            runtimes,
             max_sessions: 2,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
@@ -1074,7 +1154,28 @@ mod tests {
     }
 
     fn create_event(provider: &Provider, channel_id: Uuid, command_id: &str) -> Event {
-        create_event_inner(provider, channel_id, command_id, serde_json::Value::Null)
+        create_event_inner(
+            provider,
+            channel_id,
+            command_id,
+            "claude-primary",
+            serde_json::Value::Null,
+        )
+    }
+
+    fn create_event_for_ref(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        instance_ref: &str,
+    ) -> Event {
+        create_event_inner(
+            provider,
+            channel_id,
+            command_id,
+            instance_ref,
+            serde_json::Value::Null,
+        )
     }
 
     fn create_event_with_initial_turn(
@@ -1083,13 +1184,20 @@ mod tests {
         command_id: &str,
         turn: &str,
     ) -> Event {
-        create_event_inner(provider, channel_id, command_id, serde_json::json!(turn))
+        create_event_inner(
+            provider,
+            channel_id,
+            command_id,
+            "claude-primary",
+            serde_json::json!(turn),
+        )
     }
 
     fn create_event_inner(
         provider: &Provider,
         channel_id: Uuid,
         command_id: &str,
+        instance_ref: &str,
         initial_turn: serde_json::Value,
     ) -> Event {
         let content = serde_json::json!({
@@ -1099,7 +1207,7 @@ mod tests {
                 "type": "session.create",
                 "projectRef": null,
                 "repoRef": null,
-                "providerInstanceRef": "claude-primary",
+                "providerInstanceRef": instance_ref,
                 "providerAuthorityPubkey": provider.config.pubkey_hex(),
                 "model": null,
                 "title": "Ship it",
@@ -1194,6 +1302,97 @@ mod tests {
         assert_eq!(provider.sessions.live_count(), 1);
     }
 
+    /// Multi-runtime routing: a create naming a second runtime's ref must spawn
+    /// *that* runtime's adapter and mint its driver into the target.
+    #[tokio::test]
+    async fn a_create_routes_to_the_named_runtimes_adapter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+
+        // Two distinct fake adapters, so the spawn choice is observable: only
+        // the "codex" one exists — spawning the claude one would fail.
+        let codex_agent = fake_agent(dir.path(), "codex-agent", GOOD_AGENT);
+        let runtimes = vec![
+            claude_runtime(dir.path().join("missing-claude").to_string_lossy().into()),
+            RuntimeDescriptor {
+                instance_ref: "codex-primary".into(),
+                driver: "codex-acp".into(),
+                runtime: "codex".into(),
+                agent_command: codex_agent,
+                agent_args: Vec::new(),
+                cli_env: None,
+                default_model: "default".into(),
+                allowed_models: vec!["default".into()],
+                discover_models: false,
+                capabilities: None,
+            },
+        ];
+        let mut provider = Provider::new(config_of_runtimes(
+            Keys::generate(),
+            &dir.path().join("state"),
+            Some(&projects),
+            runtimes,
+        ))
+        .expect("provider");
+
+        let event = create_event_for_ref(&provider, channel_id, "create-1", "codex-primary");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts[0]["status"], "created");
+        assert_eq!(receipts[0]["session"]["driver"], "codex-acp");
+
+        let record = provider.state().sessions().next().expect("session");
+        assert_eq!(record.provider_instance_ref, "codex-primary");
+        assert_eq!(record.runtime, "codex");
+
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata[0]["provider"], "codex-primary");
+        assert_eq!(metadata[0]["runtime"], "codex");
+        // Codex gets the conservative baseline vector: no plan claim yet.
+        assert_eq!(metadata[0]["capabilities"]["plan"], false);
+        assert_eq!(metadata[0]["capabilities"]["threadTurnInterrupt"], true);
+    }
+
+    /// A create naming a ref this signer does not offer is *ours* — no other
+    /// process will answer it — so it must fail loudly rather than strand the
+    /// consumer's durable create in silence.
+    #[tokio::test]
+    async fn an_unknown_provider_instance_ref_fails_the_create() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = create_event_for_ref(&provider, channel_id, "create-1", "ghost-primary");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(receipts[0]["error"]["code"], "PROVIDER_UNAVAILABLE");
+        let message = receipts[0]["error"]["message"].as_str().expect("message");
+        assert!(message.contains("ghost-primary"));
+        assert!(message.contains("claude-primary"));
+        assert_eq!(provider.state().sessions().count(), 0);
+        assert!(provider.state().is_command_consumed("create-1"));
+    }
+
     /// The invariant the whole workdir seam exists to protect.
     #[tokio::test]
     async fn no_published_event_ever_carries_the_host_working_directory() {
@@ -1213,7 +1412,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
         provider
             .enqueue_transcript(
                 channel_id,
@@ -1399,6 +1598,74 @@ mod tests {
         assert!(record.open_turn.is_none());
     }
 
+    /// A recovered session keeps the driver it was created under even when its
+    /// runtime descriptor is gone (adapter uninstalled across the restart).
+    /// Consumers match transcripts by the full target, driver included — a
+    /// synthesized result under a different driver would never render, so the
+    /// turn would hang forever in the UI.
+    #[tokio::test]
+    async fn recovery_keeps_the_persisted_driver_when_the_descriptor_is_gone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let keys = Keys::generate();
+        let channel_id = Uuid::new_v4();
+
+        // A codex session with a turn in flight, written by a previous run.
+        {
+            let mut store = StateStore::open(&state_dir, 86_400).expect("state store");
+            store
+                .insert_session(SessionRecord {
+                    session_id: "11111111-1111-4111-8111-111111111111".into(),
+                    generation: 1,
+                    channel_id,
+                    command_id: "create-codex".into(),
+                    provider_instance_ref: "codex-primary".into(),
+                    runtime: "codex".into(),
+                    driver: "codex-acp".into(),
+                    cwd: dir.path().join("checkout"),
+                    project_ref: None,
+                    repo_ref: None,
+                    model: None,
+                    title: None,
+                    created_at_ms: now_ms(),
+                    next_seq: 3,
+                    open_turn: Some(OpenTurn {
+                        turn_id: "turn-1".into(),
+                        command_id: Some("turn-cmd-1".into()),
+                        started_at_ms: now_ms(),
+                    }),
+                    closed: false,
+                })
+                .expect("insert");
+            store
+                .consume_command("create-codex", now_secs())
+                .expect("consume");
+        }
+
+        // The restarted provider offers claude only — codex was uninstalled.
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let mut restarted =
+            Provider::new(config_of(keys, &state_dir, None, agent)).expect("provider");
+        restarted.recover().expect("recover");
+        let sink = CollectingSink::new();
+        restarted.flush(&sink).await.expect("flush");
+
+        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(
+            transcripts[0]["session"]["driver"], "codex-acp",
+            "the synthesized result must keep the driver the session published under"
+        );
+        assert_eq!(transcripts[0]["item"]["kind"], "result");
+
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(
+            metadata.last().expect("metadata")["session"]["driver"],
+            "codex-acp"
+        );
+        assert_eq!(metadata.last().expect("metadata")["status"], "disconnected");
+    }
+
     /// The whole ACP binding, end to end against a scripted agent.
     #[tokio::test]
     async fn a_turn_reaches_the_agent_and_publishes_a_terminal_result() {
@@ -1417,7 +1684,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
 
         provider
             .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
@@ -1482,7 +1749,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
         provider
             .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
             .await
@@ -1577,7 +1844,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
         target.generation = 2;
 
         provider
@@ -1607,7 +1874,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
 
         provider
             .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
@@ -1652,7 +1919,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
 
         provider
             .enqueue_transcript(
@@ -1896,7 +2163,7 @@ mod tests {
             .sessions()
             .next()
             .expect("session")
-            .target(config::DRIVER, "instance-1");
+            .target("instance-1");
 
         let mut seqs = Vec::new();
         for index in 0..3 {

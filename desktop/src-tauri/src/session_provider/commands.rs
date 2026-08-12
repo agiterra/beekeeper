@@ -36,10 +36,12 @@ static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// identities.
 const INSTANCE_ID_PUBKEY_PREFIX_LEN: usize = 16;
 
-/// Live model catalog exposed by this computer's Claude Code ACP adapter.
+/// Model catalog for one coding-session runtime.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodingSessionProviderModels {
+    /// The runtime instance these models belong to.
+    pub instance_ref: String,
     /// Adapter selection used when the person makes no explicit choice.
     pub default_model: String,
     /// Every adapter-advertised selection value, in adapter order.
@@ -58,12 +60,33 @@ pub async fn coding_session_provider_status(
     provider_status(&app, &provider, &relay_url)
 }
 
-/// Probe the installed Claude Code adapter for the models it can select.
+/// Probe one runtime's model surface.
 ///
-/// This is independent of relay catalog delivery so the first session in a
-/// brand-new channel can offer the same choices as an established channel.
+/// `claude-primary` (and the argument-less legacy call) keeps the live adapter
+/// probe so the first session in a brand-new channel can offer the same
+/// choices as an established channel. Other known runtimes advertise the
+/// static `"default"` alias without spawning anything — their adapters resolve
+/// the real model at session time. An unknown ref is an error.
 #[tauri::command]
-pub async fn coding_session_provider_models() -> Result<CodingSessionProviderModels, String> {
+pub async fn coding_session_provider_models(
+    instance_ref: Option<String>,
+) -> Result<CodingSessionProviderModels, String> {
+    let instance_ref = instance_ref.unwrap_or_else(|| "claude-primary".to_string());
+    let Some(discover_models) =
+        crate::session_provider::runtimes::known_instance_ref(&instance_ref)
+    else {
+        return Err(format!(
+            "unknown coding-session runtime instanceRef: {instance_ref}"
+        ));
+    };
+    if !discover_models {
+        return Ok(CodingSessionProviderModels {
+            instance_ref,
+            default_model: "default".to_string(),
+            allowed_models: vec!["default".to_string()],
+        });
+    }
+
     let resolved_acp = crate::managed_agents::resolve_command("buzz-acp")
         .ok_or_else(|| "buzz-acp was not found; rebuild the desktop sidecars".to_string())?;
     let resolved_agent = crate::managed_agents::resolve_command("claude-agent-acp")
@@ -84,10 +107,24 @@ pub async fn coding_session_provider_models() -> Result<CodingSessionProviderMod
         env,
     )
     .await?;
-    coding_session_provider_models_from_response(response)
+    coding_session_provider_models_from_response(&instance_ref, response)
+}
+
+/// Every runtime this desktop can offer, installed or not, with install/auth
+/// readiness — the picker needs uninstalled rows to render install and sign-in
+/// affordances. Fast CLI auth probes only; never spawns ACP adapters.
+#[tauri::command]
+pub async fn coding_session_provider_runtimes(
+) -> Result<Vec<crate::session_provider::runtimes::CodingSessionProviderRuntime>, String> {
+    // The auth probes are blocking child-process waits (up to 10s each), so
+    // they run off the async executor.
+    tauri::async_runtime::spawn_blocking(crate::session_provider::runtimes::list_runtimes)
+        .await
+        .map_err(|error| format!("runtime discovery task failed: {error}"))
 }
 
 pub(crate) fn coding_session_provider_models_from_response(
+    instance_ref: &str,
     response: crate::managed_agents::AgentModelsResponse,
 ) -> Result<CodingSessionProviderModels, String> {
     let allowed_models: Vec<String> = response.models.into_iter().map(|model| model.id).collect();
@@ -97,6 +134,7 @@ pub(crate) fn coding_session_provider_models_from_response(
         .or_else(|| allowed_models.first().cloned())
         .ok_or_else(|| "the Claude Code ACP adapter returned no selectable models".to_string())?;
     Ok(CodingSessionProviderModels {
+        instance_ref: instance_ref.to_string(),
         default_model,
         allowed_models,
     })

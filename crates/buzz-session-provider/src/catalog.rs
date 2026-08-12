@@ -101,27 +101,41 @@ struct CatalogBody<'a> {
 /// with the remainder sorted; `projects[]` sorted by `(projectRef, repoRef ?? "")`
 /// with no duplicate pair; each project's provider list sorted and deduplicated.
 pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Catalog {
-    let mut allowed_models: Vec<String> = config
-        .allowed_models
+    let mut providers: Vec<CatalogProvider> = config
+        .runtimes
         .iter()
-        .filter(|model| *model != &config.default_model)
-        .cloned()
+        .map(|descriptor| {
+            let mut allowed_models: Vec<String> = descriptor
+                .allowed_models
+                .iter()
+                .filter(|model| *model != &descriptor.default_model)
+                .cloned()
+                .collect();
+            allowed_models.sort();
+            allowed_models.dedup();
+            allowed_models.truncate(MAX_ALLOWED_MODELS.saturating_sub(1));
+            allowed_models.insert(0, descriptor.default_model.clone());
+            CatalogProvider {
+                provider_instance_ref: descriptor.instance_ref.clone(),
+                driver: descriptor.driver.clone(),
+                runtime: descriptor.runtime.clone(),
+                default_model: descriptor.default_model.clone(),
+                allowed_models,
+                capabilities: descriptor
+                    .capabilities
+                    .unwrap_or_else(|| Capabilities::v1_for_runtime(&descriptor.runtime)),
+            }
+        })
         .collect();
-    allowed_models.sort();
-    allowed_models.dedup();
-    allowed_models.truncate(MAX_ALLOWED_MODELS.saturating_sub(1));
-    allowed_models.insert(0, config.default_model.clone());
-
-    let mut providers = vec![CatalogProvider {
-        provider_instance_ref: crate::config::PROVIDER_INSTANCE_REF.to_owned(),
-        driver: crate::config::DRIVER.to_owned(),
-        runtime: crate::config::RUNTIME.to_owned(),
-        default_model: config.default_model.clone(),
-        allowed_models,
-        capabilities: Capabilities::claude_agent_acp(),
-    }];
     providers.sort_by(|left, right| left.provider_instance_ref.cmp(&right.provider_instance_ref));
     providers.truncate(MAX_PROVIDERS);
+
+    // In v1 every runtime serves every configured project, so each project
+    // advertises the full (already sorted) instance-ref list.
+    let provider_refs: Vec<String> = providers
+        .iter()
+        .map(|provider| provider.provider_instance_ref.clone())
+        .collect();
 
     // Every project the host has configured a working directory for is one this
     // provider can actually serve — a project with no directory would only fail
@@ -134,7 +148,7 @@ pub fn build(config: &Config, projects_file: &ProjectsFile, revision: u64) -> Ca
         .map(|project_ref| CatalogProject {
             project_ref: project_ref.to_owned(),
             repo_ref: None,
-            providers: vec![crate::config::PROVIDER_INSTANCE_REF.to_owned()],
+            providers: provider_refs.clone(),
         })
         .collect();
     projects.sort_by(|left, right| {
@@ -196,7 +210,24 @@ mod tests {
 
     use nostr::Keys;
 
-    fn config(default_model: &str, allowed: &[&str]) -> Config {
+    use buzz_core::coding_session_runtime::RuntimeDescriptor;
+
+    fn claude_descriptor(default_model: &str, allowed: &[&str]) -> RuntimeDescriptor {
+        RuntimeDescriptor {
+            instance_ref: "claude-primary".into(),
+            driver: "claude-agent-acp".into(),
+            runtime: "claude".into(),
+            agent_command: "claude-agent-acp".into(),
+            agent_args: Vec::new(),
+            cli_env: None,
+            default_model: default_model.to_owned(),
+            allowed_models: allowed.iter().map(|model| (*model).to_owned()).collect(),
+            discover_models: false,
+            capabilities: None,
+        }
+    }
+
+    fn config_with_runtimes(runtimes: Vec<RuntimeDescriptor>) -> Config {
         Config {
             keys: Keys::generate(),
             relay_url: "ws://localhost:3000".into(),
@@ -204,10 +235,7 @@ mod tests {
             state_dir: PathBuf::from("/tmp/csp"),
             projects_file: None,
             instance_id: "instance-1".into(),
-            agent_command: "claude-agent-acp".into(),
-            default_model: default_model.to_owned(),
-            allowed_models: allowed.iter().map(|model| (*model).to_owned()).collect(),
-            discover_models: false,
+            runtimes,
             max_sessions: 4,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
@@ -215,6 +243,10 @@ mod tests {
             include_thoughts: true,
             command_horizon: Duration::from_secs(86_400),
         }
+    }
+
+    fn config(default_model: &str, allowed: &[&str]) -> Config {
+        config_with_runtimes(vec![claude_descriptor(default_model, allowed)])
     }
 
     fn projects(refs: &[&str]) -> ProjectsFile {
@@ -261,6 +293,56 @@ mod tests {
         ))
         .expect("serialize");
         assert_eq!(json, again);
+    }
+
+    /// The multi-runtime form: providers sorted by the full instance ref, one
+    /// entry per descriptor, and every project offering every runtime.
+    #[test]
+    fn two_runtimes_advertise_sorted_providers_and_shared_projects() {
+        let codex = RuntimeDescriptor {
+            instance_ref: "codex-primary".into(),
+            driver: "codex-acp".into(),
+            runtime: "codex".into(),
+            agent_command: "codex-acp".into(),
+            agent_args: Vec::new(),
+            cli_env: None,
+            default_model: "default".into(),
+            allowed_models: vec!["default".into()],
+            discover_models: false,
+            capabilities: None,
+        };
+        // Deliberately out of order: the catalog sorts by instance ref.
+        let catalog = build(
+            &config_with_runtimes(vec![codex, claude_descriptor("default", &["default"])]),
+            &projects(&[&coordinate("alpha")]),
+            1,
+        );
+        let json = to_canonical_json(&catalog).expect("serialize");
+        assert!(json.starts_with(
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":1,"providers":[{"providerInstanceRef":"claude-primary","driver":"claude-agent-acp","runtime":"claude","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":true}},{"providerInstanceRef":"codex-primary","driver":"codex-acp","runtime":"codex","defaultModel":"default","allowedModels":["default"],"capabilities":{"threadTurnStart":true,"threadTurnInterrupt":true,"threadSteer":false,"context":false,"diff":false,"plan":false}}]"#
+        ));
+        assert!(json.contains(r#""providers":["claude-primary","codex-primary"]"#));
+    }
+
+    /// A descriptor's explicit capability vector overrides the per-runtime v1
+    /// default — the vector must be per provider, not shared.
+    #[test]
+    fn an_explicit_capability_vector_wins_over_the_runtime_default() {
+        let mut goose = claude_descriptor("default", &[]);
+        goose.instance_ref = "goose-primary".into();
+        goose.driver = "goose-acp".into();
+        goose.runtime = "goose".into();
+        goose.capabilities = Some(Capabilities {
+            thread_steer: true,
+            ..Capabilities::v1_baseline()
+        });
+        let catalog = build(
+            &config_with_runtimes(vec![goose]),
+            &ProjectsFile::default(),
+            1,
+        );
+        assert!(catalog.providers[0].capabilities.thread_steer);
+        assert!(!catalog.providers[0].capabilities.plan);
     }
 
     #[test]

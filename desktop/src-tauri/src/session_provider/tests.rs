@@ -33,23 +33,27 @@ const RELAY: &str = "wss://relay.example/";
 
 #[test]
 fn live_claude_models_preserve_adapter_order_and_current_default() {
-    let models = coding_session_provider_models_from_response(AgentModelsResponse {
-        agent_name: "claude-agent-acp".to_string(),
-        agent_version: "1".to_string(),
-        models: ["default", "opus[1m]", "sonnet", "haiku"]
-            .into_iter()
-            .map(|id| AgentModelInfo {
-                id: id.to_string(),
-                name: None,
-                description: None,
-            })
-            .collect(),
-        agent_default_model: Some("sonnet".to_string()),
-        selected_model: None,
-        supports_switching: true,
-    })
+    let models = coding_session_provider_models_from_response(
+        "claude-primary",
+        AgentModelsResponse {
+            agent_name: "claude-agent-acp".to_string(),
+            agent_version: "1".to_string(),
+            models: ["default", "opus[1m]", "sonnet", "haiku"]
+                .into_iter()
+                .map(|id| AgentModelInfo {
+                    id: id.to_string(),
+                    name: None,
+                    description: None,
+                })
+                .collect(),
+            agent_default_model: Some("sonnet".to_string()),
+            selected_model: None,
+            supports_switching: true,
+        },
+    )
     .expect("model response");
 
+    assert_eq!(models.instance_ref, "claude-primary");
     assert_eq!(models.default_model, "sonnet");
     assert_eq!(
         models.allowed_models,
@@ -59,18 +63,21 @@ fn live_claude_models_preserve_adapter_order_and_current_default() {
 
 #[test]
 fn live_claude_models_fall_back_to_the_first_adapter_option() {
-    let models = coding_session_provider_models_from_response(AgentModelsResponse {
-        agent_name: "claude-agent-acp".to_string(),
-        agent_version: "1".to_string(),
-        models: vec![AgentModelInfo {
-            id: "default".to_string(),
-            name: None,
-            description: None,
-        }],
-        agent_default_model: Some("missing".to_string()),
-        selected_model: None,
-        supports_switching: true,
-    })
+    let models = coding_session_provider_models_from_response(
+        "claude-primary",
+        AgentModelsResponse {
+            agent_name: "claude-agent-acp".to_string(),
+            agent_version: "1".to_string(),
+            models: vec![AgentModelInfo {
+                id: "default".to_string(),
+                name: None,
+                description: None,
+            }],
+            agent_default_model: Some("missing".to_string()),
+            selected_model: None,
+            supports_switching: true,
+        },
+    )
     .expect("model response");
 
     assert_eq!(models.default_model, "default");
@@ -173,6 +180,39 @@ fn legacy_store_without_optional_fields_loads() {
 
 // ── env assembly ─────────────────────────────────────────────────────────────
 
+fn sample_runtimes() -> Vec<buzz_core_pkg::coding_session_runtime::RuntimeDescriptor> {
+    use buzz_core_pkg::coding_session_runtime::{CliEnvVar, RuntimeDescriptor};
+    vec![
+        RuntimeDescriptor {
+            instance_ref: "claude-primary".into(),
+            driver: "claude-agent-acp".into(),
+            runtime: "claude".into(),
+            agent_command: "/opt/buzz/bin/claude-agent-acp".into(),
+            agent_args: Vec::new(),
+            cli_env: Some(CliEnvVar {
+                name: "CLAUDE_CODE_EXECUTABLE".into(),
+                value: "/usr/local/bin/claude".into(),
+            }),
+            default_model: "default".into(),
+            allowed_models: vec!["default".into()],
+            discover_models: true,
+            capabilities: None,
+        },
+        RuntimeDescriptor {
+            instance_ref: "goose-primary".into(),
+            driver: "goose-acp".into(),
+            runtime: "goose".into(),
+            agent_command: "/opt/homebrew/bin/goose".into(),
+            agent_args: vec!["acp".into()],
+            cli_env: None,
+            default_model: "default".into(),
+            allowed_models: vec!["default".into()],
+            discover_models: false,
+            capabilities: None,
+        },
+    ]
+}
+
 fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
     build_provider_env(&ProviderEnvInputs {
         record,
@@ -180,6 +220,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         state_dir: Path::new("/tmp/session-provider/aaaa"),
         agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
+        runtimes: sample_runtimes(),
     })
 }
 
@@ -219,6 +260,38 @@ fn env_carries_the_required_provider_contract() {
         Some("/usr/local/bin/claude")
     );
     assert!(env.contains_key("RUST_LOG"));
+}
+
+/// `BUZZ_CSP_RUNTIMES` must round-trip through the exact parser the sidecar
+/// uses — the env map is the real interface, so this is the drift check.
+#[test]
+fn env_carries_a_parseable_runtime_list() {
+    let env = env_for(&sample_record());
+    let raw = env.get("BUZZ_CSP_RUNTIMES").expect("runtimes in env");
+    let parsed = buzz_core_pkg::coding_session_runtime::parse_runtime_descriptors(raw)
+        .expect("the sidecar parser must accept what the host writes");
+    assert_eq!(parsed, sample_runtimes());
+    // The legacy variables stay exported alongside the list, so an older
+    // sidecar binary keeps working under a newer desktop.
+    assert!(env.contains_key("BUZZ_CSP_AGENT_COMMAND"));
+    assert!(env.contains_key("CLAUDE_CODE_EXECUTABLE"));
+}
+
+/// An empty runtime list writes no variable at all: the sidecar treats absence
+/// as "synthesize the legacy claude default", while an empty JSON array would
+/// be a startup error.
+#[test]
+fn env_omits_an_empty_runtime_list() {
+    let record = sample_record();
+    let env = build_provider_env(&ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+    });
+    assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
 }
 
 /// `BUZZ_AUTH_TAG` is parsed by the provider as a JSON array of strings and

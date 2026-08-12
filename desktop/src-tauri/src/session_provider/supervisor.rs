@@ -499,6 +499,9 @@ fn spawn_provider_child(
         state_dir,
         agent_command: resolve_command(PROVIDER_AGENT_BINARY),
         claude_code_executable: resolve_claude_code_executable(),
+        // Computed per spawn: installing an adapter takes effect on the next
+        // provider (re)start, matching the rest of the discovery surface.
+        runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),
     });
     for (key, value) in env {
         command.env(key, value);

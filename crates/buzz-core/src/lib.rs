@@ -16,6 +16,9 @@ pub mod coding_session_lifecycle_command;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
 /// and transcript envelopes (44225).
 pub mod coding_session_payload;
+/// Runtime descriptors shared by the desktop host and the coding-session
+/// provider sidecar (`BUZZ_CSP_RUNTIMES`).
+pub mod coding_session_runtime;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

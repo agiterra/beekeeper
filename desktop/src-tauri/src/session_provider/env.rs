@@ -11,6 +11,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use buzz_core_pkg::coding_session_runtime::RuntimeDescriptor;
+
 use crate::session_provider::store::CodingSessionProviderRecord;
 
 /// Filename of the host-local working-directory map inside the state dir.
@@ -40,6 +42,10 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// managed agents use. `None` leaves the adapter's own PATH lookup in
     /// charge.
     pub claude_code_executable: Option<PathBuf>,
+    /// The full runtime list, exported as `BUZZ_CSP_RUNTIMES`. A newer sidecar
+    /// reads this as the complete offer; an older one ignores it and keeps
+    /// using the legacy variables above, which stay exported alongside it.
+    pub runtimes: Vec<RuntimeDescriptor>,
 }
 
 /// Build the child's Buzz-owned environment.
@@ -90,6 +96,18 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
             cli.to_string_lossy().into_owned(),
         );
     }
+    if !inputs.runtimes.is_empty() {
+        match serde_json::to_string(&inputs.runtimes) {
+            Ok(json) => {
+                env.insert("BUZZ_CSP_RUNTIMES".to_string(), json);
+            }
+            Err(error) => {
+                // Unreachable for this shape; the legacy variables above keep a
+                // claude-only sidecar working if it ever happens.
+                eprintln!("buzz-desktop: session-provider: failed to encode runtimes: {error}");
+            }
+        }
+    }
     env
 }
 
@@ -104,5 +122,6 @@ pub(crate) const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BUZZ_AUTH_TAG",
     "BUZZ_ACP_PRIVATE_KEY",
     "BUZZ_API_TOKEN",
+    "BUZZ_CSP_RUNTIMES",
     "NOSTR_PRIVATE_KEY",
 ];

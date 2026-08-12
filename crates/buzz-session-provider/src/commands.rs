@@ -21,8 +21,9 @@ use buzz_core::coding_session_command::{
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
 };
+use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
-use crate::payload::{PROJECT_CWD_UNRESOLVED, SESSION_LIMIT};
+use crate::payload::{PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_LIMIT};
 use crate::state::StateStore;
 
 /// Why a command produced no side effect.
@@ -67,6 +68,9 @@ pub enum LifecycleDecision {
 pub struct CreatePlan {
     /// The create command being answered.
     pub command_id: String,
+    /// The matched runtime's `instance_ref` — which descriptor serves this
+    /// create.
+    pub runtime_instance_ref: String,
     /// Channel every event for the new session is published into.
     pub channel_id: Uuid,
     /// Host-local working directory. Never appears in signed content.
@@ -110,10 +114,8 @@ pub enum TurnDecision {
 pub struct CommandContext<'a> {
     /// This provider's signing pubkey, lowercase hex.
     pub provider_pubkey: &'a str,
-    /// The `providerInstanceRef` this provider answers to.
-    pub provider_instance_ref: &'a str,
-    /// Driver slug in every `cs-target` this provider mints.
-    pub driver: &'a str,
+    /// Every runtime this provider offers.
+    pub runtimes: &'a [RuntimeDescriptor],
     /// Instance id in every `cs-target` this provider mints.
     pub instance_id: &'a str,
     /// Current wall clock, seconds since the Unix epoch.
@@ -158,9 +160,7 @@ pub fn decide_lifecycle(
     // Addressing before dedupe: a command for another adapter must not consume
     // an id in *this* adapter's ledger, or a later legitimate reuse would be
     // silently dropped.
-    if !provider_authority_pubkey.eq_ignore_ascii_case(context.provider_pubkey)
-        || provider_instance_ref != context.provider_instance_ref
-    {
+    if !provider_authority_pubkey.eq_ignore_ascii_case(context.provider_pubkey) {
         return LifecycleDecision::Ignore(Ignored::NotAddressed);
     }
     if context.state.is_command_consumed(&payload.command_id) {
@@ -168,6 +168,30 @@ pub fn decide_lifecycle(
     }
     if context.past_horizon(created_at) {
         return LifecycleDecision::Ignore(Ignored::PastHorizon);
+    }
+
+    // The command is addressed to *this* signer, so no other process will ever
+    // answer it. A ref naming no descriptor therefore fails loudly — silence
+    // would strand the consumer's durable create forever.
+    if !context
+        .runtimes
+        .iter()
+        .any(|descriptor| &descriptor.instance_ref == provider_instance_ref)
+    {
+        let mut offered: Vec<&str> = context
+            .runtimes
+            .iter()
+            .map(|descriptor| descriptor.instance_ref.as_str())
+            .collect();
+        offered.sort_unstable();
+        return LifecycleDecision::Fail {
+            command_id: payload.command_id.clone(),
+            code: PROVIDER_UNAVAILABLE,
+            message: format!(
+                "unknown providerInstanceRef {provider_instance_ref:?}; this provider offers: {}",
+                offered.join(", ")
+            ),
+        };
     }
 
     if context.state.live_session_count() >= context.max_sessions {
@@ -200,6 +224,7 @@ pub fn decide_lifecycle(
 
     LifecycleDecision::Create(Box::new(CreatePlan {
         command_id: payload.command_id.clone(),
+        runtime_instance_ref: provider_instance_ref.clone(),
         channel_id,
         cwd,
         project_ref: project_ref.clone(),
@@ -217,8 +242,14 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         Err(error) => return TurnDecision::Ignore(Ignored::Malformed(error)),
     };
 
-    if command.target.driver != context.driver || command.target.instance_id != context.instance_id
-    {
+    // Any driver this provider's runtimes mint is acceptable; the session id
+    // (a UUID) plus generation fence everything downstream, so two runtimes
+    // sharing a driver slug cannot misroute a turn.
+    let known_driver = context
+        .runtimes
+        .iter()
+        .any(|descriptor| descriptor.driver == command.target.driver);
+    if !known_driver || command.target.instance_id != context.instance_id {
         return TurnDecision::Ignore(Ignored::NotAddressed);
     }
     if context.state.is_command_consumed(&command.command_id) {
@@ -394,6 +425,31 @@ mod tests {
         StateStore::open(dir, 86_400).expect("state")
     }
 
+    fn runtime(instance_ref: &str, driver: &str, runtime: &str) -> RuntimeDescriptor {
+        RuntimeDescriptor {
+            instance_ref: instance_ref.to_owned(),
+            driver: driver.to_owned(),
+            runtime: runtime.to_owned(),
+            agent_command: driver.to_owned(),
+            agent_args: Vec::new(),
+            cli_env: None,
+            default_model: "default".into(),
+            allowed_models: vec!["default".into()],
+            discover_models: false,
+            capabilities: None,
+        }
+    }
+
+    fn runtimes() -> &'static [RuntimeDescriptor] {
+        static RUNTIMES: std::sync::OnceLock<Vec<RuntimeDescriptor>> = std::sync::OnceLock::new();
+        RUNTIMES.get_or_init(|| {
+            vec![
+                runtime("claude-primary", "claude-agent-acp", "claude"),
+                runtime("codex-primary", "codex-acp", "codex"),
+            ]
+        })
+    }
+
     fn ctx<'a>(
         state: &'a StateStore,
         projects: &'a ProjectsFile,
@@ -401,8 +457,7 @@ mod tests {
     ) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: AUTHORITY,
-            provider_instance_ref: "claude-primary",
-            driver: "claude-agent-acp",
+            runtimes: runtimes(),
             instance_id: "instance-1",
             now_secs,
             horizon_secs: 86_400,
@@ -436,6 +491,9 @@ mod tests {
             generation: 1,
             channel_id: Uuid::nil(),
             command_id: "create-1".into(),
+            provider_instance_ref: "claude-primary".into(),
+            runtime: "claude".into(),
+            driver: "claude-agent-acp".into(),
             cwd: cwd.to_path_buf(),
             project_ref: None,
             repo_ref: None,
@@ -471,6 +529,60 @@ mod tests {
                 &create_content("create-1", "null", &other)
             ),
             LifecycleDecision::Ignore(Ignored::NotAddressed)
+        );
+    }
+
+    /// Authority matched but the ref names no descriptor: nobody else will ever
+    /// answer this command, so it fails loudly instead of being ignored.
+    #[test]
+    fn a_create_for_an_unknown_instance_ref_fails_with_provider_unavailable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let projects = projects_with_channel(Uuid::nil(), dir.path());
+        let context = ctx(&state, &projects, 1_000);
+        let content = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"providerInstanceRef":"ghost-primary","providerAuthorityPubkey":"{AUTHORITY}","model":null,"title":null,"initialTurn":null}}}}"#
+        );
+        match decide_lifecycle(&context, Uuid::nil(), 1_000, &content) {
+            LifecycleDecision::Fail {
+                command_id,
+                code,
+                message,
+            } => {
+                assert_eq!(command_id, "create-1");
+                assert_eq!(code, PROVIDER_UNAVAILABLE);
+                assert_eq!(
+                    message,
+                    "unknown providerInstanceRef \"ghost-primary\"; this provider offers: \
+                     claude-primary, codex-primary"
+                );
+            }
+            other => panic!("expected a failure receipt, got {other:?}"),
+        }
+    }
+
+    /// Any driver in the runtime set is addressable; the session UUID does the
+    /// rest of the routing.
+    #[test]
+    fn turns_for_any_offered_driver_are_addressed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .insert_session(session("s1", dir.path()))
+            .expect("insert");
+        let projects = ProjectsFile::default();
+        let context = ctx(&state, &projects, 1_000);
+
+        let codex_turn = r#"{"schema":"buzz-coding-session-command/v1","commandId":"turn-1","target":{"driver":"codex-acp","instanceId":"instance-1","sessionId":"s1","generation":1},"action":{"type":"thread.turn.start","text":"go"}}"#;
+        assert!(matches!(
+            decide_turn(&context, 1_000, codex_turn),
+            TurnDecision::Start { .. }
+        ));
+
+        let alien_turn = r#"{"schema":"buzz-coding-session-command/v1","commandId":"turn-2","target":{"driver":"someone-elses-acp","instanceId":"instance-1","sessionId":"s1","generation":1},"action":{"type":"thread.turn.start","text":"go"}}"#;
+        assert_eq!(
+            decide_turn(&context, 1_000, alien_turn),
+            TurnDecision::Ignore(Ignored::NotAddressed)
         );
     }
 

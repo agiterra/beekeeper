@@ -770,6 +770,7 @@ pub fn run() {
             set_global_agent_config,
             session_provider::commands::coding_session_provider_status,
             session_provider::commands::coding_session_provider_models,
+            session_provider::commands::coding_session_provider_runtimes,
             session_provider::commands::provision_coding_session_provider,
             session_provider::commands::ensure_coding_session_provider_running,
             session_provider::commands::stop_coding_session_provider,

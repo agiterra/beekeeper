@@ -50,6 +50,19 @@ pub struct SessionRecord {
     pub channel_id: Uuid,
     /// The create command that minted this session.
     pub command_id: String,
+    /// The runtime instance that serves this session. Defaults to the claude
+    /// ref for records written before the field existed.
+    #[serde(default = "default_provider_instance_ref")]
+    pub provider_instance_ref: String,
+    /// Runtime slug behind the driver. Defaults for pre-field records.
+    #[serde(default = "default_runtime_slug")]
+    pub runtime: String,
+    /// Driver slug minted into every `cs-target` for this generation. Persisted
+    /// so the wire identity survives the descriptor disappearing (adapter
+    /// uninstalled across a restart). Defaults to the claude driver for records
+    /// written before the field existed — the only driver those can have used.
+    #[serde(default = "default_driver")]
+    pub driver: String,
     /// Working directory the agent runs in. Never serialized into an event.
     pub cwd: PathBuf,
     /// NIP-MP project coordinate, or `None` for a standalone session.
@@ -70,11 +83,23 @@ pub struct SessionRecord {
     pub closed: bool,
 }
 
+fn default_provider_instance_ref() -> String {
+    crate::config::PROVIDER_INSTANCE_REF.to_owned()
+}
+
+fn default_runtime_slug() -> String {
+    crate::config::RUNTIME.to_owned()
+}
+
+fn default_driver() -> String {
+    crate::config::DRIVER.to_owned()
+}
+
 impl SessionRecord {
-    /// The wire target naming this generation.
-    pub fn target(&self, driver: &str, instance_id: &str) -> CodingSessionTarget {
+    /// The wire target naming this generation, minted with the persisted driver.
+    pub fn target(&self, instance_id: &str) -> CodingSessionTarget {
         CodingSessionTarget {
-            driver: driver.to_owned(),
+            driver: self.driver.clone(),
             instance_id: instance_id.to_owned(),
             session_id: self.session_id.clone(),
             generation: self.generation,
@@ -391,6 +416,9 @@ mod tests {
             generation: 1,
             channel_id: Uuid::nil(),
             command_id: format!("create-{session_id}"),
+            provider_instance_ref: "claude-primary".into(),
+            runtime: "claude".into(),
+            driver: "claude-agent-acp".into(),
             cwd: PathBuf::from("/Users/operator/checkout"),
             project_ref: None,
             repo_ref: None,
@@ -512,6 +540,35 @@ mod tests {
             .update_session("ghost", |record| record.closed = true)
             .expect("update"));
         assert!(store.allocate_seq("ghost").expect("allocate").is_none());
+    }
+
+    /// Records written before the runtime fields existed must still load, and
+    /// they load as claude — the only runtime that could have minted them.
+    #[test]
+    fn pre_runtime_session_records_default_to_claude() {
+        let mut value = serde_json::to_value(record("s1")).expect("serialize");
+        let object = value.as_object_mut().expect("object");
+        object.remove("providerInstanceRef");
+        object.remove("runtime");
+        object.remove("driver");
+        let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
+        assert_eq!(loaded.provider_instance_ref, "claude-primary");
+        assert_eq!(loaded.runtime, "claude");
+        assert_eq!(loaded.driver, "claude-agent-acp");
+    }
+
+    /// The persisted driver — not the live descriptor table — names the wire
+    /// target, so a session's identity cannot mutate mid-life when its
+    /// runtime's adapter is uninstalled across a restart.
+    #[test]
+    fn the_target_is_minted_from_the_persisted_driver() {
+        let mut codex = record("s1");
+        codex.driver = "codex-acp".into();
+        let target = codex.target("instance-1");
+        assert_eq!(target.driver, "codex-acp");
+        assert_eq!(target.instance_id, "instance-1");
+        assert_eq!(target.session_id, "s1");
+        assert_eq!(target.generation, 1);
     }
 
     #[test]

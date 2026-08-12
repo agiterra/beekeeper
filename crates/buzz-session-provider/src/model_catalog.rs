@@ -1,4 +1,4 @@
-//! Live model discovery for the first-party Claude Code ACP adapter.
+//! Live model discovery for ACP adapters that opt in via `discoverModels`.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -15,38 +15,55 @@ struct DiscoveredModels {
     allowed_models: Vec<String>,
 }
 
-/// Replace fallback model data with the adapter's current ACP catalog.
+/// Replace fallback model data with each adapter's current ACP catalog.
 ///
-/// Discovery is best effort: an unavailable or signed-out adapter must not
-/// prevent the provider from starting. A later session still asks the fresh
-/// ACP response whether a requested model can be applied.
+/// Runs sequentially per opted-in descriptor, best effort with a per-descriptor
+/// timeout: an unavailable or signed-out adapter must not prevent the provider
+/// from starting. A later session still asks the fresh ACP response whether a
+/// requested model can be applied.
 pub(crate) async fn discover(config: &mut Config) {
-    if !config.discover_models {
-        return;
+    for descriptor in config
+        .runtimes
+        .iter_mut()
+        .filter(|descriptor| descriptor.discover_models)
+    {
+        let cli_env: Vec<(String, String)> = descriptor
+            .cli_env
+            .iter()
+            .map(|env| (env.name.clone(), env.value.clone()))
+            .collect();
+        let result = tokio::time::timeout(
+            DISCOVERY_TIMEOUT,
+            probe(&descriptor.agent_command, &descriptor.agent_args, &cli_env),
+        )
+        .await;
+        let runtime = descriptor.runtime.as_str();
+        let discovered = match result {
+            Ok(Ok(discovered)) => discovered,
+            Ok(Err(error)) => {
+                tracing::warn!(target: "csp::models", "{runtime} model discovery failed: {error}");
+                continue;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "csp::models",
+                    "{runtime} model discovery timed out after {DISCOVERY_TIMEOUT:?}"
+                );
+                continue;
+            }
+        };
+
+        descriptor.default_model = discovered.default_model;
+        descriptor.allowed_models = discovered.allowed_models;
     }
-
-    let result = tokio::time::timeout(DISCOVERY_TIMEOUT, probe(&config.agent_command)).await;
-    let discovered = match result {
-        Ok(Ok(discovered)) => discovered,
-        Ok(Err(error)) => {
-            tracing::warn!(target: "csp::models", "Claude model discovery failed: {error}");
-            return;
-        }
-        Err(_) => {
-            tracing::warn!(
-                target: "csp::models",
-                "Claude model discovery timed out after {DISCOVERY_TIMEOUT:?}"
-            );
-            return;
-        }
-    };
-
-    config.default_model = discovered.default_model;
-    config.allowed_models = discovered.allowed_models;
 }
 
-async fn probe(agent_command: &str) -> anyhow::Result<DiscoveredModels> {
-    let mut client = AcpClient::spawn(agent_command, &[], &[], false).await?;
+async fn probe(
+    agent_command: &str,
+    agent_args: &[String],
+    cli_env: &[(String, String)],
+) -> anyhow::Result<DiscoveredModels> {
+    let mut client = AcpClient::spawn(agent_command, agent_args, cli_env, false).await?;
     let result = async {
         client.initialize().await?;
         let cwd = std::env::current_dir()

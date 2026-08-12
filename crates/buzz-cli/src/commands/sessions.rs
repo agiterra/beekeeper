@@ -1206,7 +1206,7 @@ mod tests {
             model: model.map(str::to_owned),
             status,
             branch: None,
-            capabilities: Capabilities::claude_agent_acp(),
+            capabilities: Capabilities::v1_claude(),
         }
     }
 
