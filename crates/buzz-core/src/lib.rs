@@ -9,6 +9,10 @@
 pub mod agent_turn_metric;
 /// Channel and membership enums shared across crates.
 pub mod channel;
+/// NIP-CSC: Coding-session command — provider-neutral turn request payload.
+pub mod coding_session_command;
+/// NIP-CSL: Coding-session lifecycle command — session creation payload.
+pub mod coding_session_lifecycle_command;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

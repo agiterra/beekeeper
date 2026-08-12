@@ -544,6 +544,59 @@ pub const KIND_MEMBER_REMOVED_NOTIFICATION: u32 = 44101;
 /// See `docs/nips/NIP-AM.md`.
 pub const KIND_AGENT_TURN_METRIC: u32 = 44200;
 
+/// NIP-CSC: Coding-session command — an operator-authored, provider-neutral turn
+/// request.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON [`crate::coding_session_command::CodingSessionCommandPayload`];
+/// event authorship is the only actor authority. Consumed by an out-of-relay
+/// provider adapter — the relay deliberately never executes this kind, it only
+/// validates the envelope and stores it. Tags: exactly one `h`, `cs-v`, and
+/// `cs-target`. See `docs/nips/NIP-CSC.md`.
+pub const KIND_CODING_SESSION_COMMAND: u32 = 44220;
+
+/// NIP-CSL: Coding-session lifecycle command — a session creation request.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON
+/// [`crate::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload`].
+/// Ordered tags: `h`, `csl-v`, `csl-command`. The optional `projectRef` binds a
+/// session to a NIP-MP project (kind 30621); standalone sessions omit it.
+/// See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LIFECYCLE_COMMAND: u32 = 44221;
+
+/// NIP-CSPC: Coding-session provider catalog — a provider-authored advertisement
+/// of the session drivers, models, and capabilities it can serve.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON catalog carrying a monotonic `revision`; consumers keep the
+/// highest revision per (channel, signer). Ordered tags: `h`, `cspc-v`,
+/// `cspc-revision`, `cspc-key`. See `docs/nips/NIP-CSPC.md`.
+pub const KIND_CODING_SESSION_PROVIDER_CATALOG: u32 = 44222;
+
+/// NIP-CSL: Coding-session metadata — provider-authored immutable facts about one
+/// exact session generation.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
+/// tags: `h`, `csm-v`, `cs-target`, `csm-key`. See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_METADATA: u32 = 44223;
+
+/// NIP-CSL: Coding-session lifecycle receipt — the provider-authored, immutable
+/// result of one lifecycle command.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
+/// tags: `h`, `cslr-v`, `csl-command`, `csl-key`. See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LIFECYCLE_RECEIPT: u32 = 44224;
+
+/// NIP-CST: Coding-session transcript item — one provider-authored, sequenced
+/// step of one exact session generation.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
+/// tags: `h`, `cst-v`, `cs-target`, `cst-seq`, `cst-key`. Sequence numbers are
+/// monotonic per (session, generation); gaps are permitted, duplicates are not.
+/// See `docs/nips/NIP-CST.md`.
+pub const KIND_CODING_SESSION_TRANSCRIPT: u32 = 44225;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -725,6 +778,12 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
+    KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_TRANSCRIPT,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -885,6 +944,44 @@ const _: () = assert!(!is_ephemeral(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_parameterized_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(KIND_AGENT_TURN_METRIC <= u16::MAX as u32);
+// Compile-time: coding-session kinds are regular stored kinds (not ephemeral,
+// not replaceable). Commands, receipts, metadata, and transcript items are all
+// append-only points in a durable record — a replaced command or a replaced
+// transcript item would silently rewrite history a provider already acted on.
+// The catalog carries its own monotonic `revision` instead of being replaceable
+// so that every advertisement stays auditable.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(KIND_CODING_SESSION_COMMAND <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_LIFECYCLE_COMMAND));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LIFECYCLE_COMMAND));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND
+));
+const _: () = assert!(KIND_CODING_SESSION_LIFECYCLE_COMMAND <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_PROVIDER_CATALOG));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_PROVIDER_CATALOG));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_PROVIDER_CATALOG
+));
+const _: () = assert!(KIND_CODING_SESSION_PROVIDER_CATALOG <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(KIND_CODING_SESSION_METADATA <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_LIFECYCLE_RECEIPT));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LIFECYCLE_RECEIPT));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+));
+const _: () = assert!(KIND_CODING_SESSION_LIFECYCLE_RECEIPT <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_TRANSCRIPT));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_TRANSCRIPT));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_TRANSCRIPT
+));
+const _: () = assert!(KIND_CODING_SESSION_TRANSCRIPT <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).
