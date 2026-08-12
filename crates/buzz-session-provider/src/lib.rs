@@ -33,13 +33,15 @@ pub mod publish;
 pub mod session;
 pub mod state;
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use nostr::Event;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use buzz_acp::relay::HarnessRelay;
-use buzz_acp::ChannelFilter;
+use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -66,11 +68,13 @@ use payload::{
     METADATA_SCHEMA,
 };
 use publish::{EventSink, Outbox, Priority};
-use session::{CreateRequest, SessionCommand, SessionManager};
-use state::{now_ms, now_secs, SessionRecord, StateStore};
+use session::{CreateRequest, SessionCommand, SessionEvent, SessionManager, TurnOutcome};
+use state::{now_ms, now_secs, OpenTurn, SessionRecord, StateStore};
 
 /// How often the outbox is drained when nothing else is happening.
 const OUTBOX_TICK: Duration = Duration::from_secs(2);
+/// Backlog of actor reports the provider loop will buffer.
+const SESSION_EVENT_CAPACITY: usize = 256;
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -134,6 +138,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     }
                 }
             },
+            Some(event) = provider.next_session_event() => {
+                if let Err(error) = provider.handle_session_event(event) {
+                    tracing::error!(target: "csp", "failed to record session event: {error}");
+                }
+            }
             _ = ticker.tick() => {
                 if let Err(error) = provider.flush(&publisher).await {
                     tracing::error!(target: "csp", "outbox flush failed: {error}");
@@ -158,6 +167,8 @@ pub struct Provider {
     state: StateStore,
     outbox: Outbox,
     sessions: SessionManager,
+    session_events: mpsc::Receiver<SessionEvent>,
+    last_metadata: HashMap<String, String>,
 }
 
 impl Provider {
@@ -166,22 +177,31 @@ impl Provider {
         let pubkey_hex = config.pubkey_hex();
         let state = StateStore::open(&config.state_dir, config.command_horizon.as_secs())?;
         let outbox = Outbox::open(&config.state_dir, &pubkey_hex)?;
+        let (events_tx, session_events) = mpsc::channel(SESSION_EVENT_CAPACITY);
         Ok(Self {
             config,
             pubkey_hex,
             state,
             outbox,
-            sessions: SessionManager::new(),
+            sessions: SessionManager::new(events_tx),
+            session_events,
+            last_metadata: HashMap::new(),
         })
     }
 
     /// Repair state left behind by an unclean exit.
     ///
-    /// A create that minted a session record but died before its `commandId`
-    /// reached the ledger would otherwise replay into a second session for the
-    /// same command, so the ledger is reconciled against the records here.
-    /// Mid-turn repair — synthesizing the terminal item a dead process never
-    /// published — arrives with the ACP binding.
+    /// Two repairs, both consequences of the same fact: a restarted provider has
+    /// no process behind any session it previously owned, and v1 never re-binds
+    /// a generation.
+    ///
+    /// 1. A create that minted a session record but died before its `commandId`
+    ///    reached the ledger would replay into a *second* session for one
+    ///    command, so the ledger is reconciled against the records first.
+    /// 2. Every session that was still open is retired: a turn caught mid-flight
+    ///    gets the terminal `result` item its consumer is waiting on — without
+    ///    it the turn renders as running forever — and every open generation
+    ///    gets `disconnected` metadata.
     pub fn recover(&mut self) -> anyhow::Result<()> {
         let orphans: Vec<(String, String)> = self
             .state
@@ -198,7 +218,51 @@ impl Provider {
             );
             self.state.consume_command(&command_id, now_secs())?;
         }
+
+        let stranded: Vec<SessionRecord> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed)
+            .cloned()
+            .collect();
+        for record in stranded {
+            let target = record.target(config::DRIVER, &self.config.instance_id);
+            if let Some(open_turn) = &record.open_turn {
+                tracing::warn!(
+                    target: "csp::recovery",
+                    session_id = %record.session_id,
+                    turn_id = %open_turn.turn_id,
+                    "turn was in flight when the provider stopped — synthesizing its result"
+                );
+                if let Some(command_id) = &open_turn.command_id {
+                    self.state.consume_command(command_id, now_secs())?;
+                }
+                self.enqueue_transcript(
+                    record.channel_id,
+                    &target,
+                    Some(&open_turn.turn_id),
+                    payload::result_item(
+                        payload::ResultSubtype::Error,
+                        u64::try_from(now_ms().saturating_sub(open_turn.started_at_ms))
+                            .unwrap_or_default(),
+                        "provider terminated mid-turn",
+                        payload::TurnCost::default(),
+                    ),
+                    Priority::High,
+                )?;
+            }
+            self.state.update_session(&record.session_id, |record| {
+                record.open_turn = None;
+                record.closed = true;
+            })?;
+            self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
+        }
         Ok(())
+    }
+
+    /// Await the next actor report. `None` once every actor is gone.
+    pub async fn next_session_event(&mut self) -> Option<SessionEvent> {
+        self.session_events.recv().await
     }
 
     /// Subscribe to the two command kinds in one channel, replaying from the
@@ -320,19 +384,23 @@ impl Provider {
             agent_command: self.config.agent_command.clone(),
             idle_timeout: self.config.idle_timeout,
             max_turn_duration: self.config.max_turn_duration,
+            idle_shutdown: self.config.session_idle_shutdown,
         };
 
-        if let Err(failure) = self.sessions.create(request).await {
-            tracing::warn!(
-                target: "csp",
-                command_id = %plan.command_id,
-                code = failure.code,
-                "session creation failed: {}", failure.message
-            );
-            let receipt =
-                LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
-            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
-        }
+        let startup = match self.sessions.create(request).await {
+            Ok(startup) => startup,
+            Err(failure) => {
+                tracing::warn!(
+                    target: "csp",
+                    command_id = %plan.command_id,
+                    code = failure.code,
+                    "session creation failed: {}", failure.message
+                );
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        };
 
         let record = SessionRecord {
             session_id: target.session_id.clone(),
@@ -342,7 +410,7 @@ impl Provider {
             cwd: plan.cwd,
             project_ref: plan.project_ref.clone(),
             repo_ref: plan.repo_ref.clone(),
-            model: plan.model.clone(),
+            model: startup.model.clone().or_else(|| plan.model.clone()),
             title: plan.title.clone(),
             created_at_ms: now_ms(),
             next_seq: 1,
@@ -351,18 +419,45 @@ impl Provider {
         };
         self.state.insert_session(record)?;
 
-        let receipt = LifecycleReceipt::created(&plan.command_id, &target);
+        // The initial turn is *dispatched* before the receipt is decided, so
+        // `created_with_failed_initial_turn` means exactly what a consumer can
+        // act on: the session exists but its first turn never reached the agent.
+        // A turn that reaches the agent and then fails is a transcript
+        // `result{error}`, not a lifecycle outcome — the session is fine and the
+        // operator can simply try again.
+        let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
+            (None, _) => None,
+            (Some(_), None) => Some("session actor stopped before the first turn".to_owned()),
+            (Some(text), Some(handle)) => handle
+                .deliver(SessionCommand::Turn {
+                    command_id: format!("{}:initial", plan.command_id),
+                    text: text.clone(),
+                })
+                .err()
+                .map(|error| format!("could not deliver the first turn: {error:?}")),
+        };
+
+        let receipt = match &dispatch_error {
+            None => LifecycleReceipt::created(&plan.command_id, &target),
+            Some(message) => LifecycleReceipt::created_with_failed_initial_turn(
+                &plan.command_id,
+                &target,
+                message,
+            ),
+        };
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        self.enqueue_metadata(
-            plan.channel_id,
-            &target,
-            self.metadata_for(&target, SessionStatus::Idle),
-        )?;
+        let status = if plan.initial_turn.is_some() && dispatch_error.is_none() {
+            SessionStatus::Running
+        } else {
+            SessionStatus::Idle
+        };
+        self.publish_metadata(plan.channel_id, &target, status)?;
 
         tracing::info!(
             target: "csp",
             command_id = %plan.command_id,
             session_id = %target.session_id,
+            acp_session_id = %startup.acp_session_id,
             "session created"
         );
         Ok(())
@@ -477,22 +572,35 @@ impl Provider {
         Ok(())
     }
 
-    /// Queue per-generation metadata (44223).
-    pub fn enqueue_metadata(
+    /// Queue per-generation metadata (44223) describing `status`.
+    ///
+    /// Metadata is the one provider-authored kind whose latest value is the
+    /// whole truth, so a queued-but-unsent row is superseded rather than
+    /// preserved. Publishing a status the provider has already left behind is
+    /// not merely stale — two metadata events landing in the same second read to
+    /// the consumer as conflicting claims about one generation, and it refuses
+    /// to pick a winner. Identical content is skipped for the same reason.
+    pub fn publish_metadata(
         &mut self,
         channel_id: Uuid,
         target: &CodingSessionTarget,
-        metadata: SessionMetadata,
+        status: SessionStatus,
     ) -> anyhow::Result<()> {
+        let metadata = self.metadata_for(target, status);
         let content = serde_json::to_string(&metadata)?;
+        if self.last_metadata.get(&target.session_id) == Some(&content) {
+            return Ok(());
+        }
         let event = build_coding_session_metadata(channel_id, target, &content)?
             .sign_with_keys(&self.config.keys)?;
-        self.outbox.enqueue(
+        self.outbox.enqueue_latest(
             KIND_CODING_SESSION_METADATA,
             &coding_session_metadata_semantic_key(target),
             Priority::High,
             event,
         )?;
+        self.last_metadata
+            .insert(target.session_id.clone(), content);
         Ok(())
     }
 
@@ -525,6 +633,91 @@ impl Provider {
         Ok(Some(event_seq))
     }
 
+    /// Turn one actor report into durable state and queued events.
+    pub fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
+        match event {
+            SessionEvent::TurnStarted {
+                session_id,
+                turn_id,
+                command_id,
+                text: _,
+            } => {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                self.state.update_session(&session_id, |record| {
+                    record.open_turn = Some(OpenTurn {
+                        turn_id: turn_id.clone(),
+                        command_id: Some(command_id.clone()),
+                        started_at_ms: now_ms(),
+                    });
+                })?;
+                self.publish_metadata(channel_id, &target, SessionStatus::Running)?;
+            }
+            SessionEvent::TurnFinished {
+                session_id,
+                turn_id,
+                outcome,
+                duration_ms,
+                usage,
+            } => {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                let (item, status, fatal) = turn_result(&outcome, duration_ms, usage.as_deref());
+                self.enqueue_transcript(channel_id, &target, Some(&turn_id), item, Priority::High)?;
+                self.state.update_session(&session_id, |record| {
+                    record.open_turn = None;
+                    record.closed |= fatal;
+                })?;
+                self.publish_metadata(channel_id, &target, status)?;
+            }
+            SessionEvent::TurnDropped {
+                session_id,
+                command_id,
+            } => {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                tracing::warn!(
+                    target: "csp",
+                    %session_id,
+                    %command_id,
+                    "turn dropped: the session's queue is full"
+                );
+                self.enqueue_transcript(
+                    channel_id,
+                    &target,
+                    None,
+                    payload::status_item("turn_dropped:queue_full"),
+                    Priority::High,
+                )?;
+            }
+            SessionEvent::Exited { session_id, reason } => {
+                self.sessions.forget(&session_id);
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                tracing::info!(target: "csp", %session_id, "session ended: {reason:?}");
+                self.state.update_session(&session_id, |record| {
+                    record.open_turn = None;
+                    record.closed = true;
+                })?;
+                self.publish_metadata(channel_id, &target, SessionStatus::Disconnected)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a session id to the channel it publishes into and its wire target.
+    fn locate(&self, session_id: &str) -> Option<(Uuid, CodingSessionTarget)> {
+        let record = self.state.session(session_id)?;
+        Some((
+            record.channel_id,
+            record.target(config::DRIVER, &self.config.instance_id),
+        ))
+    }
+
     /// Drain the outbox into `sink`.
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         Ok(self.outbox.flush(sink).await?)
@@ -538,6 +731,80 @@ impl Provider {
     /// Number of rows still awaiting publication.
     pub fn pending_publishes(&self) -> usize {
         self.outbox.pending_len()
+    }
+}
+
+/// Map a turn outcome onto its terminal transcript item, the generation's next
+/// status, and whether the session can serve another turn.
+fn turn_result(
+    outcome: &TurnOutcome,
+    duration_ms: u64,
+    usage: Option<&TurnUsage>,
+) -> (serde_json::Value, SessionStatus, bool) {
+    let cost = usage.map(turn_cost).unwrap_or_default();
+    match outcome {
+        TurnOutcome::Completed { stop_reason } => {
+            // `refusal` and the two limit stops are real answers, not provider
+            // failures: the agent decided the turn was over. They are surfaced
+            // as errors so the operator sees *why* the turn stopped short
+            // instead of a silent success with no output.
+            let is_error = !matches!(stop_reason, buzz_acp::acp::StopReason::EndTurn);
+            let subtype = if is_error {
+                payload::ResultSubtype::Error
+            } else {
+                payload::ResultSubtype::Success
+            };
+            // The generation is `idle` either way: a refusal or a token limit
+            // ends the turn, not the session, and the operator's next prompt is
+            // perfectly serviceable.
+            (
+                payload::result_item(subtype, duration_ms, stop_reason_text(stop_reason), cost),
+                SessionStatus::Idle,
+                false,
+            )
+        }
+        TurnOutcome::Cancelled => (
+            payload::result_item(
+                payload::ResultSubtype::Cancelled,
+                duration_ms,
+                "interrupted by the operator",
+                cost,
+            ),
+            SessionStatus::Interrupted,
+            false,
+        ),
+        TurnOutcome::Failed {
+            message,
+            agent_gone,
+        } => (
+            payload::result_item(payload::ResultSubtype::Error, duration_ms, message, cost),
+            if *agent_gone {
+                SessionStatus::Disconnected
+            } else {
+                SessionStatus::Failed
+            },
+            *agent_gone,
+        ),
+    }
+}
+
+fn stop_reason_text(stop_reason: &buzz_acp::acp::StopReason) -> &'static str {
+    use buzz_acp::acp::StopReason;
+    match stop_reason {
+        StopReason::EndTurn => "completed",
+        StopReason::Cancelled => "cancelled",
+        StopReason::MaxTokens => "stopped: token limit reached",
+        StopReason::MaxTurnRequests => "stopped: request limit reached",
+        StopReason::Refusal => "stopped: the agent refused the prompt",
+    }
+}
+
+fn turn_cost(usage: &TurnUsage) -> payload::TurnCost {
+    payload::TurnCost {
+        cost_usd: usage.turn_cost_usd,
+        input_tokens: usage.turn_input_tokens,
+        output_tokens: usage.turn_output_tokens,
+        total_tokens: usage.turn_total_tokens,
     }
 }
 
@@ -557,6 +824,8 @@ mod tests {
     use std::sync::Mutex;
 
     use nostr::Keys;
+
+    use crate::session::testing::{fake_agent, GOOD_AGENT, STALLING_AGENT};
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
@@ -591,7 +860,12 @@ mod tests {
         }
     }
 
-    fn config_of(keys: Keys, state_dir: &Path, projects: Option<&Path>) -> Config {
+    fn config_of(
+        keys: Keys,
+        state_dir: &Path,
+        projects: Option<&Path>,
+        agent_command: String,
+    ) -> Config {
         Config {
             keys,
             relay_url: "ws://localhost:3000".into(),
@@ -599,7 +873,7 @@ mod tests {
             state_dir: state_dir.to_path_buf(),
             projects_file: projects.map(Path::to_path_buf),
             instance_id: "instance-1".into(),
-            agent_command: "claude-agent-acp".into(),
+            agent_command,
             default_model: "claude-sonnet-4-6".into(),
             allowed_models: vec!["claude-sonnet-4-6".into()],
             max_sessions: 2,
@@ -611,8 +885,14 @@ mod tests {
         }
     }
 
+    /// A provider wired to a cooperative scripted agent.
     fn provider(state_dir: &Path, projects: Option<&Path>) -> Provider {
-        Provider::new(config_of(Keys::generate(), state_dir, projects)).expect("provider")
+        let agent = fake_agent(state_dir_parent(state_dir), "good-agent", GOOD_AGENT);
+        Provider::new(config_of(Keys::generate(), state_dir, projects, agent)).expect("provider")
+    }
+
+    fn state_dir_parent(state_dir: &Path) -> &Path {
+        state_dir.parent().unwrap_or(state_dir)
     }
 
     fn write_projects(dir: &Path, channel_id: Uuid, cwd: &Path) -> std::path::PathBuf {
@@ -630,6 +910,24 @@ mod tests {
     }
 
     fn create_event(provider: &Provider, channel_id: Uuid, command_id: &str) -> Event {
+        create_event_inner(provider, channel_id, command_id, serde_json::Value::Null)
+    }
+
+    fn create_event_with_initial_turn(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        turn: &str,
+    ) -> Event {
+        create_event_inner(provider, channel_id, command_id, serde_json::json!(turn))
+    }
+
+    fn create_event_inner(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        initial_turn: serde_json::Value,
+    ) -> Event {
         let content = serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-command/v1",
             "commandId": command_id,
@@ -641,7 +939,7 @@ mod tests {
                 "providerAuthorityPubkey": provider.config.pubkey_hex(),
                 "model": null,
                 "title": "Ship it",
-                "initialTurn": null,
+                "initialTurn": initial_turn,
             },
         })
         .to_string();
@@ -657,11 +955,34 @@ mod tests {
     }
 
     fn turn_event(channel_id: Uuid, command_id: &str, target: &CodingSessionTarget) -> Event {
+        command_event(
+            channel_id,
+            command_id,
+            target,
+            serde_json::json!({ "type": "thread.turn.start", "text": "do the thing" }),
+        )
+    }
+
+    fn interrupt_event(channel_id: Uuid, command_id: &str, target: &CodingSessionTarget) -> Event {
+        command_event(
+            channel_id,
+            command_id,
+            target,
+            serde_json::json!({ "type": "thread.turn.interrupt" }),
+        )
+    }
+
+    fn command_event(
+        channel_id: Uuid,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        action: serde_json::Value,
+    ) -> Event {
         let content = serde_json::json!({
             "schema": "buzz-coding-session-command/v1",
             "commandId": command_id,
             "target": target,
-            "action": { "type": "thread.turn.start", "text": "do the thing" },
+            "action": action,
         })
         .to_string();
         nostr::EventBuilder::new(
@@ -794,8 +1115,14 @@ mod tests {
         // The same signing identity across the restart — a rotated key would
         // change the addressing and make this test prove nothing.
         let keys = Keys::generate();
-        let mut first =
-            Provider::new(config_of(keys.clone(), &state_dir, Some(&projects))).expect("provider");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let mut first = Provider::new(config_of(
+            keys.clone(),
+            &state_dir,
+            Some(&projects),
+            agent.clone(),
+        ))
+        .expect("provider");
         let event = create_event(&first, channel_id, "create-1");
         first
             .handle_command_event(channel_id, &event)
@@ -806,8 +1133,13 @@ mod tests {
         drop(first);
 
         let mut restarted =
-            Provider::new(config_of(keys, &state_dir, Some(&projects))).expect("provider");
+            Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
         restarted.recover().expect("recover");
+        // Recovery retires the generation the dead process owned; that one
+        // `disconnected` metadata is the only thing it may publish.
+        let after_recovery = restarted.pending_publishes();
+        assert_eq!(after_recovery, 1);
+
         restarted
             .handle_command_event(channel_id, &event)
             .await
@@ -815,8 +1147,189 @@ mod tests {
         assert_eq!(restarted.state().sessions().count(), 1);
         assert_eq!(
             restarted.pending_publishes(),
-            0,
-            "the replay must not re-enqueue a receipt or metadata"
+            after_recovery,
+            "the replay must not re-enqueue a receipt or a second session"
+        );
+    }
+
+    /// A turn caught mid-flight by a crash has no terminal item, so a consumer
+    /// would render it running forever. Recovery has to close it out.
+    #[tokio::test]
+    async fn recovery_synthesizes_the_terminal_item_a_dead_process_never_published() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let keys = Keys::generate();
+        // A stalling agent means the turn is genuinely still open when the
+        // provider goes away, which is exactly the state being repaired.
+        let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+
+        let session_id = {
+            let mut first = Provider::new(config_of(
+                keys.clone(),
+                &state_dir,
+                Some(&projects),
+                agent.clone(),
+            ))
+            .expect("provider");
+            let create = create_event_with_initial_turn(&first, channel_id, "create-1", "go");
+            first
+                .handle_command_event(channel_id, &create)
+                .await
+                .expect("handle");
+            let started = tokio::time::timeout(Duration::from_secs(10), first.next_session_event())
+                .await
+                .expect("turn start")
+                .expect("event");
+            first.handle_session_event(started).expect("record");
+            first.flush(&CollectingSink::new()).await.expect("flush");
+            let session_id = first
+                .state()
+                .sessions()
+                .next()
+                .expect("session")
+                .session_id
+                .clone();
+            assert!(first
+                .state()
+                .session(&session_id)
+                .expect("session")
+                .open_turn
+                .is_some());
+            session_id
+        };
+
+        let mut restarted =
+            Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
+        restarted.recover().expect("recover");
+        let sink = CollectingSink::new();
+        restarted.flush(&sink).await.expect("flush");
+
+        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(transcripts[0]["item"]["kind"], "result");
+        assert_eq!(transcripts[0]["item"]["subtype"], "error");
+        assert_eq!(transcripts[0]["item"]["isError"], true);
+        assert_eq!(
+            transcripts[0]["item"]["result"],
+            "provider terminated mid-turn"
+        );
+        assert!(transcripts[0]["turnId"].is_string());
+
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.last().expect("metadata")["status"], "disconnected");
+
+        let record = restarted.state().session(&session_id).expect("session");
+        assert!(record.closed);
+        assert!(record.open_turn.is_none());
+    }
+
+    /// The whole ACP binding, end to end against a scripted agent.
+    #[tokio::test]
+    async fn a_turn_reaches_the_agent_and_publishes_a_terminal_result() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(config::DRIVER, "instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+
+        // Drain the actor's report of the turn opening and closing.
+        for _ in 0..2 {
+            let event =
+                tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+                    .await
+                    .expect("session event")
+                    .expect("event");
+            provider.handle_session_event(event).expect("record");
+        }
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(transcripts[0]["item"]["kind"], "result");
+        assert_eq!(transcripts[0]["item"]["subtype"], "success");
+        assert_eq!(transcripts[0]["item"]["result"], "completed");
+        assert_eq!(transcripts[0]["eventSeq"], 1);
+    }
+
+    /// An interrupt must produce a `cancelled` terminal item, not a hung turn.
+    #[tokio::test]
+    async fn an_interrupt_closes_the_turn_as_cancelled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+        let mut provider = Provider::new(config_of(
+            Keys::generate(),
+            &dir.path().join("state"),
+            Some(&projects),
+            agent,
+        ))
+        .expect("provider");
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(config::DRIVER, "instance-1");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        let started = tokio::time::timeout(Duration::from_secs(10), provider.next_session_event())
+            .await
+            .expect("turn start")
+            .expect("event");
+        provider.handle_session_event(started).expect("record");
+
+        provider
+            .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
+            .await
+            .expect("handle");
+        let finished = tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+            .await
+            .expect("turn finish")
+            .expect("event");
+        provider.handle_session_event(finished).expect("record");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let transcripts = sink.contents_of(KIND_CODING_SESSION_TRANSCRIPT);
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(transcripts[0]["item"]["subtype"], "cancelled");
+        assert_eq!(transcripts[0]["item"]["isError"], false);
+        assert_eq!(
+            sink.contents_of(KIND_CODING_SESSION_METADATA)
+                .last()
+                .expect("metadata")["status"],
+            "interrupted"
         );
     }
 

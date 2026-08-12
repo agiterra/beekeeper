@@ -254,6 +254,95 @@ impl TranscriptEnvelope {
     }
 }
 
+/// How a turn ended, as the consumer's `result` item spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultSubtype {
+    /// The turn finished normally.
+    Success,
+    /// The turn failed.
+    Error,
+    /// The turn was interrupted.
+    Cancelled,
+}
+
+impl ResultSubtype {
+    /// The exact string the consumer's projector reads.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Error => "error",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Per-turn accounting, when the adapter reported any.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TurnCost {
+    /// Estimated USD cost of the turn.
+    pub cost_usd: Option<f64>,
+    /// Input tokens consumed.
+    pub input_tokens: Option<u64>,
+    /// Output tokens produced.
+    pub output_tokens: Option<u64>,
+    /// Total tokens, when the adapter reports a genuine total.
+    pub total_tokens: Option<u64>,
+}
+
+impl TurnCost {
+    /// Whether anything at all is known.
+    pub fn is_empty(&self) -> bool {
+        self.cost_usd.is_none()
+            && self.input_tokens.is_none()
+            && self.output_tokens.is_none()
+            && self.total_tokens.is_none()
+    }
+}
+
+/// Build the terminal `result` item that closes a turn.
+///
+/// `costUsd` and the token counts are omitted rather than sent as `null`: the
+/// consumer's projector renders `costUsd` only when it is a number, and an
+/// explicit `null` would claim the provider measured zero.
+pub fn result_item(
+    subtype: ResultSubtype,
+    duration_ms: u64,
+    result: &str,
+    cost: TurnCost,
+) -> serde_json::Value {
+    let mut item = serde_json::json!({
+        "kind": "result",
+        "subtype": subtype.as_str(),
+        "isError": subtype == ResultSubtype::Error,
+        "durationMs": duration_ms,
+        "result": result,
+    });
+    let object = item.as_object_mut().expect("result item is an object");
+    if let Some(cost_usd) = cost.cost_usd {
+        object.insert("costUsd".into(), serde_json::json!(cost_usd));
+    }
+    for (key, value) in [
+        ("inputTokens", cost.input_tokens),
+        ("outputTokens", cost.output_tokens),
+        ("totalTokens", cost.total_tokens),
+    ] {
+        if let Some(value) = value {
+            object.insert(key.into(), serde_json::json!(value));
+        }
+    }
+    item
+}
+
+/// Build a bounded `status` item — the projector renders it as a lifecycle row.
+pub fn status_item(status: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "status", "status": status })
+}
+
+/// Build the `user_prompt` item that opens a turn.
+pub fn user_prompt_item(content: &str, steered: bool) -> serde_json::Value {
+    serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered })
+}
+
 /// Normalize an operator-facing string to the consumer's nullable contract.
 ///
 /// The consumer's `boundedNullable` accepts `null` or a *non-blank* string and

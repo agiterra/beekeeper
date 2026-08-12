@@ -1,29 +1,49 @@
-//! Per-session actors.
+//! Per-session actors, each owning one `claude-agent-acp` subprocess.
 //!
-//! One actor owns one session, and in the ACP binding one actor owns exactly one
-//! `claude-agent-acp` subprocess. That one-to-one shape is forced, not chosen:
-//! [`buzz_acp::acp::AcpClient`] permits a single in-flight `session/prompt` per
+//! One actor owns one session and one process. That one-to-one shape is forced,
+//! not chosen: [`AcpClient`] permits a single in-flight `session/prompt` per
 //! process, so sharing a process across sessions would serialize unrelated
 //! operators behind each other. It also buys per-session working directories and
 //! crash isolation for free.
 //!
-//! This commit lands the actor's shape, mailbox, and lifecycle so the command
-//! loop is complete and testable; the subprocess itself arrives with the ACP
-//! binding.
+//! The actor never publishes. It reports [`SessionEvent`]s to the provider loop,
+//! which owns durable state and the outbox — one writer, so a sequence counter
+//! can never be handed out twice.
+//!
+//! # Cancelling an in-flight turn
+//!
+//! `session_prompt_*` borrows the client for the whole turn, so the interrupt
+//! path drops the prompt future to release that borrow before calling
+//! `cancel_with_cleanup_grace`. This mirrors the harness's own control path
+//! (`pool.rs`, the `control_rx` arm): dropping the future leaves the client's
+//! `last_prompt_id` set, which is exactly what the cleanup drain needs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use buzz_acp::acp::{AcpClient, AcpError, ModelSwitchMethod, StopReason};
+use buzz_acp::observer::{context_for, ObserverHandle};
+use buzz_acp::TurnUsage;
 use buzz_core::coding_session_command::CodingSessionTarget;
+
+use crate::payload::{PROVIDER_AUTH_REQUIRED, PROVIDER_UNAVAILABLE};
 
 /// Mailbox depth for one session. Turns beyond this are refused rather than
 /// buffered without bound — an operator who cannot see a queue cannot reason
 /// about one.
 pub const SESSION_MAILBOX_DEPTH: usize = 8;
+/// Turns held while another is running. Overflow becomes a visible dropped-turn
+/// item rather than silent backlog.
+pub const SESSION_QUEUE_DEPTH: usize = 8;
+/// Ceiling on `spawn` + `initialize` + `session/new`. A create that has not
+/// answered by now is an unavailable provider, not a slow one.
+pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a cancelled agent has to acknowledge before the drain gives up.
+pub const CANCEL_GRACE: Duration = Duration::from_secs(30);
 
 /// Everything needed to bring one session up.
 #[derive(Debug, Clone)]
@@ -44,6 +64,8 @@ pub struct CreateRequest {
     pub idle_timeout: Duration,
     /// Per-turn wall-clock ceiling.
     pub max_turn_duration: Duration,
+    /// Idle window before the subprocess is reclaimed.
+    pub idle_shutdown: Duration,
 }
 
 /// Why a session could not be created.
@@ -53,6 +75,29 @@ pub struct CreateFailure {
     pub code: &'static str,
     /// Operator-facing detail.
     pub message: String,
+}
+
+/// What a successful create produced.
+#[derive(Clone)]
+pub struct SessionStartup {
+    /// The adapter's own session id. Internal — never leaves this process.
+    pub acp_session_id: String,
+    /// Wire tap carrying every JSON-RPC frame this session's agent emits.
+    pub observer: ObserverHandle,
+    /// Effective model, when one could be established.
+    pub model: Option<String>,
+}
+
+// Hand-written because `ObserverHandle` is a broadcast handle with no `Debug`,
+// and the field carries no information worth printing anyway.
+impl std::fmt::Debug for SessionStartup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionStartup")
+            .field("acp_session_id", &self.acp_session_id)
+            .field("model", &self.model)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Work delivered to a live session.
@@ -81,6 +126,79 @@ pub enum DeliverError {
     QueueFull,
     /// The actor is gone.
     Gone,
+}
+
+/// How a turn ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TurnOutcome {
+    /// The agent returned a stop reason.
+    Completed {
+        /// The reason the agent gave.
+        stop_reason: StopReason,
+    },
+    /// The operator interrupted it.
+    Cancelled,
+    /// The turn could not be completed.
+    Failed {
+        /// Operator-facing detail.
+        message: String,
+        /// Whether the agent process is gone, so the session cannot continue.
+        agent_gone: bool,
+    },
+}
+
+/// Why a session actor stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitReason {
+    /// Nothing arrived within the idle-shutdown window.
+    Idle,
+    /// The provider asked it to stop.
+    Requested,
+    /// The agent process went away.
+    AgentGone(String),
+}
+
+/// Something a session actor wants the provider loop to publish.
+#[derive(Debug, Clone)]
+pub enum SessionEvent {
+    /// A turn began.
+    TurnStarted {
+        /// Which session.
+        session_id: String,
+        /// Producer-minted turn id carried on every item of this turn.
+        turn_id: String,
+        /// The command that opened it.
+        command_id: String,
+        /// The prompt text, so the provider can record it as a `user_prompt`.
+        text: String,
+    },
+    /// A turn ended.
+    TurnFinished {
+        /// Which session.
+        session_id: String,
+        /// The turn that ended.
+        turn_id: String,
+        /// How it ended.
+        outcome: TurnOutcome,
+        /// Wall-clock duration.
+        duration_ms: u64,
+        /// Usage, when the adapter reported any.
+        usage: Option<Box<TurnUsage>>,
+    },
+    /// A turn was refused because the session's queue was full.
+    TurnDropped {
+        /// Which session.
+        session_id: String,
+        /// The command that was refused.
+        command_id: String,
+    },
+    /// The actor stopped and the subprocess is gone.
+    Exited {
+        /// Which session.
+        session_id: String,
+        /// Why.
+        reason: ExitReason,
+    },
 }
 
 /// Handle to one live session actor.
@@ -112,25 +230,60 @@ impl SessionHandle {
 }
 
 /// Registry of live session actors.
-#[derive(Debug, Default)]
 pub struct SessionManager {
     live: HashMap<String, SessionHandle>,
+    events: mpsc::Sender<SessionEvent>,
 }
 
 impl SessionManager {
-    /// An empty registry.
-    pub fn new() -> Self {
-        Self::default()
+    /// A registry that reports actor events to `events`.
+    pub fn new(events: mpsc::Sender<SessionEvent>) -> Self {
+        Self {
+            live: HashMap::new(),
+            events,
+        }
     }
 
-    /// Bring up a session actor for `request`.
-    pub async fn create(&mut self, request: CreateRequest) -> Result<(), CreateFailure> {
+    /// Spawn the adapter, open an ACP session, and start an actor for it.
+    ///
+    /// The whole startup is awaited so the caller can answer the create command
+    /// with a receipt that reflects reality rather than an optimistic guess.
+    pub async fn create(
+        &mut self,
+        request: CreateRequest,
+    ) -> Result<SessionStartup, CreateFailure> {
+        let observer = ObserverHandle::in_process();
+        let started = tokio::time::timeout(STARTUP_TIMEOUT, start_agent(&request, &observer)).await;
+        let (client, startup) = match started {
+            Ok(Ok(started)) => started,
+            Ok(Err(failure)) => return Err(failure),
+            Err(_) => {
+                return Err(CreateFailure {
+                    code: PROVIDER_UNAVAILABLE,
+                    message: format!(
+                        "{} did not open a session within {}s",
+                        request.agent_command,
+                        STARTUP_TIMEOUT.as_secs()
+                    ),
+                })
+            }
+        };
+
         let session_id = request.target.session_id.clone();
         let (tx, rx) = mpsc::channel(SESSION_MAILBOX_DEPTH);
-        tokio::spawn(run_session(request, rx));
+        let actor = SessionActor {
+            client,
+            acp_session_id: startup.acp_session_id.clone(),
+            session_id: session_id.clone(),
+            idle_timeout: request.idle_timeout,
+            max_turn_duration: request.max_turn_duration,
+            idle_shutdown: request.idle_shutdown,
+            events: self.events.clone(),
+        };
+        tokio::spawn(actor.run(rx));
         self.live
             .insert(session_id.clone(), SessionHandle { session_id, tx });
-        Ok(())
+        Ok(startup)
     }
 
     /// Handle for a live session, if it is still running.
@@ -145,81 +298,545 @@ impl SessionManager {
         }
     }
 
+    /// Forget a session whose actor has already stopped.
+    pub fn forget(&mut self, session_id: &str) {
+        self.live.remove(session_id);
+    }
+
     /// Number of live actors.
     pub fn live_count(&self) -> usize {
         self.live.len()
     }
+}
 
-    /// Drop handles whose actors have exited.
-    pub fn reap(&mut self) -> Vec<String> {
-        let dead: Vec<String> = self
-            .live
-            .iter()
-            .filter(|(_, handle)| !handle.is_live())
-            .map(|(session_id, _)| session_id.clone())
-            .collect();
-        for session_id in &dead {
-            self.live.remove(session_id);
+/// Spawn the adapter and open one ACP session in `request.cwd`.
+async fn start_agent(
+    request: &CreateRequest,
+    observer: &ObserverHandle,
+) -> Result<(AcpClient, SessionStartup), CreateFailure> {
+    // `AcpClient::spawn` inherits this process's environment, which is how
+    // `CLAUDE_CODE_EXECUTABLE` reaches the adapter: the desktop host resolves it
+    // once and exports it, and every session inherits the same answer.
+    let mut client = AcpClient::spawn(&request.agent_command, &[], &[], false)
+        .await
+        .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
+
+    client.set_observer(Some(observer.clone()), 0);
+    client.set_observer_context(context_for(Some(request.channel_id), None, None));
+
+    if let Err(failure) = client
+        .initialize()
+        .await
+        .map_err(|error| classify_startup_error(&error, "initialize the agent"))
+    {
+        client.shutdown().await;
+        return Err(failure);
+    }
+
+    let cwd = request.cwd.to_string_lossy().to_string();
+    let response = match client
+        .session_new_full(&cwd, Vec::new(), None, request.title.as_deref())
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let failure = classify_startup_error(&error, "open an agent session");
+            client.shutdown().await;
+            return Err(failure);
         }
-        dead
+    };
+
+    let model = apply_model(&mut client, &response, request.model.as_deref()).await;
+    Ok((
+        client,
+        SessionStartup {
+            acp_session_id: response.session_id,
+            observer: observer.clone(),
+            model,
+        },
+    ))
+}
+
+/// Ask the adapter to use `desired`, best effort.
+///
+/// A model the adapter does not offer is reported as "not applied" rather than
+/// failing the create: the session is perfectly usable on the adapter's own
+/// default, and metadata says which model actually took effect.
+async fn apply_model(
+    client: &mut AcpClient,
+    response: &buzz_acp::acp::SessionNewResponse,
+    desired: Option<&str>,
+) -> Option<String> {
+    let desired = desired?;
+    let method = buzz_acp::acp::resolve_model_switch_method(&response.raw, desired);
+    let outcome = match method {
+        Some(ModelSwitchMethod::ConfigOption {
+            config_id,
+            option_value,
+        }) => {
+            client
+                .session_set_config_option(&response.session_id, &config_id, &option_value)
+                .await
+        }
+        Some(ModelSwitchMethod::SetModel { model_id }) => {
+            client
+                .session_set_model(&response.session_id, &model_id)
+                .await
+        }
+        None => {
+            tracing::warn!(
+                target: "csp::session",
+                "agent does not offer model {desired} — using its default"
+            );
+            return None;
+        }
+    };
+    match outcome {
+        Ok(_) => Some(desired.to_owned()),
+        Err(error) => {
+            tracing::warn!(target: "csp::session", "model switch to {desired} failed: {error}");
+            None
+        }
     }
 }
 
-/// The session actor loop.
+/// Map an ACP startup failure onto a receipt error code.
 ///
-/// Placeholder body: it drains its mailbox and exits on shutdown, which is
-/// exactly the lifecycle the ACP binding will keep once it owns a subprocess.
-async fn run_session(request: CreateRequest, mut rx: mpsc::Receiver<SessionCommand>) {
-    tracing::info!(
-        target: "csp::session",
-        session_id = %request.target.session_id,
-        cwd = %request.cwd.display(),
-        "session actor started"
-    );
-    while let Some(command) = rx.recv().await {
-        match command {
-            SessionCommand::Shutdown => break,
-            other => tracing::debug!(
-                target: "csp::session",
-                session_id = %request.target.session_id,
-                "session actor received {other:?}"
+/// The auth split is what an operator acts on: `PROVIDER_AUTH_REQUIRED` means
+/// "go log in", everything else means "the adapter is broken or absent". ACP
+/// carries no dedicated auth error code, so the classification reads the
+/// adapter's message. It is deliberately generous — misreading a genuine auth
+/// failure as a generic outage sends the operator hunting a phantom bug, while
+/// the reverse only shows a slightly wrong hint.
+pub fn classify_startup_error(error: &AcpError, what: &str) -> CreateFailure {
+    let message = error.to_string();
+    let looks_like_auth = match error {
+        AcpError::AgentError { message, .. } => mentions_auth(message),
+        _ => false,
+    };
+    CreateFailure {
+        code: if looks_like_auth {
+            PROVIDER_AUTH_REQUIRED
+        } else {
+            PROVIDER_UNAVAILABLE
+        },
+        message: format!("could not {what}: {message}"),
+    }
+}
+
+fn mentions_auth(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    [
+        "auth",
+        "login",
+        "log in",
+        "sign in",
+        "credential",
+        "api key",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+struct SessionActor {
+    client: AcpClient,
+    acp_session_id: String,
+    session_id: String,
+    idle_timeout: Duration,
+    max_turn_duration: Duration,
+    idle_shutdown: Duration,
+    events: mpsc::Sender<SessionEvent>,
+}
+
+/// How the select loop around an in-flight prompt ended.
+enum PromptInterruption {
+    Completed(Result<StopReason, AcpError>),
+    Interrupted,
+    Shutdown,
+}
+
+impl SessionActor {
+    async fn run(mut self, mut rx: mpsc::Receiver<SessionCommand>) {
+        tracing::info!(
+            target: "csp::session",
+            session_id = %self.session_id,
+            acp_session_id = %self.acp_session_id,
+            "session actor started"
+        );
+        let mut queued: VecDeque<(String, String)> = VecDeque::new();
+        let mut reason = ExitReason::Requested;
+
+        'actor: loop {
+            let next = match queued.pop_front() {
+                Some(turn) => Some(SessionCommand::Turn {
+                    command_id: turn.0,
+                    text: turn.1,
+                }),
+                None => match tokio::time::timeout(self.idle_shutdown, rx.recv()).await {
+                    Ok(command) => command,
+                    Err(_) => {
+                        reason = ExitReason::Idle;
+                        break 'actor;
+                    }
+                },
+            };
+            match next {
+                None | Some(SessionCommand::Shutdown) => break 'actor,
+                Some(SessionCommand::Interrupt { command_id }) => {
+                    tracing::debug!(
+                        target: "csp::session",
+                        session_id = %self.session_id,
+                        %command_id,
+                        "interrupt with no turn in flight — nothing to cancel"
+                    );
+                }
+                Some(SessionCommand::Turn { command_id, text }) => {
+                    if let Some(gone) = self.run_turn(&mut rx, &mut queued, command_id, text).await
+                    {
+                        reason = ExitReason::AgentGone(gone);
+                        break 'actor;
+                    }
+                }
+            }
+        }
+
+        self.client.shutdown().await;
+        let _ = self
+            .events
+            .send(SessionEvent::Exited {
+                session_id: self.session_id.clone(),
+                reason: reason.clone(),
+            })
+            .await;
+        tracing::info!(
+            target: "csp::session",
+            session_id = %self.session_id,
+            "session actor stopped: {reason:?}"
+        );
+    }
+
+    /// Run one turn. Returns `Some(reason)` when the agent process is gone.
+    async fn run_turn(
+        &mut self,
+        rx: &mut mpsc::Receiver<SessionCommand>,
+        queued: &mut VecDeque<(String, String)>,
+        command_id: String,
+        text: String,
+    ) -> Option<String> {
+        let turn_id = Uuid::new_v4().to_string();
+        let started = Instant::now();
+        self.client.set_observer_context(context_for(
+            None,
+            Some(self.acp_session_id.clone()),
+            Some(turn_id.clone()),
+        ));
+        let _ = self
+            .events
+            .send(SessionEvent::TurnStarted {
+                session_id: self.session_id.clone(),
+                turn_id: turn_id.clone(),
+                command_id,
+                text: text.clone(),
+            })
+            .await;
+
+        // The prompt future holds `&mut self.client` for the whole turn; it is
+        // boxed so the interrupt path can drop it and get the client back.
+        let mut prompt = Box::pin(self.client.session_prompt_with_idle_timeout(
+            &self.acp_session_id,
+            &text,
+            self.idle_timeout,
+            self.max_turn_duration,
+        ));
+        let interruption = loop {
+            tokio::select! {
+                biased;
+                result = prompt.as_mut() => break PromptInterruption::Completed(result),
+                command = rx.recv() => match command {
+                    None | Some(SessionCommand::Shutdown) => break PromptInterruption::Shutdown,
+                    Some(SessionCommand::Interrupt { .. }) => {
+                        break PromptInterruption::Interrupted
+                    }
+                    Some(SessionCommand::Turn { command_id, text }) => {
+                        if queued.len() >= SESSION_QUEUE_DEPTH {
+                            let _ = self
+                                .events
+                                .send(SessionEvent::TurnDropped {
+                                    session_id: self.session_id.clone(),
+                                    command_id,
+                                })
+                                .await;
+                        } else {
+                            queued.push_back((command_id, text));
+                        }
+                    }
+                },
+            }
+        };
+        drop(prompt);
+
+        let (outcome, agent_gone) = match interruption {
+            PromptInterruption::Completed(Ok(stop_reason)) => {
+                (TurnOutcome::Completed { stop_reason }, None)
+            }
+            PromptInterruption::Completed(Err(error)) => self.recover_from_turn_error(error).await,
+            PromptInterruption::Interrupted | PromptInterruption::Shutdown => {
+                match self
+                    .client
+                    .cancel_with_cleanup_grace(&self.acp_session_id, CANCEL_GRACE)
+                    .await
+                {
+                    Ok(_) => (TurnOutcome::Cancelled, None),
+                    Err(AcpError::AgentExited) => (
+                        TurnOutcome::Failed {
+                            message: "agent exited during cancellation".into(),
+                            agent_gone: true,
+                        },
+                        Some("agent exited during cancellation".to_owned()),
+                    ),
+                    // The agent ignored the cancel but the operator's intent
+                    // stands: report it cancelled, and let the drained process
+                    // be reclaimed by the caller.
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "csp::session",
+                            session_id = %self.session_id,
+                            "cancel drain did not complete: {error}"
+                        );
+                        (TurnOutcome::Cancelled, None)
+                    }
+                }
+            }
+        };
+
+        let usage = self.client.take_turn_usage().map(Box::new);
+        let _ = self
+            .events
+            .send(SessionEvent::TurnFinished {
+                session_id: self.session_id.clone(),
+                turn_id,
+                outcome,
+                duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                usage,
+            })
+            .await;
+        self.client.set_observer_context(context_for(
+            None,
+            Some(self.acp_session_id.clone()),
+            None,
+        ));
+        agent_gone
+    }
+
+    /// Turn a failed prompt into an outcome, cancelling first when the agent is
+    /// merely slow rather than dead.
+    async fn recover_from_turn_error(&mut self, error: AcpError) -> (TurnOutcome, Option<String>) {
+        let message = error.to_string();
+        match error {
+            AcpError::AgentExited | AcpError::Io(_) => (
+                TurnOutcome::Failed {
+                    message: message.clone(),
+                    agent_gone: true,
+                },
+                Some(message),
+            ),
+            AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } => {
+                // The turn is over as far as the operator is concerned, but the
+                // agent may still be working; drain it so the next turn starts
+                // from a quiet process.
+                let _ = self
+                    .client
+                    .cancel_with_cleanup_grace(&self.acp_session_id, CANCEL_GRACE)
+                    .await;
+                (
+                    TurnOutcome::Failed {
+                        message,
+                        agent_gone: false,
+                    },
+                    None,
+                )
+            }
+            _ => (
+                TurnOutcome::Failed {
+                    message,
+                    agent_gone: false,
+                },
+                None,
             ),
         }
     }
-    tracing::info!(
-        target: "csp::session",
-        session_id = %request.target.session_id,
-        "session actor stopped"
-    );
+}
+
+/// Scripted stand-in agents, shared by this module's tests and the provider's.
+///
+/// The technique is buzz-acp's own (`acp.rs` spawns shell scripts that emit
+/// NDJSON): a real subprocess speaking real JSON-RPC over real pipes, so nothing
+/// about the transport is mocked away — only the model behind it.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::io::Write;
+    use std::path::Path;
+
+    /// Write an executable shell script and return its path.
+    pub(crate) fn fake_agent(dir: &Path, name: &str, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        let mut file = std::fs::File::create(&path).expect("create script");
+        write!(file, "#!/bin/bash\n{body}").expect("write script");
+        drop(file);
+        let mut perms = std::fs::metadata(&path).expect("stat").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// A cooperative agent: answers `initialize` and `session/new`, streams a
+    /// message chunk per prompt, then completes the turn.
+    pub(crate) const GOOD_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"working"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// Never answers the prompt, so the operator's interrupt is the only way out.
+    pub(crate) const STALLING_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// Opens a session, then dies the moment a turn starts.
+    pub(crate) const DYING_AGENT: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      exit 1 ;;
+  esac
+done
+"#;
+
+    /// Refuses `session/new` with an authentication error.
+    pub(crate) const UNAUTHENTICATED_AGENT: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"authMethods":[{"id":"claude-login"}]}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"Authentication required: run claude login"}}\n' "$id" ;;
+  esac
+done
+"#;
 }
 
 #[cfg(test)]
 mod tests {
+    use super::testing::*;
     use super::*;
 
-    fn request(session_id: &str) -> CreateRequest {
+    fn request(command: String, cwd: &std::path::Path) -> CreateRequest {
         CreateRequest {
             target: CodingSessionTarget {
                 driver: "claude-agent-acp".into(),
                 instance_id: "instance-1".into(),
-                session_id: session_id.into(),
+                session_id: "s1".into(),
                 generation: 1,
             },
             channel_id: Uuid::nil(),
-            cwd: PathBuf::from("/tmp"),
-            title: None,
+            cwd: cwd.to_path_buf(),
+            title: Some("Ship it".into()),
             model: None,
-            agent_command: "claude-agent-acp".into(),
-            idle_timeout: Duration::from_secs(900),
-            max_turn_duration: Duration::from_secs(7200),
+            agent_command: command,
+            idle_timeout: Duration::from_secs(5),
+            max_turn_duration: Duration::from_secs(10),
+            idle_shutdown: Duration::from_secs(30),
         }
     }
 
+    async fn next_event(rx: &mut mpsc::Receiver<SessionEvent>) -> SessionEvent {
+        tokio::time::timeout(Duration::from_secs(15), rx.recv())
+            .await
+            .expect("event within timeout")
+            .expect("channel open")
+    }
+
     #[tokio::test]
-    async fn a_created_session_accepts_work_until_it_is_shut_down() {
-        let mut manager = SessionManager::new();
-        manager.create(request("s1")).await.expect("create");
-        assert_eq!(manager.live_count(), 1);
+    async fn a_turn_runs_to_completion_and_reports_its_stop_reason() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+
+        let startup = manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        assert_eq!(startup.acp_session_id, "acp-session-1");
+
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+            })
+            .expect("deliver");
+
+        assert!(matches!(
+            next_event(&mut rx).await,
+            SessionEvent::TurnStarted { ref command_id, .. } if command_id == "turn-1"
+        ));
+        match next_event(&mut rx).await {
+            SessionEvent::TurnFinished { outcome, .. } => assert_eq!(
+                outcome,
+                TurnOutcome::Completed {
+                    stop_reason: StopReason::EndTurn
+                }
+            ),
+            other => panic!("expected a finished turn, got {other:?}"),
+        }
+        manager.shutdown("s1");
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_cancels_an_in_flight_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "stalling-agent", STALLING_AGENT);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
 
         let handle = manager.handle("s1").expect("handle");
         handle
@@ -228,14 +845,146 @@ mod tests {
                 text: "go".into(),
             })
             .expect("deliver");
+        assert!(matches!(
+            next_event(&mut rx).await,
+            SessionEvent::TurnStarted { .. }
+        ));
+        handle
+            .deliver(SessionCommand::Interrupt {
+                command_id: "int-1".into(),
+            })
+            .expect("deliver interrupt");
 
+        match next_event(&mut rx).await {
+            SessionEvent::TurnFinished { outcome, .. } => {
+                assert_eq!(outcome, TurnOutcome::Cancelled)
+            }
+            other => panic!("expected a cancelled turn, got {other:?}"),
+        }
         manager.shutdown("s1");
-        assert_eq!(manager.live_count(), 0);
-        assert!(manager.handle("s1").is_none());
     }
 
-    /// Blocking the relay read loop behind one busy session would stall every
-    /// other session on the box, so an overfull mailbox is reported instead.
+    /// An agent that dies mid-turn must produce a terminal outcome and take the
+    /// session down with it — a session whose process is gone can serve no
+    /// further turn, and pretending otherwise strands the operator.
+    #[tokio::test]
+    async fn an_agent_that_dies_mid_turn_ends_the_turn_and_the_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "dying-agent", DYING_AGENT);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+            })
+            .expect("deliver");
+
+        assert!(matches!(
+            next_event(&mut rx).await,
+            SessionEvent::TurnStarted { .. }
+        ));
+        match next_event(&mut rx).await {
+            SessionEvent::TurnFinished { outcome, .. } => assert!(
+                matches!(
+                    outcome,
+                    TurnOutcome::Failed {
+                        agent_gone: true,
+                        ..
+                    }
+                ),
+                "expected a fatal turn failure, got {outcome:?}"
+            ),
+            other => panic!("expected a finished turn, got {other:?}"),
+        }
+        match next_event(&mut rx).await {
+            SessionEvent::Exited { reason, .. } => {
+                assert!(matches!(reason, ExitReason::AgentGone(_)))
+            }
+            other => panic!("expected an exit, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_agent_fails_the_create_with_a_recoverable_code() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "unauth-agent", UNAUTHENTICATED_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let failure = manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect_err("create should fail");
+        assert_eq!(failure.code, PROVIDER_AUTH_REQUIRED);
+        assert_eq!(manager.live_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_missing_agent_binary_fails_the_create_as_unavailable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let failure = manager
+            .create(request(
+                dir.path()
+                    .join("no-such-agent")
+                    .to_string_lossy()
+                    .into_owned(),
+                dir.path(),
+            ))
+            .await
+            .expect_err("create should fail");
+        assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn an_idle_session_reclaims_its_subprocess() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut req = request(agent, dir.path());
+        req.idle_shutdown = Duration::from_millis(150);
+        manager.create(req).await.expect("create");
+
+        match next_event(&mut rx).await {
+            SessionEvent::Exited { reason, .. } => assert_eq!(reason, ExitReason::Idle),
+            other => panic!("expected an idle exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn startup_errors_split_into_go_log_in_and_it_is_broken() {
+        let auth = classify_startup_error(
+            &AcpError::AgentError {
+                code: -32000,
+                message: "Authentication required".into(),
+            },
+            "open an agent session",
+        );
+        assert_eq!(auth.code, PROVIDER_AUTH_REQUIRED);
+
+        let broken = classify_startup_error(
+            &AcpError::AgentError {
+                code: -32000,
+                message: "disk full".into(),
+            },
+            "open an agent session",
+        );
+        assert_eq!(broken.code, PROVIDER_UNAVAILABLE);
+
+        assert_eq!(
+            classify_startup_error(&AcpError::AgentExited, "spawn the agent").code,
+            PROVIDER_UNAVAILABLE
+        );
+    }
+
     #[tokio::test]
     async fn a_full_mailbox_is_reported_rather_than_awaited() {
         let (tx, _rx) = mpsc::channel(1);

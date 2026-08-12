@@ -201,6 +201,35 @@ impl Outbox {
         priority: Priority,
         event: nostr::Event,
     ) -> io::Result<bool> {
+        self.enqueue_inner(kind, semantic_key, priority, event, false)
+    }
+
+    /// Queue an event that *supersedes* any unsent row with the same key.
+    ///
+    /// Only correct for facts whose latest value is the whole truth — session
+    /// metadata, where the consumer keeps the newest event per target. Sending
+    /// a stale `idle` and dropping the `running` that overtook it would leave a
+    /// permanently wrong status; worse, publishing both inside the same second
+    /// reads to the consumer as two conflicting claims rather than a sequence.
+    /// Immutable facts (receipts, transcript items) must never use this.
+    pub fn enqueue_latest(
+        &mut self,
+        kind: u32,
+        semantic_key: &str,
+        priority: Priority,
+        event: nostr::Event,
+    ) -> io::Result<bool> {
+        self.enqueue_inner(kind, semantic_key, priority, event, true)
+    }
+
+    fn enqueue_inner(
+        &mut self,
+        kind: u32,
+        semantic_key: &str,
+        priority: Priority,
+        event: nostr::Event,
+        supersede: bool,
+    ) -> io::Result<bool> {
         let signer = event.pubkey.to_hex();
         if signer != self.signer {
             tracing::warn!(
@@ -210,7 +239,18 @@ impl Outbox {
             return Ok(false);
         }
         if self.contains(kind, semantic_key) {
-            return Ok(false);
+            if !supersede {
+                return Ok(false);
+            }
+            let superseded: Vec<String> = self
+                .pending
+                .iter()
+                .filter(|row| row.entry.kind == kind && row.entry.semantic_key == semantic_key)
+                .map(|row| row.entry.id.clone())
+                .collect();
+            for id in superseded {
+                self.ack(&id)?;
+            }
         }
         let entry = OutboxEntry {
             id: uuid::Uuid::new_v4().to_string(),
