@@ -3,6 +3,7 @@ mod app_menu;
 mod app_state;
 mod archive;
 mod builderlab;
+mod coding_sessions;
 mod commands;
 mod deep_link;
 mod egress_guard;
@@ -772,6 +773,13 @@ pub fn run() {
             session_provider::commands::stop_coding_session_provider,
             commands::coding_session_popout::stage_coding_session_popout_bootstrap,
             commands::coding_session_popout::get_coding_session_popout_bootstrap,
+            coding_sessions::workdir_store::get_coding_session_workdir_state,
+            coding_sessions::workdir_store::set_coding_session_workdir,
+            coding_sessions::workdir_store::record_coding_session_workdir_use,
+            coding_sessions::workdir_store::stage_coding_session_create_hint,
+            coding_sessions::workdir_store::clear_coding_session_create_hint,
+            coding_sessions::workdir_store::validate_coding_session_workdir,
+            coding_sessions::workdir_store::pick_coding_session_workdir,
             mesh_start_node,
             mesh_stop_node,
             mesh_node_status,

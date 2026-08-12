@@ -9,6 +9,7 @@ use nostr::ToBech32;
 use tauri::{AppHandle, State};
 
 use crate::app_state::AppState;
+use crate::coding_sessions::workdir_store::remateralize_provider_projects_view;
 use crate::relay::relay_ws_url_with_override;
 use crate::session_provider::store::{
     load_provider_store, save_provider_store, CodingSessionProviderRecord,
@@ -68,6 +69,12 @@ pub async fn provision_coding_session_provider(
     // provider whose output the desktop refuses to render is worse than one
     // that never started.
     trust::seed_provider_trust(&app, &record.provider_pubkey)?;
+    // The state directory only exists from here on, so any working directory
+    // the operator chose before provisioning has had nowhere to land. Write it
+    // now, before the child starts reading the file.
+    if let Err(error) = remateralize_provider_projects_view(&app, &state) {
+        eprintln!("buzz-desktop: failed to materialize coding-session projects view: {error}");
+    }
 
     ensure_running(&app, &provider, &relay_url)?;
     provider_status(&app, &provider, &relay_url)
