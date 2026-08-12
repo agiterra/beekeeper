@@ -64,6 +64,11 @@ impl StopReason {
     ///
     /// Matching is case-insensitive so agents that send `"END_TURN"` or
     /// `"Cancelled"` are handled correctly without a protocol error.
+    // Deliberately not `FromStr`: an unrecognized stop reason is a normal wire
+    // condition to be tolerated, not an error to be constructed and reported,
+    // so `Option` is the honest return type. (The lint only became visible when
+    // this module went public; the signature predates it and callers rely on it.)
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "end_turn" => Some(Self::EndTurn),

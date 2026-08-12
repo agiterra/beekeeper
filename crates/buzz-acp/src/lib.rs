@@ -1,17 +1,23 @@
 #![deny(unsafe_code)]
 
-mod acp;
+// `acp`, `observer`, and `relay` are public so other crates can reuse this
+// harness as a library — an out-of-tree provider needs the ACP client, the
+// JSON-RPC observer bus, and the relay connection, but must NOT run the
+// harness's mention/queue/pool semantics. Keeping those private is the point:
+// the boundary is "borrow the plumbing", not "become a second harness".
+pub mod acp;
 mod config;
 mod engram_fetch;
 mod filter;
-mod observer;
+pub mod observer;
 mod pool;
 mod pool_lifecycle;
 mod queue;
-mod relay;
+pub mod relay;
 mod setup_mode;
 mod usage;
 
+pub use config::ChannelFilter;
 pub use usage::TurnUsage;
 
 use std::collections::{HashMap, HashSet, VecDeque};
