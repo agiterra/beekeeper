@@ -153,6 +153,16 @@ export function deriveShellRoute(pathname: string): {
     };
   }
 
+  // A coding session belongs to the channel that carries its signed events, so
+  // the shell keeps that channel selected while the workspace is open.
+  if (pathname.startsWith("/coding-sessions/")) {
+    const [, , rawChannelId] = pathname.split("/");
+    return {
+      selectedChannelId: rawChannelId ? decodeURIComponent(rawChannelId) : null,
+      selectedView: "channel",
+    };
+  }
+
   if (pathname === "/messages/new") {
     return {
       selectedChannelId: null,

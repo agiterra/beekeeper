@@ -1,0 +1,380 @@
+import * as React from "react";
+import { ArrowDown, CircleAlert } from "lucide-react";
+
+import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { deriveTranscriptItemBlockIds } from "@/features/agents/ui/agentSessionTranscriptGrouping";
+import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
+import {
+  deriveCodingSessionWorkspaceStatus,
+  resolveCodingSessionWorkspace,
+} from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
+import { useChannelsQuery } from "@/features/channels/hooks";
+import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
+import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
+import { Button } from "@/shared/ui/button";
+import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
+import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
+import { CodingSessionComposer } from "./CodingSessionComposer";
+import { CodingSessionHeader } from "./CodingSessionHeader";
+import {
+  codingSessionTaskRailPreferenceKey,
+  type CodingSessionTaskRailPreference,
+  CodingSessionTaskRail,
+  deriveCodingSessionTaskRailOpen,
+} from "./CodingSessionTaskRail";
+import { CodingSessionTranscript } from "./CodingSessionTranscript";
+
+type CodingSessionWorkspaceProps = {
+  channelId: string;
+  generationId: string;
+  onBack: () => void;
+  surface: CodingSessionSurface;
+};
+
+export function CodingSessionWorkspace({
+  channelId,
+  generationId,
+  onBack,
+  surface,
+}: CodingSessionWorkspaceProps) {
+  const catalog = useCodingSessionCatalog(channelId);
+  const channelsQuery = useChannelsQuery({ enabled: true });
+  const channel =
+    channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
+  const resolution = resolveCodingSessionWorkspace({
+    catalog,
+    generationId,
+  });
+
+  if (resolution.kind !== "ready") {
+    return (
+      <CodingSessionWorkspaceState
+        channelName={channel?.name ?? null}
+        generationId={generationId}
+        onBack={onBack}
+        resolution={resolution}
+      />
+    );
+  }
+
+  return (
+    <ReadyCodingSessionWorkspace
+      channelId={channelId}
+      channelName={channel?.name ?? null}
+      generationId={generationId}
+      isMember={channel?.isMember ?? false}
+      key={`${channelId}:${generationId}`}
+      onBack={onBack}
+      session={resolution.session}
+      surface={surface}
+    />
+  );
+}
+
+function ReadyCodingSessionWorkspace({
+  channelId,
+  channelName,
+  generationId,
+  isMember,
+  onBack,
+  session,
+}: {
+  channelId: string;
+  channelName: string | null;
+  generationId: string;
+  isMember: boolean;
+  onBack: () => void;
+  session: Extract<
+    ReturnType<typeof resolveCodingSessionWorkspace>,
+    { kind: "ready" }
+  >["session"];
+  surface: CodingSessionSurface;
+}) {
+  const workspaceRef = React.useRef<HTMLElement>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+  const isNarrow = useNarrowCodingSessionWorkspace(workspaceRef);
+  const runtimeLabel = React.useMemo(() => {
+    const runtime = session.runtime ?? session.provider;
+    return runtime ? formatCodingSessionRuntimeLabel(runtime) : null;
+  }, [session.provider, session.runtime]);
+  const providerLabel = React.useMemo(
+    () =>
+      session.provider
+        ? formatCodingSessionRuntimeLabel(session.provider)
+        : null,
+    [session.provider],
+  );
+  const blockIds = React.useMemo(
+    () => deriveTranscriptItemBlockIds(session.transcript),
+    [session.transcript],
+  );
+  const stableBlockIds = useStableArrayShallow(blockIds);
+  const messages = React.useMemo(
+    () => stableBlockIds.map((id) => ({ id })),
+    [stableBlockIds],
+  );
+  const { isAtBottom, newMessageCount, onScroll, scrollToBottom } =
+    useAnchoredScroll({
+      channelId: `${channelId}:${generationId}`,
+      contentRef,
+      isLoading: false,
+      messages,
+      scrollContainerRef: scrollRef,
+    });
+  const status = deriveCodingSessionWorkspaceStatus(session.transcript);
+  const taskModel = React.useMemo(
+    () => deriveCodingSessionTaskModel(session.transcript),
+    [session.transcript],
+  );
+  const taskRailPreferenceKey = React.useMemo(
+    () => codingSessionTaskRailPreferenceKey(channelId, generationId),
+    [channelId, generationId],
+  );
+  const [taskRailPreference, setTaskRailPreference] =
+    React.useState<CodingSessionTaskRailPreference>(() =>
+      readTaskRailPreference(taskRailPreferenceKey),
+    );
+  const taskRailOpen = deriveCodingSessionTaskRailOpen({
+    hasPlan: taskModel !== null,
+    isNarrow,
+    preference: taskRailPreference,
+  });
+  const isWorking = status.kind === "working";
+
+  const setTaskRailOpen = React.useCallback(
+    (open: boolean | ((current: boolean) => boolean)) => {
+      const nextOpen = typeof open === "function" ? open(taskRailOpen) : open;
+      const preference = nextOpen ? "open" : "closed";
+      setTaskRailPreference(preference);
+      writeTaskRailPreference(taskRailPreferenceKey, preference);
+    },
+    [taskRailOpen, taskRailPreferenceKey],
+  );
+
+  return (
+    <main
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      data-testid="coding-session-workspace"
+      ref={workspaceRef}
+    >
+      <CodingSessionHeader
+        channelName={channelName}
+        compact={isNarrow}
+        generationLabel={session.label}
+        model={session.model}
+        onBack={onBack}
+        onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
+        providerAuthorityPubkey={session.providerAuthorityPubkey}
+        runtimeLabel={runtimeLabel}
+        sessionTitle={session.title}
+        status={status}
+        taskCount={taskModel?.tasks.length ?? 0}
+        taskRailOpen={taskRailOpen}
+      />
+      <div className="flex min-h-0 flex-1">
+        <section
+          aria-label="Session transcript"
+          className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+        >
+          <div
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            onScroll={onScroll}
+            ref={scrollRef}
+          >
+            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-44 sm:px-8">
+              <div ref={contentRef}>
+                <CodingSessionTranscript
+                  generationId={generationId}
+                  isWorking={isWorking}
+                  items={session.transcript}
+                  scrollRef={scrollRef}
+                />
+              </div>
+            </div>
+          </div>
+          {!isAtBottom ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-32 z-30 flex justify-center">
+              <Button
+                className="pointer-events-auto rounded-full bg-background/90 shadow-md backdrop-blur-xl"
+                data-testid="coding-session-scroll-to-latest"
+                onClick={() => scrollToBottom("smooth")}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <ArrowDown />
+                {newMessageCount > 0
+                  ? `${newMessageCount} new`
+                  : "Scroll to latest"}
+              </Button>
+            </div>
+          ) : null}
+          {session.commandTarget ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
+              <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+                <CodingSessionComposer
+                  canInterrupt={
+                    codingSessionTargetSupportsInterrupt(
+                      session.commandTarget,
+                    ) && session.capabilities?.threadTurnInterrupt !== false
+                  }
+                  canSteer={session.capabilities?.threadSteer === true}
+                  channelId={channelId}
+                  controlContext={{
+                    capabilities: session.capabilities,
+                    model: session.model,
+                    providerLabel,
+                    runtimeLabel,
+                    status,
+                  }}
+                  immersive
+                  isMember={isMember}
+                  isWorking={isWorking}
+                  layout={isNarrow ? "stacked" : "inline"}
+                  target={session.commandTarget}
+                  variant="floating"
+                />
+              </div>
+            </div>
+          ) : null}
+        </section>
+        {!isNarrow && taskRailOpen ? (
+          <CodingSessionTaskRail model={taskModel} />
+        ) : null}
+      </div>
+      {isNarrow ? (
+        <Sheet onOpenChange={setTaskRailOpen} open={taskRailOpen}>
+          <SheetContent
+            aria-describedby={undefined}
+            className="w-[min(90vw,22rem)] max-w-none p-0"
+            side="right"
+          >
+            <SheetTitle className="sr-only">Session plan</SheetTitle>
+            <CodingSessionTaskRail model={taskModel} variant="sheet" />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+    </main>
+  );
+}
+
+function CodingSessionWorkspaceState({
+  channelName,
+  generationId,
+  onBack,
+  resolution,
+}: {
+  channelName: string | null;
+  generationId: string;
+  onBack: () => void;
+  resolution: Exclude<
+    ReturnType<typeof resolveCodingSessionWorkspace>,
+    { kind: "ready" }
+  >;
+}) {
+  const loading = resolution.kind === "loading";
+  return (
+    <main
+      className="flex h-full min-h-0 flex-1 flex-col bg-background"
+      data-testid={`coding-session-workspace-${resolution.kind}`}
+    >
+      <CodingSessionHeader
+        channelName={channelName}
+        generationLabel={shortGenerationId(generationId)}
+        onBack={onBack}
+        status={{ kind: "unknown", label: "Status unknown" }}
+      />
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10 text-center">
+        <div className="max-w-md">
+          {loading ? (
+            <FuzzyLogo
+              ariaLabel="Loading coding session"
+              className="mx-auto text-muted-foreground"
+              fuzz={false}
+              loop
+            />
+          ) : (
+            <CircleAlert className="mx-auto h-5 w-5 text-muted-foreground" />
+          )}
+          <h2 className="mt-4 text-base font-semibold">
+            {loading
+              ? "Loading coding session"
+              : resolution.kind === "untrusted"
+                ? "Generation not trusted"
+                : "Generation not found"}
+          </h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {loading
+              ? "Resolving the exact signed generation from the relay catalog."
+              : resolution.description}
+          </p>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function shortGenerationId(value: string): string {
+  return value.length <= 28 ? value : `${value.slice(0, 28)}…`;
+}
+
+function readTaskRailPreference(key: string): CodingSessionTaskRailPreference {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.sessionStorage.getItem(key);
+    return value === "open" || value === "closed" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTaskRailPreference(
+  key: string,
+  preference: Exclude<CodingSessionTaskRailPreference, null>,
+) {
+  try {
+    window.sessionStorage.setItem(key, preference);
+  } catch {
+    // Storage can be unavailable in hardened webviews; local state still works.
+  }
+}
+
+const NARROW_CODING_SESSION_WORKSPACE_WIDTH = 960;
+
+function useNarrowCodingSessionWorkspace(
+  workspaceRef: React.RefObject<HTMLElement | null>,
+): boolean {
+  const [isNarrow, setIsNarrow] = React.useState(false);
+
+  React.useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    const update = (width: number) => {
+      setIsNarrow(width < NARROW_CODING_SESSION_WORKSPACE_WIDTH);
+    };
+    update(workspace.getBoundingClientRect().width);
+
+    if (typeof ResizeObserver === "undefined") {
+      const media = window.matchMedia(
+        `(max-width: ${NARROW_CODING_SESSION_WORKSPACE_WIDTH - 1}px)`,
+      );
+      const updateFromMedia = () => setIsNarrow(media.matches);
+      media.addEventListener("change", updateFromMedia);
+      return () => media.removeEventListener("change", updateFromMedia);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) update(entry.contentRect.width);
+    });
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, [workspaceRef]);
+
+  return isNarrow;
+}

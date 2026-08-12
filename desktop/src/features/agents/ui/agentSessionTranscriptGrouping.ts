@@ -783,6 +783,21 @@ export function deriveTranscriptBlockIds(
   return blocks.map(getDisplayBlockKey);
 }
 
+/**
+ * The same display-block key sequence, starting from projected items.
+ *
+ * A coding session is projected from signed 442xx events rather than observer
+ * frames, so it joins the chain one step later than
+ * `deriveTranscriptBlockIds` — the anchored-scroll contract downstream is
+ * identical.
+ */
+export function deriveTranscriptItemBlockIds(
+  items: readonly TranscriptItem[],
+): string[] {
+  const blocks = buildTranscriptDisplayBlocks([...items]);
+  return blocks.map(getDisplayBlockKey);
+}
+
 /** Human-readable labels for a collapsed turn setup row. */
 export function formatTurnSetupLabel(
   items: Extract<TranscriptItem, { type: "lifecycle" }>[],
