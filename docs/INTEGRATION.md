@@ -9,7 +9,7 @@ maintainable and upstreamable. Quick version: [CONTRIBUTING-FORK.md](../CONTRIBU
 |---|---|---|
 | `main` | Pure mirror of `block/buzz` main. **Never** carries local commits. | ff-only |
 | `feature/<name>` | One upstreamable feature. Based on `main`, or stacked on another feature. No CI files, no agiterra-only bits. | rebased per sync |
-| `integration/glue` | Cross-feature adaptation patches + `scripts/integrate.sh` + this doc + `.woodpecker/` CI. Merged last into `integrated`. | rebased per sync |
+| `integration/glue` | Cross-feature adaptation patches + `scripts/integrate.sh` + this doc + `.woodpecker/` CI. A patch series **rebased onto the feature assembly** each build (so glue commits may edit files that only exist on feature branches); its current base is recorded in `integration/glue-base`. Force-pushed like `integrated`. | rebased per build |
 | `integrated` | The assembled product: `main` + every feature + glue. **Deploys and daily work use this.** | rebuilt + force-pushed; pin via `build/*` tags |
 
 `integrated` is rewritten on every rebuild (like linux-next). Consumers re-fetch
@@ -19,6 +19,7 @@ Relay images are tagged with the build tag they were built from.
 Current stack:
 - `feature/project-containers` — projects as containers (channels/forums/repos/workflows under projects; sidebar + management UI)
 - `feature/project-access` (stacked on containers) — visibility levels (`buzz-access`), project ACL, private-repo gating
+- `feature/coding-sessions` — coding sessions with a Claude Code provider (NIP-CSC/CSL/CST kinds 44220–44225, `buzz-session-provider` crate, workspace UI, transcript export, `buzz sessions` CLI); project-shelf coupling lives in glue
 
 ## The sync loop
 

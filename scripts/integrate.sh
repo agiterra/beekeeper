@@ -4,7 +4,9 @@
 # Branch model (see docs/INTEGRATION.md):
 #   main              ff-only mirror of block/buzz main
 #   feature/<name>    upstreamable topic branches, rebased per sync
-#   integration/glue  cross-feature patches + this tooling + CI pipelines
+#   integration/glue  cross-feature patches + this tooling + CI pipelines;
+#                     a patch series REBASED ONTO the feature assembly each
+#                     build (force-pushed; base recorded in integration/glue-base)
 #   integrated        REBUILT product branch (force-pushed; pin via build/* tags)
 #
 # Usage: scripts/integrate.sh [--no-push] [--skip-gate] [--no-sync]
@@ -16,6 +18,7 @@ FEATURES=(
   "fix/git-sign-oa-pubkey-validation"
   "feature/project-containers"
   "feature/project-access:feature/project-containers"
+  "feature/coding-sessions"
 )
 GLUE="integration/glue"
 
@@ -55,13 +58,25 @@ for entry in "${FEATURES[@]}"; do
   git checkout "$branch"
   git rebase --onto "$base" "$old_base" "$branch"
 done
-git checkout "$GLUE"
-git rebase --onto main "$(git merge-base "$GLUE" main)" "$GLUE"
 
-# ── 2b. stamp the CI base ref on the glue branch ─────────────────────────────
+# ── 3. rebuild integrated ────────────────────────────────────────────────────
+# The assembly is main + feature merges (rerere replays the recorded
+# cross-feature union resolutions). Glue is a PATCH SERIES REBASED ONTO THE
+# ASSEMBLY — not merged — so glue commits may edit files that only exist on
+# feature branches (cross-feature adaptation). `integration/glue-base` records
+# the assembly commit the series is currently parented on.
+OLD_GLUE_BASE="$(git rev-parse integration/glue-base)"
+git checkout -B integrated main
+for entry in "${FEATURES[@]}"; do
+  git merge --no-ff --no-edit "${entry%%:*}"
+done
+ASSEMBLY="$(git rev-parse HEAD)"
+git rebase --onto "$ASSEMBLY" "$OLD_GLUE_BASE" "$GLUE"
+git update-ref refs/heads/integration/glue-base "$ASSEMBLY"
+
+# ── 3b. stamp the CI base ref on the glue branch ─────────────────────────────
 # The gate's file-size ratchet diffs against this commit (the CI clone has no
 # origin/main ref and no credentials to fetch it).
-git checkout "$GLUE"
 mkdir -p .ci
 if [[ "$(cat .ci/base-ref 2>/dev/null)" != "$(git rev-parse main)" ]]; then
   git rev-parse main > .ci/base-ref
@@ -69,12 +84,8 @@ if [[ "$(cat .ci/base-ref 2>/dev/null)" != "$(git rev-parse main)" ]]; then
   git commit -s -m "chore(integration): stamp CI base ref $(git rev-parse --short main)"
 fi
 
-# ── 3. rebuild integrated ────────────────────────────────────────────────────
-git checkout -B integrated main
-for entry in "${FEATURES[@]}"; do
-  git merge --no-ff --no-edit "${entry%%:*}"
-done
-git merge --no-ff --no-edit "$GLUE"
+# integrated = the rebased glue tip (linear on top of the assembly).
+git checkout -B integrated "$GLUE" --
 
 # ── 4. gate ──────────────────────────────────────────────────────────────────
 if ! $SKIP_GATE; then
