@@ -81,7 +81,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     goAgents,
     goChannel,
     goCodingSession,
-    goNewCodingSession,
+    goNewProjectCodingSession,
     goProjectRepo,
     goProjects,
     goWorkflow,
@@ -358,7 +358,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
             action={actionIconButton(
               "New coding session",
               "project-section-create-coding-session",
-              () => void goNewCodingSession(),
+              () => void goNewProjectCodingSession(project.id),
             )}
           >
             {codingSessions.length === 0 ? (

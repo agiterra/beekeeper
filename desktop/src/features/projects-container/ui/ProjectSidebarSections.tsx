@@ -91,7 +91,7 @@ export function ProjectSidebarSections({
 }) {
   const {
     goCodingSession,
-    goNewCodingSession,
+    goNewProjectCodingSession,
     goProject,
     goProjectRepo,
     goProjects,
@@ -326,7 +326,9 @@ export function ProjectSidebarSections({
             }
             onOpenProject={() => handleOpenProject(project)}
             onOpenRepo={(repo) => void goProjectRepo(project.id, repo.id)}
-            onNewCodingSession={() => void goNewCodingSession()}
+            onNewCodingSession={() =>
+              void goNewProjectCodingSession(project.id)
+            }
             workflows={[
               ...(workflowBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? workflowBuckets.unclaimed : []),

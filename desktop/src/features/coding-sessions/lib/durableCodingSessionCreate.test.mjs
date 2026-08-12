@@ -107,6 +107,37 @@ test("a standalone create publishes an explicit null projectRef", async () => {
   );
 });
 
+test("a project-scoped create signs the project coordinate into the command", async () => {
+  const storage = memoryStorage();
+  const projectRef = `30621:${"b".repeat(64)}:buzz-glue`;
+  const scope = "project:owner:buzz-glue";
+  const prepared = await prepareDurableCodingSessionCreate(
+    scope,
+    input({ projectRef }),
+    { signer, storage },
+  );
+
+  assert.equal(prepared.ok, true);
+  // Placement is decided once, at create, and lives in the signed bytes — the
+  // projects sidebar reads it back off the metadata rather than re-deriving it.
+  const payload = JSON.parse(prepared.transaction.event.content);
+  assert.equal(payload.action.projectRef, projectRef);
+  assert.equal(
+    loadDurableCodingSessionCreate(scope, storage).transaction.input.projectRef,
+    projectRef,
+  );
+  // A resumed transaction is re-verified against the event it claims to be, so
+  // a projectRef that drifted after signing must fail to load at all.
+  const key = durableCodingSessionCreateStorageKey(scope);
+  const tampered = JSON.parse(storage.values.get(key));
+  tampered.input.projectRef = `30621:${"c".repeat(64)}:other`;
+  storage.values.set(key, JSON.stringify(tampered));
+  assert.equal(
+    loadDurableCodingSessionCreate(scope, storage).transaction,
+    null,
+  );
+});
+
 test("an ambiguous retry reuses the exact signed event and command id", async () => {
   const storage = memoryStorage();
   const prepared = await prepareDurableCodingSessionCreate(SCOPE, input(), {

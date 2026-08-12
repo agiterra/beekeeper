@@ -266,6 +266,20 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  /** The project-scoped create flow: the project is decided by the route, and
+   * the session's channel is derived from it rather than chosen. */
+  const goNewProjectCodingSession = React.useCallback(
+    (projectId: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/projects/$projectId/sessions/new",
+          params: { projectId },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goNewMessage = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -378,6 +392,7 @@ export function useAppNavigation() {
     goForumPost,
     goHome,
     goNewCodingSession,
+    goNewProjectCodingSession,
     goNewMessage,
     goProject,
     goProjectRepo,

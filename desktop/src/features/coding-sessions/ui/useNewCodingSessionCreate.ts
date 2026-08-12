@@ -377,6 +377,14 @@ export function useNewCodingSessionCreate({
       sessionRef?: string | null;
       /** Existing genesis to carry when attaching to a founded umbrella. */
       genesisRef?: string | null;
+      /**
+       * Project coordinate to sign into the create. This is the session's
+       * placement authority for the rest of its life — the projects sidebar
+       * reads it back off the 44223 metadata — so it is written once, here,
+       * and never inferred later. Standalone creation passes nothing.
+       */
+      projectRef?: string | null;
+      repoRef?: string | null;
     }) => {
       // `transaction` only exists once prepare has resolved, so on its own it
       // leaves the whole in-flight window unguarded — and this flow puts
@@ -418,6 +426,9 @@ export function useNewCodingSessionCreate({
         });
 
         setHostPhase("publishing");
+        // Genesis-publishing wrapper (founding publishes a genesis; joining
+        // carries the umbrella's). Glue's project coordinate rides the same
+        // input — the durable helper is never called directly here.
         const prepared = await prepareNewCodingSessionCreate(scopeId, {
           channelId: input.target.channelId,
           commandId,
@@ -426,6 +437,8 @@ export function useNewCodingSessionCreate({
           model: input.model,
           title: input.title,
           initialTurn: input.initialTurn,
+          projectRef: input.projectRef ?? null,
+          repoRef: input.repoRef ?? null,
           ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
           ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
         });
@@ -516,14 +529,16 @@ export function buildNewCodingSessionCreateInput(input: {
   model: string | null;
   title: string | null;
   initialTurn: string | null;
+  projectRef?: string | null;
+  repoRef?: string | null;
   sessionRef?: string;
   genesisRef?: string;
 }): Parameters<typeof prepareDurableCodingSessionCreate>[1] {
   return {
     channelId: input.channelId,
     commandId: input.commandId,
-    projectRef: null,
-    repoRef: null,
+    projectRef: input.projectRef ?? null,
+    repoRef: input.repoRef ?? null,
     sessionRef: input.sessionRef ?? createCodingSessionSessionRef(),
     ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
     providerInstanceRef: input.providerInstanceRef,

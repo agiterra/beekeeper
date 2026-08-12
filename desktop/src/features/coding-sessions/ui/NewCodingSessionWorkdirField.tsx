@@ -16,19 +16,23 @@ import { cn } from "@/shared/lib/cn";
  * Where the session runs, chosen on this machine and never published.
  *
  * The default walks the same order the provider itself resolves in — the
- * channel's remembered directory, then the most recently used one — so the
- * pre-filled value is the one the create would have used anyway, made visible
- * before it matters instead of after a failed receipt.
+ * project's remembered directory, then the channel's, then the most recently
+ * used one — so the pre-filled value is the one the create would have used
+ * anyway, made visible before it matters instead of after a failed receipt.
  */
 export function NewCodingSessionWorkdirField({
   channelId,
   disabled = false,
   onChange,
+  projectKey = null,
   value,
 }: {
   channelId: string | null;
   disabled?: boolean;
   onChange: (path: string) => void;
+  /** NIP-MP project coordinate whose remembered directory outranks the
+   * channel's — a project-scoped session belongs to the project's checkout. */
+  projectKey?: string | null;
   value: string;
 }) {
   const [state, setState] = React.useState<CodingSessionWorkdirState | null>(
@@ -55,11 +59,12 @@ export function NewCodingSessionWorkdirField({
   React.useEffect(() => {
     if (!state || touchedRef.current || value.trim().length > 0) return;
     const preferred =
+      (projectKey ? state.byProject[projectKey]?.path : null) ??
       (channelId ? state.byChannel[channelId]?.path : null) ??
       state.mru[0]?.path ??
       "";
     if (preferred) onChange(preferred);
-  }, [channelId, onChange, state, value]);
+  }, [channelId, onChange, projectKey, state, value]);
 
   React.useEffect(() => {
     const candidate = value.trim();

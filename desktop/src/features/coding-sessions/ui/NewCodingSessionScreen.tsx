@@ -1,5 +1,11 @@
 import { useCanGoBack, useNavigate, useRouter } from "@tanstack/react-router";
-import { ArrowLeft, CircleAlert, LoaderCircle, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  CircleAlert,
+  FolderKanban,
+  LoaderCircle,
+  Send,
+} from "lucide-react";
 import * as React from "react";
 
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
@@ -31,18 +37,46 @@ import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 
 /**
- * Create a coding session that belongs to a channel and nothing else.
+ * A project the session is being created inside.
+ *
+ * Supplied by the projects feature's wrapper (glue): the screen stays the one
+ * create flow and only swaps the channel *question* for a channel *fact*.
+ */
+export type NewCodingSessionProjectContext = {
+  projectId: string;
+  projectName: string;
+  /** Coordinate signed into the create as the session's placement authority. */
+  projectRef: string | null;
+  /** The project's sessions channel, or null until this create publishes one. */
+  channelId: string | null;
+  /** Name the sessions channel will be published under, when there is none. */
+  pendingChannelName: string;
+  /**
+   * Resolve — creating it if needed — the channel this session belongs in.
+   * Called once, on submit: opening the screen and walking away must not leave
+   * a channel behind.
+   */
+  ensureChannelId: () => Promise<string>;
+};
+
+/**
+ * Create a coding session that belongs to a channel, and optionally to the
+ * project that channel serves.
  *
  * The donor's screen was project-shaped: it picked a project, then a repo,
  * then a provider narrowed by both. Standalone creation asks the three
  * questions a session actually needs — which channel, which provider, which
- * directory on this machine — and publishes `projectRef: null`. The
- * project-scoped wrapper comes back with the glue patch that owns projects.
+ * directory on this machine — and publishes `projectRef: null`. With a
+ * `projectContext` the project is already decided, so the channel picker
+ * becomes a statement of where the session will live and the create carries
+ * the project's coordinate.
  */
 export function NewCodingSessionScreen({
   channelId: initialChannelId,
+  projectContext = null,
 }: {
   channelId?: string;
+  projectContext?: NewCodingSessionProjectContext | null;
 }) {
   const navigate = useNavigate();
   const router = useRouter();
@@ -58,18 +92,32 @@ export function NewCodingSessionScreen({
   const [channelSelection, setChannelSelection] = React.useState<string | null>(
     initialChannelId ?? null,
   );
-  const channelId =
-    channelSelection ??
-    (memberChannels.some((channel) => channel.id === initialChannelId)
-      ? (initialChannelId ?? null)
-      : (memberChannels[0]?.id ?? null));
+  const channelId = projectContext
+    ? projectContext.channelId
+    : (channelSelection ??
+      (memberChannels.some((channel) => channel.id === initialChannelId)
+        ? (initialChannelId ?? null)
+        : (memberChannels[0]?.id ?? null)));
   const memberChannelIds = React.useMemo(
     () => memberChannels.map((channel) => channel.id).sort(),
     [memberChannels],
   );
   const providerCatalog = useCodingSessionProviderCatalog(memberChannelIds);
 
-  const scopeId = channelId ?? "unscoped";
+  // A project whose sessions channel does not exist yet still has a definite
+  // destination — it just has no id until submit publishes it. The pending key
+  // stands in so the provider picker and the durable-create scope stay stable
+  // across that transition.
+  const pendingChannelKey = projectContext
+    ? `pending-project-channel:${projectContext.projectId}`
+    : null;
+  const targetChannelId = channelId ?? pendingChannelKey;
+
+  // One in-flight create per project, not per channel: the channel can change
+  // identity mid-flow (it gets published), the project cannot.
+  const scopeId = projectContext
+    ? `project:${projectContext.projectId}`
+    : (channelId ?? "unscoped");
   const {
     beginLoginWatch,
     durabilityError,
@@ -107,7 +155,7 @@ export function NewCodingSessionScreen({
     () =>
       resolveNewCodingSessionTargets({
         catalogs: providerCatalog.entries,
-        channelId,
+        channelId: targetChannelId,
         localProvider: providerStatus?.providerPubkey
           ? {
               providerPubkey: providerStatus.providerPubkey,
@@ -117,11 +165,11 @@ export function NewCodingSessionScreen({
           : null,
       }),
     [
-      channelId,
       providerCatalog.entries,
       providerModelsByInstanceRef,
       providerRuntimes,
       providerStatus?.providerPubkey,
+      targetChannelId,
     ],
   );
 
@@ -184,31 +232,63 @@ export function NewCodingSessionScreen({
   const draftBytes = new TextEncoder().encode(draftText).byteLength;
   const draftOverCap =
     draftBytes > MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES;
+  const [setupError, setSetupError] = React.useState<string | null>(null);
+  const [isPreparingChannel, setIsPreparingChannel] = React.useState(false);
   const canSubmit =
     !isPublishing &&
+    !isPreparingChannel &&
     transaction === null &&
-    channelId !== null &&
+    targetChannelId !== null &&
     selectedTarget !== null &&
     isNewCodingSessionTargetReady(selectedTarget) &&
     !draftOverCap;
 
   const handleSubmit = React.useCallback(() => {
     if (!canSubmit || !selectedTarget) return;
-    void submit({
-      target: selectedTarget,
-      model:
-        effectiveModel && effectiveModel.length > 0 ? effectiveModel : null,
-      title: title.trim().length > 0 ? title.trim() : null,
-      initialTurn: draftText.trim().length > 0 ? draftText : null,
-      workdir: workdir.trim().length > 0 ? workdir.trim() : null,
-    }).then(() => {
+    setSetupError(null);
+    void (async () => {
+      let submitTarget = selectedTarget;
+      if (projectContext) {
+        // The sessions channel is published here, on the first create that
+        // needs it, and never on mount.
+        setIsPreparingChannel(true);
+        try {
+          const ensured = await projectContext.ensureChannelId();
+          if (ensured !== selectedTarget.channelId) {
+            // Only reachable on the bootstrap path: with no channel there was
+            // no catalog, so the selection is one of this computer's current
+            // runtimes. Preserve that runtime/model choice and bind only its
+            // destination to the channel that was just published.
+            submitTarget = { ...selectedTarget, channelId: ensured };
+          }
+        } catch (error) {
+          setSetupError(
+            error instanceof Error
+              ? error.message
+              : "Could not prepare a channel for this project's sessions.",
+          );
+          return;
+        } finally {
+          setIsPreparingChannel(false);
+        }
+      }
+      await submit({
+        target: submitTarget,
+        model:
+          effectiveModel && effectiveModel.length > 0 ? effectiveModel : null,
+        title: title.trim().length > 0 ? title.trim() : null,
+        initialTurn: draftText.trim().length > 0 ? draftText : null,
+        workdir: workdir.trim().length > 0 ? workdir.trim() : null,
+        projectRef: projectContext?.projectRef ?? null,
+      });
       clearDraft();
-    });
+    })();
   }, [
     canSubmit,
     clearDraft,
     draftText,
     effectiveModel,
+    projectContext,
     selectedTarget,
     submit,
     title,
@@ -291,20 +371,36 @@ export function NewCodingSessionScreen({
         >
           <ArrowLeft />
         </Button>
-        <h1 className="text-sm font-semibold">New coding session</h1>
+        <h1 className="text-sm font-semibold">
+          {projectContext
+            ? `New coding session in ${projectContext.projectName}`
+            : "New coding session"}
+        </h1>
       </header>
 
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-5 py-7 sm:px-8">
-        <NewCodingSessionChannelPicker
-          channels={memberChannels}
-          disabled={transaction !== null}
-          onChange={(next) => {
-            setChannelSelection(next);
-            setTargetSelection({ key: null, explicit: false });
-            setModelSelection({ value: null, explicit: false });
-          }}
-          value={channelId}
-        />
+        {projectContext ? (
+          <NewCodingSessionProjectDestination
+            channelName={
+              memberChannels.find(
+                (channel) => channel.id === projectContext.channelId,
+              )?.name ?? null
+            }
+            pendingChannelName={projectContext.pendingChannelName}
+            projectName={projectContext.projectName}
+          />
+        ) : (
+          <NewCodingSessionChannelPicker
+            channels={memberChannels}
+            disabled={transaction !== null}
+            onChange={(next) => {
+              setChannelSelection(next);
+              setTargetSelection({ key: null, explicit: false });
+              setModelSelection({ value: null, explicit: false });
+            }}
+            value={channelId}
+          />
+        )}
 
         <NewCodingSessionProviderPicker
           disabled={transaction !== null}
@@ -327,6 +423,7 @@ export function NewCodingSessionScreen({
             transaction !== null && !isCodingSessionWorkdirFailure(failureCode)
           }
           onChange={setWorkdir}
+          projectKey={projectContext?.projectRef ?? null}
           value={workdir}
         />
 
@@ -383,6 +480,17 @@ export function NewCodingSessionScreen({
           />
         ) : null}
 
+        {setupError ? (
+          <p
+            className="flex items-start gap-2 text-sm text-destructive"
+            data-testid="new-coding-session-setup-error"
+            role="alert"
+          >
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            {setupError}
+          </p>
+        ) : null}
+
         {status ? (
           <p
             className={cn(
@@ -403,7 +511,9 @@ export function NewCodingSessionScreen({
           </p>
         ) : null}
 
-        {targets.length === 0 && channelId !== null && hostPhase === "idle" ? (
+        {targets.length === 0 &&
+        targetChannelId !== null &&
+        hostPhase === "idle" ? (
           <p className="text-sm text-muted-foreground">
             No coding-session provider is available. Reopen this screen to retry
             setting up this computer's provider.
@@ -454,6 +564,49 @@ export function NewCodingSessionScreen({
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * Where a project-scoped session will live, stated rather than asked. A project
+ * without a sessions channel yet names the one this create is about to publish,
+ * so the side effect is visible before the button is pressed.
+ */
+export function NewCodingSessionProjectDestination({
+  channelName,
+  pendingChannelName,
+  projectName,
+}: {
+  channelName: string | null;
+  pendingChannelName: string;
+  projectName: string;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+      data-testid="new-coding-session-project-destination"
+    >
+      <p className="flex items-center gap-2 text-sm font-medium">
+        <FolderKanban className="size-4 shrink-0 text-muted-foreground" />
+        <span className="truncate">{projectName}</span>
+      </p>
+      <p className="text-2xs text-muted-foreground">
+        {channelName ? (
+          <>
+            The session's signed transcript lives in{" "}
+            <span className="font-medium">#{channelName}</span>, visible to that
+            channel's members.
+          </>
+        ) : (
+          <>
+            This project has no sessions channel yet. Creating this session
+            publishes a closed channel called{" "}
+            <span className="font-medium">#{pendingChannelName}</span> inside
+            the project, and the transcript lives there.
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 

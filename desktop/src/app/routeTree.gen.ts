@@ -21,6 +21,7 @@ import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$cha
 import { Route as projectsDotprojectIdDotindexRouteImport } from "./routes/projects.$projectId.index";
 import { Route as observeDotownerDotsessionIdRouteImport } from "./routes/observe.$owner.$sessionId";
 import { Route as codingSessionsDotchannelIdDotgenerationIdRouteImport } from "./routes/coding-sessions.$channelId.$generationId";
+import { Route as projectsDotprojectIdDotsessionsDotnewRouteImport } from "./routes/projects.$projectId.sessions.new";
 import { Route as projectsDotprojectIdDotcodeDotrepoIdRouteImport } from "./routes/projects.$projectId.code.$repoId";
 import { Route as channelsDotchannelIdDotpostsDotpostIdRouteImport } from "./routes/channels.$channelId.posts.$postId";
 
@@ -107,6 +108,12 @@ const codingSessionsDotchannelIdDotgenerationIdRoute =
     path: "/coding-sessions/$channelId/$generationId",
     getParentRoute: () => rootRouteImport,
   } as any);
+const projectsDotprojectIdDotsessionsDotnewRoute =
+  projectsDotprojectIdDotsessionsDotnewRouteImport.update({
+    id: "/sessions/new",
+    path: "/sessions/new",
+    getParentRoute: () => projectsDotprojectIdRoute,
+  } as any);
 const projectsDotprojectIdDotcodeDotrepoIdRoute =
   projectsDotprojectIdDotcodeDotrepoIdRouteImport.update({
     id: "/code/$repoId",
@@ -139,6 +146,7 @@ export interface FileRoutesByFullPath {
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
+  "/projects/$projectId/sessions/new": typeof projectsDotprojectIdDotsessionsDotnewRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
@@ -158,6 +166,7 @@ export interface FileRoutesByTo {
   "/projects/$projectId": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
+  "/projects/$projectId/sessions/new": typeof projectsDotprojectIdDotsessionsDotnewRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -179,6 +188,7 @@ export interface FileRoutesById {
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
+  "/projects/$projectId/sessions/new": typeof projectsDotprojectIdDotsessionsDotnewRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -200,7 +210,8 @@ export interface FileRouteTypes {
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
-    | "/projects/$projectId/code/$repoId";
+    | "/projects/$projectId/code/$repoId"
+    | "/projects/$projectId/sessions/new";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
@@ -219,7 +230,8 @@ export interface FileRouteTypes {
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId"
     | "/channels/$channelId/posts/$postId"
-    | "/projects/$projectId/code/$repoId";
+    | "/projects/$projectId/code/$repoId"
+    | "/projects/$projectId/sessions/new";
   id:
     | "__root__"
     | "/"
@@ -239,7 +251,8 @@ export interface FileRouteTypes {
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
-    | "/projects/$projectId/code/$repoId";
+    | "/projects/$projectId/code/$repoId"
+    | "/projects/$projectId/sessions/new";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -375,6 +388,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof codingSessionsDotchannelIdDotgenerationIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/projects/$projectId/sessions/new": {
+      id: "/projects/$projectId/sessions/new";
+      path: "/sessions/new";
+      fullPath: "/projects/$projectId/sessions/new";
+      preLoaderRoute: typeof projectsDotprojectIdDotsessionsDotnewRouteImport;
+      parentRoute: typeof projectsDotprojectIdRoute;
+    };
     "/projects/$projectId/code/$repoId": {
       id: "/projects/$projectId/code/$repoId";
       path: "/code/$repoId";
@@ -395,12 +415,15 @@ declare module "@tanstack/react-router" {
 interface projectsDotprojectIdRouteChildren {
   projectsDotprojectIdDotindexRoute: typeof projectsDotprojectIdDotindexRoute;
   projectsDotprojectIdDotcodeDotrepoIdRoute: typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
+  projectsDotprojectIdDotsessionsDotnewRoute: typeof projectsDotprojectIdDotsessionsDotnewRoute;
 }
 
 const projectsDotprojectIdRouteChildren: projectsDotprojectIdRouteChildren = {
   projectsDotprojectIdDotindexRoute: projectsDotprojectIdDotindexRoute,
   projectsDotprojectIdDotcodeDotrepoIdRoute:
     projectsDotprojectIdDotcodeDotrepoIdRoute,
+  projectsDotprojectIdDotsessionsDotnewRoute:
+    projectsDotprojectIdDotsessionsDotnewRoute,
 };
 
 const projectsDotprojectIdRouteWithChildren =

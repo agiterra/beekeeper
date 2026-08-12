@@ -13,6 +13,7 @@ import {
   FileText,
   FolderGit2,
   FolderKanban,
+  FolderOpen,
   Hash,
   Lock,
   Pencil,
@@ -25,6 +26,11 @@ import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import {
+  getCodingSessionWorkdirState,
+  pickCodingSessionWorkdir,
+  setCodingSessionWorkdir,
+} from "@/shared/api/tauriCodingSessionWorkdirs";
 import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -117,6 +123,87 @@ function ManageSection({
       ) : (
         <ul className="flex flex-col">{children}</ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * The directory this project's coding sessions start in on this computer.
+ *
+ * Host-local and never published — a working directory names one person's disk,
+ * and the project is shared. It is stored under the project's coordinate so
+ * every session created for the project defaults to the same checkout, ahead of
+ * any per-channel or most-recently-used guess.
+ */
+function ProjectWorkdirRow({ project }: { project: ProjectContainer }) {
+  const [path, setPath] = React.useState<string | null>(null);
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void getCodingSessionWorkdirState()
+      .then((state) => {
+        if (!cancelled) {
+          setPath(state.byProject[project.address]?.path ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPath(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.address]);
+
+  const handlePick = React.useCallback(() => {
+    setIsSaving(true);
+    void pickCodingSessionWorkdir()
+      .then(async (picked) => {
+        if (!picked) return;
+        const next = await setCodingSessionWorkdir({
+          scope: "project",
+          key: project.address,
+          path: picked,
+        });
+        setPath(next.byProject[project.address]?.path ?? picked);
+      })
+      .catch((error) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not save the working directory.",
+        );
+      })
+      .finally(() => setIsSaving(false));
+  }, [project.address]);
+
+  return (
+    <div
+      className="mt-3 flex items-center gap-2 border-t border-border/60 pt-3"
+      data-testid={`manage-project-workdir-${project.dtag}`}
+    >
+      <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="shrink-0 text-xs text-muted-foreground">
+        Sessions run in
+      </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate font-mono text-2xs",
+          path ? "text-foreground" : "text-muted-foreground/60",
+        )}
+        title={path ?? undefined}
+      >
+        {path ?? "Not set — falls back to the most recent directory"}
+      </span>
+      <button
+        className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground/80 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+        data-testid={`manage-project-workdir-pick-${project.dtag}`}
+        disabled={isSaving}
+        onClick={handlePick}
+        type="button"
+      >
+        {path ? "Change" : "Choose"}
+      </button>
     </div>
   );
 }
@@ -408,6 +495,8 @@ export function ProjectsManagePanel() {
             </ManageSection>
           ) : null}
         </div>
+
+        {isFallback ? null : <ProjectWorkdirRow project={project} />}
       </DroppableCard>
     );
   };

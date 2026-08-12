@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { acpAuthMethodsQueryKey } from "@/features/agents/hooks";
 import {
   NewCodingSessionChannelPicker,
+  NewCodingSessionProjectDestination,
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
 } from "./NewCodingSessionScreen.tsx";
@@ -290,4 +291,34 @@ test("the working-directory field names the exact reason a path will not work", 
     }),
     null,
   );
+});
+
+test("a project with a sessions channel states where the transcript will land", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(NewCodingSessionProjectDestination, {
+      channelName: "buzz glue sessions",
+      pendingChannelName: "Buzz Glue sessions",
+      projectName: "Buzz Glue",
+    }),
+  );
+
+  assert.match(markup, /Buzz Glue/);
+  assert.match(markup, /#buzz glue sessions/);
+  // Nothing is being created, so the screen must not say it will be.
+  assert.doesNotMatch(markup, /publishes a closed channel/);
+});
+
+test("a project without one names the channel this create is about to publish", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(NewCodingSessionProjectDestination, {
+      channelName: null,
+      pendingChannelName: "Buzz Glue sessions",
+      projectName: "Buzz Glue",
+    }),
+  );
+
+  // The side effect is disclosed before the button, not discovered after it.
+  assert.match(markup, /no sessions channel yet/);
+  assert.match(markup, /publishes a closed channel/);
+  assert.match(markup, /#Buzz Glue sessions/);
 });
