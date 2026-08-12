@@ -1,5 +1,7 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
+import { refreshGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { createCodingSessionLifecycleCommandId } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
@@ -98,6 +100,16 @@ export function useNewCodingSessionCreate({
       Map<string, { defaultModel: string; allowedModels: string[] }>
     >(() => new Map());
 
+  // Provisioning (and every provider start) seeds `allowed-bridge-pubkeys`
+  // from Rust. The trusted ingress reads that list through the shared config
+  // query, whose staleTime is Infinity — without this refetch, a first-run
+  // ingress stays armed against the pre-provision (empty) trust set and the
+  // create receipt is never admitted until the window reloads.
+  const queryClient = useQueryClient();
+  const onTrustMutated = React.useCallback(() => {
+    refreshGlobalAgentConfig(queryClient);
+  }, [queryClient]);
+
   React.useEffect(() => {
     const loaded = loadDurableCodingSessionCreate(scopeId);
     setTransaction(loaded.transaction);
@@ -113,6 +125,7 @@ export function useNewCodingSessionCreate({
       onProvisioning: () => {
         if (!cancelled) setHostPhase("provisioning");
       },
+      onTrustMutated,
     })
       .then((status) => {
         if (!cancelled) {
@@ -153,7 +166,7 @@ export function useNewCodingSessionCreate({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [onTrustMutated]);
 
   const scoped = transaction?.scopeId === scopeId ? transaction : null;
   const lifecycleSnapshot = useCodingSessionLifecycleResolution(
@@ -251,6 +264,7 @@ export function useNewCodingSessionCreate({
             pubkey === providerStatus?.providerPubkey,
           signerPubkey: input.target.signerPubkey,
           setHostPhase,
+          onTrustMutated,
         });
         if (status) setProviderStatus(status);
 
@@ -304,6 +318,7 @@ export function useNewCodingSessionCreate({
     },
     [
       isPublishing,
+      onTrustMutated,
       providerStatus?.providerPubkey,
       publishTransaction,
       scopeId,
@@ -402,16 +417,25 @@ export async function loadCodingSessionProviderRuntimes({
 export async function loadOrProvisionCodingSessionProvider({
   getStatus = getCodingSessionProviderStatus,
   onProvisioning = () => {},
+  onTrustMutated = () => {},
   provision = provisionCodingSessionProvider,
 }: {
   getStatus?: () => Promise<CodingSessionProviderStatus>;
   onProvisioning?: () => void;
+  /**
+   * Fired after any backend call that seeds `allowed-bridge-pubkeys`
+   * (`session_provider/trust.rs`), so config readers can refetch the trust
+   * list this render is otherwise caching forever.
+   */
+  onTrustMutated?: () => void;
   provision?: () => Promise<CodingSessionProviderStatus>;
 } = {}): Promise<CodingSessionProviderStatus> {
   const status = await getStatus();
   if (status.provisioned) return status;
   onProvisioning();
-  return provision();
+  const provisioned = await provision();
+  onTrustMutated();
+  return provisioned;
 }
 
 /**
@@ -425,18 +449,25 @@ async function ensureLocalProvider(input: {
   isLocalProvider: (pubkey: string) => boolean;
   signerPubkey: string;
   setHostPhase: (phase: NewCodingSessionHostPhase) => void;
+  onTrustMutated: () => void;
 }): Promise<CodingSessionProviderStatus | null> {
   const status = await getCodingSessionProviderStatus().catch(() => null);
   if (status && !status.provisioned) {
     input.setHostPhase("provisioning");
-    return provisionCodingSessionProvider();
+    const provisioned = await provisionCodingSessionProvider();
+    input.onTrustMutated();
+    return provisioned;
   }
   if (!status || !input.isLocalProvider(input.signerPubkey)) {
     return status;
   }
   if (!status.running) {
     input.setHostPhase("starting");
-    return ensureCodingSessionProviderRunning();
+    // Starting also re-seeds trust (`supervisor.rs` re-asserts the entry on
+    // every start), so readers must refetch here too.
+    const running = await ensureCodingSessionProviderRunning();
+    input.onTrustMutated();
+    return running;
   }
   return status;
 }

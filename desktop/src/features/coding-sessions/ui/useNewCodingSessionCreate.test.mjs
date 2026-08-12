@@ -53,6 +53,44 @@ test("a fresh create screen provisions this computer before target selection", a
   assert.equal(provisioningNotices, 1);
 });
 
+test("provisioning announces the trust mutation after the backend seeded it", async () => {
+  // Provisioning appends the first `allowed-bridge-pubkeys` entry from Rust
+  // (`session_provider/trust.rs`). The infinity-stale config query only
+  // refetches when this callback fires, so a missing or early notification
+  // leaves the trusted ingress armed against the empty pre-provision trust
+  // set — the first-run "waiting for the provider forever" race.
+  const order = [];
+
+  await loadOrProvisionCodingSessionProvider({
+    getStatus: async () => ({ provisioned: false, running: false }),
+    provision: async () => {
+      order.push("provision");
+      return provisioned;
+    },
+    onTrustMutated: () => {
+      order.push("trust-mutated");
+    },
+  });
+
+  // Exactly once, and only after provision resolved — refetching before the
+  // backend wrote the entry would just re-cache the empty list.
+  assert.deepEqual(order, ["provision", "trust-mutated"]);
+});
+
+test("a reused provider does not announce a trust mutation", async () => {
+  let trustMutations = 0;
+
+  await loadOrProvisionCodingSessionProvider({
+    getStatus: async () => provisioned,
+    provision: async () => provisioned,
+    onTrustMutated: () => {
+      trustMutations += 1;
+    },
+  });
+
+  assert.equal(trustMutations, 0);
+});
+
 function readyRuntime(overrides = {}) {
   return {
     instanceRef: "claude-primary",

@@ -75,3 +75,22 @@ export function publishSavedGlobalAgentConfig(
   cache.setQueryData(globalAgentConfigQueryKey, config);
   void cache.invalidateQueries({ queryKey: globalAgentConfigQueryKey });
 }
+
+/**
+ * Refetch the shared config after Rust rewrote the file behind the UI's back.
+ *
+ * Provisioning the local coding-session provider (and every provider start)
+ * appends the provider's pubkey to `allowed-bridge-pubkeys` from Rust
+ * (`session_provider/trust.rs`), and no `setGlobalAgentConfig` save happens on
+ * that path — so nothing calls `publishSavedGlobalAgentConfig`. With
+ * `staleTime: Infinity`, the cached (possibly empty) trust list would then be
+ * final for the app's lifetime: the fail-closed ingress consumer keeps
+ * admitting nothing, and a first-ever session create spins forever waiting for
+ * a receipt the subscription cannot see. Invalidate-only (no seed) because the
+ * provisioning IPC returns a provider status, not the canonical config.
+ */
+export function refreshGlobalAgentConfig(
+  cache: Pick<QueryClient, "invalidateQueries">,
+): void {
+  void cache.invalidateQueries({ queryKey: globalAgentConfigQueryKey });
+}
