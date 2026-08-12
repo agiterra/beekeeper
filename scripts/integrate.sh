@@ -66,7 +66,7 @@ done
 # feature branches (cross-feature adaptation). `integration/glue-base` records
 # the assembly commit the series is currently parented on.
 OLD_GLUE_BASE="$(git rev-parse integration/glue-base)"
-git checkout -B integrated main
+git checkout -B integrated-build main
 for entry in "${FEATURES[@]}"; do
   git merge --no-ff --no-edit "${entry%%:*}"
 done
@@ -85,7 +85,7 @@ if [[ "$(cat .ci/base-ref 2>/dev/null)" != "$(git rev-parse main)" ]]; then
 fi
 
 # integrated = the rebased glue tip (linear on top of the assembly).
-git checkout -B integrated "$GLUE" --
+git checkout -B integrated-build "$GLUE" --
 
 # ── 4. gate ──────────────────────────────────────────────────────────────────
 if ! $SKIP_GATE; then
@@ -106,8 +106,8 @@ if ! $NO_PUSH; then
   for entry in "${FEATURES[@]}"; do
     git push --force-with-lease origin "${entry%%:*}"
   done
-  git push --force-with-lease origin "$GLUE" integrated
+  git push --force-with-lease origin "$GLUE" integration/glue-base integrated-build:integrated
   git push origin "$tag"
 fi
 
-echo "OK: integrated rebuilt at $(git rev-parse --short integrated), tagged $tag"
+echo "OK: integrated rebuilt at $(git rev-parse --short integrated-build), tagged $tag"
