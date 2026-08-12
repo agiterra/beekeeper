@@ -32,15 +32,22 @@ function installWindow(localStorage, overrides = {}) {
   globalThis.window = { localStorage, ...overrides };
 }
 
-const snapshot = (updatedAt) => JSON.stringify({ updatedAt, payload: "cache" });
+const snapshot = (updatedAt, timestampKey = "updatedAt") =>
+  JSON.stringify({ [timestampKey]: updatedAt, payload: "cache" });
 
 test("sweeps stale whitelisted caches and keeps fresh or durable state", () => {
   const now = 100 * DAY_MS;
   const entries = LOCAL_STORAGE_SWEEP_RULES.flatMap(
-    ({ keyPrefix, maxAgeMs }, index) => [
-      [`${keyPrefix}stale-a-${index}`, snapshot(now - maxAgeMs)],
-      [`${keyPrefix}stale-b-${index}`, snapshot(now - maxAgeMs - DAY_MS)],
-      [`${keyPrefix}fresh-${index}`, snapshot(now - maxAgeMs + 1)],
+    ({ keyPrefix, maxAgeMs, timestampKey }, index) => [
+      [`${keyPrefix}stale-a-${index}`, snapshot(now - maxAgeMs, timestampKey)],
+      [
+        `${keyPrefix}stale-b-${index}`,
+        snapshot(now - maxAgeMs - DAY_MS, timestampKey),
+      ],
+      [
+        `${keyPrefix}fresh-${index}`,
+        snapshot(now - maxAgeMs + 1, timestampKey),
+      ],
     ],
   );
   entries.push(["buzz-communities", snapshot(0)]);

@@ -235,6 +235,18 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goNewCodingSession = React.useCallback(
+    (channelId?: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/coding-sessions/new",
+          search: channelId ? { channelId } : {},
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goNewMessage = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -346,6 +358,7 @@ export function useAppNavigation() {
     goCodingSession,
     goForumPost,
     goHome,
+    goNewCodingSession,
     goNewMessage,
     goProject,
     goProjects,

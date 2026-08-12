@@ -36,6 +36,13 @@ export const SWEEP_LARGE_VALUE_DEFER_BYTES = 128 * 1024;
 type LocalStorageSweepRule = {
   keyPrefix: string;
   maxAgeMs: number;
+  /**
+   * Which field carries the entry's age. Defaults to `updatedAt`, which is
+   * what a repaintable cache records. A record that is written once and never
+   * touched again — a durable create transaction, say — names its own field
+   * rather than being forced to pretend it is a cache.
+   */
+  timestampKey?: string;
 };
 
 /** Disposable cache namespaces and their maximum idle age. */
@@ -46,20 +53,30 @@ export const LOCAL_STORAGE_SWEEP_RULES: readonly LocalStorageSweepRule[] = [
   { keyPrefix: "buzz-sidebar-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-timeline-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-user-labels.v1:", maxAgeMs: 14 * DAY_MS },
+  // A durable coding-session create transaction exists to stop a *duplicate*
+  // session, so it must outlive a crash and a reload. It must not outlive the
+  // question it answers: after a week the create either happened or did not,
+  // and a stale record would block that scope from ever creating again.
+  {
+    keyPrefix: "buzz.coding-session-create.v1:",
+    maxAgeMs: 7 * DAY_MS,
+    timestampKey: "createdAt",
+  },
   // Do not add buzz-self-profile.v1: here. It is the load-bearing offline
   // identity fallback when the relay is unreachable, not a repaintable cache.
 ];
 
-function updatedAtFromJson(value: string): number | null {
+function updatedAtFromJson(
+  value: string,
+  timestampKey = "updatedAt",
+): number | null {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (typeof parsed !== "object" || parsed === null) return null;
     const record = parsed as Record<string, unknown>;
-    if (
-      typeof record.updatedAt === "number" &&
-      Number.isFinite(record.updatedAt)
-    ) {
-      return record.updatedAt;
+    const declared = record[timestampKey];
+    if (typeof declared === "number" && Number.isFinite(declared)) {
+      return declared;
     }
 
     // User-label cache buckets carry freshness per profile instead of at the
@@ -119,7 +136,7 @@ export function sweepStaleLocalStorage(now = Date.now()): number {
 
       const value = storage.getItem(key);
       if (value === null) continue;
-      const updatedAt = updatedAtFromJson(value);
+      const updatedAt = updatedAtFromJson(value, rule.timestampKey);
       if (isStale(updatedAt, rule, now)) {
         staleKeys.push(key);
       }
@@ -259,7 +276,7 @@ function sweepChunked(now: number, isAlive: () => boolean): () => void {
             key.startsWith(r.keyPrefix),
           );
           if (!rule) continue;
-          const updatedAt = updatedAtFromJson(value);
+          const updatedAt = updatedAtFromJson(value, rule.timestampKey);
           if (isStale(updatedAt, rule, now)) {
             staleKeys.push(key);
           }
@@ -292,7 +309,10 @@ function sweepChunked(now: number, isAlive: () => boolean): () => void {
             key.startsWith(r.keyPrefix),
           );
           if (!rule) continue;
-          const currentUpdatedAt = updatedAtFromJson(currentValue);
+          const currentUpdatedAt = updatedAtFromJson(
+            currentValue,
+            rule.timestampKey,
+          );
           if (!isStale(currentUpdatedAt, rule, now)) continue; // rewritten fresh
           storage.removeItem(key);
         } catch {

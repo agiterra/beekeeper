@@ -1,4 +1,4 @@
-import { ExternalLink, MessagesSquare } from "lucide-react";
+import { ExternalLink, MessagesSquare, Plus } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 
@@ -29,7 +29,7 @@ export function ChannelCodingSessionsMenu({
       }),
     [catalog, channelId],
   );
-  const { goCodingSession } = useAppNavigation();
+  const { goCodingSession, goNewCodingSession } = useAppNavigation();
   const [open, setOpen] = React.useState(false);
 
   const handleOpen = React.useCallback(
@@ -40,6 +40,11 @@ export function ChannelCodingSessionsMenu({
     },
     [channelId, goCodingSession],
   );
+  const handleCreate = React.useCallback(() => {
+    if (!channelId) return;
+    setOpen(false);
+    void goNewCodingSession(channelId);
+  }, [channelId, goNewCodingSession]);
   const handlePopout = React.useCallback(
     (generationId: string) => {
       if (!channelId) return;
@@ -90,6 +95,17 @@ export function ChannelCodingSessionsMenu({
           onOpen={handleOpen}
           onPopout={handlePopout}
         />
+        <Button
+          className="mt-1 w-full justify-start"
+          data-testid="channel-coding-sessions-new"
+          onClick={handleCreate}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <Plus />
+          New coding session
+        </Button>
       </PopoverContent>
     </Popover>
   );

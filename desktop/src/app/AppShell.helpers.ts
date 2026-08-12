@@ -159,6 +159,12 @@ export function deriveShellRoute(pathname: string): {
     };
   }
 
+  // The create screen has no channel of its own yet — the picker inside it is
+  // what chooses one — so the shell keeps no channel selected.
+  if (pathname === "/coding-sessions/new") {
+    return { selectedChannelId: null, selectedView: "home" };
+  }
+
   // A coding session belongs to the channel that carries its signed events, so
   // the shell keeps that channel selected while the workspace is open.
   if (pathname.startsWith("/coding-sessions/")) {
