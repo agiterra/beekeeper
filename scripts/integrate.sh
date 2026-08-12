@@ -83,7 +83,13 @@ done
 OLD_GLUE_BASE="$(git rev-parse integration/glue-base)"
 git checkout -B integrated-build main
 for entry in "${FEATURES[@]}"; do
-  git merge --no-ff --no-edit "${entry%%:*}"
+  # rerere auto-stages previously-recorded resolutions but the merge still
+  # exits non-zero; commit and continue when nothing is left unresolved.
+  if ! git merge --no-ff --no-edit "${entry%%:*}"; then
+    [[ -z "$(git ls-files -u)" ]] \
+      || { echo "unresolved conflicts merging ${entry%%:*} — resolve, commit, rerun" >&2; exit 1; }
+    git commit --no-edit
+  fi
 done
 ASSEMBLY="$(git rev-parse HEAD)"
 git rebase --onto "$ASSEMBLY" "$OLD_GLUE_BASE" "$GLUE"
