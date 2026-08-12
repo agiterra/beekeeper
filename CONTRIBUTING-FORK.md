@@ -53,3 +53,7 @@ working **in this repo**; upstream's own contributor guide is
 Everything deeper — the sync loop, conflict handling (`git rerere`), retiring
 a feature once upstream absorbs it, the upstreaming flow, CI details and known
 runner limitations — is in [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
+Running a daily-driver Buzz.app and a dev instance side by side on macOS
+(distinct icons, no repeated keychain prompts):
+[docs/local-desktop-instances.md](docs/local-desktop-instances.md).

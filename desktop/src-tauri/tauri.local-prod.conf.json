@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": [
+      "binaries/buzz-acp",
+      "binaries/buzz-agent",
+      "binaries/buzz-backend-kubernetes",
+      "binaries/buzz-dev-mcp",
+      "binaries/git-credential-nostr",
+      "binaries/buzz",
+      "binaries/buzz-session-provider"
+    ]
+  }
+}

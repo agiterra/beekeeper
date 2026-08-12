@@ -28,8 +28,22 @@ fi
 BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev\",\"productName\":\"Buzz Dev\"}"
 unset VITE_DEV_BRANCH
 
+# Generate a badged variant of the app icon labelled $1 into
+# target/dev-icons/icon.icns (gitignored). Sets DEV_ICON on success; returns
+# non-zero (leaving the stock config in place) when the generator is
+# unavailable or fails (e.g. Linux — no swift).
+generate_badged_icon() {
+    ICON_DIR="$WORKTREE_ROOT/desktop/src-tauri/target/dev-icons"
+    mkdir -p "$ICON_DIR"
+    DEV_ICON="$ICON_DIR/icon.icns"
+    swift "$WORKTREE_ROOT/scripts/generate-dev-icon.swift" \
+        "$WORKTREE_ROOT/desktop/src-tauri/icons/icon.icns" "$DEV_ICON" "$1"
+}
+
 # In worktrees, extract a label from the branch name and derive a unique app
 # identity and icon so multiple local desktop instances can run side by side.
+# The main checkout keeps the plain dev identity but still gets a "dev"-badged
+# icon so it is distinguishable from an installed production Buzz.app.
 #
 # Worktree detection: compare --git-dir to --git-common-dir. In the main
 # working tree these are identical; in any worktree (whether under .worktrees/,
@@ -80,17 +94,13 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
             fi
         fi
 
-        ICON_DIR="$WORKTREE_ROOT/desktop/src-tauri/target/dev-icons"
-        mkdir -p "$ICON_DIR"
-        DEV_ICON="$ICON_DIR/icon.icns"
-        GENERATE_DEV_ICON="$WORKTREE_ROOT/scripts/generate-dev-icon.swift"
-        BASE_ICON="$WORKTREE_ROOT/desktop/src-tauri/icons/icon.icns"
-
-        if swift "$GENERATE_DEV_ICON" "$BASE_ICON" "$DEV_ICON" "$BUZZ_WORKTREE_LABEL"; then
+        if generate_badged_icon "$BUZZ_WORKTREE_LABEL"; then
             echo "🌳 Worktree: ${BUZZ_WORKTREE_LABEL}"
             export VITE_DEV_BRANCH="$BUZZ_WORKTREE_LABEL"
             BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Buzz Dev (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
         fi
+    elif generate_badged_icon "dev"; then
+        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev\",\"productName\":\"Buzz Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
     fi
 fi
 

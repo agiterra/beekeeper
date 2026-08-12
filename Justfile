@@ -16,6 +16,13 @@ mesh := ""
 # Usage: `just fresh=1 desktop-standalone`.
 fresh := ""
 
+# Disable the OS-keyring secret backend for dev desktop builds: secrets fall
+# back to 0600 files under the instance's app-data dir, so rebuilt (unsigned)
+# dev binaries never trigger macOS keychain password prompts. Opt in per shell
+# (`just nokeyring=1 desktop-standalone`) or permanently via
+# `export BUZZ_DESKTOP_NOKEYRING=1` in your shell profile.
+nokeyring := env_var_or_default("BUZZ_DESKTOP_NOKEYRING", "")
+
 # List all available tasks
 default:
     @just --list
@@ -281,6 +288,11 @@ desktop-release-build target="aarch64-apple-darwin":
     touch "desktop/src-tauri/binaries/buzz-$TARGET"
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
+
+# Build the local production Buzz.app from a build/* tag (default: newest) and
+# install it to /Applications. See docs/local-desktop-instances.md.
+prod-desktop tag="":
+    ./scripts/local-prod-build.sh {{tag}}
 
 # Run desktop checks suitable for CI / pre-push
 desktop-ci: desktop-check desktop-test desktop-tauri-fmt-check desktop-build desktop-tauri-check desktop-tauri-test
@@ -599,7 +611,12 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     fi
     trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
     echo "Starting standalone desktop on Vite port ${BUZZ_VITE_PORT}; no relay services were started"
-    pnpm exec tauri dev --config "$BUZZ_TAURI_CONFIG" {{ARGS}}
+    CARGO_ARGS=()
+    if [[ -n "{{nokeyring}}" ]]; then
+        echo "system-keyring OFF: secrets live in 0600 files under the app-data dir"
+        CARGO_ARGS=(-- --no-default-features)
+    fi
+    pnpm exec tauri dev --config "$BUZZ_TAURI_CONFIG" {{ARGS}} ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"}
 
 # Run the desktop app against the internal staging relay (installs deps + builds agent tools automatically)
 staging *ARGS: bootstrap _ensure-sidecar-stubs
