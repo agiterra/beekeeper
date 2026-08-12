@@ -29,6 +29,7 @@
 pub mod catalog;
 pub mod commands;
 pub mod config;
+mod model_catalog;
 pub mod payload;
 pub mod publish;
 pub mod session;
@@ -82,7 +83,8 @@ const SESSION_EVENT_CAPACITY: usize = 256;
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
     init_tracing();
-    let config = Config::from_env()?;
+    let mut config = Config::from_env()?;
+    model_catalog::discover(&mut config).await;
     run_with(config).await
 }
 
@@ -1003,6 +1005,7 @@ mod tests {
             agent_command,
             default_model: "claude-sonnet-4-6".into(),
             allowed_models: vec!["claude-sonnet-4-6".into()],
+            discover_models: false,
             max_sessions: 2,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),

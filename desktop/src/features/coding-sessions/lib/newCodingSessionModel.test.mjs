@@ -167,16 +167,19 @@ test("this computer's provider is a target before it has published anything", ()
   const target = localCodingSessionProviderTarget({
     channelId: "channel-a",
     providerPubkey: PROVIDER_A,
+    defaultModel: "default",
+    allowedModels: ["default", "haiku", "sonnet"],
   });
 
   assert.equal(target.channelId, "channel-a");
   assert.equal(target.signerPubkey, PROVIDER_A);
   assert.equal(target.provider.providerInstanceRef, "claude-primary");
-  assert.deepEqual(
-    target.provider.allowedModels,
-    [],
-    "no model list until a real catalog arrives — the create sends null and the provider defaults",
-  );
+  assert.equal(target.provider.defaultModel, "default");
+  assert.deepEqual(target.provider.allowedModels, [
+    "default",
+    "haiku",
+    "sonnet",
+  ]);
   assert.equal(target.provider.capabilities.threadTurnStart, true);
 });
 

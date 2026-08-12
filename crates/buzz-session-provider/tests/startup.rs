@@ -14,6 +14,7 @@ fn startup_selects_a_rustls_crypto_provider() {
         .env("BUZZ_PRIVATE_KEY", secret)
         .env("BUZZ_RELAY_URL", "wss://127.0.0.1:9")
         .env("BUZZ_CSP_STATE_DIR", temp.path())
+        .env("BUZZ_CSP_DEFAULT_MODEL", "default")
         .output()
         .expect("run provider");
 

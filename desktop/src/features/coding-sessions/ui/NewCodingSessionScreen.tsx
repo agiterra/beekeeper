@@ -72,6 +72,7 @@ export function NewCodingSessionScreen({
     lifecycleErrorMessage,
     lifecycleIsLoading,
     providerStatus,
+    providerModels,
     publishError,
     retryExact,
     startFresh,
@@ -109,9 +110,17 @@ export function NewCodingSessionScreen({
       localCodingSessionProviderTarget({
         channelId,
         providerPubkey: providerStatus.providerPubkey,
+        defaultModel: providerModels?.defaultModel,
+        allowedModels: providerModels?.allowedModels,
       }),
     ];
-  }, [catalogTargets, channelId, providerStatus?.providerPubkey]);
+  }, [
+    catalogTargets,
+    channelId,
+    providerModels?.allowedModels,
+    providerModels?.defaultModel,
+    providerStatus?.providerPubkey,
+  ]);
 
   const [targetSelection, setTargetSelection] = React.useState<{
     key: string | null;

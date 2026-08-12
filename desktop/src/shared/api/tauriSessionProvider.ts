@@ -23,10 +23,23 @@ export type CodingSessionProviderStatus = {
   instanceId?: string;
 };
 
+/** Live model selections exposed by this computer's Claude Code adapter. */
+export type CodingSessionProviderModels = {
+  defaultModel: string;
+  allowedModels: string[];
+};
+
 /** Read the provider's provisioning and supervision state. */
 export async function getCodingSessionProviderStatus(): Promise<CodingSessionProviderStatus> {
   return invokeTauri<CodingSessionProviderStatus>(
     "coding_session_provider_status",
+  );
+}
+
+/** Discover every Claude Code model selectable through the installed adapter. */
+export async function getCodingSessionProviderModels(): Promise<CodingSessionProviderModels> {
+  return invokeTauri<CodingSessionProviderModels>(
+    "coding_session_provider_models",
   );
 }
 

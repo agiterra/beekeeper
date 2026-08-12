@@ -7,7 +7,7 @@ use crate::managed_agents::{
 
 use super::agent_models::normalize_agent_models;
 
-pub(super) async fn run_agent_models_command(
+pub(crate) async fn run_agent_models_command(
     resolved_acp: PathBuf,
     agent_command: String,
     agent_args: Vec<String>,

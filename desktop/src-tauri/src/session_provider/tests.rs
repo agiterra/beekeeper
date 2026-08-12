@@ -12,9 +12,13 @@ use std::time::Duration;
 
 use nostr::ToBech32;
 
-use crate::managed_agents::{validate_global_config, GlobalAgentConfig};
+use crate::managed_agents::{
+    validate_global_config, AgentModelInfo, AgentModelsResponse, GlobalAgentConfig,
+};
 use crate::session_provider::canonical_relay_key;
-use crate::session_provider::commands::mint_provider_record;
+use crate::session_provider::commands::{
+    coding_session_provider_models_from_response, mint_provider_record,
+};
 use crate::session_provider::env::{build_provider_env, ProviderEnvInputs, PROJECTS_FILE_NAME};
 use crate::session_provider::store::{
     CodingSessionProviderRecord, CodingSessionProviderStore, STORE_VERSION,
@@ -26,6 +30,51 @@ use crate::session_provider::supervisor::{
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
 
 const RELAY: &str = "wss://relay.example/";
+
+#[test]
+fn live_claude_models_preserve_adapter_order_and_current_default() {
+    let models = coding_session_provider_models_from_response(AgentModelsResponse {
+        agent_name: "claude-agent-acp".to_string(),
+        agent_version: "1".to_string(),
+        models: ["default", "opus[1m]", "sonnet", "haiku"]
+            .into_iter()
+            .map(|id| AgentModelInfo {
+                id: id.to_string(),
+                name: None,
+                description: None,
+            })
+            .collect(),
+        agent_default_model: Some("sonnet".to_string()),
+        selected_model: None,
+        supports_switching: true,
+    })
+    .expect("model response");
+
+    assert_eq!(models.default_model, "sonnet");
+    assert_eq!(
+        models.allowed_models,
+        vec!["default", "opus[1m]", "sonnet", "haiku"]
+    );
+}
+
+#[test]
+fn live_claude_models_fall_back_to_the_first_adapter_option() {
+    let models = coding_session_provider_models_from_response(AgentModelsResponse {
+        agent_name: "claude-agent-acp".to_string(),
+        agent_version: "1".to_string(),
+        models: vec![AgentModelInfo {
+            id: "default".to_string(),
+            name: None,
+            description: None,
+        }],
+        agent_default_model: Some("missing".to_string()),
+        selected_model: None,
+        supports_switching: true,
+    })
+    .expect("model response");
+
+    assert_eq!(models.default_model, "default");
+}
 
 fn sample_record() -> CodingSessionProviderRecord {
     CodingSessionProviderRecord {

@@ -5,6 +5,8 @@
 //! identity would strand every transcript already signed by it, so that belongs
 //! to an explicit rotation flow rather than a button.
 
+use std::collections::BTreeMap;
+
 use nostr::ToBech32;
 use tauri::{AppHandle, State};
 
@@ -15,8 +17,8 @@ use crate::session_provider::store::{
     load_provider_store, save_provider_store, CodingSessionProviderRecord,
 };
 use crate::session_provider::supervisor::{
-    ensure_running, provider_status, stop_provider, CodingSessionProviderState,
-    CodingSessionProviderStatus,
+    ensure_running, provider_status, resolve_claude_code_executable, stop_provider,
+    CodingSessionProviderState, CodingSessionProviderStatus,
 };
 use crate::session_provider::trust;
 use crate::util::now_iso;
@@ -34,6 +36,16 @@ static PROVISION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// identities.
 const INSTANCE_ID_PUBKEY_PREFIX_LEN: usize = 16;
 
+/// Live model catalog exposed by this computer's Claude Code ACP adapter.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodingSessionProviderModels {
+    /// Adapter selection used when the person makes no explicit choice.
+    pub default_model: String,
+    /// Every adapter-advertised selection value, in adapter order.
+    pub allowed_models: Vec<String>,
+}
+
 /// Whether a provider identity exists for the active relay, and whether the
 /// desktop is currently supervising it.
 #[tauri::command]
@@ -44,6 +56,50 @@ pub async fn coding_session_provider_status(
 ) -> Result<CodingSessionProviderStatus, String> {
     let relay_url = relay_ws_url_with_override(&state);
     provider_status(&app, &provider, &relay_url)
+}
+
+/// Probe the installed Claude Code adapter for the models it can select.
+///
+/// This is independent of relay catalog delivery so the first session in a
+/// brand-new channel can offer the same choices as an established channel.
+#[tauri::command]
+pub async fn coding_session_provider_models() -> Result<CodingSessionProviderModels, String> {
+    let resolved_acp = crate::managed_agents::resolve_command("buzz-acp")
+        .ok_or_else(|| "buzz-acp was not found; rebuild the desktop sidecars".to_string())?;
+    let resolved_agent = crate::managed_agents::resolve_command("claude-agent-acp")
+        .or_else(|| crate::managed_agents::resolve_command("claude-code-acp"))
+        .ok_or_else(|| "the Claude Code ACP adapter is not installed".to_string())?;
+    let mut env = BTreeMap::new();
+    if let Some(claude) = resolve_claude_code_executable() {
+        env.insert(
+            "CLAUDE_CODE_EXECUTABLE".to_string(),
+            claude.to_string_lossy().into_owned(),
+        );
+    }
+    let response = crate::commands::agent_model_process::run_agent_models_command(
+        resolved_acp,
+        resolved_agent.to_string_lossy().into_owned(),
+        Vec::new(),
+        None,
+        env,
+    )
+    .await?;
+    coding_session_provider_models_from_response(response)
+}
+
+pub(crate) fn coding_session_provider_models_from_response(
+    response: crate::managed_agents::AgentModelsResponse,
+) -> Result<CodingSessionProviderModels, String> {
+    let allowed_models: Vec<String> = response.models.into_iter().map(|model| model.id).collect();
+    let default_model = response
+        .agent_default_model
+        .filter(|model| allowed_models.contains(model))
+        .or_else(|| allowed_models.first().cloned())
+        .ok_or_else(|| "the Claude Code ACP adapter returned no selectable models".to_string())?;
+    Ok(CodingSessionProviderModels {
+        default_model,
+        allowed_models,
+    })
 }
 
 /// Provision a provider identity for the active relay, seed the bridge trust

@@ -525,7 +525,7 @@ fn spawn_provider_child(
 /// `claude-agent-acp` it spawns, so resolving it here keeps coding sessions and
 /// managed agents on the same binary instead of whatever the adapter's own PATH
 /// lookup happens to find.
-fn resolve_claude_code_executable() -> Option<PathBuf> {
+pub(crate) fn resolve_claude_code_executable() -> Option<PathBuf> {
     let cli = known_acp_runtime_exact("claude")?.underlying_cli?;
     let path = resolve_command(cli)?;
     if should_skip_claude_executable(&path, cfg!(windows)) {

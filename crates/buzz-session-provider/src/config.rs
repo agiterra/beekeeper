@@ -24,8 +24,8 @@ pub const DRIVER: &str = "claude-agent-acp";
 pub const RUNTIME: &str = "claude";
 /// The single provider instance reference this adapter advertises.
 pub const PROVIDER_INSTANCE_REF: &str = "claude-primary";
-/// Model advertised when `BUZZ_CSP_DEFAULT_MODEL` is unset.
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
+/// Safe adapter-owned model alias used when live discovery is unavailable.
+pub const DEFAULT_MODEL: &str = "default";
 
 /// Default ceiling on concurrently live sessions.
 pub const DEFAULT_MAX_SESSIONS: usize = 4;
@@ -77,6 +77,9 @@ pub struct Config {
     pub default_model: String,
     /// Models this provider will accept, `allowedModels[0] == default_model`.
     pub allowed_models: Vec<String>,
+    /// Whether startup should replace the fallback models with the adapter's
+    /// live ACP catalog. Explicit model environment variables disable this.
+    pub(crate) discover_models: bool,
     /// Ceiling on concurrently live sessions.
     pub max_sessions: usize,
     /// Idle window before a live session's subprocess is reclaimed.
@@ -127,10 +130,13 @@ impl Config {
 
         let agent_command = non_empty(&lookup, "BUZZ_CSP_AGENT_COMMAND")
             .unwrap_or_else(|| DEFAULT_AGENT_COMMAND.to_owned());
-        let default_model = non_empty(&lookup, "BUZZ_CSP_DEFAULT_MODEL")
-            .unwrap_or_else(|| DEFAULT_MODEL.to_owned());
+        let configured_default_model = non_empty(&lookup, "BUZZ_CSP_DEFAULT_MODEL");
+        let configured_allowed_models = non_empty(&lookup, "BUZZ_CSP_ALLOWED_MODELS");
+        let discover_models =
+            configured_default_model.is_none() && configured_allowed_models.is_none();
+        let default_model = configured_default_model.unwrap_or_else(|| DEFAULT_MODEL.to_owned());
         let allowed_models =
-            parse_allowed_models(lookup("BUZZ_CSP_ALLOWED_MODELS").as_deref(), &default_model);
+            parse_allowed_models(configured_allowed_models.as_deref(), &default_model);
 
         let max_sessions = parse_usize(&lookup, "BUZZ_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
         if max_sessions == 0 {
@@ -167,6 +173,7 @@ impl Config {
             agent_command,
             default_model,
             allowed_models,
+            discover_models,
             max_sessions,
             session_idle_shutdown,
             idle_timeout,
@@ -324,6 +331,7 @@ mod tests {
         assert_eq!(config.agent_command, DEFAULT_AGENT_COMMAND);
         assert_eq!(config.default_model, DEFAULT_MODEL);
         assert_eq!(config.allowed_models, vec![DEFAULT_MODEL.to_owned()]);
+        assert!(config.discover_models);
         assert_eq!(config.max_sessions, DEFAULT_MAX_SESSIONS);
         assert_eq!(config.command_horizon, Duration::from_secs(86_400));
         assert_eq!(config.session_idle_shutdown, Duration::from_secs(1800));
@@ -363,6 +371,18 @@ mod tests {
                 "model-c".to_owned()
             ]
         );
+        assert!(!config.discover_models);
+    }
+
+    #[test]
+    fn either_model_override_disables_live_discovery() {
+        let mut default_only = minimal();
+        default_only.insert("BUZZ_CSP_DEFAULT_MODEL", "model-a".into());
+        assert!(!load(&default_only).unwrap().discover_models);
+
+        let mut allowed_only = minimal();
+        allowed_only.insert("BUZZ_CSP_ALLOWED_MODELS", "model-a,model-b".into());
+        assert!(!load(&allowed_only).unwrap().discover_models);
     }
 
     #[test]

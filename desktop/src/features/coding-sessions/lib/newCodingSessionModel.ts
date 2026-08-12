@@ -96,6 +96,8 @@ export function selectInitialNewCodingSessionTarget(
 export function localCodingSessionProviderTarget(input: {
   channelId: string;
   providerPubkey: string;
+  defaultModel?: string;
+  allowedModels?: readonly string[];
 }): NewCodingSessionTarget {
   // `providerInstanceRef` routes a create to a catalog entry. It is not the
   // pubkey-derived `instanceId` that later appears in a session's cs-target.
@@ -113,8 +115,8 @@ export function localCodingSessionProviderTarget(input: {
       providerInstanceRef,
       driver: "claude-agent-acp",
       runtime: "claude",
-      defaultModel: "",
-      allowedModels: [],
+      defaultModel: input.defaultModel ?? "",
+      allowedModels: [...(input.allowedModels ?? [])],
       capabilities: {
         threadTurnStart: true,
         threadTurnInterrupt: true,

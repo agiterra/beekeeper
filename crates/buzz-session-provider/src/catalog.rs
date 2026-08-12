@@ -207,6 +207,7 @@ mod tests {
             agent_command: "claude-agent-acp".into(),
             default_model: default_model.to_owned(),
             allowed_models: allowed.iter().map(|model| (*model).to_owned()).collect(),
+            discover_models: false,
             max_sessions: 4,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),

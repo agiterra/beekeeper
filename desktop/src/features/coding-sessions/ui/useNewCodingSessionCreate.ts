@@ -11,8 +11,10 @@ import {
 } from "@/shared/api/tauriCodingSessionWorkdirs";
 import {
   ensureCodingSessionProviderRunning,
+  getCodingSessionProviderModels,
   getCodingSessionProviderStatus,
   provisionCodingSessionProvider,
+  type CodingSessionProviderModels,
   type CodingSessionProviderStatus,
 } from "@/shared/api/tauriSessionProvider";
 import { useCodingSessionCatalog } from "../useCodingSessionCatalog";
@@ -54,6 +56,7 @@ export type NewCodingSessionCreateState = {
   lifecycleErrorMessage: string | null;
   resolvedGenerationId: string | null;
   providerStatus: CodingSessionProviderStatus | null;
+  providerModels: CodingSessionProviderModels | null;
 };
 
 export function useNewCodingSessionCreate({
@@ -80,6 +83,8 @@ export function useNewCodingSessionCreate({
     React.useState<NewCodingSessionHostPhase>("idle");
   const [providerStatus, setProviderStatus] =
     React.useState<CodingSessionProviderStatus | null>(null);
+  const [providerModels, setProviderModels] =
+    React.useState<CodingSessionProviderModels | null>(null);
 
   React.useEffect(() => {
     const loaded = loadDurableCodingSessionCreate(scopeId);
@@ -100,6 +105,12 @@ export function useNewCodingSessionCreate({
       .then((status) => {
         if (!cancelled) {
           setProviderStatus(status);
+        }
+        return getCodingSessionProviderModels().catch(() => null);
+      })
+      .then((models) => {
+        if (!cancelled) {
+          setProviderModels(models);
           setHostPhase("idle");
         }
       })
@@ -305,6 +316,7 @@ export function useNewCodingSessionCreate({
     lifecycleErrorMessage: lifecycleSnapshot.errorMessage,
     lifecycleIsLoading: lifecycleSnapshot.isLoading,
     providerStatus,
+    providerModels,
     publishError,
     resolvedGenerationId,
     retryExact,
