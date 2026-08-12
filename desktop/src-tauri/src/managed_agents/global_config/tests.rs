@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{
     normalize_global_config_fields, resolve_effective_model_provider, strip_empty_env_vars,
-    validate_global_config, GlobalAgentConfig,
+    validate_global_config, AllowedBridgePubkey, GlobalAgentConfig,
 };
 use crate::managed_agents::{AgentDefinition, BackendKind, ManagedAgentRecord, RespondTo};
 
@@ -267,6 +267,10 @@ fn roundtrip_serialization() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4".to_string()),
         preferred_runtime: Some("claude".to_string()),
+        allowed_bridge_pubkeys: vec![AllowedBridgePubkey {
+            pubkey: "a".repeat(64),
+            label: "local provider".to_string(),
+        }],
     };
     let json = serde_json::to_string(&config).expect("serialize");
     let back: GlobalAgentConfig = serde_json::from_str(&json).expect("deserialize");
@@ -593,6 +597,10 @@ fn populated_global_config_round_trips() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4-5".to_string()),
         preferred_runtime: None,
+        allowed_bridge_pubkeys: vec![AllowedBridgePubkey {
+            pubkey: "b".repeat(64),
+            label: "local provider".to_string(),
+        }],
     };
     let json = serde_json::to_string(&original).expect("serialization must not fail");
     let decoded: GlobalAgentConfig =

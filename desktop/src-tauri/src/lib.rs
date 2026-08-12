@@ -35,6 +35,7 @@ mod relay;
 mod relay_admission;
 mod reset;
 mod secret_store;
+mod session_provider;
 mod shutdown;
 mod templates;
 mod terminal_runtime;
@@ -313,6 +314,7 @@ pub fn run() {
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
         .manage(terminal_runtime::TerminalSessions::default())
+        .manage(session_provider::CodingSessionProviderState::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
@@ -788,6 +790,10 @@ pub fn run() {
             put_agent_session_config,
             get_global_agent_config,
             set_global_agent_config,
+            session_provider::commands::coding_session_provider_status,
+            session_provider::commands::provision_coding_session_provider,
+            session_provider::commands::ensure_coding_session_provider_running,
+            session_provider::commands::stop_coding_session_provider,
             mesh_start_node,
             mesh_stop_node,
             mesh_node_status,
