@@ -86,6 +86,10 @@ steps:
       # mirror tip into .ci/base-ref (an ancestor already present in the clone).
       - export CHECK_FILE_SIZES_BASE=$(cat .ci/base-ref)
       - export PATH="$CI_WORKSPACE/bin:$PATH"
+      # pnpm's store→node_modules copyfile occasionally hits a transient EAGAIN
+      # on this docker-in-incus filesystem; install up front with one retry so
+      # the implicit install inside `pnpm check` never has to do the heavy copy.
+      - (cd desktop && pnpm install) || (sleep 15 && cd desktop && pnpm install)
       - just desktop-check
       - just desktop-test
       - cd desktop && pnpm typecheck
