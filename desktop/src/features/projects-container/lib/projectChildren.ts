@@ -6,6 +6,10 @@ import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { KIND_MANAGED_AGENT, KIND_PERSONA } from "@/shared/constants/kinds";
 
 import { parseMemberRef } from "./projectContainerModel";
+import {
+  compareProjectCodingSessionEntries,
+  type ProjectCodingSessionShelfEntry,
+} from "./projectCodingSessionShelf";
 import type { ProjectContainer } from "../hooks";
 
 export type ProjectAgentRow = {
@@ -40,6 +44,7 @@ export function projectAgentRows(
 
 /** One row in a project's flat child list; the type picks the icon. */
 export type ProjectChildRow =
+  | { type: "coding-session"; entry: ProjectCodingSessionShelfEntry }
   | { type: "channel"; channel: Channel }
   | { type: "forum"; channel: Channel }
   | { type: "repo"; repo: CodeRepo }
@@ -49,21 +54,25 @@ export type ProjectChildRow =
   | { type: "remote-shell"; terminal: RemoteTerminal };
 
 /** Fixed display order of the flat list — mirrors the old subsection order,
- * with forums promoted next to channels. */
+ * with forums promoted next to channels and live coding sessions on top:
+ * a session is the only child that changes while you watch it. */
 export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
   {
-    channel: 0,
-    forum: 1,
-    repo: 2,
-    workflow: 3,
-    agent: 4,
-    shell: 5,
-    "remote-shell": 6,
+    "coding-session": 0,
+    channel: 1,
+    forum: 2,
+    repo: 3,
+    workflow: 4,
+    agent: 5,
+    shell: 6,
+    "remote-shell": 7,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
 export function projectChildKey(row: ProjectChildRow): string {
   switch (row.type) {
+    case "coding-session":
+      return `session:${row.entry.channelId}:${row.entry.generationId}`;
     case "channel":
       return `channel:${row.channel.id}`;
     case "forum":
@@ -83,6 +92,8 @@ export function projectChildKey(row: ProjectChildRow): string {
 
 export function projectChildLabel(row: ProjectChildRow): string {
   switch (row.type) {
+    case "coding-session":
+      return row.entry.label;
     case "channel":
     case "forum":
       return row.channel.name;
@@ -106,6 +117,12 @@ export function compareProjectChildren(
   const byRank =
     PROJECT_CHILD_TYPE_RANK[a.type] - PROJECT_CHILD_TYPE_RANK[b.type];
   if (byRank !== 0) return byRank;
+  // Sessions keep the shelf's activity order (working → unknown → idle, then
+  // newest first). Alphabetizing them would sort by a label that is mostly the
+  // same word plus a generation number, burying the one that is running now.
+  if (a.type === "coding-session" && b.type === "coding-session") {
+    return compareProjectCodingSessionEntries(a.entry, b.entry);
+  }
   const byLabel = projectChildLabel(a).localeCompare(
     projectChildLabel(b),
     undefined,
@@ -122,6 +139,7 @@ export function compareProjectChildren(
  * visibility caps before calling.
  */
 export function buildProjectChildren(input: {
+  codingSessions?: ProjectCodingSessionShelfEntry[];
   streamChannels: Channel[];
   forumChannels: Channel[];
   repos: CodeRepo[];
@@ -131,6 +149,9 @@ export function buildProjectChildren(input: {
   remoteTerminals?: RemoteTerminal[];
 }): ProjectChildRow[] {
   const rows: ProjectChildRow[] = [
+    ...(input.codingSessions ?? []).map(
+      (entry): ProjectChildRow => ({ type: "coding-session", entry }),
+    ),
     ...input.streamChannels.map(
       (channel): ProjectChildRow => ({ type: "channel", channel }),
     ),

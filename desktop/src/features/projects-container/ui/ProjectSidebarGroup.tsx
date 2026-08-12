@@ -36,12 +36,23 @@ import {
 } from "@/shared/ui/sidebar";
 
 import type { ProjectContainer } from "../hooks";
+import type {
+  ExactProjectCodingSessionCoordinates,
+  ProjectCodingSessionShelfEntry,
+} from "../lib/projectCodingSessionShelf";
 import {
   buildProjectChildren,
   projectChildKey,
   type ProjectAgentRow,
 } from "../lib/projectChildren";
 import { ProjectChildRowItem } from "./ProjectChildRowItem";
+
+/**
+ * How many session rows a project shows inline. Sessions accumulate faster
+ * than any other child, and a project with a year of history must not push its
+ * channels off the bottom of the sidebar — the rest stay on the project screen.
+ */
+export const PROJECT_SIDEBAR_SESSION_LIMIT = 5;
 
 /** Channel-row handlers shared by every project group, lifted once from
  * AppSidebar so each group can render real channel rows. */
@@ -77,6 +88,7 @@ export function ProjectSidebarGroup({
   project,
   isFallback,
   agents,
+  codingSessions,
   streamChannels,
   forumChannels,
   repos,
@@ -84,8 +96,10 @@ export function ProjectSidebarGroup({
   collapsed,
   onToggleCollapsed,
   onOpenAgents,
+  onOpenCodingSession,
   onOpenProject,
   onOpenRepo,
+  onNewCodingSession,
   onRequestCreate,
   workflows,
   onOpenWorkflow,
@@ -103,6 +117,8 @@ export function ProjectSidebarGroup({
    * workspace owner has published a real `general` project event. */
   isFallback?: boolean;
   agents: ProjectAgentRow[];
+  /** Trusted sessions this project owns, already in shelf (activity) order. */
+  codingSessions?: ProjectCodingSessionShelfEntry[];
   streamChannels: Channel[];
   forumChannels: Channel[];
   repos: CodeRepo[];
@@ -110,8 +126,13 @@ export function ProjectSidebarGroup({
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onOpenAgents: () => void;
+  onOpenCodingSession?: (
+    coordinates: ExactProjectCodingSessionCoordinates,
+  ) => void;
   onOpenProject: () => void;
   onOpenRepo: (repo: CodeRepo) => void;
+  /** Starts the project-scoped create flow from the group's `+` menu. */
+  onNewCodingSession?: () => void;
   /** Opens a project-scoped create dialog (hosted by the sections parent so
    * a single dialog instance serves every group). */
   onRequestCreate?: (kind: "channel" | "forum") => void;
@@ -151,6 +172,10 @@ export function ProjectSidebarGroup({
   const children = React.useMemo(
     () =>
       buildProjectChildren({
+        codingSessions: (codingSessions ?? []).slice(
+          0,
+          PROJECT_SIDEBAR_SESSION_LIMIT,
+        ),
         streamChannels,
         forumChannels,
         repos,
@@ -160,6 +185,7 @@ export function ProjectSidebarGroup({
         remoteTerminals,
       }),
     [
+      codingSessions,
       streamChannels,
       forumChannels,
       repos,
@@ -176,6 +202,7 @@ export function ProjectSidebarGroup({
       row={row}
       channelHandlers={channelHandlers}
       onOpenAgents={onOpenAgents}
+      onOpenCodingSession={onOpenCodingSession}
       onOpenRepo={onOpenRepo}
       onOpenWorkflow={onOpenWorkflow}
       activeShellSessionId={activeShellSessionId}
@@ -221,7 +248,7 @@ export function ProjectSidebarGroup({
           </SidebarMenuItem>
         </SidebarMenu>
         <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
-          {onRequestCreate || onNewShell || hasUnread ? (
+          {onRequestCreate || onNewShell || onNewCodingSession || hasUnread ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -256,6 +283,15 @@ export function ProjectSidebarGroup({
                     New forum
                   </DropdownMenuItem>
                 ) : null}
+                {onNewCodingSession ? (
+                  <DropdownMenuItem
+                    data-testid={`project-new-coding-session-${project.dtag}`}
+                    onSelect={() => deferMenuAction(onNewCodingSession)}
+                  >
+                    <Terminal />
+                    New coding session
+                  </DropdownMenuItem>
+                ) : null}
                 {onNewShell ? (
                   <DropdownMenuItem
                     data-testid={`project-new-shell-${project.dtag}`}
@@ -267,7 +303,7 @@ export function ProjectSidebarGroup({
                 ) : null}
                 {hasUnread ? (
                   <>
-                    {onRequestCreate || onNewShell ? (
+                    {onRequestCreate || onNewShell || onNewCodingSession ? (
                       <DropdownMenuSeparator />
                     ) : null}
                     <DropdownMenuItem

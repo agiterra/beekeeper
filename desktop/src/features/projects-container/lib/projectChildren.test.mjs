@@ -10,6 +10,7 @@ import {
 } from "./projectChildren.ts";
 
 const emptyInput = {
+  codingSessions: [],
   remoteTerminals: [],
   streamChannels: [],
   forumChannels: [],
@@ -55,12 +56,27 @@ const makeRemote = (overrides = {}) => ({
   ...overrides,
 });
 
+const makeSessionEntry = (overrides = {}) => ({
+  placement: "project",
+  projectId: "owner:alpha",
+  placedBy: "channel",
+  channelId: "channel-1",
+  generationId: "generation-1",
+  label: "Coding session · generation 1",
+  sourceChannelLabel: null,
+  runtimeLabel: "Claude Code",
+  status: { kind: "idle", label: "Idle" },
+  session: { lastEventAt: "2026-07-30T12:00:00.000Z" },
+  ...overrides,
+});
+
 test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
 
 test("buildProjectChildren groups interleaved types by rank order", () => {
   const rows = buildProjectChildren({
+    codingSessions: [makeSessionEntry()],
     streamChannels: [makeChannel()],
     forumChannels: [
       makeChannel({ id: "forum-1", name: "ideas", channelType: "forum" }),
@@ -73,7 +89,16 @@ test("buildProjectChildren groups interleaved types by rank order", () => {
   });
   assert.deepEqual(
     rows.map((row) => row.type),
-    ["channel", "forum", "repo", "workflow", "agent", "shell", "remote-shell"],
+    [
+      "coding-session",
+      "channel",
+      "forum",
+      "repo",
+      "workflow",
+      "agent",
+      "shell",
+      "remote-shell",
+    ],
   );
   const ranks = rows.map((row) => PROJECT_CHILD_TYPE_RANK[row.type]);
   assert.deepEqual(
@@ -108,6 +133,41 @@ test("identical labels fall back to the key tie-break", () => {
   assert.deepEqual(
     rows.map((row) => row.workflow.id),
     ["wf-a", "wf-b"],
+  );
+});
+
+test("coding sessions keep shelf activity order instead of alphabetizing", () => {
+  const rows = buildProjectChildren({
+    ...emptyInput,
+    codingSessions: [
+      makeSessionEntry({
+        generationId: "zzz-idle",
+        label: "Aaa idle session",
+        status: { kind: "idle", label: "Idle" },
+      }),
+      makeSessionEntry({
+        generationId: "aaa-working",
+        label: "Zzz working session",
+        status: { kind: "working", label: "Working" },
+      }),
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.entry.generationId),
+    ["aaa-working", "zzz-idle"],
+  );
+});
+
+test("a coding-session key is its exact channel and generation coordinates", () => {
+  assert.equal(
+    projectChildKey({
+      type: "coding-session",
+      entry: makeSessionEntry({
+        channelId: "channel/a",
+        generationId: "generation|1",
+      }),
+    }),
+    "session:channel/a:generation|1",
   );
 });
 

@@ -2,9 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { getChannelsWorkflows } from "@/shared/api/tauriWorkflows";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import { relayClient } from "@/shared/api/relayClient";
@@ -15,6 +17,12 @@ import {
   useProjectsQuery,
   type Repository as CodeRepo,
 } from "@/features/projects/hooks";
+import {
+  bucketProjectCodingSessions,
+  resolveProjectCodingSessionShelf,
+  type ProjectCodingSessionShelfEntry,
+  type ProjectCodingSessionShelfState,
+} from "./lib/projectCodingSessionShelf";
 import {
   GENERAL_PROJECT_DTAG,
   LOCAL_GENERAL_ID,
@@ -334,6 +342,75 @@ export function useProjectWorkflowBuckets(
     byProject: buckets.byProject,
     unclaimed: buckets.unclaimed,
   };
+}
+
+/**
+ * Trusted coding sessions bucketed by the project that owns them.
+ *
+ * Same shape as `useProjectWorkflowBuckets` because a session is the same kind
+ * of child: its signed events are `h`-scoped to one channel, so the channel's
+ * project owns it — except that a session can also *state* its project in the
+ * signed 44223 metadata, and that statement wins (see
+ * `resolveProjectCodingSessionPlacement`). Sessions nothing claims land in
+ * `unclaimed`, displayed under General.
+ *
+ * Ingress is scoped to channels the viewer has joined: 442xx is strict-
+ * membership, so a channel you are not in has no readable sessions to show and
+ * subscribing to it would only cost a filter.
+ */
+export function useProjectCodingSessionBuckets(
+  channels: Channel[] | undefined,
+  channelsByProject: ReadonlyMap<string, Channel[]>,
+  forumsByProject: ReadonlyMap<string, Channel[]>,
+): {
+  byProject: ReadonlyMap<string, ProjectCodingSessionShelfEntry[]>;
+  unclaimed: ProjectCodingSessionShelfEntry[];
+  state: ProjectCodingSessionShelfState;
+} {
+  const { projects } = useProjectContainers();
+  const sessionChannelIds = React.useMemo(
+    () =>
+      (channels ?? [])
+        .filter((channel) => channel.isMember)
+        .map((channel) => channel.id)
+        .sort(),
+    [channels],
+  );
+  const stableChannelIds = useStableArrayShallow(sessionChannelIds);
+  const catalog = useGlobalCodingSessionCatalog(stableChannelIds);
+
+  const placementIndex = React.useMemo(() => {
+    const projectIdByRef = new Map<string, string>();
+    for (const project of projects) {
+      projectIdByRef.set(project.address, project.id);
+    }
+    const projectIdByChannel = new Map<string, string>();
+    for (const [ownerId, owned] of channelsByProject) {
+      for (const channel of owned) projectIdByChannel.set(channel.id, ownerId);
+    }
+    for (const [ownerId, owned] of forumsByProject) {
+      for (const forum of owned) projectIdByChannel.set(forum.id, ownerId);
+    }
+    return { projectIdByRef, projectIdByChannel };
+  }, [projects, channelsByProject, forumsByProject]);
+
+  const channelLabels = React.useMemo(
+    () =>
+      new Map((channels ?? []).map((channel) => [channel.id, channel.name])),
+    [channels],
+  );
+
+  return React.useMemo(() => {
+    const shelf = resolveProjectCodingSessionShelf(
+      catalog,
+      placementIndex,
+      channelLabels,
+    );
+    return {
+      ...bucketProjectCodingSessions(shelf.entries),
+      state: shelf.state,
+    };
+  }, [catalog, channelLabels, placementIndex]);
 }
 
 /**

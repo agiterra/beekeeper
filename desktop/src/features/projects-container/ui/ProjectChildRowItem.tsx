@@ -1,4 +1,4 @@
-import { Bot, Eye, FolderGit2, Terminal, Zap } from "lucide-react";
+import { Bot, Circle, Eye, FolderGit2, Terminal, Zap } from "lucide-react";
 
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
@@ -6,8 +6,10 @@ import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
+import { cn } from "@/shared/lib/cn";
 import { SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 
+import type { ExactProjectCodingSessionCoordinates } from "../lib/projectCodingSessionShelf";
 import type { ProjectChildRow } from "../lib/projectChildren";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
@@ -20,6 +22,7 @@ export function ProjectChildRowItem({
   row,
   channelHandlers,
   onOpenAgents,
+  onOpenCodingSession,
   onOpenRepo,
   onOpenWorkflow,
   activeShellSessionId,
@@ -31,6 +34,9 @@ export function ProjectChildRowItem({
   row: ProjectChildRow;
   channelHandlers: ProjectChannelHandlers;
   onOpenAgents: () => void;
+  onOpenCodingSession?: (
+    coordinates: ExactProjectCodingSessionCoordinates,
+  ) => void;
   onOpenRepo: (repo: CodeRepo) => void;
   onOpenWorkflow?: (workflow: Workflow) => void;
   activeShellSessionId?: string;
@@ -40,6 +46,50 @@ export function ProjectChildRowItem({
   onObserveShell?: (terminal: RemoteTerminal) => void;
 }) {
   switch (row.type) {
+    case "coding-session": {
+      if (!onOpenCodingSession) return null;
+      const { entry } = row;
+      const details = [entry.runtimeLabel, entry.status.label]
+        .filter(Boolean)
+        .join(" · ");
+      return (
+        <SidebarMenuItem data-session-status={entry.status.kind}>
+          <SidebarMenuButton
+            aria-label={`Open ${entry.label}${details ? `, ${details}` : ""}`}
+            className={cn(
+              "h-auto min-h-8 py-1.5",
+              entry.status.kind === "idle" &&
+                "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
+            )}
+            data-testid="project-coding-session-row"
+            onClick={() =>
+              onOpenCodingSession({
+                channelId: entry.channelId,
+                generationId: entry.generationId,
+              })
+            }
+            type="button"
+          >
+            {entry.status.kind === "working" ? (
+              <Circle
+                aria-hidden
+                className="size-2.5 shrink-0 fill-current text-emerald-500"
+              />
+            ) : (
+              <Terminal className="size-4 shrink-0" />
+            )}
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate">{entry.label}</span>
+              {details ? (
+                <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
+                  {details}
+                </span>
+              ) : null}
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      );
+    }
     case "channel":
     case "forum": {
       const { channel } = row;

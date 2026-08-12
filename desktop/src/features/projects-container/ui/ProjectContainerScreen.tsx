@@ -9,6 +9,7 @@ import {
   Lock,
   Pencil,
   Plus,
+  Terminal,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -35,6 +36,7 @@ import type { Channel } from "@/shared/api/types";
 
 import {
   partitionChannels,
+  useProjectCodingSessionBuckets,
   useProjectContainers,
   useProjectWorkflowBuckets,
   type ProjectContainer,
@@ -75,8 +77,15 @@ import { useProjectItemMoves } from "./useProjectItemMoves";
  * move between projects, and the owner can edit or delete the project.
  */
 export function ProjectContainerScreen({ projectId }: { projectId: string }) {
-  const { goChannel, goProjectRepo, goAgents, goProjects, goWorkflow } =
-    useAppNavigation();
+  const {
+    goAgents,
+    goChannel,
+    goCodingSession,
+    goNewCodingSession,
+    goProjectRepo,
+    goProjects,
+    goWorkflow,
+  } = useAppNavigation();
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   const channelsQuery = useChannelsQuery();
   const personas = usePersonasQuery();
@@ -108,6 +117,11 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
 
   // Workflows are channel-scoped; their project is the channel's project.
   const { workflowsEnabled, ...workflowBuckets } = useProjectWorkflowBuckets(
+    channelsQuery.data,
+    channelBuckets.channelsByProject,
+    channelBuckets.forumsByProject,
+  );
+  const sessionBuckets = useProjectCodingSessionBuckets(
     channelsQuery.data,
     channelBuckets.channelsByProject,
     channelBuckets.forumsByProject,
@@ -201,6 +215,10 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
       ]
     : [];
   const agents = projectAgentRows(project, personasById, managedAgentsByPubkey);
+  const codingSessions = [
+    ...(sessionBuckets.byProject.get(project.id) ?? []),
+    ...(isGeneral ? sessionBuckets.unclaimed : []),
+  ];
 
   const actionIconButton = (
     label: string,
@@ -332,6 +350,51 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
           {/* The local General placeholder has no coordinate to manage a
               roster against — the card appears once the real head exists. */}
           {!isFallback ? <ProjectMembersCard project={project} /> : null}
+
+          <SectionCard
+            count={codingSessions.length}
+            icon={<Terminal className="size-4" />}
+            title="Coding sessions"
+            action={actionIconButton(
+              "New coding session",
+              "project-section-create-coding-session",
+              () => void goNewCodingSession(),
+            )}
+          >
+            {codingSessions.length === 0 ? (
+              <EmptyHint>
+                {sessionBuckets.state.kind === "ready"
+                  ? "No coding sessions in this project."
+                  : sessionBuckets.state.message}
+              </EmptyHint>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {codingSessions.map((entry) => (
+                  <li key={`${entry.channelId}:${entry.generationId}`}>
+                    <Button
+                      className="h-8 w-full justify-start gap-2 px-2"
+                      data-testid="project-screen-coding-session-row"
+                      onClick={() =>
+                        void goCodingSession(
+                          entry.channelId,
+                          entry.generationId,
+                        )
+                      }
+                      variant="ghost"
+                    >
+                      <Terminal className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{entry.label}</span>
+                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                        {[entry.runtimeLabel, entry.status.label]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
 
           <SectionCard
             count={agents.length}

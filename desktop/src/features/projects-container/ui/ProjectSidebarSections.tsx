@@ -32,7 +32,11 @@ import { SidebarMenuLabel } from "@/shared/ui/sidebar-menu-label";
 import { useFeatureEnabled } from "@/shared/features";
 import { joinChannel } from "@/shared/api/tauriChannels";
 
-import { useProjectWorkflowBuckets, type ProjectContainer } from "../hooks";
+import {
+  useProjectCodingSessionBuckets,
+  useProjectWorkflowBuckets,
+  type ProjectContainer,
+} from "../hooks";
 import {
   GENERAL_PROJECT_DTAG,
   LOCAL_GENERAL_ID,
@@ -85,8 +89,14 @@ export function ProjectSidebarSections({
   relayUrl?: string;
   onOpenAgents: () => void;
 }) {
-  const { goProject, goProjectRepo, goProjects, goWorkflow } =
-    useAppNavigation();
+  const {
+    goCodingSession,
+    goNewCodingSession,
+    goProject,
+    goProjectRepo,
+    goProjects,
+    goWorkflow,
+  } = useAppNavigation();
   const collapse = useProjectCollapse(currentPubkey, relayUrl);
   // This component only mounts while the Projects experiment is enabled, so
   // the one-shot General migration is anchored here.
@@ -145,6 +155,14 @@ export function ProjectSidebarSections({
   // derived from the channel's project; unclaimed channels' workflows show
   // under General.
   const workflowBuckets = useProjectWorkflowBuckets(
+    channelsQuery.data,
+    channelsByProject,
+    forumsByProject,
+  );
+
+  // Coding sessions are channel-scoped the same way, except a session may also
+  // carry a signed projectRef that overrides its channel's project.
+  const sessionBuckets = useProjectCodingSessionBuckets(
     channelsQuery.data,
     channelsByProject,
     forumsByProject,
@@ -289,6 +307,10 @@ export function ProjectSidebarSections({
               personasById,
               managedAgentsByPubkey,
             )}
+            codingSessions={[
+              ...(sessionBuckets.byProject.get(project.id) ?? []),
+              ...(isGeneral ? sessionBuckets.unclaimed : []),
+            ]}
             streamChannels={[
               ...(channelsByProject.get(project.id) ?? []),
               ...(isGeneral ? globalChannels : []),
@@ -299,8 +321,12 @@ export function ProjectSidebarSections({
             collapsed={collapse.isProjectCollapsed(project.id)}
             onToggleCollapsed={() => collapse.toggleProject(project.id)}
             onOpenAgents={onOpenAgents}
+            onOpenCodingSession={({ channelId, generationId }) =>
+              void goCodingSession(channelId, generationId)
+            }
             onOpenProject={() => handleOpenProject(project)}
             onOpenRepo={(repo) => void goProjectRepo(project.id, repo.id)}
+            onNewCodingSession={() => void goNewCodingSession()}
             workflows={[
               ...(workflowBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? workflowBuckets.unclaimed : []),
