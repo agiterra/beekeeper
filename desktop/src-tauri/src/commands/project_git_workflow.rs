@@ -369,9 +369,9 @@ pub(crate) fn clone_project_repository_blocking(
 ) -> Result<ProjectRepoCloneResult, String> {
     validate_local_clone_url(clone_url)?;
     let branch = normalize_branch_option(default_branch);
-    if let Some(repo_dir) = find_local_repo_dir(repos_dir, project_dtag, Some(clone_url))? {
+    if let Some(checkout) = find_local_repo_dir(repos_dir, project_dtag, Some(clone_url))? {
         return Ok(ProjectRepoCloneResult {
-            path: repo_dir.display().to_string(),
+            path: checkout.path.display().to_string(),
             cloned: false,
             message: "Repository is already cloned.".to_string(),
         });

@@ -1,4 +1,4 @@
-import { FolderPlus, Link, Plus } from "lucide-react";
+import { FolderInput, FolderPlus, Link, Plus } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -17,10 +17,12 @@ export function ProjectSectionRepoAddMenu({
   attachAvailable,
   onAttachExisting,
   onCreateNew,
+  onImportLocal,
 }: {
   attachAvailable: boolean;
   onAttachExisting: () => void;
   onCreateNew: () => void;
+  onImportLocal: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -51,6 +53,13 @@ export function ProjectSectionRepoAddMenu({
             Add existing repository
           </DropdownMenuItem>
         ) : null}
+        <DropdownMenuItem
+          data-testid="project-section-create-repo-import"
+          onSelect={onImportLocal}
+        >
+          <FolderInput className="h-4 w-4" />
+          Import local repository
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

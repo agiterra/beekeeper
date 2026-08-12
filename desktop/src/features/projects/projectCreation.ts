@@ -24,7 +24,7 @@ export function isUnsupportedProjectKindError(error: unknown): boolean {
   );
 }
 
-function projectDtagFromName(name: string): string {
+export function projectDtagFromName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

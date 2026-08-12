@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import {
   useManagedAgentsQuery,
   usePersonasQuery,
@@ -44,9 +45,16 @@ import {
 } from "../lib/projectContainerModel";
 import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
+import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
+
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
+import {
+  linkedRepoCloneUrl,
+  useLinkProjectRepoMutation,
+} from "../useLinkProjectRepo";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
+import { LinkProjectRepoDialog } from "./LinkProjectRepoDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
 import { ProjectSectionRepoAddMenu } from "./ProjectSectionRepoAddMenu";
 import {
@@ -178,10 +186,13 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
   );
 
   const updateMutation = useUpdateProjectContainerMutation();
+  const linkMutation = useLinkProjectRepoMutation();
+  const relayOrigin = useRelayOrigin();
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [createKind, setCreateKind] =
     React.useState<ProjectsScreenCreateKind | null>(null);
+  const [linkRepo, setLinkRepo] = React.useState<CodeRepo | null>(null);
 
   if (!project) {
     return (
@@ -372,6 +383,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
                 attachAvailable={attachableRepoCount > 0}
                 onAttachExisting={() => setCreateKind("repo-attach")}
                 onCreateNew={() => setCreateKind("repo")}
+                onImportLocal={() => setCreateKind("repo-import")}
               />
             }
           >
@@ -399,6 +411,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
                       onMove={(target) =>
                         moves.requestMoveRepo(repo, project.id, target)
                       }
+                      onLinkLocal={() => setLinkRepo(repo)}
                     />
                   </li>
                 ))}
@@ -486,6 +499,25 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
         kind={createKind}
         targetProject={project}
         onClose={() => setCreateKind(null)}
+      />
+
+      <LinkProjectRepoDialog
+        cloneUrl={linkRepo ? linkedRepoCloneUrl(linkRepo, relayOrigin) : null}
+        isLinking={linkMutation.isPending}
+        onLink={async (input) => {
+          if (!linkRepo) return;
+          const result = await linkMutation.mutateAsync({
+            repo: linkRepo,
+            relayOrigin,
+            ...input,
+          });
+          toast.success(`Linked ${result.name} to ${result.path}.`);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setLinkRepo(null);
+        }}
+        open={linkRepo !== null}
+        repoName={linkRepo?.name ?? ""}
       />
     </div>
   );

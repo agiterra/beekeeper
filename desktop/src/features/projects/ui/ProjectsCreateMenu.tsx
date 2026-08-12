@@ -2,6 +2,7 @@ import {
   CircleDot,
   FileText,
   FolderGit2,
+  FolderInput,
   FolderKanban,
   GitPullRequest,
   Hash,
@@ -30,6 +31,7 @@ export function ProjectsCreateMenu({
   onCreateIssue,
   onCreatePullRequest,
   onCreateRepository,
+  onImportRepository,
   onCreateChannel,
   onCreateForum,
   onCreateWorkflow,
@@ -41,6 +43,7 @@ export function ProjectsCreateMenu({
   onCreateIssue?: () => void;
   onCreatePullRequest?: () => void;
   onCreateRepository?: () => void;
+  onImportRepository?: () => void;
   onCreateChannel?: () => void;
   onCreateForum?: () => void;
   onCreateWorkflow?: () => void;
@@ -92,6 +95,12 @@ export function ProjectsCreateMenu({
         label: "Repository",
         icon: FolderGit2,
         action: onCreateRepository,
+      },
+      onImportRepository && {
+        label: "Import local repository",
+        icon: FolderInput,
+        action: onImportRepository,
+        testId: "projects-create-menu-import-repo",
       },
       onCreateChannel && {
         label: "Channel",

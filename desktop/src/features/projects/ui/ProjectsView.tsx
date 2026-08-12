@@ -727,6 +727,9 @@ export function ProjectsView({
       onCreateRepository={
         selectedContainer ? () => setScreenCreateKind("repo") : undefined
       }
+      onImportRepository={
+        selectedContainer ? () => setScreenCreateKind("repo-import") : undefined
+      }
       onCreateChannel={
         selectedContainer ? () => setScreenCreateKind("channel") : undefined
       }

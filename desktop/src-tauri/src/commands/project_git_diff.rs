@@ -234,6 +234,7 @@ fn local_ref_exists(repo_dir: &std::path::Path, auth: &GitAuthConfig, ref_name: 
 
 fn local_target_ref(
     repo_dir: &std::path::Path,
+    remote: &str,
     auth: &GitAuthConfig,
     branch: Option<&str>,
     target_commit: Option<&str>,
@@ -247,9 +248,9 @@ fn local_target_ref(
         if local_ref_exists(repo_dir, auth, branch) {
             return branch.to_string();
         }
-        let origin_branch = format!("origin/{branch}");
-        if local_ref_exists(repo_dir, auth, &origin_branch) {
-            return origin_branch;
+        let remote_branch = format!("{remote}/{branch}");
+        if local_ref_exists(repo_dir, auth, &remote_branch) {
+            return remote_branch;
         }
     }
     "HEAD".to_string()
@@ -257,14 +258,15 @@ fn local_target_ref(
 
 fn local_base_ref(
     repo_dir: &std::path::Path,
+    remote: &str,
     auth: &GitAuthConfig,
     branch: Option<&str>,
     target_branch: Option<&str>,
 ) -> Option<String> {
     let branch = branch?;
-    let origin_branch = format!("origin/{branch}");
-    if local_ref_exists(repo_dir, auth, &origin_branch) {
-        return Some(origin_branch);
+    let remote_branch = format!("{remote}/{branch}");
+    if local_ref_exists(repo_dir, auth, &remote_branch) {
+        return Some(remote_branch);
     }
     if target_branch == Some(branch) {
         return None;
@@ -274,13 +276,14 @@ fn local_base_ref(
 
 fn local_diff_range(
     repo_dir: &std::path::Path,
+    remote: &str,
     auth: &GitAuthConfig,
     base_branch: Option<&str>,
     target_branch: Option<&str>,
     base_commit: Option<&str>,
     target_commit: Option<&str>,
 ) -> String {
-    let target_ref = local_target_ref(repo_dir, auth, target_branch, target_commit);
+    let target_ref = local_target_ref(repo_dir, remote, auth, target_branch, target_commit);
     if let Some(base_commit) = base_commit {
         if base_commit != target_ref && local_ref_exists(repo_dir, auth, base_commit) {
             return if run_git(
@@ -296,7 +299,7 @@ fn local_diff_range(
             };
         }
     }
-    if let Some(base_ref) = local_base_ref(repo_dir, auth, base_branch, target_branch) {
+    if let Some(base_ref) = local_base_ref(repo_dir, remote, auth, base_branch, target_branch) {
         return if run_git(
             &["merge-base", &base_ref, &target_ref],
             Some(repo_dir),
@@ -480,13 +483,14 @@ pub async fn get_project_local_repo_diff(
     let target_commit = clean_commit(target_commit);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(repo_dir) =
+        let Some(checkout) =
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, clone_url.as_deref())?
         else {
             return Ok(None);
         };
         let range = local_diff_range(
-            &repo_dir,
+            &checkout.path,
+            &checkout.remote,
             &auth,
             base_branch.as_deref(),
             branch.as_deref(),
@@ -498,7 +502,7 @@ pub async fn get_project_local_repo_diff(
         } else {
             None
         };
-        diff_from_repo(&repo_dir, &auth, &range, commit_body_ref).map(Some)
+        diff_from_repo(&checkout.path, &auth, &range, commit_body_ref).map(Some)
     })
     .await
     .map_err(|error| format!("local repo diff task failed: {error}"))?

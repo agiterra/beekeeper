@@ -4,6 +4,12 @@ import { toast } from "sonner";
 
 import { useIsManagedAgent } from "@/features/agent-memory/hooks";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { LinkProjectRepoDialog } from "@/features/projects-container/ui/LinkProjectRepoDialog";
+import {
+  linkedRepoCloneUrl,
+  useLinkProjectRepoMutation,
+} from "@/features/projects-container/useLinkProjectRepo";
+import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import type { Project, Repository } from "@/features/projects/hooks";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { ownsAuthorAgent } from "@/features/profile/lib/identity";
@@ -37,9 +43,12 @@ export function ProjectRepositoryManagement({
 }) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [attachOpen, setAttachOpen] = React.useState(false);
+  const [linkOpen, setLinkOpen] = React.useState(false);
   const channelsQuery = useChannelsQuery();
   const createMutation = useAddProjectRepositoryMutation();
   const attachMutation = useAttachProjectRepositoryMutation();
+  const linkMutation = useLinkProjectRepoMutation();
+  const relayOrigin = useRelayOrigin();
   const repairMutation = useBindProjectRepositoryChannelMutation();
   const ownerProfileQuery = useUsersBatchQuery([project.owner], {
     enabled: Boolean(identityPubkey),
@@ -131,10 +140,26 @@ export function ProjectRepositoryManagement({
         project={project}
         repositories={attachCandidates}
       />
+      <LinkProjectRepoDialog
+        cloneUrl={linkedRepoCloneUrl(repository, relayOrigin)}
+        isLinking={linkMutation.isPending}
+        onLink={async (input) => {
+          const result = await linkMutation.mutateAsync({
+            repo: repository,
+            relayOrigin,
+            ...input,
+          });
+          toast.success(`Linked ${result.name} to ${result.path}.`);
+        }}
+        onOpenChange={setLinkOpen}
+        open={linkOpen}
+        repoName={repository.name}
+      />
       <ProjectRepositoryPicker
         onAttach={canEdit ? () => setAttachOpen(true) : undefined}
         onChange={onChange}
         onCreate={canEdit ? () => setCreateOpen(true) : undefined}
+        onLinkLocal={() => setLinkOpen(true)}
         project={project}
         repository={repository}
       />

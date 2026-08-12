@@ -1,10 +1,11 @@
-import { EllipsisVertical, FolderKanban } from "lucide-react";
+import { EllipsisVertical, FolderKanban, FolderSymlink } from "lucide-react";
 
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 
@@ -13,16 +14,19 @@ import type { ProjectContainer } from "../hooks";
 /**
  * Hover-revealed "Move to project" menu for an item row. The trigger relies
  * on a `group/manage-row` class on an ancestor row for its hover reveal.
- * Shared by the all-projects manage panel and the per-project screen.
+ * Shared by the all-projects manage panel and the per-project screen. Repo
+ * rows may additionally offer linking a local checkout.
  */
 export function MoveToProjectMenu({
   currentId,
   projects,
   onMove,
+  onLinkLocal,
 }: {
   currentId: string | null;
   projects: ProjectContainer[];
   onMove: (target: ProjectContainer) => void;
+  onLinkLocal?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -47,6 +51,18 @@ export function MoveToProjectMenu({
               {project.name}
             </DropdownMenuItem>
           ))}
+        {onLinkLocal ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid="move-to-project-link-local"
+              onSelect={onLinkLocal}
+            >
+              <FolderSymlink />
+              Link local checkout…
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -12,6 +12,7 @@ import { CreateChannelDialog } from "@/features/sidebar/ui/CreateChannelDialog";
 import { WorkflowDialog } from "@/features/workflows/ui/WorkflowDialog";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { ChannelVisibility } from "@/shared/api/types";
+import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 
 import {
   partitionChannels,
@@ -35,9 +36,11 @@ import {
   ensureRealProject,
   useGeneralProjectRefResolver,
 } from "../useGeneralProjectMigration";
+import { useImportProjectRepoMutation } from "../useImportProjectRepo";
 import { AttachProjectRepoDialog } from "./AttachProjectRepoDialog";
 import { CreateProjectContainerDialog } from "./CreateProjectContainerDialog";
 import { CreateProjectRepoDialog } from "./CreateProjectRepoDialog";
+import { ImportProjectRepoDialog } from "./ImportProjectRepoDialog";
 
 export type ProjectsScreenCreateKind =
   | "channel"
@@ -45,6 +48,7 @@ export type ProjectsScreenCreateKind =
   | "workflow"
   | "repo"
   | "repo-attach"
+  | "repo-import"
   | "project";
 
 /**
@@ -75,7 +79,9 @@ export function ProjectsScreenCreateDialogs({
   const createChannelMutation = useCreateChannelMutation();
   const createProjectMutation = useCreateProjectContainerMutation();
   const createRepoMutation = useCreateProjectRepoMutation();
+  const importRepoMutation = useImportProjectRepoMutation();
   const moveRepoMutation = useMoveRepoToProjectMutation();
+  const relayOrigin = useRelayOrigin();
 
   // Repos, channels, forums, and workflows land in the target project —
   // falling back to General (published lazily) when the host passes none.
@@ -139,9 +145,13 @@ export function ProjectsScreenCreateDialogs({
   }, [repoAccessChannels, workflowChannels]);
 
   React.useEffect(() => {
-    if (kind !== "repo") return;
+    if (kind !== "repo" && kind !== "repo-import") return;
     if (channelsQuery.isLoading || repoAccessChannels.length > 0) return;
-    toast.error("Add a channel to this project before creating a repository.");
+    toast.error(
+      kind === "repo-import"
+        ? "Add a channel to this project before importing a repository."
+        : "Add a channel to this project before creating a repository.",
+    );
     onClose();
   }, [kind, channelsQuery.isLoading, repoAccessChannels.length, onClose]);
 
@@ -252,6 +262,28 @@ export function ProjectsScreenCreateDialogs({
         }}
         open={kind === "repo" && repoAccessChannels.length > 0}
         projectName={repoTargetProject.name}
+      />
+
+      <ImportProjectRepoDialog
+        channels={repoAccessChannels}
+        defaultChannelId={defaultRepoChannelId}
+        isImporting={importRepoMutation.isPending}
+        onImport={async (input) => {
+          const result = await importRepoMutation.mutateAsync({
+            project: repoTargetProject,
+            relayOrigin,
+            ...input,
+          });
+          toast.success(`Repository "${result.name}" imported.`);
+          onRepoCreated?.();
+        }}
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        open={kind === "repo-import" && repoAccessChannels.length > 0}
+        ownerPubkey={currentPubkey?.toLowerCase()}
+        projectName={repoTargetProject.name}
+        relayOrigin={relayOrigin}
       />
 
       <AttachProjectRepoDialog

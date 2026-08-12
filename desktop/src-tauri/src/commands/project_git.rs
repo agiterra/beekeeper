@@ -3,7 +3,7 @@ use super::project_git_exec::{
     GitAuthConfig,
 };
 use super::project_git_push::push_project_local_repository_blocking;
-use super::project_repo_paths::{canonical_repos_roots, find_local_repo_dir};
+use super::project_repo_paths::find_local_repo_dir;
 use crate::app_state::AppState;
 use serde::Serialize;
 use std::time::UNIX_EPOCH;
@@ -44,11 +44,6 @@ pub struct ProjectRepoSnapshotInfo {
 pub struct ProjectLocalRepoSnapshotInfo {
     pub path: String,
     pub snapshot: ProjectRepoSnapshotInfo,
-}
-#[derive(Serialize)]
-pub struct ProjectLocalRepoInfo {
-    pub name: String,
-    pub path: String,
 }
 #[derive(Serialize)]
 pub struct ProjectRepoSyncStatusInfo {
@@ -284,6 +279,7 @@ fn normalize_branch_name(branch: &str) -> &str {
 
 fn branch_activity_range(
     repo_dir: &std::path::Path,
+    remote: &str,
     auth: &GitAuthConfig,
     branch_name: Option<&str>,
     base_branch: Option<&str>,
@@ -295,7 +291,7 @@ fn branch_activity_range(
         return None;
     }
 
-    let remote_base_ref = format!("refs/remotes/origin/{base_branch}");
+    let remote_base_ref = format!("refs/remotes/{remote}/{base_branch}");
     if run_git(
         &["rev-parse", "--verify", "--quiet", remote_base_ref.as_str()],
         Some(repo_dir),
@@ -306,7 +302,7 @@ fn branch_activity_range(
         return None;
     }
 
-    Some(format!("origin/{base_branch}..HEAD"))
+    Some(format!("{remote}/{base_branch}..HEAD"))
 }
 
 fn parse_ls_tree(
@@ -356,7 +352,10 @@ fn snapshot_from_repo(
     )
     .ok()
     .and_then(|output| parse_latest_commit(&output));
-    let branch_activity_range = branch_activity_range(repo_dir, auth, branch_name, base_branch);
+    // Temp clones made by `snapshot_from_repo` always name their remote
+    // `origin` — only user checkouts carry a registered remote.
+    let branch_activity_range =
+        branch_activity_range(repo_dir, "origin", auth, branch_name, base_branch);
     let branch_activity_ref = branch_activity_range.as_deref().unwrap_or("HEAD");
     let (commits, contributors) = if latest_commit.is_some() {
         let commits = run_git(
@@ -415,6 +414,7 @@ fn snapshot_from_repo(
 
 fn snapshot_from_worktree(
     repo_dir: &std::path::Path,
+    remote: &str,
     auth: &GitAuthConfig,
     branch_name: Option<&str>,
     base_branch: Option<&str>,
@@ -426,7 +426,8 @@ fn snapshot_from_worktree(
     )
     .ok()
     .and_then(|output| parse_latest_commit(&output));
-    let branch_activity_range = branch_activity_range(repo_dir, auth, branch_name, base_branch);
+    let branch_activity_range =
+        branch_activity_range(repo_dir, remote, auth, branch_name, base_branch);
     let branch_activity_ref = branch_activity_range.as_deref().unwrap_or("HEAD");
     let (commits, contributors, latest_commit_by_path) = if latest_commit.is_some() {
         let commits = run_git(
@@ -497,6 +498,7 @@ pub(crate) fn normalize_branch_option(branch: Option<&str>) -> Option<String> {
 
 pub(crate) fn compare_local_remote_status(
     repo_dir: &std::path::Path,
+    remote: &str,
     clone_url: &str,
     branch_name: Option<&str>,
     base_branch: Option<&str>,
@@ -530,15 +532,17 @@ pub(crate) fn compare_local_remote_status(
         .or_else(|| normalize_branch_option(local_branch.as_deref()))
         .unwrap_or_else(|| "main".to_string());
 
-    // Only rewrite the checkout's origin when it actually differs from the
+    // Only rewrite the tracked remote when it actually differs from the
     // project's clone URL — a read-only status poll must not silently
-    // re-point the user's remote on every run.
-    let current_origin = run_git(&["remote", "get-url", "origin"], Some(repo_dir), auth)
+    // re-point the user's remote on every run. For registry-linked checkouts
+    // this targets the registered remote (e.g. `buzz`), never the user's
+    // foreign `origin`.
+    let current_remote_url = run_git(&["remote", "get-url", remote], Some(repo_dir), auth)
         .ok()
         .and_then(|output| first_output_line(&output));
-    if current_origin.as_deref() != Some(clone_url) {
+    if current_remote_url.as_deref() != Some(clone_url) {
         let _ = run_git(
-            &["remote", "set-url", "origin", clone_url],
+            &["remote", "set-url", remote, clone_url],
             Some(repo_dir),
             auth,
         );
@@ -550,7 +554,7 @@ pub(crate) fn compare_local_remote_status(
         "--quiet",
         "--depth=100",
         "--end-of-options",
-        "origin",
+        remote,
         branch.as_str(),
     ];
     if let Some(base_branch) = base_branch.as_deref() {
@@ -561,7 +565,7 @@ pub(crate) fn compare_local_remote_status(
     let local_head = run_git(&["rev-parse", "HEAD"], Some(repo_dir), auth)
         .ok()
         .and_then(|output| first_output_line(&output));
-    let remote_ref = format!("refs/remotes/origin/{branch}");
+    let remote_ref = format!("refs/remotes/{remote}/{branch}");
     let remote_head = run_git(
         &["rev-parse", "--verify", "--quiet", remote_ref.as_str()],
         Some(repo_dir),
@@ -573,7 +577,7 @@ pub(crate) fn compare_local_remote_status(
     // declares `main`. Permit that mismatch only when the remote has no branch
     // refs at all; any lookup failure is treated as non-empty (fail closed).
     let remote_has_branches = run_git(
-        &["ls-remote", "--heads", "--end-of-options", "origin"],
+        &["ls-remote", "--heads", "--end-of-options", remote],
         Some(repo_dir),
         auth,
     )
@@ -585,7 +589,7 @@ pub(crate) fn compare_local_remote_status(
             &[
                 "merge-base",
                 "HEAD",
-                format!("origin/{base_branch}").as_str(),
+                format!("{remote}/{base_branch}").as_str(),
             ],
             Some(repo_dir),
             auth,
@@ -601,7 +605,7 @@ pub(crate) fn compare_local_remote_status(
             &[
                 "rev-list",
                 "--count",
-                format!("origin/{branch}..HEAD").as_str(),
+                format!("{remote}/{branch}..HEAD").as_str(),
             ],
             Some(repo_dir),
             auth,
@@ -615,7 +619,7 @@ pub(crate) fn compare_local_remote_status(
             &[
                 "rev-list",
                 "--count",
-                format!("HEAD..origin/{branch}").as_str(),
+                format!("HEAD..{remote}/{branch}").as_str(),
             ],
             Some(repo_dir),
             auth,
@@ -805,60 +809,25 @@ pub async fn get_project_local_repo_snapshot(
     let base_branch = clean_branch(base_branch);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(repo_dir) =
+        let Some(checkout) =
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, clone_url.as_deref())?
         else {
             return Ok(None);
         };
-        let snapshot =
-            snapshot_from_worktree(&repo_dir, &auth, branch.as_deref(), base_branch.as_deref());
+        let snapshot = snapshot_from_worktree(
+            &checkout.path,
+            &checkout.remote,
+            &auth,
+            branch.as_deref(),
+            base_branch.as_deref(),
+        );
         Ok(Some(ProjectLocalRepoSnapshotInfo {
-            path: repo_dir.display().to_string(),
+            path: checkout.path.display().to_string(),
             snapshot,
         }))
     })
     .await
     .map_err(|error| format!("local repo snapshot task failed: {error}"))?
-}
-
-#[tauri::command]
-pub async fn list_project_local_repositories(
-    repos_dir: Option<String>,
-) -> Result<Vec<ProjectLocalRepoInfo>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let repos_roots = canonical_repos_roots(repos_dir.as_deref())?;
-        let mut seen_paths = std::collections::HashSet::new();
-        let mut repos = Vec::new();
-        for repos_root in repos_roots {
-            let entries = std::fs::read_dir(&repos_root)
-                .map_err(|error| format!("read reposDir: {error}"))?;
-            for entry in entries.filter_map(Result::ok) {
-                let Some(file_type) = entry.file_type().ok() else {
-                    continue;
-                };
-                if !file_type.is_dir() && !file_type.is_symlink() {
-                    continue;
-                }
-                let Ok(path) = entry.path().canonicalize() else {
-                    continue;
-                };
-                if !path.starts_with(&repos_root) || !path.is_dir() || !path.join(".git").exists() {
-                    continue;
-                }
-                if !seen_paths.insert(path.clone()) {
-                    continue;
-                }
-                repos.push(ProjectLocalRepoInfo {
-                    name: entry.file_name().to_string_lossy().to_string(),
-                    path: path.display().to_string(),
-                });
-            }
-        }
-        repos.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(repos)
-    })
-    .await
-    .map_err(|error| format!("local repo list task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -874,7 +843,7 @@ pub async fn get_project_repo_sync_status(
     let auth = build_git_auth_config(&state)?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(repo_dir) =
+        let Some(checkout) =
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, Some(&clone_url))?
         else {
             return Ok(ProjectRepoSyncStatusInfo {
@@ -901,7 +870,8 @@ pub async fn get_project_repo_sync_status(
         };
 
         Ok(compare_local_remote_status(
-            &repo_dir,
+            &checkout.path,
+            &checkout.remote,
             &clone_url,
             branch_name.as_deref(),
             base_branch.as_deref(),
@@ -925,13 +895,14 @@ pub async fn push_project_local_repository(
     let auth = build_git_auth_config(&state)?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(repo_dir) =
+        let Some(checkout) =
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, Some(&clone_url))?
         else {
             return Err("No local checkout found.".to_string());
         };
         push_project_local_repository_blocking(
-            &repo_dir,
+            &checkout.path,
+            &checkout.remote,
             clone_url,
             branch_name,
             base_branch,
@@ -956,13 +927,19 @@ pub async fn pull_project_local_repository(
     let auth = build_git_auth_config(&state)?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(repo_dir) =
+        let Some(checkout) =
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, Some(&clone_url))?
         else {
             return Err("No local checkout found.".to_string());
         };
-        let status =
-            compare_local_remote_status(&repo_dir, &clone_url, branch_name.as_deref(), None, &auth);
+        let status = compare_local_remote_status(
+            &checkout.path,
+            &checkout.remote,
+            &clone_url,
+            branch_name.as_deref(),
+            None,
+            &auth,
+        );
         if !status.can_pull {
             return Err(status
                 .pull_block_reason
@@ -973,8 +950,14 @@ pub async fn pull_project_local_repository(
             .as_deref()
             .ok_or_else(|| "No branch selected for pull.".to_string())?;
         run_git(
-            &["pull", "--ff-only", "--end-of-options", "origin", branch],
-            Some(&repo_dir),
+            &[
+                "pull",
+                "--ff-only",
+                "--end-of-options",
+                &checkout.remote,
+                branch,
+            ],
+            Some(&checkout.path),
             &auth,
         )?;
 

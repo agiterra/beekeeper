@@ -1224,6 +1224,31 @@ declare global {
       kind: number;
       tags: string[][];
     }>;
+    /** Overrides the folder returned by the mock native import picker. */
+    __BUZZ_E2E_IMPORT_FOLDER__?: {
+      path: string;
+      name: string;
+      is_git_repo: boolean;
+      current_branch: string | null;
+      origin_url: string | null;
+      has_commits: boolean;
+    };
+    /** Records the last import-repository command payload for assertions. */
+    __BUZZ_E2E_IMPORTED_REPO__?: {
+      path: string;
+      cloneUrl: string;
+      owner: string;
+      dtag: string;
+      remoteStrategy: string;
+    };
+    /** Records the last link-checkout command payload for assertions. */
+    __BUZZ_E2E_LINKED_REPO__?: {
+      path: string;
+      cloneUrl: string;
+      owner: string;
+      dtag: string;
+      remoteStrategy: string;
+    };
     /** Project event kinds rejected once, in order, to exercise retry flows. */
     __BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__?: number[];
     /** Makes the mock relay reject project announcements as an unknown kind. */
@@ -11738,6 +11763,52 @@ export function maybeInstallE2eTauriMocks() {
         );
       case "list_project_local_repositories":
         return [];
+      case "pick_project_import_folder":
+        return (
+          window.__BUZZ_E2E_IMPORT_FOLDER__ ?? {
+            path: "/tmp/buzz/import/widget-lib",
+            name: "widget-lib",
+            is_git_repo: true,
+            current_branch: "main",
+            origin_url: null,
+            has_commits: true,
+          }
+        );
+      case "import_project_local_repository": {
+        const { input } = payload as {
+          input: {
+            path: string;
+            cloneUrl: string;
+            owner: string;
+            dtag: string;
+            remoteStrategy: string;
+          };
+        };
+        window.__BUZZ_E2E_IMPORTED_REPO__ = input;
+        return {
+          path: input.path,
+          remote:
+            input.remoteStrategy === "add-buzz-remote" ? "buzz" : "origin",
+          branch: "main",
+        };
+      }
+      case "link_project_local_repository": {
+        const { input } = payload as {
+          input: {
+            path: string;
+            cloneUrl: string;
+            owner: string;
+            dtag: string;
+            remoteStrategy: string;
+          };
+        };
+        window.__BUZZ_E2E_LINKED_REPO__ = input;
+        return {
+          path: input.path,
+          remote:
+            input.remoteStrategy === "add-buzz-remote" ? "buzz" : "origin",
+        };
+      }
       case "push_project_local_repository": {
         const input = payload as { branchName?: string | null };
         const status = window.__BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__;
