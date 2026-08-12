@@ -317,17 +317,21 @@ pub fn result_item(
         "durationMs": duration_ms,
         "result": result,
     });
-    let object = item.as_object_mut().expect("result item is an object");
-    if let Some(cost_usd) = cost.cost_usd {
-        object.insert("costUsd".into(), serde_json::json!(cost_usd));
-    }
-    for (key, value) in [
-        ("inputTokens", cost.input_tokens),
-        ("outputTokens", cost.output_tokens),
-        ("totalTokens", cost.total_tokens),
-    ] {
-        if let Some(value) = value {
-            object.insert(key.into(), serde_json::json!(value));
+    // The literal above is an object, so this always matches; written as a
+    // pattern rather than an `expect` so a future edit to the literal degrades
+    // into a result item without accounting rather than a panic mid-turn.
+    if let Some(object) = item.as_object_mut() {
+        if let Some(cost_usd) = cost.cost_usd {
+            object.insert("costUsd".into(), serde_json::json!(cost_usd));
+        }
+        for (key, value) in [
+            ("inputTokens", cost.input_tokens),
+            ("outputTokens", cost.output_tokens),
+            ("totalTokens", cost.total_tokens),
+        ] {
+            if let Some(value) = value {
+                object.insert(key.into(), serde_json::json!(value));
+            }
         }
     }
     item

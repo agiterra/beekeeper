@@ -26,6 +26,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod catalog;
 pub mod commands;
 pub mod config;
 pub mod payload;
@@ -34,8 +35,8 @@ pub mod session;
 pub mod state;
 pub mod transcript;
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::collections::{BTreeSet, HashMap};
+use std::time::{Duration, SystemTime};
 
 use nostr::Event;
 use tokio::sync::mpsc;
@@ -47,16 +48,17 @@ use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
-    build_coding_session_transcript_item,
+    build_coding_session_provider_catalog, build_coding_session_transcript_item,
 };
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
-    coding_session_transcript_semantic_key, MAX_TRANSCRIPT_CONTENT_BYTES,
+    coding_session_provider_catalog_semantic_key, coding_session_transcript_semantic_key,
+    MAX_TRANSCRIPT_CONTENT_BYTES,
 };
 
 use commands::{
@@ -70,7 +72,7 @@ use payload::{
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{CreateRequest, SessionCommand, SessionEvent, SessionManager, TurnOutcome};
-use state::{now_ms, now_secs, OpenTurn, SessionRecord, StateStore};
+use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
 
 /// How often the outbox is drained when nothing else is happening.
 const OUTBOX_TICK: Duration = Duration::from_secs(2);
@@ -117,6 +119,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
         provider.subscribe(&mut relay, channel_id).await?;
     }
     relay.subscribe_membership_notifications().await?;
+    provider.refresh_catalog(true)?;
 
     let publisher = relay.event_publisher();
     let mut ticker = tokio::time::interval(OUTBOX_TICK);
@@ -145,6 +148,11 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             }
             _ = ticker.tick() => {
+                // Hot-reload: an operator who adds a project to the file should
+                // see it offered without restarting the provider.
+                if let Err(error) = provider.refresh_catalog(false) {
+                    tracing::error!(target: "csp", "catalog refresh failed: {error}");
+                }
                 if let Err(error) = provider.flush(&publisher).await {
                     tracing::error!(target: "csp", "outbox flush failed: {error}");
                 }
@@ -170,6 +178,8 @@ pub struct Provider {
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     last_metadata: HashMap<String, String>,
+    subscribed: BTreeSet<Uuid>,
+    projects_fingerprint: Option<(SystemTime, u64)>,
 }
 
 impl Provider {
@@ -187,6 +197,8 @@ impl Provider {
             sessions: SessionManager::new(events_tx),
             session_events,
             last_metadata: HashMap::new(),
+            subscribed: BTreeSet::new(),
+            projects_fingerprint: None,
         })
     }
 
@@ -266,10 +278,85 @@ impl Provider {
         self.session_events.recv().await
     }
 
+    /// Advertise the catalog wherever it is not yet current.
+    ///
+    /// Called at startup, whenever a new channel is joined, and on every tick.
+    /// `force` skips the projects-file change check — the tick path uses a
+    /// modified-time comparison so a file that never changes costs a `stat`
+    /// rather than a read, a hash, and a serialization.
+    ///
+    /// The revision advances only when the canonical body changes. That is what
+    /// makes "the highest revision I have seen from this signer" mean "the
+    /// newest thing on offer": a restart or a projects-file rewrite that alters
+    /// nothing must not look like new capabilities.
+    pub fn refresh_catalog(&mut self, force: bool) -> anyhow::Result<()> {
+        let fingerprint = catalog::fingerprint(self.config.projects_file.as_deref());
+        let unchanged_file = !force && fingerprint == self.projects_fingerprint;
+        let already_everywhere = self
+            .subscribed
+            .iter()
+            .all(|channel| self.state.catalog().advertised_channels.contains(channel));
+        if unchanged_file && already_everywhere && self.state.catalog().revision > 0 {
+            return Ok(());
+        }
+        self.projects_fingerprint = fingerprint;
+
+        let projects = ProjectsFile::load(self.config.projects_file.as_deref());
+        let stored = self.state.catalog().clone();
+        let probe = catalog::build(&self.config, &projects, stored.revision.max(1));
+        let digest = catalog::body_digest(&probe);
+
+        let (revision, mut advertised) =
+            if stored.content_digest.as_deref() == Some(&digest) && stored.revision > 0 {
+                (stored.revision, stored.advertised_channels.clone())
+            } else {
+                // New content: a fresh revision, advertised nowhere yet.
+                (stored.revision.saturating_add(1).max(1), Vec::new())
+            };
+
+        let catalog = catalog::build(&self.config, &projects, revision);
+        let content = catalog::to_canonical_json(&catalog)?;
+        let mut published = 0usize;
+        for channel_id in self.subscribed.clone() {
+            if advertised.contains(&channel_id) {
+                continue;
+            }
+            let event = build_coding_session_provider_catalog(channel_id, revision, &content)?
+                .sign_with_keys(&self.config.keys)?;
+            self.outbox.enqueue(
+                KIND_CODING_SESSION_PROVIDER_CATALOG,
+                &coding_session_provider_catalog_semantic_key(
+                    &channel_id.to_string(),
+                    revision,
+                    &content,
+                ),
+                Priority::High,
+                event,
+            )?;
+            advertised.push(channel_id);
+            published += 1;
+        }
+
+        self.state.set_catalog(CatalogState {
+            revision,
+            content_digest: Some(digest),
+            advertised_channels: advertised,
+        })?;
+        if published > 0 {
+            tracing::info!(
+                target: "csp::catalog",
+                revision,
+                channels = published,
+                "advertised provider catalog"
+            );
+        }
+        Ok(())
+    }
+
     /// Subscribe to the two command kinds in one channel, replaying from the
     /// persisted watermark so a restart cannot silently skip an unseen command.
     async fn subscribe(
-        &self,
+        &mut self,
         relay: &mut HarnessRelay,
         channel_id: Uuid,
     ) -> Result<(), buzz_acp::relay::RelayError> {
@@ -282,7 +369,9 @@ impl Provider {
         };
         relay
             .subscribe_channel_from(channel_id, filter, self.state.watermark(channel_id))
-            .await
+            .await?;
+        self.subscribed.insert(channel_id);
+        Ok(())
     }
 
     /// Route one relay event.
@@ -297,9 +386,13 @@ impl Provider {
             KIND_MEMBER_ADDED_NOTIFICATION => {
                 tracing::info!(target: "csp", %channel_id, "membership granted — subscribing");
                 self.subscribe(relay, channel_id).await?;
+                // A channel that cannot see the catalog cannot create a session
+                // in it, so advertising is part of joining, not a side effect.
+                self.refresh_catalog(false)?;
             }
             KIND_MEMBER_REMOVED_NOTIFICATION => {
                 tracing::info!(target: "csp", %channel_id, "membership revoked — unsubscribing");
+                self.subscribed.remove(&channel_id);
                 relay.unsubscribe_channel(channel_id).await?;
             }
             _ => {
@@ -1588,6 +1681,198 @@ mod tests {
         );
         assert!(
             serde_json::to_string(published).expect("json").len() <= MAX_TRANSCRIPT_CONTENT_BYTES
+        );
+    }
+
+    fn catalog_events(sink: &CollectingSink) -> Vec<Event> {
+        sink.all()
+            .into_iter()
+            .filter(|event| u32::from(event.kind.as_u16()) == KIND_CODING_SESSION_PROVIDER_CATALOG)
+            .collect()
+    }
+
+    fn tag_value(event: &Event, name: &str) -> Option<String> {
+        event
+            .tags
+            .iter()
+            .map(nostr::Tag::as_slice)
+            .find(|tag| tag.first().map(String::as_str) == Some(name))
+            .and_then(|tag| tag.get(1).cloned())
+    }
+
+    #[tokio::test]
+    async fn the_catalog_is_advertised_once_per_channel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut provider = provider(&dir.path().join("state"), None);
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        provider.subscribed.insert(first);
+        provider.subscribed.insert(second);
+
+        provider.refresh_catalog(true).expect("advertise");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let catalogs = catalog_events(&sink);
+        assert_eq!(catalogs.len(), 2);
+        assert_eq!(provider.state().catalog().revision, 1);
+
+        // A second pass over unchanged input advertises nothing new.
+        provider.refresh_catalog(true).expect("advertise");
+        let quiet = CollectingSink::new();
+        provider.flush(&quiet).await.expect("flush");
+        assert!(catalog_events(&quiet).is_empty());
+        assert_eq!(provider.state().catalog().revision, 1);
+    }
+
+    /// `cspc-revision` must equal the revision inside the content and `cspc-key`
+    /// must digest the exact signed bytes — the consumer checks both before it
+    /// will offer any target from the catalog.
+    #[tokio::test]
+    async fn catalog_tags_agree_with_the_content_they_describe() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut provider = provider(&dir.path().join("state"), None);
+        let channel_id = Uuid::new_v4();
+        provider.subscribed.insert(channel_id);
+        provider.refresh_catalog(true).expect("advertise");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let event = catalog_events(&sink).into_iter().next().expect("catalog");
+
+        let content: serde_json::Value =
+            serde_json::from_str(&event.content).expect("catalog content");
+        assert_eq!(content["schema"], catalog::CATALOG_SCHEMA);
+        assert_eq!(content["revision"], 1);
+        assert_eq!(
+            content["providers"][0]["providerInstanceRef"],
+            "claude-primary"
+        );
+        assert_eq!(content["providers"][0]["driver"], config::DRIVER);
+        assert_eq!(content["providers"][0]["runtime"], config::RUNTIME);
+        assert_eq!(content["providers"][0]["capabilities"]["plan"], true);
+
+        assert_eq!(
+            tag_value(&event, "h").as_deref(),
+            Some(channel_id.to_string().as_str())
+        );
+        assert_eq!(tag_value(&event, "cspc-revision").as_deref(), Some("1"));
+        assert_eq!(
+            tag_value(&event, "cspc-key"),
+            Some(coding_session_provider_catalog_semantic_key(
+                &channel_id.to_string(),
+                1,
+                &event.content,
+            ))
+        );
+
+        // Byte-for-byte re-serialization, which is what the consumer performs.
+        let reparsed: catalog::Catalog =
+            serde_json::from_value(content).expect("catalog round-trips");
+        assert_eq!(
+            catalog::to_canonical_json(&reparsed).expect("serialize"),
+            event.content
+        );
+    }
+
+    /// The revision is a claim that something changed. It has to bump when the
+    /// offer changes and stay put when it does not.
+    #[tokio::test]
+    async fn the_revision_bumps_only_when_the_offer_changes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let projects_path = dir.path().join("projects.json");
+        std::fs::write(&projects_path, br#"{"version":1}"#).expect("write");
+        let mut provider = provider(&dir.path().join("state"), Some(&projects_path));
+        let channel_id = Uuid::new_v4();
+        provider.subscribed.insert(channel_id);
+
+        provider.refresh_catalog(true).expect("advertise");
+        provider.flush(&CollectingSink::new()).await.expect("flush");
+        assert_eq!(provider.state().catalog().revision, 1);
+
+        // Rewriting the file with equivalent content is not a new offer.
+        std::fs::write(&projects_path, br#"{"version":1,"channels":{}}"#).expect("write");
+        provider.refresh_catalog(true).expect("advertise");
+        assert_eq!(provider.state().catalog().revision, 1);
+
+        // Adding a servable project is.
+        std::fs::write(
+            &projects_path,
+            format!(
+                r#"{{"version":1,"projects":{{"30621:{}:demo":"{}"}}}}"#,
+                "cd".repeat(32),
+                dir.path().display()
+            ),
+        )
+        .expect("write");
+        provider.refresh_catalog(true).expect("advertise");
+        assert_eq!(provider.state().catalog().revision, 2);
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let event = catalog_events(&sink).into_iter().next().expect("catalog");
+        let content: serde_json::Value = serde_json::from_str(&event.content).expect("content");
+        assert_eq!(content["revision"], 2);
+        assert_eq!(content["projects"][0]["repoRef"], serde_json::Value::Null);
+        assert_eq!(tag_value(&event, "cspc-revision").as_deref(), Some("2"));
+    }
+
+    /// A channel joined later must receive the catalog it missed; without it an
+    /// operator in that channel has no provider to pick.
+    #[tokio::test]
+    async fn a_channel_joined_later_still_receives_the_current_catalog() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut provider = provider(&dir.path().join("state"), None);
+        let first = Uuid::new_v4();
+        provider.subscribed.insert(first);
+        provider.refresh_catalog(true).expect("advertise");
+        provider.flush(&CollectingSink::new()).await.expect("flush");
+
+        let late = Uuid::new_v4();
+        provider.subscribed.insert(late);
+        provider.refresh_catalog(false).expect("advertise");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let catalogs = catalog_events(&sink);
+        assert_eq!(catalogs.len(), 1);
+        assert_eq!(
+            tag_value(&catalogs[0], "h").as_deref(),
+            Some(late.to_string().as_str())
+        );
+        assert_eq!(
+            provider.state().catalog().revision,
+            1,
+            "reaching a new channel is not a new offer"
+        );
+    }
+
+    /// The revision survives a restart: restarting is not a capability change,
+    /// and a consumer that kept revision 3 must not be handed a fresh 1.
+    #[tokio::test]
+    async fn the_revision_survives_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let keys = Keys::generate();
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let channel_id = Uuid::new_v4();
+
+        let mut first =
+            Provider::new(config_of(keys.clone(), &state_dir, None, agent.clone())).expect("first");
+        first.subscribed.insert(channel_id);
+        first.refresh_catalog(true).expect("advertise");
+        first.flush(&CollectingSink::new()).await.expect("flush");
+        drop(first);
+
+        let mut restarted =
+            Provider::new(config_of(keys, &state_dir, None, agent)).expect("restarted");
+        restarted.subscribed.insert(channel_id);
+        restarted.refresh_catalog(true).expect("advertise");
+        assert_eq!(restarted.state().catalog().revision, 1);
+        let sink = CollectingSink::new();
+        restarted.flush(&sink).await.expect("flush");
+        assert!(
+            catalog_events(&sink).is_empty(),
+            "an unchanged catalog is not re-advertised after a restart"
         );
     }
 
