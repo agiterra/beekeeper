@@ -1379,7 +1379,7 @@ dependencies = [
  "buzz-sdk",
  "chrono",
  "hex",
- "nostr",
+ "nostr 0.44.7",
  "rustls",
  "serde",
  "serde_json",
