@@ -19,6 +19,7 @@ Relay images are tagged with the build tag they were built from.
 Current stack:
 - `feature/project-containers` — projects as containers (channels/forums/repos/workflows under projects; sidebar + management UI)
 - `feature/project-access` (stacked on containers) — visibility levels (`buzz-access`), project ACL, private-repo gating
+- `feature/builtin-shell` (stacked on access) — built-in shell terminals (`buzz-shell-host` sidecar, session broker + agent consent, `buzz session` CLI) and NIP-ST shared terminals (kinds 30623/24310/24311: project members observe sessions read-only)
 - `feature/coding-sessions` — coding sessions with a Claude Code provider (NIP-CSC/CSL/CST kinds 44220–44225, `buzz-session-provider` crate, workspace UI, transcript export, `buzz sessions` CLI); project-shelf coupling lives in glue
 
 ## The sync loop
