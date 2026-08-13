@@ -444,6 +444,9 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         buzz_core::kind::KIND_PROJECT_PUT_MEMBER | buzz_core::kind::KIND_PROJECT_REMOVE_MEMBER => {
             Ok(Scope::ReposWrite)
         }
+        // NIP-ST: a shared-terminal session announce is ordinary member
+        // content, not repository metadata.
+        buzz_core::kind::KIND_SHELL_SESSION => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -1928,6 +1931,107 @@ pub(crate) fn validate_project_ref_tag(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a NIP-ST kind:30623 shared-terminal session announce and return
+/// its project coordinate.
+///
+/// Fail-closed shape checks: exactly one `d` (bounded session id), exactly
+/// one `a` (a valid `30621:<owner>:<dtag>` coordinate — the gate that hides
+/// the announce inside a private project keys off it), a `status` of
+/// `open`/`closed` (an unknown status is rejected, not defaulted), a bounded
+/// `title`, a sane `dims`, and a small content budget.
+pub(crate) fn validate_shell_session_envelope(event: &Event) -> Result<String, String> {
+    if event.content.len() > 4096 {
+        return Err(format!(
+            "shell-session content too large ({} bytes, max 4096)",
+            event.content.len()
+        ));
+    }
+
+    let mut d_tags = Vec::new();
+    let mut a_tags = Vec::new();
+    let mut statuses = Vec::new();
+    let mut titles = Vec::new();
+    let mut dims = Vec::new();
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.len() < 2 {
+            continue;
+        }
+        let value = parts[1].as_str().to_string();
+        match parts[0].as_str() {
+            "d" => d_tags.push(value),
+            "a" => a_tags.push(value),
+            "status" => statuses.push(value),
+            "title" => titles.push(value),
+            "dims" => dims.push(value),
+            _ => {}
+        }
+    }
+
+    let [session_id] = d_tags.as_slice() else {
+        return Err(format!(
+            "shell-session event must have exactly one `d` tag (got {})",
+            d_tags.len()
+        ));
+    };
+    if session_id.is_empty()
+        || session_id.len() > 64
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err("shell-session `d` tag must be a bounded session id".into());
+    }
+
+    let [coordinate] = a_tags.as_slice() else {
+        return Err(format!(
+            "shell-session event must have exactly one `a` tag (got {})",
+            a_tags.len()
+        ));
+    };
+    validate_project_ref_tag(coordinate)?;
+
+    let [status] = statuses.as_slice() else {
+        return Err(format!(
+            "shell-session event must have exactly one `status` tag (got {})",
+            statuses.len()
+        ));
+    };
+    if status != "open" && status != "closed" {
+        return Err(format!(
+            "shell-session `status` must be `open` or `closed` (got {status:?})"
+        ));
+    }
+
+    if titles.len() > 1 {
+        return Err("shell-session event must have at most one `title` tag".into());
+    }
+    if let Some(title) = titles.first() {
+        if title.chars().count() > 200 {
+            return Err("shell-session `title` too long (max 200 chars)".into());
+        }
+    }
+
+    if dims.len() > 1 {
+        return Err("shell-session event must have at most one `dims` tag".into());
+    }
+    if let Some(dims) = dims.first() {
+        let valid = dims.split_once('x').is_some_and(|(rows, cols)| {
+            (1..=3).contains(&rows.len())
+                && (1..=4).contains(&cols.len())
+                && rows.bytes().all(|b| b.is_ascii_digit())
+                && cols.bytes().all(|b| b.is_ascii_digit())
+        });
+        if !valid {
+            return Err(format!(
+                "shell-session `dims` must be `<rows>x<cols>` (got {dims:?})"
+            ));
+        }
+    }
+
+    Ok(coordinate.clone())
+}
+
 /// Validate the optional `["project", "<coordinate>"]` back-reference on a
 /// repo announcement (kind:30617), returning the **normalized** coordinate
 /// (`30621:<lowercase-hex>:<dtag>`) when present.
@@ -2966,6 +3070,29 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_PROJECT {
         validate_project_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+    }
+
+    if kind_u32 == buzz_core::kind::KIND_SHELL_SESSION {
+        let coordinate = validate_shell_session_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        // NIP-ST write gate: announcing a terminal into a *private* project
+        // requires the author to be admitted (owner or invited member) — the
+        // announce surfaces the session in that project's Terminals view.
+        // Public/unknown coordinates stay soft references, matching the repo
+        // `project` tag semantics.
+        let author_bytes = event.pubkey.to_bytes();
+        let allowed = state
+            .db
+            .can_access_project_contents(tenant.community(), &coordinate, &author_bytes)
+            .await
+            .map_err(|e| {
+                IngestError::Internal(format!("error: project gate lookup failed: {e}"))
+            })?;
+        if !allowed {
+            return Err(IngestError::Rejected(
+                "restricted: project is private".into(),
+            ));
+        }
     }
 
     if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
@@ -5693,6 +5820,113 @@ mod tests {
             err.to_string().contains("UUID"),
             "expected UUID error, got: {err}"
         );
+    }
+
+    // ─── kind:30623 shared-terminal session announce (NIP-ST) ───────────────
+
+    fn make_shell_session(tags: &[&[&str]]) -> Event {
+        make_event_with_tags(buzz_core::kind::KIND_SHELL_SESSION, "", tags)
+    }
+
+    #[test]
+    fn shell_session_envelope_accepts_well_formed_announce() {
+        let coord = format!("30621:{HEX64}:platform");
+        let ev = make_shell_session(&[
+            &["d", "a4f6c8e0-1111-2222-3333-444455556666"],
+            &["a", &coord],
+            &["status", "open"],
+            &["title", "build shell"],
+            &["dims", "34x120"],
+        ]);
+        assert_eq!(validate_shell_session_envelope(&ev).expect("valid"), coord);
+    }
+
+    #[test]
+    fn shell_session_envelope_requires_singleton_d_a_status() {
+        let coord = format!("30621:{HEX64}:platform");
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["a", &coord],
+            &["status", "open"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("exactly one `d` tag"), "got: {err}");
+
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "abc"],
+            &["status", "open"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("exactly one `a` tag"), "got: {err}");
+
+        let err =
+            validate_shell_session_envelope(&make_shell_session(&[&["d", "abc"], &["a", &coord]]))
+                .unwrap_err();
+        assert!(err.contains("exactly one `status` tag"), "got: {err}");
+    }
+
+    #[test]
+    fn shell_session_envelope_rejects_unknown_status_fail_closed() {
+        let coord = format!("30621:{HEX64}:platform");
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "abc"],
+            &["a", &coord],
+            &["status", "sharing"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("`status` must be"), "got: {err}");
+    }
+
+    #[test]
+    fn shell_session_envelope_rejects_malformed_coordinate_id_and_dims() {
+        let coord = format!("30621:{HEX64}:platform");
+
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "abc"],
+            &["a", &format!("30617:{HEX64}:repo")],
+            &["status", "open"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("kind"), "got: {err}");
+
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "../escape"],
+            &["a", &coord],
+            &["status", "open"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("session id"), "got: {err}");
+
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "abc"],
+            &["a", &coord],
+            &["status", "open"],
+            &["dims", "-1xhuge"],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("`dims` must be"), "got: {err}");
+    }
+
+    #[test]
+    fn shell_session_envelope_bounds_title_and_content() {
+        let coord = format!("30621:{HEX64}:platform");
+        let long_title = "t".repeat(201);
+        let err = validate_shell_session_envelope(&make_shell_session(&[
+            &["d", "abc"],
+            &["a", &coord],
+            &["status", "open"],
+            &["title", &long_title],
+        ]))
+        .unwrap_err();
+        assert!(err.contains("`title` too long"), "got: {err}");
+
+        let big = "x".repeat(4097);
+        let ev = make_event_with_tags(
+            buzz_core::kind::KIND_SHELL_SESSION,
+            &big,
+            &[&["d", "abc"], &["a", &coord], &["status", "open"]],
+        );
+        let err = validate_shell_session_envelope(&ev).unwrap_err();
+        assert!(err.contains("content too large"), "got: {err}");
     }
 
     // ─── kind:9007/9002 `project` tag (channel↔project association) ─────────

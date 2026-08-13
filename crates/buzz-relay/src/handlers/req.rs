@@ -1368,6 +1368,7 @@ pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
         ks.iter().any(|k| {
             let kind = k.as_u16() as u32;
             buzz_core::kind::is_git_project_gated_kind(kind)
+                || kind == buzz_core::kind::KIND_SHELL_SESSION
                 || buzz_core::kind::is_project_membership_kind(kind)
         })
     })
@@ -1464,6 +1465,15 @@ pub(crate) fn event_visible_to_reader(
         event,
         &requester_pubkey_hex,
         &hidden_repos.names,
+        &hidden_repos.project_coordinates,
+    ) {
+        return false;
+    }
+    // NIP-ST: a shared-terminal announce inside a private project the reader
+    // is not admitted to is withheld the same way the project's repos are.
+    if buzz_core::kind::shell_session_hidden_from(
+        event,
+        &requester_pubkey_hex,
         &hidden_repos.project_coordinates,
     ) {
         return false;

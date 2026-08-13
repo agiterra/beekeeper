@@ -496,6 +496,19 @@ pub const KIND_PAIRING: u32 = 24134;
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
+/// NIP-ST: shared-terminal watch open/keepalive/resync (ephemeral, observer →
+/// session owner). Tags: `p` = owner (routing), `d` = session id, `a` = the
+/// project coordinate the session is shared under. Content is a small JSON
+/// `{"action":"watch"|"stop"|"resync"}`. Never stored; project-membership
+/// gated at ingest and fan-out for private projects.
+pub const KIND_SHELL_WATCH: u32 = 24310;
+/// NIP-ST: shared-terminal frame stream (ephemeral, session owner →
+/// observers). Tags: `d` = session id, `a` = project coordinate, `t` = frame
+/// type (`tail`|`snap`|`diff`|`resize`|`end`), `seq`, `epoch`, optional
+/// `dims`/`chunk`. Content is base64 raw terminal bytes an observer terminal
+/// can write verbatim. Never stored; same project gating as
+/// [`KIND_SHELL_WATCH`].
+pub const KIND_SHELL_FRAME: u32 = 24311;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -660,6 +673,17 @@ pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 /// announcement, never a project. See `docs/nips/NIP-MP.md`.
 pub const KIND_PROJECT: u32 = 30621;
 
+/// NIP-ST: shared-terminal session announce (parameterized replaceable,
+/// d = session id). Owner-authored; lists an open built-in-shell session in
+/// its project's Terminals view so members can observe it read-only.
+///
+/// Tags: `a` = `30621:<owner>:<dtag>` project coordinate (required — a
+/// session with no real project is never announced), `title` (≤200 chars),
+/// `status` = `open`|`closed` (replace-latest lifecycle: rename/close/unshare
+/// republish the same address), `dims` = `<rows>x<cols>`. Deliberately
+/// carries no cwd or shell path. See `docs/nips/NIP-ST.md`.
+pub const KIND_SHELL_SESSION: u32 = 30623;
+
 /// Tag carrying a project's access level (Buzz container extension).
 ///
 /// `["buzz-access", "private"]` restricts the project container to its author
@@ -806,6 +830,58 @@ pub const fn is_project_membership_kind(kind: u32) -> bool {
         kind,
         KIND_PROJECT_PUT_MEMBER | KIND_PROJECT_REMOVE_MEMBER | KIND_PROJECT_MEMBERS
     )
+}
+
+/// Returns `true` for the NIP-ST shared-terminal kinds (session announce,
+/// watch, frame). All three carry the session's project coordinate in a
+/// single `a` tag and are membership-gated when that project is private —
+/// at ingest (publisher must be admitted), at live fan-out
+/// (`filter_fanout_by_access`), and, for the stored 30623, at every read
+/// chokepoint via [`shell_session_hidden_from`].
+pub const fn is_shell_observe_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_SHELL_SESSION | KIND_SHELL_WATCH | KIND_SHELL_FRAME
+    )
+}
+
+/// The project coordinate a NIP-ST shared-terminal event is scoped to: the
+/// content of its single `a` tag. Returns `None` when absent (ingest rejects
+/// that shape, but a malformed event must gate closed, not open).
+pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
+    let a = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    event
+        .tags
+        .filter(nostr::TagKind::SingleLetter(a))
+        .find_map(|t| t.content().map(str::to_string))
+}
+
+/// Returns `true` if a stored kind:30623 session announce must be withheld
+/// from this reader: its project coordinate is in the reader's
+/// hidden-private-project set (resolved per reader by
+/// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is not the
+/// announce's author. An empty set (the common case) hides nothing; a 30623
+/// with no `a` tag hides from every non-author (fail closed — ingest rejects
+/// the shape, but a smuggled head must not leak).
+pub fn shell_session_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    hidden_project_coordinates: &std::collections::HashSet<String>,
+) -> bool {
+    if event_kind_u32(event) != KIND_SHELL_SESSION {
+        return false;
+    }
+    if event
+        .pubkey
+        .to_hex()
+        .eq_ignore_ascii_case(reader_pubkey_hex)
+    {
+        return false;
+    }
+    match shell_observe_project_ref(event) {
+        Some(coord) => hidden_project_coordinates.contains(&coord),
+        None => true,
+    }
 }
 
 /// Kinds whose visibility follows the repo → project link (NIP-MP Buzz
@@ -1114,6 +1190,9 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_GIT_STATUS_CLOSED,
     KIND_GIT_STATUS_DRAFT,
     KIND_PROJECT,
+    KIND_SHELL_SESSION,
+    KIND_SHELL_WATCH,
+    KIND_SHELL_FRAME,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -1213,6 +1292,10 @@ const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_SHELL_SESSION)); // 30623 ∈ 30000–39999
+const _: () = assert!(is_ephemeral(KIND_SHELL_WATCH)); // 24310 ∈ 20000–29999, never stored
+const _: () = assert!(is_ephemeral(KIND_SHELL_FRAME)); // 24311 ∈ 20000–29999, never stored
+const _: () = assert!(!is_ephemeral(KIND_SHELL_SESSION));
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
 
@@ -1370,6 +1453,64 @@ mod tests {
         ]);
         let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         assert!(project_container_hidden_from(&ev, other));
+    }
+
+    // ── NIP-ST shared terminals: kinds + hidden-from ─────────────────────
+
+    #[test]
+    fn shell_observe_kinds_are_recognized() {
+        assert!(is_shell_observe_kind(KIND_SHELL_SESSION));
+        assert!(is_shell_observe_kind(KIND_SHELL_WATCH));
+        assert!(is_shell_observe_kind(KIND_SHELL_FRAME));
+        assert!(!is_shell_observe_kind(KIND_PROJECT));
+    }
+
+    #[test]
+    fn shell_observe_project_ref_reads_single_a_tag() {
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let ev = make_event_of_kind(KIND_SHELL_FRAME, &[&["d", "s1"], &["a", &coord]]);
+        assert_eq!(shell_observe_project_ref(&ev), Some(coord));
+        let no_a = make_event_of_kind(KIND_SHELL_FRAME, &[&["d", "s1"]]);
+        assert_eq!(shell_observe_project_ref(&no_a), None);
+    }
+
+    #[test]
+    fn shell_session_hidden_from_reader_outside_private_project() {
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let ev = make_event_of_kind(
+            KIND_SHELL_SESSION,
+            &[&["d", "s1"], &["a", &coord], &["status", "open"]],
+        );
+        let mut hidden = std::collections::HashSet::new();
+
+        // Empty hidden set (public/admitted): visible.
+        assert!(!shell_session_hidden_from(&ev, FOREIGN_HEX, &hidden));
+
+        hidden.insert(coord);
+        // Foreign reader whose hidden set contains the coordinate: withheld.
+        assert!(shell_session_hidden_from(&ev, FOREIGN_HEX, &hidden));
+        // The author always sees their own announce.
+        assert!(!shell_session_hidden_from(
+            &ev,
+            &ev.pubkey.to_hex(),
+            &hidden
+        ));
+    }
+
+    #[test]
+    fn shell_session_without_coordinate_fails_closed() {
+        let ev = make_event_of_kind(KIND_SHELL_SESSION, &[&["d", "s1"], &["status", "open"]]);
+        let mut hidden = std::collections::HashSet::new();
+        hidden.insert("anything".to_string());
+        assert!(shell_session_hidden_from(&ev, FOREIGN_HEX, &hidden));
+        assert!(!shell_session_hidden_from(
+            &ev,
+            &ev.pubkey.to_hex(),
+            &hidden
+        ));
+        // Other kinds never trip this predicate.
+        let other = make_event_of_kind(KIND_PROJECT, &[&["d", "s1"]]);
+        assert!(!shell_session_hidden_from(&other, FOREIGN_HEX, &hidden));
     }
 
     #[test]

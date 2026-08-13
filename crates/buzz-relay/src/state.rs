@@ -88,7 +88,7 @@ impl CommunityConnectionControl {
 /// Leaves headroom under the process-wide drain deadline for a stalled writer.
 const RESTART_CLOSE_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 type SlidingWindowCounter = (u32, Instant);
-type ScopedRateLimiter = DashMap<ScopedPubkeyKey, SlidingWindowCounter>;
+pub(crate) type ScopedRateLimiter = DashMap<ScopedPubkeyKey, SlidingWindowCounter>;
 
 /// Per-connection entry in the connection manager.
 struct ConnEntry {
@@ -728,11 +728,13 @@ pub struct AppState {
     pub repo_gate_cache: Arc<
         moka::sync::Cache<(CommunityId, String), Option<Arc<buzz_db::git_repo::RepoProjectGate>>>,
     >,
-    /// Per-coordinate private-project gate (NIP-MP membership fan-out):
+    /// Per-coordinate private-project gate (NIP-MP membership fan-out +
+    /// NIP-ST shared terminals):
     /// (community_id, `30621:<owner>:<dtag>`) maps to the project's owner +
     /// invited members when that project is private, else `None` ("no gate").
-    /// Lets live fan-out filter membership events (9010/9011/39010) by
-    /// project membership in memory. Same TTL/flush discipline as
+    /// Lets shared-terminal ingest and live fan-out filter membership events
+    /// (9010/9011/39010) and terminal traffic by project membership in
+    /// memory. Same TTL/flush discipline as
     /// [`Self::project_gate_cache`].
     #[allow(clippy::type_complexity)]
     pub coordinate_gate_cache: Arc<
@@ -775,6 +777,14 @@ pub struct AppState {
     /// Key: (community_id, agent pubkey bytes). Value: (count, window_start).
     /// 100 events/sec per agent — prevents relay/DB pressure from bursty telemetry.
     pub observer_rate_limiter: Arc<ScopedRateLimiter>,
+    /// Per-publisher sliding-window rate limiter for shared-terminal frames
+    /// (kind 24311): 60/sec per (community, author). Watch events (24310) use
+    /// [`Self::shell_watch_rate_limiter`] at 10/sec so keepalives can't be
+    /// starved by a frame flood (and vice versa).
+    pub shell_frame_rate_limiter: Arc<ScopedRateLimiter>,
+    /// Per-observer sliding-window rate limiter for shared-terminal watch
+    /// events (kind 24310). See [`Self::shell_frame_rate_limiter`].
+    pub shell_watch_rate_limiter: Arc<ScopedRateLimiter>,
     /// Per-uploader sliding-window rate limiter for media upload starts.
     /// Key: (community_id, uploader pubkey bytes). Value: (count, window_start).
     pub media_upload_rate_limiter: Arc<ScopedRateLimiter>,
@@ -995,6 +1005,8 @@ impl AppState {
             nip98_replay,
             admission_rate_limiter,
             observer_rate_limiter: Arc::new(DashMap::new()),
+            shell_frame_rate_limiter: Arc::new(DashMap::new()),
+            shell_watch_rate_limiter: Arc::new(DashMap::new()),
             media_upload_rate_limiter: Arc::new(DashMap::new()),
             invite_claim_rate_limiter: Arc::new(
                 moka::sync::Cache::builder()
@@ -1166,7 +1178,8 @@ impl AppState {
     }
 
     /// Resolve the private-project gate at a `30621:<owner>:<dtag>` coordinate
-    /// with a 10-second cache (NIP-MP membership fan-out).
+    /// with a 10-second cache (NIP-MP membership fan-out + NIP-ST shared
+    /// terminals).
     ///
     /// `None` means "no gate" (unknown coordinate or public project). Same
     /// flush discipline as [`Self::channel_project_gate_cached`] — every 30621

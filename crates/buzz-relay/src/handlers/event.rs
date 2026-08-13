@@ -309,6 +309,58 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // NIP-ST shared-terminal gate (fan-out): session announces (30623) and
+    // the ephemeral watch/frame kinds (24310/24311) scoped to a *private*
+    // project are delivered past the author only to connections the project
+    // admits. Global (channel-less) events, so the channel filtering below
+    // never sees them; the coordinate comes from the event's own validated
+    // `a` tag. A missing coordinate or gate-lookup failure delivers to nobody
+    // but the author (fail closed).
+    let matches = if buzz_core::kind::is_shell_observe_kind(event_kind_u32(&stored_event.event)) {
+        let author = stored_event.event.pubkey.to_bytes();
+        let gate = match buzz_core::kind::shell_observe_project_ref(&stored_event.event) {
+            Some(coordinate) => {
+                match state
+                    .project_coordinate_gate_cached(community_id, &coordinate)
+                    .await
+                {
+                    Ok(gate) => gate,
+                    Err(e) => {
+                        warn!(%coordinate, "fan-out access filter: shared-terminal gate lookup failed: {e}");
+                        return Vec::new();
+                    }
+                }
+            }
+            // No coordinate at all: ingest rejects this shape, so only the
+            // author could ever legitimately see it.
+            None => {
+                return matches
+                    .into_iter()
+                    .filter(|(conn_id, _)| {
+                        state
+                            .conn_manager
+                            .pubkey_for_conn(*conn_id)
+                            .is_some_and(|pk| pk == author)
+                    })
+                    .collect();
+            }
+        };
+        match gate {
+            None => matches,
+            Some(gate) => matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                        return false;
+                    };
+                    pk == author || gate.admits_read(&pk)
+                })
+                .collect(),
+        }
+    } else {
+        matches
+    };
+
     let Some(channel_id) = stored_event.channel_id else {
         return matches;
     };
@@ -883,6 +935,31 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
             return;
         }
         handle_agent_observer_event(event, conn_id, &event_id_hex, conn, state).await;
+        return;
+    }
+
+    // NIP-ST shared-terminal ephemeral kinds get a dedicated branch (project
+    // gate + per-kind rate limits) instead of the generic ephemeral path.
+    if kind_u32 == buzz_core::kind::KIND_SHELL_WATCH
+        || kind_u32 == buzz_core::kind::KIND_SHELL_FRAME
+    {
+        if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
+            reject("scope");
+            conn.send(RelayMessage::ok(
+                &event_id_hex,
+                false,
+                "restricted: insufficient scope for shared-terminal events",
+            ));
+            return;
+        }
+        super::shell_observe::handle_shell_observe_event(
+            event,
+            conn_id,
+            &event_id_hex,
+            conn,
+            state,
+        )
+        .await;
         return;
     }
 
