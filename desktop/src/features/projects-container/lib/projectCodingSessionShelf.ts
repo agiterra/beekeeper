@@ -239,6 +239,8 @@ function statusPriority(status: CodingSessionWorkspaceStatus): number {
       return 1;
     case "idle":
       return 2;
+    case "ended":
+      return 3;
   }
 }
 
