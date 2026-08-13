@@ -333,22 +333,31 @@ function isValidDurableTransaction(
   return isExactSignedEvent(value.event, eventInput);
 }
 
+const DURABLE_CREATE_INPUT_KEYS = [
+  "channelId",
+  "commandId",
+  "projectRef",
+  "repoRef",
+  "providerInstanceRef",
+  "providerAuthorityPubkey",
+  "model",
+  "title",
+  "initialTurn",
+] as const;
+
+/**
+ * Exactly the historical input key set, or exactly that set plus `sessionRef`
+ * — nothing between, nothing beyond. Transactions persisted before the
+ * umbrella field existed must stay resumable forever, and the byte-exact
+ * event verification below is what actually guarantees their integrity.
+ */
 function isCreateInput(
   value: unknown,
 ): value is DurableCodingSessionCreateInput {
   return (
     isPlainRecord(value) &&
-    hasExactKeys(value, [
-      "channelId",
-      "commandId",
-      "projectRef",
-      "repoRef",
-      "providerInstanceRef",
-      "providerAuthorityPubkey",
-      "model",
-      "title",
-      "initialTurn",
-    ])
+    (hasExactKeySet(value, DURABLE_CREATE_INPUT_KEYS) ||
+      hasExactKeySet(value, [...DURABLE_CREATE_INPUT_KEYS, "sessionRef"]))
   );
 }
 
@@ -427,5 +436,20 @@ function hasExactKeys(
   return (
     actual.length === keys.length &&
     actual.every((key, index) => key === keys[index])
+  );
+}
+
+/**
+ * Exact key membership without an order requirement. Callers assemble the
+ * create input, so its key order is theirs; the signed event's canonical
+ * order is enforced separately by rebuilding and byte-comparing it.
+ */
+function hasExactKeySet(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length && actual.every((key) => keys.includes(key))
   );
 }

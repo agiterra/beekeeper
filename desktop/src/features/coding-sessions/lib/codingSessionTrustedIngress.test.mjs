@@ -922,3 +922,32 @@ test("a rejected or unverifiable event is never retained", () => {
   assert.equal(snapshot.rejectedAuthorCount, 1);
   assert.equal(snapshot.invalidSignatureCount, 1);
 });
+
+test("metadata accepts an optional canonical sessionRef and rejects every other shape", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  // Absent key: the pre-umbrella form decodes with no sessionRef property.
+  const withoutKey = parseBuzzCodingSessionMetadata(JSON.stringify(metadata()));
+  assert.equal("sessionRef" in withoutKey, false);
+  // Present key: echoed only when the create claimed one.
+  assert.equal(
+    parseBuzzCodingSessionMetadata(JSON.stringify(metadata({ sessionRef })))
+      ?.sessionRef,
+    sessionRef,
+  );
+  // The echo is never an explicit null and never a looser string.
+  for (const invalid of [
+    null,
+    "",
+    "not-a-uuid",
+    "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10",
+    "5b7e1c2a90d44b0ea1f37c2d8e6f4a10",
+    42,
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(
+        JSON.stringify(metadata({ sessionRef: invalid })),
+      ),
+      null,
+    );
+  }
+});

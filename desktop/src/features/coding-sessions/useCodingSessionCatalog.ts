@@ -1,7 +1,9 @@
 import * as React from "react";
 
 import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
+import type { RelayEvent } from "@/shared/api/types";
 import type { CodingSessionPopoutBootstrap } from "./lib/codingSessionBootstrap";
+import { groupCodingSessionCatalog } from "./lib/codingSessionUmbrellaModel";
 import { rememberCodingSessionPopoutBootstrap } from "./lib/codingSessionBootstrap";
 import { buildCodingSessionTargetKey } from "./lib/codingSessionCommand";
 import {
@@ -17,15 +19,23 @@ import type {
   CodingSessionCatalogSnapshot,
   GlobalCodingSessionCatalogSnapshot,
 } from "./lib/codingSessionTypes";
+import { useCodingSessionCreateObservations } from "./lib/useCodingSessionCreateObservations";
 import { useTrustedCodingSessionIngress } from "./lib/useTrustedCodingSessionIngress";
 
 /**
  * The coding-session catalog for one channel.
  *
- * Trusted ingress is the only source. The donor merged a second, Hive-backed
- * projection catalog in beside it; with the compatibility transport gone there
- * is nothing to merge — a session exists here if and only if a trusted signer
- * published signed 442xx events for it.
+ * Trusted ingress is the only source of session *facts*. The donor merged a
+ * second, Hive-backed projection catalog in beside it; with the compatibility
+ * transport gone there is nothing to merge — a session exists here if and only
+ * if a trusted signer published signed 442xx events for it.
+ *
+ * Alongside them the snapshot carries `creates`: human-signed 44221 create
+ * observations, each joined to an execution by that provider's own receipt.
+ * They decide only *who operates what*, never whether a session exists or what
+ * happened in it, and the catalog's `isLoading` deliberately does not wait on
+ * them — a session renders as soon as its facts arrive, with authority
+ * unresolved (and therefore ungated) until the observations land.
  */
 export function useCodingSessionCatalog(
   channelId: string | null,
@@ -54,6 +64,12 @@ export function useCodingSessionCatalog(
     defaultRelayClient,
     ingressBootstrap,
   );
+  // Operator authority rides a second, deliberately separate subscription:
+  // 44221 creates are signed by humans, so they must never be admitted to the
+  // provider-authority-signed trusted store. Each observation is bound to an
+  // execution only through that provider's own 44224 receipt.
+  const createObservations =
+    useCodingSessionCreateObservations(ingressChannelIds);
   const snapshot = React.useMemo(
     () => ({
       channelId,
@@ -62,13 +78,14 @@ export function useCodingSessionCatalog(
         trustedIngress.metadata,
         trustedIngress.transcripts,
       ),
+      creates: createObservations.observations,
       isLoading: trustedIngress.isLoading,
       errorMessage: trustedIngress.errorMessage,
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
       rejectedAuthorCount: trustedIngress.rejectedAuthorCount,
       invalidSignatureCount: trustedIngress.invalidSignatureCount,
     }),
-    [channelId, trustedIngress],
+    [channelId, createObservations.observations, trustedIngress],
   );
 
   useRememberedCodingSessionPopoutBootstraps(
@@ -85,6 +102,7 @@ export function useCodingSessionCatalog(
     return {
       ...snapshot,
       entries: [],
+      creates: [],
       isLoading: false,
       authorityErrorMessage:
         "This pop-out did not receive an exact signed session snapshot. Reopen the generation from the main window.",
@@ -100,6 +118,7 @@ export function useCodingSessionCatalog(
     return {
       ...snapshot,
       entries: [],
+      creates: [],
       isLoading: false,
       authorityErrorMessage:
         "This pop-out snapshot no longer matches the configured coding-session authority. Reopen the generation from the main window.",
@@ -120,20 +139,52 @@ function useRememberedCodingSessionPopoutBootstraps(
 ): void {
   React.useEffect(() => {
     if (!channelId || !authorityIdentity) return;
+    // An umbrella pop-out must be able to re-verify every member execution,
+    // not only the routed one, so each generation's staged snapshot carries
+    // the raw signed events of its whole umbrella (deduplicated by event id).
+    const umbrellaMembers = buildUmbrellaMemberIndex(entries);
     for (const entry of entries) {
       if (!entry.commandTarget || !entry.providerAuthorityPubkey) continue;
+      const members = umbrellaMembers.get(entry.generationId) ?? [entry];
+      const relayEventsById = new Map<string, RelayEvent>();
+      for (const member of members) {
+        if (!member.commandTarget || !member.providerAuthorityPubkey) continue;
+        for (const event of retainedRawEvents({
+          channelId,
+          signerPubkey: member.providerAuthorityPubkey,
+          targetKey: buildCodingSessionTargetKey(member.commandTarget),
+        })) {
+          relayEventsById.set(event.id, event);
+        }
+      }
       rememberCodingSessionPopoutBootstrap({
         channelId,
         generationId: entry.generationId,
         authorityIdentity,
-        relayEvents: retainedRawEvents({
-          channelId,
-          signerPubkey: entry.providerAuthorityPubkey,
-          targetKey: buildCodingSessionTargetKey(entry.commandTarget),
-        }),
+        relayEvents: [...relayEventsById.values()],
       });
     }
   }, [authorityIdentity, channelId, entries, retainedRawEvents]);
+}
+
+/**
+ * For each generation, the catalog records of every execution sharing its
+ * umbrella (itself included). Implicit umbrellas map to themselves alone.
+ */
+function buildUmbrellaMemberIndex(
+  entries: readonly CodingSessionCatalogRecord[],
+): Map<string, CodingSessionCatalogRecord[]> {
+  const index = new Map<string, CodingSessionCatalogRecord[]>();
+  for (const umbrella of groupCodingSessionCatalog(entries)) {
+    const members = umbrella.executions.flatMap((execution) => [
+      ...execution.priorGenerations,
+      execution.activeGeneration,
+    ]);
+    for (const member of members) {
+      index.set(member.generationId, members);
+    }
+  }
+  return index;
 }
 
 type TrustedRawEventReader = ReturnType<
@@ -247,6 +298,7 @@ export function mergeTrustedCodingSessionIngress(
       commandTarget: target,
       projectRef: metadata?.projectRef ?? null,
       repoRef: metadata?.repoRef ?? null,
+      sessionRef: metadata?.sessionRef ?? null,
       provider: metadata?.provider ?? null,
       runtime: metadata?.runtime ?? target.driver,
       model: metadata?.model ?? null,

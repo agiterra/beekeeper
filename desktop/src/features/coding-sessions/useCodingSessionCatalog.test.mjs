@@ -311,3 +311,32 @@ test("a null channel yields nothing at all", () => {
     [],
   );
 });
+
+test("the record carries the metadata's sessionRef, or null without one", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const [claimed] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [metadataEntry({ sessionRef })],
+    [],
+  );
+  assert.equal(claimed.sessionRef, sessionRef);
+
+  const [preUmbrella] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [metadataEntry()],
+    [],
+  );
+  assert.equal(preUmbrella.sessionRef, null);
+
+  const [transcriptOnly] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [],
+    [
+      transcriptEntry({
+        eventSeq: 1,
+        item: { kind: "assistant_text", text: "hi" },
+      }),
+    ],
+  );
+  assert.equal(transcriptOnly.sessionRef, null);
+});

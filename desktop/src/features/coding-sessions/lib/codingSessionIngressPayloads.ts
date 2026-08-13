@@ -14,6 +14,7 @@ import {
   decodeTarget,
   hasExactKeys,
   hasRequiredAndOptionalKeys,
+  isCodingSessionSessionRef,
   isPlainRecord,
   parseBoundedJson,
 } from "./codingSessionWireDecode";
@@ -66,6 +67,11 @@ export type CodingSessionLifecycleReceipt =
  * Per-generation metadata. `projectRef` is nullable — an explicit null is a
  * standalone session — and `agentRef`/`branch` are always null in v1: the
  * provider binds no managed agent and never re-binds a generation to a branch.
+ *
+ * `sessionRef` is the umbrella session reference echoed from the create.
+ * It is an *optional* key, never an explicit null: the provider emits it only
+ * when the create claimed one, so pre-umbrella metadata stays byte-identical
+ * and old clients lose enrichment only for umbrella-claiming sessions.
  */
 export type BuzzCodingSessionMetadataV1 = {
   schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
@@ -83,6 +89,7 @@ export type BuzzCodingSessionMetadataV1 = {
   contextSummary?: string;
   diffSummary?: string;
   planSummary?: string;
+  sessionRef?: string;
 };
 
 /** Collision-free immutable receipt key shared with the provider. */
@@ -194,7 +201,12 @@ export function parseBuzzCodingSessionMetadata(
     "branch",
     "capabilities",
   ] as const;
-  const optional = ["contextSummary", "diffSummary", "planSummary"] as const;
+  const optionalSummaries = [
+    "contextSummary",
+    "diffSummary",
+    "planSummary",
+  ] as const;
+  const optional = [...optionalSummaries, "sessionRef"] as const;
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, required, optional) ||
@@ -218,13 +230,21 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
-  for (const key of optional) {
+  for (const key of optionalSummaries) {
     if (
       Object.hasOwn(value, key) &&
       !boundedNonempty(value[key], MAX_SUMMARY_BYTES)
     ) {
       return null;
     }
+  }
+  // A present `sessionRef` must be exactly the canonical UUID shape the create
+  // validated — the echo is a projection convenience, never a looser claim.
+  if (
+    Object.hasOwn(value, "sessionRef") &&
+    !isCodingSessionSessionRef(value.sessionRef)
+  ) {
+    return null;
   }
   return Object.freeze({
     schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
@@ -247,6 +267,9 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(typeof value.planSummary === "string"
       ? { planSummary: value.planSummary }
+      : {}),
+    ...(typeof value.sessionRef === "string"
+      ? { sessionRef: value.sessionRef }
       : {}),
   });
 }

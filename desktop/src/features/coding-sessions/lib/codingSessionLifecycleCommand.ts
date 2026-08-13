@@ -2,6 +2,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_CODING_SESSION_LIFECYCLE_COMMAND } from "@/shared/constants/kinds";
+import { isCodingSessionSessionRef } from "./codingSessionWireDecode";
 
 export const CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA =
   "buzz-coding-session-lifecycle-command/v1" as const;
@@ -16,11 +17,20 @@ export const MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES = 12 * 1024;
  * `projectRef` is nullable — an explicit `null` is a standalone session that
  * belongs to no project. The key is always serialized: a missing key is
  * malformed, not a standalone session.
+ *
+ * `sessionRef` is the umbrella session identity: a client-minted lowercase
+ * UUID claimed on the create and shared by every execution of the same
+ * umbrella session. Unlike `projectRef` it joined the schema after v1 events
+ * were already signed, so the key itself is optional on the type: new
+ * producers always write it (explicit `null` means "no umbrella claimed"),
+ * while an absent key is only ever the historical 8-key form re-serialized
+ * byte-for-byte (durable-create replay).
  */
 export type CodingSessionCreateAction = {
   type: "session.create";
   projectRef: string | null;
   repoRef: string | null;
+  sessionRef?: string | null;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -62,6 +72,13 @@ export function buildCodingSessionCreateEvent(input: {
   commandId: string;
   projectRef: string | null;
   repoRef: string | null;
+  /**
+   * New creates always carry the key — a freshly minted UUID
+   * ({@link createCodingSessionSessionRef}) or an explicit `null`. An absent
+   * key reproduces the historical 8-key action exactly, which durable-create
+   * replay of pre-`sessionRef` transactions depends on.
+   */
+  sessionRef?: string | null;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -76,6 +93,13 @@ export function buildCodingSessionCreateEvent(input: {
       type: "session.create",
       projectRef: input.projectRef,
       repoRef: input.repoRef,
+      // Canonical key order matches the sidecar's 9-key decode form; the
+      // spread keeps the historical 8-key form byte-identical when absent.
+      // `undefined` counts as absent so a durable transaction round-tripped
+      // through JSON (which drops undefined values) rebuilds the same bytes.
+      ...(input.sessionRef !== undefined
+        ? { sessionRef: input.sessionRef }
+        : {}),
       providerInstanceRef: input.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
       model: input.model,
@@ -105,6 +129,7 @@ export function validateCodingSessionCreateInput(input: {
   commandId: string;
   projectRef: string | null;
   repoRef: string | null;
+  sessionRef?: string | null;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -131,6 +156,15 @@ export function validateCodingSessionCreateInput(input: {
     "action.repoRef",
     MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
   );
+  if (
+    input.sessionRef !== undefined &&
+    input.sessionRef !== null &&
+    !isCodingSessionSessionRef(input.sessionRef)
+  ) {
+    throw new Error(
+      "action.sessionRef must be a canonical lowercase hyphenated UUID",
+    );
+  }
   validateRequired(
     input.providerInstanceRef,
     "action.providerInstanceRef",
@@ -183,6 +217,18 @@ export async function publishCodingSessionCreate(
 
 export function createCodingSessionLifecycleCommandId(): string {
   return `csl-${crypto.randomUUID()}`;
+}
+
+/**
+ * Mint the umbrella `sessionRef` a create claims.
+ *
+ * Every new create mints one — a single-execution session is an umbrella of
+ * one, so a later create carrying the same ref joins it as a new execution
+ * with no migration step. Deliberately distinct from every provider-runtime
+ * identifier: provider session ids live inside `cs-target`.
+ */
+export function createCodingSessionSessionRef(): string {
+  return crypto.randomUUID().toLowerCase();
 }
 
 function validateRequired(

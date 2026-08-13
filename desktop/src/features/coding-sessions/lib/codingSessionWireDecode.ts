@@ -151,6 +151,18 @@ export function hasTagNamed(tags: string[][], name: string): boolean {
   return tags.some((tag) => Array.isArray(tag) && tag[0] === name);
 }
 
+/**
+ * Canonical umbrella session reference: a lowercase, hyphenated UUID
+ * (36 chars, lowercase hex). This is the only shape a `sessionRef` may take,
+ * on the 44221 create payload and in the 44223 metadata echo alike.
+ */
+export function isCodingSessionSessionRef(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+  );
+}
+
 export function normalizePubkey(value: unknown): string {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toLowerCase();

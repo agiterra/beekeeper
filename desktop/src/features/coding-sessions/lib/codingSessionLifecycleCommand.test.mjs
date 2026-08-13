@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildCodingSessionCreateEvent,
+  createCodingSessionSessionRef,
   MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
   publishCodingSessionCreate,
@@ -79,6 +80,82 @@ test("provider instance is required while optional fields stay explicit", () => 
       buildCodingSessionCreateEvent({ ...input, ...invalid }),
     );
   }
+});
+
+test("a sessionRef serializes in canonical position between repoRef and providerInstanceRef", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const event = buildCodingSessionCreateEvent({ ...input, sessionRef });
+  assert.deepEqual(Object.keys(JSON.parse(event.content).action), [
+    "type",
+    "projectRef",
+    "repoRef",
+    "sessionRef",
+    "providerInstanceRef",
+    "providerAuthorityPubkey",
+    "model",
+    "title",
+    "initialTurn",
+  ]);
+  assert.equal(JSON.parse(event.content).action.sessionRef, sessionRef);
+  // Tag shape is untouched: umbrella and non-umbrella creates produce
+  // identically shaped envelopes.
+  assert.deepEqual(event.tags, [
+    ["h", "channel-1"],
+    ["csl-v", "csl1-1"],
+    ["csl-command", "create-1"],
+  ]);
+});
+
+test("an explicit null sessionRef serializes; an absent key reproduces the 8-key historical form", () => {
+  const withNull = buildCodingSessionCreateEvent({
+    ...input,
+    sessionRef: null,
+  });
+  assert.match(withNull.content, /"sessionRef":null/);
+
+  const historical = buildCodingSessionCreateEvent(input);
+  const roundTripped = buildCodingSessionCreateEvent({
+    ...input,
+    sessionRef: undefined,
+  });
+  assert.equal("sessionRef" in JSON.parse(historical.content).action, false);
+  // `undefined` counts as absent so a JSON round-trip (which drops the key)
+  // rebuilds the same bytes.
+  assert.equal(roundTripped.content, historical.content);
+});
+
+test("a sessionRef must be a canonical lowercase hyphenated UUID", () => {
+  for (const invalid of [
+    "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10",
+    "5b7e1c2a90d44b0ea1f37c2d8e6f4a10",
+    "not-a-uuid",
+    "",
+    " ",
+    `5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10 `,
+  ]) {
+    assert.throws(
+      () => buildCodingSessionCreateEvent({ ...input, sessionRef: invalid }),
+      /action\.sessionRef/,
+    );
+  }
+});
+
+test("every minted sessionRef is accepted by the builder", () => {
+  for (let round = 0; round < 16; round += 1) {
+    const sessionRef = createCodingSessionSessionRef();
+    assert.match(
+      sessionRef,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    assert.doesNotThrow(() =>
+      buildCodingSessionCreateEvent({ ...input, sessionRef }),
+    );
+  }
+  // Every create mints its own umbrella identity.
+  assert.notEqual(
+    createCodingSessionSessionRef(),
+    createCodingSessionSessionRef(),
+  );
 });
 
 test("references and initial turn use UTF-8 byte limits", () => {
