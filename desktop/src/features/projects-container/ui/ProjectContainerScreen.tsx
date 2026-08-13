@@ -364,6 +364,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
                 project.id === LOCAL_GENERAL_ID ? null : project.address
               }
               isFallback={project.id === LOCAL_GENERAL_ID}
+              repos={repos}
             />
           </FeatureGate>
 

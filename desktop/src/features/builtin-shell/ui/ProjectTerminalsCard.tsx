@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui/button";
 
 import { useCreateShellSession } from "../hooks/useCreateShellSession";
 import { useShellSessions } from "../hooks/useShellSessions";
+import { projectDefaultCwd, type ShellCwdRepo } from "../lib/projectShellCwd";
 import { useProjectTerminals } from "../observe/useProjectTerminals";
 
 /**
@@ -19,17 +20,27 @@ import { useProjectTerminals } from "../observe/useProjectTerminals";
 export function ProjectTerminalsCard({
   projectAddress,
   isFallback,
+  repos = [],
 }: {
   /** The project's `30621:<owner>:<dtag>` address, or null for the local
    * General placeholder (nothing is announced there). */
   projectAddress: string | null;
   /** True for the local General bucket — sessions there are unassigned. */
   isFallback: boolean;
+  /** The project's repositories, for the new-terminal default cwd (the first
+   * repo with a local checkout wins). */
+  repos?: readonly ShellCwdRepo[];
 }) {
   const navigate = useNavigate();
   const { sessions } = useShellSessions();
   const { createFor } = useCreateShellSession();
   const remote = useProjectTerminals(projectAddress);
+
+  const createTerminal = React.useCallback(() => {
+    void projectDefaultCwd(repos).then((cwd) =>
+      createFor(projectAddress ?? undefined, cwd),
+    );
+  }, [repos, createFor, projectAddress]);
 
   const own = React.useMemo(
     () =>
@@ -67,7 +78,7 @@ export function ProjectTerminalsCard({
         <Button
           aria-label="New terminal"
           data-testid="project-terminals-new"
-          onClick={() => createFor(projectAddress ?? undefined)}
+          onClick={createTerminal}
           size="icon-xs"
           variant="ghost"
         >

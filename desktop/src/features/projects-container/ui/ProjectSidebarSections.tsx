@@ -10,6 +10,7 @@ import {
   usePersonasQuery,
 } from "@/features/agents/hooks";
 import { useCreateShellSession } from "@/features/builtin-shell/hooks/useCreateShellSession";
+import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
@@ -108,6 +109,16 @@ export function ProjectSidebarSections({
     [navigate],
   );
   const { createFor: createShellFor } = useCreateShellSession();
+  // New terminals open in the project's code checkout when one exists.
+  const handleNewShell = React.useCallback(
+    (project: ProjectContainer, isFallback: boolean) => {
+      const repos = reposByProject.get(project.id) ?? [];
+      void projectDefaultCwd(repos).then((cwd) =>
+        createShellFor(isFallback ? undefined : project.address, cwd),
+      );
+    },
+    [reposByProject, createShellFor],
+  );
   const shellDialogs = useShellSessionDialogs();
 
   // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
@@ -279,7 +290,7 @@ export function ProjectSidebarSections({
             onRequestCloseShell={shellDialogs.requestClose}
             onNewShell={
               builtinShellEnabled
-                ? () => createShellFor(isFallback ? undefined : project.address)
+                ? () => handleNewShell(project, Boolean(isFallback))
                 : undefined
             }
           />

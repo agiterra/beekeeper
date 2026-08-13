@@ -16,7 +16,7 @@ import { upsertShellSession } from "./useShellSessions";
  * instance can serve every project group without hooks-in-a-loop.
  */
 export function useCreateShellSession(): {
-  createFor: (projectRef?: string) => void;
+  createFor: (projectRef?: string, cwd?: string) => void;
   creating: boolean;
 } {
   const { grant } = useSessionConsent();
@@ -24,10 +24,14 @@ export function useCreateShellSession(): {
   const [creating, setCreating] = React.useState(false);
 
   const createFor = React.useCallback(
-    (projectRef?: string) => {
+    (projectRef?: string, cwd?: string) => {
       if (creating) return;
       setCreating(true);
-      createShellSession(projectRef !== undefined ? { projectRef } : undefined)
+      createShellSession(
+        projectRef !== undefined || cwd !== undefined
+          ? { projectRef, cwd }
+          : undefined,
+      )
         .then((info) => {
           grant(shellWorkspaceId(info.sessionId));
           // Make the session visible to every consumer (including the screen

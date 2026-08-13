@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import * as React from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { useIdentityQuery } from "@/shared/api/hooks";
@@ -70,7 +71,43 @@ export const projectTerminalsQueryKey = (projectAddress: string) => [
  */
 export function useProjectTerminals(projectAddress: string | null) {
   const identity = useIdentityQuery();
+  const queryClient = useQueryClient();
   const myPubkey = identity.data?.pubkey ?? null;
+
+  // Live announce fan-out: a member opening/closing/renaming a session
+  // refreshes the list immediately; the 30s poll below is the fallback for
+  // missed events (reconnects, replaceable-head races).
+  React.useEffect(() => {
+    if (projectAddress === null) return;
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void relayClient
+      .subscribeLive(
+        {
+          kinds: [KIND_SHELL_SESSION],
+          "#a": [projectAddress],
+          since: Math.floor(Date.now() / 1_000),
+          limit: 100,
+        },
+        () => {
+          void queryClient.invalidateQueries({
+            queryKey: projectTerminalsQueryKey(projectAddress),
+          });
+        },
+      )
+      .then((handle) => {
+        if (disposed) handle?.();
+        else unsubscribe = handle ?? null;
+      })
+      .catch(() => {
+        // Poll fallback still runs.
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [projectAddress, queryClient]);
+
   return useQuery({
     queryKey: projectTerminalsQueryKey(projectAddress ?? "none"),
     enabled: projectAddress !== null,
