@@ -68,15 +68,17 @@ use buzz_sdk::coding_session::{
 
 use commands::{
     decide_lifecycle, CommandContext, CreatePlan, Ignored, LifecycleDecision, ProjectsFile,
-    TurnDecision,
+    ResumePlan, StopPlan, TurnDecision,
 };
 use config::Config;
 use payload::{
     Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope,
-    METADATA_SCHEMA,
+    METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
 };
 use publish::{EventSink, Outbox, Priority};
-use session::{CreateRequest, SessionCommand, SessionEvent, SessionManager, TurnOutcome};
+use session::{
+    CreateRequest, SessionCommand, SessionContinuity, SessionEvent, SessionManager, TurnOutcome,
+};
 use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
 
 /// How often the outbox is drained when nothing else is happening.
@@ -217,10 +219,11 @@ impl Provider {
     /// 1. A create that minted a session record but died before its `commandId`
     ///    reached the ledger would replay into a *second* session for one
     ///    command, so the ledger is reconciled against the records first.
-    /// 2. Every session that was still open is retired: a turn caught mid-flight
+    /// 2. Every session that was still open is detached: a turn caught mid-flight
     ///    gets the terminal `result` item its consumer is waiting on — without
     ///    it the turn renders as running forever — and every open generation
-    ///    gets `disconnected` metadata.
+    ///    gets `disconnected` metadata. The durable record remains resumable;
+    ///    only an explicit `session.stop` retires it.
     pub fn recover(&mut self) -> anyhow::Result<()> {
         let orphans: Vec<(String, String)> = self
             .state
@@ -272,7 +275,6 @@ impl Provider {
             }
             self.state.update_session(&record.session_id, |record| {
                 record.open_turn = None;
-                record.closed = true;
             })?;
             self.publish_metadata(record.channel_id, &target, SessionStatus::Disconnected)?;
         }
@@ -463,6 +465,8 @@ impl Provider {
                 self.enqueue_receipt(channel_id, &command_id, &receipt)
             }
             LifecycleDecision::Create(plan) => self.create_session(*plan).await,
+            LifecycleDecision::Resume(plan) => self.resume_session(plan).await,
+            LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
     }
 
@@ -496,6 +500,7 @@ impl Provider {
             cwd: plan.cwd.clone(),
             title: plan.title.clone(),
             model: plan.model.clone(),
+            resume_cursor: None,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
             agent_env: descriptor
@@ -537,6 +542,7 @@ impl Provider {
             repo_ref: plan.repo_ref.clone(),
             session_ref: plan.session_ref.clone(),
             model: startup.model.clone().or_else(|| plan.model.clone()),
+            resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
             created_at_ms: now_ms(),
             next_seq: 1,
@@ -583,8 +589,161 @@ impl Provider {
             target: "csp",
             command_id = %plan.command_id,
             session_id = %target.session_id,
-            acp_session_id = %startup.acp_session_id,
             "session created"
+        );
+        Ok(())
+    }
+
+    async fn resume_session(&mut self, plan: ResumePlan) -> anyhow::Result<()> {
+        if self
+            .sessions
+            .handle(&plan.target.session_id)
+            .is_some_and(session::SessionHandle::is_live)
+        {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                SESSION_ALREADY_ATTACHED,
+                "the execution is already attached on this provider",
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        }
+
+        let Some(record) = self.state.session(&plan.target.session_id).cloned() else {
+            return Ok(());
+        };
+        let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                PROVIDER_UNAVAILABLE,
+                "the execution's runtime is no longer installed",
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        };
+        let Some(generation) = record
+            .generation
+            .checked_add(1)
+            .filter(|value| *value <= buzz_core::coding_session_command::MAX_SAFE_GENERATION)
+        else {
+            self.state.consume_command(&plan.command_id, now_secs())?;
+            let receipt = LifecycleReceipt::failed(
+                &plan.command_id,
+                PROVIDER_UNAVAILABLE,
+                "the execution generation cannot advance further",
+            );
+            return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+        };
+        let target = CodingSessionTarget {
+            driver: record.driver.clone(),
+            instance_id: self.config.instance_id.clone(),
+            session_id: record.session_id.clone(),
+            generation,
+        };
+        let request = CreateRequest {
+            target: target.clone(),
+            channel_id: record.channel_id,
+            cwd: record.cwd.clone(),
+            title: record.title.clone(),
+            model: record.model.clone(),
+            resume_cursor: record.resume_cursor.clone(),
+            agent_command: descriptor.agent_command.clone(),
+            agent_args: descriptor.agent_args.clone(),
+            agent_env: descriptor
+                .cli_env
+                .iter()
+                .map(|env| (env.name.clone(), env.value.clone()))
+                .collect(),
+            idle_timeout: self.config.idle_timeout,
+            max_turn_duration: self.config.max_turn_duration,
+            idle_shutdown: self.config.session_idle_shutdown,
+            include_thoughts: self.config.include_thoughts,
+        };
+        let startup = match self.sessions.create(request).await {
+            Ok(startup) => startup,
+            Err(failure) => {
+                self.state.consume_command(&plan.command_id, now_secs())?;
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        };
+
+        if let Err(error) = self.state.update_session(&record.session_id, |record| {
+            record.generation = generation;
+            record.next_seq = 1;
+            record.open_turn = None;
+            record.closed = false;
+            record.resume_cursor = Some(startup.acp_session_id.clone());
+            if startup.model.is_some() {
+                record.model = startup.model.clone();
+            }
+        }) {
+            self.sessions.shutdown(&record.session_id);
+            return Err(error.into());
+        }
+        self.state.consume_command(&plan.command_id, now_secs())?;
+
+        let (receipt, status) = match startup.continuity {
+            SessionContinuity::Resumed => (
+                LifecycleReceipt::resumed(&plan.command_id, &target),
+                "session_resumed",
+            ),
+            SessionContinuity::Loaded => (
+                LifecycleReceipt::resumed(&plan.command_id, &target),
+                "session_loaded",
+            ),
+            SessionContinuity::RestartedWithoutContext { reason } => (
+                LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
+                "session_restarted_without_context",
+            ),
+            SessionContinuity::Fresh => (
+                LifecycleReceipt::resumed_without_context(
+                    &plan.command_id,
+                    &target,
+                    "the provider had no saved session cursor",
+                ),
+                "session_restarted_without_context",
+            ),
+        };
+        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
+        self.enqueue_transcript(
+            plan.channel_id,
+            &target,
+            None,
+            payload::status_item(status),
+            Priority::High,
+        )?;
+        self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
+        tracing::info!(
+            target: "csp",
+            command_id = %plan.command_id,
+            session_id = %target.session_id,
+            generation,
+            "session generation attached"
+        );
+        Ok(())
+    }
+
+    fn stop_session(&mut self, plan: StopPlan) -> anyhow::Result<()> {
+        // Persist the operator's terminal intent before signalling the actor.
+        // If the process dies between this write and command-ledger append, a
+        // replay is harmless and completes the same stop transaction.
+        self.state
+            .update_session(&plan.target.session_id, |record| {
+                record.closed = true;
+                record.open_turn = None;
+            })?;
+        self.state.consume_command(&plan.command_id, now_secs())?;
+        self.sessions.shutdown(&plan.target.session_id);
+        let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
+        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
+        self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Stopped)?;
+        tracing::info!(
+            target: "csp",
+            command_id = %plan.command_id,
+            session_id = %plan.target.session_id,
+            "session stopped"
         );
         Ok(())
     }
@@ -648,6 +807,7 @@ impl Provider {
             now_secs: now_secs(),
             horizon_secs: self.config.command_horizon.as_secs(),
             max_sessions: self.config.max_sessions,
+            active_session_count: self.sessions.live_count(),
             state: &self.state,
             projects,
         }
@@ -829,13 +989,24 @@ impl Provider {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
                     return Ok(());
                 };
-                let (item, status, fatal) = turn_result(&outcome, duration_ms, usage.as_deref());
+                let (item, status) = turn_result(&outcome, duration_ms, usage.as_deref());
                 self.enqueue_transcript(channel_id, &target, Some(&turn_id), item, Priority::High)?;
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = None;
-                    record.closed |= fatal;
                 })?;
-                self.publish_metadata(channel_id, &target, status)?;
+                let stopped = self
+                    .state
+                    .session(&session_id)
+                    .is_some_and(|record| record.closed);
+                self.publish_metadata(
+                    channel_id,
+                    &target,
+                    if stopped {
+                        SessionStatus::Stopped
+                    } else {
+                        status
+                    },
+                )?;
             }
             SessionEvent::TranscriptItems {
                 session_id,
@@ -882,11 +1053,22 @@ impl Provider {
                     return Ok(());
                 };
                 tracing::info!(target: "csp", %session_id, "session ended: {reason:?}");
+                let stopped = self
+                    .state
+                    .session(&session_id)
+                    .is_some_and(|record| record.closed);
                 self.state.update_session(&session_id, |record| {
                     record.open_turn = None;
-                    record.closed = true;
                 })?;
-                self.publish_metadata(channel_id, &target, SessionStatus::Disconnected)?;
+                self.publish_metadata(
+                    channel_id,
+                    &target,
+                    if stopped {
+                        SessionStatus::Stopped
+                    } else {
+                        SessionStatus::Disconnected
+                    },
+                )?;
             }
         }
         Ok(())
@@ -930,7 +1112,7 @@ fn turn_result(
     outcome: &TurnOutcome,
     duration_ms: u64,
     usage: Option<&TurnUsage>,
-) -> (serde_json::Value, SessionStatus, bool) {
+) -> (serde_json::Value, SessionStatus) {
     let cost = usage.map(turn_cost).unwrap_or_default();
     match outcome {
         TurnOutcome::Completed { stop_reason } => {
@@ -950,7 +1132,6 @@ fn turn_result(
             (
                 payload::result_item(subtype, duration_ms, stop_reason_text(stop_reason), cost),
                 SessionStatus::Idle,
-                false,
             )
         }
         TurnOutcome::Cancelled => (
@@ -961,7 +1142,6 @@ fn turn_result(
                 cost,
             ),
             SessionStatus::Interrupted,
-            false,
         ),
         TurnOutcome::Failed {
             message,
@@ -973,7 +1153,6 @@ fn turn_result(
             } else {
                 SessionStatus::Failed
             },
-            *agent_gone,
         ),
     }
 }
@@ -1015,7 +1194,7 @@ mod tests {
 
     use nostr::Keys;
 
-    use crate::session::testing::{fake_agent, GOOD_AGENT, STALLING_AGENT};
+    use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
 
     struct CollectingSink {
         events: Mutex<Vec<Event>>,
@@ -1281,6 +1460,26 @@ mod tests {
             target,
             serde_json::json!({ "type": "thread.turn.interrupt" }),
         )
+    }
+
+    fn lifecycle_target_event(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        action: &str,
+        target: &CodingSessionTarget,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": action,
+                "session": target,
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+            },
+        })
+        .to_string();
+        signed_lifecycle_event(channel_id, content)
     }
 
     fn command_event(
@@ -1680,8 +1879,119 @@ mod tests {
         assert_eq!(metadata.last().expect("metadata")["status"], "disconnected");
 
         let record = restarted.state().session(&session_id).expect("session");
-        assert!(record.closed);
+        assert!(
+            !record.closed,
+            "process death detaches the generation but does not override durable stop intent"
+        );
         assert!(record.open_turn.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_restart_can_resume_into_a_new_generation_and_stop_it_durably() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let keys = Keys::generate();
+        let agent = fake_agent(dir.path(), "resumable-agent", RESUMABLE_AGENT);
+
+        let session_id = {
+            let mut first = Provider::new(config_of(
+                keys.clone(),
+                &state_dir,
+                Some(&projects),
+                agent.clone(),
+            ))
+            .expect("provider");
+            let create = create_event(&first, channel_id, "create-resumable");
+            first
+                .handle_command_event(channel_id, &create)
+                .await
+                .expect("create");
+            let record = first.state().sessions().next().expect("session");
+            assert_eq!(record.resume_cursor.as_deref(), Some("saved-acp-session"));
+            record.session_id.clone()
+        };
+
+        let mut restarted = Provider::new(config_of(
+            keys.clone(),
+            &state_dir,
+            Some(&projects),
+            agent.clone(),
+        ))
+        .expect("provider");
+        restarted.recover().expect("recover");
+        let previous = restarted
+            .state()
+            .session(&session_id)
+            .expect("session")
+            .target(&restarted.config.instance_id);
+        assert_eq!(previous.generation, 1);
+        assert!(
+            !restarted
+                .state()
+                .session(&session_id)
+                .expect("session")
+                .closed
+        );
+
+        let resume = lifecycle_target_event(
+            &restarted,
+            channel_id,
+            "resume-1",
+            "session.resume",
+            &previous,
+        );
+        restarted
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+        let current = restarted
+            .state()
+            .session(&session_id)
+            .expect("session")
+            .target(&restarted.config.instance_id);
+        assert_eq!(current.generation, 2);
+        assert!(restarted.sessions.handle(&session_id).is_some());
+
+        let stale_turn = turn_event(channel_id, "stale-after-resume", &previous);
+        restarted
+            .handle_command_event(channel_id, &stale_turn)
+            .await
+            .expect("stale turn");
+        assert!(
+            !restarted.state().is_command_consumed("stale-after-resume"),
+            "the old generation stays fenced after reattachment"
+        );
+
+        let stop =
+            lifecycle_target_event(&restarted, channel_id, "stop-1", "session.stop", &current);
+        restarted
+            .handle_command_event(channel_id, &stop)
+            .await
+            .expect("stop");
+        assert!(
+            restarted
+                .state()
+                .session(&session_id)
+                .expect("session")
+                .closed
+        );
+
+        drop(restarted);
+        let mut after_stop =
+            Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
+        after_stop.recover().expect("recover");
+        assert!(
+            after_stop
+                .state()
+                .session(&session_id)
+                .expect("session")
+                .closed
+        );
+        assert_eq!(after_stop.sessions.live_count(), 0);
     }
 
     /// A recovered session keeps the driver it was created under even when its
@@ -1713,6 +2023,7 @@ mod tests {
                     repo_ref: None,
                     session_ref: None,
                     model: None,
+                    resume_cursor: Some("private-acp-cursor".into()),
                     title: None,
                     created_at_ms: now_ms(),
                     next_seq: 3,

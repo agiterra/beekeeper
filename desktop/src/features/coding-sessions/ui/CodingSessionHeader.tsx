@@ -109,7 +109,7 @@ export function CodingSessionHeader({
             "h-2 w-2 rounded-full",
             status.kind === "working"
               ? "bg-emerald-500"
-              : status.kind === "idle"
+              : status.kind === "idle" || status.kind === "ended"
                 ? "bg-muted-foreground/50"
                 : "bg-amber-500",
           )}

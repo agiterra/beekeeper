@@ -8,6 +8,15 @@ import {
   type CodingSessionCommandTarget,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
+  createCodingSessionLifecycleCommandId,
+  publishCodingSessionResume,
+  publishCodingSessionStop,
+} from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import type {
+  CodingSessionStatus,
+  CodingSessionWorkspaceStatus,
+} from "@/features/coding-sessions/lib/codingSessionTypes";
+import {
   getCodingSessionComposerState,
   shouldSubmitCodingSessionComposerKey,
 } from "@/features/coding-sessions/lib/codingSessionComposerModel";
@@ -31,14 +40,12 @@ type CodingSessionComposerProps = {
     model: string | null;
     providerLabel: string | null;
     runtimeLabel: string | null;
-    status: {
-      kind: "working" | "idle" | "unknown";
-      label: string;
-    };
+    status: CodingSessionWorkspaceStatus;
   };
   immersive?: boolean;
   isMember: boolean;
   isWorking: boolean;
+  lifecycleStatus?: CodingSessionStatus;
   layout?: "inline" | "stacked";
   /**
    * Observe the live draft. The umbrella composer uses this to follow a typed
@@ -57,6 +64,7 @@ type CodingSessionComposerProps = {
    * Applied once per `id`; the person keeps full control of the text after.
    */
   prefill?: { id: string; text: string } | null;
+  providerAuthorityPubkey?: string | null;
   target: CodingSessionCommandTarget;
   variant?: "panel" | "floating";
 };
@@ -70,10 +78,12 @@ export function CodingSessionComposer({
   immersive = false,
   isMember,
   isWorking,
+  lifecycleStatus,
   layout = "inline",
   onTextChange,
   prepareText,
   prefill = null,
+  providerAuthorityPubkey = null,
   target,
   variant = "panel",
 }: CodingSessionComposerProps) {
@@ -88,7 +98,7 @@ export function CodingSessionComposer({
     setText(prefill.text);
   }
   const [pendingAction, setPendingAction] = React.useState<
-    "send" | "interrupt" | null
+    "send" | "interrupt" | "resume" | "stop" | null
   >(null);
   const [error, setError] = React.useState<string | null>(null);
   const isSending = pendingAction !== null;
@@ -101,9 +111,16 @@ export function CodingSessionComposer({
     isWorking,
     text: preparedText,
   });
-  const canSubmitText = state.canSend && (!immersive || !isWorking || canSteer);
+  const isDisconnected = lifecycleStatus === "disconnected";
+  const isEnded = lifecycleStatus === "stopped";
+  const isUnavailable = isDisconnected || isEnded;
+  const canSubmitText =
+    !isUnavailable && state.canSend && (!immersive || !isWorking || canSteer);
   const editorDisabled =
-    !isMember || isSending || (immersive && isWorking && !canSteer);
+    !isMember ||
+    isSending ||
+    isUnavailable ||
+    (immersive && isWorking && !canSteer);
 
   const submit = React.useCallback(async () => {
     if (!canSubmitText || isSending) return;
@@ -153,6 +170,59 @@ export function CodingSessionComposer({
     }
   }, [canInterrupt, channelId, isMember, isSending, target]);
 
+  const handleResume = React.useCallback(async () => {
+    if (!isMember || !isDisconnected || isSending || !providerAuthorityPubkey) {
+      return;
+    }
+    setPendingAction("resume");
+    setError(null);
+    try {
+      await publishCodingSessionResume({
+        channelId,
+        commandId: createCodingSessionLifecycleCommandId(),
+        target,
+        providerAuthorityPubkey,
+      });
+    } catch (resumeError) {
+      setError(
+        resumeError instanceof Error
+          ? resumeError.message
+          : "Unable to reconnect the coding session.",
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  }, [
+    channelId,
+    isDisconnected,
+    isMember,
+    isSending,
+    providerAuthorityPubkey,
+    target,
+  ]);
+
+  const handleSessionStop = React.useCallback(async () => {
+    if (!isMember || isSending || !providerAuthorityPubkey) return;
+    setPendingAction("stop");
+    setError(null);
+    try {
+      await publishCodingSessionStop({
+        channelId,
+        commandId: createCodingSessionLifecycleCommandId(),
+        target,
+        providerAuthorityPubkey,
+      });
+    } catch (stopError) {
+      setError(
+        stopError instanceof Error
+          ? stopError.message
+          : "Unable to stop the coding session.",
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  }, [channelId, isMember, isSending, providerAuthorityPubkey, target]);
+
   return (
     <div
       className={cn(
@@ -174,6 +244,38 @@ export function CodingSessionComposer({
         </p>
       ) : null}
       {error ? <p className="mb-2 text-sm text-destructive">{error}</p> : null}
+      {isDisconnected ? (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            This provider execution is disconnected.
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              data-testid="coding-session-composer-resume"
+              disabled={!isMember || !providerAuthorityPubkey || isSending}
+              onClick={() => void handleResume()}
+              size="sm"
+              type="button"
+            >
+              {pendingAction === "resume" ? "Reconnecting…" : "Reconnect"}
+            </Button>
+            <Button
+              data-testid="coding-session-composer-session-stop"
+              disabled={!isMember || !providerAuthorityPubkey || isSending}
+              onClick={() => void handleSessionStop()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {pendingAction === "stop" ? "Stopping…" : "End session"}
+            </Button>
+          </div>
+        </div>
+      ) : isEnded ? (
+        <p className="mb-2 rounded-xl border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+          This provider execution has ended.
+        </p>
+      ) : null}
       <div
         className={cn(
           "flex gap-2",
@@ -196,9 +298,13 @@ export function CodingSessionComposer({
             }
           }}
           placeholder={
-            immersive && isWorking && !canSteer
-              ? "Current turn in progress…"
-              : "Steer this coding session…"
+            isEnded
+              ? "This execution has ended."
+              : isDisconnected
+                ? "Reconnect this execution to continue…"
+                : immersive && isWorking && !canSteer
+                  ? "Current turn in progress…"
+                  : "Steer this coding session…"
           }
           value={text}
         />
@@ -212,7 +318,7 @@ export function CodingSessionComposer({
           >
             <Button
               data-testid="coding-session-composer-primary"
-              disabled={!state.canSend || isSending}
+              disabled={!canSubmitText || isSending}
               onClick={() => void handlePrimaryAction()}
               type="button"
             >
@@ -244,6 +350,7 @@ export function CodingSessionComposer({
           context={controlContext}
           isMember={isMember}
           isWorking={isWorking}
+          isUnavailable={isUnavailable}
           onInterrupt={() => void handleStop()}
           onSteer={() => void handlePrimaryAction()}
           pendingAction={pendingAction}
@@ -260,6 +367,7 @@ function ImmersiveCodingSessionControlDeck({
   context,
   isMember,
   isWorking,
+  isUnavailable,
   onInterrupt,
   onSteer,
   pendingAction,
@@ -270,9 +378,10 @@ function ImmersiveCodingSessionControlDeck({
   context: CodingSessionComposerProps["controlContext"];
   isMember: boolean;
   isWorking: boolean;
+  isUnavailable: boolean;
   onInterrupt: () => void;
   onSteer: () => void;
-  pendingAction: "send" | "interrupt" | null;
+  pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   steerDisabled: boolean;
 }) {
   const availableCapabilities = context
@@ -314,7 +423,7 @@ function ImmersiveCodingSessionControlDeck({
         className="ml-auto flex shrink-0 items-center gap-1.5"
         data-testid="coding-session-composer-actions"
       >
-        {isWorking ? (
+        {isUnavailable ? null : isWorking ? (
           <>
             {canSteer ? (
               <Button

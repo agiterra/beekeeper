@@ -1,7 +1,8 @@
 //! Provider-neutral coding-session lifecycle command contract.
 //!
 //! Events use [`crate::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND`] and public
-//! JSON so an installed provider adapter can create a session. Event authorship
+//! JSON so an installed provider adapter can create, resume, or stop a session.
+//! Event authorship
 //! is the authority; content carries no claimed actor identity or host-specific
 //! execution state — notably, never a filesystem path.
 //!
@@ -28,9 +29,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::coding_session_command::{
+    CodingSessionTarget, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
+};
 use crate::kind::KIND_PROJECT;
 
-/// The only currently supported coding-session lifecycle command schema.
+/// The currently supported coding-session lifecycle command envelope schema.
 pub const CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA: &str =
     "buzz-coding-session-lifecycle-command/v1";
 /// The version tag placed on each coding-session lifecycle command event.
@@ -88,6 +92,22 @@ pub enum CodingSessionLifecycleAction {
         title: Option<String>,
         /// Optional first turn to deliver after session creation.
         initial_turn: Option<String>,
+    },
+    /// Reattach a disconnected, non-stopped execution as a new generation.
+    #[serde(rename = "session.resume")]
+    SessionResume {
+        /// Exact previous generation being resumed.
+        session: CodingSessionTarget,
+        /// Signing pubkey of the provider authority that owns the target.
+        provider_authority_pubkey: String,
+    },
+    /// Durably stop an execution so a provider restart cannot revive it.
+    #[serde(rename = "session.stop")]
+    SessionStop {
+        /// Exact current generation being stopped.
+        session: CodingSessionTarget,
+        /// Signing pubkey of the provider authority that owns the target.
+        provider_authority_pubkey: String,
     },
 }
 
@@ -151,6 +171,17 @@ impl CodingSessionLifecycleCommandPayload {
                     MAX_LIFECYCLE_INITIAL_TURN_BYTES,
                 )?;
             }
+            CodingSessionLifecycleAction::SessionResume {
+                session,
+                provider_authority_pubkey,
+            }
+            | CodingSessionLifecycleAction::SessionStop {
+                session,
+                provider_authority_pubkey,
+            } => {
+                validate_target(session)?;
+                validate_provider_authority_pubkey(provider_authority_pubkey)?;
+            }
         }
         Ok(())
     }
@@ -178,21 +209,29 @@ pub fn decode_coding_session_lifecycle_command(
     let action = value
         .get("action")
         .ok_or_else(|| "coding-session lifecycle command payload missing action".to_string())?;
-    require_exact_fields_with_optional(
-        action,
-        &[
-            "type",
-            "projectRef",
-            "repoRef",
-            "providerInstanceRef",
-            "providerAuthorityPubkey",
-            "model",
-            "title",
-            "initialTurn",
-        ],
-        &["sessionRef"],
-        "action",
-    )?;
+    match action.get("type").and_then(Value::as_str) {
+        Some("session.create") => require_exact_fields_with_optional(
+            action,
+            &[
+                "type",
+                "projectRef",
+                "repoRef",
+                "providerInstanceRef",
+                "providerAuthorityPubkey",
+                "model",
+                "title",
+                "initialTurn",
+            ],
+            &["sessionRef"],
+            "action",
+        )?,
+        Some("session.resume" | "session.stop") => require_exact_fields(
+            action,
+            &["type", "session", "providerAuthorityPubkey"],
+            "action",
+        )?,
+        _ => return Err("coding-session lifecycle command action type is unsupported".into()),
+    }
 
     // Decode a second time into the strict serde type. This preserves serde's
     // duplicate-field detection, which a Value alone cannot represent.
@@ -326,6 +365,20 @@ fn validate_provider_authority_pubkey(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_target(target: &CodingSessionTarget) -> Result<(), String> {
+    for (field, value) in [
+        ("action.session.driver", &target.driver),
+        ("action.session.instanceId", &target.instance_id),
+        ("action.session.sessionId", &target.session_id),
+    ] {
+        validate_required(value, field, MAX_IDENTIFIER_BYTES)?;
+    }
+    if target.generation == 0 || target.generation > MAX_SAFE_GENERATION {
+        return Err("action.session.generation must be a positive safe integer".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,18 +440,61 @@ mod tests {
         assert!(decode_coding_session_lifecycle_command(&nulls).is_ok());
     }
 
+    #[test]
+    fn resume_and_stop_round_trip_exact_generation_targets() {
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "instance-1".into(),
+            session_id: "session-1".into(),
+            generation: 7,
+        };
+        for action in [
+            CodingSessionLifecycleAction::SessionResume {
+                session: target.clone(),
+                provider_authority_pubkey: "ab".repeat(32),
+            },
+            CodingSessionLifecycleAction::SessionStop {
+                session: target.clone(),
+                provider_authority_pubkey: "ab".repeat(32),
+            },
+        ] {
+            let payload = CodingSessionLifecycleCommandPayload {
+                schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
+                command_id: "lifecycle-1".into(),
+                action,
+            };
+            let content = serde_json::to_string(&payload).unwrap();
+            assert_eq!(
+                decode_coding_session_lifecycle_command(&content).unwrap(),
+                payload
+            );
+        }
+
+        let smuggled = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"lifecycle-1","action":{{"type":"session.resume","session":{{"driver":"codex-acp","instanceId":"instance-1","sessionId":"session-1","generation":7}},"providerAuthorityPubkey":"{}","cwd":"/tmp"}}}}"#,
+            "ab".repeat(32)
+        );
+        assert!(decode_coding_session_lifecycle_command(&smuggled).is_err());
+    }
+
     /// Fork amendment: a session need not belong to a project.
     #[test]
     fn accepts_a_standalone_session_with_no_project_ref() {
         let mut payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *project_ref = None;
         assert!(payload.validate().is_ok());
 
         let content = serde_json::to_string(&payload).unwrap();
         let decoded = decode_coding_session_lifecycle_command(&content).unwrap();
         assert_eq!(decoded, payload);
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &decoded.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
         assert!(project_ref.is_none());
     }
 
@@ -436,7 +532,10 @@ mod tests {
     fn accepts_both_the_8_key_and_9_key_action_forms() {
         let historical = lifecycle_content("null");
         let decoded = decode_coding_session_lifecycle_command(&historical).unwrap();
-        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
         assert!(
             session_ref.is_none(),
             "the pre-amendment form claims no umbrella"
@@ -444,12 +543,18 @@ mod tests {
 
         let explicit_null = lifecycle_content_with_session_ref("null");
         let decoded = decode_coding_session_lifecycle_command(&explicit_null).unwrap();
-        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
         assert!(session_ref.is_none());
 
         let claimed = lifecycle_content_with_session_ref(&format!("\"{}\"", session_reference()));
         let decoded = decode_coding_session_lifecycle_command(&claimed).unwrap();
-        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
         assert_eq!(session_ref.as_deref(), Some(session_reference().as_str()));
     }
 
@@ -459,7 +564,10 @@ mod tests {
     #[test]
     fn new_producers_always_write_the_session_ref_key() {
         let mut payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *session_ref = None;
         let content = serde_json::to_string(&payload).unwrap();
         assert!(content.contains("\"sessionRef\":null"));
@@ -503,7 +611,10 @@ mod tests {
         }
 
         let mut payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *session_ref = Some("umbrella".into());
         assert!(payload.validate().is_err());
     }
@@ -531,7 +642,10 @@ mod tests {
     #[test]
     fn rejects_a_present_but_malformed_project_ref() {
         let mut payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *project_ref = Some("project".into());
         assert!(payload.validate().is_err());
 
@@ -585,17 +699,26 @@ mod tests {
         let CodingSessionLifecycleAction::SessionCreate {
             provider_authority_pubkey,
             ..
-        } = &mut payload.action;
+        } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *provider_authority_pubkey = "AB".repeat(32);
         assert!(payload.validate().is_err());
 
         payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { repo_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { repo_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *repo_ref = Some("\n".into());
         assert!(payload.validate().is_err());
 
         payload = valid_payload();
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         *project_ref = Some(" ".into());
         assert!(payload.validate().is_err());
     }
@@ -619,15 +742,22 @@ mod tests {
                 ));
                 *initial_turn = Some("🐝".repeat(MAX_LIFECYCLE_INITIAL_TURN_BYTES / 4));
             }
+            _ => panic!("expected create action"),
         }
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &payload.action
+        else {
+            panic!("expected create action")
+        };
         assert_eq!(
             project_ref.as_deref().map(str::len),
             Some(MAX_LIFECYCLE_REFERENCE_BYTES)
         );
         assert!(payload.validate().is_ok());
 
-        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action;
+        let CodingSessionLifecycleAction::SessionCreate { project_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         project_ref.as_mut().unwrap().push('a');
         assert!(payload.validate().is_err());
 
@@ -635,7 +765,10 @@ mod tests {
             project_ref,
             initial_turn,
             ..
-        } = &mut payload.action;
+        } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
         project_ref.as_mut().unwrap().pop();
         initial_turn.as_mut().unwrap().push('a');
         assert!(payload.validate().is_err());

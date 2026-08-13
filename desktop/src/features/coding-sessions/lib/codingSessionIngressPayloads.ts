@@ -61,6 +61,20 @@ export type CodingSessionLifecycleReceipt =
       status: "failed";
       session: null;
       error: { code: string; message: string };
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "resumed" | "stopped";
+      session: CodingSessionCommandTarget;
+      error: null;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "resumed_without_context";
+      session: CodingSessionCommandTarget;
+      error: { code: "CONTEXT_NOT_RECOVERED"; message: string };
     };
 
 /**
@@ -157,6 +171,39 @@ export function parseCodingSessionLifecycleReceipt(
       session,
       error: Object.freeze({
         code: "INITIAL_TURN_FAILED" as const,
+        message: value.error.message,
+      }),
+    });
+  }
+  if (value.status === "resumed" || value.status === "stopped") {
+    const session = decodeTarget(value.session);
+    if (!session || value.error !== null) return null;
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId: value.commandId,
+      status: value.status,
+      session,
+      error: null,
+    });
+  }
+  if (value.status === "resumed_without_context") {
+    const session = decodeTarget(value.session);
+    if (
+      !session ||
+      !isPlainRecord(value.error) ||
+      !hasExactKeys(value.error, ["code", "message"]) ||
+      value.error.code !== "CONTEXT_NOT_RECOVERED" ||
+      !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId: value.commandId,
+      status: "resumed_without_context",
+      session,
+      error: Object.freeze({
+        code: "CONTEXT_NOT_RECOVERED" as const,
         message: value.error.message,
       }),
     });
@@ -309,6 +356,7 @@ function isCodingSessionStatus(value: unknown): value is CodingSessionStatus {
       "running",
       "waiting_for_input",
       "completed",
+      "stopped",
       "failed",
       "interrupted",
       "disconnected",

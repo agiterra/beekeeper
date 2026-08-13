@@ -256,4 +256,8 @@ test("workspace status derives from provider-neutral transcript lifecycle", () =
     kind: "unknown",
     label: "Status unknown",
   });
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "stopped"), {
+    kind: "ended",
+    label: "Ended",
+  });
 });

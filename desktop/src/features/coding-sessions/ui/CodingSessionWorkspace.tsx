@@ -195,7 +195,10 @@ function ReadyCodingSessionWorkspace({
       messages,
       scrollContainerRef: scrollRef,
     });
-  const status = deriveCodingSessionWorkspaceStatus(session.transcript);
+  const status = deriveCodingSessionWorkspaceStatus(
+    session.transcript,
+    session.status,
+  );
   const taskModel = React.useMemo(
     () => deriveCodingSessionTaskModel(session.transcript),
     [session.transcript],
@@ -324,7 +327,9 @@ function ReadyCodingSessionWorkspace({
                   immersive
                   isMember={isMember}
                   isWorking={isWorking}
+                  lifecycleStatus={session.status}
                   layout={isNarrow ? "stacked" : "inline"}
+                  providerAuthorityPubkey={session.providerAuthorityPubkey}
                   target={session.commandTarget}
                   variant="floating"
                 />

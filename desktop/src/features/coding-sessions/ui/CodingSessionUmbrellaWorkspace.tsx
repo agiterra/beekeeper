@@ -540,6 +540,9 @@ export function umbrellaWorkspaceStatus(
   if (umbrella.status === "unknown") {
     return { kind: "unknown", label: "Status unknown" };
   }
+  if (umbrella.status === "stopped") {
+    return { kind: "ended", label: "Ended" };
+  }
   return { kind: "idle", label: "Idle" };
 }
 

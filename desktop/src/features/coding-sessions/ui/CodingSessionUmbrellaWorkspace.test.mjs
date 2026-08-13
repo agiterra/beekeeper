@@ -446,14 +446,14 @@ test("without a resolvable signed fact the prefill degrades to a plain quote", (
   assert.match(prefill.text, /> The failing test/);
 });
 
-test("umbrella status maps onto the header's honest three states", () => {
+test("umbrella status maps onto the header's honest states", () => {
   assert.deepEqual(umbrellaWorkspaceStatus({ status: "running" }), {
     kind: "working",
     label: "Working",
   });
-  assert.deepEqual(umbrellaWorkspaceStatus({ status: "completed" }), {
-    kind: "idle",
-    label: "Idle",
+  assert.deepEqual(umbrellaWorkspaceStatus({ status: "stopped" }), {
+    kind: "ended",
+    label: "Ended",
   });
   assert.deepEqual(umbrellaWorkspaceStatus({ status: "unknown" }), {
     kind: "unknown",

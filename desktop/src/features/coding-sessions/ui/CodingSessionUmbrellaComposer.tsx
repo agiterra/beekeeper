@@ -260,7 +260,10 @@ function ExecutionComposer({
 }) {
   const record = participant.execution.activeGeneration;
   const target = record.commandTarget;
-  const status = deriveCodingSessionWorkspaceStatus(record.transcript);
+  const status = deriveCodingSessionWorkspaceStatus(
+    record.transcript,
+    record.status,
+  );
   const isWorking = status.kind === "working";
   const runtime = record.runtime ?? record.provider;
   const runtimeLabel = runtime
@@ -297,10 +300,12 @@ function ExecutionComposer({
       immersive
       isMember={isMember}
       isWorking={isWorking}
+      lifecycleStatus={record.status}
       layout={layout}
       onTextChange={onTextChange}
       prepareText={prepareText}
       prefill={prefill}
+      providerAuthorityPubkey={participant.execution.signerPubkey}
       target={target}
       variant="floating"
     />

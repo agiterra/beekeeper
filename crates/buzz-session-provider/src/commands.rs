@@ -61,6 +61,10 @@ pub enum LifecycleDecision {
     },
     /// Create a session.
     Create(Box<CreatePlan>),
+    /// Reattach a disconnected session as a new generation.
+    Resume(ResumePlan),
+    /// Durably stop a session.
+    Stop(StopPlan),
 }
 
 /// A validated, resolved create request.
@@ -87,6 +91,28 @@ pub struct CreatePlan {
     pub title: Option<String>,
     /// First turn to deliver after creation, or `None`.
     pub initial_turn: Option<String>,
+}
+
+/// A validated request to reattach one exact prior generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumePlan {
+    /// Lifecycle command being answered.
+    pub command_id: String,
+    /// Channel the execution belongs to.
+    pub channel_id: Uuid,
+    /// Exact disconnected generation the operator observed.
+    pub target: CodingSessionTarget,
+}
+
+/// A validated request to durably stop one exact current generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopPlan {
+    /// Lifecycle command being answered.
+    pub command_id: String,
+    /// Channel the execution belongs to.
+    pub channel_id: Uuid,
+    /// Exact current generation the operator observed.
+    pub target: CodingSessionTarget,
 }
 
 /// What to do about one 44220 turn command.
@@ -126,6 +152,8 @@ pub struct CommandContext<'a> {
     pub horizon_secs: u64,
     /// Ceiling on concurrently live sessions.
     pub max_sessions: usize,
+    /// Number of adapter actors currently attached in this process.
+    pub active_session_count: usize,
     /// Durable state: dedupe ledger and session records.
     pub state: &'a StateStore,
     /// Host-local working-directory map, freshly read.
@@ -149,16 +177,20 @@ pub fn decide_lifecycle(
         Ok(payload) => payload,
         Err(error) => return LifecycleDecision::Ignore(Ignored::Malformed(error)),
     };
-    let CodingSessionLifecycleAction::SessionCreate {
-        project_ref,
-        repo_ref,
-        session_ref,
-        provider_instance_ref,
-        provider_authority_pubkey,
-        model,
-        title,
-        initial_turn,
-    } = &payload.action;
+    let provider_authority_pubkey = match &payload.action {
+        CodingSessionLifecycleAction::SessionCreate {
+            provider_authority_pubkey,
+            ..
+        }
+        | CodingSessionLifecycleAction::SessionResume {
+            provider_authority_pubkey,
+            ..
+        }
+        | CodingSessionLifecycleAction::SessionStop {
+            provider_authority_pubkey,
+            ..
+        } => provider_authority_pubkey,
+    };
 
     // Addressing before dedupe: a command for another adapter must not consume
     // an id in *this* adapter's ledger, or a later legitimate reuse would be
@@ -172,6 +204,56 @@ pub fn decide_lifecycle(
     if context.past_horizon(created_at) {
         return LifecycleDecision::Ignore(Ignored::PastHorizon);
     }
+
+    if let CodingSessionLifecycleAction::SessionResume { session, .. }
+    | CodingSessionLifecycleAction::SessionStop { session, .. } = &payload.action
+    {
+        if session.instance_id != context.instance_id {
+            return LifecycleDecision::Ignore(Ignored::NotAddressed);
+        }
+        let Some(record) = context.state.session(&session.session_id) else {
+            return LifecycleDecision::Ignore(Ignored::UnknownTarget);
+        };
+        if record.channel_id != channel_id || record.driver != session.driver {
+            return LifecycleDecision::Ignore(Ignored::UnknownTarget);
+        }
+        if record.generation != session.generation {
+            return LifecycleDecision::Ignore(Ignored::StaleGeneration);
+        }
+
+        return match &payload.action {
+            CodingSessionLifecycleAction::SessionResume { .. } if record.closed => {
+                LifecycleDecision::Ignore(Ignored::SessionClosed)
+            }
+            CodingSessionLifecycleAction::SessionResume { .. } => {
+                LifecycleDecision::Resume(ResumePlan {
+                    command_id: payload.command_id,
+                    channel_id,
+                    target: session.clone(),
+                })
+            }
+            CodingSessionLifecycleAction::SessionStop { .. } => LifecycleDecision::Stop(StopPlan {
+                command_id: payload.command_id,
+                channel_id,
+                target: session.clone(),
+            }),
+            CodingSessionLifecycleAction::SessionCreate { .. } => unreachable!(),
+        };
+    }
+
+    let CodingSessionLifecycleAction::SessionCreate {
+        project_ref,
+        repo_ref,
+        session_ref,
+        provider_instance_ref,
+        provider_authority_pubkey: _,
+        model,
+        title,
+        initial_turn,
+    } = &payload.action
+    else {
+        unreachable!()
+    };
 
     // The command is addressed to *this* signer, so no other process will ever
     // answer it. A ref naming no descriptor therefore fails loudly — silence
@@ -197,7 +279,7 @@ pub fn decide_lifecycle(
         };
     }
 
-    if context.state.live_session_count() >= context.max_sessions {
+    if context.active_session_count >= context.max_sessions {
         return LifecycleDecision::Fail {
             command_id: payload.command_id.clone(),
             code: SESSION_LIMIT,
@@ -466,6 +548,7 @@ mod tests {
             now_secs,
             horizon_secs: 86_400,
             max_sessions: 4,
+            active_session_count: state.live_session_count(),
             state,
             projects,
         }
@@ -489,6 +572,17 @@ mod tests {
         )
     }
 
+    fn lifecycle_target_content(
+        action: &str,
+        command_id: &str,
+        session_id: &str,
+        generation: u64,
+    ) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"{command_id}","action":{{"type":"{action}","session":{{"driver":"claude-agent-acp","instanceId":"instance-1","sessionId":"{session_id}","generation":{generation}}},"providerAuthorityPubkey":"{AUTHORITY}"}}}}"#
+        )
+    }
+
     fn session(session_id: &str, cwd: &Path) -> SessionRecord {
         SessionRecord {
             session_id: session_id.to_owned(),
@@ -503,6 +597,7 @@ mod tests {
             repo_ref: None,
             session_ref: None,
             model: None,
+            resume_cursor: None,
             title: None,
             created_at_ms: 0,
             next_seq: 1,
@@ -724,6 +819,64 @@ mod tests {
                 &create_content("create-1", "null", AUTHORITY)
             ),
             LifecycleDecision::Ignore(Ignored::AlreadyConsumed)
+        );
+    }
+
+    #[test]
+    fn resume_and_stop_are_fenced_to_the_exact_persisted_generation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .insert_session(session("s1", dir.path()))
+            .expect("insert");
+        let projects = ProjectsFile::default();
+        let context = ctx(&state, &projects, 1_000);
+
+        assert!(matches!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.resume", "resume-1", "s1", 1),
+            ),
+            LifecycleDecision::Resume(ResumePlan { target, .. }) if target.generation == 1
+        ));
+        assert!(matches!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-1", "s1", 1),
+            ),
+            LifecycleDecision::Stop(StopPlan { target, .. }) if target.generation == 1
+        ));
+        assert_eq!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.resume", "resume-stale", "s1", 2),
+            ),
+            LifecycleDecision::Ignore(Ignored::StaleGeneration)
+        );
+    }
+
+    #[test]
+    fn a_durably_stopped_session_cannot_resume() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let mut stopped = session("s1", dir.path());
+        stopped.closed = true;
+        state.insert_session(stopped).expect("insert");
+        let projects = ProjectsFile::default();
+        assert_eq!(
+            decide_lifecycle(
+                &ctx(&state, &projects, 1_000),
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.resume", "resume-1", "s1", 1),
+            ),
+            LifecycleDecision::Ignore(Ignored::SessionClosed)
         );
     }
 

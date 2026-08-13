@@ -127,7 +127,11 @@ const IDLE_STATUSES = new Set([
 
 export function deriveCodingSessionWorkspaceStatus(
   transcript: CodingSessionCatalogRecord["transcript"],
+  lifecycleStatus?: CodingSessionCatalogRecord["status"],
 ): CodingSessionWorkspaceStatus {
+  if (lifecycleStatus === "stopped") {
+    return { kind: "ended", label: "Ended" };
+  }
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const item = transcript[index];
     if (item.type !== "lifecycle") continue;

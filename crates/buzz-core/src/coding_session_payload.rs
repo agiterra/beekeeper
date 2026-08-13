@@ -43,16 +43,20 @@ pub const SESSION_LIMIT: &str = "SESSION_LIMIT";
 pub const PROVIDER_AUTH_REQUIRED: &str = "PROVIDER_AUTH_REQUIRED";
 /// The agent adapter could not be started or did not complete `session/new`.
 pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
+/// A resume was requested while the execution still had a live actor.
+pub const SESSION_ALREADY_ATTACHED: &str = "SESSION_ALREADY_ATTACHED";
+/// A new generation started, but the provider could not recover prior context.
+pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 
-/// Lifecycle outcome for exactly one create command (kind 44224).
+/// Lifecycle outcome for exactly one create, resume, or stop command (kind 44224).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LifecycleReceipt {
     /// Always [`LIFECYCLE_RECEIPT_SCHEMA`].
     pub schema: String,
-    /// The `commandId` of the create this answers.
+    /// The `commandId` of the lifecycle command this answers.
     pub command_id: String,
-    /// `created`, `created_with_failed_initial_turn`, or `failed`.
+    /// Exact lifecycle outcome.
     pub status: ReceiptStatus,
     /// The minted target, or `null` when the create failed outright.
     pub session: Option<CodingSessionTarget>,
@@ -60,7 +64,7 @@ pub struct LifecycleReceipt {
     pub error: Option<ReceiptError>,
 }
 
-/// The three receipt outcomes the consumer recognizes.
+/// Receipt outcomes recognized by current consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiptStatus {
     /// Session exists and, if a first turn was requested, it was delivered.
@@ -72,6 +76,15 @@ pub enum ReceiptStatus {
     /// No session exists.
     #[serde(rename = "failed")]
     Failed,
+    /// A disconnected execution reattached with its prior provider context.
+    #[serde(rename = "resumed")]
+    Resumed,
+    /// A new generation attached with fresh provider context.
+    #[serde(rename = "resumed_without_context")]
+    ResumedWithoutContext,
+    /// The execution was durably stopped.
+    #[serde(rename = "stopped")]
+    Stopped,
 }
 
 /// Machine-readable code plus an operator-facing message.
@@ -126,6 +139,46 @@ impl LifecycleReceipt {
             }),
         }
     }
+
+    /// A disconnected execution reattached with its prior provider context.
+    pub fn resumed(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::Resumed,
+            session: Some(target.clone()),
+            error: None,
+        }
+    }
+
+    /// A new generation attached, but the adapter could not recover context.
+    pub fn resumed_without_context(
+        command_id: &str,
+        target: &CodingSessionTarget,
+        message: &str,
+    ) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::ResumedWithoutContext,
+            session: Some(target.clone()),
+            error: Some(ReceiptError {
+                code: CONTEXT_NOT_RECOVERED.to_owned(),
+                message: bounded_message(message),
+            }),
+        }
+    }
+
+    /// An execution was durably stopped.
+    pub fn stopped(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::Stopped,
+            session: Some(target.clone()),
+            error: None,
+        }
+    }
 }
 
 /// Lifecycle status of one session generation, as the consumer models it.
@@ -142,6 +195,8 @@ pub enum SessionStatus {
     WaitingForInput,
     /// The session finished normally and will accept no more turns.
     Completed,
+    /// The operator durably stopped the execution.
+    Stopped,
     /// The session ended in an error.
     Failed,
     /// A turn was interrupted.
@@ -457,6 +512,9 @@ mod tests {
             LifecycleReceipt::created("create-1", &target()),
             LifecycleReceipt::created_with_failed_initial_turn("create-1", &target(), "boom"),
             LifecycleReceipt::failed("create-1", PROJECT_CWD_UNRESOLVED, "no cwd"),
+            LifecycleReceipt::resumed("resume-1", &target()),
+            LifecycleReceipt::resumed_without_context("resume-2", &target(), "cursor rejected"),
+            LifecycleReceipt::stopped("stop-1", &target()),
         ] {
             let value = serde_json::to_value(&receipt).expect("serialize");
             assert_eq!(
@@ -488,6 +546,23 @@ mod tests {
         assert_eq!(failed["status"], "failed");
         assert!(failed["session"].is_null());
         assert_eq!(keys(&failed["error"]), sorted(&["code", "message"]));
+
+        let resumed = serde_json::to_value(LifecycleReceipt::resumed("c", &target())).unwrap();
+        assert_eq!(resumed["status"], "resumed");
+        assert!(resumed["error"].is_null());
+
+        let discontinuity = serde_json::to_value(LifecycleReceipt::resumed_without_context(
+            "c",
+            &target(),
+            "cursor rejected",
+        ))
+        .unwrap();
+        assert_eq!(discontinuity["status"], "resumed_without_context");
+        assert_eq!(discontinuity["error"]["code"], CONTEXT_NOT_RECOVERED);
+
+        let stopped = serde_json::to_value(LifecycleReceipt::stopped("c", &target())).unwrap();
+        assert_eq!(stopped["status"], "stopped");
+        assert!(stopped["error"].is_null());
     }
 
     /// A blank message would make the whole receipt malformed at the consumer's
@@ -616,13 +691,14 @@ mod tests {
     }
 
     #[test]
-    fn session_status_strings_match_the_donor_allowlist() {
+    fn session_status_strings_match_the_fork_allowlist() {
         let allowed = [
             (SessionStatus::Starting, "starting"),
             (SessionStatus::Idle, "idle"),
             (SessionStatus::Running, "running"),
             (SessionStatus::WaitingForInput, "waiting_for_input"),
             (SessionStatus::Completed, "completed"),
+            (SessionStatus::Stopped, "stopped"),
             (SessionStatus::Failed, "failed"),
             (SessionStatus::Interrupted, "interrupted"),
             (SessionStatus::Disconnected, "disconnected"),

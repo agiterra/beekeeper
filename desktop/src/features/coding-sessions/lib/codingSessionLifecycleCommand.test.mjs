@@ -3,11 +3,20 @@ import test from "node:test";
 
 import {
   buildCodingSessionCreateEvent,
+  buildCodingSessionResumeEvent,
+  buildCodingSessionStopEvent,
   createCodingSessionSessionRef,
   MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
   publishCodingSessionCreate,
 } from "./codingSessionLifecycleCommand.ts";
+
+const target = {
+  driver: "codex-acp",
+  instanceId: "instance-1",
+  sessionId: "session-1",
+  generation: 4,
+};
 
 const input = {
   channelId: "channel-1",
@@ -38,6 +47,36 @@ test("session.create content and tags are deterministic and carry no host author
   assert.equal("env" in content.action, false);
   assert.equal("secrets" in content.action, false);
   assert.equal("generation" in content.action, false);
+});
+
+test("resume and stop carry only an exact Buzz target and provider authority", () => {
+  for (const [type, build] of [
+    ["session.resume", buildCodingSessionResumeEvent],
+    ["session.stop", buildCodingSessionStopEvent],
+  ]) {
+    const event = build({
+      channelId: "channel-1",
+      commandId: `${type}-1`,
+      target,
+      providerAuthorityPubkey: "ab".repeat(32),
+    });
+    assert.deepEqual(JSON.parse(event.content), {
+      schema: "buzz-coding-session-lifecycle-command/v1",
+      commandId: `${type}-1`,
+      action: {
+        type,
+        session: target,
+        providerAuthorityPubkey: "ab".repeat(32),
+      },
+    });
+    assert.equal(event.content.includes("acp" + "SessionId"), false);
+    assert.equal(event.content.includes("cwd"), false);
+    assert.deepEqual(event.tags, [
+      ["h", "channel-1"],
+      ["csl-v", "csl1-1"],
+      ["csl-command", `${type}-1`],
+    ]);
+  }
 });
 
 test("standalone sessions serialize an explicit null projectRef, never a missing key", () => {

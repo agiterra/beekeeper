@@ -134,6 +134,51 @@ test("immersive idle composer shows send and distinct idle status without stop",
   assert.doesNotMatch(markup, /coding-session-composer-interrupt/);
 });
 
+test("a disconnected execution offers reconnect or durable end instead of send", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      lifecycleStatus: "disconnected",
+      providerAuthorityPubkey: "ab".repeat(32),
+      target,
+      variant: "floating",
+    }),
+  );
+
+  assert.match(markup, /coding-session-composer-resume/);
+  assert.match(markup, />Reconnect</);
+  assert.match(markup, /coding-session-composer-session-stop/);
+  assert.match(markup, />End session</);
+  assert.doesNotMatch(markup, /coding-session-composer-primary/);
+  assert.match(markup, /Reconnect this execution to continue/);
+});
+
+test("an ended execution is terminal and offers no further controls", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      lifecycleStatus: "stopped",
+      providerAuthorityPubkey: "ab".repeat(32),
+      target,
+      variant: "floating",
+    }),
+  );
+
+  assert.match(markup, /This provider execution has ended/);
+  assert.match(markup, /This execution has ended/);
+  assert.doesNotMatch(markup, /coding-session-composer-primary/);
+  assert.doesNotMatch(markup, /coding-session-composer-resume/);
+  assert.doesNotMatch(markup, /coding-session-composer-session-stop/);
+});
+
 test("immersive controls fail closed when authority and interrupt capability are absent", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {

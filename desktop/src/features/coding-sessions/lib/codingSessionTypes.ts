@@ -8,6 +8,7 @@ export type CodingSessionStatus =
   | "running"
   | "waiting_for_input"
   | "completed"
+  | "stopped"
   | "failed"
   | "interrupted"
   | "disconnected"
@@ -124,4 +125,5 @@ export type GlobalCodingSessionCatalogSnapshot = {
 export type CodingSessionWorkspaceStatus =
   | { kind: "working"; label: "Working" }
   | { kind: "idle"; label: "Idle" }
+  | { kind: "ended"; label: "Ended" }
   | { kind: "unknown"; label: "Status unknown" };

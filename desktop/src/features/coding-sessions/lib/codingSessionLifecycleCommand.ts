@@ -2,6 +2,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_CODING_SESSION_LIFECYCLE_COMMAND } from "@/shared/constants/kinds";
+import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { isCodingSessionSessionRef } from "./codingSessionWireDecode";
 
 export const CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA =
@@ -38,10 +39,27 @@ export type CodingSessionCreateAction = {
   initialTurn: string | null;
 };
 
+export type CodingSessionResumeAction = {
+  type: "session.resume";
+  session: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+};
+
+export type CodingSessionStopAction = {
+  type: "session.stop";
+  session: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+};
+
+export type CodingSessionLifecycleAction =
+  | CodingSessionCreateAction
+  | CodingSessionResumeAction
+  | CodingSessionStopAction;
+
 export type CodingSessionLifecycleCommandPayload = {
   schema: typeof CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA;
   commandId: string;
-  action: CodingSessionCreateAction;
+  action: CodingSessionLifecycleAction;
 };
 
 export type CodingSessionLifecycleCommandEventInput = {
@@ -192,6 +210,104 @@ export function validateCodingSessionCreateInput(input: {
   );
 }
 
+/** Build an exact-generation request to reattach a disconnected execution. */
+export function buildCodingSessionResumeEvent(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+}): CodingSessionLifecycleCommandEventInput {
+  return buildCodingSessionTargetLifecycleEvent(input, "session.resume");
+}
+
+/** Build an exact-generation durable stop request. */
+export function buildCodingSessionStopEvent(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+}): CodingSessionLifecycleCommandEventInput {
+  return buildCodingSessionTargetLifecycleEvent(input, "session.stop");
+}
+
+function buildCodingSessionTargetLifecycleEvent(
+  input: {
+    channelId: string;
+    commandId: string;
+    target: CodingSessionCommandTarget;
+    providerAuthorityPubkey: string;
+  },
+  type: "session.resume" | "session.stop",
+): CodingSessionLifecycleCommandEventInput {
+  validateTargetLifecycleInput(input);
+  const payload: CodingSessionLifecycleCommandPayload = {
+    schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+    commandId: input.commandId,
+    action: {
+      type,
+      session: input.target,
+      providerAuthorityPubkey: input.providerAuthorityPubkey,
+    },
+  };
+  const content = JSON.stringify(payload);
+  validateUtf8Limit(
+    content,
+    "coding-session lifecycle command content",
+    MAX_CODING_SESSION_LIFECYCLE_CONTENT_BYTES,
+  );
+  return {
+    kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    content,
+    tags: [
+      ["h", input.channelId],
+      ["csl-v", CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION],
+      ["csl-command", input.commandId],
+    ],
+  };
+}
+
+function validateTargetLifecycleInput(input: {
+  channelId: string;
+  commandId: string;
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+}): void {
+  validateRequired(
+    input.channelId,
+    "channelId",
+    MAX_CODING_SESSION_LIFECYCLE_REFERENCE_BYTES,
+  );
+  validateRequired(
+    input.commandId,
+    "commandId",
+    MAX_CODING_SESSION_LIFECYCLE_IDENTIFIER_BYTES,
+  );
+  for (const [field, value] of [
+    ["action.session.driver", input.target.driver],
+    ["action.session.instanceId", input.target.instanceId],
+    ["action.session.sessionId", input.target.sessionId],
+  ] as const) {
+    validateRequired(
+      value,
+      field,
+      MAX_CODING_SESSION_LIFECYCLE_IDENTIFIER_BYTES,
+    );
+  }
+  if (
+    !Number.isSafeInteger(input.target.generation) ||
+    input.target.generation <= 0
+  ) {
+    throw new Error(
+      "action.session.generation must be a positive safe integer",
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(input.providerAuthorityPubkey)) {
+    throw new Error(
+      "action.providerAuthorityPubkey must be a lowercase 64-hex public key",
+    );
+  }
+}
+
 /**
  * Publish a native 44221 create. The fork owns its relay, so there is no
  * compatibility transport: any rejection fails the create.
@@ -211,6 +327,58 @@ export async function publishCodingSessionCreate(
     event,
     "Timed out while creating the coding session.",
     "Failed to create the coding session.",
+  );
+  return { eventId: accepted.id, kind: accepted.kind };
+}
+
+/** Publish an exact-generation resume request. */
+export async function publishCodingSessionResume(
+  input: Parameters<typeof buildCodingSessionResumeEvent>[0],
+  dependencies: {
+    publisher?: LifecyclePublisher;
+    signer?: LifecycleSigner;
+  } = {},
+): Promise<PublishedCodingSessionLifecycleCommand> {
+  return publishLifecycleEvent(
+    buildCodingSessionResumeEvent(input),
+    "Timed out while reconnecting the coding session.",
+    "Failed to reconnect the coding session.",
+    dependencies,
+  );
+}
+
+/** Publish an exact-generation durable stop request. */
+export async function publishCodingSessionStop(
+  input: Parameters<typeof buildCodingSessionStopEvent>[0],
+  dependencies: {
+    publisher?: LifecyclePublisher;
+    signer?: LifecycleSigner;
+  } = {},
+): Promise<PublishedCodingSessionLifecycleCommand> {
+  return publishLifecycleEvent(
+    buildCodingSessionStopEvent(input),
+    "Timed out while stopping the coding session.",
+    "Failed to stop the coding session.",
+    dependencies,
+  );
+}
+
+async function publishLifecycleEvent(
+  input: CodingSessionLifecycleCommandEventInput,
+  timeoutMessage: string,
+  sendErrorMessage: string,
+  dependencies: {
+    publisher?: LifecyclePublisher;
+    signer?: LifecycleSigner;
+  },
+): Promise<PublishedCodingSessionLifecycleCommand> {
+  const publisher = dependencies.publisher ?? relayClient;
+  const signer = dependencies.signer ?? signRelayEvent;
+  const event = await signer(input);
+  const accepted = await publisher.publishEvent(
+    event,
+    timeoutMessage,
+    sendErrorMessage,
   );
   return { eventId: accepted.id, kind: accepted.kind };
 }

@@ -22,7 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use tokio::sync::broadcast;
@@ -61,6 +61,9 @@ pub struct CreateRequest {
     pub title: Option<String>,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
+    /// Previously persisted ACP session id to reattach, or `None` for a fresh
+    /// provider session. This value is host-private.
+    pub resume_cursor: Option<String>,
     /// ACP adapter binary to spawn.
     pub agent_command: String,
     /// Adapter argv after the command (e.g. `["acp"]` for goose).
@@ -95,6 +98,25 @@ pub struct SessionStartup {
     pub observer: ObserverHandle,
     /// Effective model, when one could be established.
     pub model: Option<String>,
+    /// Whether the adapter recovered its prior context.
+    pub continuity: SessionContinuity,
+}
+
+/// How an ACP session was opened for this Buzz execution generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionContinuity {
+    /// A brand-new Buzz execution opened a brand-new ACP session.
+    Fresh,
+    /// `session/resume` reattached without replaying history.
+    Resumed,
+    /// `session/load` reattached; replay frames were intentionally not ingested.
+    Loaded,
+    /// Reattachment was unavailable or rejected, so the generation has fresh
+    /// provider context and must say so honestly.
+    RestartedWithoutContext {
+        /// Stable, non-sensitive explanation suitable for a transcript status.
+        reason: &'static str,
+    },
 }
 
 // Hand-written because `ObserverHandle` is a broadcast handle with no `Debug`,
@@ -103,8 +125,8 @@ impl std::fmt::Debug for SessionStartup {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SessionStartup")
-            .field("acp_session_id", &self.acp_session_id)
             .field("model", &self.model)
+            .field("continuity", &self.continuity)
             .finish_non_exhaustive()
     }
 }
@@ -228,6 +250,7 @@ pub enum SessionEvent {
 pub struct SessionHandle {
     session_id: String,
     tx: mpsc::Sender<SessionCommand>,
+    shutdown: watch::Sender<bool>,
 }
 
 impl SessionHandle {
@@ -248,6 +271,12 @@ impl SessionHandle {
     /// Whether the actor is still running.
     pub fn is_live(&self) -> bool {
         !self.tx.is_closed()
+    }
+
+    /// Signal durable retirement on a control path that cannot be blocked by
+    /// the bounded turn mailbox.
+    fn shutdown(&self) {
+        let _ = self.shutdown.send(true);
     }
 }
 
@@ -293,6 +322,7 @@ impl SessionManager {
 
         let session_id = request.target.session_id.clone();
         let (tx, rx) = mpsc::channel(SESSION_MAILBOX_DEPTH);
+        let (shutdown, shutdown_rx) = watch::channel(false);
         let actor = SessionActor {
             client,
             acp_session_id: startup.acp_session_id.clone(),
@@ -304,9 +334,15 @@ impl SessionManager {
             observer,
             translator: TranscriptTranslator::new(request.include_thoughts),
         };
-        tokio::spawn(actor.run(rx));
-        self.live
-            .insert(session_id.clone(), SessionHandle { session_id, tx });
+        tokio::spawn(actor.run(rx, shutdown_rx));
+        self.live.insert(
+            session_id.clone(),
+            SessionHandle {
+                session_id,
+                tx,
+                shutdown,
+            },
+        );
         Ok(startup)
     }
 
@@ -318,7 +354,7 @@ impl SessionManager {
     /// Ask a session to retire and forget it.
     pub fn shutdown(&mut self, session_id: &str) {
         if let Some(handle) = self.live.remove(session_id) {
-            let _ = handle.deliver(SessionCommand::Shutdown);
+            handle.shutdown();
         }
     }
 
@@ -368,11 +404,9 @@ async fn start_agent(
     }
 
     let cwd = request.cwd.to_string_lossy().to_string();
-    let response = match client
-        .session_new_full(&cwd, Vec::new(), None, request.title.as_deref())
-        .await
-    {
-        Ok(response) => response,
+    let opened = open_agent_session(&mut client, request, &cwd).await;
+    let (response, continuity) = match opened {
+        Ok(opened) => opened,
         Err(error) => {
             let failure = classify_startup_error(&error, "open an agent session");
             client.shutdown().await;
@@ -387,6 +421,57 @@ async fn start_agent(
             acp_session_id: response.session_id,
             observer: observer.clone(),
             model,
+            continuity,
+        },
+    ))
+}
+
+async fn open_agent_session(
+    client: &mut AcpClient,
+    request: &CreateRequest,
+    cwd: &str,
+) -> Result<(buzz_acp::acp::SessionNewResponse, SessionContinuity), AcpError> {
+    let Some(cursor) = request.resume_cursor.as_deref() else {
+        let response = client
+            .session_new_full(cwd, Vec::new(), None, request.title.as_deref())
+            .await?;
+        return Ok((response, SessionContinuity::Fresh));
+    };
+
+    let mut fallback_reason = "adapter does not advertise session resume or load";
+    if client.session_resume_supported() {
+        match client.session_resume_full(cursor, cwd, Vec::new()).await {
+            Ok(response) => return Ok((response, SessionContinuity::Resumed)),
+            Err(_) => {
+                // Adapter errors are untrusted and may echo the opaque cursor.
+                // Keep the durable resume identifier out of provider logs.
+                tracing::warn!(target: "csp::session", "ACP session/resume rejected");
+                fallback_reason = "adapter rejected session resume";
+            }
+        }
+    }
+    if client.session_load_supported() {
+        match client.session_load_full(cursor, cwd, Vec::new()).await {
+            Ok(response) => return Ok((response, SessionContinuity::Loaded)),
+            Err(_) => {
+                // See the resume branch above: an adapter error is not safe to log.
+                tracing::warn!(target: "csp::session", "ACP session/load rejected");
+                fallback_reason = if client.session_resume_supported() {
+                    "adapter rejected session resume and load"
+                } else {
+                    "adapter rejected session load"
+                };
+            }
+        }
+    }
+
+    let response = client
+        .session_new_full(cwd, Vec::new(), None, request.title.as_deref())
+        .await?;
+    Ok((
+        response,
+        SessionContinuity::RestartedWithoutContext {
+            reason: fallback_reason,
         },
     ))
 }
@@ -492,29 +577,44 @@ enum PromptInterruption {
 }
 
 impl SessionActor {
-    async fn run(mut self, mut rx: mpsc::Receiver<SessionCommand>) {
+    async fn run(
+        mut self,
+        mut rx: mpsc::Receiver<SessionCommand>,
+        mut shutdown: watch::Receiver<bool>,
+    ) {
         tracing::info!(
             target: "csp::session",
             session_id = %self.session_id,
-            acp_session_id = %self.acp_session_id,
             "session actor started"
         );
         let mut queued: VecDeque<(String, String)> = VecDeque::new();
         let mut reason = ExitReason::Requested;
 
         'actor: loop {
+            if *shutdown.borrow() {
+                break 'actor;
+            }
             let next = match queued.pop_front() {
                 Some(turn) => Some(SessionCommand::Turn {
                     command_id: turn.0,
                     text: turn.1,
                 }),
-                None => match tokio::time::timeout(self.idle_shutdown, rx.recv()).await {
-                    Ok(command) => command,
-                    Err(_) => {
+                None => {
+                    let idle = tokio::time::sleep(self.idle_shutdown);
+                    tokio::pin!(idle);
+                    tokio::select! {
+                        biased;
+                        changed = shutdown.changed() => {
+                            let _ = changed;
+                            break 'actor;
+                        }
+                        command = rx.recv() => command,
+                        _ = &mut idle => {
                         reason = ExitReason::Idle;
                         break 'actor;
+                        }
                     }
-                },
+                }
             };
             match next {
                 None | Some(SessionCommand::Shutdown) => break 'actor,
@@ -527,9 +627,11 @@ impl SessionActor {
                     );
                 }
                 Some(SessionCommand::Turn { command_id, text }) => {
-                    if let Some(gone) = self.run_turn(&mut rx, &mut queued, command_id, text).await
+                    if let Some(exit_reason) = self
+                        .run_turn(&mut rx, &mut shutdown, &mut queued, command_id, text)
+                        .await
                     {
-                        reason = ExitReason::AgentGone(gone);
+                        reason = exit_reason;
                         break 'actor;
                     }
                 }
@@ -551,14 +653,15 @@ impl SessionActor {
         );
     }
 
-    /// Run one turn. Returns `Some(reason)` when the agent process is gone.
+    /// Run one turn. Returns an exit reason when the actor must retire.
     async fn run_turn(
         &mut self,
         rx: &mut mpsc::Receiver<SessionCommand>,
+        shutdown: &mut watch::Receiver<bool>,
         queued: &mut VecDeque<(String, String)>,
         command_id: String,
         text: String,
-    ) -> Option<String> {
+    ) -> Option<ExitReason> {
         let turn_id = Uuid::new_v4().to_string();
         let started = Instant::now();
         self.client.set_observer_context(context_for(
@@ -594,6 +697,10 @@ impl SessionActor {
         let interruption = loop {
             tokio::select! {
                 biased;
+                changed = shutdown.changed() => {
+                    let _ = changed;
+                    break PromptInterruption::Shutdown
+                },
                 result = prompt.as_mut() => break PromptInterruption::Completed(result),
                 frame = frames.recv() => {
                     let items = translate_frame(
@@ -645,6 +752,7 @@ impl SessionActor {
             }
         }
 
+        let requested_shutdown = matches!(interruption, PromptInterruption::Shutdown);
         let (outcome, agent_gone) = match interruption {
             PromptInterruption::Completed(Ok(stop_reason)) => {
                 (TurnOutcome::Completed { stop_reason }, None)
@@ -700,7 +808,11 @@ impl SessionActor {
             Some(self.acp_session_id.clone()),
             None,
         ));
-        agent_gone
+        if requested_shutdown {
+            Some(ExitReason::Requested)
+        } else {
+            agent_gone.map(ExitReason::AgentGone)
+        }
     }
 
     /// Turn a failed prompt into an outcome, cancelling first when the agent is
@@ -872,6 +984,21 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// Advertises and accepts ACP `session/resume` for a saved cursor.
+    pub(crate) const RESUMABLE_AGENT: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{}}}}}\n' "$id" ;;
+    *'"method":"session/resume"'*'"sessionId":"saved-acp-session"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"saved-acp-session"}}\n' "$id" ;;
+  esac
+done
+"#;
+
     /// Never answers the prompt, so the operator's interrupt is the only way out.
     pub(crate) const STALLING_AGENT: &str = r#"
 LAST_PROMPT=""
@@ -936,6 +1063,7 @@ mod tests {
             cwd: cwd.to_path_buf(),
             title: Some("Ship it".into()),
             model: None,
+            resume_cursor: None,
             agent_command: command,
             agent_args: Vec::new(),
             agent_env: Vec::new(),
@@ -1063,6 +1191,41 @@ mod tests {
             ),
             other => panic!("expected a finished turn, got {other:?}"),
         }
+        manager.shutdown("s1");
+    }
+
+    #[tokio::test]
+    async fn a_saved_cursor_uses_advertised_acp_resume() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "resumable-agent", RESUMABLE_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut reattach = request(agent, dir.path());
+        reattach.target.generation = 2;
+        reattach.resume_cursor = Some("saved-acp-session".into());
+
+        let startup = manager.create(reattach).await.expect("reattach");
+        assert_eq!(startup.acp_session_id, "saved-acp-session");
+        assert_eq!(startup.continuity, SessionContinuity::Resumed);
+        manager.shutdown("s1");
+    }
+
+    #[tokio::test]
+    async fn an_adapter_without_resume_starts_fresh_and_reports_discontinuity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut reattach = request(agent, dir.path());
+        reattach.target.generation = 2;
+        reattach.resume_cursor = Some("saved-acp-session".into());
+
+        let startup = manager.create(reattach).await.expect("reattach");
+        assert_eq!(startup.acp_session_id, "acp-session-1");
+        assert!(matches!(
+            startup.continuity,
+            SessionContinuity::RestartedWithoutContext { .. }
+        ));
         manager.shutdown("s1");
     }
 
@@ -1261,9 +1424,11 @@ mod tests {
     #[tokio::test]
     async fn a_full_mailbox_is_reported_rather_than_awaited() {
         let (tx, _rx) = mpsc::channel(1);
+        let (shutdown, _shutdown_rx) = watch::channel(false);
         let handle = SessionHandle {
             session_id: "s1".into(),
             tx,
+            shutdown,
         };
         handle
             .deliver(SessionCommand::Interrupt {
@@ -1278,13 +1443,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn durable_shutdown_bypasses_a_full_turn_mailbox() {
+        let (tx, _rx) = mpsc::channel(1);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = SessionHandle {
+            session_id: "s1".into(),
+            tx,
+            shutdown,
+        };
+        handle
+            .deliver(SessionCommand::Turn {
+                command_id: "queued".into(),
+                text: "work".into(),
+            })
+            .expect("mailbox entry");
+
+        handle.shutdown();
+
+        assert!(*shutdown_rx.borrow());
+    }
+
     #[tokio::test]
     async fn delivering_to_a_dead_actor_reports_rather_than_hangs() {
         let (tx, rx) = mpsc::channel(1);
+        let (shutdown, _shutdown_rx) = watch::channel(false);
         drop(rx);
         let handle = SessionHandle {
             session_id: "s1".into(),
             tx,
+            shutdown,
         };
         assert_eq!(
             handle.deliver(SessionCommand::Shutdown),

@@ -205,6 +205,12 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Whether the agent advertised the stable top-level `loadSession`
+    /// capability during initialization.
+    session_load_supported: bool,
+    /// Whether the agent advertised `sessionCapabilities.resume` during
+    /// initialization.
+    session_resume_supported: bool,
     /// Per-turn channel for receiving goose-native non-cancelling steer
     /// requests from the main loop. Installed by
     /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
@@ -602,6 +608,8 @@ impl AcpClient {
             observer_context: ObserverContext::default(),
             active_run_id: None,
             steering_supported: false,
+            session_load_supported: false,
+            session_resume_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
@@ -762,6 +770,13 @@ impl AcpClient {
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        self.session_load_supported = result
+            .pointer("/agentCapabilities/loadSession")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.session_resume_supported = result
+            .pointer("/agentCapabilities/sessionCapabilities/resume")
+            .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false));
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
     }
@@ -823,9 +838,65 @@ impl AcpClient {
             .as_str()
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
-        tracing::info!(target: "acp::session", "session created: {session_id}");
+        tracing::info!(target: "acp::session", "session created");
         Ok(SessionNewResponse {
             session_id,
+            raw: result,
+        })
+    }
+
+    /// Resume an existing ACP session without requesting transcript replay.
+    ///
+    /// Callers must gate this on [`session_resume_supported`](Self::session_resume_supported).
+    /// The returned session id is the opaque cursor supplied by the caller;
+    /// ACP resume responses do not repeat it.
+    pub async fn session_resume_full(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let result = self
+            .send_request(
+                "session/resume",
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "cwd": cwd,
+                    "mcpServers": mcp_servers,
+                }),
+            )
+            .await?;
+        tracing::info!(target: "acp::session", "session resumed");
+        Ok(SessionNewResponse {
+            session_id: session_id.to_owned(),
+            raw: result,
+        })
+    }
+
+    /// Load an existing ACP session, allowing the adapter to replay its history.
+    ///
+    /// Callers must gate this on [`session_load_supported`](Self::session_load_supported).
+    /// Observer consumers should subscribe only after this call if replayed
+    /// updates are already represented in their own durable transcript.
+    pub async fn session_load_full(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let result = self
+            .send_request(
+                "session/load",
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "cwd": cwd,
+                    "mcpServers": mcp_servers,
+                }),
+            )
+            .await?;
+        tracing::info!(target: "acp::session", "session loaded");
+        Ok(SessionNewResponse {
+            session_id: session_id.to_owned(),
             raw: result,
         })
     }
@@ -1024,6 +1095,16 @@ impl AcpClient {
     /// for the supervisor's post-initialize log line.
     pub fn steering_supported(&self) -> bool {
         self.steering_supported
+    }
+
+    /// Whether initialization advertised `loadSession: true`.
+    pub fn session_load_supported(&self) -> bool {
+        self.session_load_supported
+    }
+
+    /// Whether initialization advertised `sessionCapabilities.resume`.
+    pub fn session_resume_supported(&self) -> bool {
+        self.session_resume_supported
     }
 
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
@@ -1253,7 +1334,11 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        if matches!(method, "session/resume" | "session/load") {
+            tracing::debug!(target: "acp::wire", id, method, "→ ACP request (session id redacted)");
+        } else {
+            tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        }
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
@@ -4352,6 +4437,29 @@ mod tests {
             !supported,
             "_meta.steering.supported: false must leave steering_supported false"
         );
+    }
+
+    #[tokio::test]
+    async fn initialize_records_load_and_resume_capabilities() {
+        let script = r#"
+read -r _init
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{}}}}}'
+sleep 5
+"#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        assert!(client.session_load_supported());
+        assert!(client.session_resume_supported());
+
+        let script = r#"
+read -r _init
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":false,"sessionCapabilities":{"resume":null}}}}'
+sleep 5
+"#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        assert!(!client.session_load_supported());
+        assert!(!client.session_resume_supported());
     }
 
     /// Test 2: no `active_run_id` + capability advertised → the bytes on the

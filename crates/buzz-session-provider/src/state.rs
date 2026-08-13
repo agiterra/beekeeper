@@ -44,7 +44,7 @@ const COMMANDS_FILE: &str = "commands.jsonl";
 pub struct SessionRecord {
     /// Producer-minted session id (a UUID); half of the `cs-target`.
     pub session_id: String,
-    /// Generation number. Always 1 in v1 — rebinding is a future feature.
+    /// Generation number. Starts at 1 and advances on each provider reattach.
     pub generation: u64,
     /// Channel every event for this session is published into.
     pub channel_id: Uuid,
@@ -76,6 +76,10 @@ pub struct SessionRecord {
     pub session_ref: Option<String>,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
+    /// Opaque ACP session id used only to reattach this host's adapter.
+    /// Never published or passed through the adapter environment.
+    #[serde(default)]
+    pub resume_cursor: Option<String>,
     /// Operator-facing title, or `None`.
     pub title: Option<String>,
     /// Creation time, milliseconds since the Unix epoch.
@@ -183,6 +187,10 @@ impl StateStore {
     /// remembering it buys nothing and the ledger would grow without bound.
     pub fn open(dir: &Path, command_retention_secs: u64) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
+        restrict_directory(dir)?;
+        for file in [STATE_FILE, COMMANDS_FILE] {
+            restrict_file_if_present(&dir.join(file))?;
+        }
         let snapshot = load_snapshot(&dir.join(STATE_FILE))?;
         let mut store = Self {
             dir: dir.to_path_buf(),
@@ -222,10 +230,12 @@ impl StateStore {
             command_id: command_id.to_owned(),
             at,
         };
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.dir.join(COMMANDS_FILE))?;
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        restrict_new_file(&mut options);
+        let path = self.dir.join(COMMANDS_FILE);
+        let mut file = options.open(&path)?;
+        restrict_file(&path)?;
         writeln!(file, "{}", serde_json::to_string(&record)?)?;
         file.sync_all()
     }
@@ -382,11 +392,54 @@ pub(crate) fn atomic_write(path: &Path, body: &[u8]) -> io::Result<()> {
         Uuid::new_v4()
     ));
     {
-        let mut file = File::create(&temp)?;
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        restrict_new_file(&mut options);
+        let mut file = options.open(&temp)?;
         file.write_all(body)?;
         file.sync_all()?;
     }
-    fs::rename(&temp, path)
+    fs::rename(&temp, path)?;
+    restrict_file(path)
+}
+
+#[cfg(unix)]
+fn restrict_new_file(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
+}
+
+#[cfg(not(unix))]
+fn restrict_new_file(_options: &mut OpenOptions) {}
+
+#[cfg(unix)]
+fn restrict_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn restrict_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_file(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+fn restrict_file_if_present(path: &Path) -> io::Result<()> {
+    match restrict_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_file(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Seconds since the Unix epoch.
@@ -429,6 +482,7 @@ mod tests {
             repo_ref: None,
             session_ref: None,
             model: None,
+            resume_cursor: None,
             title: None,
             created_at_ms: 1_700_000_000_000,
             next_seq: 1,
@@ -445,7 +499,9 @@ mod tests {
             let mut store = StateStore::open(dir.path(), 3600).expect("open");
             store.record_watermark(channel, 100).expect("watermark");
             store.record_watermark(channel, 50).expect("watermark");
-            store.insert_session(record("s1")).expect("insert");
+            let mut session = record("s1");
+            session.resume_cursor = Some("host-private-acp-session".into());
+            store.insert_session(session).expect("insert");
             store
                 .set_catalog(CatalogState {
                     revision: 4,
@@ -462,6 +518,45 @@ mod tests {
         );
         assert_eq!(store.catalog().revision, 4);
         assert_eq!(store.catalog().advertised_channels, vec![channel]);
+        assert_eq!(
+            store
+                .session("s1")
+                .and_then(|session| session.resume_cursor.as_deref()),
+            Some("host-private-acp-session")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_state_uses_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = StateStore::open(dir.path(), 3600).expect("open");
+        store.insert_session(record("s1")).expect("insert");
+        store
+            .consume_command("create-s1", now_secs())
+            .expect("consume");
+
+        assert_eq!(
+            fs::metadata(dir.path())
+                .expect("directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        for file in [STATE_FILE, COMMANDS_FILE] {
+            assert_eq!(
+                fs::metadata(dir.path().join(file))
+                    .expect("file metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "{file} must not expose the ACP resume cursor or command ledger"
+            );
+        }
     }
 
     /// The whole point of allocate-before-publish: a process that dies between

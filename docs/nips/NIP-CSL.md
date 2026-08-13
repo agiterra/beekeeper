@@ -26,6 +26,11 @@ Provider-neutral rendering after creation uses the signed
 > 4. **`sessionRef` groups executions into an umbrella session.** A nullable,
 >    client-minted UUID added after v1 shipped; the action is exactly the
 >    historical 8-key form or exactly the 9-key form including it. See below.
+> 5. **Continuation is generation-fenced.** `session.resume` and
+>    `session.stop` address an exact published `cs-target`. Resume never carries
+>    the provider's opaque ACP cursor; that cursor remains host-private. A
+>    successful reattachment publishes a new generation, while stop is durable
+>    intent that survives provider restart.
 
 ## Wire contract
 
@@ -49,6 +54,49 @@ an explicit `null`, and additional or missing fields are invalid:
   }
 }
 ```
+
+The same v1 envelope also admits exactly these two lifecycle action shapes:
+
+```json
+{
+  "schema": "buzz-coding-session-lifecycle-command/v1",
+  "commandId": "client-idempotency-id",
+  "action": {
+    "type": "session.resume",
+    "session": {
+      "driver": "codex-acp",
+      "instanceId": "provider-instance-id",
+      "sessionId": "provider-minted-buzz-session-id",
+      "generation": 1
+    },
+    "providerAuthorityPubkey": "64-lowercase-hex-catalog-signer"
+  }
+}
+```
+
+`session.stop` has the identical three-key action with `type` set to
+`session.stop`. Adding a discriminated action is an additive v1 evolution:
+older consumers reject an unknown action and therefore fail closed; they must
+not reinterpret it as `session.create`.
+
+`session.resume` addresses the exact disconnected generation the operator
+observed. The provider resolves its persisted ACP cursor, working directory,
+runtime, and model locally. On success it keeps the Buzz `sessionId`, advances
+`generation` by one, resets the per-generation transcript sequence, and emits
+new metadata. ACP `session/resume` is preferred when advertised;
+`session/load` is a compatibility fallback. If neither recovers context, a new
+ACP session may still attach as the next generation, but its receipt and
+transcript must say `CONTEXT_NOT_RECOVERED` /
+`session_restarted_without_context` rather than claiming continuity.
+
+`session.stop` addresses the exact current generation. Once consumed, the
+provider records the execution as closed before releasing its process. Restart
+recovery must not attach or make resumable a closed record. This is different
+from `thread.turn.interrupt`, which cancels only the in-flight turn and leaves
+the execution available. The stopped generation's final metadata status is
+`stopped`; consumers must treat that lifecycle status as terminal. It is
+distinct from `completed`, which remains the degraded transcript-only inference
+for a successful turn when metadata is absent.
 
 `providerInstanceRef` and `providerAuthorityPubkey` are required. The provider
 authority is exactly the lowercase 64-hex signer of the selected
@@ -161,9 +209,12 @@ operator identity claim; a consumer must compare it to its own current signing
 pubkey before reserving a command or causing provider side effects, and ignore
 commands addressed to another authority.
 
-**No host-local state travels in signed content.** Not paths, not environment
-variables, not secrets, not session IDs, not generations. The working directory
-in particular is machine-local configuration the producer resolves for itself;
+**No host-local runtime state travels in signed content.** Not paths,
+environment variables, secrets, process identifiers, or opaque ACP session
+ids. The provider-neutral Buzz `cs-target` is the deliberate exception for
+`session.resume` and `session.stop`: its public session id and generation fence
+already identify signed lifecycle facts. The working directory in particular
+is machine-local configuration the producer resolves for itself;
 `deny_unknown_fields` on the action means a `cwd` smuggled into the payload is
 a decode failure, and the relay rejects the event.
 
@@ -190,6 +241,24 @@ A receipt is keyed by `commandId` alone: one lifecycle command has exactly one
 outcome, so a second receipt for the same command is a duplicate to drop, never
 a revision to apply. Metadata is immutable per generation — a correction is a
 new generation, not a rewrite.
+
+The receipt keeps the same exact five-key v1 object. In addition to the create
+statuses, lifecycle continuation uses:
+
+- `resumed`: `session` is the new-generation target and `error` is `null`;
+- `resumed_without_context`: `session` is the new-generation target and
+  `error` is `{ "code": "CONTEXT_NOT_RECOVERED", "message": "..." }`;
+- `stopped`: `session` is the stopped exact target and `error` is `null`;
+- `failed`: unchanged, with `session: null` and a stable error object.
+
+An old consumer that does not recognize a new status rejects that receipt; it
+must never coerce the outcome into `created`. The new generation's metadata and
+transcript remain independently verifiable facts.
+
+The ACP session id used as a resume cursor is sensitive host-local state. It
+MUST NOT appear in commands, receipts, metadata, transcripts, adapter
+environment variables, or logs. Provider state containing it MUST be
+owner-readable only on platforms that expose filesystem permissions.
 
 Both kinds are provider-authored, so the relay applies scope, `h` scope, strict
 membership, and a size cap (32 KiB metadata, 16 KiB receipt) and nothing more.

@@ -32,6 +32,9 @@ export function resolveChannelCodingSessionIngress(input: {
 
   return input.catalog.entries.map((session) => ({
     session,
-    status: deriveCodingSessionWorkspaceStatus(session.transcript),
+    status: deriveCodingSessionWorkspaceStatus(
+      session.transcript,
+      session.status,
+    ),
   }));
 }
