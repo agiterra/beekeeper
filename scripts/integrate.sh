@@ -52,13 +52,24 @@ fi
 # ── 2. rebase the feature stack ──────────────────────────────────────────────
 # rerere replays previously-resolved conflicts; a genuinely new conflict stops
 # the script for human resolution (rerun after `git rebase --continue`).
-# A branch already based on its target is skipped outright; a branch checked
-# out in another linked worktree cannot be checked out here, so its rebase
-# runs inside that worktree (requires it to be clean).
+# Snapshot every old base before rewriting any feature branch. Without this,
+# rebasing a stacked branch's base first changes the later merge-base lookup and
+# makes Git replay the base branch's commits into the child a second time.
+OLD_BASES=()
 for entry in "${FEATURES[@]}"; do
   branch="${entry%%:*}"
   base="${entry#*:}"; [[ "$base" == "$entry" ]] && base="main"
-  old_base=$(git merge-base "$branch" "$base")
+  OLD_BASES+=("$(git merge-base "$branch" "$base")")
+done
+
+# A branch already based on its target is skipped outright; a branch checked
+# out in another linked worktree cannot be checked out here, so its rebase
+# runs inside that worktree (requires it to be clean).
+for i in "${!FEATURES[@]}"; do
+  entry="${FEATURES[$i]}"
+  branch="${entry%%:*}"
+  base="${entry#*:}"; [[ "$base" == "$entry" ]] && base="main"
+  old_base="${OLD_BASES[$i]}"
   if [[ "$old_base" == "$(git rev-parse "$base")" ]]; then
     echo "== $branch already based on $base — skipping rebase"
     continue
