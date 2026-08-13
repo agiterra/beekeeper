@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  publishCodingSessionLaneRenderableRefs,
+  resetCodingSessionLaneVisibility,
+} from "@/features/messages/lib/codingSessionLaneVisibility";
+import {
   extractHiddenDmIds,
   extractMemberChannelIds,
   fetchCommunityUnread,
@@ -918,4 +922,78 @@ test("fetchCommunityUnread forced-unread with null baseline + synced marker pres
   });
 
   assert.deepEqual(result, { hasUnread: false, mentionCount: 0 });
+});
+
+test("fetchCommunityUnread ignores coding-session lane chat this client hides from the channel", async () => {
+  const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const laneRelay = () =>
+    relayFor([
+      // 1. member events
+      () => [
+        event({
+          tags: [
+            ["d", CHANNEL_ID],
+            ["p", PUBKEY],
+          ],
+        }),
+      ],
+      // 2. metadata events (parallel with visibility)
+      () => [
+        event({
+          tags: [
+            ["d", CHANNEL_ID],
+            ["t", "stream"],
+          ],
+        }),
+      ],
+      // 3. visibility events (parallel with metadata)
+      () => [],
+      // 4. read-state events (parallel with mutes)
+      () => [],
+      // 5. mutes events (parallel with read-state)
+      () => [],
+      // 6. unread events — a single lane-tagged message
+      () => [
+        event({
+          id: "lane-unread".padEnd(64, "0"),
+          created_at: 20,
+          tags: [
+            ["h", CHANNEL_ID],
+            ["cs-session", SESSION_REF],
+          ],
+        }),
+      ],
+      // 7. mention events — the same lane message, @-mentioning the user
+      () => [
+        event({
+          id: "lane-mention".padEnd(64, "0"),
+          created_at: 30,
+          tags: [
+            ["h", CHANNEL_ID],
+            ["cs-session", SESSION_REF],
+            ["p", PUBKEY],
+          ],
+        }),
+      ],
+    ]);
+
+  const observe = async () =>
+    fetchCommunityUnread({
+      client: laneRelay(),
+      pubkey: PUBKEY,
+      nowSeconds: 100,
+      decryptReadState: async (value) => value,
+      decryptMutes: async (value) => value,
+      readThreadRelationships: readRelationships(),
+    });
+
+  // Unresolved ref → ordinary chat: it must still light the rail.
+  resetCodingSessionLaneVisibility();
+  assert.deepEqual(await observe(), { hasUnread: true, mentionCount: 1 });
+
+  // Once the lane is openable, both the dot and the mention count are phantom.
+  publishCodingSessionLaneRenderableRefs(CHANNEL_ID, new Set([SESSION_REF]));
+  assert.deepEqual(await observe(), { hasUnread: false, mentionCount: 0 });
+
+  resetCodingSessionLaneVisibility();
 });

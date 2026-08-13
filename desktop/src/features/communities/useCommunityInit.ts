@@ -20,6 +20,7 @@ import {
   clearAllDrafts,
   initDraftStore,
 } from "@/features/messages/lib/useDrafts";
+import { resetCodingSessionLaneVisibility } from "@/features/messages/lib/codingSessionLaneVisibility";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
 import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { resetLinkPreviewPreparations } from "@/features/messages/lib/linkPreviewPreparationStore";
@@ -79,6 +80,11 @@ async function resetCommunityState({
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
   resetCodingSessionPopoutBootstrapCache();
+  // Which coding-session conversation lanes are openable is per-relay: keeping
+  // the old community's refs would hide chat in the new one (channel ids are
+  // UUIDs, but a hidden message with no lane to render in is the one outcome
+  // the rule must never produce).
+  resetCodingSessionLaneVisibility();
 }
 
 type CommunityInitResult =

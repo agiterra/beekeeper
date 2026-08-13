@@ -1,3 +1,7 @@
+import {
+  type CodingSessionLaneRefResolver,
+  shouldSuppressCodingSessionLaneMessageFromChannelTimeline,
+} from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import type { RelayEvent } from "@/shared/api/types";
 import { CHANNEL_TIMELINE_CONTENT_KINDS } from "@/shared/constants/kinds";
 import {
@@ -10,9 +14,20 @@ import { getThreadReference, isBroadcastReply } from "./threading";
 
 const CHANNEL_TIMELINE_KINDS = new Set<number>(CHANNEL_TIMELINE_CONTENT_KINDS);
 
-function retainRefetchReconciliationEvents(events: RelayEvent[]) {
+function retainRefetchReconciliationEvents(
+  events: RelayEvent[],
+  renderableLaneRefs: CodingSessionLaneRefResolver,
+) {
   return events.filter((event) => {
     if (!CHANNEL_TIMELINE_KINDS.has(event.kind)) return false;
+    if (
+      shouldSuppressCodingSessionLaneMessageFromChannelTimeline(
+        event,
+        renderableLaneRefs,
+      )
+    ) {
+      return false;
+    }
     if (event.pending) return true;
     const thread = getThreadReference(event.tags);
     return thread.parentId !== null && !isBroadcastReply(event.tags);
@@ -22,10 +37,15 @@ function retainRefetchReconciliationEvents(events: RelayEvent[]) {
 /**
  * Project the timeline from the authoritative window while retaining local
  * pending sends and non-broadcast thread replies the window does not contain.
+ *
+ * `renderableLaneRefs` carries the same lane-resolution rule the window parse
+ * used, so a cache-only row cannot re-introduce a message the window dropped
+ * (or drop one the window kept).
  */
 export function reconcileChannelWindowMessages(
   window: ChannelWindowStore,
   messages: RelayEvent[],
+  renderableLaneRefs: CodingSessionLaneRefResolver,
 ) {
   const windowEvents = flattenChannelWindowEvents(window);
   if (window.pages.length === 0) {
@@ -41,9 +61,10 @@ export function reconcileChannelWindowMessages(
     return [...merged].sort((left, right) => compareRelayOrder(right, left));
   }
   const authoritativeIds = new Set(windowEvents.map((event) => event.id));
-  const retained = retainRefetchReconciliationEvents(messages).filter(
-    (event) => !authoritativeIds.has(event.id),
-  );
+  const retained = retainRefetchReconciliationEvents(
+    messages,
+    renderableLaneRefs,
+  ).filter((event) => !authoritativeIds.has(event.id));
 
   // Reconcile acknowledgements against cache-only rows without changing the
   // authoritative window's order. The render key moves from an optimistic row

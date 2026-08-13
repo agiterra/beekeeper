@@ -117,6 +117,15 @@ export const CODING_SESSION_EVENT_KINDS = [
 // Reactions, edits, diffs, deletions, and system messages are deliberately
 // excluded: they can land after the last human-visible message and would
 // otherwise create phantom unreads.
+//
+// One member of this set is not decidable by kind alone: a kind:9 carrying a
+// `cs-session` tag is a coding-session lane message *if* this client can open
+// that lane, in which case it is invisible in the channel timeline and must
+// not trigger unread either. That is filtered per event, with the same rule the
+// timeline uses — `isCodingSessionLaneMessageHiddenFromChannel` in
+// features/messages/lib/codingSessionLaneVisibility.ts. Any new consumer of
+// this kind set that drives badges, notifications, or the mention feed must
+// apply it too.
 export const CHANNEL_MESSAGE_EVENT_KINDS = [
   KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_V2,

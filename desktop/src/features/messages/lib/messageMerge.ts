@@ -1,4 +1,5 @@
 import type { RelayEvent } from "@/shared/api/types";
+import { isCodingSessionLaneMessageHiddenFromChannel } from "./codingSessionLaneVisibility";
 import {
   dedupeMessagesById,
   normalizeTimelineMessages,
@@ -74,6 +75,18 @@ export function mergeTimelineCacheMessages(
   current: RelayEvent[],
   incoming: RelayEvent,
 ): RelayEvent[] {
+  // The live-update path writes straight into the rendered timeline cache, so
+  // it needs the same lane rule the window parse applies — otherwise a message
+  // the window drops walks back in through this door. Resolution is by the
+  // event's own `h` tag; an unresolvable ref stays ordinary chat.
+  if (
+    isCodingSessionLaneMessageHiddenFromChannel(
+      getChannelIdFromTags(incoming.tags),
+      incoming,
+    )
+  ) {
+    return current;
+  }
   return mergeMessagesWithNormalizer(
     current,
     incoming,

@@ -10,6 +10,7 @@ import {
   maxReadAt,
   msgContextKey,
 } from "@/features/channels/readState/readStateFormat";
+import { isCodingSessionLaneMessageHiddenFromChannel } from "@/features/messages/lib/codingSessionLaneVisibility";
 import {
   getThreadReference,
   isBroadcastReply,
@@ -274,9 +275,20 @@ export async function fetchCommunityUnread(args: {
       mentionEventsPromise,
     ]);
 
+    // Both queries use kind sets whose kind:9 members may be coding-session
+    // lane chat, which renders inside a session umbrella rather than in the
+    // channel — counting it here would light a rail dot with nothing behind
+    // it. Same rule as the timeline and the active community's unread: an
+    // unresolved ref stays ordinary chat and still counts, which is also what
+    // an inactive community sees, since lane refs only resolve for the
+    // community the user currently has open.
+    const isHiddenLaneMessage = (event: RelayEvent) =>
+      isCodingSessionLaneMessageHiddenFromChannel(channel.id, event);
+
     if (!hasUnread) {
       hasUnread = unreadEvents.some(
         (event) =>
+          !isHiddenLaneMessage(event) &&
           isUnreadExternalEvent(event, readState, readAt, normalizedPubkey) &&
           shouldNotifyForEvent(event, normalizedPubkey, {
             participatedRootIds,
@@ -289,8 +301,10 @@ export async function fetchCommunityUnread(args: {
       );
     }
 
-    mentionCount += mentionEvents.filter((event) =>
-      isUnreadExternalEvent(event, readState, readAt, normalizedPubkey),
+    mentionCount += mentionEvents.filter(
+      (event) =>
+        !isHiddenLaneMessage(event) &&
+        isUnreadExternalEvent(event, readState, readAt, normalizedPubkey),
     ).length;
   }
 

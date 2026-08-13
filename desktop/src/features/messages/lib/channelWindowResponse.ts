@@ -1,3 +1,7 @@
+import {
+  type CodingSessionLaneRefResolver,
+  shouldSuppressCodingSessionLaneMessageFromChannelTimeline,
+} from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   CHANNEL_AUX_EVENT_KINDS,
@@ -81,14 +85,32 @@ function expectedBoundsKey(
   return `${channelId.toLowerCase()}:${suffix}`;
 }
 
-/** Partition a flat `/query` response before any cursor or timeline math. */
+/**
+ * Partition a flat `/query` response before any cursor or timeline math.
+ *
+ * `renderableLaneRefs` are the session refs whose conversation lane this
+ * client can open in this channel (see `codingSessionLaneVisibility`); pass an
+ * empty set to keep every lane-tagged message as ordinary chat.
+ */
 export function parseChannelWindowResponse(
   events: RelayEvent[],
   channelId: string,
   startCursor: ChannelWindowCursor | null,
+  renderableLaneRefs: CodingSessionLaneRefResolver,
 ): ChannelWindowPage {
+  // Session-lane chat belongs to its umbrella surface, the same boundary that
+  // keeps 442xx kinds out of chat — but only when this client can actually
+  // open that lane. An unresolvable ref (malformed, or an umbrella we have no
+  // lane for) stays visible as ordinary attributable chat.
   const rows = events
-    .filter((event) => CONTENT_KINDS.has(event.kind))
+    .filter(
+      (event) =>
+        CONTENT_KINDS.has(event.kind) &&
+        !shouldSuppressCodingSessionLaneMessageFromChannelTimeline(
+          event,
+          renderableLaneRefs,
+        ),
+    )
     .map((event) => ({
       event,
       thread: null as ChannelWindowThreadSummary | null,

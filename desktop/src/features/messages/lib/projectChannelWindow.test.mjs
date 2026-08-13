@@ -17,6 +17,10 @@ import {
 } from "./projectChannelWindow.ts";
 import { reconcileChannelWindowMessages } from "./channelWindowReconciliation.ts";
 
+// The reconciler is told which session lanes this client can open; none of
+// these fixtures are lane messages.
+const NO_LANES = new Set();
+
 function event(id, createdAt) {
   return {
     id: id.padEnd(64, "0"),
@@ -93,7 +97,7 @@ function beginRefetch(harness, fetchPage, afterWindowWrite) {
       const previousMessages = harness.client.getQueryData(harness.messagesKey);
       harness.client.setQueryData(harness.windowKey, next);
       afterWindowWrite?.();
-      return reconcileChannelWindowMessages(next, previousMessages);
+      return reconcileChannelWindowMessages(next, previousMessages, NO_LANES);
     },
   });
   const unsubscribe = observer.subscribe(() => {});
@@ -156,10 +160,11 @@ test("test_projection_retains_pending_send_and_non_broadcast_thread_reply", asyn
     ],
   };
   const window = harness.client.getQueryData(harness.windowKey);
-  const projected = reconcileChannelWindowMessages(window, [
-    pending,
-    threadReply,
-  ]);
+  const projected = reconcileChannelWindowMessages(
+    window,
+    [pending, threadReply],
+    NO_LANES,
+  );
 
   assert.deepEqual(
     projected.map((event) => event.content),
@@ -176,7 +181,7 @@ test("test_projection_replaces_pending_send_with_authoritative_event", () => {
     newestPage([accepted, event("initial", 100)]),
   );
 
-  const projected = reconcileChannelWindowMessages(window, [pending]);
+  const projected = reconcileChannelWindowMessages(window, [pending], NO_LANES);
 
   assert.deepEqual(
     projected.map((event) => event.content),
@@ -201,11 +206,13 @@ test("test_reconciliation_preserves_dense_second_window_order", () => {
   );
 
   assert.deepEqual(
-    reconcileChannelWindowMessages(store, []).map((item) => item.content),
+    reconcileChannelWindowMessages(store, [], NO_LANES).map(
+      (item) => item.content,
+    ),
     ["z", "c", "b", "a"],
   );
   assert.deepEqual(
-    reconcileChannelWindowMessages(store, []).map((item) => item.id),
+    reconcileChannelWindowMessages(store, [], NO_LANES).map((item) => item.id),
     flattenChannelWindowEvents(store).map((item) => item.id),
   );
 });
@@ -226,6 +233,7 @@ test("test_reconciliation_retains_identical_pending_sends", () => {
   const projected = reconcileChannelWindowMessages(
     harness.client.getQueryData(harness.windowKey),
     [first, second],
+    NO_LANES,
   );
 
   assert.deepEqual(
@@ -255,7 +263,11 @@ test("test_reconciliation_acknowledges_only_one_identical_pending_send", () => {
     newestPage([accepted, event("initial", 100)]),
   );
 
-  const projected = reconcileChannelWindowMessages(window, [first, second]);
+  const projected = reconcileChannelWindowMessages(
+    window,
+    [first, second],
+    NO_LANES,
+  );
 
   assert.deepEqual(
     projected.map((item) => item.id),

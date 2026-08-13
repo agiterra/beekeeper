@@ -7,6 +7,7 @@ import {
   type ChannelWindowStore,
 } from "./channelWindowStore";
 import { reconcileChannelWindowMessages } from "./channelWindowReconciliation";
+import { codingSessionLaneRenderableRefs } from "./codingSessionLaneVisibility";
 
 /** Keep the rendered timeline cache aligned with its authoritative window. */
 export function projectChannelWindowMessages(
@@ -18,7 +19,12 @@ export function projectChannelWindowMessages(
     emptyChannelWindowStore();
   queryClient.setQueryData<RelayEvent[]>(
     channelMessagesKey(channelId),
-    (messages = []) => reconcileChannelWindowMessages(window, messages),
+    (messages = []) =>
+      reconcileChannelWindowMessages(
+        window,
+        messages,
+        codingSessionLaneRenderableRefs(channelId),
+      ),
   );
 }
 

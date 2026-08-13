@@ -8,6 +8,10 @@ import {
   getChannelIdFromTags,
   isThreadReply,
 } from "@/features/messages/lib/threading";
+import {
+  isCodingSessionLaneMessageHiddenFromChannel,
+  observeCodingSessionLaneRefs,
+} from "@/features/messages/lib/codingSessionLaneVisibility";
 import { shouldNotifyForEvent } from "@/features/notifications/lib/shouldNotify";
 import { relayClient } from "@/shared/api/relayClient";
 import {
@@ -241,6 +245,17 @@ export function useLiveChannelUpdates(
       return;
     }
 
+    // A session-lane message this client renders inside a coding session's
+    // umbrella is not visible in this channel, so none of the side effects
+    // below apply to it: no OS notification, no DM alert, no mention ping, no
+    // unread. Observing first lets the visibility hook resolve refs for
+    // channels the user has not opened; the gate itself fails open, so an
+    // unresolved or forged ref stays ordinary chat and notifies normally.
+    observeCodingSessionLaneRefs(channelId, [event]);
+    if (isCodingSessionLaneMessageHiddenFromChannel(channelId, event)) {
+      return;
+    }
+
     const isDmChannel = dmChannelMap.has(channelId);
     const isUnreadTriggerKind = isChannelUnreadTriggerKind(
       event.kind,
@@ -340,6 +355,21 @@ export function useLiveChannelUpdates(
     }
 
     handleIncomingMessage(event);
+
+    // The mention subscription (buildChannelMentionFilter) matches on kind +
+    // `#p`, so it also delivers lane-tagged chat. A mention inside a lane the
+    // user can open is surfaced by that lane, not by the Home mention chime —
+    // resolve the channel from the event's own `h` tag, as the timeline merge
+    // path does.
+    if (
+      isCodingSessionLaneMessageHiddenFromChannel(
+        getChannelIdFromTags(event.tags),
+        event,
+      )
+    ) {
+      return;
+    }
+
     options.onLiveMention?.();
   });
 
