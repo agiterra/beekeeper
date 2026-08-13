@@ -8,6 +8,7 @@
       "binaries/buzz-dev-mcp",
       "binaries/git-credential-nostr",
       "binaries/buzz",
+      "binaries/buzz-shell-host",
       "binaries/buzz-session-provider"
     ]
   }

@@ -62,7 +62,8 @@ cp "$GLUE_ROOT/desktop/src-tauri/tauri.local-prod.conf.json" desktop/src-tauri/t
 
 # ── release sidecars + coding-session provider ───────────────────────────────
 cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes \
-  -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-session-provider
+  -p buzz-dev-mcp -p buzz-cli -p git-credential-nostr -p buzz-session-provider \
+  -p buzz-shell-host
 ./scripts/bundle-sidecars.sh
 cp target/release/buzz-session-provider "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
