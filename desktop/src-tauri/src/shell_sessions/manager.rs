@@ -61,10 +61,11 @@ fn default_cwd() -> String {
 }
 
 /// The directory holding host sockets + reattach receipts
-/// (`~/.local/state/buzz/shell-hosts`, next to the session-broker socket).
+/// (`<state_dir>/shell-hosts`, next to the session-broker socket). Namespaced
+/// per instance (buzz vs buzz-dev) so two apps on one machine never adopt
+/// each other's detached sessions at reattach.
 fn hosts_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    let dir = PathBuf::from(home).join(".local/state/buzz/shell-hosts");
+    let dir = crate::shell_sessions::state_dir()?.join("shell-hosts");
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create shell-hosts dir: {e}"))?;
     Ok(dir)
 }

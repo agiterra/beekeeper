@@ -94,7 +94,9 @@ pub enum SessionCmd {
 }
 
 /// Env override for the broker socket path (kept in lockstep with the desktop's
-/// `session_broker::server`).
+/// `session_broker::server`). The default targets the **production** app's
+/// broker; a dev-build app binds `…/buzz-dev/session-broker.sock` instead —
+/// set the env override to reach it.
 const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
 const DEFAULT_SOCKET_REL: &str = ".local/state/buzz/session-broker.sock";
 

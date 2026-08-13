@@ -18,22 +18,20 @@ use super::protocol::{BrokerEnvelope, BrokerRequest, BrokerResponse};
 
 /// Env override for the broker socket path.
 const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
-/// Fixed socket location, derived from `$HOME` so the separate `buzz session`
-/// CLI (not a Tauri app, so it has no `app_data_dir`) can find it with
-/// identical logic. The `buzz session` CLI computes the same path; keep the
-/// two in lockstep.
-const DEFAULT_SOCKET_REL: &str = ".local/state/buzz/session-broker.sock";
 
 /// Resolve the broker socket path: `$BUZZ_SESSION_BROKER_SOCK`, else
-/// `$HOME/.local/state/buzz/session-broker.sock`.
+/// `<state_dir>/session-broker.sock` (`~/.local/state/buzz` in production,
+/// `…/buzz-dev` for dev builds — so two instances on one machine don't steal
+/// each other's bind). The `buzz session` CLI defaults to the production
+/// path (`crates/buzz-cli/src/commands/session.rs` — keep in lockstep);
+/// reaching a dev instance requires the env override.
 pub fn socket_path() -> Result<PathBuf, String> {
     if let Ok(explicit) = std::env::var(SOCKET_PATH_ENV) {
         if !explicit.is_empty() {
             return Ok(PathBuf::from(explicit));
         }
     }
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home).join(DEFAULT_SOCKET_REL))
+    Ok(crate::shell_sessions::state_dir()?.join("session-broker.sock"))
 }
 
 /// Bind the broker socket and serve requests until the process exits. The
