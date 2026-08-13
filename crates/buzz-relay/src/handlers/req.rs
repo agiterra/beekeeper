@@ -1361,6 +1361,13 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
 /// fallback — the fast SQL `count_events()` has no per-event access check,
 /// so it would count a private project's repo activity, leaking its
 /// existence even without returning content.
+///
+/// NIP-ST shared-terminal announces (kind:30623) trigger the same
+/// hidden-set resolution: their per-event gate
+/// ([`buzz_core::kind::shell_session_hidden_from`], applied inside
+/// [`event_visible_to_reader`]) reads the reader's hidden private-project
+/// coordinates from that set, so a filter that can match a 30623 must fetch
+/// it or the announce gate would silently see an empty set and fail open.
 /// The NIP-MP membership kinds (9010/9011/39010) ride the same rule for the
 /// same reason ([`buzz_core::kind::project_membership_event_hidden_from`]).
 pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
