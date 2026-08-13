@@ -47,7 +47,6 @@ export function useHomeFeedQuery() {
         ),
       );
     },
-    staleTime: 15_000,
     gcTime: 5 * 60 * 1_000,
     // Pause background polling on degraded/stalled/disconnected connections.
     // The relay can't serve the request anyway, and the spurious failures
