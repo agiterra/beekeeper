@@ -81,8 +81,13 @@ export function createCodingSessionDiscoveryController<Result>({
         getRateLimitRemainingMs(),
       );
       const attempt = retryAttempt + 1;
+      // Back-pressure is a server instruction, not a transport failure, so it
+      // does not spend the bounded budget — it only advances the backoff
+      // exponent (capped at 30s). See `isCodingSessionRelayBackPressure`.
       const willRetry =
-        attempt <= maxRetries && isRetryableCodingSessionDiscoveryError(error);
+        isCodingSessionRelayBackPressure(error) ||
+        (attempt <= maxRetries &&
+          isRetryableCodingSessionDiscoveryError(error));
       const retry = { attempt, delayMs, willRetry };
       retryAttempt = willRetry ? Math.min(retryAttempt + 1, 31) : 0;
       onError(error, retry);
@@ -114,6 +119,39 @@ export function createCodingSessionDiscoveryController<Result>({
 }
 
 /**
+ * Relay back-pressure: a "come back later", never a permanent failure.
+ *
+ * The relay closes a REQ with one of three distinct `rate-limited:` reasons
+ * (`buzz-relay/src/connection.rs`):
+ *
+ * - `rate-limited: quota exceeded; retry in Ns` — the per-pubkey WebSocket
+ *   admission budget (`human_ws_events_per_sec` × a 5s burst window, so 50
+ *   REQ/EVENT frames by default) is spent.
+ * - `rate-limited: too many concurrent requests` — the handler semaphore is
+ *   saturated.
+ * - `rate-limited: shared admission unavailable` — the shared (Redis) limiter
+ *   could not be consulted, so the relay fails closed.
+ *
+ * All three are transient and all three must be retried. Matching only the
+ * first was the defect behind "the session stops rendering when I leave and
+ * come back": entering a coding-session view issues a burst of REQs (trusted
+ * ingress history + live, create observations history + live, the conversation
+ * lane, plus the channel window and its aux backfills), and the frames that
+ * lose the quota race come back as one of the two unmatched reasons. The
+ * discovery controller then treated them as fatal, leaving the catalog with no
+ * entries and `isLoading` false — which the workspace renders as "Generation
+ * not found" for a session that exists and is still streaming.
+ */
+export function isCodingSessionRelayBackPressure(error: unknown): boolean {
+  const message = (
+    error instanceof Error ? error.message : String(error)
+  ).toLowerCase();
+  return (
+    message.includes("rate-limited:") || parseRateLimitHint(message) !== null
+  );
+}
+
+/**
  * Retry relay transport/back-pressure failures, never arbitrary parsing,
  * authority, or invalid-filter errors.
  */
@@ -123,10 +161,7 @@ export function isRetryableCodingSessionDiscoveryError(
   const message = (
     error instanceof Error ? error.message : String(error)
   ).toLowerCase();
-  if (
-    message.includes("rate-limited:") &&
-    (message.includes("quota exceeded") || parseRateLimitHint(message) !== null)
-  ) {
+  if (isCodingSessionRelayBackPressure(error)) {
     return true;
   }
   return [

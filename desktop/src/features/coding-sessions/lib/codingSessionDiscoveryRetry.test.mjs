@@ -95,7 +95,9 @@ test("controller stops after the bounded retry budget is exhausted", async () =>
   const controller = createCodingSessionDiscoveryController({
     async load() {
       loadCount += 1;
-      throw new Error("rate-limited: quota exceeded; retry in 5s");
+      // A transport failure, deliberately not back-pressure: the bounded
+      // budget exists for failures the relay is not asking us to wait out.
+      throw new Error("socket closed");
     },
     onAttemptStart() {},
     onSuccess() {},
@@ -120,13 +122,21 @@ test("controller stops after the bounded retry budget is exhausted", async () =>
   assert.equal(scheduled.length, 0);
 });
 
-test("retry classifier excludes non-quota admission and authority failures", () => {
-  assert.equal(
-    isRetryableCodingSessionDiscoveryError(
-      new Error("rate-limited: shared admission unavailable"),
-    ),
-    false,
-  );
+test("retry classifier covers every relay back-pressure reason, and no authority failure", () => {
+  // The exact three CLOSED reasons `buzz-relay/src/connection.rs` emits.
+  // Matching only the first one is what stranded a live session behind
+  // "Generation not found" after navigating away and back.
+  for (const reason of [
+    "rate-limited: quota exceeded; retry in 5s",
+    "rate-limited: too many concurrent requests",
+    "rate-limited: shared admission unavailable",
+  ]) {
+    assert.equal(
+      isRetryableCodingSessionDiscoveryError(new Error(reason)),
+      true,
+      reason,
+    );
+  }
   assert.equal(
     isRetryableCodingSessionDiscoveryError(
       new Error("Native session projections disabled: invalid authority"),
@@ -139,6 +149,54 @@ test("retry classifier excludes non-quota admission and authority failures", () 
     ),
     true,
   );
+});
+
+test("back-pressure retries outlive the bounded transport budget", async () => {
+  const scheduled = [];
+  const errors = [];
+  let loadCount = 0;
+  const controller = createCodingSessionDiscoveryController({
+    async load() {
+      loadCount += 1;
+      if (loadCount <= 6) {
+        throw new Error("rate-limited: too many concurrent requests");
+      }
+      return "recovered";
+    },
+    onAttemptStart() {},
+    onSuccess() {},
+    onError: (_error, retry) => errors.push(retry),
+    retrySeed: "backpressure",
+    maxRetries: 1,
+    getRateLimitRemainingMs: () => 0,
+    schedule(callback) {
+      scheduled.push(callback);
+      return scheduled.length;
+    },
+    clearSchedule() {},
+  });
+
+  controller.request();
+  await flushMicrotasks();
+  // Six attempts against a `maxRetries: 1` budget: the relay asked us to slow
+  // down, so the controller keeps converging instead of latching an empty,
+  // not-loading catalog.
+  for (let round = 0; round < 5; round += 1) {
+    assert.equal(errors.at(-1).willRetry, true, `round ${round}`);
+    scheduled.shift()();
+    await flushMicrotasks();
+  }
+  assert.equal(loadCount, 6);
+  assert.equal(errors.length, 6);
+  assert.equal(errors.at(-1).willRetry, true);
+
+  // The backoff exponent still advances, so a relay that stays saturated is
+  // polled on the same capped schedule as any other retry — never tightly.
+  assert.ok(errors.at(-1).delayMs > errors[0].delayMs);
+
+  scheduled.shift()();
+  await flushMicrotasks();
+  assert.equal(loadCount, 7);
 });
 
 test("retry delay honors a longer active gate and caps hostile server hints", () => {
