@@ -92,6 +92,16 @@ done
 # ASSEMBLY — not merged — so glue commits may edit files that only exist on
 # feature branches (cross-feature adaptation). `integration/glue-base` records
 # the assembly commit the series is currently parented on.
+PENDING_GLUE_BASE_REF="refs/heads/integration/glue-base-pending"
+if pending_glue_base="$(git rev-parse -q --verify "$PENDING_GLUE_BASE_REF" 2>/dev/null)"; then
+  # A previous run may have stopped for conflicts and then been completed with
+  # `git rebase --continue` outside this script. Promote its target only when
+  # it is now genuine ancestry; an aborted rebase leaves the old marker intact.
+  if git merge-base --is-ancestor "$pending_glue_base" "$GLUE"; then
+    git update-ref refs/heads/integration/glue-base "$pending_glue_base"
+  fi
+  git update-ref -d "$PENDING_GLUE_BASE_REF"
+fi
 OLD_GLUE_BASE="$(git rev-parse integration/glue-base)"
 git checkout -B integrated-build main
 for entry in "${FEATURES[@]}"; do
@@ -104,8 +114,13 @@ for entry in "${FEATURES[@]}"; do
   fi
 done
 ASSEMBLY="$(git rev-parse HEAD)"
-git rebase --onto "$ASSEMBLY" "$OLD_GLUE_BASE" "$GLUE"
+git update-ref "$PENDING_GLUE_BASE_REF" "$ASSEMBLY"
+if ! git rebase --onto "$ASSEMBLY" "$OLD_GLUE_BASE" "$GLUE"; then
+  echo "glue rebase stopped; resolve it, run git rebase --continue, then rerun this script" >&2
+  exit 1
+fi
 git update-ref refs/heads/integration/glue-base "$ASSEMBLY"
+git update-ref -d "$PENDING_GLUE_BASE_REF"
 
 # ── 3b. stamp the CI base ref on the glue branch ─────────────────────────────
 # The gate's file-size ratchet diffs against this commit (the CI clone has no
