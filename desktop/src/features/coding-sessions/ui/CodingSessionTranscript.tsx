@@ -450,13 +450,17 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
     if (item.role === "user") {
       return (
         <div
-          className="flex justify-end"
+          className="group flex flex-col items-end gap-1"
           data-role="user-message"
           data-testid="coding-session-user-message"
         >
-          <div className="max-w-[85%] rounded-2xl border border-border/70 bg-muted/35 px-4 py-2.5 text-sm leading-6">
+          <div className="max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
             <Markdown content={item.text.trim() || " "} mediaInset />
           </div>
+          <p className="pe-1 text-2xs text-muted-foreground">
+            <span className="font-medium text-foreground/75">You</span>
+            {formatCodingSessionMessageTimestamp(item.timestamp)}
+          </p>
         </div>
       );
     }
@@ -522,6 +526,15 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
     />
   );
 });
+
+function formatCodingSessionMessageTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return "";
+  return ` · ${date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
 
 function findSettledWorkRun(turn: CodingSessionTranscriptTurn) {
   if (!turn.completion) return null;

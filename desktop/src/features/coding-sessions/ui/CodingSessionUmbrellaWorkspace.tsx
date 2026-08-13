@@ -103,7 +103,7 @@ export function UmbrellaCodingSessionWorkspace({
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-44 sm:px-8">
+            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-64 sm:px-8">
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 laneMessages={lane.messages}
@@ -248,7 +248,7 @@ export function CodingSessionUmbrellaTimelineView({
 
   return (
     <div
-      className="flex flex-col gap-5"
+      className="flex flex-col gap-7"
       data-testid="coding-session-umbrella-timeline"
     >
       {entries.map((entry) => {
@@ -356,8 +356,9 @@ function UmbrellaTurnBlock({
   return (
     <article
       className={cn(
-        "rounded-2xl border border-border/60 bg-background/60 px-4 py-3 transition-colors",
-        isHighlighted && "border-primary/60 bg-primary/5",
+        "relative py-1 transition-colors",
+        isHighlighted &&
+          "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
       )}
       data-block={blockKey}
       data-execution={block.executionKey}
@@ -366,8 +367,10 @@ function UmbrellaTurnBlock({
       data-testid="coding-session-umbrella-turn-block"
       ref={registerNode}
     >
-      <header className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium">{label}</span>
+      <header className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium">
+          {label}
+        </span>
         <span
           className="font-mono text-2xs text-muted-foreground"
           title="Fact-stream signer for every item in this block"

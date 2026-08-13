@@ -122,6 +122,8 @@ test("renders a conversation-first settled turn with a T3-style work fold", asyn
   });
 
   assert.match(markup, /coding-session-user-message/);
+  assert.match(markup, />You</);
+  assert.match(markup, /bg-muted/);
   assert.match(markup, /data-transcript-renderer="static"/);
   assert.match(markup, /Fix the reconnect bug/);
   assert.match(markup, /coding-session-assistant-message/);

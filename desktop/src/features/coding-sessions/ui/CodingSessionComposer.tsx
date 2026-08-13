@@ -285,7 +285,7 @@ export function CodingSessionComposer({
         <Textarea
           aria-label="Coding-session instruction"
           className={cn(
-            "min-h-16 min-w-0 flex-1 resize-y",
+            "min-h-16 min-w-0 flex-1 resize-y text-foreground caret-primary",
             immersive && "min-h-12",
             variant === "floating" && "border-0 bg-transparent shadow-none",
           )}
