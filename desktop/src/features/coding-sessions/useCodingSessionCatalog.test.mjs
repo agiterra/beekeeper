@@ -117,7 +117,7 @@ test("a session is discoverable from transcripts alone, with inferred status", (
   );
   assert.equal(session.metadataAuthorityPubkey, null);
   assert.equal(session.status, "running");
-  assert.equal(session.title, "Claude Agent Acp session");
+  assert.equal(session.title, "Coding session");
   assert.equal(session.label, "Claude Agent Acp · generation 1");
   assert.equal(session.transcript.length, 2);
   assert.equal(session.projectRef, null);
@@ -144,7 +144,7 @@ test("metadata enriches only its exact channel, target, signer, and unconflicted
       session.commandTarget.generation === 1,
   );
   assert.equal(exact.metadataAuthorityPubkey, null);
-  assert.equal(exact.title, "Claude Agent Acp session");
+  assert.equal(exact.title, "Coding session");
   assert.ok(
     !sessions.some((session) => session.title === "Wrong channel"),
     "another channel's metadata never creates a session here",

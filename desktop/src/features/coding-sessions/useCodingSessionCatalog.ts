@@ -285,7 +285,7 @@ export function mergeTrustedCodingSessionIngress(
         target,
       ),
       label: `${driverLabel} · generation ${target.generation}`,
-      title: metadata?.title ?? `${driverLabel} session`,
+      title: metadata?.title ?? "Coding session",
       providerAuthorityPubkey: signerPubkey,
       metadataAuthorityPubkey: metadataEntry?.signerPubkey ?? null,
       lastEventAt: new Date(latestTimestamp).toISOString(),
