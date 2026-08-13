@@ -385,5 +385,28 @@ pub(crate) fn invoke_handler(
         build_shell_input_event,
         #[cfg(unix)]
         shell_remote_input,
+        // Coding sessions (feature/coding-sessions) — the provider supervisor,
+        // pop-out bootstrap, workdir store, and transcript export. Their branch
+        // registers these in lib.rs's inline list; on the assembly that list
+        // lives here (glue adaptation).
+        session_provider::commands::coding_session_provider_status,
+        session_provider::commands::coding_session_provider_models,
+        session_provider::commands::coding_session_provider_runtimes,
+        session_provider::commands::provision_coding_session_provider,
+        session_provider::commands::ensure_coding_session_provider_running,
+        session_provider::commands::stop_coding_session_provider,
+        session_provider::commands::coding_session_provider_models,
+        session_provider::commands::coding_session_provider_runtimes,
+        commands::coding_session_popout::stage_coding_session_popout_bootstrap,
+        commands::coding_session_popout::get_coding_session_popout_bootstrap,
+        coding_sessions::workdir_store::get_coding_session_workdir_state,
+        coding_sessions::workdir_store::set_coding_session_workdir,
+        coding_sessions::workdir_store::record_coding_session_workdir_use,
+        coding_sessions::workdir_store::stage_coding_session_create_hint,
+        coding_sessions::workdir_store::clear_coding_session_create_hint,
+        coding_sessions::workdir_store::validate_coding_session_workdir,
+        coding_sessions::workdir_store::pick_coding_session_workdir,
+        commands::coding_session_export::begin_coding_session_transcript_export,
+        commands::coding_session_export::write_coding_session_transcript_export,
     ]
 }
