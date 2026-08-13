@@ -7,6 +7,7 @@ import {
   Hash,
   Lock,
   Plus,
+  Terminal,
 } from "lucide-react";
 
 import {
@@ -20,6 +21,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
+import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Channel } from "@/shared/api/types";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
@@ -66,8 +68,9 @@ export type ProjectChannelHandlers = {
 
 /**
  * One collapsible project group in the sidebar: a single flat list of every
- * child the project owns — channels, forums, repos, workflows, and agents —
- * type-ranked and identified by icon. Collapsing the header hides all of it.
+ * child the project owns — channels, forums, repos, workflows, agents, and
+ * shells — type-ranked and identified by icon. Collapsing the header hides
+ * all of it.
  */
 export function ProjectSidebarGroup({
   project,
@@ -85,6 +88,12 @@ export function ProjectSidebarGroup({
   onRequestCreate,
   workflows,
   onOpenWorkflow,
+  shellSessions,
+  activeShellSessionId,
+  onOpenShell,
+  onRequestRenameShell,
+  onRequestCloseShell,
+  onNewShell,
 }: {
   project: ProjectContainer;
   /** True for the locally-synthesized General bucket that exists before the
@@ -107,6 +116,14 @@ export function ProjectSidebarGroup({
    * kind:30620 def is always channel-scoped via its `h` tag). */
   workflows?: Workflow[];
   onOpenWorkflow?: (workflow: Workflow) => void;
+  shellSessions: ShellSessionInfo[];
+  activeShellSessionId?: string;
+  onOpenShell: (sessionId: string) => void;
+  onRequestRenameShell: (session: ShellSessionInfo) => void;
+  onRequestCloseShell: (session: ShellSessionInfo) => void;
+  /** Undefined when the builtin-shell experiment is off — hides the shell
+   * item in the create menu. */
+  onNewShell?: () => void;
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
@@ -133,8 +150,9 @@ export function ProjectSidebarGroup({
         repos,
         workflows: workflows ?? [],
         agents,
+        shellSessions,
       }),
-    [streamChannels, forumChannels, repos, workflows, agents],
+    [streamChannels, forumChannels, repos, workflows, agents, shellSessions],
   );
 
   const childRows = children.map((row) => (
@@ -145,6 +163,10 @@ export function ProjectSidebarGroup({
       onOpenAgents={onOpenAgents}
       onOpenRepo={onOpenRepo}
       onOpenWorkflow={onOpenWorkflow}
+      activeShellSessionId={activeShellSessionId}
+      onOpenShell={onOpenShell}
+      onRequestRenameShell={onRequestRenameShell}
+      onRequestCloseShell={onRequestCloseShell}
     />
   ));
 
@@ -183,7 +205,7 @@ export function ProjectSidebarGroup({
           </SidebarMenuItem>
         </SidebarMenu>
         <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
-          {onRequestCreate || hasUnread ? (
+          {onRequestCreate || onNewShell || hasUnread ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -218,9 +240,20 @@ export function ProjectSidebarGroup({
                     New forum
                   </DropdownMenuItem>
                 ) : null}
+                {onNewShell ? (
+                  <DropdownMenuItem
+                    data-testid={`project-new-shell-${project.dtag}`}
+                    onSelect={() => deferMenuAction(onNewShell)}
+                  >
+                    <Terminal />
+                    New terminal
+                  </DropdownMenuItem>
+                ) : null}
                 {hasUnread ? (
                   <>
-                    {onRequestCreate ? <DropdownMenuSeparator /> : null}
+                    {onRequestCreate || onNewShell ? (
+                      <DropdownMenuSeparator />
+                    ) : null}
                     <DropdownMenuItem
                       data-testid={`project-mark-all-read-${project.dtag}`}
                       onSelect={() => deferMenuAction(markAllRead)}

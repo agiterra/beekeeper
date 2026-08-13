@@ -11267,6 +11267,45 @@ export function maybeInstallE2eTauriMocks() {
           },
         };
       }
+      case "list_session_agent_consent":
+        return [];
+      case "set_session_agent_consent":
+        return null;
+      // Built-in shell mocks: enough for the Settings → Terminals panel and
+      // the sidebar section to render in a browser. Not a real PTY.
+      case "list_shell_sessions":
+        return [];
+      case "create_shell_session":
+      case "resume_shell_session":
+        return {
+          sessionId: "mock-shell-1",
+          title: "mock-shell",
+          currentDirectory: "/Users/you",
+          shell: "/bin/zsh",
+          createdAt: 1_784_919_914,
+          rows: 24,
+          cols: 80,
+          running: true,
+          restorable: false,
+        };
+      case "read_shell_session":
+        return "$ ";
+      case "attach_shell_session":
+        return "";
+      case "close_shell_session":
+      case "rename_shell_session":
+      case "set_shell_session_project":
+      case "write_shell_session":
+      case "resize_shell_session":
+        return null;
+      case "list_shell_access_requests":
+        return [];
+      case "resolve_shell_access_request":
+        return null;
+      case "shell_persistence_enabled":
+        return true;
+      case "set_shell_persistence_enabled":
+        return null;
       case "mesh_installed_models":
         return mockMeshState.models;
       case "mesh_model_catalog":

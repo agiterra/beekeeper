@@ -15,6 +15,7 @@ const emptyInput = {
   repos: [],
   workflows: [],
   agents: [],
+  shellSessions: [],
 };
 
 const makeChannel = (overrides = {}) => ({
@@ -36,6 +37,13 @@ const makeWorkflow = (overrides = {}) => ({
   ...overrides,
 });
 
+const makeShell = (overrides = {}) => ({
+  sessionId: "shell-1",
+  title: "zsh",
+  running: true,
+  ...overrides,
+});
+
 test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
@@ -49,10 +57,11 @@ test("buildProjectChildren groups interleaved types by rank order", () => {
     repos: [makeRepo()],
     workflows: [makeWorkflow()],
     agents: [{ key: "30175:owner:helper", label: "Helper" }],
+    shellSessions: [makeShell()],
   });
   assert.deepEqual(
     rows.map((row) => row.type),
-    ["channel", "forum", "repo", "workflow", "agent"],
+    ["channel", "forum", "repo", "workflow", "agent", "shell"],
   );
   const ranks = rows.map((row) => PROJECT_CHILD_TYPE_RANK[row.type]);
   assert.deepEqual(
@@ -115,6 +124,30 @@ test("projectChildLabel reads the per-type display name", () => {
     }),
     "Helper",
   );
+  assert.equal(
+    projectChildLabel({ type: "shell", session: makeShell() }),
+    "zsh",
+  );
+});
+
+test("shell rows sort last and key by session id", () => {
+  const rows = buildProjectChildren({
+    ...emptyInput,
+    streamChannels: [makeChannel()],
+    shellSessions: [
+      makeShell({ sessionId: "shell-b", title: "zsh" }),
+      makeShell({ sessionId: "shell-a", title: "zsh" }),
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => row.type),
+    ["channel", "shell", "shell"],
+  );
+  assert.deepEqual(
+    rows.slice(1).map((row) => row.session.sessionId),
+    ["shell-a", "shell-b"],
+  );
+  assert.equal(projectChildKey(rows[1]), "shell:shell-a");
 });
 
 test("compareProjectChildren orders by rank before label", () => {

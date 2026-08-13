@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { FolderGit2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -8,6 +9,9 @@ import {
   useManagedAgentsQuery,
   usePersonasQuery,
 } from "@/features/agents/hooks";
+import { useCreateShellSession } from "@/features/builtin-shell/hooks/useCreateShellSession";
+import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
+import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
@@ -87,6 +91,24 @@ export function ProjectSidebarSections({
   const createContainerMutation = useCreateProjectContainerMutation();
   const channelsQuery = useChannelsQuery();
   const forumEnabled = useFeatureEnabled("forum");
+
+  // Shells are hoisted once (the store is shared and module-level, so this is
+  // cheaper than a hook per project group) and partitioned per project below.
+  const builtinShellEnabled = useFeatureEnabled("builtin-shell");
+  const { sessions: allShellSessions } = useShellSessions();
+  const navigate = useNavigate();
+  const activeShellSessionId = useParams({
+    strict: false,
+    select: (p) => (p as { sessionId?: string }).sessionId,
+  });
+  const handleOpenShell = React.useCallback(
+    (sessionId: string) => {
+      void navigate({ to: "/shell/$sessionId", params: { sessionId } });
+    },
+    [navigate],
+  );
+  const { createFor: createShellFor } = useCreateShellSession();
+  const shellDialogs = useShellSessionDialogs();
 
   // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
   // derived from the channel's project; unclaimed channels' workflows show
@@ -203,8 +225,8 @@ export function ProjectSidebarSections({
       {displayProjects.map((project) => {
         const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
         const isFallback = project.id === LOCAL_GENERAL_ID;
-        // Unclaimed repos/forums always land in General — they must belong
-        // to a project, and General is the sweep target.
+        // Unclaimed repos/forums/shells always land in General — they must
+        // belong to a project, and General is the sweep target.
         const repos = [
           ...(reposByProject.get(project.id) ?? []),
           ...(isGeneral ? unclaimedRepos : []),
@@ -214,6 +236,13 @@ export function ProjectSidebarSections({
               ...(forumsByProject.get(project.id) ?? []),
               ...(isGeneral ? unclaimedForums : []),
             ]
+          : [];
+        const shellSessions = builtinShellEnabled
+          ? allShellSessions.filter(
+              (session) =>
+                session.projectRef === project.address ||
+                ((isFallback || isGeneral) && !session.projectRef),
+            )
           : [];
         return (
           <ProjectSidebarGroup
@@ -243,9 +272,20 @@ export function ProjectSidebarSections({
             ]}
             onOpenWorkflow={(workflow) => void goWorkflow(workflow.id)}
             onRequestCreate={(kind) => setCreateRequest({ kind, project })}
+            shellSessions={shellSessions}
+            activeShellSessionId={activeShellSessionId}
+            onOpenShell={handleOpenShell}
+            onRequestRenameShell={shellDialogs.requestRename}
+            onRequestCloseShell={shellDialogs.requestClose}
+            onNewShell={
+              builtinShellEnabled
+                ? () => createShellFor(isFallback ? undefined : project.address)
+                : undefined
+            }
           />
         );
       })}
+      {shellDialogs.dialogs}
 
       <ProjectsScreenCreateDialogs
         kind={createRequest?.kind ?? null}

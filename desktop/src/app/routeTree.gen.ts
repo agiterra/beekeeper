@@ -13,6 +13,7 @@ import { Route as projectsRouteImport } from "./routes/projects";
 import { Route as agentsRouteImport } from "./routes/agents";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as workflowsDotworkflowIdRouteImport } from "./routes/workflows.$workflowId";
+import { Route as shellDotsessionIdRouteImport } from "./routes/shell.$sessionId";
 import { Route as projectsDotprojectIdRouteImport } from "./routes/projects.$projectId";
 import { Route as messagesDotnewRouteImport } from "./routes/messages.new";
 import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$channelId";
@@ -60,6 +61,11 @@ const workflowsDotworkflowIdRoute = workflowsDotworkflowIdRouteImport.update({
   path: "/workflows/$workflowId",
   getParentRoute: () => rootRouteImport,
 } as any);
+const shellDotsessionIdRoute = shellDotsessionIdRouteImport.update({
+  id: "/shell/$sessionId",
+  path: "/shell/$sessionId",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const projectsDotprojectIdRoute = projectsDotprojectIdRouteImport.update({
   id: "/projects/$projectId",
   path: "/projects/$projectId",
@@ -105,6 +111,7 @@ export interface FileRoutesByFullPath {
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
+  "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -120,6 +127,7 @@ export interface FileRoutesByTo {
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
+  "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/projects/$projectId": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -137,6 +145,7 @@ export interface FileRoutesById {
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
+  "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -155,6 +164,7 @@ export interface FileRouteTypes {
     | "/channels/$channelId"
     | "/messages/new"
     | "/projects/$projectId"
+    | "/shell/$sessionId"
     | "/workflows/$workflowId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -170,6 +180,7 @@ export interface FileRouteTypes {
     | "/workflows"
     | "/channels/$channelId"
     | "/messages/new"
+    | "/shell/$sessionId"
     | "/workflows/$workflowId"
     | "/projects/$projectId"
     | "/channels/$channelId/posts/$postId"
@@ -186,6 +197,7 @@ export interface FileRouteTypes {
     | "/channels/$channelId"
     | "/messages/new"
     | "/projects/$projectId"
+    | "/shell/$sessionId"
     | "/workflows/$workflowId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -203,6 +215,7 @@ export interface RootRouteChildren {
   channelsDotchannelIdRoute: typeof channelsDotchannelIdRoute;
   messagesDotnewRoute: typeof messagesDotnewRoute;
   projectsDotprojectIdRoute: typeof projectsDotprojectIdRouteWithChildren;
+  shellDotsessionIdRoute: typeof shellDotsessionIdRoute;
   workflowsDotworkflowIdRoute: typeof workflowsDotworkflowIdRoute;
   channelsDotchannelIdDotpostsDotpostIdRoute: typeof channelsDotchannelIdDotpostsDotpostIdRoute;
 }
@@ -263,6 +276,13 @@ declare module "@tanstack/react-router" {
       path: "/workflows/$workflowId";
       fullPath: "/workflows/$workflowId";
       preLoaderRoute: typeof workflowsDotworkflowIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/shell/$sessionId": {
+      id: "/shell/$sessionId";
+      path: "/shell/$sessionId";
+      fullPath: "/shell/$sessionId";
+      preLoaderRoute: typeof shellDotsessionIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/projects/$projectId": {
@@ -335,6 +355,7 @@ const rootRouteChildren: RootRouteChildren = {
   channelsDotchannelIdRoute: channelsDotchannelIdRoute,
   messagesDotnewRoute: messagesDotnewRoute,
   projectsDotprojectIdRoute: projectsDotprojectIdRouteWithChildren,
+  shellDotsessionIdRoute: shellDotsessionIdRoute,
   workflowsDotworkflowIdRoute: workflowsDotworkflowIdRoute,
   channelsDotchannelIdDotpostsDotpostIdRoute:
     channelsDotchannelIdDotpostsDotpostIdRoute,
