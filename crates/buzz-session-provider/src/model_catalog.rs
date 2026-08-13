@@ -63,7 +63,17 @@ async fn probe(
     agent_args: &[String],
     cli_env: &[(String, String)],
 ) -> anyhow::Result<DiscoveredModels> {
-    let mut client = AcpClient::spawn(agent_command, agent_args, cli_env, false).await?;
+    // Fenced for the same reason a session spawn is: this is the same adapter
+    // binary, started by the same sidecar, and a startup probe is no more
+    // entitled to the provider's signing key than a session is.
+    let mut client = AcpClient::spawn_with_env_fence(
+        agent_command,
+        agent_args,
+        cli_env,
+        false,
+        &crate::agent_fence::FENCE,
+    )
+    .await?;
     let result = async {
         client.initialize().await?;
         let cwd = std::env::current_dir()

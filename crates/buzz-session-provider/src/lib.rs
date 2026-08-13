@@ -18,6 +18,9 @@
 //!   operator was no longer looking at.
 //! - **Gaps, never duplicates.** Transcript sequences are reserved and persisted
 //!   before publication, so a crash burns a number rather than reusing one.
+//! - **The agent is not the provider.** Adapters are spawned behind
+//!   [`agent_fence::FENCE`], so a session's agent cannot read the signing key
+//!   whose events consumers trust as provider fact.
 //!
 //! # Environment
 //!
@@ -26,6 +29,7 @@
 
 #![deny(unsafe_code)]
 
+mod agent_fence;
 pub mod catalog;
 pub mod commands;
 pub mod config;

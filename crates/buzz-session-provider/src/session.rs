@@ -338,15 +338,19 @@ async fn start_agent(
     request: &CreateRequest,
     observer: &ObserverHandle,
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
-    // `AcpClient::spawn` inherits this process's environment plus the
-    // descriptor's per-runtime `agent_env` — that is how a runtime-specific CLI
-    // override (e.g. `CLAUDE_CODE_EXECUTABLE`) reaches the adapter: the desktop
-    // host resolves it once and every session gets the same answer.
-    let mut client = AcpClient::spawn(
+    // The adapter inherits this process's environment plus the descriptor's
+    // per-runtime `agent_env` — that is how a runtime-specific CLI override
+    // (e.g. `CLAUDE_CODE_EXECUTABLE`) reaches the adapter: the desktop host
+    // resolves it once and every session gets the same answer.
+    //
+    // Minus the fence: the provider's signing key and the secrets it inherited
+    // from the launching shell are removed first. See `crate::agent_fence`.
+    let mut client = AcpClient::spawn_with_env_fence(
         &request.agent_command,
         &request.agent_args,
         &request.agent_env,
         false,
+        &crate::agent_fence::FENCE,
     )
     .await
     .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
@@ -823,6 +827,30 @@ pub(crate) mod testing {
         path.to_string_lossy().into_owned()
     }
 
+    /// A cooperative agent that first writes its own environment to
+    /// `dump_path`, so a test can assert on what the child actually inherited
+    /// rather than on what the spawn code appears to do.
+    ///
+    /// The path is baked into the script because the only other way to hand it
+    /// to the child would be an environment variable — the very channel under
+    /// test.
+    pub(crate) fn env_dumping_agent(dump_path: &str) -> String {
+        format!(
+            r#"
+env > "{dump_path}"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"acp-session-1"}}}}\n' "$id" ;;
+  esac
+done
+"#
+        )
+    }
+
     /// A cooperative agent: answers `initialize` and `session/new`, streams a
     /// message chunk per prompt, then completes the turn.
     pub(crate) const GOOD_AGENT: &str = r#"
@@ -945,6 +973,59 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    /// End-to-end proof of the credential fence, through the real create path
+    /// and a real subprocess: the adapter writes its own environment to a file
+    /// and the test reads what it actually got.
+    ///
+    /// The canaries are delivered through `agent_env` rather than by mutating
+    /// this process's environment. `std::env::set_var` races every other
+    /// test's `fork`/`exec` in a threaded runner, and it is not needed to
+    /// prove the property — the fence is applied after all injection and
+    /// removes unconditionally, so a key it drops here is a key it drops
+    /// whatever the source. That the removal also reaches *inherited* values
+    /// is asserted on the `Command` itself in `buzz-acp`.
+    #[tokio::test]
+    async fn the_adapter_never_receives_the_providers_credentials() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dump = dir.path().join("child-env");
+        let agent = fake_agent(
+            dir.path(),
+            "env-dumping-agent",
+            &env_dumping_agent(&dump.to_string_lossy()),
+        );
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+
+        let mut create = request(agent, dir.path());
+        create.agent_env = vec![
+            ("BUZZ_PRIVATE_KEY".into(), "nsec1canary".into()),
+            ("BUZZ_AUTH_TAG".into(), "[\"canary\"]".into()),
+            ("BUZZ_S3_SECRET_KEY".into(), "canary".into()),
+            ("TYPESENSE_API_KEY".into(), "canary".into()),
+            ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
+        ];
+        manager.create(create).await.expect("create");
+
+        let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
+        for key in [
+            "BUZZ_PRIVATE_KEY",
+            "BUZZ_AUTH_TAG",
+            "BUZZ_S3_SECRET_KEY",
+            "TYPESENSE_API_KEY",
+        ] {
+            assert!(!dumped.contains(key), "{key} reached the agent:\n{dumped}");
+        }
+        assert!(
+            dumped.contains("CLAUDE_CODE_EXECUTABLE"),
+            "the fence took the per-runtime CLI override with it:\n{dumped}"
+        );
+        assert!(
+            dumped.contains("PATH="),
+            "the fence emptied the agent's environment:\n{dumped}"
+        );
+        manager.shutdown("s1");
     }
 
     #[tokio::test]

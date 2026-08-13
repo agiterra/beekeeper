@@ -418,6 +418,78 @@ fn build_client_capabilities() -> serde_json::Value {
     })
 }
 
+/// Environment variables an agent subprocess must not receive.
+///
+/// A spawn inherits the parent environment wholesale — that is correct for the
+/// managed-agent harness, where the agent is a Buzz participant meant to act as
+/// itself, and wrong for a host that merely supervises an agent it does not
+/// want speaking in its name. This type is how such a host says so.
+///
+/// Policy lives with the caller: the fence carries no defaults, and
+/// [`OPEN`](Self::OPEN) — the fence that stops nothing — is what every existing
+/// call site gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnvFence {
+    /// Exact variable names, removed whether or not this process has them set.
+    /// Removing an absent key is a no-op, so an enumerated fence does not
+    /// depend on how the host happened to be launched.
+    pub keys: &'static [&'static str],
+    /// Name prefixes. Every variable under one is removed, *including names
+    /// nobody has invented yet* — the property an enumerated list cannot
+    /// offer, and the reason a fence over a namespace the caller owns is worth
+    /// more than a list of the credentials it currently holds.
+    pub prefixes: &'static [&'static str],
+    /// Names that survive a matching prefix. Adding one should be a
+    /// one-line, reviewable exception, not a reason to weaken a prefix.
+    pub exempt: &'static [&'static str],
+}
+
+impl EnvFence {
+    /// The fence that stops nothing — full environment inheritance.
+    pub const OPEN: Self = Self {
+        keys: &[],
+        prefixes: &[],
+        exempt: &[],
+    };
+
+    /// Whether `key` is fenced.
+    pub fn covers(&self, key: &str) -> bool {
+        if self.exempt.contains(&key) {
+            return false;
+        }
+        self.keys.contains(&key) || self.prefixes.iter().any(|prefix| key.starts_with(*prefix))
+    }
+
+    /// Whether this fence stops anything at all.
+    pub fn is_open(&self) -> bool {
+        self.keys.is_empty() && self.prefixes.is_empty()
+    }
+
+    /// Remove every fenced variable from `cmd`'s child environment.
+    ///
+    /// The enumerated keys go unconditionally; the prefix rules are resolved
+    /// against this process's own environment, because those are the values
+    /// the child would otherwise inherit.
+    fn apply(&self, cmd: &mut tokio::process::Command) {
+        if self.is_open() {
+            return;
+        }
+        for key in self.keys {
+            if !self.exempt.contains(key) {
+                cmd.env_remove(key);
+            }
+        }
+        if self.prefixes.is_empty() {
+            return;
+        }
+        for (key, _) in std::env::vars_os() {
+            if self.covers(&key.to_string_lossy()) {
+                cmd.env_remove(&key);
+            }
+        }
+    }
+}
+
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
@@ -455,6 +527,10 @@ impl AcpClient {
     /// trigger the recursive merge + forced `network_access=true` in
     /// `build_codex_config_env`.  Pass `false` for test spawns and non-Codex agents.
     ///
+    /// The child inherits this process's entire environment; callers that hold
+    /// credentials the agent must not see want
+    /// [`spawn_with_env_fence`](Self::spawn_with_env_fence) instead.
+    ///
     /// After spawning, call [`initialize`](Self::initialize) before any other method.
     pub async fn spawn(
         command: &str,
@@ -462,6 +538,90 @@ impl AcpClient {
         extra_env: &[(String, String)],
         has_generated_codex_config: bool,
     ) -> Result<Self, AcpError> {
+        // The open fence: the managed-agent harness *wants* its agent to
+        // inherit `BUZZ_PRIVATE_KEY` and friends, because a managed agent is a
+        // Buzz participant acting as itself.
+        Self::spawn_with_env_fence(
+            command,
+            args,
+            extra_env,
+            has_generated_codex_config,
+            &EnvFence::OPEN,
+        )
+        .await
+    }
+
+    /// Like [`spawn`](Self::spawn), but with `fence` applied to the child's
+    /// environment.
+    ///
+    /// Opt-in by design. Inheriting the parent environment is right for the
+    /// managed-agent harness and wrong for hosts that merely *supervise* an
+    /// agent — a coding-session sidecar signs provider-authoritative events
+    /// with a key its agent has no business holding. Rather than guess which
+    /// caller is which, the fence is a parameter and the default is unchanged.
+    pub async fn spawn_with_env_fence(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+    ) -> Result<Self, AcpError> {
+        let mut cmd =
+            Self::build_agent_command(command, args, extra_env, has_generated_codex_config, fence)?;
+
+        let standard_adapter =
+            match crate::config::normalize_agent_command_identity(command).as_str() {
+                "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
+                    Some(StandardAdapterKind::Claude)
+                }
+                "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
+                _ => None,
+            };
+        let mut child = cmd.spawn()?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AcpError::Protocol("failed to open agent stdin".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
+
+        Ok(Self {
+            child,
+            stdin,
+            reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
+            next_id: 0,
+            pending_permission_id: None,
+            permission_responded: false,
+            last_prompt_id: None,
+            current_hard_deadline: None,
+            observer: None,
+            observer_agent_index: None,
+            observer_context: ObserverContext::default(),
+            active_run_id: None,
+            steering_supported: false,
+            steer_rx: None,
+            goose_usage: UsageTracker::default(),
+            standard_usage: StandardUsageTracker::default(),
+            standard_adapter,
+        })
+    }
+
+    /// Assemble the child `Command` without spawning it.
+    ///
+    /// Split out from the spawn so the environment it hands the child is
+    /// inspectable by tests: `Command::get_envs` reports both the keys we set
+    /// and the keys we removed, which is the only way to assert the fence
+    /// without running an adapter.
+    fn build_agent_command(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+    ) -> Result<tokio::process::Command, AcpError> {
         use std::process::Stdio;
 
         let mut cmd = tokio::process::Command::new(command);
@@ -503,6 +663,9 @@ impl AcpClient {
         // key replacement) and inherited parent env (via the parent-presence
         // check) override them.
         for &(key, value) in crate::config::default_agent_env(command) {
+            if fence.covers(key) {
+                continue;
+            }
             if std::env::var_os(key).is_none() {
                 cmd.env(key, value);
             }
@@ -513,12 +676,20 @@ impl AcpClient {
                 // Handled by build_codex_config_env; skip here to avoid double-setting.
                 continue;
             }
+            // The fence outranks an explicit value. A fenced key appearing in
+            // `extra_env` is a configuration mistake, and failing closed is the
+            // only reading of it that cannot leak.
+            if fence.covers(key) {
+                continue;
+            }
             if std::env::var_os(key).is_none() {
                 cmd.env(key, value);
             }
         }
         if let Some(merged) = codex_config_value {
-            cmd.env("CODEX_CONFIG", merged);
+            if !fence.covers("CODEX_CONFIG") {
+                cmd.env("CODEX_CONFIG", merged);
+            }
         }
 
         // Spawn the agent in its own process group so SIGKILL doesn't propagate
@@ -531,44 +702,13 @@ impl AcpClient {
         // console-subsystem child process spawned from a GUI/non-console parent.
         configure_no_window(&mut cmd);
 
-        let standard_adapter =
-            match crate::config::normalize_agent_command_identity(command).as_str() {
-                "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
-                    Some(StandardAdapterKind::Claude)
-                }
-                "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
-                _ => None,
-            };
-        let mut child = cmd.spawn()?;
+        // The fence, last. Skipping injection above is not enough on its own:
+        // the parent-presence checks deliberately leave *inherited* values
+        // alone, and inheritance is the whole leak. `env_remove` is what
+        // reaches those.
+        fence.apply(&mut cmd);
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| AcpError::Protocol("failed to open agent stdin".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
-
-        Ok(Self {
-            child,
-            stdin,
-            reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
-            next_id: 0,
-            pending_permission_id: None,
-            permission_responded: false,
-            last_prompt_id: None,
-            current_hard_deadline: None,
-            observer: None,
-            observer_agent_index: None,
-            observer_context: ObserverContext::default(),
-            active_run_id: None,
-            steering_supported: false,
-            steer_rx: None,
-            goose_usage: UsageTracker::default(),
-            standard_usage: StandardUsageTracker::default(),
-            standard_adapter,
-        })
+        Ok(cmd)
     }
 
     /// Attach a local observer feed to this ACP client.
@@ -2334,6 +2474,122 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The child's env plan as `(key, Some(value) | None)`, where `None` is an
+    /// explicit removal from the inherited environment.
+    fn env_plan(cmd: &tokio::process::Command) -> Vec<(String, Option<String>)> {
+        cmd.as_std()
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    }
+
+    /// A fence shaped like the coding-session provider's, without depending on
+    /// that crate.
+    const TEST_FENCE: EnvFence = EnvFence {
+        keys: &["TYPESENSE_API_KEY", "NOSTR_PRIVATE_KEY"],
+        prefixes: &["BUZZ_TEST_FENCED_"],
+        exempt: &["BUZZ_TEST_FENCED_BUT_EXEMPT"],
+    };
+
+    /// The managed-agent path. A managed agent is a Buzz participant and is
+    /// supposed to inherit `BUZZ_PRIVATE_KEY` from the harness, so the open
+    /// fence must remove nothing at all — this is the assertion that the
+    /// coding-session fix left the harness alone.
+    #[test]
+    fn the_default_spawn_removes_nothing_from_the_inherited_environment() {
+        let extra = vec![("GOOSE_PROVIDER".to_string(), "anthropic".to_string())];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        assert!(
+            plan.iter().all(|(_, value)| value.is_some()),
+            "the open fence removed a key: {plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|(key, _)| key == "GOOSE_PROVIDER" || std::env::var_os(key).is_some()),
+            "per-persona env did not reach the child: {plan:?}"
+        );
+    }
+
+    /// An enumerated key is removed whether or not this process has it set:
+    /// the parent-presence checks in the injection loops deliberately leave
+    /// inherited values alone, so `env_remove` is the only thing standing
+    /// between a host's secrets and its adapter.
+    #[test]
+    fn an_enumerated_key_is_removed_from_the_child() {
+        let extra = vec![(
+            "CLAUDE_CODE_EXECUTABLE".to_string(),
+            "/opt/claude".to_string(),
+        )];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        for key in TEST_FENCE.keys {
+            assert_eq!(
+                plan.iter()
+                    .find(|(planned, _)| planned == key)
+                    .map(|(_, value)| value.clone()),
+                Some(None),
+                "{key} was not removed from the child environment: {plan:?}"
+            );
+        }
+        assert!(
+            plan.iter()
+                .any(|(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value.is_some()),
+            "the fence dropped a per-runtime variable it should have kept: {plan:?}"
+        );
+    }
+
+    /// The fence outranks an explicit `extra_env` entry. Anything else would
+    /// let a runtime descriptor re-open the hole from the far side of a wire
+    /// format.
+    #[test]
+    fn the_fence_outranks_an_explicit_value_for_the_same_key() {
+        let extra = vec![
+            (
+                "BUZZ_TEST_FENCED_SECRET".to_string(),
+                "nsec1leak".to_string(),
+            ),
+            ("NOSTR_PRIVATE_KEY".to_string(), "nsec1leak".to_string()),
+            (
+                "BUZZ_TEST_FENCED_BUT_EXEMPT".to_string(),
+                "kept".to_string(),
+            ),
+        ];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        for key in ["BUZZ_TEST_FENCED_SECRET", "NOSTR_PRIVATE_KEY"] {
+            assert!(
+                !plan
+                    .iter()
+                    .any(|(planned, value)| planned == key && value.is_some()),
+                "{key} was injected despite the fence: {plan:?}"
+            );
+        }
+        assert!(
+            plan.iter()
+                .any(|(key, value)| key == "BUZZ_TEST_FENCED_BUT_EXEMPT"
+                    && value.as_deref() == Some("kept")),
+            "the exemption did not survive its own prefix: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn the_open_fence_covers_nothing() {
+        assert!(EnvFence::OPEN.is_open());
+        assert!(!EnvFence::OPEN.covers("BUZZ_PRIVATE_KEY"));
+    }
 
     #[test]
     fn stop_reason_parses_all_known_values() {
