@@ -3,7 +3,10 @@ import * as React from "react";
 
 import { refreshGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
-import { createCodingSessionLifecycleCommandId } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import {
+  createCodingSessionLifecycleCommandId,
+  createCodingSessionSessionRef,
+} from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { addChannelMembers } from "@/shared/api/tauri";
 import {
@@ -247,6 +250,12 @@ export function useNewCodingSessionCreate({
       title: string | null;
       initialTurn: string | null;
       workdir: string | null;
+      /**
+       * Join an existing umbrella instead of founding one (design §B): the
+       * create carries the umbrella's ref, so the provider mints a new
+       * execution inside the same session. Omit to mint a fresh umbrella.
+       */
+      sessionRef?: string | null;
     }) => {
       // `transaction` only exists once prepare has resolved, so on its own it
       // leaves the whole in-flight window unguarded — and this flow puts
@@ -287,17 +296,19 @@ export function useNewCodingSessionCreate({
         });
 
         setHostPhase("publishing");
-        const prepared = await prepareDurableCodingSessionCreate(scopeId, {
-          channelId: input.target.channelId,
-          commandId,
-          projectRef: null,
-          repoRef: null,
-          providerInstanceRef: input.target.provider.providerInstanceRef,
-          providerAuthorityPubkey: input.target.signerPubkey,
-          model: input.model,
-          title: input.title,
-          initialTurn: input.initialTurn,
-        });
+        const prepared = await prepareDurableCodingSessionCreate(
+          scopeId,
+          buildNewCodingSessionCreateInput({
+            channelId: input.target.channelId,
+            commandId,
+            providerInstanceRef: input.target.provider.providerInstanceRef,
+            providerAuthorityPubkey: input.target.signerPubkey,
+            model: input.model,
+            title: input.title,
+            initialTurn: input.initialTurn,
+            ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
+          }),
+        );
         if (!prepared.ok) {
           setDurabilityError(prepared.errorMessage);
           setHostPhase("idle");
@@ -362,6 +373,39 @@ export function useNewCodingSessionCreate({
     startFresh,
     submit,
     transaction: scoped,
+  };
+}
+
+/**
+ * Assemble the durable-create input for a brand-new session draft.
+ *
+ * Every new create mints a fresh umbrella `sessionRef` (design §A): a
+ * single-execution session is an umbrella of one, so adding a second provider
+ * later is a pure join with no migration step. The "Add provider" entry point
+ * on a session workspace passes that umbrella's existing ref instead of
+ * minting — that is the only difference between founding and joining.
+ */
+export function buildNewCodingSessionCreateInput(input: {
+  channelId: string;
+  commandId: string;
+  providerInstanceRef: string;
+  providerAuthorityPubkey: string;
+  model: string | null;
+  title: string | null;
+  initialTurn: string | null;
+  sessionRef?: string;
+}): Parameters<typeof prepareDurableCodingSessionCreate>[1] {
+  return {
+    channelId: input.channelId,
+    commandId: input.commandId,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: input.sessionRef ?? createCodingSessionSessionRef(),
+    providerInstanceRef: input.providerInstanceRef,
+    providerAuthorityPubkey: input.providerAuthorityPubkey,
+    model: input.model,
+    title: input.title,
+    initialTurn: input.initialTurn,
   };
 }
 

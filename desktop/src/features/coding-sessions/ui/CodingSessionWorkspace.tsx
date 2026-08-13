@@ -11,16 +11,19 @@ import {
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { Button } from "@/shared/ui/button";
 import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
+import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { useCodingSessionExport } from "./useCodingSessionExport";
@@ -31,6 +34,7 @@ import {
   deriveCodingSessionTaskRailOpen,
 } from "./CodingSessionTaskRail";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 
 type CodingSessionWorkspaceProps = {
   bootstrap?: CodingSessionPopoutBootstrap | null;
@@ -49,6 +53,8 @@ export function CodingSessionWorkspace({
   requireBootstrap = false,
   surface,
 }: CodingSessionWorkspaceProps) {
+  const [addProviderOpen, setAddProviderOpen] = React.useState(false);
+  const identity = useIdentityQuery();
   const catalog = useCodingSessionCatalog(channelId, bootstrap, {
     requirePopoutBootstrap: requireBootstrap,
   });
@@ -71,17 +77,67 @@ export function CodingSessionWorkspace({
     );
   }
 
+  const isMember = channel?.isMember ?? false;
+  const umbrella = resolution.umbrella;
+  // Joining needs a claimed umbrella ref to join *to* (a pre-Step-4 session has
+  // none, so it gets no affordance rather than a button that cannot work), and
+  // v1 authority is founder-only — when an observed create binds a founder who
+  // is not this user, the attach UI is absent exactly as the design specifies.
+  const canAddProvider =
+    isMember &&
+    umbrella.sessionRef !== null &&
+    resolveCodingSessionUmbrellaComposerAuthority({
+      umbrella,
+      currentUserPubkey: identity.data?.pubkey ?? null,
+    }).canPromptExecutions;
+  const onAddProvider = canAddProvider
+    ? () => setAddProviderOpen(true)
+    : undefined;
+
   return (
-    <ReadyCodingSessionWorkspace
-      channelId={channelId}
-      channelName={channel?.name ?? null}
-      generationId={generationId}
-      isMember={channel?.isMember ?? false}
-      key={`${channelId}:${generationId}`}
-      onBack={onBack}
-      session={resolution.session}
-      surface={surface}
-    />
+    <>
+      {/* The umbrella surface is a render branch, not a mode: an umbrella of
+          one falls through to exactly today's single-session tree. */}
+      {umbrella.executions.length > 1 ? (
+        <UmbrellaCodingSessionWorkspace
+          channelId={channelId}
+          channelName={channel?.name ?? null}
+          focusedExecution={resolution.focusedExecution}
+          generationId={generationId}
+          isMember={isMember}
+          key={`${channelId}:${umbrella.umbrellaKey}`}
+          onAddProvider={onAddProvider}
+          onBack={onBack}
+          surface={surface}
+          umbrella={umbrella}
+        />
+      ) : (
+        <ReadyCodingSessionWorkspace
+          channelId={channelId}
+          channelName={channel?.name ?? null}
+          generationId={generationId}
+          isMember={isMember}
+          key={`${channelId}:${generationId}`}
+          onAddProvider={onAddProvider}
+          onBack={onBack}
+          session={resolution.session}
+          surface={surface}
+        />
+      )}
+      {/* Deliberately a sibling of both branches: the first join flips the
+          workspace from the single-session tree to the umbrella surface, and
+          a dialog owned by either branch would unmount mid-create — losing the
+          receipt wait and stranding its durable transaction. */}
+      {canAddProvider ? (
+        <AddCodingSessionProviderDialog
+          channelId={channelId}
+          channelName={channel?.name ?? null}
+          onOpenChange={setAddProviderOpen}
+          open={addProviderOpen}
+          umbrella={umbrella}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -90,6 +146,7 @@ function ReadyCodingSessionWorkspace({
   channelName,
   generationId,
   isMember,
+  onAddProvider,
   onBack,
   session,
   surface,
@@ -98,6 +155,7 @@ function ReadyCodingSessionWorkspace({
   channelName: string | null;
   generationId: string;
   isMember: boolean;
+  onAddProvider?: () => void;
   onBack: () => void;
   session: Extract<
     ReturnType<typeof resolveCodingSessionWorkspace>,
@@ -195,6 +253,7 @@ function ReadyCodingSessionWorkspace({
         generationLabel={session.label}
         isExporting={isExporting}
         model={session.model}
+        onAddProvider={onAddProvider}
         onBack={onBack}
         onExport={exportEnabled ? exportTranscript : undefined}
         onPopout={surface === "main" ? handlePopout : undefined}

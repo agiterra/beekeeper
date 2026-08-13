@@ -435,6 +435,7 @@ export function NewCodingSessionChannelPicker({
 export function NewCodingSessionProviderPicker({
   disabled,
   model,
+  noteForTarget,
   onModelChange,
   onTargetChange,
   selectedTarget,
@@ -442,6 +443,12 @@ export function NewCodingSessionProviderPicker({
 }: {
   disabled: boolean;
   model: string | null;
+  /**
+   * Extra parenthetical for an option, e.g. "already in this session" in the
+   * join flow. Availability suffixes still win — a signed-out runtime's
+   * remediation is the more urgent thing to say.
+   */
+  noteForTarget?: (target: NewCodingSessionTarget) => string | null;
   onModelChange: (model: string) => void;
   onTargetChange: (selectionKey: string) => void;
   selectedTarget: NewCodingSessionTarget | null;
@@ -484,12 +491,15 @@ export function NewCodingSessionProviderPicker({
               runtime: target.provider.runtime,
               providerInstanceRef: target.provider.providerInstanceRef,
             });
+            const note = noteForTarget?.(target) ?? null;
             const suffix =
               target.availability?.state === "needs_auth"
                 ? " (sign-in needed)"
                 : target.availability?.state === "missing"
                   ? " (not installed)"
-                  : "";
+                  : note
+                    ? ` (${note})`
+                    : "";
             return (
               <option
                 disabled={!isNewCodingSessionTargetReady(target)}

@@ -40,6 +40,11 @@ type CodingSessionComposerProps = {
   isMember: boolean;
   isWorking: boolean;
   layout?: "inline" | "stacked";
+  /**
+   * Editable text staged into the editor (e.g. a handoff provenance block).
+   * Applied once per `id`; the person keeps full control of the text after.
+   */
+  prefill?: { id: string; text: string } | null;
   target: CodingSessionCommandTarget;
   variant?: "panel" | "floating";
 };
@@ -54,10 +59,20 @@ export function CodingSessionComposer({
   isMember,
   isWorking,
   layout = "inline",
+  prefill = null,
   target,
   variant = "panel",
 }: CodingSessionComposerProps) {
-  const [text, setText] = React.useState("");
+  const [text, setText] = React.useState(prefill?.text ?? "");
+  const [appliedPrefillId, setAppliedPrefillId] = React.useState<string | null>(
+    prefill?.id ?? null,
+  );
+  if (prefill && prefill.id !== appliedPrefillId) {
+    // Render-time state adjustment: a new prefill replaces the draft exactly
+    // once, then the editor is the person's again.
+    setAppliedPrefillId(prefill.id);
+    setText(prefill.text);
+  }
   const [pendingAction, setPendingAction] = React.useState<
     "send" | "interrupt" | null
   >(null);

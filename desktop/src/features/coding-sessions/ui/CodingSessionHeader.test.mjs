@@ -72,3 +72,28 @@ test("header disables the export button while an export is running", () => {
   assert.ok(exportButton, "export button must render");
   assert.match(exportButton[0], /disabled/);
 });
+
+test("the add-provider affordance appears only when this session can take one", () => {
+  const baseProps = {
+    channelName: "Hive Sessions",
+    generationLabel: "Keystone Session · generation 2",
+    onBack() {},
+    status: { kind: "idle", label: "Idle" },
+  };
+
+  // A pre-umbrella session, a non-member view, or a non-founder gets no
+  // handler — and therefore no chrome at all in the N=1 header.
+  const withoutJoin = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, baseProps),
+  );
+  assert.doesNotMatch(withoutJoin, /data-testid="coding-session-add-provider"/);
+
+  const withJoin = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      onAddProvider() {},
+    }),
+  );
+  assert.match(withJoin, /data-testid="coding-session-add-provider"/);
+  assert.match(withJoin, /Add provider/);
+});

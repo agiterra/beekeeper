@@ -1,0 +1,581 @@
+import * as React from "react";
+import { ArrowRightLeft, Flag } from "lucide-react";
+import { toast } from "sonner";
+
+import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionHandoffPrefill,
+  isCompletedCodingSessionTurnBlock,
+  parseCodingSessionHandoffPrefill,
+  readCodingSessionTurnBlockPrompt,
+  resolveCodingSessionHandoffFactLocation,
+  resolveCodingSessionHandoffSource,
+  type CodingSessionHandoffLink,
+} from "@/features/coding-sessions/lib/codingSessionHandoff";
+import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  buildUmbrellaTimeline,
+  codingSessionUmbrellaEntryKey,
+  type CodingSessionUmbrellaTimelineEntry,
+  type CodingSessionUmbrellaTurnBlock,
+} from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
+import type {
+  CodingSessionCatalogRecord,
+  CodingSessionExecution,
+  CodingSessionUmbrellaRecord,
+  CodingSessionWorkspaceStatus,
+} from "@/features/coding-sessions/lib/codingSessionTypes";
+import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
+import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
+import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { cn } from "@/shared/lib/cn";
+import { truncatePubkey } from "@/shared/lib/pubkey";
+import { CodingSessionHeader } from "./CodingSessionHeader";
+import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import {
+  CodingSessionUmbrellaComposer,
+  type CodingSessionUmbrellaComposerPrefill,
+} from "./CodingSessionUmbrellaComposer";
+
+/**
+ * The umbrella surface: one time-ordered narrative interleaved at turn-block
+ * granularity across N executions, plus the conversation lane. Mounted only
+ * when an umbrella actually has more than one execution — an umbrella of one
+ * renders today's single-session tree and never sees this component.
+ */
+export function UmbrellaCodingSessionWorkspace({
+  channelId,
+  channelName,
+  generationId,
+  isMember,
+  onAddProvider,
+  onBack,
+  surface,
+  umbrella,
+  focusedExecution,
+}: {
+  channelId: string;
+  channelName: string | null;
+  generationId: string;
+  isMember: boolean;
+  /** Opens the join flow (design §B); absent when this session cannot join. */
+  onAddProvider?: () => void;
+  onBack: () => void;
+  surface: CodingSessionSurface;
+  umbrella: CodingSessionUmbrellaRecord;
+  focusedExecution: CodingSessionExecution;
+}) {
+  const identity = useIdentityQuery();
+  const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
+  const [prefill, setPrefill] =
+    React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
+
+  const handlePopout = React.useCallback(() => {
+    void openCodingSessionPopout(channelId, generationId).catch((error) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to open the coding-session window.",
+      );
+    });
+  }, [channelId, generationId]);
+
+  return (
+    <main
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      data-testid="coding-session-umbrella-workspace"
+    >
+      <CodingSessionHeader
+        channelName={channelName}
+        generationLabel={`${umbrella.executions.length} executions`}
+        onAddProvider={onAddProvider}
+        onBack={onBack}
+        onPopout={surface === "main" ? handlePopout : undefined}
+        providerAuthorityPubkey={focusedExecution.signerPubkey}
+        sessionTitle={umbrella.title}
+        status={umbrellaWorkspaceStatus(umbrella)}
+      />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <section
+          aria-label="Umbrella session narrative"
+          className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-44 sm:px-8">
+              <CodingSessionUmbrellaTimelineView
+                channelId={channelId}
+                laneMessages={lane.messages}
+                onHandoff={setPrefill}
+                umbrella={umbrella}
+              />
+            </div>
+          </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
+            <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+              <CodingSessionUmbrellaComposer
+                channelId={channelId}
+                currentUserPubkey={identity.data?.pubkey ?? null}
+                isMember={isMember}
+                prefill={prefill}
+                umbrella={umbrella}
+              />
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Pure view over `buildUmbrellaTimeline`: each turn block renders exactly one
+ * (signer, target) stream through the existing single-session transcript
+ * renderer, wrapped in that execution's provenance chrome. Items are never
+ * cross-ordered between executions — interleaving is between blocks only.
+ */
+export function CodingSessionUmbrellaTimelineView({
+  channelId,
+  laneMessages,
+  onHandoff,
+  umbrella,
+}: {
+  channelId: string;
+  laneMessages: readonly CodingSessionLaneMessage[];
+  onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
+  umbrella: CodingSessionUmbrellaRecord;
+}) {
+  const participants = React.useMemo(
+    () => listCodingSessionUmbrellaParticipants(umbrella),
+    [umbrella],
+  );
+  const labelsByExecutionKey = React.useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const participant of participants) {
+      if (participant.kind === "execution") {
+        labels.set(participant.executionKey, participant.label);
+      }
+    }
+    return labels;
+  }, [participants]);
+  const recordsByGenerationId = React.useMemo(() => {
+    const records = new Map<string, CodingSessionCatalogRecord>();
+    for (const execution of umbrella.executions) {
+      records.set(
+        execution.activeGeneration.generationId,
+        execution.activeGeneration,
+      );
+      for (const prior of execution.priorGenerations) {
+        records.set(prior.generationId, prior);
+      }
+    }
+    return records;
+  }, [umbrella.executions]);
+  const entries = React.useMemo(
+    () => buildUmbrellaTimeline(umbrella, laneMessages),
+    [laneMessages, umbrella],
+  );
+  const workingBlockKeys = React.useMemo(
+    () => resolveWorkingBlockKeys(umbrella, entries),
+    [entries, umbrella],
+  );
+
+  // Provenance resolution for handoff chips: the `buzz://coding-session` link
+  // is a client-side convention nothing registers, so the only honest control
+  // is one that jumps to a fact this view already holds.
+  const factCandidates = React.useMemo(
+    () =>
+      entries.flatMap((entry) =>
+        entry.kind === "turn-block"
+          ? [
+              {
+                key: codingSessionUmbrellaEntryKey(entry),
+                targetKey: blockTargetKey(
+                  recordsByGenerationId.get(entry.generationId) ?? null,
+                ),
+                items: entry.items,
+              },
+            ]
+          : [],
+      ),
+    [entries, recordsByGenerationId],
+  );
+  const resolveFactLocation = React.useCallback(
+    (link: CodingSessionHandoffLink) =>
+      resolveCodingSessionHandoffFactLocation({
+        channelId,
+        link,
+        candidates: factCandidates,
+      }),
+    [channelId, factCandidates],
+  );
+
+  const blockNodes = React.useRef(new Map<string, HTMLElement>());
+  const registerBlockNode = React.useCallback(
+    (key: string, node: HTMLElement | null) => {
+      if (node) blockNodes.current.set(key, node);
+      else blockNodes.current.delete(key);
+    },
+    [],
+  );
+  const [revealed, setRevealed] = React.useState<{
+    key: string;
+    nonce: number;
+  } | null>(null);
+  const revealFact = React.useCallback((key: string) => {
+    blockNodes.current
+      .get(key)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setRevealed((current) => ({ key, nonce: (current?.nonce ?? 0) + 1 }));
+  }, []);
+  React.useEffect(() => {
+    if (revealed === null) return;
+    const handle = window.setTimeout(() => setRevealed(null), 2400);
+    return () => window.clearTimeout(handle);
+  }, [revealed]);
+
+  if (entries.length === 0) {
+    return (
+      <p
+        className="py-10 text-center text-sm text-muted-foreground"
+        data-testid="coding-session-umbrella-timeline-empty"
+      >
+        No activity in this session yet.
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-5"
+      data-testid="coding-session-umbrella-timeline"
+    >
+      {entries.map((entry) => {
+        const key = codingSessionUmbrellaEntryKey(entry);
+        if (entry.kind === "conversation") {
+          return <UmbrellaConversationRow key={key} message={entry.message} />;
+        }
+        if (entry.kind === "lifecycle") {
+          return (
+            <p
+              className="text-center text-2xs text-muted-foreground"
+              data-testid="coding-session-umbrella-lifecycle"
+              key={key}
+            >
+              {labelsByExecutionKey.get(entry.executionKey) ??
+                truncatePubkey(entry.signerPubkey)}{" "}
+              started generation {entry.generation}
+            </p>
+          );
+        }
+        return (
+          <UmbrellaTurnBlock
+            block={entry}
+            blockKey={key}
+            channelId={channelId}
+            isHighlighted={revealed?.key === key}
+            isWorking={workingBlockKeys.has(key)}
+            key={key}
+            label={
+              labelsByExecutionKey.get(entry.executionKey) ??
+              truncatePubkey(entry.signerPubkey)
+            }
+            labelsByExecutionKey={labelsByExecutionKey}
+            onHandoff={onHandoff}
+            onRegisterNode={registerBlockNode}
+            onRevealFact={revealFact}
+            record={recordsByGenerationId.get(entry.generationId) ?? null}
+            resolveFactLocation={resolveFactLocation}
+            umbrella={umbrella}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * One execution's turn block: provenance strip (provider label + signer,
+ * mirroring the header's provenance popover fields), the block's items
+ * rendered by the existing transcript renderer, a handoff chip when the
+ * prompt carries a recognizable provenance block, and "Send to ⟨execution⟩"
+ * on completed blocks.
+ */
+function UmbrellaTurnBlock({
+  block,
+  blockKey,
+  channelId,
+  isHighlighted,
+  isWorking,
+  label,
+  labelsByExecutionKey,
+  onHandoff,
+  onRegisterNode,
+  onRevealFact,
+  record,
+  resolveFactLocation,
+  umbrella,
+}: {
+  block: CodingSessionUmbrellaTurnBlock;
+  blockKey: string;
+  channelId: string;
+  isHighlighted: boolean;
+  isWorking: boolean;
+  label: string;
+  labelsByExecutionKey: ReadonlyMap<string, string>;
+  onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
+  onRegisterNode: (key: string, node: HTMLElement | null) => void;
+  onRevealFact: (key: string) => void;
+  record: CodingSessionCatalogRecord | null;
+  resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
+  umbrella: CodingSessionUmbrellaRecord;
+}) {
+  const prompt = readCodingSessionTurnBlockPrompt(block);
+  const handoff = prompt ? parseCodingSessionHandoffPrefill(prompt.text) : null;
+  const isForeign =
+    umbrella.founderPubkey !== null &&
+    (umbrella.executions.find(
+      (execution) => execution.executionKey === block.executionKey,
+    )?.operatorPubkey ?? null) !== null &&
+    umbrella.executions.find(
+      (execution) => execution.executionKey === block.executionKey,
+    )?.operatorPubkey !== umbrella.founderPubkey;
+  const handoffTargets = umbrella.executions.filter(
+    (execution) => execution.executionKey !== block.executionKey,
+  );
+  const completed = isCompletedCodingSessionTurnBlock(block);
+  const source = completed ? resolveCodingSessionHandoffSource(block) : null;
+  const sourceLocation =
+    handoff?.link != null ? resolveFactLocation(handoff.link) : null;
+  const registerNode = React.useCallback(
+    (node: HTMLElement | null) => onRegisterNode(blockKey, node),
+    [blockKey, onRegisterNode],
+  );
+
+  return (
+    <article
+      className={cn(
+        "rounded-2xl border border-border/60 bg-background/60 px-4 py-3 transition-colors",
+        isHighlighted && "border-primary/60 bg-primary/5",
+      )}
+      data-block={blockKey}
+      data-execution={block.executionKey}
+      data-highlighted={isHighlighted ? "true" : undefined}
+      data-signer={block.signerPubkey}
+      data-testid="coding-session-umbrella-turn-block"
+      ref={registerNode}
+    >
+      <header className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium">{label}</span>
+        <span
+          className="font-mono text-2xs text-muted-foreground"
+          title="Fact-stream signer for every item in this block"
+        >
+          {truncatePubkey(block.signerPubkey)}
+        </span>
+        <span className="text-2xs text-muted-foreground">
+          generation {block.generation}
+        </span>
+        {isForeign ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs text-amber-700 dark:text-amber-300"
+            data-testid="coding-session-umbrella-foreign-flag"
+            title="This execution was attached by an operator other than the session founder."
+          >
+            <Flag aria-hidden className="size-3" />
+            foreign
+          </span>
+        ) : null}
+      </header>
+      {handoff ? (
+        <p
+          className="mb-2 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-primary/10 px-2 py-1 text-xs"
+          data-testid="coding-session-umbrella-handoff-chip"
+        >
+          <ArrowRightLeft aria-hidden className="size-3.5" />
+          <span>
+            Handoff from {handoff.sourceLabel} → {label}
+          </span>
+          {handoff.link === null ? null : sourceLocation !== null ? (
+            <button
+              className="underline underline-offset-2"
+              data-testid="coding-session-umbrella-view-source"
+              onClick={() => onRevealFact(sourceLocation)}
+              type="button"
+            >
+              View source
+            </button>
+          ) : (
+            // The quoted fact is not in this view (another channel, a
+            // generation this surface has not ingested). A dead anchor would
+            // leak an unhandled scheme to the OS, so the provenance stays
+            // visible but inert — the durable link is still in the prompt text.
+            <span
+              className="text-muted-foreground"
+              data-testid="coding-session-umbrella-source-unavailable"
+              title={handoff.linkUrl}
+            >
+              source not in this view
+            </span>
+          )}
+        </p>
+      ) : null}
+      <CodingSessionTranscript
+        generationId={block.generationId}
+        isWorking={isWorking}
+        items={block.items}
+      />
+      {completed && source && handoffTargets.length > 0 ? (
+        <footer
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+          data-testid="coding-session-umbrella-handoff-actions"
+        >
+          {handoffTargets.map((execution) => (
+            <button
+              className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2.5 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
+              data-testid="coding-session-umbrella-send-to"
+              key={execution.executionKey}
+              onClick={() =>
+                onHandoff(
+                  buildUmbrellaTurnBlockHandoff({
+                    block,
+                    channelId,
+                    quote: source.quote,
+                    eventSeq: source.eventSeq,
+                    record,
+                    sourceLabel: label,
+                    targetExecutionKey: execution.executionKey,
+                  }),
+                )
+              }
+              type="button"
+            >
+              <ArrowRightLeft aria-hidden className="size-3" />
+              Send to{" "}
+              {labelsByExecutionKey.get(execution.executionKey) ??
+                truncatePubkey(execution.signerPubkey)}
+            </button>
+          ))}
+        </footer>
+      ) : null}
+    </article>
+  );
+}
+
+function UmbrellaConversationRow({
+  message,
+}: {
+  message: CodingSessionLaneMessage;
+}) {
+  return (
+    <div
+      className="rounded-xl bg-muted/40 px-4 py-2"
+      data-testid="coding-session-umbrella-conversation"
+    >
+      <p className="text-2xs text-muted-foreground">
+        <span className="font-mono">
+          {truncatePubkey(message.authorPubkey)}
+        </span>{" "}
+        · {formatLaneTimestamp(message.timestampMs)}
+      </p>
+      <p className="mt-0.5 text-base whitespace-pre-wrap">{message.content}</p>
+    </div>
+  );
+}
+
+function formatLaneTimestamp(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+}
+
+/**
+ * Build the composer prefill for "Send to ⟨execution⟩". With a resolvable
+ * signed-fact coordinate the provenance line carries the deep link; without
+ * one it degrades to a plain quoted block, which old and new clients alike
+ * render as an ordinary prompt with a visible quote.
+ */
+export function buildUmbrellaTurnBlockHandoff(input: {
+  block: CodingSessionUmbrellaTurnBlock;
+  channelId: string;
+  quote: string;
+  eventSeq: number | null;
+  record: CodingSessionCatalogRecord | null;
+  sourceLabel: string;
+  targetExecutionKey: string;
+}): CodingSessionUmbrellaComposerPrefill {
+  const target = input.record?.commandTarget ?? null;
+  const text =
+    target !== null && input.eventSeq !== null
+      ? buildCodingSessionHandoffPrefill({
+          sourceLabel: input.sourceLabel,
+          link: {
+            channelId: input.channelId,
+            targetKey: buildCodingSessionTargetKey(target),
+            eventSeq: input.eventSeq,
+          },
+          quote: input.quote,
+        })
+      : `> From ${input.sourceLabel} (this session)\n${input.quote
+          .trim()
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n")}\n\n`;
+  return {
+    id: `handoff:${input.block.generationId}:${input.block.turnId ?? "no-turn"}:${input.targetExecutionKey}:${Date.now()}`,
+    participantKey: `execution:${input.targetExecutionKey}`,
+    text,
+  };
+}
+
+/** Map the umbrella's derived status onto the header's three honest states. */
+export function umbrellaWorkspaceStatus(
+  umbrella: Pick<CodingSessionUmbrellaRecord, "status">,
+): CodingSessionWorkspaceStatus {
+  if (umbrella.status === "running" || umbrella.status === "starting") {
+    return { kind: "working", label: "Working" };
+  }
+  if (umbrella.status === "unknown") {
+    return { kind: "unknown", label: "Status unknown" };
+  }
+  return { kind: "idle", label: "Idle" };
+}
+
+/** The exact `cs-target` key of a block's stream, when the record has one. */
+function blockTargetKey(
+  record: CodingSessionCatalogRecord | null,
+): string | null {
+  return record?.commandTarget
+    ? buildCodingSessionTargetKey(record.commandTarget)
+    : null;
+}
+
+/**
+ * The keys of blocks that are visibly streaming: the last block of each
+ * execution whose active generation reports a working status.
+ */
+function resolveWorkingBlockKeys(
+  umbrella: CodingSessionUmbrellaRecord,
+  entries: readonly CodingSessionUmbrellaTimelineEntry[],
+): ReadonlySet<string> {
+  const runningExecutions = new Set(
+    umbrella.executions
+      .filter((execution) => execution.activeGeneration.status === "running")
+      .map((execution) => execution.executionKey),
+  );
+  const lastBlockKeyByExecution = new Map<string, string>();
+  for (const entry of entries) {
+    if (
+      entry.kind === "turn-block" &&
+      runningExecutions.has(entry.executionKey)
+    ) {
+      lastBlockKeyByExecution.set(
+        entry.executionKey,
+        codingSessionUmbrellaEntryKey(entry),
+      );
+    }
+  }
+  return new Set(lastBlockKeyByExecution.values());
+}

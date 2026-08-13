@@ -228,3 +228,42 @@ test("one broken adapter's model probe does not cost the others theirs", async (
     allowedModels: ["default"],
   });
 });
+
+test("every new create draft mints a fresh canonical umbrella sessionRef", async () => {
+  const { buildNewCodingSessionCreateInput } = await import(
+    "./useNewCodingSessionCreate.ts"
+  );
+  const { isCodingSessionSessionRef } = await import(
+    "../lib/codingSessionWireDecode.ts"
+  );
+  const base = {
+    channelId: "channel-1",
+    commandId: "csc-1",
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: "a".repeat(64),
+    model: null,
+    title: "Advance Buzz live sessions",
+    initialTurn: null,
+  };
+  const first = buildNewCodingSessionCreateInput(base);
+  const second = buildNewCodingSessionCreateInput(base);
+  assert.equal(isCodingSessionSessionRef(first.sessionRef), true);
+  assert.equal(isCodingSessionSessionRef(second.sessionRef), true);
+  assert.notEqual(first.sessionRef, second.sessionRef);
+  // The rest of the durable-create input is byte-for-byte the historical set.
+  assert.deepEqual(
+    { ...first, sessionRef: undefined },
+    {
+      ...base,
+      projectRef: null,
+      repoRef: null,
+      sessionRef: undefined,
+    },
+  );
+  // A future "add a provider" entry point reuses an umbrella's existing ref.
+  const joined = buildNewCodingSessionCreateInput({
+    ...base,
+    sessionRef: first.sessionRef,
+  });
+  assert.equal(joined.sessionRef, first.sessionRef);
+});

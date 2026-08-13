@@ -4,6 +4,7 @@ import {
   ExternalLink,
   Info,
   ListChecks,
+  UserPlus,
 } from "lucide-react";
 
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -19,6 +20,12 @@ type CodingSessionHeaderProps = {
   generationLabel: string;
   isExporting?: boolean;
   model?: string | null;
+  /**
+   * Opens the join flow that attaches another provider execution to this
+   * session (design §B). Absent when the session cannot take one — a
+   * pre-umbrella session with no `sessionRef`, or a non-member view.
+   */
+  onAddProvider?: () => void;
   onBack: () => void;
   onExport?: () => void;
   onPopout?: () => void;
@@ -39,6 +46,7 @@ export function CodingSessionHeader({
   generationLabel,
   isExporting = false,
   model = null,
+  onAddProvider,
   onBack,
   onExport,
   onPopout,
@@ -175,6 +183,20 @@ export function CodingSessionHeader({
               <span className="sr-only">{taskCount} tasks</span>
             </>
           ) : null}
+        </Button>
+      ) : null}
+      {onAddProvider ? (
+        <Button
+          aria-label="Add a provider to this session"
+          data-testid="coding-session-add-provider"
+          onClick={onAddProvider}
+          size={compact ? "icon" : "sm"}
+          title="Add another provider to this session"
+          type="button"
+          variant="ghost"
+        >
+          <UserPlus />
+          <span className={compact ? "sr-only" : undefined}>Add provider</span>
         </Button>
       ) : null}
       {onExport ? (
