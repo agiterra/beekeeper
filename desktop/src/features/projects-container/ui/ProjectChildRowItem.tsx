@@ -1,5 +1,6 @@
-import { Bot, FolderGit2, Zap } from "lucide-react";
+import { Bot, Eye, FolderGit2, Terminal, Zap } from "lucide-react";
 
+import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
 import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
@@ -25,6 +26,7 @@ export function ProjectChildRowItem({
   onOpenShell,
   onRequestRenameShell,
   onRequestCloseShell,
+  onObserveShell,
 }: {
   row: ProjectChildRow;
   channelHandlers: ProjectChannelHandlers;
@@ -35,6 +37,7 @@ export function ProjectChildRowItem({
   onOpenShell?: (sessionId: string) => void;
   onRequestRenameShell?: (session: ShellSessionInfo) => void;
   onRequestCloseShell?: (session: ShellSessionInfo) => void;
+  onObserveShell?: (terminal: RemoteTerminal) => void;
 }) {
   switch (row.type) {
     case "channel":
@@ -117,6 +120,23 @@ export function ProjectChildRowItem({
           onRequestRename={onRequestRenameShell}
           onRequestClose={onRequestCloseShell}
         />
+      );
+    }
+    case "remote-shell": {
+      if (!onObserveShell) return null;
+      const { terminal } = row;
+      return (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            onClick={() => onObserveShell(terminal)}
+            data-testid="project-remote-shell-row"
+            title="A member's shared terminal — open read-only"
+          >
+            <Terminal className="size-4 shrink-0" />
+            <span className="truncate">{terminal.title}</span>
+            <Eye className="ml-auto size-3.5 shrink-0 text-sidebar-foreground/50" />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
       );
     }
   }

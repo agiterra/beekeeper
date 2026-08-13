@@ -21,6 +21,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
+import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Channel } from "@/shared/api/types";
 import type { Workflow } from "@/shared/api/workflowTypes";
@@ -94,6 +95,8 @@ export function ProjectSidebarGroup({
   onRequestRenameShell,
   onRequestCloseShell,
   onNewShell,
+  remoteTerminals,
+  onObserveShell,
 }: {
   project: ProjectContainer;
   /** True for the locally-synthesized General bucket that exists before the
@@ -124,6 +127,9 @@ export function ProjectSidebarGroup({
   /** Undefined when the builtin-shell experiment is off — hides the shell
    * item in the create menu. */
   onNewShell?: () => void;
+  /** Other members' shared terminals in this project (NIP-ST announces). */
+  remoteTerminals?: RemoteTerminal[];
+  onObserveShell?: (terminal: RemoteTerminal) => void;
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
@@ -151,8 +157,17 @@ export function ProjectSidebarGroup({
         workflows: workflows ?? [],
         agents,
         shellSessions,
+        remoteTerminals,
       }),
-    [streamChannels, forumChannels, repos, workflows, agents, shellSessions],
+    [
+      streamChannels,
+      forumChannels,
+      repos,
+      workflows,
+      agents,
+      shellSessions,
+      remoteTerminals,
+    ],
   );
 
   const childRows = children.map((row) => (
@@ -167,6 +182,7 @@ export function ProjectSidebarGroup({
       onOpenShell={onOpenShell}
       onRequestRenameShell={onRequestRenameShell}
       onRequestCloseShell={onRequestCloseShell}
+      onObserveShell={onObserveShell}
     />
   ));
 

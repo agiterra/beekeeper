@@ -10,6 +10,7 @@ import {
 } from "./projectChildren.ts";
 
 const emptyInput = {
+  remoteTerminals: [],
   streamChannels: [],
   forumChannels: [],
   repos: [],
@@ -44,6 +45,16 @@ const makeShell = (overrides = {}) => ({
   ...overrides,
 });
 
+const makeRemote = (overrides = {}) => ({
+  sessionId: "remote-1",
+  ownerPubkey: "feedface".repeat(8),
+  title: "build shell",
+  projectRef: "30621:owner:alpha",
+  dims: null,
+  announcedAt: 1,
+  ...overrides,
+});
+
 test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
@@ -58,10 +69,11 @@ test("buildProjectChildren groups interleaved types by rank order", () => {
     workflows: [makeWorkflow()],
     agents: [{ key: "30175:owner:helper", label: "Helper" }],
     shellSessions: [makeShell()],
+    remoteTerminals: [makeRemote()],
   });
   assert.deepEqual(
     rows.map((row) => row.type),
-    ["channel", "forum", "repo", "workflow", "agent", "shell"],
+    ["channel", "forum", "repo", "workflow", "agent", "shell", "remote-shell"],
   );
   const ranks = rows.map((row) => PROJECT_CHILD_TYPE_RANK[row.type]);
   assert.deepEqual(
@@ -148,6 +160,19 @@ test("shell rows sort last and key by session id", () => {
     ["shell-a", "shell-b"],
   );
   assert.equal(projectChildKey(rows[1]), "shell:shell-a");
+});
+
+test("remote terminals key by owner+session and label by title", () => {
+  const rows = buildProjectChildren({
+    ...emptyInput,
+    remoteTerminals: [makeRemote()],
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(
+    projectChildKey(rows[0]),
+    `remote-shell:${"feedface".repeat(8)}:remote-1`,
+  );
+  assert.equal(projectChildLabel(rows[0]), "build shell");
 });
 
 test("compareProjectChildren orders by rank before label", () => {

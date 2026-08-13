@@ -122,3 +122,80 @@ export function useProjectTerminals(projectAddress: string | null) {
     },
   });
 }
+
+export const remoteTerminalsIndexQueryKey = [
+  "projects",
+  "shared-terminals",
+  "index",
+];
+
+/**
+ * All members' open shared terminals, bucketed by project address — one
+ * query + one live subscription for every sidebar project group (per-group
+ * hooks would be hooks-in-a-loop). The relay withholds announces of private
+ * projects the viewer isn't admitted to, so bucketing is display-only.
+ */
+export function useRemoteTerminalsIndex(
+  enabled: boolean,
+): ReadonlyMap<string, RemoteTerminal[]> {
+  const identity = useIdentityQuery();
+  const queryClient = useQueryClient();
+  const myPubkey = identity.data?.pubkey ?? null;
+
+  React.useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void relayClient
+      .subscribeLive(
+        {
+          kinds: [KIND_SHELL_SESSION],
+          since: Math.floor(Date.now() / 1_000),
+          limit: 100,
+        },
+        () => {
+          void queryClient.invalidateQueries({
+            queryKey: remoteTerminalsIndexQueryKey,
+          });
+        },
+      )
+      .then((handle) => {
+        if (disposed) handle?.();
+        else unsubscribe = handle ?? null;
+      })
+      .catch(() => {
+        // Poll fallback still runs.
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [enabled, queryClient]);
+
+  const query = useQuery({
+    queryKey: remoteTerminalsIndexQueryKey,
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const events = await relayClient.fetchEvents({
+        kinds: [KIND_SHELL_SESSION],
+        limit: 200,
+      });
+      const addresses = new Set<string>();
+      for (const event of events) {
+        const address = tagValue(event, "a");
+        if (address) addresses.add(address);
+      }
+      const index = new Map<string, RemoteTerminal[]>();
+      for (const address of addresses) {
+        const terminals = remoteTerminalsFromEvents(events, address, myPubkey);
+        if (terminals.length > 0) index.set(address, terminals);
+      }
+      return index;
+    },
+  });
+
+  return query.data ?? EMPTY_INDEX;
+}
+
+const EMPTY_INDEX: ReadonlyMap<string, RemoteTerminal[]> = new Map();

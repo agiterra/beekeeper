@@ -11,6 +11,10 @@ import {
 } from "@/features/agents/hooks";
 import { useCreateShellSession } from "@/features/builtin-shell/hooks/useCreateShellSession";
 import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
+import {
+  useRemoteTerminalsIndex,
+  type RemoteTerminal,
+} from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
@@ -109,6 +113,22 @@ export function ProjectSidebarSections({
     [navigate],
   );
   const { createFor: createShellFor } = useCreateShellSession();
+  // Other members' shared terminals, one workspace-wide index bucketed by
+  // project address (observable rows carry a right-justified eye).
+  const remoteTerminalsIndex = useRemoteTerminalsIndex(builtinShellEnabled);
+  const handleObserveShell = React.useCallback(
+    (terminal: RemoteTerminal) => {
+      void navigate({
+        to: "/observe/$owner/$sessionId",
+        params: {
+          owner: terminal.ownerPubkey,
+          sessionId: terminal.sessionId,
+        },
+        search: { project: terminal.projectRef },
+      });
+    },
+    [navigate],
+  );
   // New terminals open in the project's code checkout when one exists.
   const handleNewShell = React.useCallback(
     (project: ProjectContainer, isFallback: boolean) => {
@@ -255,6 +275,10 @@ export function ProjectSidebarSections({
                 ((isFallback || isGeneral) && !session.projectRef),
             )
           : [];
+        const remoteTerminals =
+          builtinShellEnabled && !isFallback
+            ? (remoteTerminalsIndex.get(project.address) ?? [])
+            : [];
         return (
           <ProjectSidebarGroup
             key={project.id}
@@ -293,6 +317,8 @@ export function ProjectSidebarSections({
                 ? () => handleNewShell(project, Boolean(isFallback))
                 : undefined
             }
+            remoteTerminals={remoteTerminals}
+            onObserveShell={handleObserveShell}
           />
         );
       })}
