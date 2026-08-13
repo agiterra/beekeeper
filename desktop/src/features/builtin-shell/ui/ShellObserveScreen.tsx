@@ -5,6 +5,7 @@ import { ArrowLeft, Eye, RefreshCw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
@@ -59,7 +60,7 @@ export function ShellObserveScreen({
   const ownerName =
     ownerProfile?.displayName ??
     ownerProfile?.name ??
-    `${ownerPubkey.slice(0, 8)}…${ownerPubkey.slice(-4)}`;
+    truncatePubkey(ownerPubkey);
 
   React.useEffect(() => {
     const container = containerRef.current;

@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Eye, Plus, Terminal } from "lucide-react";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
+import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 
 import { useCreateShellSession } from "../hooks/useCreateShellSession";
@@ -48,11 +49,7 @@ export function ProjectTerminalsCard({
   const owners = useUsersBatchQuery(ownerPubkeys);
   const ownerLabel = (pubkey: string) => {
     const profile = owners.data?.profiles[pubkey.toLowerCase()];
-    return (
-      profile?.displayName ??
-      profile?.name ??
-      `${pubkey.slice(0, 8)}…${pubkey.slice(-4)}`
-    );
+    return profile?.displayName ?? profile?.name ?? truncatePubkey(pubkey);
   };
 
   const count = own.length + remoteTerminals.length;
