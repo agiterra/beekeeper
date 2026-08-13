@@ -13,6 +13,17 @@
 //! *structurally required* in signed JSON — `null` must be written explicitly —
 //! so a truncated or partially-serialized payload can never be mistaken for a
 //! deliberate standalone session. See `docs/nips/NIP-CSL.md`.
+//!
+//! # Fork amendment: `sessionRef` umbrella reference
+//!
+//! `session.create` also carries a nullable `sessionRef` — a client-minted
+//! lowercase UUID grouping several provider executions into one user-facing
+//! umbrella session. Unlike `projectRef`, this field was added *after* the v1
+//! schema shipped, so signed events without the key exist and must stay valid
+//! forever. The decoder therefore accepts exactly the historical 8-key action
+//! or exactly the 9-key action including `sessionRef` — nothing between,
+//! nothing beyond. New producers always write the key (explicit `null` or a
+//! UUID); only the past may omit it. See `docs/nips/NIP-CSL.md`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,6 +70,14 @@ pub enum CodingSessionLifecycleAction {
         project_ref: Option<String>,
         /// Optional repository reference within the project.
         repo_ref: Option<String>,
+        /// Optional umbrella session reference (canonical lowercase UUID).
+        ///
+        /// A later create carrying the same `sessionRef` joins the same
+        /// umbrella as a new execution. `None` claims no umbrella — the
+        /// pre-amendment semantics, an implicit umbrella of one. Decodes to
+        /// `None` both from an explicit `null` and from the historical 8-key
+        /// form that predates the field.
+        session_ref: Option<String>,
         /// Required capability-advertised provider instance reference.
         provider_instance_ref: String,
         /// Required signing pubkey of the selected provider catalog authority.
@@ -99,6 +118,7 @@ impl CodingSessionLifecycleCommandPayload {
             CodingSessionLifecycleAction::SessionCreate {
                 project_ref,
                 repo_ref,
+                session_ref,
                 provider_instance_ref,
                 provider_authority_pubkey,
                 model,
@@ -112,6 +132,9 @@ impl CodingSessionLifecycleCommandPayload {
                         MAX_LIFECYCLE_REFERENCE_BYTES,
                     )?;
                     validate_project_ref(project_ref)?;
+                }
+                if let Some(session_ref) = session_ref {
+                    validate_session_ref(session_ref)?;
                 }
                 validate_optional(repo_ref, "action.repoRef", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_required(
@@ -136,7 +159,10 @@ impl CodingSessionLifecycleCommandPayload {
 /// Strictly decode and validate signed lifecycle-command content.
 ///
 /// Nullable action fields must be present explicitly, even when their value is
-/// `null`. Unknown, duplicate, or missing fields are rejected.
+/// `null`. Unknown, duplicate, or missing fields are rejected. The one
+/// exception is `sessionRef`, added after v1 shipped: the action must carry
+/// exactly the historical 8-key set or exactly the 9-key set including
+/// `sessionRef` — an omitted key is accepted only as the historical form.
 pub fn decode_coding_session_lifecycle_command(
     content: &str,
 ) -> Result<CodingSessionLifecycleCommandPayload, String> {
@@ -152,7 +178,7 @@ pub fn decode_coding_session_lifecycle_command(
     let action = value
         .get("action")
         .ok_or_else(|| "coding-session lifecycle command payload missing action".to_string())?;
-    require_exact_fields(
+    require_exact_fields_with_optional(
         action,
         &[
             "type",
@@ -164,6 +190,7 @@ pub fn decode_coding_session_lifecycle_command(
             "title",
             "initialTurn",
         ],
+        &["sessionRef"],
         "action",
     )?;
 
@@ -212,11 +239,58 @@ pub fn validate_project_ref(project_ref: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Check that `session_ref` is a canonical lowercase hyphenated UUID.
+///
+/// The umbrella reference never rides in a tag, so nothing downstream
+/// normalizes it — two clients only agree on membership if the bytes are
+/// byte-exact. Canonical form is therefore the contract: 36 characters,
+/// `8-4-4-4-12`, lowercase hex. Uppercase, braces, URNs, and truncations are
+/// all rejected rather than coerced.
+pub fn validate_session_ref(session_ref: &str) -> Result<(), String> {
+    let malformed = || {
+        format!(
+            "action.sessionRef must be a canonical lowercase hyphenated UUID \
+             (got {session_ref:?})"
+        )
+    };
+    let bytes = session_ref.as_bytes();
+    if bytes.len() != 36 {
+        return Err(malformed());
+    }
+    for (index, byte) in bytes.iter().enumerate() {
+        let valid = match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(byte),
+        };
+        if !valid {
+            return Err(malformed());
+        }
+    }
+    Ok(())
+}
+
 fn require_exact_fields(value: &Value, expected: &[&str], field: &str) -> Result<(), String> {
+    require_exact_fields_with_optional(value, expected, &[], field)
+}
+
+/// Require every `expected` key and allow — without requiring — the `optional`
+/// ones. Any key outside both sets is still a hard rejection, so "optional"
+/// here means exactly "a later schema revision's additive key", never "extra
+/// data tolerated".
+fn require_exact_fields_with_optional(
+    value: &Value,
+    expected: &[&str],
+    optional: &[&str],
+    field: &str,
+) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or_else(|| format!("coding-session lifecycle command {field} must be an object"))?;
-    if object.len() != expected.len() || expected.iter().any(|key| !object.contains_key(*key)) {
+    let complete = expected.iter().all(|key| object.contains_key(*key));
+    let recognized = object
+        .keys()
+        .all(|key| expected.contains(&key.as_str()) || optional.contains(&key.as_str()));
+    if !complete || !recognized {
         return Err(format!(
             "coding-session lifecycle command {field} has missing or unsupported fields"
         ));
@@ -261,6 +335,11 @@ mod tests {
         format!("30621:{}:amas-redux", "cd".repeat(32))
     }
 
+    /// A canonical lowercase umbrella session reference.
+    fn session_reference() -> String {
+        "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned()
+    }
+
     fn valid_payload() -> CodingSessionLifecycleCommandPayload {
         CodingSessionLifecycleCommandPayload {
             schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.into(),
@@ -268,6 +347,7 @@ mod tests {
             action: CodingSessionLifecycleAction::SessionCreate {
                 project_ref: Some(project_coordinate()),
                 repo_ref: Some("30617:owner:amas-redux".into()),
+                session_ref: Some(session_reference()),
                 provider_instance_ref: "claude-primary".into(),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: Some("claude-sonnet-4-6".into()),
@@ -277,9 +357,19 @@ mod tests {
         }
     }
 
+    /// The historical 8-key v1 action, exactly as pre-amendment signers wrote it.
     fn lifecycle_content(project_ref_json: &str) -> String {
         format!(
             r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":{project_ref_json},"repoRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
+            "ab".repeat(32)
+        )
+    }
+
+    /// The 9-key action a post-amendment signer writes: `sessionRef` always
+    /// present, explicit `null` allowed.
+    fn lifecycle_content_with_session_ref(session_ref_json: &str) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":{session_ref_json},"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
             "ab".repeat(32)
         )
     }
@@ -337,6 +427,105 @@ mod tests {
                 "should reject {rejected:?}"
             );
         }
+    }
+
+    /// Fork amendment: the action is exactly the historical 8-key form or
+    /// exactly the 9-key form with `sessionRef` — both decode, and the 8-key
+    /// form reads as "no umbrella claimed".
+    #[test]
+    fn accepts_both_the_8_key_and_9_key_action_forms() {
+        let historical = lifecycle_content("null");
+        let decoded = decode_coding_session_lifecycle_command(&historical).unwrap();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        assert!(
+            session_ref.is_none(),
+            "the pre-amendment form claims no umbrella"
+        );
+
+        let explicit_null = lifecycle_content_with_session_ref("null");
+        let decoded = decode_coding_session_lifecycle_command(&explicit_null).unwrap();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        assert!(session_ref.is_none());
+
+        let claimed = lifecycle_content_with_session_ref(&format!("\"{}\"", session_reference()));
+        let decoded = decode_coding_session_lifecycle_command(&claimed).unwrap();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action;
+        assert_eq!(session_ref.as_deref(), Some(session_reference().as_str()));
+    }
+
+    /// New producers always write the key: the serializer emits `sessionRef`
+    /// even when no umbrella is claimed, so an omitted key stays exclusively a
+    /// historical artifact and never something a new signer produces.
+    #[test]
+    fn new_producers_always_write_the_session_ref_key() {
+        let mut payload = valid_payload();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action;
+        *session_ref = None;
+        let content = serde_json::to_string(&payload).unwrap();
+        assert!(content.contains("\"sessionRef\":null"));
+        assert_eq!(
+            decode_coding_session_lifecycle_command(&content).unwrap(),
+            payload
+        );
+    }
+
+    /// Optional does not mean unvalidated, and canonical form is the whole
+    /// contract: the reference travels in no tag, so nothing downstream ever
+    /// normalizes it — a non-canonical spelling would silently split an
+    /// umbrella in two.
+    #[test]
+    fn rejects_a_present_but_malformed_session_ref() {
+        assert!(validate_session_ref(&session_reference()).is_ok());
+
+        for rejected in [
+            session_reference().to_uppercase(),                // uppercase hex
+            session_reference().replace('-', ""),              // no hyphens
+            format!("{{{}}}", session_reference()),            // braced form
+            format!("urn:uuid:{}", session_reference()),       // URN form
+            session_reference()[..35].to_owned(),              // truncated
+            format!("{}0", session_reference()),               // too long
+            "5b7e1c2a-90d4x4b0e-a1f3-7c2d8e6f4a10".to_owned(), // hyphen misplaced
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a1g".to_owned(), // non-hex digit
+            " ".repeat(36),                                    // whitespace
+            String::new(),
+        ] {
+            assert!(
+                validate_session_ref(&rejected).is_err(),
+                "should reject {rejected:?}"
+            );
+            let content = lifecycle_content_with_session_ref(
+                &serde_json::Value::String(rejected.clone()).to_string(),
+            );
+            assert!(
+                decode_coding_session_lifecycle_command(&content).is_err(),
+                "decode should reject sessionRef {rejected:?}"
+            );
+        }
+
+        let mut payload = valid_payload();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action;
+        *session_ref = Some("umbrella".into());
+        assert!(payload.validate().is_err());
+    }
+
+    /// "8-key or 9-key" admits nothing between and nothing beyond: an action
+    /// that trades a required key for `sessionRef`, or that carries a tenth
+    /// key alongside it, is rejected.
+    #[test]
+    fn rejects_action_shapes_between_and_beyond_the_two_forms() {
+        // 8 keys, but sessionRef standing in for the required repoRef.
+        let swapped = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"sessionRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
+            "ab".repeat(32)
+        );
+        assert!(decode_coding_session_lifecycle_command(&swapped).is_err());
+
+        // 10 keys: the 9-key form plus a smuggled host path.
+        let beyond = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null,"cwd":"/tmp"}}}}"#,
+            "ab".repeat(32)
+        );
+        assert!(decode_coding_session_lifecycle_command(&beyond).is_err());
     }
 
     #[test]

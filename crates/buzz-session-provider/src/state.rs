@@ -69,6 +69,11 @@ pub struct SessionRecord {
     pub project_ref: Option<String>,
     /// Repository coordinate, or `None`.
     pub repo_ref: Option<String>,
+    /// Umbrella session reference from the create, echoed into every 44223
+    /// for this session. Defaults to `None` for records written before the
+    /// field existed — those creates could not have claimed an umbrella.
+    #[serde(default)]
+    pub session_ref: Option<String>,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
     /// Operator-facing title, or `None`.
@@ -422,6 +427,7 @@ mod tests {
             cwd: PathBuf::from("/Users/operator/checkout"),
             project_ref: None,
             repo_ref: None,
+            session_ref: None,
             model: None,
             title: None,
             created_at_ms: 1_700_000_000_000,
@@ -540,6 +546,20 @@ mod tests {
             .update_session("ghost", |record| record.closed = true)
             .expect("update"));
         assert!(store.allocate_seq("ghost").expect("allocate").is_none());
+    }
+
+    /// Records written before `sessionRef` existed must still load, and they
+    /// load with no umbrella — the only claim those creates could have made.
+    #[test]
+    fn pre_session_ref_records_load_with_no_umbrella() {
+        let mut value = serde_json::to_value(record("s1")).expect("serialize");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("sessionRef")
+            .expect("field present in current records");
+        let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
+        assert!(loaded.session_ref.is_none());
     }
 
     /// Records written before the runtime fields existed must still load, and

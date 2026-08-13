@@ -23,6 +23,9 @@ Provider-neutral rendering after creation uses the signed
 > 3. **`projectRef` coordinates are `30621:` only.** The donor's example used
 >    the `30178:` team-catalog kind; sessions here bind to NIP-MP projects
 >    (`kind:30621`) and nothing else.
+> 4. **`sessionRef` groups executions into an umbrella session.** A nullable,
+>    client-minted UUID added after v1 shipped; the action is exactly the
+>    historical 8-key form or exactly the 9-key form including it. See below.
 
 ## Wire contract
 
@@ -37,6 +40,7 @@ an explicit `null`, and additional or missing fields are invalid:
     "type": "session.create",
     "projectRef": "30621:<lowercase-64-hex-owner>:<project-d>",
     "repoRef": "30617:owner:repository",
+    "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
     "providerInstanceRef": "capability-advertised-instance",
     "providerAuthorityPubkey": "64-lowercase-hex-catalog-signer",
     "model": "provider-neutral-model-id",
@@ -49,9 +53,10 @@ an explicit `null`, and additional or missing fields are invalid:
 `providerInstanceRef` and `providerAuthorityPubkey` are required. The provider
 authority is exactly the lowercase 64-hex signer of the selected
 [provider-catalog](NIP-CSPC.md) event; it addresses the command to one adapter
-even when several share a channel. `projectRef`, `repoRef`, `model`, `title`,
-and `initialTurn` are nullable; a present string must be nonempty after
-trimming. Limits are UTF-8 byte limits:
+even when several share a channel. `projectRef`, `repoRef`, `sessionRef`, `model`,
+`title`, and `initialTurn` are nullable; a present string must be nonempty
+after trimming (`sessionRef` carries its own stricter shape, below). Limits are
+UTF-8 byte limits:
 
 - `commandId`: 256 bytes
 - all references, `model`, and `title`: 2 KiB (2,048 bytes) each
@@ -82,6 +87,51 @@ contains a colon stays addressable. Owner hex must be lowercase: `#a` filter
 matching is byte-exact, so an uppercase-owner coordinate would be invisible to
 the queries readers actually issue. A `30178:` team-catalog coordinate, a
 `30617:` repository coordinate, and a bare slug are all rejected.
+
+### Fork amendment: `sessionRef` umbrella reference
+
+One user-facing session may contain several provider executions — a Claude
+execution and a Codex execution as co-participants in one surface. The grouping
+identity is `sessionRef`: a client-minted canonical UUID (36 characters,
+`8-4-4-4-12`, lowercase hex), deliberately distinct from every
+provider-runtime identifier. A later create carrying the same `sessionRef`
+**joins** the umbrella as a new execution with its own `cs-target` and its own
+fact streams; nothing about receipts, metadata keys, generations, or
+transcripts changes shape. `null` claims no umbrella — the pre-amendment
+semantics, an implicit umbrella of one.
+
+**Decode discipline — where this differs from `projectRef`.** `projectRef` was
+in the schema from v1, so its key is structurally required and only its value
+may be `null`. `sessionRef` was added to an already-deployed schema: signed
+v1 events without the key exist and must stay valid forever. The action is
+therefore **exactly the 8-key v1 set, or exactly the 9-key set including
+`sessionRef`** — nothing between, nothing beyond. New producers always write
+the key (explicit `null` or a UUID); the 8-key form is accepted only as the
+historical form. This is the versioned additive discipline the explicit-null
+rule exists to protect: an omitted key on a *new* event is still
+indistinguishable from truncation, so new clients never omit it — but the
+decoder cannot reject the past.
+
+Optional is still not unvalidated. The reference travels in no tag, so nothing
+downstream normalizes it; two clients agree on umbrella membership only if the
+bytes are byte-exact. A present `sessionRef` must therefore be canonical —
+uppercase hex, braces, URN prefixes, and truncations are rejected rather than
+coerced, because a non-canonical spelling would silently split an umbrella in
+two.
+
+No tag carries the reference, so umbrella and non-umbrella creates produce
+identically shaped envelopes — the same property `projectRef` has. The relay
+learns nothing new: it validates through this same decoder and remains a
+validating store. Grouping, founder authority (the signer of the earliest
+create bearing a `sessionRef`), and rendering are consumer concerns.
+
+The provider echoes a claimed reference into `kind:44223` metadata as an
+*optional* `sessionRef` key — emitted only when non-null, never as an explicit
+`null` — so pre-amendment consumers' exact-key metadata check keeps accepting
+every session that never claimed an umbrella. The echo is a projection
+convenience for catalog grouping; the operator-signed create remains the
+authoritative membership claim. If they ever disagree, consumers trust the
+create and flag the record.
 
 ### Tags
 
@@ -158,7 +208,7 @@ event signed by the previous key.
 | Concern | Location |
 | --- | --- |
 | Kind constants | `crates/buzz-core/src/kind.rs` |
-| Payload + `projectRef` validation | `crates/buzz-core/src/coding_session_lifecycle_command.rs` |
+| Payload + `projectRef` / `sessionRef` validation | `crates/buzz-core/src/coding_session_lifecycle_command.rs` |
 | Envelope validation, membership, size caps | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Builders | `crates/buzz-sdk/src/builders.rs` |
 | Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |

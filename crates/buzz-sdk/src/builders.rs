@@ -5148,6 +5148,7 @@ mod tests {
             action: CodingSessionLifecycleAction::SessionCreate {
                 project_ref,
                 repo_ref: None,
+                session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into()),
                 provider_instance_ref: "claude-primary".into(),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: None,
@@ -5217,8 +5218,10 @@ mod tests {
                 ]
             );
             // Even a standalone session writes `projectRef` explicitly, so a
-            // truncated payload can never be read as a deliberate one.
+            // truncated payload can never be read as a deliberate one — and a
+            // new producer always writes `sessionRef`, umbrella claimed or not.
             assert!(event.content.contains("\"projectRef\":"));
+            assert!(event.content.contains("\"sessionRef\":"));
             assert_eq!(
                 buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
                     &event.content

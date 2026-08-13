@@ -1207,6 +1207,7 @@ mod tests {
             status,
             branch: None,
             capabilities: Capabilities::v1_claude(),
+            session_ref: None,
         }
     }
 

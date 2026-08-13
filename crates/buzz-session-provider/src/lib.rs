@@ -531,6 +531,7 @@ impl Provider {
             cwd: plan.cwd,
             project_ref: plan.project_ref.clone(),
             repo_ref: plan.repo_ref.clone(),
+            session_ref: plan.session_ref.clone(),
             model: startup.model.clone().or_else(|| plan.model.clone()),
             title: plan.title.clone(),
             created_at_ms: now_ms(),
@@ -692,6 +693,10 @@ impl Provider {
             capabilities: descriptor
                 .and_then(|descriptor| descriptor.capabilities)
                 .unwrap_or_else(|| Capabilities::v1_for_runtime(&runtime_slug)),
+            // Echoed only when the create claimed one; the struct then omits
+            // the key entirely, so unclaimed sessions keep the exact 12-key
+            // shape pre-amendment consumers require.
+            session_ref: record.and_then(|record| record.session_ref.clone()),
         }
     }
 
@@ -1193,6 +1198,32 @@ mod tests {
         )
     }
 
+    /// A create claiming an umbrella: the 9-key post-amendment action form.
+    fn create_event_with_session_ref(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        session_ref: &str,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "sessionRef": session_ref,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": null,
+            },
+        })
+        .to_string();
+        signed_lifecycle_event(channel_id, content)
+    }
+
     fn create_event_inner(
         provider: &Provider,
         channel_id: Uuid,
@@ -1215,6 +1246,10 @@ mod tests {
             },
         })
         .to_string();
+        signed_lifecycle_event(channel_id, content)
+    }
+
+    fn signed_lifecycle_event(channel_id: Uuid, content: String) -> Event {
         nostr::EventBuilder::new(
             nostr::Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
             content,
@@ -1297,9 +1332,56 @@ mod tests {
         assert_eq!(metadata[0]["title"], "Ship it");
         assert!(metadata[0]["projectRef"].is_null());
         assert_eq!(metadata[0]["capabilities"]["threadTurnInterrupt"], true);
+        assert!(
+            !metadata[0]
+                .as_object()
+                .expect("object")
+                .contains_key("sessionRef"),
+            "a create with no umbrella claim keeps the exact pre-amendment metadata shape"
+        );
 
         assert_eq!(provider.state().sessions().count(), 1);
         assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    /// A create claiming an umbrella round-trips its `sessionRef` into the
+    /// published metadata — the projection the catalog groups by — while the
+    /// receipt contract stays byte-identical to an unclaimed create's.
+    #[tokio::test]
+    async fn a_create_with_a_session_ref_echoes_it_into_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = create_event_with_session_ref(&provider, channel_id, "create-1", umbrella);
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "created");
+
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0]["sessionRef"], umbrella);
+
+        // The claim is durable: it lives on the session record, so every later
+        // metadata publication for this session carries it too.
+        let record = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("one session record");
+        assert_eq!(record.session_ref.as_deref(), Some(umbrella));
     }
 
     /// Multi-runtime routing: a create naming a second runtime's ref must spawn
@@ -1625,6 +1707,7 @@ mod tests {
                     cwd: dir.path().join("checkout"),
                     project_ref: None,
                     repo_ref: None,
+                    session_ref: None,
                     model: None,
                     title: None,
                     created_at_ms: now_ms(),

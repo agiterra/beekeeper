@@ -249,6 +249,16 @@ pub struct SessionMetadata {
     pub branch: Option<String>,
     /// Capabilities in force for this generation.
     pub capabilities: Capabilities,
+    /// Umbrella session reference echoed from the create, when one was claimed.
+    ///
+    /// This is the one *optional* key in an otherwise exact-key contract:
+    /// emitted only when the create carried a non-null `sessionRef`, never as
+    /// an explicit `null`. Pre-amendment consumers' exact-key check therefore
+    /// keeps accepting every session that never claimed an umbrella, and the
+    /// echo is a projection convenience only — the operator-signed create
+    /// remains the authoritative membership claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<String>,
 }
 
 /// One transcript item's signed envelope (kind 44225).
@@ -515,6 +525,7 @@ mod tests {
             status: SessionStatus::Idle,
             branch: None,
             capabilities: Capabilities::v1_claude(),
+            session_ref: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -551,6 +562,56 @@ mod tests {
                 "diff",
                 "plan",
             ])
+        );
+    }
+
+    /// `sessionRef` is optional-key, not explicit-null: present exactly when
+    /// an umbrella was claimed, absent otherwise. An explicit `null` would
+    /// fail *every* old client's exact-key metadata check; absence fails it
+    /// only for sessions that actually claimed an umbrella.
+    #[test]
+    fn metadata_emits_session_ref_only_when_an_umbrella_was_claimed() {
+        let mut metadata = SessionMetadata {
+            schema: METADATA_SCHEMA.to_owned(),
+            session: target(),
+            project_ref: None,
+            repo_ref: None,
+            title: None,
+            agent_ref: None,
+            provider: Some("codex-primary".into()),
+            runtime: Some("codex".into()),
+            model: None,
+            status: SessionStatus::Running,
+            branch: None,
+            capabilities: Capabilities::v1_baseline(),
+            session_ref: None,
+        };
+        let unclaimed = serde_json::to_value(&metadata).expect("serialize");
+        assert!(
+            !unclaimed
+                .as_object()
+                .expect("object")
+                .contains_key("sessionRef"),
+            "no umbrella claimed: the key must be absent, not null"
+        );
+
+        metadata.session_ref = Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into());
+        let claimed = serde_json::to_value(&metadata).expect("serialize");
+        assert_eq!(
+            claimed["sessionRef"],
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"
+        );
+
+        // Both shapes round-trip: readers of old 12-key events and new 13-key
+        // events decode through the same struct.
+        let reloaded: SessionMetadata =
+            serde_json::from_value(unclaimed).expect("deserialize 12-key form");
+        assert!(reloaded.session_ref.is_none());
+        let reloaded: SessionMetadata =
+            serde_json::from_value(claimed).expect("deserialize 13-key form");
+        assert_eq!(
+            reloaded.session_ref.as_deref(),
+            Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
         );
     }
 

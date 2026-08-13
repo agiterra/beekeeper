@@ -79,6 +79,8 @@ pub struct CreatePlan {
     pub project_ref: Option<String>,
     /// Repository coordinate, or `None`.
     pub repo_ref: Option<String>,
+    /// Umbrella session reference from the create, or `None` when unclaimed.
+    pub session_ref: Option<String>,
     /// Requested model, or `None`.
     pub model: Option<String>,
     /// Operator-facing title, or `None`.
@@ -150,6 +152,7 @@ pub fn decide_lifecycle(
     let CodingSessionLifecycleAction::SessionCreate {
         project_ref,
         repo_ref,
+        session_ref,
         provider_instance_ref,
         provider_authority_pubkey,
         model,
@@ -229,6 +232,7 @@ pub fn decide_lifecycle(
         cwd,
         project_ref: project_ref.clone(),
         repo_ref: repo_ref.clone(),
+        session_ref: session_ref.clone(),
         model: model.clone(),
         title: title.clone(),
         initial_turn: initial_turn.clone(),
@@ -497,6 +501,7 @@ mod tests {
             cwd: cwd.to_path_buf(),
             project_ref: None,
             repo_ref: None,
+            session_ref: None,
             model: None,
             title: None,
             created_at_ms: 0,
@@ -634,6 +639,38 @@ mod tests {
             ..all.clone()
         };
         assert_eq!(resolved(&channel_only), channel_dir);
+    }
+
+    /// Fork amendment: a create may claim an umbrella via `sessionRef`. The
+    /// plan carries it verbatim; the historical 8-key form plans `None` — the
+    /// exact behavior of every create before the field existed.
+    #[test]
+    fn a_create_plans_the_session_ref_it_claimed_and_none_otherwise() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let projects = projects_with_channel(Uuid::nil(), dir.path());
+        let context = ctx(&state, &projects, 1_000);
+
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let claiming = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":"{umbrella}","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{AUTHORITY}","model":null,"title":null,"initialTurn":null}}}}"#
+        );
+        match decide_lifecycle(&context, Uuid::nil(), 1_000, &claiming) {
+            LifecycleDecision::Create(plan) => {
+                assert_eq!(plan.session_ref.as_deref(), Some(umbrella));
+            }
+            other => panic!("expected a create plan, got {other:?}"),
+        }
+
+        match decide_lifecycle(
+            &context,
+            Uuid::nil(),
+            1_000,
+            &create_content("create-2", "null", AUTHORITY),
+        ) {
+            LifecycleDecision::Create(plan) => assert!(plan.session_ref.is_none()),
+            other => panic!("expected a create plan, got {other:?}"),
+        }
     }
 
     #[test]
