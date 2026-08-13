@@ -542,3 +542,31 @@ forms), frontend second.
 5. **Unread/notification semantics for lane messages** — session badge vs
    channel unread; and whether old-client users find un-suppressed lane chat
    noisy enough to warrant accelerating client upgrades.
+
+---
+
+## Post-implementation review notes (2026-08-12, adversarial review of the Step 4 wave)
+
+Verified clean: N=1 renders identically (strict `length > 1` render fork,
+reference-equal record); cross-signer merging is structurally impossible
+(blocks built from one record's transcript, executions keyed by
+signer+driver+instanceId+sessionId, 44225 carries no umbrella field); wire
+compat holds (Rust 8-or-9-key decode, explicit-null semantics, optional-key
+44223 echo, byte-exact durable-create replay both ways); no new
+unwrap/expect; rem-only text tokens.
+
+### Accepted risk (v1, not fixed): handoff quoting and chip provenance
+
+1. **Cross-agent prompt injection.** The handoff prefills agent B's prompt
+   with agent A's verbatim output under the operator's signature. A's output
+   is attacker-influenceable (it may quote a repo file, a web page, a tool
+   result), so this is a genuine injection channel into B. The operator can
+   edit before sending, but the default is to trust A's text. Accepted for
+   v1 because the operator is always in the loop; revisit before any
+   autonomous (unmediated) handoff ships — this is a named prerequisite of
+   the persistent-session-agents step.
+2. **Chip label spoofing.** Handoff chips are recognized from prose, so any
+   prompt beginning with the quoted-handoff pattern renders a "Handoff from
+   X" chip with an unverified label. The *link* is verifiable (it addresses
+   a signed 44225 fact); the *label* is not. Do not let UI treat the chip
+   label as provenance.
