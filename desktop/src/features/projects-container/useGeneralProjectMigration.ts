@@ -40,7 +40,9 @@ const migratedScopes = new Set<string>();
 export async function publishGeneralProject(): Promise<ProjectContainer> {
   const [repos, channels, containers] = await Promise.all([
     fetchProjects().catch(() => []),
-    getChannels().catch(() => []),
+    getChannels(null)
+      .then((result) => result.channels ?? [])
+      .catch(() => []),
     fetchProjectContainers().catch(() => []),
   ]);
 
@@ -159,7 +161,9 @@ export function useGeneralProjectMigration(
           // Channels must belong to a project: sweep any channel no project
           // claims into the existing General head (curated-ref union), so
           // membership is durable rather than display-only.
-          const channels = await getChannels().catch(() => []);
+          const channels = await getChannels(null)
+            .then((result) => result.channels ?? [])
+            .catch(() => []);
           if (cancelled) return;
           const claimed = new Set(
             containers.flatMap((project) => project.channelIds),

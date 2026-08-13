@@ -38,7 +38,7 @@ function setupStubs({ channels = [], repoEvents = [], projectEvents = [] }) {
         return JSON.stringify(event);
       }
       if (command === "get_channels") {
-        return channels;
+        return { hash: "test-hash", channels, last_messages: {} };
       }
       throw new Error(`Unexpected Tauri command: ${command}`);
     },
