@@ -41,6 +41,18 @@ type CodingSessionComposerProps = {
   isWorking: boolean;
   layout?: "inline" | "stacked";
   /**
+   * Observe the live draft. The umbrella composer uses this to follow a typed
+   * `@handle` with the participant selector; nothing here depends on it.
+   */
+  onTextChange?: (text: string) => void;
+  /**
+   * Last transform applied to the draft before it is published — the umbrella
+   * composer strips a leading `@handle` that already did its routing. The
+   * *prepared* text is what gates Send, so a message that prepares to nothing
+   * (a bare handle) is not sendable rather than sent empty.
+   */
+  prepareText?: (text: string) => string;
+  /**
    * Editable text staged into the editor (e.g. a handoff provenance block).
    * Applied once per `id`; the person keeps full control of the text after.
    */
@@ -59,6 +71,8 @@ export function CodingSessionComposer({
   isMember,
   isWorking,
   layout = "inline",
+  onTextChange,
+  prepareText,
   prefill = null,
   target,
   variant = "panel",
@@ -78,7 +92,15 @@ export function CodingSessionComposer({
   >(null);
   const [error, setError] = React.useState<string | null>(null);
   const isSending = pendingAction !== null;
-  const state = getCodingSessionComposerState({ isMember, isWorking, text });
+  React.useEffect(() => {
+    onTextChange?.(text);
+  }, [onTextChange, text]);
+  const preparedText = (prepareText ? prepareText(text) : text).trim();
+  const state = getCodingSessionComposerState({
+    isMember,
+    isWorking,
+    text: preparedText,
+  });
   const canSubmitText = state.canSend && (!immersive || !isWorking || canSteer);
   const editorDisabled =
     !isMember || isSending || (immersive && isWorking && !canSteer);
@@ -92,7 +114,7 @@ export function CodingSessionComposer({
         channelId,
         commandId: createCodingSessionCommandId(),
         target,
-        text: text.trim(),
+        text: preparedText,
       });
       setText("");
     } catch (submitError) {
@@ -104,7 +126,7 @@ export function CodingSessionComposer({
     } finally {
       setPendingAction(null);
     }
-  }, [canSubmitText, channelId, isSending, target, text]);
+  }, [canSubmitText, channelId, isSending, preparedText, target]);
 
   const handlePrimaryAction = React.useCallback(async () => {
     await submit();

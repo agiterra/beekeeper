@@ -11,6 +11,12 @@ import {
   defaultCodingSessionUmbrellaParticipantKey,
   resolveCodingSessionUmbrellaComposerAuthority,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
+import {
+  resolveCodingSessionMention,
+  stripCodingSessionMentionForTarget,
+  suggestCodingSessionMentionHandles,
+  type CodingSessionMentionResolution,
+} from "@/features/coding-sessions/lib/codingSessionMentionRouting";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -43,6 +49,12 @@ type CodingSessionUmbrellaComposerProps = {
  * execution plus "Session" when a lane exists) over the existing per-target
  * composer. At N=1 the selector is not rendered and the single execution's
  * composer appears exactly as today.
+ *
+ * Typing a leading `@handle` is sugar over that same selection: the selector
+ * moves to the named execution so the target is never implicit, and the handle
+ * is stripped from the text that is actually published. Nothing about the wire
+ * changes — it is still a 44220 turn command against that execution's governed
+ * target — and at N=1 there are no handles at all.
  */
 export function CodingSessionUmbrellaComposer({
   channelId,
@@ -64,13 +76,27 @@ export function CodingSessionUmbrellaComposer({
   const [selectedKey, setSelectedKey] = React.useState<string | null>(() =>
     defaultCodingSessionUmbrellaParticipantKey(participants),
   );
+  // Bumped only by an *explicit* selection — a chip click or a staged handoff.
+  // It keys the editor, so picking a participant by hand starts a clean draft,
+  // while a typed @mention carries the draft it was written in (that draft is
+  // the whole reason the target moved).
+  const [draftEpoch, setDraftEpoch] = React.useState(0);
+  const [draft, setDraft] = React.useState("");
   const [appliedPrefillId, setAppliedPrefillId] = React.useState<string | null>(
     null,
   );
   if (prefill && prefill.id !== appliedPrefillId) {
     setAppliedPrefillId(prefill.id);
     setSelectedKey(prefill.participantKey);
+    setDraftEpoch((epoch) => epoch + 1);
+    setDraft(prefill.text);
   }
+  const selectParticipant = (key: string) => {
+    if (key === selectedKey) return;
+    setSelectedKey(key);
+    setDraftEpoch((epoch) => epoch + 1);
+    setDraft("");
+  };
 
   const selected =
     participants.find(
@@ -86,6 +112,38 @@ export function CodingSessionUmbrellaComposer({
       > => participant.kind === "execution",
     ) ??
     null;
+  const selectedParticipantKey =
+    selected === null ? null : codingSessionUmbrellaParticipantKey(selected);
+
+  const mention = resolveCodingSessionMention({ participants, text: draft });
+  if (
+    mention.kind === "match" &&
+    selected?.kind === "execution" &&
+    mention.participantKey !== selectedParticipantKey
+  ) {
+    // Render-phase retarget: the selector follows the typed handle without
+    // remounting the editor, so the draft survives and the caret does not
+    // move. Only from an execution — in the Session lane you are talking to
+    // people *about* the agents, and prose there must stay prose.
+    setSelectedKey(mention.participantKey);
+  }
+  const mentionHint = describeCodingSessionMention(
+    mention,
+    suggestCodingSessionMentionHandles(participants),
+  );
+  const showMentionHint =
+    participants.length > 1 &&
+    selected?.kind === "execution" &&
+    mentionHint.length > 0;
+  const prepareText = React.useCallback(
+    (text: string) =>
+      stripCodingSessionMentionForTarget({
+        participants,
+        participantKey: selectedParticipantKey,
+        text,
+      }),
+    [participants, selectedParticipantKey],
+  );
 
   return (
     <div data-testid="coding-session-umbrella-composer">
@@ -119,7 +177,7 @@ export function CodingSessionUmbrellaComposer({
                 }`}
                 disabled={gated}
                 key={key}
-                onClick={() => setSelectedKey(key)}
+                onClick={() => selectParticipant(key)}
                 title={gated ? (authority.reason ?? undefined) : undefined}
                 type="button"
               >
@@ -128,6 +186,18 @@ export function CodingSessionUmbrellaComposer({
             );
           })}
         </fieldset>
+      ) : null}
+      {showMentionHint ? (
+        <p
+          // Where a typed handle is about to send is not something to discover
+          // by sight only.
+          aria-live="polite"
+          className="mb-2 px-1 text-2xs text-muted-foreground"
+          data-state={mention.kind}
+          data-testid="coding-session-mention-hint"
+        >
+          {mentionHint}
+        </p>
       ) : null}
       {selected === null ? null : selected.kind === "session" ? (
         <CodingSessionLaneComposer
@@ -147,13 +217,17 @@ export function CodingSessionUmbrellaComposer({
         <ExecutionComposer
           channelId={channelId}
           isMember={isMember}
-          // Keyed by execution: the editor holds its draft in local state, so
-          // without a fresh instance per participant a half-written prompt for
-          // Claude would be sitting in the box — and would be *sent* — after
-          // switching the selector to Codex.
-          key={selected.executionKey}
+          // Keyed by explicit selection: the editor holds its draft in local
+          // state, so without a fresh instance per hand-picked participant a
+          // half-written prompt for Claude would be sitting in the box — and
+          // would be *sent* — after switching the selector to Codex. A typed
+          // @mention deliberately does not bump this: it is the draft itself
+          // that chose the new target.
+          key={`draft-${draftEpoch}`}
           layout={layout}
+          onTextChange={setDraft}
           participant={selected}
+          prepareText={prepareText}
           prefill={
             prefill &&
             prefill.participantKey ===
@@ -171,13 +245,17 @@ function ExecutionComposer({
   channelId,
   isMember,
   layout,
+  onTextChange,
   participant,
+  prepareText,
   prefill,
 }: {
   channelId: string;
   isMember: boolean;
   layout: "inline" | "stacked";
+  onTextChange: (text: string) => void;
   participant: Extract<CodingSessionUmbrellaParticipant, { kind: "execution" }>;
+  prepareText: (text: string) => string;
   prefill: { id: string; text: string } | null;
 }) {
   const record = participant.execution.activeGeneration;
@@ -220,11 +298,40 @@ function ExecutionComposer({
       isMember={isMember}
       isWorking={isWorking}
       layout={layout}
+      onTextChange={onTextChange}
+      prepareText={prepareText}
       prefill={prefill}
       target={target}
       variant="floating"
     />
   );
+}
+
+/**
+ * The composer's one line about mentions: which handles exist, or what the
+ * handle currently typed is going to do. An unknown handle says nothing — the
+ * person is probably mid-word — but an ambiguous or unreachable one says so
+ * plainly, since that is exactly where an unspoken assumption ("Claude got
+ * this") would otherwise be wrong. Empty means: render no line at all.
+ */
+function describeCodingSessionMention(
+  mention: CodingSessionMentionResolution,
+  handles: readonly { handle: string }[],
+): string {
+  switch (mention.kind) {
+    case "match":
+      return `Sending to ${mention.label} — @${mention.raw} is removed from the prompt.`;
+    case "ambiguous":
+      return `@${mention.raw} fits ${mention.labels.join(" and ")}, so it stays plain text. Pick one above.`;
+    case "unavailable":
+      return `@${mention.raw} is ${mention.label}, but ${mention.reason}, so it stays plain text.`;
+    default:
+      return handles.length === 0
+        ? ""
+        : `Start a message with ${handles
+            .map((entry) => `@${entry.handle}`)
+            .join(" or ")} to address one directly.`;
+  }
 }
 
 /**
