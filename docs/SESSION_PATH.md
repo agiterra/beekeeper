@@ -266,3 +266,39 @@ Apache-2.0 and with DCO sign-off (clause b). Rules of use:
 - No relay-side parsing of provider content; the relay stays a validating
   store.
 - No multi-agent ceremony in the single-agent flow.
+
+## Execution sandboxing (finding, 2026-08-12)
+
+A Claude agent running inside a Buzz coding session was asked to audit its own
+environment. It reported, and the code confirms, that the ACP adapter inherits
+the sidecar's entire environment (`AcpClient::spawn` does not clear it):
+
+1. **`BUZZ_PRIVATE_KEY` (the provider's nsec) is visible to the agent** —
+   that key is the trust anchor for kinds 44222–44225, so an agent can sign
+   transcript facts the desktop renders as authentic, and `BUZZ_AUTH_TAG`
+   makes them carry the owner's NIP-OA delegation. *Fix landed: scrub the
+   provider's credentials at the sidecar→adapter boundary. The managed-agent
+   harness keeps its deliberate injection — a managed agent is supposed to act
+   as itself; a coding-session execution is not a managed agent
+   (`agent_ref` is null by design).*
+2. **App infrastructure secrets leak in from the developer's `.env`**
+   (`BUZZ_S3_*`, `TYPESENSE_API_KEY`, keyring service), letting an agent write
+   the media store and search index directly, bypassing relay authorization.
+   *Same fix.*
+3. **The agent inherits the operator's personal MCP servers** — in this audit
+   that included authenticated Gmail and Google Calendar, plus browser control
+   with arbitrary script evaluation. Env scrubbing does NOT fix this: it comes
+   from the provider CLI reading the operator's own user-level configuration.
+   Fixing it means launching the adapter against a scoped config/profile
+   directory. **Open.** This must be settled before sessions become steerable
+   by other members (Step 3/4), because a shared session would otherwise give a
+   teammate a path to the operator's personal integrations.
+4. **Filesystem scope is the user's, not the session's** — the agent could read
+   every other local session transcript. Inherent to shell-capable agents;
+   noted so nobody assumes the working directory is a boundary.
+
+The agent's own summary is the right way to hold this: *"the boundary here is
+my own compliance, not the environment's."* Product invariant 9 (sensitive
+execution state stays protected) is about the shared record; this finding is
+about the execution sandbox, and the two must both hold before shared
+observation becomes shared participation.
