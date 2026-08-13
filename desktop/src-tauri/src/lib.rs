@@ -37,6 +37,8 @@ mod relay_admission;
 mod reset;
 mod secret_store;
 #[cfg(unix)]
+mod session_broker;
+#[cfg(unix)]
 mod shell_sessions;
 mod shutdown;
 mod templates;
@@ -361,6 +363,11 @@ pub fn run() {
                 .keyring_locked
                 .load(std::sync::atomic::Ordering::Acquire);
             let recovery_mode = identity_lost || keyring_locked;
+
+            // Session broker (agent access to built-in shells, consent-gated)
+            // + reattach to detached shell hosts from the previous run.
+            #[cfg(unix)]
+            session_broker::start_unix_session_services(&app_handle);
 
             // Backfill the pinned persona snapshot for any pre-existing agent
             // that predates the record-authoritative-spawn cutover (persona_id

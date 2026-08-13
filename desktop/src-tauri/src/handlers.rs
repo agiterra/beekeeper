@@ -371,5 +371,9 @@ pub(crate) fn invoke_handler(
         shell_persistence_enabled,
         #[cfg(unix)]
         set_shell_persistence_enabled,
+        #[cfg(unix)]
+        set_session_agent_consent,
+        #[cfg(unix)]
+        list_session_agent_consent,
     ]
 }

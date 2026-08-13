@@ -1,0 +1,511 @@
+//! The local session broker: an owner-only Unix socket the `buzz session` CLI
+//! calls to act on sessions on behalf of an agent. It is the single enforcement
+//! point for agent access — every write is gated on the backend agent-consent
+//! store — so an agent can neither reach a session's PTY directly nor bypass
+//! consent.
+
+use std::path::PathBuf;
+
+use serde_json::json;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+
+use crate::shell_sessions::{self, keys, manager as shell_manager};
+
+use super::consent;
+use super::model::{BrokerSession, BrokerTerminal, SessionActivity};
+use super::protocol::{BrokerEnvelope, BrokerRequest, BrokerResponse};
+
+/// Env override for the broker socket path.
+const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
+/// Fixed socket location, derived from `$HOME` so the separate `buzz session`
+/// CLI (not a Tauri app, so it has no `app_data_dir`) can find it with
+/// identical logic. The `buzz session` CLI computes the same path; keep the
+/// two in lockstep.
+const DEFAULT_SOCKET_REL: &str = ".local/state/buzz/session-broker.sock";
+
+/// Resolve the broker socket path: `$BUZZ_SESSION_BROKER_SOCK`, else
+/// `$HOME/.local/state/buzz/session-broker.sock`.
+pub fn socket_path() -> Result<PathBuf, String> {
+    if let Ok(explicit) = std::env::var(SOCKET_PATH_ENV) {
+        if !explicit.is_empty() {
+            return Ok(PathBuf::from(explicit));
+        }
+    }
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join(DEFAULT_SOCKET_REL))
+}
+
+/// Bind the broker socket and serve requests until the process exits. The
+/// `AppHandle` lets request handlers surface access prompts to the UI and
+/// persist consent decisions.
+pub async fn spawn_session_broker(app: tauri::AppHandle) {
+    let path = match socket_path() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("session-broker: {e}");
+            return;
+        }
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("session-broker: failed to create {}: {e}", parent.display());
+            return;
+        }
+    }
+    // A stale socket from a previous run blocks bind; it's owner-only and
+    // single-purpose, so removing it is safe.
+    let _ = std::fs::remove_file(&path);
+    let listener = match UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("session-broker: failed to bind {}: {e}", path.display());
+            return;
+        }
+    };
+    restrict_socket_permissions(&path);
+    eprintln!("session-broker: listening on {}", path.display());
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let app = app.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_connection(stream, app).await {
+                        eprintln!("session-broker: connection error: {e}");
+                    }
+                });
+            }
+            Err(e) => {
+                eprintln!("session-broker: accept failed: {e}");
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restrict_socket_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_socket_permissions(_path: &std::path::Path) {}
+
+/// One request per connection: read a line, dispatch, write a response line.
+async fn handle_connection(stream: UnixStream, app: tauri::AppHandle) -> Result<(), String> {
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut line = String::new();
+    let read = reader
+        .read_line(&mut line)
+        .await
+        .map_err(|e| format!("read: {e}"))?;
+    if read == 0 {
+        return Ok(());
+    }
+
+    let response = match serde_json::from_str::<BrokerEnvelope>(line.trim_end()) {
+        Ok(envelope) => dispatch(envelope, &app).await,
+        Err(e) => BrokerResponse::err(format!("malformed request: {e}")),
+    };
+
+    let mut out = serde_json::to_string(&response).map_err(|e| format!("encode: {e}"))?;
+    out.push('\n');
+    write_half
+        .write_all(out.as_bytes())
+        .await
+        .map_err(|e| format!("write: {e}"))?;
+    Ok(())
+}
+
+async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerResponse {
+    let caller = envelope.caller.as_deref().unwrap_or("unknown");
+    match envelope.request {
+        BrokerRequest::List => {
+            eprintln!("session-broker: caller={caller} op=list");
+            let mut sessions = shell_sessions_as_broker_sessions();
+            // Tell the caller up front whether each session accepts writes,
+            // rather than making it discover consent by a refused send.
+            for session in &mut sessions {
+                session.agents_enabled = consent::is_agent_consented(&session.workspace_id);
+            }
+            match serde_json::to_value(&sessions) {
+                Ok(value) => BrokerResponse::ok(value),
+                Err(e) => BrokerResponse::err(format!("encode sessions: {e}")),
+            }
+        }
+        BrokerRequest::Read {
+            workspace_id,
+            scrollback,
+            rendered,
+            since,
+        } => {
+            eprintln!("session-broker: caller={caller} op=read workspace={workspace_id}");
+            let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
+                return only_shell_sessions();
+            };
+            shell_read(session_id, rendered, scrollback, since)
+        }
+        BrokerRequest::Send { workspace_id, text } => {
+            eprintln!("session-broker: caller={caller} op=send workspace={workspace_id}");
+            if !consent::is_agent_consented(&workspace_id) {
+                return not_permitted(&workspace_id);
+            }
+            let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
+                return only_shell_sessions();
+            };
+            shell_send_text(session_id, &text)
+        }
+        BrokerRequest::SendKey { workspace_id, key } => {
+            eprintln!(
+                "session-broker: caller={caller} op=send_key workspace={workspace_id} key={key}"
+            );
+            if !consent::is_agent_consented(&workspace_id) {
+                return not_permitted(&workspace_id);
+            }
+            let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
+                return only_shell_sessions();
+            };
+            shell_send_key(session_id, &key)
+        }
+        BrokerRequest::Exec {
+            workspace_id,
+            command,
+            quiet_ms,
+            timeout_ms,
+        } => {
+            eprintln!("session-broker: caller={caller} op=exec workspace={workspace_id}");
+            let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
+                return BrokerResponse::err(
+                    "exec is only supported for built-in shell sessions".to_string(),
+                );
+            };
+            if consent::is_agent_consented(&workspace_id) {
+                shell_exec(session_id, &command, quiet_ms, timeout_ms).await
+            } else {
+                // No standing consent: prompt the owner for *this* command. They
+                // can allow it once (runs it, consent unchanged, so the next
+                // command prompts again) or enable full control (runs it and
+                // stops prompting). This makes exec self-prompting rather than
+                // failing.
+                request_access(
+                    app,
+                    &workspace_id,
+                    Some(command),
+                    None,
+                    envelope.caller.clone(),
+                )
+                .await
+            }
+        }
+        BrokerRequest::RequestAccess {
+            workspace_id,
+            command,
+            reason,
+        } => {
+            eprintln!("session-broker: caller={caller} op=request_access workspace={workspace_id}");
+            request_access(app, &workspace_id, command, reason, envelope.caller.clone()).await
+        }
+    }
+}
+
+/// Built-in shell sessions projected into the session shape agents consume
+/// from `list` — `shell:`-prefixed workspace ids.
+fn shell_sessions_as_broker_sessions() -> Vec<BrokerSession> {
+    shell_manager::list()
+        .into_iter()
+        .map(|info| {
+            let workspace_id = shell_sessions::workspace_id(&info.session_id);
+            BrokerSession {
+                workspace_id: workspace_id.clone(),
+                window_id: None,
+                title: Some(info.title.clone()),
+                current_directory: Some(info.current_directory.clone()),
+                status_line: (!info.running).then(|| "Shell exited".to_string()),
+                status_line_at: None,
+                activity: SessionActivity::Active,
+                is_selected: false,
+                has_unread: false,
+                is_pinned: false,
+                last_activity_at: Some(info.created_at as f64),
+                terminals: vec![BrokerTerminal {
+                    surface_id: workspace_id,
+                    title: Some(info.title),
+                    current_directory: Some(info.current_directory),
+                    is_focused: true,
+                    is_ready: info.running,
+                }],
+                agents_enabled: false, // set by the List handler
+                input_line: shell_manager::input_line(&info.session_id),
+            }
+        })
+        .collect()
+}
+
+/// Fulfill a broker read against a built-in shell session.
+fn shell_read(
+    session_id: &str,
+    rendered: bool,
+    scrollback: bool,
+    since: Option<u64>,
+) -> BrokerResponse {
+    match shell_manager::read(session_id, rendered, scrollback, since) {
+        Ok(read) => match serde_json::to_value(&read) {
+            Ok(value) => BrokerResponse::ok(value),
+            Err(e) => BrokerResponse::err(format!("encode read: {e}")),
+        },
+        Err(e) => BrokerResponse::err(e),
+    }
+}
+
+/// Type text into a shell session then press Enter.
+fn shell_send_text(session_id: &str, text: &str) -> BrokerResponse {
+    let result = shell_manager::write(session_id, text.as_bytes())
+        .and_then(|()| shell_manager::write(session_id, b"\r"));
+    delivered_or_err(result)
+}
+
+/// Send a single named key into a shell session.
+fn shell_send_key(session_id: &str, key: &str) -> BrokerResponse {
+    let result = match keys::key_to_bytes(key) {
+        Some(bytes) => shell_manager::write(session_id, &bytes),
+        None => Err(format!("unsupported key: {key}")),
+    };
+    delivered_or_err(result)
+}
+
+fn delivered_or_err(result: Result<(), String>) -> BrokerResponse {
+    match result {
+        Ok(()) => BrokerResponse::ok(json!({ "delivered": true })),
+        Err(e) => BrokerResponse::err(e),
+    }
+}
+
+/// Run a command in a shell session and return the new output once it settles.
+/// Types the command + Enter, then polls until output has been quiet for
+/// `quiet_ms` (default 600) or `timeout_ms` elapses (default 15000), and
+/// returns everything printed since — the collapsed send/poll/read round-trip.
+async fn shell_exec(
+    session_id: &str,
+    command: &str,
+    quiet_ms: Option<u64>,
+    timeout_ms: Option<u64>,
+) -> BrokerResponse {
+    let quiet = std::time::Duration::from_millis(quiet_ms.unwrap_or(600).max(50));
+    let timeout =
+        std::time::Duration::from_millis(timeout_ms.unwrap_or(15_000).max(quiet_ms.unwrap_or(600)));
+
+    let start = match shell_manager::cursor(session_id) {
+        Ok(c) => c,
+        Err(e) => return BrokerResponse::err(e),
+    };
+    if let Err(e) = shell_manager::write(session_id, command.as_bytes())
+        .and_then(|()| shell_manager::write(session_id, b"\r"))
+    {
+        return BrokerResponse::err(e);
+    }
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut timed_out = true;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        match (
+            shell_manager::idle_for(session_id),
+            shell_manager::cursor(session_id),
+        ) {
+            (Ok(Some(idle)), Ok(cur)) if idle >= quiet && cur > start => {
+                timed_out = false;
+                break;
+            }
+            (Err(e), _) | (_, Err(e)) => return BrokerResponse::err(e),
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    match shell_manager::read(session_id, false, false, Some(start)) {
+        Ok(read) => BrokerResponse::ok(json!({
+            "output": read.text,
+            "cursor": read.cursor,
+            "truncated": read.truncated,
+            "inputLine": read.input_line,
+            "timedOut": timed_out,
+        })),
+        Err(e) => BrokerResponse::err(e),
+    }
+}
+
+/// Ask the owner, in chat, for access to a session lacking standing consent.
+/// Blocks until the owner answers (or a fixed timeout). On "once" the named
+/// command runs a single time; on "full" agent consent is enabled and the
+/// command, if any, runs; "deny" returns `approved: false`.
+async fn request_access(
+    app: &tauri::AppHandle,
+    workspace_id: &str,
+    command: Option<String>,
+    reason: Option<String>,
+    caller: Option<String>,
+) -> BrokerResponse {
+    // Access requests only make sense for the built-in shell today (it owns
+    // the exec path the approval unblocks).
+    let Some(session_id) = shell_sessions::session_id_from_workspace(workspace_id) else {
+        return BrokerResponse::err(
+            "access requests are only supported for built-in shell sessions".to_string(),
+        );
+    };
+    // Verify the session exists before prompting, so a stale/bogus id can't pop
+    // a phantom approval dialog and block for the timeout.
+    let Some(session_info) = shell_manager::info(session_id) else {
+        return BrokerResponse::err(format!("shell session {session_id} not found"));
+    };
+    let session_title = Some(session_info.title);
+
+    // Derive a request id that is unique across concurrent asks without needing
+    // a clock: workspace + caller + the current output cursor.
+    let salt = shell_manager::cursor(session_id).unwrap_or(0);
+    let id = format!("{workspace_id}:{}:{salt}", caller.as_deref().unwrap_or("?"));
+    let request = shell_sessions::access::AccessRequest {
+        id: id.clone(),
+        workspace_id: workspace_id.to_string(),
+        session_title,
+        command: command.clone(),
+        reason,
+        caller,
+    };
+    let rx = match shell_sessions::access::register(app, request) {
+        Ok(rx) => rx,
+        Err(e) => return BrokerResponse::err(e),
+    };
+
+    let decision = match tokio::time::timeout(std::time::Duration::from_secs(180), rx).await {
+        Ok(Ok(decision)) => decision,
+        // Sender dropped or timed out: withdraw and report.
+        _ => {
+            shell_sessions::access::cancel(app, &id);
+            return BrokerResponse::err(
+                "the owner did not respond to the access request in time".to_string(),
+            );
+        }
+    };
+
+    use shell_sessions::access::Decision;
+    match decision {
+        Decision::Deny => BrokerResponse::ok(json!({ "approved": false })),
+        Decision::Full => {
+            if let Err(e) = consent::set_agent_consented(app, workspace_id, true) {
+                return BrokerResponse::err(e);
+            }
+            let output = match &command {
+                Some(cmd) => match shell_exec(session_id, cmd, None, None).await.result {
+                    Some(v) => v.get("output").and_then(|o| o.as_str()).map(str::to_string),
+                    None => None,
+                },
+                None => None,
+            };
+            BrokerResponse::ok(json!({ "approved": true, "mode": "full", "output": output }))
+        }
+        Decision::Once => {
+            let Some(cmd) = command else {
+                return BrokerResponse::ok(json!({ "approved": true, "mode": "once" }));
+            };
+            match shell_exec(session_id, &cmd, None, None).await.result {
+                Some(v) => BrokerResponse::ok(json!({
+                    "approved": true,
+                    "mode": "once",
+                    "output": v.get("output").and_then(|o| o.as_str()).unwrap_or_default(),
+                })),
+                None => BrokerResponse::ok(json!({ "approved": true, "mode": "once" })),
+            }
+        }
+    }
+}
+
+fn not_permitted(workspace_id: &str) -> BrokerResponse {
+    BrokerResponse::err(format!(
+        "not permitted: agent interaction is not enabled for session {workspace_id}. \
+         Ask the owner with `buzz session request-access {workspace_id}` \
+         (optionally --command to run one command), or have them turn on \"Agents\" \
+         for it in the session's settings."
+    ))
+}
+
+fn only_shell_sessions() -> BrokerResponse {
+    BrokerResponse::err("only built-in shell sessions (shell:<id>) are supported".to_string())
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    async fn call(sock: &str, request: serde_json::Value) -> serde_json::Value {
+        let stream = UnixStream::connect(sock).await.expect("connect broker");
+        let (read_half, mut write_half) = stream.into_split();
+        let mut line =
+            serde_json::to_string(&json!({ "caller": "test", "request": request })).unwrap();
+        line.push('\n');
+        write_half.write_all(line.as_bytes()).await.unwrap();
+        let mut reader = BufReader::new(read_half);
+        let mut response = String::new();
+        reader.read_line(&mut response).await.unwrap();
+        serde_json::from_str(response.trim_end()).unwrap()
+    }
+
+    /// End-to-end broker check against a **live** desktop app with at least
+    /// one built-in shell session open. Ignored by default (CI has no app);
+    /// run with the app running:
+    /// `cargo test --manifest-path desktop/src-tauri/Cargo.toml
+    /// session_broker::server::live -- --ignored --nocapture`. Read-only: it
+    /// lists sessions and asserts a write is refused by default — it never
+    /// types into a session (agent consent is off).
+    #[tokio::test]
+    #[ignore]
+    async fn live_broker_lists_and_gates_writes() {
+        // Target the running desktop app's broker socket rather than spawning
+        // one here — spawn_session_broker requires an AppHandle.
+        let sock = &super::socket_path()
+            .expect("broker socket path")
+            .to_string_lossy()
+            .into_owned();
+        for _ in 0..60 {
+            if std::path::Path::new(sock).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        let list = call(sock, json!({ "op": "list" })).await;
+        assert_eq!(list["ok"], true, "list failed: {list}");
+        let sessions = list["result"].as_array().expect("sessions array");
+        assert!(!sessions.is_empty(), "expected live shell sessions");
+        eprintln!("broker listed {} sessions", sessions.len());
+        let ws = sessions[0]["workspaceId"]
+            .as_str()
+            .expect("workspaceId")
+            .to_string();
+
+        // Default-off agent consent: a write must be refused.
+        let send = call(
+            sock,
+            json!({ "op": "send", "workspace_id": ws, "text": "noop" }),
+        )
+        .await;
+        assert_eq!(
+            send["ok"], false,
+            "send should be refused by default: {send}"
+        );
+        assert!(
+            send["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not permitted"),
+            "unexpected error: {send}"
+        );
+        eprintln!("consent gate correctly refused a non-consented send");
+    }
+}

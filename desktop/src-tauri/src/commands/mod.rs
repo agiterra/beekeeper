@@ -62,6 +62,8 @@ mod qr_download;
 mod relay_members;
 mod relay_reconnect;
 #[cfg(unix)]
+mod sessions;
+#[cfg(unix)]
 mod shell_sessions;
 mod social;
 mod team_snapshot;
@@ -118,6 +120,8 @@ pub use project_terminal::*;
 pub use qr_download::*;
 pub use relay_members::*;
 pub use relay_reconnect::*;
+#[cfg(unix)]
+pub use sessions::*;
 #[cfg(unix)]
 pub use shell_sessions::*;
 pub use social::*;

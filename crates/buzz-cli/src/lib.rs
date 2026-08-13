@@ -237,6 +237,10 @@ enum Cmd {
     /// Persona pack operations (local, no relay connection needed)
     #[command(subcommand)]
     Pack(PackCmd),
+    /// Read and drive interactive sessions on this machine (local; via the
+    /// desktop session broker, gated by per-session agent consent)
+    #[command(subcommand)]
+    Session(commands::session::SessionCmd),
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
@@ -2115,6 +2119,18 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         };
     }
 
+    // Session commands are local-only — they call the desktop session broker,
+    // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
+    // the caller pubkey is passed to the broker for its audit log.
+    if let Cmd::Session(ref sub) = cli.command {
+        let caller = cli
+            .private_key
+            .as_ref()
+            .and_then(|k| Keys::parse(k).ok())
+            .map(|keys| keys.public_key().to_hex());
+        return commands::session::dispatch(sub, caller).await;
+    }
+
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
     let private_key_str = cli.private_key.ok_or_else(|| {
@@ -2175,6 +2191,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
+        Cmd::Session(_) => unreachable!("handled above"),
     }
 }
 
@@ -2279,6 +2296,7 @@ mod tests {
             "projects",
             "reactions",
             "repos",
+            "session",
             "social",
             "upload",
             "users",
