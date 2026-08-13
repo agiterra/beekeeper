@@ -257,6 +257,7 @@ function deriveTurn(
         });
       } else if (
         result.body &&
+        !isCeremonialCompletionValue(result.body) &&
         !assistantResultEchoes.has(normalizeContent(result.body))
       ) {
         visible.push({
@@ -592,19 +593,23 @@ export function formatCodingSessionCompletionOutcome(
   const outcome = completion.outcome?.trim();
   if (!outcome) return null;
   const normalized = outcome.toLowerCase();
-  if (
-    normalized === "completed" ||
-    normalized === "error" ||
-    normalized === "failed" ||
-    normalized === "interrupted" ||
-    normalized === "result" ||
-    normalized === "success" ||
-    normalized === "unknown"
-  ) {
-    return null;
-  }
+  if (isCeremonialCompletionValue(normalized)) return null;
   return normalized.replace(/[_-]+/g, " ");
 }
+
+function isCeremonialCompletionValue(value: string): boolean {
+  return COMPLETION_CEREMONY_VALUES.has(value.trim().toLowerCase());
+}
+
+const COMPLETION_CEREMONY_VALUES = new Set([
+  "completed",
+  "error",
+  "failed",
+  "interrupted",
+  "result",
+  "success",
+  "unknown",
+]);
 
 export function formatCodingSessionCost(costUsd: number): string {
   if (costUsd < 0.01) return `$${costUsd.toFixed(4)}`;

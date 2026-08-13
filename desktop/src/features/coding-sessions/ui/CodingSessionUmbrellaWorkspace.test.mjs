@@ -20,6 +20,7 @@ import {
 import {
   CodingSessionUmbrellaTimelineView,
   buildUmbrellaTurnBlockHandoff,
+  shouldShowTurnBlockProvenance,
   umbrellaWorkspaceStatus,
 } from "./CodingSessionUmbrellaWorkspace.tsx";
 
@@ -341,6 +342,33 @@ test("turn-block keys stay unique and stable when a lane message interleaves", (
     withLane.filter((key) => !key.startsWith("conversation:")),
     withoutLane,
   );
+});
+
+test("provenance labels an execution run once and yields to generation lifecycle rows", () => {
+  const first = {
+    kind: "turn-block",
+    executionKey: "claude",
+    signerPubkey: CLAUDE_SIGNER,
+    generation: 1,
+  };
+  const entries = [
+    first,
+    { ...first, blockSeq: 1 },
+    {
+      kind: "lifecycle",
+      executionKey: "claude",
+      signerPubkey: CLAUDE_SIGNER,
+      event: "generation-started",
+      generation: 2,
+    },
+    { ...first, generation: 2, blockSeq: 2 },
+    { ...first, executionKey: "codex", signerPubkey: CODEX_SIGNER },
+  ];
+
+  assert.equal(shouldShowTurnBlockProvenance(entries, 0), true);
+  assert.equal(shouldShowTurnBlockProvenance(entries, 1), false);
+  assert.equal(shouldShowTurnBlockProvenance(entries, 3), false);
+  assert.equal(shouldShowTurnBlockProvenance(entries, 4), true);
 });
 
 test("a turn split by a mid-turn ungrouped item yields two distinct block keys", () => {

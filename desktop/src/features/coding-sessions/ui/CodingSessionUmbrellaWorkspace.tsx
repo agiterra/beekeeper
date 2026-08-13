@@ -251,7 +251,7 @@ export function CodingSessionUmbrellaTimelineView({
       className="flex flex-col gap-7"
       data-testid="coding-session-umbrella-timeline"
     >
-      {entries.map((entry) => {
+      {entries.map((entry, index) => {
         const key = codingSessionUmbrellaEntryKey(entry);
         if (entry.kind === "conversation") {
           return <UmbrellaConversationRow key={key} message={entry.message} />;
@@ -287,6 +287,7 @@ export function CodingSessionUmbrellaTimelineView({
             onRevealFact={revealFact}
             record={recordsByGenerationId.get(entry.generationId) ?? null}
             resolveFactLocation={resolveFactLocation}
+            showProvenance={shouldShowTurnBlockProvenance(entries, index)}
             umbrella={umbrella}
           />
         );
@@ -315,6 +316,7 @@ function UmbrellaTurnBlock({
   onRevealFact,
   record,
   resolveFactLocation,
+  showProvenance,
   umbrella,
 }: {
   block: CodingSessionUmbrellaTurnBlock;
@@ -329,6 +331,7 @@ function UmbrellaTurnBlock({
   onRevealFact: (key: string) => void;
   record: CodingSessionCatalogRecord | null;
   resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
+  showProvenance: boolean;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const prompt = readCodingSessionTurnBlockPrompt(block);
@@ -367,30 +370,39 @@ function UmbrellaTurnBlock({
       data-testid="coding-session-umbrella-turn-block"
       ref={registerNode}
     >
-      <header className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium">
-          {label}
-        </span>
-        <span
-          className="font-mono text-2xs text-muted-foreground"
-          title="Fact-stream signer for every item in this block"
+      <span className="sr-only">
+        Response from {label}, signer {truncatePubkey(block.signerPubkey)},
+        generation {block.generation}.
+      </span>
+      {showProvenance ? (
+        <header
+          className="mb-3 flex flex-wrap items-center gap-2"
+          data-testid="coding-session-umbrella-provenance"
         >
-          {truncatePubkey(block.signerPubkey)}
-        </span>
-        <span className="text-2xs text-muted-foreground">
-          generation {block.generation}
-        </span>
-        {isForeign ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs text-amber-700 dark:text-amber-300"
-            data-testid="coding-session-umbrella-foreign-flag"
-            title="This execution was attached by an operator other than the session founder."
-          >
-            <Flag aria-hidden className="size-3" />
-            foreign
+          <span className="rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium">
+            {label}
           </span>
-        ) : null}
-      </header>
+          <span
+            className="font-mono text-2xs text-muted-foreground"
+            title="Fact-stream signer for every item in this execution run"
+          >
+            {truncatePubkey(block.signerPubkey)}
+          </span>
+          <span className="text-2xs text-muted-foreground">
+            generation {block.generation}
+          </span>
+          {isForeign ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs text-amber-700 dark:text-amber-300"
+              data-testid="coding-session-umbrella-foreign-flag"
+              title="This execution was attached by an operator other than the session founder."
+            >
+              <Flag aria-hidden className="size-3" />
+              foreign
+            </span>
+          ) : null}
+        </header>
+      ) : null}
       {handoff ? (
         <p
           className="mb-2 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-primary/10 px-2 py-1 text-xs"
@@ -463,6 +475,29 @@ function UmbrellaTurnBlock({
         </footer>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * Provenance labels a contiguous execution run, not every turn. A generation
+ * lifecycle row already identifies the execution and generation, so the first
+ * block after that row does not repeat the same chrome either.
+ */
+export function shouldShowTurnBlockProvenance(
+  entries: readonly CodingSessionUmbrellaTimelineEntry[],
+  index: number,
+): boolean {
+  const entry = entries[index];
+  if (entry?.kind !== "turn-block") return false;
+  const previous = entries[index - 1];
+  if (!previous) return true;
+  if (previous.kind === "conversation") return true;
+  if (previous.executionKey !== entry.executionKey) return true;
+  if (previous.kind === "lifecycle") {
+    return previous.generation !== entry.generation;
+  }
+  return (
+    previous.kind !== "turn-block" || previous.generation !== entry.generation
   );
 }
 

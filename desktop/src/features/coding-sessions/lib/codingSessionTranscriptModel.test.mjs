@@ -396,6 +396,30 @@ test("uses a non-duplicate result body as assistant content", () => {
   assert.equal(turn.entries[1].item.text, "Finished successfully.");
 });
 
+test("suppresses an exact ceremonial result body while keeping turn completion", () => {
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Acknowledge" }),
+      lifecycle({
+        id: "result",
+        title: "Turn result",
+        text: "completed",
+      }),
+    ],
+    { isWorking: false },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.kind, "turn");
+  assert.deepEqual(
+    turn.entries.map((entry) =>
+      entry.kind === "item" ? entry.item.id : entry.id,
+    ),
+    ["prompt"],
+  );
+  assert.equal(turn.completion.state, "completed");
+});
+
 test("collapses only the prefix of adjacent successful tools", () => {
   const model = deriveCodingSessionTranscriptModel(
     [
