@@ -64,6 +64,14 @@ function getCodeBlockText(children: React.ReactNode) {
   return getReactNodeText(children).replace(/\n$/, "");
 }
 
+export function StaticCodeBlock({ children }: { children?: React.ReactNode }) {
+  return (
+    <pre className="overflow-x-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5">
+      {children}
+    </pre>
+  );
+}
+
 export function MarkdownCodeBlock({
   children,
   language,
