@@ -56,6 +56,73 @@ pub struct PersistedSession {
     pub scrollback: Vec<u8>,
 }
 
+/// App-owned per-session metadata the detached host never sees.
+///
+/// The host checkpoints `<id>.json` every 10 s from its own (older) meta
+/// shape, so anything only the app knows — the project tag and the NIP-ST
+/// share flag — would be silently erased between runs if it lived there.
+/// This sidecar map (`app-meta.json`) is written only by the app and merged
+/// back over host/disk metadata at reattach/load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppMeta {
+    #[serde(default)]
+    pub project_ref: Option<String>,
+    /// Whether the session is observable by its project's members (NIP-ST).
+    /// Defaults on: assigning a session to a project shares it unless the
+    /// owner opts out.
+    #[serde(default = "default_true")]
+    pub shared: bool,
+}
+
+impl Default for AppMeta {
+    fn default() -> Self {
+        AppMeta {
+            project_ref: None,
+            shared: true,
+        }
+    }
+}
+
+fn app_meta_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(base_dir(app)?.join("app-meta.json"))
+}
+
+/// The app-owned per-session metadata map. Missing/corrupt reads as empty.
+pub fn load_app_meta(app: &AppHandle) -> std::collections::HashMap<String, AppMeta> {
+    let Ok(path) = app_meta_path(app) else {
+        return Default::default();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Default::default();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+/// Merge one session's app-owned metadata into the map and write it back.
+pub fn set_app_meta(app: &AppHandle, id: &str, meta: AppMeta) {
+    let mut map = load_app_meta(app);
+    map.insert(id.to_string(), meta);
+    write_app_meta(app, &map);
+}
+
+/// Drop one session's app-owned metadata (the session was closed/forgotten).
+pub fn remove_app_meta(app: &AppHandle, id: &str) {
+    let mut map = load_app_meta(app);
+    if map.remove(id).is_some() {
+        write_app_meta(app, &map);
+    }
+}
+
+fn write_app_meta(app: &AppHandle, map: &std::collections::HashMap<String, AppMeta>) {
+    let Ok(path) = app_meta_path(app) else {
+        return;
+    };
+    if let Ok(json) = serde_json::to_vec_pretty(map) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 fn base_dir(app: &AppHandle) -> Result<PathBuf, String> {
     dir(app)
 }

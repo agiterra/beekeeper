@@ -11306,6 +11306,33 @@ export function maybeInstallE2eTauriMocks() {
         return true;
       case "set_shell_persistence_enabled":
         return null;
+      case "set_shell_session_shared":
+        return null;
+      case "shell_broadcast_watch":
+        return [];
+      case "shell_broadcast_watchers":
+        return [];
+      case "build_shell_watch_event": {
+        const input = payload as {
+          ownerPubkey?: string;
+          sessionId?: string;
+          projectRef?: string;
+          action?: string;
+        };
+        return JSON.stringify({
+          id: "e2e-watch-event",
+          pubkey: getMockMemberPubkey(activeConfig ?? undefined),
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 24310,
+          tags: [
+            ["p", input.ownerPubkey ?? ""],
+            ["d", input.sessionId ?? ""],
+            ["a", input.projectRef ?? ""],
+          ],
+          content: JSON.stringify({ action: input.action ?? "watch" }),
+          sig: "00",
+        });
+      }
       case "mesh_installed_models":
         return mockMeshState.models;
       case "mesh_model_catalog":

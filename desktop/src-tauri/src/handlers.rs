@@ -375,5 +375,13 @@ pub(crate) fn invoke_handler(
         set_session_agent_consent,
         #[cfg(unix)]
         list_session_agent_consent,
+        #[cfg(unix)]
+        set_shell_session_shared,
+        #[cfg(unix)]
+        shell_broadcast_watch,
+        #[cfg(unix)]
+        shell_broadcast_watchers,
+        #[cfg(unix)]
+        build_shell_watch_event,
     ]
 }

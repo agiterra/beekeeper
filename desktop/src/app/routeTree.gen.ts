@@ -18,6 +18,7 @@ import { Route as projectsDotprojectIdRouteImport } from "./routes/projects.$pro
 import { Route as messagesDotnewRouteImport } from "./routes/messages.new";
 import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$channelId";
 import { Route as projectsDotprojectIdDotindexRouteImport } from "./routes/projects.$projectId.index";
+import { Route as observeDotownerDotsessionIdRouteImport } from "./routes/observe.$owner.$sessionId";
 import { Route as projectsDotprojectIdDotcodeDotrepoIdRouteImport } from "./routes/projects.$projectId.code.$repoId";
 import { Route as channelsDotchannelIdDotpostsDotpostIdRouteImport } from "./routes/channels.$channelId.posts.$postId";
 
@@ -87,6 +88,12 @@ const projectsDotprojectIdDotindexRoute =
     path: "/",
     getParentRoute: () => projectsDotprojectIdRoute,
   } as any);
+const observeDotownerDotsessionIdRoute =
+  observeDotownerDotsessionIdRouteImport.update({
+    id: "/observe/$owner/$sessionId",
+    path: "/observe/$owner/$sessionId",
+    getParentRoute: () => rootRouteImport,
+  } as any);
 const projectsDotprojectIdDotcodeDotrepoIdRoute =
   projectsDotprojectIdDotcodeDotrepoIdRouteImport.update({
     id: "/code/$repoId",
@@ -113,6 +120,7 @@ export interface FileRoutesByFullPath {
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
@@ -129,6 +137,7 @@ export interface FileRoutesByTo {
   "/messages/new": typeof messagesDotnewRoute;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
@@ -147,6 +156,7 @@ export interface FileRoutesById {
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
   "/projects/$projectId/code/$repoId": typeof projectsDotprojectIdDotcodeDotrepoIdRoute;
@@ -166,6 +176,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
     | "/projects/$projectId/code/$repoId";
@@ -182,6 +193,7 @@ export interface FileRouteTypes {
     | "/messages/new"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/observe/$owner/$sessionId"
     | "/projects/$projectId"
     | "/channels/$channelId/posts/$postId"
     | "/projects/$projectId/code/$repoId";
@@ -199,6 +211,7 @@ export interface FileRouteTypes {
     | "/projects/$projectId"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
     | "/projects/$projectId/code/$repoId";
@@ -217,6 +230,7 @@ export interface RootRouteChildren {
   projectsDotprojectIdRoute: typeof projectsDotprojectIdRouteWithChildren;
   shellDotsessionIdRoute: typeof shellDotsessionIdRoute;
   workflowsDotworkflowIdRoute: typeof workflowsDotworkflowIdRoute;
+  observeDotownerDotsessionIdRoute: typeof observeDotownerDotsessionIdRoute;
   channelsDotchannelIdDotpostsDotpostIdRoute: typeof channelsDotchannelIdDotpostsDotpostIdRoute;
 }
 
@@ -313,6 +327,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof projectsDotprojectIdDotindexRouteImport;
       parentRoute: typeof projectsDotprojectIdRoute;
     };
+    "/observe/$owner/$sessionId": {
+      id: "/observe/$owner/$sessionId";
+      path: "/observe/$owner/$sessionId";
+      fullPath: "/observe/$owner/$sessionId";
+      preLoaderRoute: typeof observeDotownerDotsessionIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/projects/$projectId/code/$repoId": {
       id: "/projects/$projectId/code/$repoId";
       path: "/code/$repoId";
@@ -357,6 +378,7 @@ const rootRouteChildren: RootRouteChildren = {
   projectsDotprojectIdRoute: projectsDotprojectIdRouteWithChildren,
   shellDotsessionIdRoute: shellDotsessionIdRoute,
   workflowsDotworkflowIdRoute: workflowsDotworkflowIdRoute,
+  observeDotownerDotsessionIdRoute: observeDotownerDotsessionIdRoute,
   channelsDotchannelIdDotpostsDotpostIdRoute:
     channelsDotchannelIdDotpostsDotpostIdRoute,
 };

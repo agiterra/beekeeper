@@ -35,6 +35,10 @@ pub fn start_unix_session_services(app: &tauri::AppHandle) {
         spawn_session_broker(broker_handle).await;
     });
 
+    // NIP-ST broadcasting needs the app handle for signing + Tauri events
+    // before any session can announce — reattach below announces.
+    crate::shell_sessions::broadcast::init(app);
+
     // Built-in shell: reattach to detached host processes that survived the last
     // app run (their shells kept running), and register the rest from on-disk
     // history as restorable (the reboot fallback). Hosts own their own periodic

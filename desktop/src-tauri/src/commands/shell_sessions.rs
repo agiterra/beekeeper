@@ -7,6 +7,7 @@
 //! workspace id.
 
 use base64::Engine;
+use nostr::JsonUtil;
 use tauri::AppHandle;
 
 use crate::shell_sessions::access::{self, AccessRequest, Decision};
@@ -14,7 +15,7 @@ use crate::shell_sessions::manager::{self, ShellSessionInfo};
 
 /// Spawn a new built-in shell session. Defaults: the user's `$SHELL`, `$HOME`.
 /// `project_ref`, if given, tags the session with the project container
-/// (`30178:<owner>:<slug>` coordinate) it was opened from.
+/// (`30621:<owner>:<slug>` coordinate) it was opened from.
 #[tauri::command]
 pub fn create_shell_session(
     app: AppHandle,
@@ -132,4 +133,66 @@ pub fn resolve_shell_access_request(
     let decision = Decision::parse(&decision)
         .ok_or_else(|| format!("unknown decision '{decision}' (expected once|full|deny)"))?;
     access::resolve(&app, &request_id, decision)
+}
+
+/// Flip a session's NIP-ST share flag (observable by project members).
+/// Turning sharing off retracts the announce and ends any observer stream.
+#[tauri::command]
+pub fn set_shell_session_shared(
+    app: AppHandle,
+    session_id: String,
+    shared: bool,
+) -> Result<(), String> {
+    manager::set_shared(&app, &session_id, shared)
+}
+
+/// A validated NIP-ST watch event arrived for one of this owner's sessions
+/// (relayed by the TS pump). Registers/refreshes/stops the watcher and
+/// returns the signed attach-bundle frame events the pump must publish.
+#[tauri::command]
+pub fn shell_broadcast_watch(
+    session_id: String,
+    watcher_pubkey: String,
+    action: String,
+) -> Result<Vec<String>, String> {
+    crate::shell_sessions::broadcast::watch(&session_id, &watcher_pubkey, &action)
+}
+
+/// The pubkeys currently watching a session (pull fallback for the owner's
+/// "N watching" indicator; live updates ride the shell-broadcast-watchers
+/// Tauri event).
+#[tauri::command]
+pub fn shell_broadcast_watchers(session_id: String) -> Vec<String> {
+    crate::shell_sessions::broadcast::watchers(&session_id)
+}
+
+/// Build + sign a NIP-ST kind:24310 watch event for the observer side (the
+/// relay requires signed events; signing lives in Rust with the keys).
+#[tauri::command]
+pub fn build_shell_watch_event(
+    state: tauri::State<'_, crate::app_state::AppState>,
+    owner_pubkey: String,
+    session_id: String,
+    project_ref: String,
+    action: String,
+) -> Result<String, String> {
+    if !matches!(action.as_str(), "watch" | "stop" | "resync") {
+        return Err(format!("unknown watch action: {action}"));
+    }
+    let owner = nostr::PublicKey::from_hex(owner_pubkey.trim())
+        .map_err(|e| format!("invalid owner pubkey: {e}"))?;
+    let keys = state.signing_keys()?;
+    let content = serde_json::json!({ "action": action }).to_string();
+    let event = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_WATCH as u16),
+        content,
+    )
+    .tags([
+        nostr::Tag::public_key(owner),
+        nostr::Tag::identifier(session_id),
+        nostr::Tag::parse(["a".to_string(), project_ref]).map_err(|e| e.to_string())?,
+    ])
+    .sign_with_keys(&keys)
+    .map_err(|e| format!("sign watch event failed: {e}"))?;
+    Ok(event.as_json())
 }

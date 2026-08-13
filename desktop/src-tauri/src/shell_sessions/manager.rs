@@ -106,8 +106,19 @@ pub fn create(
         running: true,
         restorable: false,
         project_ref,
+        shared: true,
     };
-    spawn_host_and_attach(app, info, &cwd)
+    let info = spawn_host_and_attach(app, info, &cwd)?;
+    crate::shell_sessions::persist::set_app_meta(
+        app,
+        &info.session_id,
+        crate::shell_sessions::persist::AppMeta {
+            project_ref: info.project_ref.clone(),
+            shared: info.shared,
+        },
+    );
+    crate::shell_sessions::broadcast::announce(app, &info, "open");
+    Ok(info)
 }
 
 /// Spawn a fresh host process for `info` in `cwd`, then attach to it. Used by
@@ -303,6 +314,7 @@ fn spawn_reader_thread(
                                 "dataB64": base64::engine::general_purpose::STANDARD.encode(&bytes),
                             }),
                         );
+                        crate::shell_sessions::broadcast::on_output(&session_id);
                     }
                     Ok(Some(Frame::Exit)) => break,
                     // Ignore host→client-only frames we don't act on here.
@@ -316,6 +328,10 @@ fn spawn_reader_thread(
                     session.info.running = false;
                 }
             }
+            if let Some(session_info) = info(&session_id) {
+                crate::shell_sessions::broadcast::announce(&app, &session_info, "closed");
+            }
+            crate::shell_sessions::broadcast::session_ended(&session_id);
             let _ = app.emit(EXIT_EVENT, serde_json::json!({ "sessionId": session_id }));
         });
 }
@@ -323,6 +339,9 @@ fn spawn_reader_thread(
 /// At startup: reattach to hosts that survived the last app run, and register
 /// the rest (dead host / disk-only history) as dormant, restorable sessions.
 pub fn reattach_hosts(app: &AppHandle) {
+    // App-owned per-session metadata (project tag + share flag) — the host's
+    // receipts and checkpoints never carry these.
+    let app_meta = crate::shell_sessions::persist::load_app_meta(app);
     // 1. Live hosts: a receipt whose host pid is alive and socket connects
     //    (list-probe — read-only, never deletes the receipt itself).
     let driver = session_driver::BuzzShellHostDriver;
@@ -339,6 +358,9 @@ pub fn reattach_hosts(app: &AppHandle) {
                 };
                 let socket = PathBuf::from(&receipt.socket_path);
                 if driver.list_probe(&receipt, &socket) == Probed::Alive {
+                    // The host never learns app-side fields (project tag,
+                    // share flag); they come from the app-owned sidecar map.
+                    let app_meta = app_meta.get(&receipt.id).cloned().unwrap_or_default();
                     let info = ShellSessionInfo {
                         session_id: receipt.id.clone(),
                         title: receipt.title.clone(),
@@ -349,13 +371,17 @@ pub fn reattach_hosts(app: &AppHandle) {
                         cols: 80,
                         running: true,
                         restorable: false,
-                        // The host's receipt predates project containers and
-                        // doesn't carry this local-only field.
-                        project_ref: None,
+                        project_ref: app_meta.project_ref,
+                        shared: app_meta.shared,
                     };
                     match attach(app, info, &socket) {
-                        Ok(_) => {
+                        Ok(reattached_info) => {
                             reattached.insert(receipt.id.clone());
+                            crate::shell_sessions::broadcast::announce(
+                                app,
+                                &reattached_info,
+                                "open",
+                            );
                         }
                         Err(e) => eprintln!("shell-host: reattach {} failed: {e}", receipt.id),
                     }
@@ -386,6 +412,9 @@ pub fn reattach_hosts(app: &AppHandle) {
         let mut parser = vt100::Parser::new(rows, cols, 0);
         parser.process(&session.scrollback);
         let total = session.scrollback.len() as u64;
+        // The host's checkpoint rewrites `<id>.json` without app-side fields,
+        // so the sidecar map wins over whatever the meta file carries.
+        let session_app_meta = app_meta.get(&meta.session_id).cloned();
         let info = ShellSessionInfo {
             session_id: meta.session_id.clone(),
             title: meta.title,
@@ -396,9 +425,11 @@ pub fn reattach_hosts(app: &AppHandle) {
             cols,
             running: false,
             restorable: true,
-            // Old persisted files predate this field and deserialize it as
-            // `None` (`#[serde(default)]`); newer ones carry it forward.
-            project_ref: meta.project_ref.clone(),
+            project_ref: session_app_meta
+                .as_ref()
+                .and_then(|m| m.project_ref.clone())
+                .or_else(|| meta.project_ref.clone()),
+            shared: session_app_meta.map(|m| m.shared).unwrap_or(true),
         };
         map.insert(
             meta.session_id.clone(),
@@ -436,7 +467,9 @@ pub fn resume(app: &AppHandle, session_id: &str) -> Result<ShellSessionInfo, Str
     } else {
         default_cwd()
     };
-    spawn_host_and_attach(app, session.info, &cwd)
+    let info = spawn_host_and_attach(app, session.info, &cwd)?;
+    crate::shell_sessions::broadcast::announce(app, &info, "open");
+    Ok(info)
 }
 
 /// All sessions (live + restorable), oldest first.
@@ -474,6 +507,13 @@ pub fn info(session_id: &str) -> Option<ShellSessionInfo> {
 /// forgets any files here — an explicit close means "gone", not restorable.
 /// (Merely quitting the app never calls this: hosts are left running to reattach.)
 pub fn close(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    // Announce the close (and end any observer stream) while the info is
+    // still resolvable.
+    if let Some(session_info) = info(session_id) {
+        crate::shell_sessions::broadcast::announce(app, &session_info, "closed");
+        crate::shell_sessions::broadcast::session_ended(session_id);
+    }
+    crate::shell_sessions::persist::remove_app_meta(app, session_id);
     let removed_live = {
         let mut sessions = lock_registry()?;
         sessions.remove(session_id).inspect(|s| {
@@ -520,7 +560,11 @@ pub fn rename(app: &AppHandle, session_id: &str, title: &str) -> Result<(), Stri
         }
     };
     if let Some(client) = live_client {
-        return client.set_title(title);
+        client.set_title(title)?;
+        if let Some(session_info) = info(session_id) {
+            crate::shell_sessions::broadcast::announce(app, &session_info, "open");
+        }
+        return Ok(());
     }
 
     let renamed = {
@@ -554,26 +598,130 @@ pub fn set_project_ref(
     session_id: &str,
     project_ref: Option<String>,
 ) -> Result<(), String> {
-    {
+    let old_ref = info(session_id).and_then(|i| i.project_ref);
+    let updated = {
         let mut sessions = lock_registry()?;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.info.project_ref = project_ref;
-            return Ok(());
+        match sessions.get_mut(session_id) {
+            Some(session) => {
+                session.info.project_ref = project_ref.clone();
+                Some(session.info.clone())
+            }
+            None => None,
         }
+    };
+    let updated = match updated {
+        Some(info) => Some(info),
+        None => {
+            let mut map = dormant()
+                .lock()
+                .map_err(|_| "shell-session dormant lock poisoned".to_string())?;
+            match map.get_mut(session_id) {
+                Some(session) => {
+                    session.info.project_ref = project_ref.clone();
+                    let info = session.info.clone();
+                    drop(map);
+                    crate::shell_sessions::persist::set_project_ref(
+                        app,
+                        session_id,
+                        project_ref.clone(),
+                    );
+                    Some(info)
+                }
+                None => None,
+            }
+        }
+    };
+    let Some(info) = updated else {
+        return Err(format!("shell session {session_id} not found"));
+    };
+    crate::shell_sessions::persist::set_app_meta(
+        app,
+        session_id,
+        crate::shell_sessions::persist::AppMeta {
+            project_ref: info.project_ref.clone(),
+            shared: info.shared,
+        },
+    );
+    // Announce under the (possibly new) coordinate — the addressable replace
+    // drops the announce from the old project's list automatically. Clearing
+    // the ref publishes `closed` under the old coordinate (same address) and
+    // ends any active observer stream.
+    if info.project_ref.is_some() {
+        crate::shell_sessions::broadcast::announce(app, &info, "open");
+    } else if let Some(old_coord) = old_ref {
+        crate::shell_sessions::broadcast::announce_closed_previous(app, &info, &old_coord);
+        crate::shell_sessions::broadcast::session_ended(session_id);
     }
+    Ok(())
+}
 
-    let mut map = dormant()
-        .lock()
-        .map_err(|_| "shell-session dormant lock poisoned".to_string())?;
-    match map.get_mut(session_id) {
-        Some(session) => {
-            session.info.project_ref = project_ref.clone();
-            drop(map);
-            crate::shell_sessions::persist::set_project_ref(app, session_id, project_ref);
-            Ok(())
+/// Flip a session's NIP-ST share flag. Turning sharing off closes the
+/// announce and ends any active observer stream.
+pub fn set_shared(app: &AppHandle, session_id: &str, shared: bool) -> Result<(), String> {
+    let updated = {
+        let mut sessions = lock_registry()?;
+        match sessions.get_mut(session_id) {
+            Some(session) => {
+                session.info.shared = shared;
+                Some(session.info.clone())
+            }
+            None => {
+                drop(sessions);
+                let mut map = dormant()
+                    .lock()
+                    .map_err(|_| "shell-session dormant lock poisoned".to_string())?;
+                match map.get_mut(session_id) {
+                    Some(session) => {
+                        session.info.shared = shared;
+                        Some(session.info.clone())
+                    }
+                    None => None,
+                }
+            }
         }
-        None => Err(format!("shell session {session_id} not found")),
+    };
+    let Some(info) = updated else {
+        return Err(format!("shell session {session_id} not found"));
+    };
+    crate::shell_sessions::persist::set_app_meta(
+        app,
+        session_id,
+        crate::shell_sessions::persist::AppMeta {
+            project_ref: info.project_ref.clone(),
+            shared,
+        },
+    );
+    if shared {
+        crate::shell_sessions::broadcast::announce(app, &info, "open");
+    } else {
+        crate::shell_sessions::broadcast::announce(app, &info, "closed");
+        crate::shell_sessions::broadcast::session_ended(session_id);
     }
+    Ok(())
+}
+
+/// A clone of the session's rendered screen (live or dormant), plus its
+/// grid, for the NIP-ST broadcast module's snapshot/diff frames.
+pub(crate) fn clone_screen(session_id: &str) -> Result<(vt100::Screen, u16, u16), String> {
+    let (state, rows, cols) = {
+        if let Ok(sessions) = registry().lock() {
+            if let Some(s) = sessions.get(session_id) {
+                (s.state.clone(), s.info.rows, s.info.cols)
+            } else {
+                let map = dormant()
+                    .lock()
+                    .map_err(|_| "shell-session dormant lock poisoned".to_string())?;
+                let s = map
+                    .get(session_id)
+                    .ok_or_else(|| format!("shell session {session_id} not found"))?;
+                (s.state.clone(), s.info.rows, s.info.cols)
+            }
+        } else {
+            return Err("shell-session registry lock poisoned".to_string());
+        }
+    };
+    let st = state.lock().map_err(|_| lock_err())?;
+    Ok((st.parser.screen().clone(), rows, cols))
 }
 
 /// Write raw bytes (keystrokes) to the session's host.
@@ -605,7 +753,9 @@ pub fn resize(session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
         }
         session.io.clone()
     };
-    session_driver::BuzzShellHostDriver.input_resize(&io, InputResize::Resize { rows, cols })
+    session_driver::BuzzShellHostDriver.input_resize(&io, InputResize::Resize { rows, cols })?;
+    crate::shell_sessions::broadcast::on_resize(session_id, rows, cols);
+    Ok(())
 }
 
 /// Clone the shared state Arc so a read can work without holding the registry

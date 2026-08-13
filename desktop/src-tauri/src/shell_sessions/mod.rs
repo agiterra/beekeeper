@@ -12,6 +12,7 @@
 //! -prefixed workspace id so the broker can route by backend.
 
 pub mod access;
+pub mod broadcast;
 pub mod host_client;
 pub mod keys;
 pub mod manager;

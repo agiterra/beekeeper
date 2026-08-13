@@ -22,8 +22,12 @@ export type ShellSessionInfo = {
    * to respawn a shell in its saved directory with history replayed. */
   restorable: boolean;
   /** Project container coordinate (`30621:<owner>:<slug>`) this session is
-   * grouped under in the sidebar. Local-only — shells have no relay presence. */
+   * grouped under in the sidebar. A session with a real project ref is
+   * announced to that project per NIP-ST. */
   projectRef?: string | null;
+  /** Whether project members may observe this session read-only (NIP-ST).
+   * Default on; meaningless without a projectRef. */
+  shared?: boolean;
 };
 
 /** The broker/consent workspace id for a built-in shell session. */
@@ -180,3 +184,47 @@ export function setSessionAgentConsent(
 export function listSessionAgentConsent(): Promise<string[]> {
   return invokeTauri<string[]>("list_session_agent_consent");
 }
+
+// ── NIP-ST shared terminals (project members observe read-only) ──────────
+
+/** Flip a session's share flag. Off retracts the announce + ends streams. */
+export function setShellSessionShared(
+  sessionId: string,
+  shared: boolean,
+): Promise<void> {
+  return invokeTauri("set_shell_session_shared", { sessionId, shared });
+}
+
+/** Forward a validated watch event to the broadcaster; returns signed
+ * attach-bundle frame events (JSON strings) to publish. */
+export function shellBroadcastWatch(
+  sessionId: string,
+  watcherPubkey: string,
+  action: "watch" | "stop" | "resync",
+): Promise<string[]> {
+  return invokeTauri<string[]>("shell_broadcast_watch", {
+    sessionId,
+    watcherPubkey,
+    action,
+  });
+}
+
+/** Pubkeys currently watching a session (pull fallback for the indicator). */
+export function shellBroadcastWatchers(sessionId: string): Promise<string[]> {
+  return invokeTauri<string[]>("shell_broadcast_watchers", { sessionId });
+}
+
+/** Build + sign a kind:24310 watch event for a session we want to observe. */
+export function buildShellWatchEvent(input: {
+  ownerPubkey: string;
+  sessionId: string;
+  projectRef: string;
+  action: "watch" | "stop" | "resync";
+}): Promise<string> {
+  return invokeTauri<string>("build_shell_watch_event", { ...input });
+}
+
+/** Signed frame events ready to publish over the relay WebSocket. */
+export const SHELL_BROADCAST_PUBLISH_EVENT = "shell-broadcast-publish";
+/** `{ sessionId, watchers }` roster updates for the owner's indicator. */
+export const SHELL_BROADCAST_WATCHERS_EVENT = "shell-broadcast-watchers";

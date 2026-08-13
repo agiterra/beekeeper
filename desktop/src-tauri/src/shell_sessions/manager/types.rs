@@ -34,11 +34,15 @@ pub struct ShellSessionInfo {
     #[serde(default)]
     pub restorable: bool,
     /// The `30621:<owner>:<slug>` coordinate of the project container this
-    /// session belongs to, if any. Local-only bookkeeping (never sent to the
-    /// relay) set via `set_project_ref`; absent on sessions restored from
-    /// disk written before this field existed.
+    /// session belongs to, if any. Set via `set_project_ref` and persisted in
+    /// the app-owned sidecar map (`persist::AppMeta`); a session with a real
+    /// project ref is announced to that project per NIP-ST.
     #[serde(default)]
     pub project_ref: Option<String>,
+    /// Whether this session is observable (read-only) by its project's
+    /// members (NIP-ST). Default on; meaningless without a `project_ref`.
+    #[serde(default)]
+    pub shared: bool,
 }
 
 /// A read of a session's output for an agent: rendered/plain text plus the
@@ -129,6 +133,7 @@ mod tests {
             running: true,
             restorable: false,
             project_ref: project_ref.map(str::to_string),
+            shared: true,
         }
     }
 

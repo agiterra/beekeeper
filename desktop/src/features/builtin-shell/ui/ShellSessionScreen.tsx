@@ -1,12 +1,16 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, FolderGit2, Keyboard, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { ArrowLeft, Eye, EyeOff, FolderGit2, Keyboard, X } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
 import {
+  SHELL_BROADCAST_WATCHERS_EVENT,
   closeShellSession,
   resumeShellSession,
+  setShellSessionShared,
+  shellBroadcastWatchers,
   shellWorkspaceId,
 } from "@/shared/api/tauriShell";
 import { useSessionConsent } from "../hooks/useSessionConsent";
@@ -16,6 +20,39 @@ import {
   useShellSessions,
 } from "../hooks/useShellSessions";
 import { ShellTerminal } from "./ShellTerminal";
+
+/** Live "who is watching" roster for one session (NIP-ST owner indicator). */
+function useShellWatchers(sessionId: string): string[] {
+  const [watchers, setWatchers] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    shellBroadcastWatchers(sessionId)
+      .then((initial) => {
+        if (!disposed) setWatchers(initial);
+      })
+      .catch(() => {});
+    void listen<{ sessionId: string; watchers: string[] }>(
+      SHELL_BROADCAST_WATCHERS_EVENT,
+      (event) => {
+        if (event.payload.sessionId === sessionId) {
+          setWatchers(event.payload.watchers);
+        }
+      },
+    )
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+      setWatchers([]);
+    };
+  }, [sessionId]);
+  return watchers;
+}
 
 /**
  * A dark, terminal-colored placeholder with a spinner for the moments where a
@@ -44,6 +81,7 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
   const navigate = useNavigate();
   const { sessions, loading } = useShellSessions();
   const { isConsented, grant } = useSessionConsent();
+  const watchers = useShellWatchers(sessionId);
 
   const session = React.useMemo(
     () => sessions.find((s) => s.sessionId === sessionId) ?? null,
@@ -51,6 +89,15 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
   );
   const workspaceId = shellWorkspaceId(sessionId);
   const interactive = isConsented(workspaceId);
+  const shared = session?.shared ?? true;
+
+  const toggleShared = React.useCallback(() => {
+    if (!session) return;
+    const next = !shared;
+    void setShellSessionShared(sessionId, next)
+      .then(() => upsertShellSession({ ...session, shared: next }))
+      .catch(() => {});
+  }, [session, sessionId, shared]);
 
   // A restored session has history but no live shell — respawn it in its saved
   // directory the moment its screen opens, so it "just works". Guard so the
@@ -115,6 +162,37 @@ export function ShellSessionScreen({ sessionId }: { sessionId: string }) {
           <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground">
             Exited
           </span>
+        ) : null}
+        {watchers.length > 0 ? (
+          <span
+            className="flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-2xs font-medium text-emerald-500"
+            data-testid="shell-session-watchers"
+            title="Project members observing this terminal"
+          >
+            <Eye className="size-3" />
+            {watchers.length} watching
+          </span>
+        ) : null}
+        {session.projectRef ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={toggleShared}
+            data-testid="shell-session-share-toggle"
+            title={
+              shared
+                ? "Project members can observe this terminal (read-only). Click to make it private."
+                : "This terminal is private. Click to let project members observe it."
+            }
+          >
+            {shared ? (
+              <Eye className="mr-2 size-4" />
+            ) : (
+              <EyeOff className="mr-2 size-4" />
+            )}
+            {shared ? "Shared" : "Private"}
+          </Button>
         ) : null}
         <Button
           type="button"
