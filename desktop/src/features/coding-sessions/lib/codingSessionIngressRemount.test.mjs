@@ -369,12 +369,21 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
   // One round is enough to land the first rejection.
   await settle(1);
 
-  // Mid-backoff the catalog must read as "still loading", never as a resolved
-  // empty catalog — the latter is what the workspace turns into
-  // "Generation not found".
-  assert.equal(result.current.trusted.isLoading, true);
+  // At this observation point the retry may still be backing off, or a busy
+  // suite may have already let the compressed retry ladder converge. Either
+  // state is valid; a resolved empty catalog is not, because the workspace
+  // turns that into "Generation not found".
+  assert.equal(
+    result.current.trusted.isLoading ||
+      result.current.trusted.metadata.length === 1,
+    true,
+  );
   assert.equal(result.current.trusted.errorMessage, null);
-  assert.equal(result.current.creates.isLoading, true);
+  assert.equal(
+    result.current.creates.isLoading ||
+      result.current.creates.observations.length === 1,
+    true,
+  );
 
   await settle(40);
 

@@ -243,6 +243,12 @@ test("every host runtime becomes a bootstrap target when no catalog exists", () 
   });
 
   assert.equal(targets.length, 2);
+  assert.equal(
+    new Set(targets.map((target) => target.selectionKey)).size,
+    targets.length,
+    "runtimes sharing one signer still need distinct React/selection keys",
+  );
+  assert.equal(targets[0].signerPubkey, targets[1].signerPubkey);
   // Sorted by runtime slug: claude before codex.
   assert.equal(targets[0].provider.providerInstanceRef, "claude-primary");
   assert.equal(targets[1].provider.providerInstanceRef, "codex-primary");
