@@ -124,7 +124,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
 
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
-        provider.subscribe(&mut relay, channel_id).await?;
+        provider.subscribe(&mut relay, channel_id, None).await?;
     }
     relay.subscribe_membership_notifications().await?;
     provider.refresh_catalog(true)?;
@@ -367,6 +367,7 @@ impl Provider {
         &mut self,
         relay: &mut HarnessRelay,
         channel_id: Uuid,
+        membership_created_at: Option<u64>,
     ) -> Result<(), buzz_acp::relay::RelayError> {
         let filter = ChannelFilter {
             kinds: Some(vec![
@@ -375,11 +376,25 @@ impl Provider {
             ]),
             require_mention: false,
         };
+        // A newly granted membership and the first command are published back
+        // to back. `subscribe_channel_from` only queues the REQ, so falling
+        // back to `since=now` when the background relay task eventually sends
+        // it can skip the command by one second. Replay from the membership
+        // notification until a consumed-command watermark exists.
+        let replay_since = self.subscription_replay_since(channel_id, membership_created_at);
         relay
-            .subscribe_channel_from(channel_id, filter, self.state.watermark(channel_id))
+            .subscribe_channel_from(channel_id, filter, replay_since)
             .await?;
         self.subscribed.insert(channel_id);
         Ok(())
+    }
+
+    fn subscription_replay_since(
+        &self,
+        channel_id: Uuid,
+        membership_created_at: Option<u64>,
+    ) -> Option<u64> {
+        self.state.watermark(channel_id).or(membership_created_at)
     }
 
     /// Route one relay event.
@@ -393,7 +408,8 @@ impl Provider {
         match kind {
             KIND_MEMBER_ADDED_NOTIFICATION => {
                 tracing::info!(target: "csp", %channel_id, "membership granted — subscribing");
-                self.subscribe(relay, channel_id).await?;
+                self.subscribe(relay, channel_id, Some(event.created_at.as_secs()))
+                    .await?;
                 // A channel that cannot see the catalog cannot create a session
                 // in it, so advertising is part of joining, not a side effect.
                 self.refresh_catalog(false)?;
@@ -2294,6 +2310,29 @@ mod tests {
         assert_eq!(
             provider.state().watermark(channel_id),
             Some(event.created_at.as_secs())
+        );
+    }
+
+    #[test]
+    fn first_membership_subscription_replays_from_the_membership_event() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+
+        assert_eq!(
+            provider.subscription_replay_since(channel_id, Some(1_000)),
+            Some(1_000),
+            "a queued first subscription must not fall forward to since=now"
+        );
+
+        provider
+            .state
+            .record_watermark(channel_id, 900)
+            .expect("watermark");
+        assert_eq!(
+            provider.subscription_replay_since(channel_id, Some(1_000)),
+            Some(900),
+            "an existing command watermark remains the earliest safe replay floor"
         );
     }
 
