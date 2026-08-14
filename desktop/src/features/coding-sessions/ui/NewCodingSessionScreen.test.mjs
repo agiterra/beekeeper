@@ -2,13 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { acpAuthMethodsQueryKey } from "@/features/agents/hooks";
 import {
   NewCodingSessionChannelPicker,
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
 } from "./NewCodingSessionScreen.tsx";
 import { describeWorkdirProblem } from "./NewCodingSessionWorkdirField.tsx";
+
+/**
+ * The Connect button reads the ACP auth-methods query, so anything rendering
+ * it needs a QueryClient. Seeding a runtime's methods makes its Connect
+ * button appear; an unseeded runtime resolves to no methods and no button —
+ * exactly the non-Tauri fallback.
+ */
+function withQueryClient(element, seedMethodsByRuntime = {}) {
+  const client = new QueryClient();
+  for (const [runtime, methods] of Object.entries(seedMethodsByRuntime)) {
+    client.setQueryData([...acpAuthMethodsQueryKey, runtime], { methods });
+  }
+  return React.createElement(QueryClientProvider, { client }, element);
+}
 
 const capabilities = {
   threadTurnStart: true,
@@ -107,7 +123,7 @@ test("an empty provider list disables selection rather than pretending to offer 
 
 test("the auth-required state names the exact command that fixes it", () => {
   const markup = renderToStaticMarkup(
-    React.createElement(ProviderLoginNeeded, {}),
+    withQueryClient(React.createElement(ProviderLoginNeeded, {})),
   );
 
   assert.match(markup, /data-testid="new-coding-session-auth-required"/);
@@ -117,9 +133,11 @@ test("the auth-required state names the exact command that fixes it", () => {
 
 test("the auth-required state adapts to the runtime that failed", () => {
   const codex = renderToStaticMarkup(
-    React.createElement(ProviderLoginNeeded, {
-      runtime: { runtime: "codex", label: "Codex" },
-    }),
+    withQueryClient(
+      React.createElement(ProviderLoginNeeded, {
+        runtime: { runtime: "codex", label: "Codex" },
+      }),
+    ),
   );
   assert.match(codex, /Codex login needed/);
   assert.match(codex, /<code[^>]*>codex login<\/code>/);
@@ -127,12 +145,52 @@ test("the auth-required state adapts to the runtime that failed", () => {
 
   // A runtime with no known login command still gets an honest sentence.
   const goose = renderToStaticMarkup(
-    React.createElement(ProviderLoginNeeded, {
-      runtime: { runtime: "goose", label: "Goose" },
-    }),
+    withQueryClient(
+      React.createElement(ProviderLoginNeeded, {
+        runtime: { runtime: "goose", label: "Goose" },
+      }),
+    ),
   );
   assert.match(goose, /Goose login needed/);
   assert.doesNotMatch(goose, /<code/);
+});
+
+test("the auth-required state offers Connect when the adapter advertises a CLI login", () => {
+  const markup = renderToStaticMarkup(
+    withQueryClient(React.createElement(ProviderLoginNeeded, {}), {
+      claude: [
+        {
+          id: "claude-login",
+          name: "Log in with Claude",
+          description: null,
+          type: "terminal",
+          args: [],
+          command: [],
+          meta: null,
+        },
+        {
+          id: "api-key",
+          name: "API key",
+          description: null,
+          type: "api-key",
+          args: [],
+          command: [],
+          meta: null,
+        },
+      ],
+    }),
+  );
+
+  assert.match(
+    markup,
+    /data-testid="coding-session-runtime-connect-claude-claude-login"/,
+  );
+  assert.match(markup, /Connect Claude</);
+  // The API-key method is filtered out — CLI login is the only offered path.
+  assert.doesNotMatch(
+    markup,
+    /data-testid="coding-session-runtime-connect-claude-api-key"/,
+  );
 });
 
 test("a runtime that is not ready renders disabled with an honest hint", () => {
@@ -155,18 +213,39 @@ test("a runtime that is not ready renders disabled with an honest hint", () => {
     },
   };
   const markup = renderToStaticMarkup(
-    React.createElement(NewCodingSessionProviderPicker, {
-      disabled: false,
-      model: null,
-      onModelChange() {},
-      onTargetChange() {},
-      selectedTarget: targets[0],
-      targets: [...targets, disabledTarget],
-    }),
+    withQueryClient(
+      React.createElement(NewCodingSessionProviderPicker, {
+        disabled: false,
+        model: null,
+        onModelChange() {},
+        onTargetChange() {},
+        selectedTarget: targets[0],
+        targets: [...targets, disabledTarget],
+      }),
+      {
+        codex: [
+          {
+            id: "codex-login",
+            name: "Log in with Codex",
+            description: null,
+            type: "terminal",
+            args: [],
+            command: [],
+            meta: null,
+          },
+        ],
+      },
+    ),
   );
 
   assert.match(markup, /<option disabled[^>]*>Codex[^<]*\(sign-in needed\)</);
   assert.match(markup, /codex login/);
+  // The signed-out runtime's hint row carries its Connect button.
+  assert.match(
+    markup,
+    /data-testid="coding-session-runtime-connect-codex-codex-login"/,
+  );
+  assert.match(markup, /Connect Codex/);
   // The ready target stays selectable with no suffix ceremony.
   assert.match(markup, /value="claude-target"/);
   assert.doesNotMatch(markup, /Claude[^<]*\(sign-in needed\)/);

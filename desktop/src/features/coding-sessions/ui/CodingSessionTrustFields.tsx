@@ -94,11 +94,11 @@ export function CodingSessionTrustFields({
   return (
     <div className="space-y-2" data-testid="coding-session-trust-fields">
       <div>
-        <div className="text-sm font-medium">Coding session providers</div>
+        <div className="text-sm font-medium">Trusted session signers</div>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Trusted provider keys. Sessions signed by any other key are ignored —
-          not hidden, never rendered. An empty list disables coding sessions
-          entirely.
+          Public keys allowed to sign this computer's coding-session records.
+          Sessions signed by any other key are ignored — not hidden, never
+          rendered. An empty list disables coding sessions entirely.
         </p>
       </div>
       <p
@@ -107,7 +107,9 @@ export function CodingSessionTrustFields({
       >
         An entry is added automatically for this computer's provider when coding
         sessions are provisioned. Removing that entry stops this app from
-        ingesting its sessions until the provider is provisioned again.
+        ingesting its sessions until the provider is provisioned again. This is
+        not where AI accounts or API keys go — runtime sign-in (Claude, Codex)
+        happens from the New Coding Session screen.
       </p>
       <div className="space-y-2">
         {rows.length === 0 ? (

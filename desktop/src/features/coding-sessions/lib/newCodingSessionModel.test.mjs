@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   bootstrapClaudeCodingSessionRuntime,
   codingSessionAuthRemediation,
+  connectableCodingSessionAuthMethods,
+  isHeadlessCodingSessionLogin,
   isCodingSessionAuthFailure,
   isCodingSessionWorkdirFailure,
   isNewCodingSessionTargetReady,
@@ -493,7 +495,8 @@ test("auth remediation speaks each runtime's own language", () => {
   const claude = codingSessionAuthRemediation({ runtime: "claude" });
   assert.equal(claude.title, "Claude login needed");
   assert.equal(claude.command, "claude");
-  assert.match(claude.message, /Run `claude` in a terminal/);
+  assert.match(claude.message, /run `claude` in a terminal/);
+  assert.match(claude.message, /Use Connect to sign in/);
 
   // Legacy catalogs carry the driver-shaped slug; it still reads as claude.
   const legacy = codingSessionAuthRemediation({ runtime: "claude-agent-acp" });
@@ -532,4 +535,40 @@ test("a prelude is dropped rather than costing the user their turn", () => {
     nearCap,
     "an over-cap combination sends the draft alone",
   );
+});
+
+test("only CLI-driven auth methods are connectable", () => {
+  const terminalTyped = {
+    id: "codex-login",
+    type: "terminal",
+    meta: null,
+  };
+  const terminalMeta = {
+    id: "claude-login",
+    type: null,
+    meta: { "terminal-auth": { command: "node", args: ["/tmp/cli.js"] } },
+  };
+  const apiKey = { id: "api-key", type: "api-key", meta: null };
+  const metaWithoutCommand = {
+    id: "odd",
+    type: null,
+    meta: { "terminal-auth": {} },
+  };
+
+  assert.deepEqual(
+    connectableCodingSessionAuthMethods([
+      terminalTyped,
+      terminalMeta,
+      apiKey,
+      metaWithoutCommand,
+    ]).map((method) => method.id),
+    ["codex-login", "claude-login"],
+  );
+});
+
+test("only the claude subscription login counts as headless", () => {
+  assert.equal(isHeadlessCodingSessionLogin("claude", "claude-login"), true);
+  assert.equal(isHeadlessCodingSessionLogin("claude", "claude-ai-login"), true);
+  assert.equal(isHeadlessCodingSessionLogin("claude", "other"), false);
+  assert.equal(isHeadlessCodingSessionLogin("codex", "claude-login"), false);
 });

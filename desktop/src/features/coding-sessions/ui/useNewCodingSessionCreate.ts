@@ -33,6 +33,10 @@ import {
   publishDurableCodingSessionCreate,
   type DurableCodingSessionCreateTransaction,
 } from "../lib/durableCodingSessionCreate";
+import {
+  CODING_SESSION_LOGIN_WATCH_INTERVAL_MS,
+  codingSessionLoginWatchVerdict,
+} from "../lib/codingSessionLoginWatch";
 import { bootstrapClaudeCodingSessionRuntime } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionHostPhase } from "../lib/newCodingSessionModel";
@@ -171,6 +175,86 @@ export function useNewCodingSessionCreate({
       cancelled = true;
     };
   }, [onTrustMutated]);
+
+  /**
+   * Re-run the host runtimes probe and fold the answer into state.
+   *
+   * The backend re-runs each runtime's CLI auth check on every invoke, so a
+   * refetch IS a re-probe — this is how a completed sign-in becomes visible
+   * without restarting the app.
+   */
+  const refreshProviderRuntimes = React.useCallback(async () => {
+    let latest: CodingSessionProviderRuntime[] = [];
+    await loadCodingSessionProviderRuntimes({
+      onRuntimes: (runtimes) => {
+        latest = runtimes;
+        setProviderRuntimes(runtimes);
+      },
+      onModels: (instanceRef, models) => {
+        setProviderModelsByInstanceRef((previous) => {
+          const next = new Map(previous);
+          next.set(instanceRef, models);
+          return next;
+        });
+      },
+    });
+    return latest;
+  }, []);
+
+  // Post-Connect login watch: nothing signals when a person finishes the
+  // vendor's sign-in, so poll the probe until the launched runtime reports
+  // ready or the watch expires. A window refocus (coming back from the
+  // browser or terminal) probes immediately instead of waiting out the tick.
+  const loginWatchRef = React.useRef<{
+    timer: ReturnType<typeof setInterval>;
+    runtime: string;
+    startedAt: number;
+  } | null>(null);
+  const stopLoginWatch = React.useCallback(() => {
+    if (loginWatchRef.current) {
+      clearInterval(loginWatchRef.current.timer);
+      loginWatchRef.current = null;
+    }
+  }, []);
+  const runLoginWatchTick = React.useCallback(async () => {
+    const watch = loginWatchRef.current;
+    if (!watch) return;
+    const runtimes = await refreshProviderRuntimes().catch(
+      () => [] as CodingSessionProviderRuntime[],
+    );
+    if (loginWatchRef.current !== watch) return;
+    const verdict = codingSessionLoginWatchVerdict({
+      runtime: watch.runtime,
+      startedAt: watch.startedAt,
+      now: Date.now(),
+      runtimes,
+    });
+    if (verdict !== "continue") stopLoginWatch();
+  }, [refreshProviderRuntimes, stopLoginWatch]);
+  const beginLoginWatch = React.useCallback(
+    (runtime: string) => {
+      stopLoginWatch();
+      loginWatchRef.current = {
+        timer: setInterval(
+          () => void runLoginWatchTick(),
+          CODING_SESSION_LOGIN_WATCH_INTERVAL_MS,
+        ),
+        runtime,
+        startedAt: Date.now(),
+      };
+    },
+    [runLoginWatchTick, stopLoginWatch],
+  );
+  React.useEffect(() => {
+    const onFocus = () => {
+      if (loginWatchRef.current) void runLoginWatchTick();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      stopLoginWatch();
+    };
+  }, [runLoginWatchTick, stopLoginWatch]);
 
   const scoped = transaction?.scopeId === scopeId ? transaction : null;
   const lifecycleSnapshot = useCodingSessionLifecycleResolution(
@@ -359,6 +443,7 @@ export function useNewCodingSessionCreate({
   }, [scoped, scopeId]);
 
   return {
+    beginLoginWatch,
     durabilityError,
     hostPhase,
     isPublishing,
@@ -369,6 +454,7 @@ export function useNewCodingSessionCreate({
     providerRuntimes,
     providerModelsByInstanceRef,
     publishError,
+    refreshProviderRuntimes,
     resolvedGenerationId,
     retryExact,
     startFresh,

@@ -439,6 +439,47 @@ export function newCodingSessionFailureMessage(
   return error.message;
 }
 
+/**
+ * The subset of an adapter's advertised auth methods a Connect button may
+ * launch: the ones the runtime's own CLI drives (`type: "terminal"`, or a
+ * `terminal-auth` command in `_meta`). Mirrors `uses_terminal_auth` in
+ * `commands/agent_auth.rs` — anything else (API-key entry and other
+ * adapter-mediated schemes) is deliberately not offered here: CLI login is
+ * the only credential path for coding sessions.
+ */
+export function connectableCodingSessionAuthMethods<
+  M extends { type: string | null; meta: unknown },
+>(methods: readonly M[]): M[] {
+  return methods.filter((method) => {
+    if (method.type === "terminal") return true;
+    if (typeof method.meta !== "object" || method.meta === null) return false;
+    const terminalAuth = (method.meta as Record<string, unknown>)[
+      "terminal-auth"
+    ];
+    return (
+      typeof terminalAuth === "object" &&
+      terminalAuth !== null &&
+      "command" in terminalAuth
+    );
+  });
+}
+
+/**
+ * Whether a Connect launch completes without a terminal window: the Claude
+ * subscription login runs headless (the CLI drives a browser flow). Mirrors
+ * `is_claude_subscription_login` in `commands/agent_auth.rs`; used only to
+ * pick the right "what happens next" guidance line.
+ */
+export function isHeadlessCodingSessionLogin(
+  runtime: string,
+  methodId: string,
+): boolean {
+  return (
+    runtime === "claude" &&
+    (methodId === "claude-login" || methodId === "claude-ai-login")
+  );
+}
+
 /** What a signed-out runtime needs a person to do, in that runtime's terms. */
 export type CodingSessionAuthRemediation = {
   /** Alert heading, e.g. "Claude login needed". */
@@ -469,7 +510,7 @@ export function codingSessionAuthRemediation(
     return {
       title: "Claude login needed",
       message:
-        "Claude Code is not signed in on this computer. Run `claude` in a terminal, complete the login, then try again.",
+        "Claude Code is not signed in on this computer. Use Connect to sign in, or run `claude` in a terminal, then try again.",
       command: "claude",
     };
   }
@@ -477,7 +518,7 @@ export function codingSessionAuthRemediation(
     return {
       title: "Codex login needed",
       message:
-        "Codex is not signed in on this computer. Run `codex login` in a terminal, complete the login, then try again.",
+        "Codex is not signed in on this computer. Use Connect to sign in, or run `codex login` in a terminal, then try again.",
       command: "codex login",
     };
   }

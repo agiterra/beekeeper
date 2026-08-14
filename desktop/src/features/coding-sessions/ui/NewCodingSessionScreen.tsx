@@ -22,6 +22,8 @@ import {
   resolveSelectedNewCodingSessionTarget,
   type NewCodingSessionTarget,
 } from "../lib/newCodingSessionModel";
+import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
+import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 
@@ -66,6 +68,7 @@ export function NewCodingSessionScreen({
 
   const scopeId = channelId ?? "unscoped";
   const {
+    beginLoginWatch,
     durabilityError,
     hostPhase,
     isPublishing,
@@ -249,6 +252,7 @@ export function NewCodingSessionScreen({
         <NewCodingSessionProviderPicker
           disabled={transaction !== null}
           model={effectiveModel}
+          onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
           onModelChange={(value) =>
             setModelSelection({ value, explicit: true })
           }
@@ -315,7 +319,10 @@ export function NewCodingSessionScreen({
         </div>
 
         {isCodingSessionAuthFailure(failureCode) ? (
-          <ProviderLoginNeeded runtime={failedRuntime} />
+          <ProviderLoginNeeded
+            onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
+            runtime={failedRuntime}
+          />
         ) : null}
 
         {status ? (
@@ -436,6 +443,7 @@ export function NewCodingSessionProviderPicker({
   disabled,
   model,
   noteForTarget,
+  onLoginLaunched,
   onModelChange,
   onTargetChange,
   selectedTarget,
@@ -449,22 +457,37 @@ export function NewCodingSessionProviderPicker({
    * remediation is the more urgent thing to say.
    */
   noteForTarget?: (target: NewCodingSessionTarget) => string | null;
+  /** Forwarded to each unavailable runtime's Connect button. */
+  onLoginLaunched?: (input: { runtime: string; headless: boolean }) => void;
   onModelChange: (model: string) => void;
   onTargetChange: (selectionKey: string) => void;
   selectedTarget: NewCodingSessionTarget | null;
   targets: readonly NewCodingSessionTarget[];
 }) {
   const models = selectedTarget?.provider.allowedModels ?? [];
-  // One remediation line per unavailable runtime — disabled options say what
-  // is wrong, but an <option> cannot carry a full sentence.
-  const unavailableHints = [
-    ...new Set(
+  // One remediation row per unavailable runtime — disabled options say what
+  // is wrong, but an <option> cannot carry a full sentence, let alone the
+  // Connect button that fixes a signed-out runtime in place.
+  const unavailableRuntimes = [
+    ...new Map(
       targets.flatMap((target) =>
         !isNewCodingSessionTargetReady(target) && target.availability?.hint
-          ? [target.availability.hint]
+          ? [
+              [
+                target.provider.runtime,
+                {
+                  runtime: target.provider.runtime,
+                  label:
+                    target.availability.label ??
+                    formatCodingSessionRuntimeLabel(target.provider.runtime),
+                  state: target.availability.state,
+                  hint: target.availability.hint,
+                },
+              ] as const,
+            ]
           : [],
       ),
-    ),
+    ).values(),
   ];
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
@@ -512,10 +535,18 @@ export function NewCodingSessionProviderPicker({
             );
           })}
         </select>
-        {unavailableHints.map((hint) => (
-          <p className="text-2xs text-muted-foreground" key={hint}>
-            {hint}
-          </p>
+        {unavailableRuntimes.map((entry) => (
+          <div className="flex flex-col gap-1.5" key={entry.runtime}>
+            <p className="text-2xs text-muted-foreground">{entry.hint}</p>
+            {entry.state === "needs_auth" ? (
+              <CodingSessionRuntimeConnect
+                disabled={disabled}
+                label={entry.label}
+                onLoginLaunched={onLoginLaunched}
+                runtime={entry.runtime}
+              />
+            ) : null}
+          </div>
         ))}
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -548,11 +579,17 @@ export function NewCodingSessionProviderPicker({
 }
 
 export function ProviderLoginNeeded({
+  onLoginLaunched,
   runtime,
 }: {
+  /** Forwarded to the Connect button under the remediation text. */
+  onLoginLaunched?: (input: { runtime: string; headless: boolean }) => void;
   runtime?: { runtime: string; label?: string } | null;
 }) {
   const remediation = codingSessionAuthRemediation(runtime);
+  // The remediation copy falls back to claude with no runtime context; the
+  // Connect button targets the same fallback so the two never disagree.
+  const runtimeSlug = runtime?.runtime ?? "claude";
   // Split the message around the command so it renders as an inline <code>
   // block; a runtime with no known command shows the sentence as-is.
   const [before, after] = remediation.command
@@ -576,6 +613,13 @@ export function ProviderLoginNeeded({
           </>
         ) : null}
       </p>
+      <div className="mt-2">
+        <CodingSessionRuntimeConnect
+          label={runtime?.label ?? formatCodingSessionRuntimeLabel(runtimeSlug)}
+          onLoginLaunched={onLoginLaunched}
+          runtime={runtimeSlug}
+        />
+      </div>
     </div>
   );
 }

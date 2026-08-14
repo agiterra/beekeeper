@@ -115,6 +115,7 @@ function AddCodingSessionProviderForm({
   const sessionRef = umbrella.sessionRef;
   const providerCatalog = useCodingSessionProviderCatalog([channelId]);
   const {
+    beginLoginWatch,
     durabilityError,
     hostPhase,
     isPublishing,
@@ -264,6 +265,7 @@ function AddCodingSessionProviderForm({
         disabled={transaction !== null}
         model={effectiveModel}
         noteForTarget={(target) => notesByKey.get(target.selectionKey) ?? null}
+        onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
         onModelChange={(value) => setModelSelection({ value, explicit: true })}
         onTargetChange={(key) => {
           setSelectedKey(key);
@@ -306,7 +308,10 @@ function AddCodingSessionProviderForm({
       </div>
 
       {isCodingSessionAuthFailure(failureCode) ? (
-        <ProviderLoginNeeded runtime={failedRuntime} />
+        <ProviderLoginNeeded
+          onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
+          runtime={failedRuntime}
+        />
       ) : null}
 
       {status ? (
