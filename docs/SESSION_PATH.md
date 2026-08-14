@@ -199,16 +199,22 @@ while the dangerous powers stay parked.
 
 ### Step 5 — continuity and control (later, ordered by demand)
 
-- **Workspace checkpointing at turn boundaries** (T3's
-  `checkpoint_diff_blobs` is the precedent; Buzz hosts git — a session
-  branch/snapshot ref makes transcript + git ref the sufficient pair for
-  continuation on another machine).
-- **Continuation** = new execution under the same sessionRef, primed from
-  the durable transcript, on the continuer's subscription.
 - **Steering** (`threadSteer` is declared but false everywhere).
 - **Approvals**: kinds 46010–46012/46030–46031 are reserved and
   `SessionStatus::WaitingForInput` exists; WF-08 is the stub to finish when
   session approvals matter.
+
+**Possible future — portable session handoff.** Buzz remains the source of
+truth for signed history, session identity, membership, and authority. At a
+turn boundary, a local checkpoint provider could capture the working tree and
+publish it to an already-authorized private Git remote. A teammate could then
+choose **Continue on this machine**, restore that checkpoint, and start a new
+execution from their own provider/subscription under the existing
+`sessionRef`, primed from the durable transcript. Entire-compatible checkpoint
+capture may be one optional backend, not the session authority or transcript
+store. Buzz-hosted Git should only become a checkpoint backend after its
+clone/push/fetch path is separately certified in the intended deployment; it
+is not on the critical path for multi-provider sessions.
 
 ## Reference implementation: t3code (MIT)
 
