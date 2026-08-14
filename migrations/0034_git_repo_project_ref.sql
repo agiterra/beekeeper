@@ -2,7 +2,7 @@
 --
 -- A kind:30617 repo announcement may carry a ["project", "30621:<owner>:<d>"]
 -- back-reference placing the repo inside a project container. When that
--- project is private (see project_acl, migration 0032), the repo's Nostr
+-- project is private (see project_acl, migration 0033), the repo's Nostr
 -- surface — the 30617 announcement, relay-signed 30618 ref state, and the
 -- NIP-34 child events (patches/PRs/issues/status) that `a`-tag the repo —
 -- must be hidden from readers outside the project.

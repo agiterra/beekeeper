@@ -1040,8 +1040,8 @@ mod tests {
         // Optional project-container association on channels (kind 30621
         // NIP-MP coordinate): additive migration, its own version, never
         // folded into 0001 — same brownfield checksum rule.
-        assert_eq!(migrations[30].version, 31);
-        let project_ref = migrations[30].sql.as_str();
+        assert_eq!(migrations[31].version, 32);
+        let project_ref = migrations[31].sql.as_str();
         assert!(project_ref.contains("ALTER TABLE channels ADD COLUMN project_ref"));
         assert!(!migrations[0].sql.as_str().contains("project_ref"));
 
@@ -1049,8 +1049,8 @@ mod tests {
         // migration, its own version — same brownfield checksum rule. The
         // LWW guard and the members CASCADE are load-bearing for the private-
         // project read gate, so their shapes are pinned here.
-        assert_eq!(migrations[31].version, 32);
-        let project_acl = migrations[31].sql.as_str();
+        assert_eq!(migrations[32].version, 33);
+        let project_acl = migrations[32].sql.as_str();
         assert!(project_acl.contains("CREATE TABLE project_acl"));
         assert!(project_acl.contains("CREATE TABLE project_acl_members"));
         assert!(project_acl.contains("CHECK (visibility IN ('public', 'private'))"));
@@ -1065,8 +1065,8 @@ mod tests {
         // Repo → project link projection (NIP-MP access extension phase 2):
         // additive migration, its own version. The LWW guard column and the
         // partial index back the hidden-repo read gate, so they are pinned.
-        assert_eq!(migrations[32].version, 33);
-        let repo_project_ref = migrations[32].sql.as_str();
+        assert_eq!(migrations[33].version, 34);
+        let repo_project_ref = migrations[33].sql.as_str();
         assert!(repo_project_ref.contains("ALTER TABLE git_repo_names ADD COLUMN project_ref"));
         assert!(repo_project_ref.contains("ADD COLUMN head_created_at BIGINT NOT NULL DEFAULT 0"));
         assert!(repo_project_ref.contains("idx_git_repo_names_project_ref"));
