@@ -312,8 +312,38 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test:
+test: test-genesis
     ./scripts/run-tests.sh all
+
+# Genesis uniqueness proofs (kind 44226) against a throwaway database.
+#
+# These prove a security property — that two rival claims on one session
+# reference cannot both be accepted — so they may not sit unexecuted. They are
+# `#[ignore]`d because they need Postgres, and `run-tests.sh` deliberately runs
+# `cargo test -p buzz-db` *without* `--ignored`, so nothing else in this repo
+# ever runs them.
+#
+# They cannot simply be pointed at the dev database. Each Postgres-backed
+# buzz-db test drops and rebuilds the schema from the *invoking worktree's*
+# migrations, so running them from a feature branch silently downgrades a shared
+# dev database and deletes any schema newer than that branch. They also deadlock
+# against each other under the default parallel harness. Hence: a database
+# created for this run, serial execution, and a drop on the way out.
+test-genesis: _ensure-services
+    #!/usr/bin/env bash
+    set -euo pipefail
+    db="buzz_genesis_gate"
+    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    cleanup
+    pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    # The event tests expect a migrated schema; they do not build one themselves.
+    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    echo "==> genesis uniqueness proofs against ${db} (serial, isolated)"
+    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+        cargo test -p buzz-db --lib genesis -- --ignored --test-threads=1
 
 # Run unit tests only (no infra needed)
 test-unit:
