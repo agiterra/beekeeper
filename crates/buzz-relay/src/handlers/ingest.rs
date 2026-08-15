@@ -14,12 +14,13 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
-    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
-    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
-    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CANVAS, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
+    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
+    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
+    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
     KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
@@ -355,13 +356,15 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
-        // Coding sessions: operator-authored commands (44220/44221) and the
-        // provider-authored facts they produce (44222-44225). All are durable,
-        // channel-scoped writes consumed by an out-of-relay provider adapter —
-        // the relay validates and stores them, and deliberately never executes
-        // them. See docs/nips/NIP-CSC.md, NIP-CSL.md, NIP-CSPC.md, NIP-CST.md.
+        // Coding sessions: the operator-signed session origin (44226), the
+        // operator-authored commands (44220/44221), and the provider-authored
+        // facts they produce (44222-44225). All are durable, channel-scoped
+        // writes consumed by an out-of-relay provider adapter — the relay
+        // validates and stores them, and deliberately never executes them. See
+        // docs/nips/NIP-CSC.md, NIP-CSL.md, NIP-CSPC.md, NIP-CST.md, NIP-CSG.md.
         KIND_CODING_SESSION_COMMAND
         | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+        | KIND_CODING_SESSION_GENESIS
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -655,19 +658,23 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             // the relay, and h-scoped events inherit private-project access
             // through `get_accessible_channel_ids`. Require `h` so a command or
             // a transcript item can never become a stray global event readable
-            // by every authenticated pubkey.
+            // by every authenticated pubkey. Genesis is scoped for a second
+            // reason on top of that one: the channel is what makes a session
+            // reference unique, so a genesis without an `h` tag would found an
+            // umbrella in no particular room.
             | KIND_CODING_SESSION_COMMAND
             | KIND_CODING_SESSION_LIFECYCLE_COMMAND
             | KIND_CODING_SESSION_PROVIDER_CATALOG
             | KIND_CODING_SESSION_METADATA
             | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
             | KIND_CODING_SESSION_TRANSCRIPT
+            | KIND_CODING_SESSION_GENESIS
     )
 }
 
-/// Returns `true` for the six coding-session kinds (44220–44225).
+/// Returns `true` for the seven coding-session kinds (44220–44226).
 ///
-/// One predicate for the strict-membership gate and the tests, so a seventh
+/// One predicate for the strict-membership gate and the tests, so an eighth
 /// kind cannot be added to one gate and forgotten by another.
 pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
     matches!(
@@ -678,14 +685,17 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_METADATA
             | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
             | KIND_CODING_SESSION_TRANSCRIPT
+            | KIND_CODING_SESSION_GENESIS
     )
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220 and 44221 are bounded by their payload contracts in `buzz-core`
-/// instead (12 KiB of turn text, 16 KiB of signed content), so they are absent
-/// here. The four provider-authored kinds carry no envelope validator — the
+/// 44220, 44221, and 44226 are bounded by their payload contracts in
+/// `buzz-core` instead (12 KiB of turn text, 16 KiB of signed content, 1 KiB of
+/// genesis), so they are absent here — and those bounds are the stricter ones,
+/// since their envelope validators run *before* this table is consulted. The
+/// four provider-authored kinds carry no envelope validator — the
 /// relay does not parse a provider's facts — so a size cap is the whole of
 /// their bound, and each one is sized to its job: a catalog enumerates every
 /// provider and model an instance offers, a transcript item carries one
@@ -1819,6 +1829,52 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
     Ok(())
 }
 
+/// Validate the exact public envelope for a coding-session genesis (44226).
+///
+/// The signed event pubkey is the session's founder, and this envelope is the
+/// only place that fact is ever established, so the shape is the narrowest of
+/// any coding-session kind: three ordered two-field tags and a two-field
+/// payload. The `csg-session` tag is re-derived from the decoded content rather
+/// than trusted, so a genesis cannot be filterable under one umbrella reference
+/// and readable as another — consumers resolve a founder through the tag, so a
+/// disagreement between the two would be a founder swap.
+///
+/// # Not enforced here: one genesis per `sessionRef`
+///
+/// This validator is pure, like every other coding-session check, and so it
+/// cannot reject a *second* genesis claiming a `sessionRef` some earlier event
+/// already founded. That rule needs a lookup, and ingest validation runs
+/// hundreds of lines and several round-trips before the insert it would need to
+/// be atomic with (`ingest_event_inner` holds no transaction; `state.db` is a
+/// pool handle). A `SELECT` here would therefore be a check-then-insert race
+/// across relay processes — competing genesis events would both be stored, and
+/// the property at stake is *which pubkey is the founder*. A dedupe that fails
+/// under exactly the concurrency an attacker controls is worse than a known
+/// gap, so this is deliberately left open rather than approximated. Closing it
+/// means moving the check into the storage transaction in `buzz-db`, alongside
+/// `replace_addressable_event`'s advisory-lock-then-probe-then-insert.
+fn validate_coding_session_genesis_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_genesis::{
+        decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_genesis(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err("coding-session genesis requires exactly three two-field tags".into());
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err("coding-session genesis first tag must be a channel UUID h tag".into());
+    }
+    if tags[1][0] != "csg-v" || tags[1][1] != CODING_SESSION_GENESIS_TAG_VERSION {
+        return Err("unsupported coding-session genesis tag version".into());
+    }
+    if tags[2][0] != "csg-session" || tags[2][1] != payload.session_ref {
+        return Err("coding-session genesis csg-session does not match payload sessionRef".into());
+    }
+    Ok(())
+}
+
 /// Validate the exact public envelope for a coding-session command (44220).
 ///
 /// The signed event pubkey is the operator authority. The payload deliberately
@@ -2748,6 +2804,11 @@ async fn ingest_event_inner(
 
     if kind_u32 == KIND_CODING_SESSION_LIFECYCLE_COMMAND {
         validate_coding_session_lifecycle_command_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_GENESIS {
+        validate_coding_session_genesis_envelope(&event)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
@@ -5465,25 +5526,26 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44225) -------------------------------------
+    // ---- Coding sessions (44220–44226) -------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
-    /// sweep it so a seventh kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 6] = [
+    /// sweep it so an eighth kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 7] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
         KIND_CODING_SESSION_METADATA,
         KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_TRANSCRIPT,
+        KIND_CODING_SESSION_GENESIS,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44225() {
+    fn coding_session_predicate_covers_exactly_44220_to_44226() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44225).contains(&kind),
+                (44220..=44226).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -5492,7 +5554,7 @@ mod tests {
         }
     }
 
-    /// All six are channel-scoped message writes, and none is global-only —
+    /// All seven are channel-scoped message writes, and none is global-only —
     /// their whole containment story is the channel ACL, which only applies to
     /// h-scoped events.
     #[test]
@@ -5766,6 +5828,130 @@ mod tests {
         );
     }
 
+    /// The canonical umbrella reference used by the genesis tests.
+    const GENESIS_SESSION_REF: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+    fn genesis_event(content: &str, channel: &str, session_tag: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            content,
+            &[
+                &["h", channel],
+                &["csg-v", "csg1-1"],
+                &["csg-session", session_tag],
+            ],
+        )
+    }
+
+    fn genesis_content(session_ref: &str) -> String {
+        serde_json::json!({ "sessionRef": session_ref, "v": 1 }).to_string()
+    }
+
+    #[test]
+    fn coding_session_genesis_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = genesis_content(GENESIS_SESSION_REF);
+        assert!(validate_coding_session_genesis_envelope(&genesis_event(
+            &content,
+            &channel,
+            GENESIS_SESSION_REF
+        ))
+        .is_ok());
+
+        // Ordered, not merely present: consumers read tags positionally.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            &content,
+            &[
+                &["csg-v", "csg1-1"],
+                &["h", &channel],
+                &["csg-session", GENESIS_SESSION_REF],
+            ],
+        );
+        assert!(validate_coding_session_genesis_envelope(&reordered).is_err());
+
+        // Three tags exactly — no room for a smuggled fourth.
+        let extra = make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            &content,
+            &[
+                &["h", &channel],
+                &["csg-v", "csg1-1"],
+                &["csg-session", GENESIS_SESSION_REF],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_genesis_envelope(&extra).is_err());
+
+        for bad_tags in [
+            vec![
+                vec!["h".to_owned(), "not-a-uuid".to_owned()],
+                vec!["csg-v".to_owned(), "csg1-1".to_owned()],
+                vec!["csg-session".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+            vec![
+                vec!["h".to_owned(), channel.clone()],
+                vec!["csg-v".to_owned(), "csg1-0".to_owned()],
+                vec!["csg-session".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+            vec![
+                vec!["h".to_owned(), channel.clone()],
+                vec!["csg-v".to_owned(), "csg1-1".to_owned()],
+                vec!["csg-ref".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+        ] {
+            let borrowed: Vec<Vec<&str>> = bad_tags
+                .iter()
+                .map(|parts| parts.iter().map(String::as_str).collect())
+                .collect();
+            let slices: Vec<&[&str]> = borrowed.iter().map(Vec::as_slice).collect();
+            let event = make_event_with_tags(KIND_CODING_SESSION_GENESIS, &content, &slices);
+            assert!(
+                validate_coding_session_genesis_envelope(&event).is_err(),
+                "should reject tags {bad_tags:?}"
+            );
+        }
+    }
+
+    /// The tag is what a consumer filters on and the content is what it reads.
+    /// If those two could name different umbrellas, a genesis would be
+    /// discoverable as the founder of a session it never founded.
+    #[test]
+    fn coding_session_genesis_rejects_a_tag_that_disagrees_with_content() {
+        let channel = Uuid::new_v4().to_string();
+        let content = genesis_content(GENESIS_SESSION_REF);
+        let substituted = genesis_event(&content, &channel, "0000000a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        assert!(validate_coding_session_genesis_envelope(&substituted).is_err());
+    }
+
+    /// Genesis content is two fields and nothing else. A restated founder
+    /// pubkey is the dangerous case: the signature already settles authorship,
+    /// so a content field claiming it is a second answer to a settled question.
+    #[test]
+    fn coding_session_genesis_rejects_off_contract_content() {
+        let channel = Uuid::new_v4().to_string();
+        for rejected in [
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF }).to_string(),
+            serde_json::json!({ "v": 1 }).to_string(),
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF, "v": 2 }).to_string(),
+            serde_json::json!({
+                "sessionRef": GENESIS_SESSION_REF,
+                "v": 1,
+                "founder": "ab".repeat(32),
+            })
+            .to_string(),
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF.to_uppercase(), "v": 1 })
+                .to_string(),
+            String::new(),
+        ] {
+            let event = genesis_event(&rejected, &channel, GENESIS_SESSION_REF);
+            assert!(
+                validate_coding_session_genesis_envelope(&event).is_err(),
+                "should reject content {rejected:?}"
+            );
+        }
+    }
+
     /// The four provider-authored kinds are bounded by size alone — the relay
     /// does not parse a provider's account of its own session. These are the
     /// exact caps the producer writes against.
@@ -5787,14 +5973,20 @@ mod tests {
             coding_session_content_cap(KIND_CODING_SESSION_TRANSCRIPT),
             Some(32 * 1024)
         );
-        // The two operator commands are bounded by their payload contracts in
-        // buzz-core instead, so they must not also carry a cap here.
+        // The three operator-authored kinds are bounded by their payload
+        // contracts in buzz-core instead, so they must not also carry a cap
+        // here. Their envelope validators run first, and each one rejects
+        // oversized content before parsing it.
         assert_eq!(
             coding_session_content_cap(KIND_CODING_SESSION_COMMAND),
             None
         );
         assert_eq!(
             coding_session_content_cap(KIND_CODING_SESSION_LIFECYCLE_COMMAND),
+            None
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_GENESIS),
             None
         );
         // And no other kind is bounded by this table.
