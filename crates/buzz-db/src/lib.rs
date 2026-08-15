@@ -2306,7 +2306,7 @@ impl Db {
         Ok(outcome)
     }
 
-    /// Atomically enforce one live coding-session genesis (kind 44226) per
+    /// Atomically enforce one coding-session genesis (kind 44226) per
     /// `(channel, sessionRef)` and store the event.
     ///
     /// See [`event::insert_coding_session_genesis_event`] for the serialization

@@ -1502,7 +1502,7 @@ pub enum CodingSessionGenesisInsertOutcome {
     },
 }
 
-/// Atomically enforce one live genesis per `(channel, sessionRef)` and store
+/// Atomically enforce one genesis per `(channel, sessionRef)` and store
 /// the event.
 ///
 /// # Why this lives here and not at ingest

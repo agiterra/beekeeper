@@ -13,14 +13,33 @@
 //! no provider. Anything mutable belongs in the lifecycle commands that follow
 //! it; a founder record that could be argued about is not a founder record.
 //!
-//! # Why the reference also rides in a tag
+//! # Why the reference also rides in a tag — and what the tag does *not* mean
 //!
 //! Unlike the lifecycle command's `sessionRef`, the genesis reference is
 //! mirrored into a `csg-session` tag. Content is opaque to the relay's filter
-//! layer, and a founder lookup that cannot be expressed as a filter is a scan:
-//! consumers must be able to ask `{kinds:[44226], "#h":[…], "#csg-session":[…]}`
-//! and get the founder in one round trip. The tag is re-derived from the
+//! and index layers, and the relay's storage transaction has to answer "is this
+//! `(channel, sessionRef)` already founded?" atomically with the insert. That
+//! probe is the tag's reason to exist: it is an **enforcement and diagnostic**
+//! affordance for the relay and its operators. The tag is re-derived from the
 //! decoded payload at ingest rather than trusted, so the two can never disagree.
+//!
+//! **Consumers must never select authority by this tag.** Authority resolves
+//! one way only: through an explicit genesis **event id**, reached from the
+//! receipt-joined create that names it. `{kinds:[44226], "#csg-session":[…]}`
+//! is not a founder lookup and must not be written as one — it is a query whose
+//! *correct* answer is "exactly one row", and a consumer that treats it as a
+//! selection has already accepted that more than one answer is possible and
+//! that it may pick among them. It may not. Two rows matching one
+//! `(channel, sessionRef)` is diagnostic evidence that the uniqueness rule was
+//! violated — a corruption to report, never an ambiguity to resolve by taking
+//! the earliest, the newest, or the one with the most reachable signer.
+//!
+//! The distinction is the whole point of the kind: `sessionRef` is an umbrella
+//! *label*, minted client-side and mirrorable anywhere, while canonical
+//! identity is the genesis event id in its relay/community/channel context. The
+//! same signed genesis mirrored to another relay is the same origin; an
+//! independently signed genesis carrying the same UUID is a different session.
+//! A consumer that resolves by label rather than by id cannot tell those apart.
 //!
 //! # Schema versioning
 //!

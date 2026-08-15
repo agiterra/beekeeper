@@ -605,7 +605,10 @@ pub const KIND_CODING_SESSION_TRANSCRIPT: u32 = 44225;
 /// carrying only a `sessionRef` and a schema version. Ordered tags: `h`,
 /// `csg-v`, `csg-session`. The signer is the session's founder — the authority
 /// every later session operation resolves back to — so this kind is signed by
-/// the human operator, never by a provider. See `docs/nips/NIP-CSG.md`.
+/// the human operator, never by a provider. Canonical identity is this event's
+/// **id**, not the `csg-session` tag: the tag exists for the relay's uniqueness
+/// probe and for diagnostics, and consumers must never select a founder by it.
+/// See `docs/nips/NIP-CSG.md`.
 pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
 
 // Forum / social (45000–45999)

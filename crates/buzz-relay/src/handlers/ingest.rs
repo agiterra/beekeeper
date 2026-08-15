@@ -1835,9 +1835,15 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
 /// only place that fact is ever established, so the shape is the narrowest of
 /// any coding-session kind: three ordered two-field tags and a two-field
 /// payload. The `csg-session` tag is re-derived from the decoded content rather
-/// than trusted, so a genesis cannot be filterable under one umbrella reference
-/// and readable as another — consumers resolve a founder through the tag, so a
-/// disagreement between the two would be a founder swap.
+/// than trusted, so a genesis cannot be enforced under one umbrella reference
+/// and read as another: the storage layer's uniqueness probe matches on the
+/// tag, so a disagreement between the two would let a genesis be stored without
+/// contending for the reference its content actually claims.
+///
+/// The tag is for that probe and for operator diagnostics. It is not a
+/// consumer-facing founder lookup — authority resolves only through an explicit
+/// genesis event id. See the module doc on
+/// [`buzz_core::coding_session_genesis`].
 ///
 /// # Not enforced here: one genesis per `sessionRef`
 ///
