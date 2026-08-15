@@ -1,0 +1,11 @@
+-- Session-transport channel type.
+--
+-- A transport channel is a hidden per-project channel carrying machine
+-- traffic (coding-session 442xx events). It is identified by type rather
+-- than display name so a user-named channel can never be mistaken for one,
+-- and the relay admits project members to it through the project ACL
+-- instead of explicit channel membership.
+--
+-- Kept in its own migration: a value added to an enum cannot be used by
+-- statements in the same transaction, so the backfill lives in the next file.
+ALTER TYPE channel_type ADD VALUE IF NOT EXISTS 'transport';

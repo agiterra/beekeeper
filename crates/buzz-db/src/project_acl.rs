@@ -171,6 +171,48 @@ pub async fn get_channel_project_gate(
     Ok(row.map(|(owner, members)| ProjectGate { owner, members }))
 }
 
+/// Resolve the project gate of a session-**transport** channel, if it is one.
+///
+/// Returns `None` when the channel does not exist, is not `channel_type =
+/// 'transport'`, has no `project_ref`, or its project is unknown — all
+/// meaning "explicit channel members only". Unlike
+/// [`get_channel_project_gate`] there is **no** private-visibility filter:
+/// transport admittance is a *positive* membership grant (the project's
+/// owner and invited members), and `project_acl` stores rows for public
+/// heads too, so a public project's members are admitted while everyone
+/// else still is not. An unresolvable project fails closed to members-only.
+pub async fn get_channel_transport_gate(
+    pool: &PgPool,
+    community: CommunityId,
+    channel_id: uuid::Uuid,
+) -> Result<Option<ProjectGate>> {
+    let row: Option<(Vec<u8>, Vec<Vec<u8>>)> = sqlx::query_as(
+        r#"
+        SELECT pa.owner,
+               COALESCE(
+                   array_agg(pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
+                   '{}'
+               ) AS members
+        FROM channels c
+        JOIN project_acl pa
+          ON pa.community_id = c.community_id
+         AND pa.coordinate = c.project_ref
+        LEFT JOIN project_acl_members pam
+          ON pam.community_id = pa.community_id
+         AND pam.owner = pa.owner
+         AND pam.dtag = pa.dtag
+        WHERE c.community_id = $1 AND c.id = $2
+          AND c.channel_type = 'transport' AND c.deleted_at IS NULL
+        GROUP BY pa.owner
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(channel_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(owner, members)| ProjectGate { owner, members }))
+}
+
 /// Resolve the gate of the **private** project at `coordinate`, or `None`
 /// when the coordinate is unknown or the project is public ("no gate").
 ///

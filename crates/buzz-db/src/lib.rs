@@ -2745,6 +2745,17 @@ impl Db {
         project_acl::get_channel_project_gate(&self.pool, community, channel_id).await
     }
 
+    /// Resolve a session-transport channel's project gate (owner + invited
+    /// members, public projects included), or `None` when the channel is not
+    /// a transport channel or its project is absent/unknown.
+    pub async fn get_channel_transport_gate(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_channel_transport_gate(&self.pool, community, channel_id).await
+    }
+
     /// Ensure a user record exists (upsert).
     ///
     /// Returns `true` if a new row was inserted (first time), `false` if it

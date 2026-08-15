@@ -767,6 +767,14 @@ pub async fn get_members_bulk(
 /// channel owner from being locked out of their own channel by pointing its
 /// `project_ref` at someone else's private project. An unresolvable
 /// `project_ref` (deleted or never-published project) means no gate.
+///
+/// Session-transport channels (third arm): a private `channel_type =
+/// 'transport'` channel is additionally readable by its project's owner and
+/// invited members — project membership IS transport access, kept in sync
+/// server-side by the 30621 ACL projection. This is a positive grant with no
+/// visibility filter on the ACL row (public-project members are admitted
+/// too); a transport channel whose project is unknown or deleted grants
+/// nothing here and falls back to explicit membership.
 pub async fn get_accessible_channel_ids(
     pool: &PgPool,
     community_id: CommunityId,
@@ -797,6 +805,24 @@ pub async fn get_accessible_channel_ids(
                       AND pam.dtag = pa.dtag
                       AND pam.pubkey = $2
                 )
+          )
+        UNION
+        SELECT c.id AS channel_id
+        FROM channels c
+        JOIN project_acl pa
+          ON pa.community_id = c.community_id
+         AND pa.coordinate = c.project_ref
+        WHERE c.community_id = $1 AND c.channel_type = 'transport' AND c.deleted_at IS NULL
+          AND (
+              pa.owner = $2
+              OR EXISTS (
+                  SELECT 1
+                  FROM project_acl_members pam
+                  WHERE pam.community_id = pa.community_id
+                    AND pam.owner = pa.owner
+                    AND pam.dtag = pa.dtag
+                    AND pam.pubkey = $2
+              )
           )
         "#,
     )

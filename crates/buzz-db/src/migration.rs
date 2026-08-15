@@ -1071,6 +1071,40 @@ mod tests {
         assert!(repo_project_ref.contains("ADD COLUMN head_created_at BIGINT NOT NULL DEFAULT 0"));
         assert!(repo_project_ref.contains("idx_git_repo_names_project_ref"));
         assert!(!migrations[0].sql.as_str().contains("git_repo_names"));
+
+        // Session-transport channel type: located by content, not index, so
+        // these assertions survive the integration renumbering that shifts
+        // this branch's migrations when upstream claims version numbers.
+        let transport_type = migrations
+            .iter()
+            .find(|migration| {
+                migration
+                    .sql
+                    .as_str()
+                    .contains("ADD VALUE IF NOT EXISTS 'transport'")
+            })
+            .expect("transport channel_type migration");
+        let transport_backfill = migrations
+            .iter()
+            .find(|migration| {
+                migration
+                    .sql
+                    .as_str()
+                    .contains("SET channel_type = 'transport'")
+            })
+            .expect("transport backfill migration");
+        // The enum value must exist (and be committed) before the backfill
+        // uses it — Postgres cannot use a value added in the same transaction.
+        assert!(transport_backfill.version > transport_type.version);
+        // The backfill keys on actual coding-session traffic plus a project
+        // ref — never on the display name, which a person could reuse.
+        let backfill_sql = strip_sql_comments(transport_backfill.sql.as_str());
+        assert!(backfill_sql.contains("kind BETWEEN 44220 AND 44225"));
+        assert!(backfill_sql.contains("project_ref IS NOT NULL"));
+        assert!(backfill_sql.contains("visibility = 'private'"));
+        assert!(!backfill_sql.contains(".name"));
+        assert!(include_str!("../../../schema/schema.sql")
+            .contains("'stream', 'forum', 'dm', 'workflow', 'transport'"));
     }
 
     #[test]

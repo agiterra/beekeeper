@@ -673,6 +673,20 @@ pub(crate) async fn check_channel_membership(
             .unwrap_or(false),
     };
     if !is_open {
+        // Session-transport channels: the project's owner and invited
+        // members are admitted without a channel_members row — project
+        // membership IS transport access, resolved through the cached ACL
+        // projection. `None` (not a transport channel, or project unknown)
+        // falls through to the members-only denial; lookup errors fail
+        // closed the same way as the membership lookup above.
+        match state
+            .channel_transport_gate_cached(tenant.community(), ch_id)
+            .await
+        {
+            Ok(Some(gate)) if gate.admits(pubkey_bytes) => return Ok(()),
+            Ok(_) => {}
+            Err(e) => return Err(format!("error: database error: {e}")),
+        }
         return Err("restricted: not a channel member".to_string());
     }
     // Open channel — but an open channel inside a private project must not

@@ -701,6 +701,16 @@ pub struct AppState {
     #[allow(clippy::type_complexity)]
     pub project_gate_cache:
         Arc<moka::sync::Cache<(CommunityId, Uuid), Option<Arc<buzz_db::project_acl::ProjectGate>>>>,
+    /// Per-channel session-transport gate: (community_id, channel_id) → the
+    /// project's owner + invited members when the channel is `channel_type =
+    /// 'transport'` and its `project_ref` resolves (public projects
+    /// included — this is a positive membership grant, not a privacy gate),
+    /// else `None` ("explicit channel members only"). Lets live fan-out and
+    /// the coding-session write gate admit project members in memory. Same
+    /// TTL/flush discipline as [`Self::project_gate_cache`].
+    #[allow(clippy::type_complexity)]
+    pub transport_gate_cache:
+        Arc<moka::sync::Cache<(CommunityId, Uuid), Option<Arc<buzz_db::project_acl::ProjectGate>>>>,
     /// Per-reader hidden-repo set (NIP-MP access extension phase 2):
     /// (community_id, reader pubkey) → the repos linked to a private project
     /// the reader is not admitted to. Empty for almost every reader — read
@@ -934,6 +944,13 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            transport_gate_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             hidden_repos_cache: Arc::new(
                 moka::sync::Cache::builder()
                     .max_capacity(10_000)
@@ -1056,6 +1073,33 @@ impl AppState {
         Ok(gate)
     }
 
+    /// Resolve a session-transport channel's project gate with a 10-second
+    /// cache.
+    ///
+    /// `None` means "explicit channel members only" (not a transport channel,
+    /// or its project is absent/unknown). Public projects DO produce a gate
+    /// here — transport admittance is a positive membership grant, not a
+    /// privacy gate. Flushed with the accessible-channels cache on every
+    /// 30621 ACL change; the stale direction after a membership removal is
+    /// bounded at 10s, matching the project-gate cache.
+    pub async fn channel_transport_gate_cached(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+    ) -> Result<Option<Arc<buzz_db::project_acl::ProjectGate>>, buzz_db::DbError> {
+        let key = (community_id, channel_id);
+        if let Some(cached) = self.transport_gate_cache.get(&key) {
+            return Ok(cached);
+        }
+        let gate = self
+            .db
+            .get_channel_transport_gate(community_id, channel_id)
+            .await?
+            .map(Arc::new);
+        self.transport_gate_cache.insert(key, gate.clone());
+        Ok(gate)
+    }
+
     /// Resolve the reader's hidden-repo set with a 10-second cache.
     ///
     /// Empty means "no repo is hidden from this reader" — the overwhelmingly
@@ -1168,6 +1212,17 @@ impl AppState {
             );
             self.project_gate_cache.invalidate_all();
         }
+        // The transport gate reads the same ACL projection — same flush signal.
+        if let Err(error) = self
+            .transport_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped transport-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.transport_gate_cache.invalidate_all();
+        }
         self.invalidate_repo_gates_local(community_id);
     }
 
@@ -1269,6 +1324,16 @@ impl AppState {
                 "community-scoped project-gate invalidation unavailable; falling back to full invalidation"
             );
             self.project_gate_cache.invalidate_all();
+        }
+        if let Err(error) = self
+            .transport_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped transport-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.transport_gate_cache.invalidate_all();
         }
         self.invalidate_repo_gates_local(community_id);
     }

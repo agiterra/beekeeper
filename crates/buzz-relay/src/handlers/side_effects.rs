@@ -370,8 +370,26 @@ pub async fn validate_admin_event(
             // require the actor to be an existing active member. Any active member may
             // add an ordinary member, guest, or bot, but only owners/admins may grant
             // an elevated role.
+            //
+            // Session-transport channels extend the private arm: a project
+            // member admitted through the transport gate has member-level
+            // authority even without a channel_members row — they must be
+            // able to add their own provider bot to a transport channel some
+            // other member created. Member-level only: the elevated-role
+            // check below still requires a real elevated channel role, and a
+            // gate lookup failure fails closed to the members-only rule.
             if channel.visibility == "private" {
-                if actor_role.is_none() {
+                let transport_admitted = if actor_role.is_none() {
+                    state
+                        .channel_transport_gate_cached(tenant.community(), channel_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some_and(|gate| gate.admits(&actor_bytes))
+                } else {
+                    false
+                };
+                if actor_role.is_none() && !transport_admitted {
                     return Err(anyhow::anyhow!("actor not authorized"));
                 }
 
@@ -1113,6 +1131,12 @@ pub async fn emit_group_discovery_events(
             // Explicit "public" tag complements NIP-29's absence-of-"private" convention,
             // making channel visibility self-describing for clients.
             tags.push(Tag::parse(["public"])?);
+        }
+        // NIP-29 hidden tag: hint to clients not to show session-transport
+        // channels in group lists. Not a security boundary — access control
+        // is handled by channel-scoped storage and the transport gate.
+        if channel.channel_type == "transport" {
+            tags.push(Tag::parse(["hidden"])?);
         }
         // NIP-29 hidden tag: hint to clients not to show DMs in public group lists.
         // Not a security boundary — access control is handled by channel-scoped storage.

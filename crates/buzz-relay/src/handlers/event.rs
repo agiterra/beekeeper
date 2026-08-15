@@ -332,11 +332,32 @@ pub async fn filter_fanout_by_access(
         }
     }
 
+    // Private channel: explicit members, plus — for a session-transport
+    // channel — the project's owner and invited members (project membership
+    // IS transport access, resolved through the cached ACL projection). A
+    // gate lookup failure degrades to members-only: over-restrictive, never
+    // a leak.
+    let transport_gate = match state
+        .channel_transport_gate_cached(community_id, channel_id)
+        .await
+    {
+        Ok(gate) => gate,
+        Err(e) => {
+            warn!(%channel_id, "fan-out access filter: transport gate lookup failed: {e}");
+            None
+        }
+    };
     let mut allowed = Vec::with_capacity(matches.len());
     for (conn_id, sub_id) in matches {
         let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
             continue;
         };
+        if let Some(gate) = &transport_gate {
+            if gate.admits(&pubkey) {
+                allowed.push((conn_id, sub_id));
+                continue;
+            }
+        }
         match state
             .is_member_cached(community_id, channel_id, &pubkey)
             .await

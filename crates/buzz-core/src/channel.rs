@@ -65,6 +65,12 @@ pub enum ChannelType {
     Dm,
     /// Internal workflow execution channel.
     Workflow,
+    /// Hidden per-project transport channel (e.g. coding-session events).
+    ///
+    /// Identified by type rather than display name so a user-named channel can
+    /// never be mistaken for one. Project members are admitted by the relay
+    /// through the project ACL instead of explicit channel membership.
+    Transport,
 }
 
 impl ChannelType {
@@ -75,6 +81,7 @@ impl ChannelType {
             Self::Forum => "forum",
             Self::Dm => "dm",
             Self::Workflow => "workflow",
+            Self::Transport => "transport",
         }
     }
 }
@@ -94,6 +101,7 @@ impl FromStr for ChannelType {
             "forum" => Ok(Self::Forum),
             "dm" => Ok(Self::Dm),
             "workflow" => Ok(Self::Workflow),
+            "transport" => Ok(Self::Transport),
             other => Err(format!("unknown channel type: {other:?}")),
         }
     }
