@@ -213,6 +213,15 @@ pub struct Provider {
     /// and cannot await: the probe runs on its own task and parks its result
     /// here when [`SessionEvent::WorktreeObserved`] reaches the loop.
     git_probes: HashMap<String, git_probe::GitProbe>,
+    /// Generation of the most recently *launched* worktree probe per session.
+    ///
+    /// Bumped synchronously in [`Provider::spawn_git_probe`], before the probe
+    /// ever touches the filesystem, so this always names the newest launch —
+    /// never merely the newest arrival. [`SessionEvent::WorktreeObserved`]
+    /// results are fenced against it (see the invariant documented on that
+    /// match arm). Absent entry means "no probe has ever been launched for
+    /// this session id," which compares as generation `0`.
+    git_probe_generation: HashMap<String, u64>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
 }
@@ -234,6 +243,7 @@ impl Provider {
             session_events_tx: events_tx,
             last_metadata: HashMap::new(),
             git_probes: HashMap::new(),
+            git_probe_generation: HashMap::new(),
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
         })
@@ -955,15 +965,27 @@ impl Provider {
     ///
     /// A session whose record has vanished is a no-op, not an error. Two probes
     /// in flight for one session are allowed rather than serialized: both are
-    /// read-only, and the result that arrives last wins — which, for two reads
-    /// of the same directory, is the one an operator would call current.
-    fn spawn_git_probe(&self, session_id: &str) {
+    /// read-only, so there is nothing to contend over. They are not, however,
+    /// left to resolve by arrival order — each is stamped with a per-session
+    /// generation minted here, and [`SessionEvent::WorktreeObserved`] fences
+    /// out any result whose generation is not the newest one launched (see the
+    /// invariant on that match arm), so a slow older probe can never overwrite
+    /// a faster newer one.
+    fn spawn_git_probe(&mut self, session_id: &str) {
         let Some(cwd) = self
             .state
             .session(session_id)
             .map(|record| record.cwd.clone())
         else {
             return;
+        };
+        let generation = {
+            let next = self
+                .git_probe_generation
+                .entry(session_id.to_owned())
+                .or_insert(0);
+            *next += 1;
+            *next
         };
         let events = self.session_events_tx.clone();
         let session_id = session_id.to_owned();
@@ -975,6 +997,7 @@ impl Provider {
             let _ = events
                 .send(SessionEvent::WorktreeObserved {
                     session_id,
+                    generation,
                     observed,
                 })
                 .await;
@@ -1188,8 +1211,34 @@ impl Provider {
             }
             SessionEvent::WorktreeObserved {
                 session_id,
+                generation,
                 observed,
             } => {
+                // Invariant: a result is applied only when its generation is
+                // the newest one launched for this session id — never merely
+                // the newest one to *arrive*. `git_probe_generation` is bumped
+                // synchronously at launch (see `spawn_git_probe`), so it can
+                // only be greater than an in-flight probe's stamped generation
+                // once a newer probe has actually been launched; a probe's own
+                // generation can never exceed it. Discarding anything older
+                // than that ceiling — rather than trusting whichever result
+                // shows up last — is what makes a slow, superseded probe unable
+                // to overwrite a faster, newer one.
+                let latest_launched = self
+                    .git_probe_generation
+                    .get(&session_id)
+                    .copied()
+                    .unwrap_or(0);
+                if generation < latest_launched {
+                    tracing::debug!(
+                        target: "csp::git",
+                        %session_id,
+                        generation,
+                        latest_launched,
+                        "discarding a worktree observation superseded by a newer probe"
+                    );
+                    return Ok(());
+                }
                 // A session that was stopped, or whose record vanished, while
                 // its probe was in flight keeps whatever its terminal metadata
                 // already said. A filesystem read landing late is not a reason
@@ -1492,20 +1541,33 @@ mod tests {
         .await;
     }
 
-    /// Drain and record session reports until the worktree is seen on `branch`.
+    /// Drain and record session reports until `session_id`'s *applied*
+    /// worktree state shows `branch`.
     ///
     /// Stronger than [`pump_until_worktree_observed`] when more than one probe
-    /// can be in flight: it waits for the observation that actually saw the
-    /// state under test rather than whichever result arrived first.
-    async fn pump_until_branch_observed(provider: &mut Provider, branch: &str) {
-        pump_until(provider, |event| {
-            matches!(
-                event,
-                SessionEvent::WorktreeObserved { observed, .. }
-                    if observed.branch.as_deref() == Some(branch)
-            )
-        })
-        .await;
+    /// can be in flight: it checks `provider.git_probes` after every event is
+    /// applied, rather than sniffing the raw event's content, because R17
+    /// fencing means a stale probe can still land in the channel carrying the
+    /// right-looking branch (it read the worktree late, after a newer probe
+    /// had already been launched) without ever winning the fence. Only
+    /// applied state proves the observation under test is the one that stuck.
+    async fn pump_until_branch_observed(provider: &mut Provider, session_id: &str, branch: &str) {
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("session event within timeout")
+                    .expect("channel open");
+            provider.handle_session_event(event).expect("record");
+            if provider
+                .git_probes
+                .get(session_id)
+                .and_then(|observed| observed.branch.as_deref())
+                == Some(branch)
+            {
+                return;
+            }
+        }
     }
 
     /// Drain and record session reports until one satisfies `done`.
@@ -1886,10 +1948,13 @@ mod tests {
             .expect("handle");
         pump_until_turn_finished(&mut provider).await;
         // The finished turn started a probe rather than awaiting one, so the
-        // re-observation arrives as its own report. Waiting for the *"after"*
-        // observation specifically keeps this deterministic when the create's
-        // probe is still in flight alongside it.
-        pump_until_branch_observed(&mut provider, "after").await;
+        // re-observation arrives as its own report. The create's own probe
+        // can still be in flight too — and, on a fast checkout, can even read
+        // the post-checkout worktree late and report "after" itself, despite
+        // being the older, superseded generation. Waiting on *applied* state
+        // for this branch (not merely an event carrying it) is what makes the
+        // assertion below test the fence rather than get lucky past it.
+        pump_until_branch_observed(&mut provider, &target.session_id, "after").await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
@@ -2011,6 +2076,84 @@ mod tests {
         // Not merely unpublished — not cached either, so nothing can resurrect
         // it into a later publication.
         assert!(!provider.git_probes.contains_key(&target.session_id));
+    }
+
+    /// R17: a stale probe completing *after* a newer one must not win.
+    ///
+    /// Deterministic by construction — no sleeps, no racing real `git`
+    /// subprocesses. The launch side is simulated by hand-setting
+    /// `git_probe_generation` to `2` (as if generation 1, then generation 2,
+    /// had both been launched); the completion side is simulated by feeding
+    /// `handle_session_event` two synthetic `WorktreeObserved` events directly,
+    /// generation 2 ("B", the newer launch) first and generation 1 ("A", the
+    /// older launch) second — the exact reversed-completion order the ruling
+    /// requires. If fencing were arrival-order-based rather than
+    /// generation-based, A's later arrival would overwrite B's result.
+    #[tokio::test]
+    async fn a_stale_generation_probe_completing_after_a_newer_one_does_not_win() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "initial-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        // Drain the create's own probe (generation 1) so it cannot interleave
+        // with the synthetic events below.
+        pump_until_worktree_observed(&mut provider).await;
+
+        let session_id = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+
+        // Simulate two more probes having been launched for this session:
+        // generation 2 ("A") launched first, generation 3 ("B") launched
+        // second. Setting the counter directly (rather than calling
+        // `spawn_git_probe` twice and racing real subprocesses) is what makes
+        // the completion order below controllable by hand.
+        provider.git_probe_generation.insert(session_id.clone(), 3);
+
+        let older = git_probe::GitProbe {
+            branch: Some("branch-a".to_owned()),
+            dirty: Some(false),
+        };
+        let newer = git_probe::GitProbe {
+            branch: Some("branch-b".to_owned()),
+            dirty: Some(true),
+        };
+
+        // B (generation 3, launched second) completes first.
+        provider
+            .handle_session_event(SessionEvent::WorktreeObserved {
+                session_id: session_id.clone(),
+                generation: 3,
+                observed: newer.clone(),
+            })
+            .expect("record newer");
+        // A (generation 2, launched first) completes after — the reversed
+        // completion order this test exists to force.
+        provider
+            .handle_session_event(SessionEvent::WorktreeObserved {
+                session_id: session_id.clone(),
+                generation: 2,
+                observed: older,
+            })
+            .expect("record older");
+
+        assert_eq!(
+            provider.git_probes.get(&session_id),
+            Some(&newer),
+            "the older, later-arriving probe overwrote the newer one"
+        );
     }
 
     /// A create claiming an umbrella round-trips its `sessionRef` into the

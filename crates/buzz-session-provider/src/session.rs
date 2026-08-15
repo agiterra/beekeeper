@@ -256,6 +256,12 @@ pub enum SessionEvent {
     WorktreeObserved {
         /// Which session was observed.
         session_id: String,
+        /// Monotonically increasing per-session sequence number assigned when
+        /// this probe was launched (see [`crate::Provider::spawn_git_probe`]).
+        /// Lets the provider fence out a result from a probe that a later probe
+        /// for the same session has already superseded, regardless of which
+        /// one's `git` subprocess happens to finish first.
+        generation: u64,
         /// What git reported — every field optional, nothing fatal.
         observed: crate::git_probe::GitProbe,
     },
