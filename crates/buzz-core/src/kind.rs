@@ -597,6 +597,17 @@ pub const KIND_CODING_SESSION_LIFECYCLE_RECEIPT: u32 = 44224;
 /// See `docs/nips/NIP-CST.md`.
 pub const KIND_CODING_SESSION_TRANSCRIPT: u32 = 44225;
 
+/// NIP-CSG: Coding-session genesis — the operator-signed origin of one umbrella
+/// session.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON [`crate::coding_session_genesis::CodingSessionGenesisPayload`]
+/// carrying only a `sessionRef` and a schema version. Ordered tags: `h`,
+/// `csg-v`, `csg-session`. The signer is the session's founder — the authority
+/// every later session operation resolves back to — so this kind is signed by
+/// the human operator, never by a provider. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -784,6 +795,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_CODING_SESSION_GENESIS,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -982,6 +994,13 @@ const _: () = assert!(!is_parameterized_replaceable(
     KIND_CODING_SESSION_TRANSCRIPT
 ));
 const _: () = assert!(KIND_CODING_SESSION_TRANSCRIPT <= u16::MAX as u32);
+// Genesis is the strictest case of the rule above: it is the founder record an
+// entire session's authority hangs from, so a replaceable genesis would let a
+// founder be swapped out after the fact.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(KIND_CODING_SESSION_GENESIS <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

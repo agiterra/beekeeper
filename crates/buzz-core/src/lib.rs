@@ -11,6 +11,9 @@ pub mod agent_turn_metric;
 pub mod channel;
 /// NIP-CSC: Coding-session command — provider-neutral turn request payload.
 pub mod coding_session_command;
+/// NIP-CSG: Coding-session genesis — the operator-signed origin of an umbrella
+/// session, and the founder every later operation resolves back to.
+pub mod coding_session_genesis;
 /// NIP-CSL: Coding-session lifecycle command — session creation payload.
 pub mod coding_session_lifecycle_command;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
