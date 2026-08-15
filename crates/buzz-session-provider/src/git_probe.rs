@@ -42,17 +42,20 @@ const MAX_BRANCH_LEN: usize = 255;
 /// Every field is independently optional: `None` means "not observed", never
 /// "observed to be absent". A non-repository directory yields
 /// [`GitProbe::default`].
+/// `pub` only so it can ride [`crate::session::SessionEvent`], which is itself
+/// public; this module is private, so the type stays unreachable from outside
+/// the crate.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct GitProbe {
+pub struct GitProbe {
     /// Current branch shortname, or `None` on a detached `HEAD`, a
     /// non-repository, or any failure.
-    pub(crate) branch: Option<String>,
+    pub branch: Option<String>,
     /// Whether the worktree has uncommitted changes, or `None` if not observed.
     ///
     /// P3 keeps this internal on purpose. Carrying dirty state as a *signed*
     /// fact is B1's work, and a boolean smuggled into `branch` would be a
     /// schema change wearing a disguise.
-    pub(crate) dirty: Option<bool>,
+    pub dirty: Option<bool>,
 }
 
 /// Look at `cwd` with `git`, bounded and best effort.

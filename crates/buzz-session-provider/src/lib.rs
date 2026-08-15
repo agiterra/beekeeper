@@ -178,6 +178,17 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What the provider last said about one session's generation.
+///
+/// The content is kept to suppress a republication that would say exactly the
+/// same thing; the status is kept so a correction that arrives out of band — a
+/// worktree observation landing after the publication it belongs to — can
+/// restate the lifecycle it found rather than guess a new one.
+struct PublishedMetadata {
+    content: String,
+    status: SessionStatus,
+}
+
 /// The provider's whole runtime state, minus the relay socket.
 pub struct Provider {
     config: Config,
@@ -186,15 +197,21 @@ pub struct Provider {
     outbox: Outbox,
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
-    last_metadata: HashMap<String, String>,
+    /// Sender for the queue [`Provider::next_session_event`] drains.
+    ///
+    /// Held so a spawned worktree probe can report back through the one inbox
+    /// the loop already selects on, rather than through a parallel channel with
+    /// its own ordering and shutdown rules.
+    session_events_tx: mpsc::Sender<SessionEvent>,
+    last_metadata: HashMap<String, PublishedMetadata>,
     /// Last bounded git observation per session id.
     ///
     /// A side map rather than a `SessionRecord` field on purpose: the
     /// observation is a fact about the host filesystem *right now*, so it must
     /// not survive a restart into a metadata publication that predates a
     /// re-probe. It exists because [`Provider::metadata_for`] is sync `&self`
-    /// and cannot await, so the probe runs at the async call sites and parks
-    /// its result here to be read.
+    /// and cannot await: the probe runs on its own task and parks its result
+    /// here when [`SessionEvent::WorktreeObserved`] reaches the loop.
     git_probes: HashMap<String, git_probe::GitProbe>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
@@ -212,8 +229,9 @@ impl Provider {
             pubkey_hex,
             state,
             outbox,
-            sessions: SessionManager::new(events_tx),
+            sessions: SessionManager::new(events_tx.clone()),
             session_events,
+            session_events_tx: events_tx,
             last_metadata: HashMap::new(),
             git_probes: HashMap::new(),
             subscribed: BTreeSet::new(),
@@ -610,11 +628,11 @@ impl Provider {
         } else {
             SessionStatus::Idle
         };
-        // Deliberately *after* the receipt is queued and the first turn is
-        // dispatched: the operator-visible acknowledgement and the agent's
-        // start must not wait on a filesystem read. The only thing this delays
-        // is the first metadata publication.
-        self.refresh_git_probe(&target.session_id).await;
+        // Started, not awaited: the first metadata publication goes out now,
+        // without a branch, and is corrected when the observation lands. Waiting
+        // here would delay this session's metadata *and* — because the probe ran
+        // on the provider loop — every other session's transcripts.
+        self.spawn_git_probe(&target.session_id);
         self.publish_metadata(plan.channel_id, &target, status)?;
 
         tracing::info!(
@@ -924,14 +942,22 @@ impl Provider {
         Ok(())
     }
 
-    /// Re-observe `session_id`'s working directory and cache what git saw.
+    /// Start a bounded re-observation of `session_id`'s working directory.
     ///
-    /// Best effort and bounded: see [`git_probe::probe`]. Callers await this
-    /// immediately *before* publishing metadata, so the publication carries the
-    /// current observation rather than the previous turn's.
+    /// The probe runs up to two short-lived `git` processes, each under
+    /// [`git_probe`]'s own ceiling, so awaiting it here would stall *every other*
+    /// session's transcript delivery and the outbox flush for as long as the
+    /// slowest of them. It therefore runs on its own task and reports back as
+    /// [`SessionEvent::WorktreeObserved`], which the loop folds in exactly like
+    /// an actor report. The consequence is deliberate: metadata is published
+    /// immediately without a branch and corrected a moment later, rather than
+    /// published late but complete.
     ///
-    /// A session whose record has vanished is a no-op, not an error.
-    async fn refresh_git_probe(&mut self, session_id: &str) {
+    /// A session whose record has vanished is a no-op, not an error. Two probes
+    /// in flight for one session are allowed rather than serialized: both are
+    /// read-only, and the result that arrives last wins — which, for two reads
+    /// of the same directory, is the one an operator would call current.
+    fn spawn_git_probe(&self, session_id: &str) {
         let Some(cwd) = self
             .state
             .session(session_id)
@@ -939,15 +965,20 @@ impl Provider {
         else {
             return;
         };
-        let observed = git_probe::probe(&cwd).await;
-        tracing::debug!(
-            target: "csp::git",
-            %session_id,
-            branch = ?observed.branch,
-            dirty = ?observed.dirty,
-            "observed the session worktree"
-        );
-        self.git_probes.insert(session_id.to_owned(), observed);
+        let events = self.session_events_tx.clone();
+        let session_id = session_id.to_owned();
+        tokio::spawn(async move {
+            let observed = git_probe::probe(&cwd).await;
+            // A closed receiver means the provider loop is gone — shutdown, or
+            // a dropped `Provider` in a test. The observation has nowhere to be
+            // published, so it is dropped rather than logged as a failure.
+            let _ = events
+                .send(SessionEvent::WorktreeObserved {
+                    session_id,
+                    observed,
+                })
+                .await;
+        });
     }
 
     /// Queue per-generation metadata (44223) describing `status`.
@@ -966,7 +997,11 @@ impl Provider {
     ) -> anyhow::Result<()> {
         let metadata = self.metadata_for(target, status);
         let content = serde_json::to_string(&metadata)?;
-        if self.last_metadata.get(&target.session_id) == Some(&content) {
+        if self
+            .last_metadata
+            .get(&target.session_id)
+            .is_some_and(|published| published.content == content)
+        {
             return Ok(());
         }
         let event = build_coding_session_metadata(channel_id, target, &content)?
@@ -977,8 +1012,10 @@ impl Provider {
             Priority::High,
             event,
         )?;
-        self.last_metadata
-            .insert(target.session_id.clone(), content);
+        self.last_metadata.insert(
+            target.session_id.clone(),
+            PublishedMetadata { content, status },
+        );
         Ok(())
     }
 
@@ -1025,12 +1062,13 @@ impl Provider {
         Ok(Some(event_seq))
     }
 
-    /// Turn one actor report into durable state and queued events.
+    /// Turn one report from the session inbox into durable state and queued
+    /// events.
     ///
-    /// Async because a finished turn re-observes the session's worktree before
-    /// publishing metadata. Every other arm is pure bookkeeping and never
-    /// awaits, so only `TurnFinished` can yield here — and only for as long as
-    /// [`git_probe`]'s bound allows.
+    /// Nothing here awaits any more: every arm is bookkeeping plus an enqueue,
+    /// so no session's report can be delayed by another's. Work that has to
+    /// wait on the world — the worktree probe — is spawned and comes back
+    /// through this same inbox as [`SessionEvent::WorktreeObserved`].
     pub async fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
             SessionEvent::TurnStarted {
@@ -1071,10 +1109,10 @@ impl Provider {
                     .session(&session_id)
                     .is_some_and(|record| record.closed);
                 // A finished turn is the moment the branch can have changed —
-                // the agent may have checked out or created one. The transcript
-                // `result` item is already queued above, so this delays only
-                // the metadata that reports it.
-                self.refresh_git_probe(&session_id).await;
+                // the agent may have checked out or created one. The probe is
+                // started rather than awaited, so the turn's metadata reports
+                // the status now and the branch a moment later.
+                self.spawn_git_probe(&session_id);
                 self.publish_metadata(
                     channel_id,
                     &target,
@@ -1146,6 +1184,51 @@ impl Provider {
                         SessionStatus::Disconnected
                     },
                 )?;
+            }
+            SessionEvent::WorktreeObserved {
+                session_id,
+                observed,
+            } => {
+                // A session that was stopped, or whose record vanished, while
+                // its probe was in flight keeps whatever its terminal metadata
+                // already said. A filesystem read landing late is not a reason
+                // to speak for a session that has finished speaking, so the
+                // observation is dropped whole — not even cached.
+                let ended = self
+                    .state
+                    .session(&session_id)
+                    .is_none_or(|record| record.closed);
+                if ended {
+                    tracing::debug!(
+                        target: "csp::git",
+                        %session_id,
+                        "discarding a worktree observation for an ended session"
+                    );
+                    return Ok(());
+                }
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                tracing::debug!(
+                    target: "csp::git",
+                    %session_id,
+                    branch = ?observed.branch,
+                    dirty = ?observed.dirty,
+                    "observed the session worktree"
+                );
+                self.git_probes.insert(session_id.clone(), observed);
+                // Republished under the status the last publication claimed:
+                // the observation corrects the branch, it says nothing about
+                // the lifecycle. When the branch is unchanged the serialized
+                // content is identical and `publish_metadata` drops it, so a
+                // probe that learns nothing new costs no event.
+                if let Some(status) = self
+                    .last_metadata
+                    .get(&session_id)
+                    .map(|published| published.status)
+                {
+                    self.publish_metadata(channel_id, &target, status)?;
+                }
             }
         }
         Ok(())
@@ -1379,7 +1462,7 @@ mod tests {
         items
     }
 
-    /// Record every actor report that is already available.
+    /// Record every session report that is already available.
     async fn pump_available(provider: &mut Provider) {
         while let Ok(Some(event)) =
             tokio::time::timeout(Duration::from_millis(250), provider.next_session_event()).await
@@ -1388,15 +1471,51 @@ mod tests {
         }
     }
 
-    /// Drain and record actor reports until a turn has finished.
+    /// Drain and record session reports until a turn has finished.
     async fn pump_until_turn_finished(provider: &mut Provider) {
+        pump_until(provider, |event| {
+            matches!(event, session::SessionEvent::TurnFinished { .. })
+        })
+        .await;
+    }
+
+    /// Drain and record session reports until a worktree observation lands.
+    ///
+    /// The probe no longer runs on the caller's stack, so a test that asserts on
+    /// a published branch has to let its result come back through the same inbox
+    /// the provider loop drains.
+    async fn pump_until_worktree_observed(provider: &mut Provider) {
+        pump_until(provider, |event| {
+            matches!(event, session::SessionEvent::WorktreeObserved { .. })
+        })
+        .await;
+    }
+
+    /// Drain and record session reports until the worktree is seen on `branch`.
+    ///
+    /// Stronger than [`pump_until_worktree_observed`] when more than one probe
+    /// can be in flight: it waits for the observation that actually saw the
+    /// state under test rather than whichever result arrived first.
+    async fn pump_until_branch_observed(provider: &mut Provider, branch: &str) {
+        pump_until(provider, |event| {
+            matches!(
+                event,
+                SessionEvent::WorktreeObserved { observed, .. }
+                    if observed.branch.as_deref() == Some(branch)
+            )
+        })
+        .await;
+    }
+
+    /// Drain and record session reports until one satisfies `done`.
+    async fn pump_until(provider: &mut Provider, done: impl Fn(&SessionEvent) -> bool) {
         loop {
             let event =
                 tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
                     .await
                     .expect("session event within timeout")
                     .expect("channel open");
-            let finished = matches!(event, session::SessionEvent::TurnFinished { .. });
+            let finished = done(&event);
             provider.handle_session_event(event).await.expect("record");
             if finished {
                 return;
@@ -1697,6 +1816,11 @@ mod tests {
             .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
             .await
             .expect("handle");
+        // The probe runs off the loop, so its result has to come back through
+        // the session inbox before metadata can name the branch. Nothing has
+        // been flushed yet, so the corrected publication supersedes the queued
+        // branchless one and the consumer still sees exactly one metadata event.
+        pump_until_worktree_observed(&mut provider).await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
@@ -1760,6 +1884,11 @@ mod tests {
             .await
             .expect("handle");
         pump_until_turn_finished(&mut provider).await;
+        // The finished turn started a probe rather than awaiting one, so the
+        // re-observation arrives as its own report. Waiting for the *"after"*
+        // observation specifically keeps this deterministic when the create's
+        // probe is still in flight alongside it.
+        pump_until_branch_observed(&mut provider, "after").await;
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
@@ -1769,6 +1898,118 @@ mod tests {
             "after",
             "the turn-finished probe did not re-observe the worktree"
         );
+    }
+
+    /// The whole point of probing off the loop: metadata is published *now*,
+    /// without a branch, and corrected by a second event when git answers. A
+    /// consumer that already read the first publication is not left with a
+    /// session that never names its branch.
+    #[tokio::test]
+    async fn an_observation_landing_after_publication_corrects_the_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "probe-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+
+        // Flushed before the observation is folded in: this is exactly what a
+        // consumer sees while git is still running.
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let published = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(published.len(), 1);
+        assert!(
+            published[0]["branch"].is_null(),
+            "the create waited on the probe: {}",
+            published[0]
+        );
+
+        pump_until_worktree_observed(&mut provider).await;
+        provider.flush(&sink).await.expect("flush");
+        let published = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(
+            published.len(),
+            2,
+            "the observation did not correct the publication"
+        );
+        assert_eq!(published[1]["branch"], "probe-branch");
+        assert_eq!(
+            published[1]["status"], published[0]["status"],
+            "the correction invented a lifecycle change the probe never saw"
+        );
+
+        // Dedupe survives the round trip: an observation identical to the last
+        // one costs no event, however many times it is repeated.
+        let session_id = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+        provider.spawn_git_probe(&session_id);
+        pump_until_worktree_observed(&mut provider).await;
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            sink.contents_of(KIND_CODING_SESSION_METADATA).len(),
+            2,
+            "an unchanged observation published a duplicate"
+        );
+    }
+
+    /// A session stopped while its probe was in flight keeps the last thing it
+    /// said. A filesystem read landing late must not republish metadata for a
+    /// generation the operator already retired.
+    #[tokio::test]
+    async fn an_observation_for_an_ended_session_is_discarded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "probe-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        // Stopped while the create's probe is still running.
+        provider
+            .handle_command_event(
+                channel_id,
+                &lifecycle_target_event(&provider, channel_id, "stop-1", "session.stop", &target),
+            )
+            .await
+            .expect("handle");
+
+        pump_until_worktree_observed(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let published = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        let last = published.last().expect("metadata");
+        assert_eq!(last["status"], "stopped");
+        assert!(
+            last["branch"].is_null(),
+            "a late observation spoke for a stopped session: {last}"
+        );
+        // Not merely unpublished — not cached either, so nothing can resurrect
+        // it into a later publication.
+        assert!(!provider.git_probes.contains_key(&target.session_id));
     }
 
     /// A create claiming an umbrella round-trips its `sessionRef` into the

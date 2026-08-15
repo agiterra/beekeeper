@@ -189,7 +189,12 @@ pub enum ExitReason {
     AgentGone(String),
 }
 
-/// Something a session actor wants the provider loop to publish.
+/// Something the provider loop must fold into state and publish.
+///
+/// Mostly reports from a session actor. [`SessionEvent::WorktreeObserved`] is
+/// the exception: it comes from a bounded observation task the provider itself
+/// spawned, and rides this queue rather than a parallel one so the loop keeps a
+/// single ordered inbox with a single shutdown rule.
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
     /// A turn began.
@@ -242,6 +247,17 @@ pub enum SessionEvent {
         session_id: String,
         /// Why.
         reason: ExitReason,
+    },
+    /// A bounded look at a session's working directory finished.
+    ///
+    /// Produced by a task the provider spawned, never by an actor: the probe
+    /// runs `git` subprocesses, and awaiting them on the loop would delay every
+    /// *other* session's transcript delivery and the outbox flush.
+    WorktreeObserved {
+        /// Which session was observed.
+        session_id: String,
+        /// What git reported — every field optional, nothing fatal.
+        observed: crate::git_probe::GitProbe,
     },
 }
 
