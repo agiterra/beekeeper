@@ -142,9 +142,23 @@ honest failure receipts; minimal UI surfacing.
 **Scope:**
 - New kind `KIND_CODING_SESSION_GENESIS` (regular, channel-scoped,
   operator-signed; content: `sessionRef`, `v`; `h` tag). Full Appendix B.1
-  checklist, including the ingest test sweep + relay rule: reject a second
-  genesis for the same `sessionRef` in the same channel (dedupe check at
-  ingest, patterned on existing envelope validators).
+  checklist, including the ingest test sweep.
+- **Genesis uniqueness slice (decided 2026-08-15):** ingest-time envelope
+  validators are pure and cannot enforce uniqueness, so uniqueness of
+  genesis per (channel, `sessionRef`) is enforced **transactionally in
+  buzz-db** using the advisory-lock precedent — first insert wins, a
+  duplicate is rejected with `OK false` (no acceptance receipt; receipts
+  stay in A4). This slice is deliberate A4 groundwork: it proves the
+  first-accepted-wins serialization architecture in its smallest form.
+  Requires `just test` (Postgres + Redis).
+- **Resolution rule (design invariant):** genesis is always resolved **by
+  event id** through the receipt-joined create — nothing ever queries
+  "the genesis for `sessionRef` X." Provider backfills the `genesisRef`
+  its create names; desktop resolves founder via create→receipt→genesis;
+  A4 chains root at a genesis id. Any duplicate that exists anyway
+  (pre-uniqueness history, future multi-relay, a bug) therefore degrades
+  to a flagged foreign attachment, never a bricked session. The provider
+  fails closed on discovered ambiguity.
 - 44221 `session.create` gains optional `genesisRef` (event id hex) via the
   **exact-fields two-form precedent** (Appendix B.3): historical 9-key form
   or new 10-key form, nothing between/beyond, with the smuggle-rejection
