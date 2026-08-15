@@ -50,6 +50,13 @@ cheaply**. The rules:
 - `just ci` before declaring any bite done. `just test` (needs
   Postgres+Redis via `just relay` infra) for bites touching
   `buzz-relay`/`buzz-db`/`buzz-auth`.
+- In feature worktrees `just ci`'s desktop file-size check needs an
+  explicit base — there is no local `main` and origin carries only
+  `integrated`: run with
+  `CHECK_FILE_SIZES_BASE=$(git merge-base upstream/main HEAD)`.
+  Do not edit the upstream script to add fork fallbacks; glue stamps the
+  CI base ref for assembled builds. A `just ci` claimed green without
+  this leg having run is not green — say which legs ran.
 - New event kinds follow the **full checklist in Appendix B.1** — a kind
   registered in one gate but not another is the known foot-gun.
 - **Decisions reserved to Brian** (do not implement past them):
