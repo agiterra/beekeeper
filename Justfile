@@ -332,7 +332,9 @@ test: test-genesis
 test-genesis: _ensure-services
     #!/usr/bin/env bash
     set -euo pipefail
-    db="buzz_genesis_gate"
+    # Unique per run: a fixed name collides when two worktrees run the gate
+    # at once (ruling R18), and both would drop each other's database.
+    db="buzz_genesis_gate_$$_$(date +%s)"
     pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
     cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
     trap cleanup EXIT
