@@ -658,8 +658,11 @@ pub async fn create_channel(
         "open" | "private" => visibility.as_str(),
         other => return Err(format!("invalid visibility: {other}")),
     };
+    // "transport" is machine-created only (hidden per-project session
+    // transport) — the channel-creation UI offers stream/forum, and the
+    // session flow is the sole transport caller.
     let ct = match channel_type.as_str() {
-        "stream" | "forum" => channel_type.as_str(),
+        "stream" | "forum" | "transport" => channel_type.as_str(),
         other => return Err(format!("invalid channel_type: {other}")),
     };
 

@@ -1,9 +1,25 @@
 // Channel domain types — split out of types.ts (which re-exports them) to
 // keep that file under the repo's file-size guard.
 
-export type ChannelType = "stream" | "forum" | "dm";
+export type ChannelType = "stream" | "forum" | "dm" | "transport";
 export type ChannelVisibility = "open" | "private";
 export type ChannelRole = "owner" | "admin" | "member" | "guest" | "bot";
+
+/**
+ * Whether a channel is a hidden per-project session transport.
+ *
+ * Transport channels carry machine traffic (coding-session events) and are
+ * never a user surface: `useChannelsQuery` filters them from its returned
+ * list by default, so every downstream channel list (sidebar, pickers,
+ * search, mentions, member views) hides them without per-surface checks.
+ * Identity is the relay-assigned `channel_type` — never the display name,
+ * which a person could reuse for a real channel.
+ */
+export function isSessionTransportChannel(
+  channel: Pick<Channel, "channelType">,
+): boolean {
+  return channel.channelType === "transport";
+}
 
 export type Channel = {
   id: string;
