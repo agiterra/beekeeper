@@ -75,10 +75,10 @@ export const KIND_GIT_STATUS_DRAFT = 1633;
 // h-tags = currently-hidden DM channel ids).
 export const KIND_DM_VISIBILITY = 30622;
 
-// ── Coding sessions (44220–44225) ────────────────────────────────────────────
+// ── Coding sessions (44220–44226) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
-// directory. All six are channel-scoped (`h` tag) and never enter
+// directory. All seven are channel-scoped (`h` tag) and never enter
 // CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
 // its own workspace surface, not to the chat timeline. Names mirror
 // crates/buzz-core/src/kind.rs — keep them in sync.
@@ -100,6 +100,10 @@ export const KIND_CODING_SESSION_METADATA = 44223;
 export const KIND_CODING_SESSION_LIFECYCLE_RECEIPT = 44224;
 // NIP-CST: one provider-authored, sequenced transcript step (`cst1-1`).
 export const KIND_CODING_SESSION_TRANSCRIPT = 44225;
+// NIP-CSG: the operator-signed origin of one umbrella session (`csg1-1`). The
+// signer is the founder; the `csg-session` tag makes that founder resolvable in
+// one filtered query rather than by scanning session history.
+export const KIND_CODING_SESSION_GENESIS = 44226;
 
 // Every coding-session kind, in one place, so the regression guard keeping them
 // out of the chat timeline cannot silently miss a newly added member.
@@ -110,6 +114,7 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_TRANSCRIPT,
+  KIND_CODING_SESSION_GENESIS,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

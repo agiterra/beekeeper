@@ -8,6 +8,7 @@ import {
   CODING_SESSION_EVENT_KINDS,
   isConversationalUnreadKind,
   KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
@@ -94,6 +95,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       metadata: KIND_CODING_SESSION_METADATA,
       lifecycleReceipt: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
       transcript: KIND_CODING_SESSION_TRANSCRIPT,
+      genesis: KIND_CODING_SESSION_GENESIS,
     },
     {
       command: 44220,
@@ -102,9 +104,10 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       metadata: 44223,
       lifecycleReceipt: 44224,
       transcript: 44225,
+      genesis: 44226,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 6);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 7);
 });
 
 test("codingSessionKinds_neverEnterTheChatTimeline", () => {
