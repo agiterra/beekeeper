@@ -1492,8 +1492,10 @@ pub enum CodingSessionGenesisInsertOutcome {
         /// a rival claim.
         was_inserted: bool,
     },
-    /// A different live genesis already founded this `(channel, sessionRef)`.
-    /// Nothing was written.
+    /// A different genesis already founded this `(channel, sessionRef)`.
+    /// Nothing was written. The winner may itself be soft-deleted — a founded
+    /// reference is never released, see the `Soft deletion` section on
+    /// [`insert_coding_session_genesis_event`].
     AlreadyFounded {
         /// Raw event id of the genesis that won, for the rejection message.
         existing_event_id: Vec<u8>,
@@ -1536,9 +1538,25 @@ pub enum CodingSessionGenesisInsertOutcome {
 ///
 /// # Soft deletion
 ///
-/// The probe only considers live rows, so deleting a genesis releases its
-/// reference to be founded again, consistently with every other uniqueness and
-/// replacement probe in this crate.
+/// The probe counts soft-deleted rows too, deliberately breaking with every
+/// other uniqueness and replacement probe in this crate. A genesis is not a
+/// piece of content occupying a name that a later writer may take over; it is
+/// the permanent identity anchor for one umbrella. Releasing its reference on
+/// deletion would hand a session's foundership to whoever asked next — the
+/// exact outcome the lock above exists to prevent — so a founded reference
+/// stays founded forever. Sessions end through lifecycle facts, never by
+/// freeing identity.
+///
+/// The relay refuses NIP-09 deletion of a genesis outright, so a soft-deleted
+/// genesis should not arise through the ordinary path at all. Counting deleted
+/// rows here is defense in depth: any future path that marks one deleted (an
+/// operator statement, a moderation tool, a bug) must not also silently reopen
+/// the identity question.
+///
+/// This is not a claim that genesis *content* is unredactable. Identity facts
+/// are permanent; redacting content is a separate question with a separate
+/// answer, and conflating the two is what makes "delete" look like a way to
+/// re-found a session.
 pub async fn insert_coding_session_genesis_event(
     pool: &PgPool,
     community_id: CommunityId,
@@ -1567,10 +1585,13 @@ pub async fn insert_coding_session_genesis_event(
     // sessions and the containment test runs over that handful.
     // `ORDER BY created_at ASC, id ASC` makes the reported winner deterministic
     // if history already holds more than one claim.
+    //
+    // No `deleted_at IS NULL` — a soft-deleted genesis still occupies its
+    // reference. See the `Soft deletion` section above.
     let existing: Option<(Vec<u8>,)> = sqlx::query_as(
         "SELECT id FROM events \
          WHERE community_id = $1 AND kind = $2 AND channel_id = $3 \
-         AND deleted_at IS NULL AND id <> $4 AND tags @> $5::jsonb \
+         AND id <> $4 AND tags @> $5::jsonb \
          ORDER BY created_at ASC, id ASC LIMIT 1",
     )
     .bind(community_id.as_uuid())
@@ -3039,6 +3060,61 @@ mod tests {
             "a refused genesis must not be stored — a rejection is not a receipt"
         );
         assert_eq!(count_live_genesis(&pool, community, &session_ref).await, 1);
+    }
+
+    /// Deleting a genesis must not release its reference.
+    ///
+    /// The relay refuses NIP-09 deletion of kind 44226 outright, so this is the
+    /// backstop for every *other* way a row could end up soft-deleted. If the
+    /// probe skipped deleted rows, "delete your genesis" would be a supported
+    /// way to hand your session's foundership to the next person who asks.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_soft_deletion_does_not_release_the_session_ref() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = make_genesis_event(&Keys::generate(), channel, &session_ref);
+        insert_coding_session_genesis_event(&pool, community, &founder, channel, None)
+            .await
+            .expect("found the session");
+
+        assert!(
+            soft_delete_event(&pool, community, founder.id.as_bytes())
+                .await
+                .expect("soft-delete the genesis"),
+            "the fixture must actually mark the founder deleted"
+        );
+        assert_eq!(
+            count_live_genesis(&pool, community, &session_ref).await,
+            0,
+            "the row must really be soft-deleted, or this test proves nothing"
+        );
+
+        let rival = make_genesis_event(&Keys::generate(), channel, &session_ref);
+        match insert_coding_session_genesis_event(&pool, community, &rival, channel, None)
+            .await
+            .expect("rival claim over a deleted founder")
+        {
+            CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id } => {
+                assert_eq!(
+                    existing_event_id,
+                    founder.id.as_bytes().as_slice(),
+                    "a deleted genesis still names itself as the founder to resolve to"
+                );
+            }
+            other => panic!("a deleted reference must stay claimed, got {other:?}"),
+        }
+
+        assert!(
+            get_event_by_id(&pool, community, rival.id.as_bytes())
+                .await
+                .expect("look up rival")
+                .is_none(),
+            "the refused rival must leave nothing behind"
+        );
     }
 
     /// Uniqueness is per `(channel, sessionRef)`. Neither axis alone may
