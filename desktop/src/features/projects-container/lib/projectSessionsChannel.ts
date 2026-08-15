@@ -68,10 +68,13 @@ type ProjectSessionTransportCandidate = {
  * events are `h`-scoped. Showing that implementation channel beside the
  * session gives two plausible doors: one opens the workspace and the other an
  * empty chat timeline. A `channel_type = "transport"` channel is always
- * hidden (the relay-assigned type is the identity); the canonical
- * name/description match remains as the legacy fallback for transports
- * created before the type existed — an ordinary chat channel hosting a
- * standalone session stays visible.
+ * hidden (the relay-assigned type is the identity). A channel carrying the
+ * canonical creation-stamp description is hidden too, sessions or not — the
+ * stamp is written only by this app's own fallback create against a relay
+ * that predates the transport type, and waiting for session ingestion left
+ * the freshly created fallback visible in the sidebar. The canonical *name*
+ * alone still hides only channels that actually host sessions, so a person
+ * who happens to name an ordinary chat channel `<project> sessions` keeps it.
  */
 export function withoutProjectSessionTransportChannels<
   T extends ProjectSessionTransportCandidate,
@@ -90,9 +93,9 @@ export function withoutProjectSessionTransportChannels<
   return input.channels.filter(
     (channel) =>
       channel.channelType !== "transport" &&
+      channel.description?.trim() !== canonicalDescription &&
       (!sessionChannelIds.has(channel.id) ||
-        (!namesMatch(channel.name, canonicalName) &&
-          channel.description?.trim() !== canonicalDescription)),
+        !namesMatch(channel.name, canonicalName)),
   );
 }
 

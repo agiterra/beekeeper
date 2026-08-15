@@ -308,3 +308,87 @@ test("active coding-session paths preserve exact encoded coordinates", () => {
     null,
   );
 });
+
+test("executions sharing an umbrella sessionRef collapse to the one with a transcript", () => {
+  // The prod repro: one create left the provider's abandoned handshake
+  // session (metadata only, no transcript) next to the real one; both echo
+  // the same umbrella sessionRef and rendered as two identical-looking rows.
+  const shelf = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "phantom",
+          sessionRef: "8e0e9f45-92b3-4fc7-84e6-affab615126a",
+          transcript: [],
+          lastEventAt: "2026-08-15T13:28:16.000Z",
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "real",
+          sessionRef: "8e0e9f45-92b3-4fc7-84e6-affab615126a",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+          lastEventAt: "2026-08-15T13:00:17.000Z",
+        }),
+      },
+    ]),
+  );
+  assert.deepEqual(
+    shelf.entries.map((entry) => entry.generationId),
+    ["real"],
+  );
+});
+
+test("distinct umbrellas and pre-umbrella records keep their own rows", () => {
+  const shelf = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({ generationId: "a", sessionRef: "umbrella-a" }),
+      },
+      {
+        channelId: "transport",
+        session: session({ generationId: "b", sessionRef: "umbrella-b" }),
+      },
+      {
+        channelId: "transport",
+        session: session({ generationId: "legacy", sessionRef: null }),
+      },
+    ]),
+  );
+  assert.deepEqual(shelf.entries.map((entry) => entry.generationId).sort(), [
+    "a",
+    "b",
+    "legacy",
+  ]);
+});
+
+test("within an umbrella, an active transcripted execution beats a finished one", () => {
+  const shelf = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "finished",
+          sessionRef: "shared",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+          lastEventAt: "2026-08-15T14:00:00.000Z",
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "active",
+          sessionRef: "shared",
+          transcript: [{ type: "lifecycle", title: "Status", text: "running" }],
+          lastEventAt: "2026-08-15T13:00:00.000Z",
+        }),
+      },
+    ]),
+  );
+  assert.equal(shelf.entries.length, 1);
+  assert.equal(shelf.entries[0].generationId, "active");
+  assert.equal(shelf.entries[0].status.kind, "working");
+});

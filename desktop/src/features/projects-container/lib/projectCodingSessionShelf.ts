@@ -89,8 +89,8 @@ export function resolveProjectCodingSessionShelf(
     };
   }
 
-  const entries = catalog.entries
-    .map(({ channelId, session }) => {
+  const entries = collapseProjectCodingSessionUmbrellas(
+    catalog.entries.map(({ channelId, session }) => {
       const placement = resolveProjectCodingSessionPlacement(
         session.projectRef,
         channelId,
@@ -112,8 +112,8 @@ export function resolveProjectCodingSessionShelf(
         status: deriveCodingSessionWorkspaceStatus(session.transcript),
         session,
       };
-    })
-    .sort(compareProjectCodingSessionEntries);
+    }),
+  ).sort(compareProjectCodingSessionEntries);
 
   if (catalog.errorMessage) {
     return {
@@ -171,6 +171,70 @@ export function resolveProjectCodingSessionPlacement(
   return owning !== undefined
     ? { projectId: owning, placedBy: "channel" }
     : { projectId: null, placedBy: null };
+}
+
+/**
+ * One shelf row per umbrella session, not per provider execution.
+ *
+ * A single create can leave several executions behind (the provider opens an
+ * ACP session, abandons it during the handshake, and opens the real one);
+ * they share a `sessionRef` and the workspace already presents them as one
+ * session, so listing each execution shows N identical-looking rows that all
+ * open the same place. Records without a sessionRef predate umbrellas and
+ * stay one row each.
+ */
+export function collapseProjectCodingSessionUmbrellas(
+  entries: readonly ProjectCodingSessionShelfEntry[],
+): ProjectCodingSessionShelfEntry[] {
+  const byUmbrella = new Map<string, ProjectCodingSessionShelfEntry>();
+  for (const entry of entries) {
+    const key = `${entry.channelId}|${
+      entry.session.sessionRef ?? `implicit:${entry.generationId}`
+    }`;
+    const current = byUmbrella.get(key);
+    if (!current || representsUmbrellaBetter(entry, current)) {
+      byUmbrella.set(key, entry);
+    }
+  }
+  return [...byUmbrella.values()];
+}
+
+/**
+ * The execution a collapsed row stands for: one with an actual transcript
+ * beats a metadata-only phantom, an active one beats a finished one, and
+ * newer activity breaks ties.
+ */
+function representsUmbrellaBetter(
+  candidate: ProjectCodingSessionShelfEntry,
+  current: ProjectCodingSessionShelfEntry,
+): boolean {
+  const candidateHasTranscript = candidate.session.transcript.length > 0;
+  const currentHasTranscript = current.session.transcript.length > 0;
+  if (candidateHasTranscript !== currentHasTranscript) {
+    return candidateHasTranscript;
+  }
+  const byStatus =
+    umbrellaStatusPriority(candidate.status) -
+    umbrellaStatusPriority(current.status);
+  if (byStatus !== 0) return byStatus < 0;
+  return (
+    candidate.session.lastEventAt.localeCompare(current.session.lastEventAt) > 0
+  );
+}
+
+/** Unlike display ordering, a known-finished state beats "unknown" here: a
+ * transcriptless record is a phantom, not the session's face. */
+function umbrellaStatusPriority(status: CodingSessionWorkspaceStatus): number {
+  switch (status.kind) {
+    case "working":
+      return 0;
+    case "idle":
+      return 1;
+    case "ended":
+      return 2;
+    case "unknown":
+      return 3;
+  }
 }
 
 /** Split resolved entries into the per-project buckets the sidebar renders. */

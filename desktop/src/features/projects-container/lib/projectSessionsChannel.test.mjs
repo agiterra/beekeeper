@@ -45,13 +45,33 @@ test("a dedicated transport disappears once its session row can replace it", () 
   );
 });
 
-test("a generated transport remains visible until a session row exists", () => {
+test("a stamped transport is hidden even before any session row exists", () => {
+  // The prod repro: the old-relay fallback creates the channel seconds before
+  // the first session's events land, and waiting for catalog ingestion left
+  // the freshly created channel sitting in the sidebar. The canonical
+  // description is this app's own creation stamp — hide on sight.
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels: [
+        {
+          id: "sessions",
+          name: "Buzz Glue sessions",
+          description: "Coding sessions for Buzz Glue.",
+        },
+      ],
+      codingSessions: [],
+    }),
+    [],
+  );
+});
+
+test("a person's own '<project> sessions' channel stays visible while it hosts none", () => {
+  // Only the name matches — no creation stamp, no hosted sessions. A human
+  // could legitimately name a chat channel this way; keep it until sessions
+  // actually live there.
   const channels = [
-    {
-      id: "sessions",
-      name: "Buzz Glue sessions",
-      description: "Coding sessions for Buzz Glue.",
-    },
+    { id: "sessions", name: "Buzz Glue sessions", description: "Planning" },
   ];
   assert.deepEqual(
     withoutProjectSessionTransportChannels({
