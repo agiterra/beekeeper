@@ -299,10 +299,12 @@ ACL re-reveal precedent).
 **Goal:** `takeover` transition type; admin-sourced; timeline-visible;
 honest inheritance bounds (no machine, no memory, no dirty work).
 **Pre-work in-bite:** G3 check (relay reads `relay_members` for admin
-standing at validation; desktop displays from 13534/39001); G4 adversarial
-review of the full chain rules (forged genesis, replay, competing
-takeovers, head-stripping) — **written review artifact required before
-code**; use a strong-model reviewer.
+standing at validation; desktop displays from 13534/39001). G4 is **split
+and scheduled** (ruling R12): a narrow chain/race review inside A4's
+acceptance; the full adversarial review (forged genesis, replay, competing
+takeovers, head-stripping) as its own scheduled bite after A6/A7 schemas
+stabilize — **written artifact approved before the first A9 code commit**;
+use a strong-model reviewer.
 **Stop-and-reassess if:** G4 finds a hijack path → fix rules first;
 takeover is the one place a design error is a security incident.
 
@@ -474,6 +476,86 @@ sessions ----`) — extend it; no e2e coverage exists for these kinds (add
 e2e only for live fan-out behavior unit tests can't reach). Provider:
 inline tests in `commands.rs` (504+) and `lib.rs` (1190+). Desktop:
 existing composer/model test patterns beside the files they test.
+
+### B.7a Rulings log — 2026-08-15 (Opus Q1–Q14, Sol review, Fable adjudication)
+
+Consolidated rulings on the questions raised during A1/P-track execution.
+Sol's recommendations were adopted on all fourteen, with the addenda noted.
+These override earlier text where they conflict.
+
+- **R1 (branch):** Build against `feature/coding-sessions` alone; it must
+  compile and test independently. Copy *behavioral patterns* from NIP-ST
+  (A6) without importing feature-only modules. The A8 picker reuse is real
+  cross-feature coupling: either extract a generic base component or put
+  the adapter on `integration/glue`. `feature/coding-sessions` must never
+  depend on `feature/project-access`. An integration ceremony is needed
+  before any cross-feature testing (Brian schedules).
+- **R2 (P1 owner):** Implementer builds the provenance package + procedure;
+  Brian selects the real session, authorizes two bounded runs (one Claude,
+  one Codex), and judges continuation quality. P1 blocks B2/B3/B4 only.
+- **R3 (DB test gate):** A security property whose test never runs is not
+  a proof. Add a **targeted** isolated-Postgres gate running the genesis
+  concurrency proofs (`--run-ignored ignored-only`, externally serialized
+  if needed). Do not make the whole buzz-db suite serial-safe this phase.
+- **R4 (reachability):** Provider-side, via a narrow
+  `git_object_reachable(repo, oid)` on the shared relay client
+  (`HarnessRelay` already carries the NIP-98 `RestClient`). It must
+  reproduce the git credential helper's repo-root NIP-98 signing, not the
+  REST bridge's exact-path binding. Run it async; the provider signs the
+  resulting fact. No desktop-side authorship weakening; no new relay
+  endpoint.
+- **R5 (event-loop stall):** Fix now, not at B1. The probe already runs
+  per completed turn with a structural worst case near 4 s. Move probing
+  to a task/result channel; this also enables R14.
+- **R6 (genesis deletion):** **Deletion must not release `sessionRef`.**
+  A genesis is a permanent identity anchor: reject NIP-09 deletion of
+  genesis events, and count soft-deleted rows in the uniqueness probe as
+  defense in depth. Sessions end via lifecycle facts, never by freeing
+  identity. (Consistent with the A8 durable-record-vs-revocation note:
+  identity facts are permanent; content redaction is a separate question.)
+- **R7 (`csg-session` tag):** Keep it, restrict its normative meaning:
+  relay/storage may use it for uniqueness enforcement and diagnostics;
+  **consumers must never select authority by it** — authority resolves
+  only through an explicit `genesisRef` event id. Fix the
+  `coding_session_genesis.rs` module doc, which currently invites
+  tag-based consumer queries in contradiction of the invariant.
+- **R8 (legacy sessions — security-critical):** With first-insert-wins
+  uniqueness, an ordinary genesis could *claim* a legacy `sessionRef`
+  (first-claim hijack). Before genesis deploys: reject an ordinary
+  genesis whenever accepted legacy create history already uses the
+  `sessionRef`; add an **adoption** flow — a genesis referencing the
+  accepted founding create/receipt, relay-verified so the signer matches
+  the deterministically projected founder (receipt-joined earliest
+  create); genuinely ambiguous founders require audited admin adoption
+  (arrives with A9 machinery). Until adoption ships, legacy sessions stay
+  readable and visibly ungoverned — and unclaimable. Addendum: the
+  uniqueness probe must count adoption geneses identically (see R6).
+- **R9 (44221 shapes):** Exactly three accepted forms — historical
+  8-key, 9-key with `sessionRef`, 10-key with `sessionRef` + `genesisRef`.
+  `genesisRef` without `sessionRef` is rejected; so is everything else.
+- **R10 (git method binding):** Existing constrained behavior; document
+  as security debt, do not redesign this phase. B1 mimics the credential
+  helper's signing contract (see R4).
+- **R11 (`hall` vs `hallway`):** Not demonstrated as a bug — provider
+  state shows `repoRef: null` on the surviving records, and project vs
+  repo `d` values are independent under NIP-MP. Needs the exact compared
+  events before it's treated as drift; otherwise drop.
+- **R12 (G4):** Split and scheduled — see A9 pre-work text.
+- **R13 (multi-relay):** Confirmed intended, not accidental:
+  `sessionRef` is an umbrella *label*; canonical identity is the genesis
+  **event id** in its relay/community/channel context. The same signed
+  genesis mirrored elsewhere is the same origin; an independently signed
+  genesis with the same UUID is a different session. Reinforces R7.
+- **R14 (public async API):** Undo. Once R5 lands, restore
+  `handle_session_event` to synchronous and `pub(crate)`; no external
+  callers exist, and the feature branch should stay upstream-clean.
+
+**Immediate order:** R6 → R7 → R8 → R3 gate (and run the gated proofs) →
+R5/R14 → run `just ci` to completion (it has not yet been reported green
+over the buzz-db commits) → resume A1 bootstrap. Opus's flagged
+unverified items (P2's timing/pkt-line figures, P3's timing table, the
+concurrency mutation claim) are re-verified by a checking agent when B1
+consumes them — not before.
 
 ### B.7 Patterns to copy from shipped work
 Project ACL composition + fail-closed gate:
