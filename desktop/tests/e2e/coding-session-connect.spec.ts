@@ -39,6 +39,14 @@ test("a signed-out runtime offers Connect and flips ready after the login", asyn
   page,
 }) => {
   await installMockBridge(page, {
+    globalAgentConfig: {
+      env_vars: {},
+      provider: null,
+      model: null,
+      "allowed-bridge-pubkeys": [
+        { pubkey: PROVIDER_PUBKEY, label: "This computer (coding sessions)" },
+      ],
+    },
     codingSessionProviderStatus: {
       provisioned: true,
       running: true,
@@ -67,7 +75,12 @@ test("a signed-out runtime offers Connect and flips ready after the login", asyn
     },
     connectAcpRuntimeResult: { launched: true },
   });
-  await page.goto("/coding-sessions/new");
+  // The e2e static server cannot serve SPA subroutes directly — enter the
+  // create screen the way a person does, through a channel's sessions menu.
+  await page.goto("/");
+  await page.getByTestId("channel-engineering").click();
+  await page.getByTestId("channel-coding-sessions-trigger").click();
+  await page.getByTestId("channel-coding-sessions-new").click();
 
   const provider = page.getByTestId("new-coding-session-provider");
   await expect(provider).toBeVisible();
