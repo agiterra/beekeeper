@@ -8,22 +8,26 @@ use buzz_core::{
         coding_session_target_key, CodingSessionCommandPayload, CodingSessionTarget,
         CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
     },
+    coding_session_genesis::{
+        CodingSessionGenesisPayload, CODING_SESSION_GENESIS_TAG_VERSION, MAX_GENESIS_CONTENT_BYTES,
+    },
     coding_session_lifecycle_command::{
         CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
         MAX_LIFECYCLE_CONTENT_BYTES,
     },
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
-        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-        KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-        KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION,
-        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
-        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
-        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
-        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
-        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
+        KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
+        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
+        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
+        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
+        KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -2355,6 +2359,33 @@ pub fn build_delete_addressable(
 // projects. Every tag list is ordered and derived from the payload — a tag and
 // the content it addresses can never disagree, because the caller never supplies
 // the tag.
+
+/// Build a coding-session genesis event (kind 44226).
+///
+/// The **human operator** signs the returned builder — never a provider, never
+/// an agent. That signature is the founder record for the umbrella session, and
+/// nothing downstream can substitute for it, so a caller that signs this with a
+/// service key has silently made that service the founder.
+///
+/// The `csg-session` tag is re-derived from the payload here and re-derived
+/// again by the relay, so the filterable reference and the signed reference are
+/// the same string by construction.
+pub fn build_coding_session_genesis(
+    channel_id: Uuid,
+    payload: &CodingSessionGenesisPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session genesis serialization: {error}"))
+    })?;
+    check_content(&content, MAX_GENESIS_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csg-v", CODING_SESSION_GENESIS_TAG_VERSION])?,
+        tag(&["csg-session", &payload.session_ref])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_GENESIS as u16), content).tags(tags))
+}
 
 /// Build a provider-neutral coding-session command (kind 44220).
 ///
@@ -5156,6 +5187,49 @@ mod tests {
                 initial_turn: None,
             },
         }
+    }
+
+    /// The founder record: three ordered tags, and a `csg-session` tag that is
+    /// the payload's own reference so a filter lookup and the signed content can
+    /// never name different umbrellas.
+    #[test]
+    fn coding_session_genesis_builder_emits_ordered_payload_derived_tags() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let payload = CodingSessionGenesisPayload::new(session_ref);
+        let event = build_coding_session_genesis(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GENESIS);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csg-v".into(), "csg1-1".into()),
+                ("csg-session".into(), session_ref.into()),
+            ]
+        );
+        assert_eq!(
+            buzz_core::coding_session_genesis::decode_coding_session_genesis(&event.content)
+                .unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn coding_session_genesis_builder_rejects_invalid_payloads() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_genesis(
+            channel,
+            &CodingSessionGenesisPayload::new("umbrella")
+        )
+        .is_err());
+
+        let mut payload = CodingSessionGenesisPayload::new("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        payload.v = 2;
+        assert!(build_coding_session_genesis(channel, &payload).is_err());
     }
 
     #[test]
