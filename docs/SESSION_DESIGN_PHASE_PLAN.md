@@ -1,6 +1,6 @@
 # Sessions: design-phase plan
 
-**Status:** dependency-ordered plan for the authority-centric phase. **v2.**
+**Status:** dependency-ordered plan for the authority-centric phase. **v3.**
 Companion to [SESSION_NEXT_PHASE_BRIEF.md](SESSION_NEXT_PHASE_BRIEF.md) (input)
 and [SESSION_VISION.md](SESSION_VISION.md) (the 2028 horizon it serves).
 **Written:** 2026-08-15 (v1); revised same day (v2) after external review.
@@ -18,6 +18,13 @@ deferred hardening to a collaboration release gate; fork cuts become
 multi-stream manifests; recorded commits are not called recoverable until the
 relay confirms the object; history seeding preserves provenance; and D6 gains
 a recovery matrix. Where v1 text survives, it is unchanged.
+
+v3 (same day) adds §7: reconciliation of an independent idea-level review
+(gpt-5.6-sol, unanchored — given only the vision and brief), reconciliation
+of newly discovered shipped work on `upstream/feature/project-access` and
+`upstream/feature/builtin-shell`, and a document status index. §§0–6 are
+unchanged from v2 except this note. Execution now lives in
+[SESSION_EXECUTION_PLAN.md](SESSION_EXECUTION_PLAN.md).
 
 Markers, extending the brief's legend:
 
@@ -632,3 +639,101 @@ Checked against the vision's product invariants:
 | #3 default me; invite + co-input while connected | D2: session capability ∩ host lease; relay enforcement is the release gate; quota-spend host-authorized and labeled |
 | #4 fork to own machine / copy own session | D5 (slice 1 same-machine, slice 2 cross-machine) |
 | #5 shared visibility; invite collaborators | Viewer-by-default **[DECIDED]** + D2 grants |
+
+---
+
+## 7. v3 addendum — review reconciliation, shipped work, document index
+
+### 7.1 Independent idea review, reconciled
+
+An unanchored review by gpt-5.6-sol (given only SESSION_VISION.md and the
+brief; no plan, no decisions, no prior analyses) endorsed the center of
+gravity — "the durable unit should be the work session, not the vendor
+process" — and challenged the vision as too transcript-centric and too
+casual about collaboration vs remote operational control.
+
+**Adopted into execution posture** (no design change needed):
+
+- **Attribution ≠ verification.** Provider-signed facts establish who
+  claimed something, not that it is true. Rendering rule for all session
+  surfaces: signed facts render as *claims by their author* ("provider X
+  reported the tests passed"), never as verified outcomes. Costs wording,
+  prevents a trust bug.
+- **Semantic capability, not host telemetry.** Matches the NIP-ST precedent
+  (§7.2) exactly; governs the eventual return of must-have #2.
+- **Continuity levels.** The review's seven-level continuity ladder is the
+  user-facing generalization of D4a's five-facts honesty rule; continuation
+  UI copy should name the level ("continued from history only" vs
+  "continued at a verified commit").
+
+**New named design question** (assigned to the authority track, to be
+answered before the invite UI ships): **durable record vs revocable
+access.** What happens on membership loss, a secret in a transcript, or a
+private→shared transition, given an immutable signed record. Ingredients
+that already exist: NIP-09 deletion, project-ACL re-reveal machinery
+(`delete_project_acl`), and the viewer-model composition in §7.2.
+
+**[OPEN-BRIAN] — challenges to standing decisions.** Standing decisions
+remain in force until Brian rules otherwise:
+
+1. **Custody vs presence-gated co-input.** The review argues for explicit
+   operational custody — one control-token holder per execution, visible
+   consensual transfer — over simultaneous co-input with queue receipts.
+   Affects the shape of the lease/queue bites (B-track A6), not A1–A5.
+2. **A "Contribute" rung** (add context/direction without controlling
+   execution) between viewer and operator.
+3. **Goal wording.** "Permanent goal" vs visible revision history.
+   Execution rule adopted regardless: the goal representation must not
+   destroy history; only the UI promise is open.
+4. **Fork knowledge cite-back** (lightweight citation of another session,
+   no merge). Post-phase; the lineage pointer already enables it.
+
+### 7.2 Shipped work reconciled (upstream, 2026-08-11 → 08-13)
+
+**`feature/project-access`** (Andy): project-level ACL on kind:30621 —
+`buzz-access: public|private` + invited members as `p` tags (owner
+implicit, cap 256), **relay-authoritative and fail-closed** at every read
+chokepoint (REQ/COUNT/search/fan-out/git) via `project_acl` tables and a
+cached per-channel `ProjectGate`. Flat two-tier (owner + members), no
+roles. Consequences for this plan:
+
+- **Session visibility composes**: viewer-by-default (decision 6) means
+  *channel membership ∩ project gate* — already relay-enforced. A session
+  in a private project is already invite-only with zero new machinery,
+  which answers the review's visibility-default critique natively: teams
+  that want private-until-invited sessions put them in private projects.
+- The invite picker (`PersonaShareRecipients` + `allowDirectPubkeyEntry`)
+  is the component the grant/invite UI reuses.
+
+**`feature/builtin-shell`** (Andy, NIP-ST): terminal observation that
+**reuses the project ACL wholesale** rather than inventing grants —
+addressable announce (30623, deliberately no cwd/no shell path) plus
+ephemeral watch/frame kinds (24310/24311), relay-enforced at write,
+fan-out, and read; observers structurally have no input path; frames only
+trusted from the owner's own signature; freshness windows and per-pubkey
+rate limits. Consequences:
+
+- The relay enforcement bite (command binding) copies these patterns
+  (`filter_fanout_by_access` branch, `*_hidden_from` read predicate,
+  coordinate-gate cache, `ScopedRateLimiter`).
+- Must-have #2's eventual shape has a shipped precedent: owner-controlled,
+  opt-in, semantic-status-only observation.
+
+**Not verifiable from here:** the relay git origin (lightyear) rejects
+non-interactive auth (no Nostr key configured for `git-credential-nostr`).
+If Andy's agents push only to the relay, that work is invisible to this
+plan. **Brian: run `git fetch origin` interactively before kickoff.**
+
+### 7.3 Document status index
+
+| Document | Status |
+| --- | --- |
+| `SESSION_VISION.md` | **Product authority.** Current. |
+| `SESSION_NEXT_PHASE_BRIEF.md` | Input snapshot for this phase. Its §3 [UNVERIFIED] items are promoted/refuted in §1 of this plan. |
+| `SESSION_DESIGN_PHASE_PLAN.md` | **Design authority** for the phase (this document, v3). |
+| `SESSION_EXECUTION_PLAN.md` | **Execution authority** — bites, proofs, orchestration rules. |
+| `SESSION_PATH.md`, `SESSION_STEP4_DESIGN.md` | Historical: pre-phase roadmap/design; their Steps 1 and 4 shipped. |
+| `SESSION_NATIVE_SUBSTRATE.md` | Historical reconnaissance input. |
+| `SESSION_HANDOFF_SOL.md`, `SESSION_HANDOFF_SOL_2026-08-14.md` | Historical handoff records. |
+| `coding-session-analysis.md` | Evergreen how-to (querying stored sessions). Current. |
+| `remote-agents.md`, `docs/nips/NIP-CSL.md`, `NIP-CSC.md`, `NIP-ST.md` | Adjacent specs. Current; NIP-CSL/NIP-CSC gain amendments in this phase. |
