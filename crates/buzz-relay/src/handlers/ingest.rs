@@ -1875,6 +1875,26 @@ fn validate_coding_session_genesis_envelope(event: &Event) -> Result<(), String>
     Ok(())
 }
 
+/// The wire answer to a genesis that lost the race for its `sessionRef`.
+///
+/// Deliberately `accepted: false` and nothing else. A rejected duplicate gets
+/// no acceptance receipt of any kind — it is a refusal, and naming the winner
+/// is the whole of what the loser is owed, so the founder it must resolve to
+/// instead is identifiable from the message without a second round trip.
+fn coding_session_genesis_duplicate_result(
+    event_id_hex: String,
+    existing_event_id: &[u8],
+) -> IngestResult {
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message: format!(
+            "duplicate: coding-session already founded by event {}",
+            hex::encode(existing_event_id)
+        ),
+    }
+}
+
 /// Validate the exact public envelope for a coding-session command (44220).
 ///
 /// The signed event pubkey is the operator authority. The payload deliberately
@@ -3212,6 +3232,44 @@ async fn ingest_event_inner(
             .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
             .await
             .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+    } else if kind_u32 == KIND_CODING_SESSION_GENESIS {
+        // Genesis is a regular event, but storing it also decides a question no
+        // pure validator can: whether this pubkey is the founder of this
+        // umbrella, or merely the second to ask. That check has to be atomic
+        // with the insert, so it lives in the storage transaction — see
+        // `buzz_db::event::insert_coding_session_genesis_event`.
+        let Some(genesis_channel) = channel_id else {
+            // `requires_h_channel_scope` already refused a genesis without a
+            // resolvable `h` channel. Failing closed rather than falling
+            // through keeps an unscoped genesis from being stored *without*
+            // the uniqueness check that only a channel makes meaningful.
+            return Err(IngestError::Rejected(
+                "invalid: coding-session genesis requires a channel".into(),
+            ));
+        };
+        let thread_params = thread_meta.as_ref().map(|m| m.as_params());
+        match state
+            .db
+            .insert_coding_session_genesis_event(
+                tenant.community(),
+                &event,
+                genesis_channel,
+                thread_params,
+            )
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        {
+            buzz_db::CodingSessionGenesisInsertOutcome::Founded {
+                stored_event,
+                was_inserted,
+            } => (*stored_event, was_inserted),
+            buzz_db::CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id } => {
+                return Ok(coding_session_genesis_duplicate_result(
+                    event_id_hex,
+                    &existing_event_id,
+                ));
+            }
+        }
     } else {
         let thread_params = thread_meta.as_ref().map(|m| m.as_params());
         match state
@@ -5922,6 +5980,33 @@ mod tests {
         let content = genesis_content(GENESIS_SESSION_REF);
         let substituted = genesis_event(&content, &channel, "0000000a-90d4-4b0e-a1f3-7c2d8e6f4a10");
         assert!(validate_coding_session_genesis_envelope(&substituted).is_err());
+    }
+
+    /// A genesis that loses the race for its reference is refused outright.
+    /// The `accepted: false` here is the whole of the contract: a duplicate
+    /// gets no acceptance receipt, and the message names the founder it must
+    /// resolve to instead.
+    #[test]
+    fn coding_session_genesis_duplicate_is_rejected_without_a_receipt() {
+        let loser = "cd".repeat(32);
+        let winner = hex::decode("ab".repeat(32)).expect("winner id");
+        let result = coding_session_genesis_duplicate_result(loser.clone(), &winner);
+
+        assert_eq!(result.event_id, loser);
+        assert!(
+            !result.accepted,
+            "a rival claim must be refused, not accepted-with-a-note"
+        );
+        assert!(
+            result.message.starts_with("duplicate:"),
+            "duplicates keep the established `duplicate:` wire prefix, got {:?}",
+            result.message
+        );
+        assert!(
+            result.message.contains(&"ab".repeat(32)),
+            "the refusal must name the winning genesis, got {:?}",
+            result.message
+        );
     }
 
     /// Genesis content is two fields and nothing else. A restated founder
