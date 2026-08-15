@@ -10,6 +10,7 @@ import {
   NewCodingSessionScreen,
   type NewCodingSessionProjectContext,
 } from "@/features/coding-sessions/ui/NewCodingSessionScreen";
+import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
 import { useIdentityQuery } from "@/shared/api/hooks";
 
 import {
@@ -46,7 +47,7 @@ export function ProjectNewCodingSessionScreen({
 }: {
   projectId: string;
 }) {
-  const { projects } = useProjectContainers();
+  const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   // Transports included: the resolver's rule 0 and the session buckets both
   // need the hidden transport channel this screen exists to find or create.
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
@@ -68,6 +69,33 @@ export function ProjectNewCodingSessionScreen({
       ) ?? null
     );
   }, [projects, projectId]);
+
+  // The workdir prefill: a local checkout of one of the project's repos.
+  // Resolved async against this computer's registered checkouts + repos-root
+  // scan; null (no repos, no checkout, non-Tauri) leaves the field to the
+  // provider's own remembered directories.
+  const projectRepos = React.useMemo(
+    () =>
+      project
+        ? [
+            ...(reposByProject.get(project.id) ?? []),
+            ...(project.dtag === GENERAL_PROJECT_DTAG ? unclaimedRepos : []),
+          ]
+        : [],
+    [project, reposByProject, unclaimedRepos],
+  );
+  const [repoCheckout, setRepoCheckout] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let cancelled = false;
+    setRepoCheckout(null);
+    if (projectRepos.length === 0) return;
+    void projectDefaultCwd(projectRepos).then((path) => {
+      if (!cancelled && path) setRepoCheckout(path);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectRepos]);
 
   const channelBuckets = React.useMemo(
     () => partitionChannels(projects, channelsQuery.data ?? []),
@@ -153,10 +181,11 @@ export function ProjectNewCodingSessionScreen({
             projectRef:
               project.id === LOCAL_GENERAL_ID ? null : project.address,
             channelId: resolvedChannel?.channelId ?? null,
+            defaultWorkdir: repoCheckout,
             ensureChannelId,
           }
         : null,
-    [ensureChannelId, project, resolvedChannel],
+    [ensureChannelId, project, repoCheckout, resolvedChannel],
   );
 
   if (!projectContext) {

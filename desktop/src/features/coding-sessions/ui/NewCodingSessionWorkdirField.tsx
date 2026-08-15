@@ -20,15 +20,46 @@ import { cn } from "@/shared/lib/cn";
  * used one — so the pre-filled value is the one the create would have used
  * anyway, made visible before it matters instead of after a failed receipt.
  */
+/**
+ * The prefill priority: the project's remembered directory, the channel's,
+ * the caller's fallback (a project repo's local checkout), then the most
+ * recently used directory anywhere.
+ */
+export function preferredWorkdirPrefill({
+  channelId,
+  fallbackPath,
+  projectKey,
+  state,
+}: {
+  channelId: string | null;
+  fallbackPath: string | null;
+  projectKey: string | null;
+  state: Pick<CodingSessionWorkdirState, "byChannel" | "byProject" | "mru">;
+}): string {
+  return (
+    (projectKey ? state.byProject[projectKey]?.path : null) ??
+    (channelId ? state.byChannel[channelId]?.path : null) ??
+    fallbackPath ??
+    state.mru[0]?.path ??
+    ""
+  );
+}
+
 export function NewCodingSessionWorkdirField({
   channelId,
   disabled = false,
+  fallbackPath = null,
   onChange,
   projectKey = null,
   value,
 }: {
   channelId: string | null;
   disabled?: boolean;
+  /** A suggested directory when the provider has nothing remembered — e.g.
+   * the local checkout of one of the project's repositories. It resolves
+   * async, so it may arrive after a lower-priority prefill already landed;
+   * an auto-filled value upgrades, a hand-edited one is never touched. */
+  fallbackPath?: string | null;
   onChange: (path: string) => void;
   /** NIP-MP project coordinate whose remembered directory outranks the
    * channel's — a project-scoped session belongs to the project's checkout. */
@@ -56,15 +87,25 @@ export function NewCodingSessionWorkdirField({
     };
   }, []);
 
+  const autoFilledRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
-    if (!state || touchedRef.current || value.trim().length > 0) return;
-    const preferred =
-      (projectKey ? state.byProject[projectKey]?.path : null) ??
-      (channelId ? state.byChannel[channelId]?.path : null) ??
-      state.mru[0]?.path ??
-      "";
-    if (preferred) onChange(preferred);
-  }, [channelId, onChange, projectKey, state, value]);
+    if (!state || touchedRef.current) return;
+    const current = value.trim();
+    // A hand-entered value is final; an auto-filled one may still upgrade
+    // when a higher-priority source resolves after the first fill.
+    if (current.length > 0 && current !== autoFilledRef.current) return;
+    const preferred = preferredWorkdirPrefill({
+      channelId,
+      fallbackPath,
+      projectKey,
+      state,
+    });
+    if (preferred && preferred !== current) {
+      autoFilledRef.current = preferred;
+      onChange(preferred);
+    }
+  }, [channelId, fallbackPath, onChange, projectKey, state, value]);
 
   React.useEffect(() => {
     const candidate = value.trim();

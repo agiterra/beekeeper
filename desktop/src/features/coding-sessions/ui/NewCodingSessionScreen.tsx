@@ -51,6 +51,11 @@ export type NewCodingSessionProjectContext = {
   /** The project's sessions channel, or null until this create publishes one. */
   channelId: string | null;
   /**
+   * Local checkout of one of the project's repositories, resolved async —
+   * the workdir prefill when the provider has nothing remembered yet.
+   */
+  defaultWorkdir: string | null;
+  /**
    * Resolve — creating it if needed — the channel this session belongs in.
    * Called once, on submit: opening the screen and walking away must not leave
    * a channel behind.
@@ -427,6 +432,7 @@ export function NewCodingSessionScreen({
           disabled={
             transaction !== null && !isCodingSessionWorkdirFailure(failureCode)
           }
+          fallbackPath={projectContext?.defaultWorkdir ?? null}
           onChange={setWorkdir}
           projectKey={projectContext?.projectRef ?? null}
           value={workdir}
