@@ -57,7 +57,10 @@ pub mod user;
 pub mod workflow;
 
 pub use error::{DbError, Result};
-pub use event::{EventQuery, ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT};
+pub use event::{
+    CodingSessionGenesisInsertOutcome, EventQuery, ReactionEventInsertOutcome,
+    DEFAULT_MAX_PAGE_LIMIT,
+};
 
 use buzz_datastore_tracing::datastore_span;
 use chrono::{DateTime, Utc};
@@ -2301,6 +2304,31 @@ impl Db {
             }
         }
         Ok(outcome)
+    }
+
+    /// Atomically enforce one live coding-session genesis (kind 44226) per
+    /// `(channel, sessionRef)` and store the event.
+    ///
+    /// See [`event::insert_coding_session_genesis_event`] for the serialization
+    /// argument. No mention rows are written: the genesis envelope permits
+    /// exactly three tags — `h`, `csg-v`, `csg-session` — so a genesis can never
+    /// carry a `p` tag to extract.
+    #[datastore_span(name = "insert_coding_session_genesis_event", system = "postgresql")]
+    pub async fn insert_coding_session_genesis_event(
+        &self,
+        community_id: CommunityId,
+        event: &nostr::Event,
+        channel_id: Uuid,
+        thread_meta: Option<event::ThreadMetadataParams<'_>>,
+    ) -> Result<event::CodingSessionGenesisInsertOutcome> {
+        event::insert_coding_session_genesis_event(
+            &self.pool,
+            community_id,
+            event,
+            channel_id,
+            thread_meta,
+        )
+        .await
     }
 
     /// Creates a new channel, bootstraps the creator as owner, and returns the record.

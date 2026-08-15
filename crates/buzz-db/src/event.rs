@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use nostr::Event;
+use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
@@ -1388,6 +1389,220 @@ pub async fn insert_reaction_event_with_thread_metadata(
     })
 }
 
+/// The tag a coding-session genesis mirrors its umbrella reference into.
+///
+/// The relay's envelope validator has already proved this tag exists and agrees
+/// with the signed content, so reading it here re-derives the uniqueness key
+/// from the exact bytes that are about to be stored rather than from a
+/// separately-passed argument that could drift from them.
+const CODING_SESSION_TAG: &str = "csg-session";
+
+/// Domain separator for the coding-session genesis advisory-lock key space.
+///
+/// Postgres advisory locks share one flat `bigint` key space across the whole
+/// database, and this repo already keys five unrelated domains into it
+/// (addressable replacement, channel names, push leases, community deletion,
+/// audit chains). Folding a constant that no other domain hashes means genesis
+/// keys cannot collide with another domain *systematically* — the way they
+/// would if this reused [`crate::event_replacement_lock_key`]'s inputs.
+///
+/// See [`coding_session_genesis_lock_key`] for why an accidental collision is
+/// nonetheless harmless, and why "provably collision-free" is not on offer.
+const CODING_SESSION_GENESIS_LOCK_DOMAIN: &[u8] = b"buzz.coding-session.genesis.v1";
+
+/// Derive the advisory-lock key that serializes genesis writes for one
+/// `(community, channel, sessionRef)`.
+///
+/// # Scope
+///
+/// Exactly the tuple uniqueness is defined over — and deliberately **not** the
+/// signer. Two rival founders racing to claim one reference is the case this
+/// lock exists to decide, so folding the pubkey in would hand both of them
+/// their own lock and let both commit. Conversely `sessionRef` and `channel_id`
+/// are both folded in so that founding unrelated sessions never contends.
+///
+/// # Collisions
+///
+/// A 64-bit key derived from unbounded input cannot be injective, so this is
+/// *not* provably collision-free against the other advisory-lock domains, and
+/// no choice of domain constant would make it so. What the constant buys is the
+/// absence of *structured* collision: no input this function accepts maps onto
+/// another domain's key by construction, only by a ~2⁻⁶⁴ accident.
+///
+/// That residual accident is safe, because an advisory-lock collision can only
+/// ever *add* mutual exclusion. Every domain's correctness argument is "no two
+/// transactions in this domain run concurrently"; sharing a key with a foreign
+/// domain gives a superset of that exclusion, never a subset. A collision costs
+/// throughput and cannot cost correctness.
+///
+/// Nor can it deadlock. A deadlock needs a transaction that waits on a second
+/// advisory lock while holding a first, and
+/// [`insert_coding_session_genesis_event`] takes exactly one advisory lock, as
+/// its first statement, and never takes another. A transaction that never waits
+/// on a second lock cannot be an edge in a wait cycle, so genesis can be
+/// *delayed* by a colliding domain but can never be part of a deadlock with
+/// one.
+fn coding_session_genesis_lock_key(
+    community_id: CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+) -> i64 {
+    let mut hasher = Sha256::new();
+    hasher.update(CODING_SESSION_GENESIS_LOCK_DOMAIN);
+    hasher.update(community_id.as_uuid().as_bytes());
+    hasher.update(channel_id.as_bytes());
+    // Length-prefixed so no reference can be confused with a different one by
+    // running into the bytes that follow it.
+    hasher.update((session_ref.len() as u64).to_le_bytes());
+    hasher.update(session_ref.as_bytes());
+    let digest = hasher.finalize();
+    let mut key = [0u8; 8];
+    key.copy_from_slice(&digest[..8]);
+    i64::from_le_bytes(key)
+}
+
+/// Read the umbrella reference a genesis event mirrors into its tags.
+fn coding_session_genesis_session_ref(event: &Event) -> Result<&str> {
+    event
+        .tags
+        .iter()
+        .find_map(|tag| {
+            let parts = tag.as_slice();
+            match parts {
+                [name, value, ..] if name == CODING_SESSION_TAG => Some(value.as_str()),
+                _ => None,
+            }
+        })
+        .ok_or_else(|| {
+            DbError::InvalidData(format!(
+                "coding-session genesis is missing its {CODING_SESSION_TAG} tag"
+            ))
+        })
+}
+
+/// Outcome of an attempted coding-session genesis (kind 44226) insert.
+#[derive(Debug)]
+pub enum CodingSessionGenesisInsertOutcome {
+    /// This event founded the session. The transaction committed.
+    Founded {
+        /// The stored genesis event.
+        stored_event: Box<StoredEvent>,
+        /// Whether the event row itself was newly inserted. `false` means this
+        /// exact event id was already stored — an idempotent resubmission, not
+        /// a rival claim.
+        was_inserted: bool,
+    },
+    /// A different live genesis already founded this `(channel, sessionRef)`.
+    /// Nothing was written.
+    AlreadyFounded {
+        /// Raw event id of the genesis that won, for the rejection message.
+        existing_event_id: Vec<u8>,
+    },
+}
+
+/// Atomically enforce one live genesis per `(channel, sessionRef)` and store
+/// the event.
+///
+/// # Why this lives here and not at ingest
+///
+/// The relay's ingest validators are pure functions running hundreds of lines
+/// and several round trips ahead of storage, holding no transaction — a
+/// `SELECT` there would be a check-then-insert race across relay processes, and
+/// the property at stake is *which pubkey is a session's founder*. So the check
+/// is moved into the storage transaction itself:
+/// `begin` → `pg_advisory_xact_lock` → probe → insert → `commit`. The lock is
+/// transaction-scoped, so every abort path releases it, and it is held across
+/// both the probe and the insert. Two rival genesis events therefore cannot
+/// both observe an empty probe: the loser blocks on the lock, and by the time
+/// it runs its own probe the winner's row is committed and visible.
+///
+/// A unique index is not an option — `events` is `PARTITION BY RANGE
+/// (created_at)`, so any unique constraint must include `created_at`, and two
+/// rival claims at different timestamps would both satisfy it.
+///
+/// # Not a receipt
+///
+/// A rejected duplicate is a plain refusal. Nothing is written for it, and the
+/// caller is expected to answer `OK false` — acceptance receipts are a separate
+/// concern that does not belong in a uniqueness check.
+///
+/// # Resubmission
+///
+/// The probe excludes this event's own id, so replaying an identical genesis
+/// stays idempotent: it falls through to `ON CONFLICT DO NOTHING` and returns
+/// [`CodingSessionGenesisInsertOutcome::Founded`] with `was_inserted: false`,
+/// exactly as any other replayed event does. Only a *different* event claiming
+/// an already-founded reference is rejected.
+///
+/// # Soft deletion
+///
+/// The probe only considers live rows, so deleting a genesis releases its
+/// reference to be founded again, consistently with every other uniqueness and
+/// replacement probe in this crate.
+pub async fn insert_coding_session_genesis_event(
+    pool: &PgPool,
+    community_id: CommunityId,
+    event: &Event,
+    channel_id: Uuid,
+    thread_meta: Option<ThreadMetadataParams<'_>>,
+) -> Result<CodingSessionGenesisInsertOutcome> {
+    let session_ref = coding_session_genesis_session_ref(event)?;
+    let lock_key = coding_session_genesis_lock_key(community_id, channel_id, session_ref);
+    let kind_i32 = event_kind_i32(event);
+    let session_probe = serde_json::json!([[CODING_SESSION_TAG, session_ref]]);
+    let id_bytes = event.id.as_bytes();
+
+    let mut tx = pool.begin().await?;
+
+    // Taken first, before any read or write, and never joined by a second
+    // advisory lock — see `coding_session_genesis_lock_key` on why that shape
+    // makes genesis undeadlockable.
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(lock_key)
+        .execute(&mut *tx)
+        .await?;
+
+    // `kind` leads the useful index here, not the tag GIN: genesis events are
+    // rare, so `(community_id, kind, created_at)` narrows to the community's
+    // sessions and the containment test runs over that handful.
+    // `ORDER BY created_at ASC, id ASC` makes the reported winner deterministic
+    // if history already holds more than one claim.
+    let existing: Option<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT id FROM events \
+         WHERE community_id = $1 AND kind = $2 AND channel_id = $3 \
+         AND deleted_at IS NULL AND id <> $4 AND tags @> $5::jsonb \
+         ORDER BY created_at ASC, id ASC LIMIT 1",
+    )
+    .bind(community_id.as_uuid())
+    .bind(kind_i32)
+    .bind(channel_id)
+    .bind(id_bytes.as_slice())
+    .bind(&session_probe)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some((existing_event_id,)) = existing {
+        tx.rollback().await?;
+        return Ok(CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id });
+    }
+
+    let (stored_event, was_inserted) = insert_event_with_thread_metadata_tx(
+        &mut tx,
+        community_id,
+        event,
+        Some(channel_id),
+        thread_meta,
+    )
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(CodingSessionGenesisInsertOutcome::Founded {
+        stored_event: Box::new(stored_event),
+        was_inserted,
+    })
+}
+
 /// A due reminder row returned by [`query_due_reminders`].
 #[derive(Debug)]
 pub struct DueReminder {
@@ -2688,5 +2903,290 @@ mod tests {
         .to_string();
         assert!(!huddle_started_content_links(&wrong_field, channel_id));
         assert!(!huddle_started_content_links("not-json", channel_id));
+    }
+
+    // ---- Coding-session genesis uniqueness (kind 44226) --------------------
+
+    /// Build a genesis event in the exact envelope the relay's validator
+    /// admits, signed by `keys`. Rival claims differ only in their signer.
+    fn make_genesis_event(keys: &Keys, channel_id: Uuid, session_ref: &str) -> nostr::Event {
+        let channel = channel_id.to_string();
+        EventBuilder::new(
+            Kind::Custom(44226),
+            format!(r#"{{"sessionRef":"{session_ref}","v":1}}"#),
+        )
+        .tags(vec![
+            Tag::parse(["h", channel.as_str()]).expect("h tag"),
+            Tag::parse(["csg-v", "csg1-1"]).expect("csg-v tag"),
+            Tag::parse(["csg-session", session_ref]).expect("csg-session tag"),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign genesis")
+    }
+
+    async fn count_live_genesis(pool: &PgPool, community: CommunityId, session_ref: &str) -> i64 {
+        let probe = serde_json::json!([["csg-session", session_ref]]);
+        sqlx::query_scalar(
+            "SELECT count(*) FROM events \
+             WHERE community_id = $1 AND kind = 44226 AND deleted_at IS NULL \
+             AND tags @> $2::jsonb",
+        )
+        .bind(community.as_uuid())
+        .bind(&probe)
+        .fetch_one(pool)
+        .await
+        .expect("count genesis rows")
+    }
+
+    /// The lock must cover the uniqueness tuple and nothing else: every
+    /// component moves the key (so unrelated sessions never contend), and the
+    /// signer is structurally absent from the signature (so rival founders
+    /// always do).
+    #[test]
+    fn genesis_lock_key_covers_exactly_the_uniqueness_scope() {
+        let community = CommunityId::from_uuid(Uuid::new_v4());
+        let other_community = CommunityId::from_uuid(Uuid::new_v4());
+        let channel = Uuid::new_v4();
+        let other_channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let other_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a11";
+
+        let base = coding_session_genesis_lock_key(community, channel, session_ref);
+        assert_eq!(
+            base,
+            coding_session_genesis_lock_key(community, channel, session_ref),
+            "the key must be stable across processes and restarts"
+        );
+        for (label, other) in [
+            (
+                "community",
+                coding_session_genesis_lock_key(other_community, channel, session_ref),
+            ),
+            (
+                "channel",
+                coding_session_genesis_lock_key(community, other_channel, session_ref),
+            ),
+            (
+                "sessionRef",
+                coding_session_genesis_lock_key(community, channel, other_ref),
+            ),
+        ] {
+            assert_ne!(base, other, "{label} must move the lock key");
+        }
+    }
+
+    #[test]
+    fn genesis_session_ref_is_read_from_the_stored_tag() {
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = make_genesis_event(&Keys::generate(), Uuid::new_v4(), session_ref);
+        assert_eq!(
+            coding_session_genesis_session_ref(&event).expect("read tag"),
+            session_ref
+        );
+
+        // Defensive: the relay's envelope validator makes this unreachable, but
+        // a genesis whose reference could not be read must fail loudly rather
+        // than be stored under some default key that serializes nothing.
+        let untagged = EventBuilder::new(Kind::Custom(44226), "{}")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign untagged");
+        assert!(coding_session_genesis_session_ref(&untagged).is_err());
+    }
+
+    /// First claim founds the session; a rival claiming the same reference in
+    /// the same channel is refused and leaves nothing behind.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_second_claim_on_one_session_ref_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = make_genesis_event(&Keys::generate(), channel, &session_ref);
+        let rival = make_genesis_event(&Keys::generate(), channel, &session_ref);
+
+        let first = insert_coding_session_genesis_event(&pool, community, &founder, channel, None)
+            .await
+            .expect("found the session");
+        assert!(matches!(
+            first,
+            CodingSessionGenesisInsertOutcome::Founded {
+                was_inserted: true,
+                ..
+            }
+        ));
+
+        let second = insert_coding_session_genesis_event(&pool, community, &rival, channel, None)
+            .await
+            .expect("rival claim");
+        match second {
+            CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id } => {
+                assert_eq!(
+                    existing_event_id,
+                    founder.id.as_bytes().as_slice(),
+                    "the refusal must name the founder the rival has to resolve to"
+                );
+            }
+            other => panic!("rival claim must be refused, got {other:?}"),
+        }
+
+        assert!(
+            get_event_by_id(&pool, community, rival.id.as_bytes())
+                .await
+                .expect("look up rival")
+                .is_none(),
+            "a refused genesis must not be stored — a rejection is not a receipt"
+        );
+        assert_eq!(count_live_genesis(&pool, community, &session_ref).await, 1);
+    }
+
+    /// Uniqueness is per `(channel, sessionRef)`. Neither axis alone may
+    /// contend: the same reference in another channel is a different umbrella,
+    /// and another reference in this channel is a different session.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_uniqueness_is_scoped_to_channel_and_session_ref() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let other_channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+        let other_ref = Uuid::new_v4().to_string();
+
+        for (label, target_channel, target_ref) in [
+            ("first claim", channel, &session_ref),
+            ("same reference, other channel", other_channel, &session_ref),
+            ("other reference, same channel", channel, &other_ref),
+        ] {
+            let event = make_genesis_event(&Keys::generate(), target_channel, target_ref);
+            let outcome =
+                insert_coding_session_genesis_event(&pool, community, &event, target_channel, None)
+                    .await
+                    .unwrap_or_else(|e| panic!("{label} must store: {e}"));
+            assert!(
+                matches!(
+                    outcome,
+                    CodingSessionGenesisInsertOutcome::Founded {
+                        was_inserted: true,
+                        ..
+                    }
+                ),
+                "{label} must found its own umbrella"
+            );
+        }
+    }
+
+    /// A client retrying the *same* signed genesis is not a rival. It must keep
+    /// the ordinary replayed-event answer, or every dropped OK turns into a
+    /// permanent "someone else founded your session".
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_resubmission_of_the_same_event_stays_idempotent() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+        let genesis = make_genesis_event(&Keys::generate(), channel, &session_ref);
+
+        for expected_insert in [true, false] {
+            let outcome =
+                insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+                    .await
+                    .expect("resubmit genesis");
+            match outcome {
+                CodingSessionGenesisInsertOutcome::Founded { was_inserted, .. } => {
+                    assert_eq!(was_inserted, expected_insert);
+                }
+                other => panic!("a replay of the founder is not a rival, got {other:?}"),
+            }
+        }
+        assert_eq!(count_live_genesis(&pool, community, &session_ref).await, 1);
+    }
+
+    /// The claim this slice actually has to earn.
+    ///
+    /// Sequential inserts prove nothing about a check-then-insert race — the
+    /// window they miss is exactly the one an attacker aims at. So four rival
+    /// genesis events, each on its own pooled connection and its own runtime
+    /// worker, are released simultaneously by a barrier and all four race for
+    /// one `(channel, sessionRef)`. Exactly one may commit.
+    ///
+    /// The concurrency is real: separate Postgres backends contend for a real
+    /// `pg_advisory_xact_lock`, which is what a horizontally-scaled relay's
+    /// competing processes do. It is not, however, *multi-process* — one client
+    /// process is enough to exercise the lock, since the lock lives in Postgres
+    /// and is oblivious to who connected.
+    ///
+    /// Rounds are repeated because a single race can be won by scheduling luck
+    /// rather than by the lock.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires Postgres"]
+    async fn genesis_concurrent_claims_resolve_to_exactly_one_winner() {
+        const RIVALS: usize = 4;
+        const ROUNDS: usize = 12;
+
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+
+        for round in 0..ROUNDS {
+            let session_ref = Uuid::new_v4().to_string();
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(RIVALS));
+            let mut claims = Vec::with_capacity(RIVALS);
+
+            for _ in 0..RIVALS {
+                let rival = make_genesis_event(&Keys::generate(), channel, &session_ref);
+                let pool = pool.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                claims.push(tokio::spawn(async move {
+                    // Establish the connection before the barrier so the racers
+                    // contend over the advisory lock rather than over the
+                    // pool's TCP and startup handshake.
+                    drop(pool.acquire().await.expect("warm a pooled connection"));
+                    barrier.wait().await;
+                    let outcome = insert_coding_session_genesis_event(
+                        &pool, community, &rival, channel, None,
+                    )
+                    .await
+                    .expect("rival claim");
+                    (rival.id.as_bytes().to_vec(), outcome)
+                }));
+            }
+
+            let mut winners = Vec::new();
+            let mut refused = Vec::new();
+            for claim in claims {
+                let (event_id, outcome) = claim.await.expect("join rival claim");
+                match outcome {
+                    CodingSessionGenesisInsertOutcome::Founded { was_inserted, .. } => {
+                        assert!(was_inserted, "round {round}: distinct rivals are new rows");
+                        winners.push(event_id);
+                    }
+                    CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id } => {
+                        refused.push(existing_event_id);
+                    }
+                }
+            }
+
+            assert_eq!(
+                winners.len(),
+                1,
+                "round {round}: exactly one rival may found a session, got {} winners",
+                winners.len()
+            );
+            assert_eq!(refused.len(), RIVALS - 1, "round {round}");
+            for named in &refused {
+                assert_eq!(
+                    named, &winners[0],
+                    "round {round}: every refusal must name the one committed founder"
+                );
+            }
+            assert_eq!(
+                count_live_genesis(&pool, community, &session_ref).await,
+                1,
+                "round {round}: the store must agree with the outcomes it handed out"
+            );
+        }
     }
 }
