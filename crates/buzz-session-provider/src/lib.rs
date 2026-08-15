@@ -33,6 +33,7 @@ mod agent_fence;
 pub mod catalog;
 pub mod commands;
 pub mod config;
+mod git_probe;
 mod model_catalog;
 pub mod payload;
 pub mod publish;
@@ -151,7 +152,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             },
             Some(event) = provider.next_session_event() => {
-                if let Err(error) = provider.handle_session_event(event) {
+                if let Err(error) = provider.handle_session_event(event).await {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
                 }
             }
@@ -186,6 +187,15 @@ pub struct Provider {
     sessions: SessionManager,
     session_events: mpsc::Receiver<SessionEvent>,
     last_metadata: HashMap<String, String>,
+    /// Last bounded git observation per session id.
+    ///
+    /// A side map rather than a `SessionRecord` field on purpose: the
+    /// observation is a fact about the host filesystem *right now*, so it must
+    /// not survive a restart into a metadata publication that predates a
+    /// re-probe. It exists because [`Provider::metadata_for`] is sync `&self`
+    /// and cannot await, so the probe runs at the async call sites and parks
+    /// its result here to be read.
+    git_probes: HashMap<String, git_probe::GitProbe>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
 }
@@ -205,6 +215,7 @@ impl Provider {
             sessions: SessionManager::new(events_tx),
             session_events,
             last_metadata: HashMap::new(),
+            git_probes: HashMap::new(),
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
         })
@@ -599,6 +610,11 @@ impl Provider {
         } else {
             SessionStatus::Idle
         };
+        // Deliberately *after* the receipt is queued and the first turn is
+        // dispatched: the operator-visible acknowledgement and the agent's
+        // start must not wait on a filesystem read. The only thing this delays
+        // is the first metadata publication.
+        self.refresh_git_probe(&target.session_id).await;
         self.publish_metadata(plan.channel_id, &target, status)?;
 
         tracing::info!(
@@ -869,7 +885,16 @@ impl Provider {
                 .or_else(|| descriptor.map(|descriptor| descriptor.default_model.clone()))
                 .or_else(|| Some(config::DEFAULT_MODEL.to_owned())),
             status,
-            branch: None,
+            // Filled from the last bounded worktree observation, or left null
+            // when the cwd is not a repository, sits on a detached HEAD, or was
+            // never successfully observed. Note what is *not* here: the probe
+            // also learns dirty state, and deliberately keeps it internal —
+            // carrying that as a signed fact is a schema question, not a
+            // free ride on a field that already exists.
+            branch: self
+                .git_probes
+                .get(&target.session_id)
+                .and_then(|observed| observed.branch.clone()),
             capabilities: descriptor
                 .and_then(|descriptor| descriptor.capabilities)
                 .unwrap_or_else(|| Capabilities::v1_for_runtime(&runtime_slug)),
@@ -897,6 +922,32 @@ impl Provider {
             event,
         )?;
         Ok(())
+    }
+
+    /// Re-observe `session_id`'s working directory and cache what git saw.
+    ///
+    /// Best effort and bounded: see [`git_probe::probe`]. Callers await this
+    /// immediately *before* publishing metadata, so the publication carries the
+    /// current observation rather than the previous turn's.
+    ///
+    /// A session whose record has vanished is a no-op, not an error.
+    async fn refresh_git_probe(&mut self, session_id: &str) {
+        let Some(cwd) = self
+            .state
+            .session(session_id)
+            .map(|record| record.cwd.clone())
+        else {
+            return;
+        };
+        let observed = git_probe::probe(&cwd).await;
+        tracing::debug!(
+            target: "csp::git",
+            %session_id,
+            branch = ?observed.branch,
+            dirty = ?observed.dirty,
+            "observed the session worktree"
+        );
+        self.git_probes.insert(session_id.to_owned(), observed);
     }
 
     /// Queue per-generation metadata (44223) describing `status`.
@@ -975,7 +1026,12 @@ impl Provider {
     }
 
     /// Turn one actor report into durable state and queued events.
-    pub fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
+    ///
+    /// Async because a finished turn re-observes the session's worktree before
+    /// publishing metadata. Every other arm is pure bookkeeping and never
+    /// awaits, so only `TurnFinished` can yield here — and only for as long as
+    /// [`git_probe`]'s bound allows.
+    pub async fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
             SessionEvent::TurnStarted {
                 session_id,
@@ -1014,6 +1070,11 @@ impl Provider {
                     .state
                     .session(&session_id)
                     .is_some_and(|record| record.closed);
+                // A finished turn is the moment the branch can have changed —
+                // the agent may have checked out or created one. The transcript
+                // `result` item is already queued above, so this delays only
+                // the metadata that reports it.
+                self.refresh_git_probe(&session_id).await;
                 self.publish_metadata(
                     channel_id,
                     &target,
@@ -1323,7 +1384,7 @@ mod tests {
         while let Ok(Some(event)) =
             tokio::time::timeout(Duration::from_millis(250), provider.next_session_event()).await
         {
-            provider.handle_session_event(event).expect("record");
+            provider.handle_session_event(event).await.expect("record");
         }
     }
 
@@ -1336,7 +1397,7 @@ mod tests {
                     .expect("session event within timeout")
                     .expect("channel open");
             let finished = matches!(event, session::SessionEvent::TurnFinished { .. });
-            provider.handle_session_event(event).expect("record");
+            provider.handle_session_event(event).await.expect("record");
             if finished {
                 return;
             }
@@ -1561,6 +1622,153 @@ mod tests {
 
         assert_eq!(provider.state().sessions().count(), 1);
         assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    /// Initialize `cwd` as a repository on `branch` with one commit.
+    fn init_repo(cwd: &Path, branch: &str) {
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(cwd)
+                .args(args)
+                .status()
+                .expect("git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        run(&["init", "-q", "-b", branch, "."]);
+        std::fs::write(cwd.join("README.md"), "hello").expect("write");
+        run(&["add", "README.md"]);
+        run(&[
+            "-c",
+            "user.email=probe@example.invalid",
+            "-c",
+            "user.name=probe",
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "-m",
+            "one",
+        ]);
+    }
+
+    /// A cwd that is not a repository publishes no branch, and — the part that
+    /// matters — publishes it as *absent knowledge* rather than as an error the
+    /// operator has to read.
+    #[tokio::test]
+    async fn a_non_repository_cwd_publishes_a_null_branch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.len(), 1);
+        assert!(metadata[0]["branch"].is_null());
+        // The receipt is unconditionally a success: a plain directory is a
+        // legitimate place to run an agent, not a failed create.
+        assert_eq!(
+            sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)[0]["status"],
+            "created"
+        );
+    }
+
+    /// The probe is observable end to end: a create in a real checkout carries
+    /// the branch git reported into signed metadata.
+    #[tokio::test]
+    async fn a_create_in_a_checkout_publishes_its_branch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "probe-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0]["branch"], "probe-branch");
+
+        // Dirty state is observed but deliberately *not* published: carrying it
+        // as a signed fact is a schema question, and smuggling it into `branch`
+        // would answer that question by accident.
+        let session_id = &provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+        assert_eq!(
+            provider.git_probes.get(session_id).and_then(|p| p.dirty),
+            Some(false)
+        );
+        for event in sink.all() {
+            let serialized = serde_json::to_string(&event).expect("serialize");
+            assert!(!serialized.contains("dirty"), "dirty leaked: {serialized}");
+        }
+    }
+
+    /// A finished turn re-observes the worktree, so a branch the agent switched
+    /// to mid-session is what the next metadata publication reports.
+    #[tokio::test]
+    async fn a_finished_turn_republishes_a_changed_branch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "before");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        // Stand in for an agent that checked out a branch during its turn.
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(["checkout", "-q", "-b", "after"])
+            .status()
+            .expect("git");
+        assert!(status.success());
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(
+            metadata.last().expect("metadata")["branch"],
+            "after",
+            "the turn-finished probe did not re-observe the worktree"
+        );
     }
 
     /// A create claiming an umbrella round-trips its `sessionRef` into the
@@ -1848,7 +2056,7 @@ mod tests {
                 .await
                 .expect("turn start")
                 .expect("event");
-            first.handle_session_event(started).expect("record");
+            first.handle_session_event(started).await.expect("record");
             // The turn is genuinely open: the agent will never answer it. Record
             // its opening items so the synthesized result continues the
             // sequence rather than starting it.
@@ -2172,7 +2380,10 @@ mod tests {
             .await
             .expect("turn start")
             .expect("event");
-        provider.handle_session_event(started).expect("record");
+        provider
+            .handle_session_event(started)
+            .await
+            .expect("record");
 
         provider
             .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
