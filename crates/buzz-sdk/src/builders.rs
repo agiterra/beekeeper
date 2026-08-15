@@ -2367,6 +2367,13 @@ pub fn build_delete_addressable(
 /// nothing downstream can substitute for it, so a caller that signs this with a
 /// service key has silently made that service the founder.
 ///
+/// `payload` is either a fresh founding
+/// ([`CodingSessionGenesisPayload::new`]) or an explicit legacy adoption
+/// ([`CodingSessionGenesisPayload::new_adoption`]) — the envelope (three
+/// tags) is identical either way; only the content differs. See the module
+/// doc on [`buzz_core::coding_session_genesis`] for what the relay verifies
+/// against an adoption reference.
+///
 /// The `csg-session` tag is re-derived from the payload here and re-derived
 /// again by the relay, so the filterable reference and the signed reference are
 /// the same string by construction.
@@ -5230,6 +5237,40 @@ mod tests {
         let mut payload = CodingSessionGenesisPayload::new("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
         payload.v = 2;
         assert!(build_coding_session_genesis(channel, &payload).is_err());
+    }
+
+    /// The adoption form emits the same three-tag envelope as a fresh
+    /// founding — only the content differs — and the `csg-session` tag still
+    /// tracks the payload's own `sessionRef`, not anything inside `adopts`.
+    #[test]
+    fn coding_session_genesis_builder_supports_the_adoption_form() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let payload = CodingSessionGenesisPayload::new_adoption(
+            session_ref,
+            "ab".repeat(32),
+            "cd".repeat(32),
+        );
+        let event = build_coding_session_genesis(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GENESIS);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csg-v".into(), "csg1-1".into()),
+                ("csg-session".into(), session_ref.into()),
+            ],
+            "the adoption form's envelope must be indistinguishable from a fresh founding"
+        );
+        assert_eq!(
+            buzz_core::coding_session_genesis::decode_coding_session_genesis(&event.content)
+                .unwrap(),
+            payload
+        );
     }
 
     #[test]

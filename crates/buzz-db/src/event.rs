@@ -10,6 +10,9 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
+use buzz_core::coding_session_genesis::{
+    decode_coding_session_genesis, CodingSessionGenesisAdoption,
+};
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, validate_session_ref, CodingSessionLifecycleAction,
 };
@@ -1498,72 +1501,110 @@ fn coding_session_genesis_session_ref(event: &Event) -> Result<&str> {
 /// an index lookup rather than a scan.
 const CODING_SESSION_COMMAND_TAG: &str = "csl-command";
 
-/// A `session.create` already in this channel's history bearing the umbrella
-/// reference a genesis is trying to found.
+/// A `session.create` already in this channel's history, decoded generically
+/// — not yet filtered to any particular `sessionRef` or `commandId`. Two
+/// different call sites narrow this differently: the R8 existence gate
+/// filters by `sessionRef` ([`legacy_session_creates_tx`]); the R16 ambiguity
+/// check filters by `commandId` ([`creates_by_command_id_tx`]).
 #[derive(Debug, Clone)]
 struct LegacySessionCreate {
     event_id: Vec<u8>,
     signer: Vec<u8>,
     command_id: String,
+    session_ref: Option<String>,
     provider_authority_pubkey: String,
 }
 
-/// Why a legacy `sessionRef` could not be adopted.
-///
-/// Every variant is a refusal. None of them is a fallback that picks a founder
-/// anyway: a session whose founder cannot be projected deterministically is
-/// left ungoverned for an audited admin adoption to settle, because guessing
-/// wrong here permanently assigns someone else's session.
+/// Why an explicit coding-session genesis adoption reference could not be
+/// verified, or why an ordinary (non-adopting) genesis could not found a
+/// `sessionRef` that legacy history already uses. Every variant is a refusal:
+/// none is a fallback that founds the session anyway.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LegacyAdoptionRefusal {
-    /// History projects a founder, and it is not this genesis's signer. This is
-    /// the first-claim hijack the rule exists to stop.
-    NotTheFounder {
-        /// Signer of the founding create, in raw bytes.
-        founder_pubkey: Vec<u8>,
-        /// Raw event id of the founding create, for the operator to check.
-        founding_create_event_id: Vec<u8>,
+pub enum GenesisAdoptionRefusal {
+    /// No `adopts` reference was given, but `session.create` history in this
+    /// channel already uses the `sessionRef` — the relay no longer infers a
+    /// founder from that history (R15); the publisher must resubmit with an
+    /// explicit `adopts` reference.
+    LegacyHistoryRequiresAdoption {
+        /// A create bearing the reference, so the operator has something
+        /// concrete to adopt.
+        existing_create_event_id: Vec<u8>,
     },
-    /// History uses the reference but does not project one founder. Needs the
-    /// audited admin adoption path, not a guess.
-    FounderAmbiguous {
-        /// Which determinism condition failed, for the refusal message.
+    /// `adopts.createEventId` does not name a stored, decodable
+    /// `session.create` (kind 44221) event.
+    ReferencedCreateNotFound,
+    /// `adopts.receiptEventId` does not name a stored, decodable lifecycle
+    /// receipt (kind 44224) event.
+    ReferencedReceiptNotFound,
+    /// The referenced receipt does not genuinely answer the referenced
+    /// create: its `commandId` disagrees, it was not signed by the create's
+    /// named provider authority, or it minted no session at all.
+    ReceiptDoesNotJoinCreate,
+    /// The referenced create claims a different `sessionRef` than the
+    /// genesis (or claims none).
+    SessionRefMismatch,
+    /// The genesis signer is not the referenced create's signer.
+    SignerMismatch {
+        /// The create's actual signer, for the rejection message.
+        founder_pubkey: Vec<u8>,
+    },
+    /// The referenced create or receipt was not published in the genesis's
+    /// own channel.
+    WrongChannel,
+    /// Other `session.create` events in this channel share the founding
+    /// `commandId` but disagree with it on signer or `sessionRef` (R16) —
+    /// mirrors the desktop's `codingSessionCreateObservations.ts` ambiguity
+    /// rule, which disputes a commandId on either disagreement.
+    CommandIdAmbiguous {
+        /// Which agreement failed, for the refusal message.
         reason: &'static str,
     },
 }
 
-/// Read a decoded `session.create` off a stored 44221 row, if that is what it
-/// is and it bears `session_ref`.
+/// Decode a stored 44221 row as a `session.create`, generically — no
+/// `sessionRef` or `commandId` filter applied.
 ///
-/// Returns `None` for every other shape — a resume, a stop, a create claiming a
-/// different umbrella or none, or content this build cannot decode. Undecodable
-/// content is skipped rather than failing the transaction: a create the strict
-/// decoder rejects was never a create any provider acted on, and one
-/// unparseable row must not make founding *any* session impossible.
-fn legacy_session_create(
+/// Returns `None` for every other shape — a resume, a stop, or content this
+/// build cannot decode. Undecodable content is skipped rather than failing
+/// the transaction: a create the strict decoder rejects was never a create
+/// any provider acted on, and one unparseable row must not make founding
+/// *any* session impossible.
+fn decode_session_create(
     event_id: Vec<u8>,
     signer: Vec<u8>,
     content: &str,
-    session_ref: &str,
 ) -> Option<LegacySessionCreate> {
     let payload = decode_coding_session_lifecycle_command(content).ok()?;
     let CodingSessionLifecycleAction::SessionCreate {
-        session_ref: claimed,
+        session_ref,
         provider_authority_pubkey,
         ..
     } = payload.action
     else {
         return None;
     };
-    if claimed.as_deref() != Some(session_ref) {
-        return None;
-    }
     Some(LegacySessionCreate {
         event_id,
         signer,
         command_id: payload.command_id,
+        session_ref,
         provider_authority_pubkey,
     })
+}
+
+/// [`decode_session_create`], filtered to creates claiming exactly
+/// `session_ref`. Used by [`legacy_session_creates_tx`]'s R8 existence gate.
+fn legacy_session_create(
+    event_id: Vec<u8>,
+    signer: Vec<u8>,
+    content: &str,
+    session_ref: &str,
+) -> Option<LegacySessionCreate> {
+    let create = decode_session_create(event_id, signer, content)?;
+    if create.session_ref.as_deref() != Some(session_ref) {
+        return None;
+    }
+    Some(create)
 }
 
 /// Every `session.create` in this channel that already claims `session_ref`.
@@ -1589,9 +1630,10 @@ fn legacy_session_create(
 /// # Soft-deleted rows count
 ///
 /// For the same reason the genesis uniqueness probe counts them: deleting a
-/// create must not move foundership. If deleted rows were skipped, a founder
-/// who tidied up their own history — or a moderator who removed one message —
-/// would silently hand the earliest-create position to somebody else.
+/// create must not reopen the "does legacy history exist" question. If
+/// deleted rows were skipped, a founder who tidied up their own history — or a
+/// moderator who removed one message — would silently make a `sessionRef`
+/// claimable as a fresh founding again.
 async fn legacy_session_creates_tx(
     tx: &mut Transaction<'_, Postgres>,
     community_id: CommunityId,
@@ -1622,128 +1664,246 @@ async fn legacy_session_creates_tx(
         .collect())
 }
 
-/// Whether the provider ever acted on `create`, per its own signed receipt.
+/// Every `session.create` in this channel bearing `command_id`, regardless of
+/// which `sessionRef` each one claims.
 ///
-/// # What "accepted" means here, and where it falls short of the consumer's rule
+/// This is the scope R16 requires and [`legacy_session_creates_tx`] cannot
+/// provide: that function prefilters by `sessionRef` first, so a rival create
+/// sharing the same `commandId` but claiming a *different* `sessionRef` is
+/// invisible to it — exactly the gap the desktop's
+/// `codingSessionCreateObservations.ts` does not have, because its bucket key
+/// is `(channelId, commandId)` alone. `csl-command` is an indexed tag (unlike
+/// `sessionRef`), so this is an exact containment lookup, not a scan.
 ///
-/// The desktop projects a founder only from a create joined to a 44224 receipt,
-/// and it verifies that receipt against the operator's local
-/// `allowed-bridge-pubkeys` allowlist. That allowlist is a file on the
-/// operator's machine; it is never published, so the relay cannot apply it. The
-/// closest fact the relay *can* check is that the receipt was signed by the
-/// very authority the create addressed — which is exactly the condition the
-/// provider itself enforces before answering a command, and signs its receipt
-/// with.
-///
-/// That makes the relay's join structurally forgeable in a way the desktop's is
-/// not: a member may publish a create naming their own key as the provider
-/// authority and then sign the matching receipt. The reason that does not
-/// become a hijack is the ingest clock bound — every event's `created_at` must
-/// sit within ±15 minutes of server time, so a forged pair cannot be placed
-/// *before* the genuine founding create of a session that already exists. The
-/// forgery can only ever append, and only the earliest create is consulted.
-///
-/// The residual gap is a `sessionRef` whose real creates were never receipt-
-/// joined at all. There the earliest create fails this check, the founder is
-/// reported ambiguous, and the reference stays unclaimable — refused, not
-/// mis-assigned.
-async fn founding_create_is_receipt_joined_tx(
+/// Soft-deleted rows count here for the same reason as
+/// [`legacy_session_creates_tx`]: a disagreement does not stop being a
+/// disagreement because one of the disagreeing creates was later deleted.
+async fn creates_by_command_id_tx(
     tx: &mut Transaction<'_, Postgres>,
     community_id: CommunityId,
     channel_id: Uuid,
-    create: &LegacySessionCreate,
-) -> Result<bool> {
-    let probe = serde_json::json!([[CODING_SESSION_COMMAND_TAG, create.command_id]]);
-    let rows: Vec<(Vec<u8>, String)> = sqlx::query_as(
-        "SELECT pubkey, content FROM events \
+    command_id: &str,
+) -> Result<Vec<LegacySessionCreate>> {
+    let probe = serde_json::json!([[CODING_SESSION_COMMAND_TAG, command_id]]);
+    let rows: Vec<(Vec<u8>, Vec<u8>, String)> = sqlx::query_as(
+        "SELECT id, pubkey, content FROM events \
          WHERE community_id = $1 AND kind = $2 AND channel_id = $3 \
-         AND tags @> $4::jsonb",
+         AND tags @> $4::jsonb \
+         ORDER BY created_at ASC, id ASC",
     )
     .bind(community_id.as_uuid())
-    .bind(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as i32)
+    .bind(KIND_CODING_SESSION_LIFECYCLE_COMMAND as i32)
     .bind(channel_id)
     .bind(&probe)
     .fetch_all(&mut **tx)
     .await?;
 
-    let authority = hex::decode(&create.provider_authority_pubkey).unwrap_or_default();
-    let mut minted: Vec<String> = Vec::new();
-    for (signer, content) in rows {
-        if authority.is_empty() || signer != authority {
-            continue;
-        }
-        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(&content) else {
-            continue;
-        };
-        if receipt.command_id != create.command_id {
-            continue;
-        }
-        if let Some(target) = receipt.session {
-            minted.push(format!(
-                "{}\u{1f}{}\u{1f}{}",
-                target.instance_id, target.session_id, target.generation
-            ));
-        }
-    }
-
-    minted.sort();
-    minted.dedup();
-    // Exactly one minted target, or nothing. Two receipts naming different
-    // targets for one command is a disagreement between producers, and the
-    // discipline for a disputed claim is to resolve nothing rather than pick a
-    // side — the same rule the desktop's join applies.
-    Ok(minted.len() == 1)
+    Ok(rows
+        .into_iter()
+        .filter_map(|(event_id, signer, content)| {
+            let create = decode_session_create(event_id, signer, &content)?;
+            (create.command_id == command_id).then_some(create)
+        })
+        .collect())
 }
 
-/// Decide whether `signer` may found a genesis over existing create history.
+/// Fetch one coding-session event (create or receipt) by raw event id,
+/// **including soft-deleted rows** — an adoption reference must keep
+/// resolving even if the referenced create or receipt was later removed from
+/// the timeline, exactly as a genesis itself stays founded through deletion
+/// (R6). `expected_kind` is pushed into the query as defense in depth on top
+/// of the caller's own kind check on the decoded payload.
+async fn fetch_coding_session_event_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    id_bytes: &[u8],
+    expected_kind: i32,
+) -> Result<Option<StoredEvent>> {
+    let row = sqlx::query(
+        "SELECT id, pubkey, created_at, kind, tags, content, sig, received_at, channel_id \
+         FROM events WHERE community_id = $1 AND id = $2 AND kind = $3 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(community_id.as_uuid())
+    .bind(id_bytes)
+    .bind(expected_kind)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    match row {
+        Some(r) => row_to_stored_event(r),
+        None => Ok(None),
+    }
+}
+
+/// Verify that `create.provider_authority_pubkey` genuinely signed `receipt`
+/// as the answer to `create.command_id`, and that the receipt minted an
+/// actual session — the same "command id echo" pattern
+/// [`creates_by_command_id_tx`]'s caller relies on elsewhere, reproduced here
+/// for one specific referenced pair instead of a scan across candidates.
+fn receipt_joins_create(
+    create: &LegacySessionCreate,
+    receipt_signer: &[u8],
+    receipt_content: &str,
+) -> bool {
+    let Ok(authority) = hex::decode(&create.provider_authority_pubkey) else {
+        return false;
+    };
+    if authority.is_empty() || receipt_signer != authority.as_slice() {
+        return false;
+    }
+    let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(receipt_content) else {
+        return false;
+    };
+    receipt.command_id == create.command_id && receipt.session.is_some()
+}
+
+/// Verify an explicit `adopts` reference against the events it names.
 ///
-/// The founder is projected exactly as the consumer projects it: the signer of
-/// the **earliest** create bearing this `sessionRef`, ordered by `created_at`
-/// then event id, required to be joined to its provider's receipt. Anything
-/// that makes that projection non-deterministic refuses instead of choosing.
-async fn adjudicate_legacy_session_ref_tx(
+/// Implements R15 step 2 (a)-(e) plus the R16 ambiguity parity fix: fetch the
+/// referenced create and receipt by event id (never by scanning history for a
+/// claim — see the module doc on
+/// [`buzz_core::coding_session_genesis`]), verify the receipt genuinely joins
+/// the create, that the create bears the genesis's `sessionRef` and was
+/// signed by the genesis's signer, that both events sit in the genesis's own
+/// channel, and finally that no other create in the channel sharing the
+/// founding `commandId` disagrees on signer or `sessionRef`.
+async fn adjudicate_explicit_adoption_tx(
     tx: &mut Transaction<'_, Postgres>,
     community_id: CommunityId,
     channel_id: Uuid,
     session_ref: &str,
-    signer: &[u8],
-) -> Result<Option<LegacyAdoptionRefusal>> {
-    let creates = legacy_session_creates_tx(tx, community_id, channel_id, session_ref).await?;
-    let Some(founding) = creates.first() else {
-        // No history uses this reference: an ordinary genesis, not an adoption.
-        return Ok(None);
+    genesis_signer: &[u8],
+    adopts: &CodingSessionGenesisAdoption,
+) -> Result<Option<GenesisAdoptionRefusal>> {
+    // The payload decoder already enforced 64-lowercase-hex, but a decode
+    // failure here is handled rather than unwrapped — this function must
+    // fail closed, never panic, on any input the caller passes it.
+    let Ok(create_id) = hex::decode(&adopts.create_event_id) else {
+        return Ok(Some(GenesisAdoptionRefusal::ReferencedCreateNotFound));
+    };
+    let Ok(receipt_id) = hex::decode(&adopts.receipt_event_id) else {
+        return Ok(Some(GenesisAdoptionRefusal::ReferencedReceiptNotFound));
     };
 
-    // A tie on (created_at, id) is impossible — ids are unique — but two
-    // creates sharing one commandId while disagreeing about who signed them or
-    // which umbrella they claim is the consumer's `disputed` case, and it binds
-    // nothing there either.
-    let same_command: Vec<&LegacySessionCreate> = creates
+    let Some(create_event) = fetch_coding_session_event_tx(
+        tx,
+        community_id,
+        &create_id,
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND as i32,
+    )
+    .await?
+    else {
+        return Ok(Some(GenesisAdoptionRefusal::ReferencedCreateNotFound));
+    };
+    let Some(receipt_event) = fetch_coding_session_event_tx(
+        tx,
+        community_id,
+        &receipt_id,
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT as i32,
+    )
+    .await?
+    else {
+        return Ok(Some(GenesisAdoptionRefusal::ReferencedReceiptNotFound));
+    };
+
+    let Some(create) = decode_session_create(
+        create_event.event.id.as_bytes().to_vec(),
+        create_event.event.pubkey.as_bytes().to_vec(),
+        &create_event.event.content,
+    ) else {
+        return Ok(Some(GenesisAdoptionRefusal::ReferencedCreateNotFound));
+    };
+
+    if create_event.channel_id != Some(channel_id) || receipt_event.channel_id != Some(channel_id) {
+        return Ok(Some(GenesisAdoptionRefusal::WrongChannel));
+    }
+
+    if !receipt_joins_create(
+        &create,
+        receipt_event.event.pubkey.as_bytes(),
+        &receipt_event.event.content,
+    ) {
+        return Ok(Some(GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate));
+    }
+
+    if create.session_ref.as_deref() != Some(session_ref) {
+        return Ok(Some(GenesisAdoptionRefusal::SessionRefMismatch));
+    }
+
+    if create.signer != genesis_signer {
+        return Ok(Some(GenesisAdoptionRefusal::SignerMismatch {
+            founder_pubkey: create.signer.clone(),
+        }));
+    }
+
+    // R16: every create in the channel sharing the founding commandId must
+    // agree on signer and sessionRef — not just the ones this genesis
+    // happens to reference. See `creates_by_command_id_tx`'s doc for why the
+    // prior sessionRef-first scoping made this invisible.
+    let siblings =
+        creates_by_command_id_tx(tx, community_id, channel_id, &create.command_id).await?;
+    let distinct_signers = siblings
         .iter()
-        .filter(|create| create.command_id == founding.command_id)
-        .collect();
-    if same_command
-        .iter()
-        .any(|create| create.signer != founding.signer)
-    {
-        return Ok(Some(LegacyAdoptionRefusal::FounderAmbiguous {
+        .map(|c| &c.signer)
+        .collect::<std::collections::HashSet<_>>();
+    if distinct_signers.len() > 1 {
+        return Ok(Some(GenesisAdoptionRefusal::CommandIdAmbiguous {
             reason: "two signers claim the founding command",
         }));
     }
-
-    if !founding_create_is_receipt_joined_tx(tx, community_id, channel_id, founding).await? {
-        return Ok(Some(LegacyAdoptionRefusal::FounderAmbiguous {
-            reason: "the earliest create has no single provider-signed receipt",
+    let distinct_session_refs = siblings
+        .iter()
+        .map(|c| &c.session_ref)
+        .collect::<std::collections::HashSet<_>>();
+    if distinct_session_refs.len() > 1 {
+        return Ok(Some(GenesisAdoptionRefusal::CommandIdAmbiguous {
+            reason: "two sessionRefs claim the founding command",
         }));
     }
 
-    if signer == founding.signer.as_slice() {
-        return Ok(None);
+    Ok(None)
+}
+
+/// Decide whether this genesis may found `session_ref`: verify its explicit
+/// `adopts` reference, or — absent one — refuse when legacy `session.create`
+/// history already uses the reference (R8, kept, but no longer resolved by
+/// inference: see the module doc on
+/// [`buzz_core::coding_session_genesis`]).
+async fn adjudicate_genesis_adoption_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    session_ref: &str,
+    event: &Event,
+) -> Result<Option<GenesisAdoptionRefusal>> {
+    let payload = decode_coding_session_genesis(&event.content).map_err(DbError::InvalidData)?;
+
+    match &payload.adopts {
+        Some(adopts) => {
+            adjudicate_explicit_adoption_tx(
+                tx,
+                community_id,
+                channel_id,
+                session_ref,
+                event.pubkey.as_bytes(),
+                adopts,
+            )
+            .await
+        }
+        None => {
+            let creates =
+                legacy_session_creates_tx(tx, community_id, channel_id, session_ref).await?;
+            match creates.first() {
+                Some(existing) => Ok(Some(
+                    GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+                        existing_create_event_id: existing.event_id.clone(),
+                    },
+                )),
+                None => Ok(None),
+            }
+        }
     }
-    Ok(Some(LegacyAdoptionRefusal::NotTheFounder {
-        founder_pubkey: founding.signer.clone(),
-        founding_create_event_id: founding.event_id.clone(),
-    }))
 }
 
 /// Outcome of an attempted coding-session genesis (kind 44226) insert.
@@ -1766,11 +1926,12 @@ pub enum CodingSessionGenesisInsertOutcome {
         /// Raw event id of the genesis that won, for the rejection message.
         existing_event_id: Vec<u8>,
     },
-    /// `session.create` history in this channel already uses the `sessionRef`
-    /// and this signer may not adopt it. Nothing was written.
-    LegacySessionRefRefused {
+    /// Either no `adopts` reference was given over `sessionRef` history that
+    /// requires one, or the given reference did not verify. Nothing was
+    /// written.
+    AdoptionRefused {
         /// Why the adoption was refused.
-        refusal: LegacyAdoptionRefusal,
+        refusal: GenesisAdoptionRefusal,
     },
 }
 
@@ -1837,28 +1998,24 @@ pub enum CodingSessionGenesisInsertOutcome {
 /// history, and the rule above would *defend* whoever published a genesis for
 /// one first — the person with the fewest scruples, not the founder.
 ///
-/// So an ordinary genesis is refused whenever create history in this channel
-/// already uses the reference. Adoption is the way through: the transaction
-/// projects the founder deterministically — the signer of the earliest create
-/// bearing the `sessionRef`, required to be joined to its provider's receipt —
-/// and admits the genesis when its signer is that founder. Anything that makes
-/// the projection non-deterministic refuses and leaves the session for an
-/// audited admin adoption to settle; a guess here permanently assigns someone
-/// else's session. Adopted geneses are ordinary geneses afterwards, so the
-/// uniqueness probe counts them exactly like any other.
+/// So an ordinary (no-`adopts`) genesis is refused whenever create history in
+/// this channel already uses the reference. Adoption is the way through, and
+/// it is **explicit** (R15): the genesis payload names the exact founding
+/// `session.create` and its joining receipt by event id, and the transaction
+/// verifies that reference — receipt genuinely joins create, create bears the
+/// same `sessionRef`, genesis signer equals the create's signer, both events
+/// sit in this channel — rather than inferring a founder from local history.
+/// An earlier revision did the latter (a plain genesis whose signer happened
+/// to match a projected founder was treated as an implicit adoption); that
+/// was rejected precisely because a signed event's meaning would then depend
+/// on which relay's database happened to hold the create history (R13, R15).
+/// Adopted geneses are ordinary geneses afterwards, so the uniqueness probe
+/// counts them exactly like any other.
 ///
-/// Adoption is **implicit**: the relay recognizes it from the signer matching
-/// projected history, and the genesis carries no explicit reference to the
-/// create it adopts. The explicit form would be better provenance and is
-/// deliberately deferred, not rejected — it needs a fourth tag, which is a
-/// change to the signed envelope in `buzz-sdk` and to its desktop producer.
-/// Nothing here depends on it: the relay's verification is the load-bearing
-/// part, and a reference the relay does not consult is provenance, not
-/// authority.
-///
-/// See [`adjudicate_legacy_session_ref_tx`] for the projection and
-/// [`founding_create_is_receipt_joined_tx`] for where the relay's receipt trust
-/// necessarily differs from the desktop consumer's.
+/// See [`adjudicate_genesis_adoption_tx`] for the dispatch between the two
+/// forms, [`adjudicate_explicit_adoption_tx`] for the reference verification,
+/// and [`creates_by_command_id_tx`] for the R16 cross-`sessionRef` ambiguity
+/// check.
 pub async fn insert_coding_session_genesis_event(
     pool: &PgPool,
     community_id: CommunityId,
@@ -1909,20 +2066,15 @@ pub async fn insert_coding_session_genesis_event(
         return Ok(CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id });
     }
 
-    // Second, and inside the same lock: a reference that predates genesis is
-    // already spoken for by whoever founded it under the old rules. See
-    // `Sessions that predate genesis` above.
-    if let Some(refusal) = adjudicate_legacy_session_ref_tx(
-        &mut tx,
-        community_id,
-        channel_id,
-        session_ref,
-        event.pubkey.as_bytes(),
-    )
-    .await?
+    // Second, and inside the same lock: verify an explicit `adopts`
+    // reference, or refuse a plain genesis over history that requires one.
+    // See `Sessions that predate genesis` above.
+    if let Some(refusal) =
+        adjudicate_genesis_adoption_tx(&mut tx, community_id, channel_id, session_ref, event)
+            .await?
     {
         tx.rollback().await?;
-        return Ok(CodingSessionGenesisInsertOutcome::LegacySessionRefRefused { refusal });
+        return Ok(CodingSessionGenesisInsertOutcome::AdoptionRefused { refusal });
     }
 
     let (stored_event, was_inserted) = insert_event_with_thread_metadata_tx(
@@ -3263,6 +3415,36 @@ mod tests {
         .expect("sign genesis")
     }
 
+    /// Build an explicit-adoption genesis event (R15): same three-tag
+    /// envelope as [`make_genesis_event`], but content also carries `adopts`
+    /// naming the founding create and its joining receipt by event id.
+    fn make_genesis_adoption_event(
+        keys: &Keys,
+        channel_id: Uuid,
+        session_ref: &str,
+        create_event_id: &nostr::EventId,
+        receipt_event_id: &nostr::EventId,
+    ) -> nostr::Event {
+        let channel = channel_id.to_string();
+        let content = serde_json::json!({
+            "sessionRef": session_ref,
+            "v": 1,
+            "adopts": {
+                "createEventId": create_event_id.to_hex(),
+                "receiptEventId": receipt_event_id.to_hex(),
+            },
+        })
+        .to_string();
+        EventBuilder::new(Kind::Custom(44226), content)
+            .tags(vec![
+                Tag::parse(["h", channel.as_str()]).expect("h tag"),
+                Tag::parse(["csg-v", "csg1-1"]).expect("csg-v tag"),
+                Tag::parse(["csg-session", session_ref]).expect("csg-session tag"),
+            ])
+            .sign_with_keys(keys)
+            .expect("sign adoption genesis")
+    }
+
     async fn count_live_genesis(pool: &PgPool, community: CommunityId, session_ref: &str) -> i64 {
         let probe = serde_json::json!([["csg-session", session_ref]]);
         sqlx::query_scalar(
@@ -3435,7 +3617,7 @@ mod tests {
         );
     }
 
-    // ---- Adoption of sessions that predate genesis (R8) -------------------
+    // ---- Adoption of sessions that predate genesis (R8, R15, R16) ----------
 
     /// A signed `session.create` in the exact envelope the relay admits,
     /// claiming `session_ref` and addressed to `authority`.
@@ -3474,8 +3656,10 @@ mod tests {
             .expect("sign create")
     }
 
-    /// The provider's signed answer minting one execution for `command_id`.
-    fn make_receipt(authority: &Keys, channel_id: Uuid, command_id: &str) -> nostr::Event {
+    /// The provider's signed answer minting one execution for `command_id`,
+    /// signed by `signer` (ordinarily the create's named authority; tests that
+    /// want a non-joining receipt pass a different key).
+    fn make_receipt_signed_by(signer: &Keys, channel_id: Uuid, command_id: &str) -> nostr::Event {
         let content = serde_json::json!({
             "schema": "buzz-coding-session-lifecycle-receipt/v1",
             "commandId": command_id,
@@ -3495,115 +3679,93 @@ mod tests {
                 Tag::parse(["cslr-v", "cslr1-1"]).expect("cslr-v tag"),
                 Tag::parse(["csl-command", command_id]).expect("csl-command tag"),
             ])
-            .sign_with_keys(authority)
+            .sign_with_keys(signer)
             .expect("sign receipt")
     }
 
-    /// Seed one session that predates genesis: the founder's create, plus a
-    /// later create by a second operator who ran in the same umbrella.
-    ///
-    /// The second create matters — it is what makes "earliest" load-bearing
-    /// rather than "the only one". Returns that later operator's keys, so a
-    /// caller can check that having run in a session is not foundership.
-    ///
-    /// `receipt_joined` controls only the *founding* create's receipt; the
-    /// later create always has one, so an unjoined founder cannot be rescued by
-    /// falling through to a create that does have one.
-    async fn seed_legacy_session(
+    fn make_receipt(authority: &Keys, channel_id: Uuid, command_id: &str) -> nostr::Event {
+        make_receipt_signed_by(authority, channel_id, command_id)
+    }
+
+    /// Store a legacy founding create + its joining receipt, returning their
+    /// event ids for an `adopts` reference.
+    async fn store_founding_pair(
         pool: &PgPool,
         community: CommunityId,
         channel: Uuid,
         session_ref: &str,
         founder: &Keys,
-        receipt_joined: bool,
-    ) -> Keys {
-        let authority = Keys::generate();
-        let later_operator = Keys::generate();
-
-        let founding = make_legacy_create(
+        authority: &Keys,
+        command_id: &str,
+    ) -> (nostr::EventId, nostr::EventId) {
+        let create = make_legacy_create(
             founder,
             channel,
             session_ref,
-            "cmd-1",
-            &authority,
+            command_id,
+            authority,
             1_700_000_000,
         );
-        insert_event(pool, community, &founding, Some(channel))
+        insert_event(pool, community, &create, Some(channel))
             .await
             .expect("store founding create");
-        if receipt_joined {
-            let receipt = make_receipt(&authority, channel, "cmd-1");
-            insert_event(pool, community, &receipt, Some(channel))
-                .await
-                .expect("store founding receipt");
-        }
-
-        let later = make_legacy_create(
-            &later_operator,
-            channel,
-            session_ref,
-            "cmd-2",
-            &authority,
-            1_700_000_500,
-        );
-        insert_event(pool, community, &later, Some(channel))
+        let receipt = make_receipt(authority, channel, command_id);
+        insert_event(pool, community, &receipt, Some(channel))
             .await
-            .expect("store later create");
-        let later_receipt = make_receipt(&authority, channel, "cmd-2");
-        insert_event(pool, community, &later_receipt, Some(channel))
-            .await
-            .expect("store later receipt");
-
-        later_operator
+            .expect("store founding receipt");
+        (create.id, receipt.id)
     }
 
-    /// The security property this ruling exists for.
-    ///
-    /// Every session that predates genesis has its `sessionRef` sitting in
-    /// public 44221 history. Without this rule, first-insert-wins uniqueness
-    /// would take the first genesis published for one of those references and
-    /// then *defend* it — turning the anti-hijack mechanism into the hijack.
+    /// A genesis without `adopts` over a `sessionRef` that legacy history
+    /// already uses must be refused — regardless of who is asking, including
+    /// the true founder. R15 removed the relay's founder-projection
+    /// machinery entirely, so there is no longer an identity this path can
+    /// verify; the only way through is the explicit `adopts` reference.
     #[tokio::test]
     #[ignore = "requires Postgres"]
-    async fn genesis_over_legacy_create_history_is_refused_for_a_non_founder() {
+    async fn genesis_without_adopts_is_refused_when_legacy_history_exists() {
         let pool = setup_pool().await;
         let community = CommunityId::from_uuid(make_test_community(&pool).await);
         let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
         let session_ref = Uuid::new_v4().to_string();
 
         let founder = Keys::generate();
-        let later_operator =
-            seed_legacy_session(&pool, community, channel, &session_ref, &founder, true).await;
+        let authority = Keys::generate();
+        let (create_id, _receipt_id) = store_founding_pair(
+            &pool,
+            community,
+            channel,
+            &session_ref,
+            &founder,
+            &authority,
+            "cmd-1",
+        )
+        .await;
 
-        // A hijacker, and — just as important — a *legitimate later operator*
-        // of the same session. Having run in an umbrella is not foundership.
         for (label, claimant) in [
             ("outsider", Keys::generate()),
-            ("later operator", later_operator.clone()),
+            ("true founder", founder.clone()),
         ] {
             let genesis = make_genesis_event(&claimant, channel, &session_ref);
             match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
                 .await
                 .unwrap_or_else(|e| panic!("{label} claim: {e}"))
             {
-                CodingSessionGenesisInsertOutcome::LegacySessionRefRefused {
+                CodingSessionGenesisInsertOutcome::AdoptionRefused {
                     refusal:
-                        LegacyAdoptionRefusal::NotTheFounder {
-                            founder_pubkey,
-                            founding_create_event_id,
+                        GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+                            existing_create_event_id,
                         },
                 } => {
                     assert_eq!(
-                        founder_pubkey,
-                        founder.public_key().to_bytes().to_vec(),
-                        "{label}: the refusal must name the founder history projects"
-                    );
-                    assert!(
-                        !founding_create_event_id.is_empty(),
-                        "{label}: the refusal must cite the create it projected from"
+                        existing_create_event_id,
+                        create_id.as_bytes().as_slice(),
+                        "{label}: the refusal must point at a create to adopt"
                     );
                 }
-                other => panic!("{label} must not be able to claim this session, got {other:?}"),
+                other => panic!(
+                    "{label}: a bare genesis over legacy history must be refused, got {other:?}"
+                ),
             }
             assert!(
                 get_event_by_id(&pool, community, genesis.id.as_bytes())
@@ -3615,21 +3777,33 @@ mod tests {
         }
     }
 
-    /// The other half: the founder history already names may adopt, and the
-    /// adopted genesis is an ordinary genesis afterwards — it holds the
-    /// reference against everyone else exactly as a fresh one would.
+    /// The way through: an explicit `adopts` reference to the founding create
+    /// and its joining receipt. The adopted genesis is an ordinary genesis
+    /// afterwards — it holds the reference against everyone else exactly as a
+    /// fresh one would.
     #[tokio::test]
     #[ignore = "requires Postgres"]
-    async fn genesis_adoption_by_the_projected_founder_is_accepted() {
+    async fn genesis_explicit_adoption_by_the_referenced_founder_is_accepted() {
         let pool = setup_pool().await;
         let community = CommunityId::from_uuid(make_test_community(&pool).await);
         let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
         let session_ref = Uuid::new_v4().to_string();
 
         let founder = Keys::generate();
-        seed_legacy_session(&pool, community, channel, &session_ref, &founder, true).await;
+        let authority = Keys::generate();
+        let (create_id, receipt_id) = store_founding_pair(
+            &pool,
+            community,
+            channel,
+            &session_ref,
+            &founder,
+            &authority,
+            "cmd-1",
+        )
+        .await;
 
-        let adoption = make_genesis_event(&founder, channel, &session_ref);
+        let adoption =
+            make_genesis_adoption_event(&founder, channel, &session_ref, &create_id, &receipt_id);
         assert!(
             matches!(
                 insert_coding_session_genesis_event(&pool, community, &adoption, channel, None)
@@ -3640,7 +3814,7 @@ mod tests {
                     ..
                 }
             ),
-            "the founder history projects must be able to adopt their own session"
+            "an adoption referencing the true founding pair, signed by that founder, must succeed"
         );
 
         let rival = make_genesis_event(&Keys::generate(), channel, &session_ref);
@@ -3655,40 +3829,332 @@ mod tests {
         }
     }
 
-    /// A session whose earliest create no provider ever answered projects no
-    /// founder. The rule refuses rather than falling through to the next
-    /// candidate: picking one would assign a real session to someone on the
-    /// strength of a create anybody could have published.
+    /// R15 step 2(a): a `createEventId` naming nothing this relay has stored
+    /// is refused, never treated as a fresh founding.
     #[tokio::test]
     #[ignore = "requires Postgres"]
-    async fn genesis_over_an_unjoined_legacy_founder_is_refused() {
+    async fn genesis_explicit_adoption_is_refused_when_create_is_missing() {
         let pool = setup_pool().await;
         let community = CommunityId::from_uuid(make_test_community(&pool).await);
         let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
         let session_ref = Uuid::new_v4().to_string();
 
         let founder = Keys::generate();
-        let later_operator =
-            seed_legacy_session(&pool, community, channel, &session_ref, &founder, false).await;
+        let authority = Keys::generate();
+        let receipt = make_receipt(&authority, channel, "cmd-1");
+        insert_event(&pool, community, &receipt, Some(channel))
+            .await
+            .expect("store receipt");
 
-        // Not even the signer of the earliest create — an unanswered create is
-        // not evidence of having run anything.
-        for claimant in [&founder, &later_operator] {
-            let genesis = make_genesis_event(claimant, channel, &session_ref);
-            match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
-                .await
-                .expect("claim over unjoined history")
-            {
-                CodingSessionGenesisInsertOutcome::LegacySessionRefRefused {
-                    refusal: LegacyAdoptionRefusal::FounderAmbiguous { reason },
-                } => {
-                    assert!(
-                        reason.contains("receipt"),
-                        "the refusal must say what was indeterminate, got {reason:?}"
-                    );
-                }
-                other => panic!("an unjoined founding create binds nothing, got {other:?}"),
+        let nonexistent_create = nostr::EventId::from_hex(&"ab".repeat(32)).expect("event id");
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            channel,
+            &session_ref,
+            &nonexistent_create,
+            &receipt.id,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption over a missing create")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::ReferencedCreateNotFound,
+            } => {}
+            other => panic!("a missing create must refuse, got {other:?}"),
+        }
+    }
+
+    /// R15 step 2(a): a `receiptEventId` naming nothing this relay has stored
+    /// is refused.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_when_receipt_is_missing() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let create = make_legacy_create(
+            &founder,
+            channel,
+            &session_ref,
+            "cmd-1",
+            &authority,
+            1_700_000_000,
+        );
+        insert_event(&pool, community, &create, Some(channel))
+            .await
+            .expect("store create");
+
+        let nonexistent_receipt = nostr::EventId::from_hex(&"cd".repeat(32)).expect("event id");
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            channel,
+            &session_ref,
+            &create.id,
+            &nonexistent_receipt,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption over a missing receipt")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::ReferencedReceiptNotFound,
+            } => {}
+            other => panic!("a missing receipt must refuse, got {other:?}"),
+        }
+    }
+
+    /// R15 step 2(b): a receipt that exists but was not signed by the
+    /// create's named provider authority does not "genuinely join" it — a
+    /// bystander's receipt for an unrelated command cannot be repurposed as
+    /// adoption evidence.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_when_receipt_does_not_join_create() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let create = make_legacy_create(
+            &founder,
+            channel,
+            &session_ref,
+            "cmd-1",
+            &authority,
+            1_700_000_000,
+        );
+        insert_event(&pool, community, &create, Some(channel))
+            .await
+            .expect("store create");
+
+        // Signed by someone other than the create's named authority — a
+        // structurally valid receipt that simply does not answer this create.
+        let impostor = Keys::generate();
+        let unjoined_receipt = make_receipt_signed_by(&impostor, channel, "cmd-1");
+        insert_event(&pool, community, &unjoined_receipt, Some(channel))
+            .await
+            .expect("store unjoined receipt");
+
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            channel,
+            &session_ref,
+            &create.id,
+            &unjoined_receipt.id,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption over an unjoined receipt")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate,
+            } => {}
+            other => panic!("a non-joining receipt must refuse, got {other:?}"),
+        }
+    }
+
+    /// R15 step 2(c): the referenced create must bear the genesis's own
+    /// `sessionRef` — a valid create/receipt pair for a *different* umbrella
+    /// cannot be repointed at this one.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_on_session_ref_mismatch() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let create_session_ref = Uuid::new_v4().to_string();
+        let genesis_session_ref = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let (create_id, receipt_id) = store_founding_pair(
+            &pool,
+            community,
+            channel,
+            &create_session_ref,
+            &founder,
+            &authority,
+            "cmd-1",
+        )
+        .await;
+
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            channel,
+            &genesis_session_ref,
+            &create_id,
+            &receipt_id,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption with a mismatched sessionRef")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::SessionRefMismatch,
+            } => {}
+            other => panic!("a sessionRef mismatch must refuse, got {other:?}"),
+        }
+    }
+
+    /// R15 step 2(d): the genesis signer must equal the create's signer — a
+    /// correctly-joined create/receipt pair does not let a *different* signer
+    /// borrow its founder status.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_on_signer_mismatch() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let (create_id, receipt_id) = store_founding_pair(
+            &pool,
+            community,
+            channel,
+            &session_ref,
+            &founder,
+            &authority,
+            "cmd-1",
+        )
+        .await;
+
+        let impostor = Keys::generate();
+        let genesis =
+            make_genesis_adoption_event(&impostor, channel, &session_ref, &create_id, &receipt_id);
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption signed by a non-founder")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::SignerMismatch { founder_pubkey },
+            } => {
+                assert_eq!(founder_pubkey, founder.public_key().to_bytes().to_vec());
             }
+            other => panic!("a signer mismatch must refuse, got {other:?}"),
+        }
+    }
+
+    /// R15 step 2(e): a create/receipt pair genuinely joined and correctly
+    /// claiming this `sessionRef` still cannot found a genesis in a
+    /// *different* channel — the events must sit in the genesis's own
+    /// channel.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_when_events_are_in_the_wrong_channel() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let create_channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let genesis_channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let (create_id, receipt_id) = store_founding_pair(
+            &pool,
+            community,
+            create_channel,
+            &session_ref,
+            &founder,
+            &authority,
+            "cmd-1",
+        )
+        .await;
+
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            genesis_channel,
+            &session_ref,
+            &create_id,
+            &receipt_id,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, genesis_channel, None)
+            .await
+            .expect("adoption across channels")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::WrongChannel,
+            } => {}
+            other => panic!("cross-channel evidence must refuse, got {other:?}"),
+        }
+    }
+
+    /// R16 (ambiguity parity): the founding `commandId` is shared by two
+    /// creates in the channel that agree on signer but disagree on
+    /// `sessionRef`. The prior `sessionRef`-first scoping made the second
+    /// create invisible to this check; scanning by `commandId` alone (as the
+    /// desktop's `codingSessionCreateObservations.ts` does) catches it.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn genesis_explicit_adoption_is_refused_on_cross_session_ref_command_id_disagreement() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let session_ref_a = Uuid::new_v4().to_string();
+        let session_ref_b = Uuid::new_v4().to_string();
+
+        let founder = Keys::generate();
+        let authority = Keys::generate();
+        let shared_command_id = "cmd-shared";
+
+        // Same signer, same commandId, two different sessionRef claims.
+        let create_a = make_legacy_create(
+            &founder,
+            channel,
+            &session_ref_a,
+            shared_command_id,
+            &authority,
+            1_700_000_000,
+        );
+        insert_event(&pool, community, &create_a, Some(channel))
+            .await
+            .expect("store create A");
+        let create_b = make_legacy_create(
+            &founder,
+            channel,
+            &session_ref_b,
+            shared_command_id,
+            &authority,
+            1_700_000_100,
+        );
+        insert_event(&pool, community, &create_b, Some(channel))
+            .await
+            .expect("store create B");
+        let receipt = make_receipt(&authority, channel, shared_command_id);
+        insert_event(&pool, community, &receipt, Some(channel))
+            .await
+            .expect("store receipt");
+
+        let genesis = make_genesis_adoption_event(
+            &founder,
+            channel,
+            &session_ref_a,
+            &create_a.id,
+            &receipt.id,
+        );
+        match insert_coding_session_genesis_event(&pool, community, &genesis, channel, None)
+            .await
+            .expect("adoption over a cross-sessionRef-disputed command")
+        {
+            CodingSessionGenesisInsertOutcome::AdoptionRefused {
+                refusal: GenesisAdoptionRefusal::CommandIdAmbiguous { reason },
+            } => {
+                assert!(
+                    reason.contains("sessionRef"),
+                    "the refusal must say sessionRefs disagreed, got {reason:?}"
+                );
+            }
+            other => panic!(
+                "a commandId shared by two conflicting sessionRef claims must refuse, got {other:?}"
+            ),
         }
     }
 

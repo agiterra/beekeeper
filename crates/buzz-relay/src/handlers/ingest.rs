@@ -1901,36 +1901,54 @@ fn coding_session_genesis_duplicate_result(
     }
 }
 
-/// The wire answer to a genesis over a `sessionRef` that predates genesis.
-///
-/// Sessions created before this kind existed already have a founder, recorded
-/// in accepted `session.create` history. A genesis over one of those references
-/// is only ever an *adoption* by that founder, and the relay projects the
-/// founder itself rather than believing a claim — so a refusal here is either
-/// "you are not that person" or "history does not name one person", and the
-/// message says which.
+/// The wire answer to a genesis whose adoption could not be verified — either
+/// it carried no `adopts` reference over `sessionRef` history that requires
+/// one, or the reference it gave did not check out (R15, R16).
 ///
 /// `invalid:` rather than `duplicate:`: nothing was duplicated. The reference is
 /// in use by history, not by a rival genesis, and telling those apart is the
-/// difference between "resolve to that founder" and "this session has no
-/// genesis yet and may never get one from you".
-fn coding_session_genesis_legacy_refusal_result(
+/// difference between "adopt it explicitly" and "this session has no genesis
+/// yet and may never get one from you".
+fn coding_session_genesis_adoption_refusal_result(
     event_id_hex: String,
-    refusal: &buzz_db::LegacyAdoptionRefusal,
+    refusal: &buzz_db::GenesisAdoptionRefusal,
 ) -> IngestResult {
     let message = match refusal {
-        buzz_db::LegacyAdoptionRefusal::NotTheFounder {
-            founder_pubkey,
-            founding_create_event_id,
+        buzz_db::GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+            existing_create_event_id,
         } => format!(
-            "invalid: this coding session was founded before genesis by {} (create {}) — \
-             only that founder may adopt it",
-            hex::encode(founder_pubkey),
-            hex::encode(founding_create_event_id)
+            "invalid: this coding session was founded before genesis (create {}) — \
+             resubmit with an explicit adopts reference to that founding create and \
+             its joining receipt",
+            hex::encode(existing_create_event_id)
         ),
-        buzz_db::LegacyAdoptionRefusal::FounderAmbiguous { reason } => format!(
-            "invalid: this coding session predates genesis and its founder is not \
-             determinable ({reason}) — it needs an audited admin adoption"
+        buzz_db::GenesisAdoptionRefusal::ReferencedCreateNotFound => {
+            "invalid: adopts.createEventId does not name a session.create this relay has stored"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::ReferencedReceiptNotFound => {
+            "invalid: adopts.receiptEventId does not name a lifecycle receipt this relay has stored"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate => {
+            "invalid: the referenced receipt does not genuinely join the referenced create"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::SessionRefMismatch => {
+            "invalid: the referenced create claims a different sessionRef than this genesis"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::SignerMismatch { founder_pubkey } => format!(
+            "invalid: this genesis's signer is not the referenced create's signer ({})",
+            hex::encode(founder_pubkey)
+        ),
+        buzz_db::GenesisAdoptionRefusal::WrongChannel => {
+            "invalid: the referenced create or receipt was not published in this genesis's channel"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::CommandIdAmbiguous { reason } => format!(
+            "invalid: other session.create events share the founding commandId and disagree \
+             with it ({reason})"
         ),
     };
     IngestResult {
@@ -3314,8 +3332,8 @@ async fn ingest_event_inner(
                     &existing_event_id,
                 ));
             }
-            buzz_db::CodingSessionGenesisInsertOutcome::LegacySessionRefRefused { refusal } => {
-                return Ok(coding_session_genesis_legacy_refusal_result(
+            buzz_db::CodingSessionGenesisInsertOutcome::AdoptionRefused { refusal } => {
+                return Ok(coding_session_genesis_adoption_refusal_result(
                     event_id_hex,
                     &refusal,
                 ));
@@ -6060,51 +6078,70 @@ mod tests {
         );
     }
 
-    /// A genesis over a session that predates the kind is refused, and the two
-    /// refusals must not read alike: one names a founder to resolve to, the
-    /// other says nobody can be resolved to and an admin has to settle it.
-    /// Neither may be reported as a `duplicate:` — nothing was duplicated, and
-    /// a client that saw one would look for a rival genesis that does not exist.
+    /// A genesis over a session that predates the kind is refused, and every
+    /// refusal reads as `invalid:`, never `duplicate:` — nothing was
+    /// duplicated, and a client that saw `duplicate:` would look for a rival
+    /// genesis that does not exist. R15 replaced the old two-refusal
+    /// (`NotTheFounder`/`FounderAmbiguous`) shape with an explicit-reference
+    /// contract; this sweeps every `GenesisAdoptionRefusal` variant's wire
+    /// message.
     #[test]
-    fn coding_session_genesis_over_legacy_history_is_refused_without_a_receipt() {
-        let founder = "ab".repeat(32);
+    fn coding_session_genesis_adoption_refusals_are_reported_as_invalid_never_duplicate() {
         let create = "cd".repeat(32);
-        let not_founder = coding_session_genesis_legacy_refusal_result(
-            "ef".repeat(32),
-            &buzz_db::LegacyAdoptionRefusal::NotTheFounder {
-                founder_pubkey: hex::decode(&founder).expect("founder"),
-                founding_create_event_id: hex::decode(&create).expect("create"),
-            },
-        );
-        assert!(!not_founder.accepted);
-        assert!(
-            not_founder.message.starts_with("invalid:"),
-            "a reference held by history is not a duplicate genesis, got {:?}",
-            not_founder.message
-        );
-        assert!(
-            not_founder.message.contains(&founder) && not_founder.message.contains(&create),
-            "the refusal must name the founder and the create it projected from, got {:?}",
-            not_founder.message
-        );
+        let founder = "ab".repeat(32);
 
-        let ambiguous = coding_session_genesis_legacy_refusal_result(
-            "ef".repeat(32),
-            &buzz_db::LegacyAdoptionRefusal::FounderAmbiguous {
-                reason: "the earliest create has no single provider-signed receipt",
-            },
-        );
-        assert!(!ambiguous.accepted);
-        assert!(
-            ambiguous.message.contains("admin adoption"),
-            "an unresolvable founder must point at the audited path, got {:?}",
-            ambiguous.message
-        );
-        assert!(
-            !ambiguous.message.contains(&founder),
-            "an ambiguous refusal must not name anyone as founder, got {:?}",
-            ambiguous.message
-        );
+        let cases: Vec<(buzz_db::GenesisAdoptionRefusal, &str)> = vec![
+            (
+                buzz_db::GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+                    existing_create_event_id: hex::decode(&create).expect("create"),
+                },
+                "adopts",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReferencedCreateNotFound,
+                "createEventId",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReferencedReceiptNotFound,
+                "receiptEventId",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate,
+                "join",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::SessionRefMismatch,
+                "sessionRef",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::SignerMismatch {
+                    founder_pubkey: hex::decode(&founder).expect("founder"),
+                },
+                "signer",
+            ),
+            (buzz_db::GenesisAdoptionRefusal::WrongChannel, "channel"),
+            (
+                buzz_db::GenesisAdoptionRefusal::CommandIdAmbiguous {
+                    reason: "two sessionRefs claim the founding command",
+                },
+                "commandId",
+            ),
+        ];
+
+        for (refusal, expect_substring) in cases {
+            let result = coding_session_genesis_adoption_refusal_result("ef".repeat(32), &refusal);
+            assert!(!result.accepted, "{refusal:?} must be refused");
+            assert!(
+                result.message.starts_with("invalid:"),
+                "{refusal:?}: legacy-history refusals are not duplicates, got {:?}",
+                result.message
+            );
+            assert!(
+                result.message.contains(expect_substring),
+                "{refusal:?}: expected {expect_substring:?} in {:?}",
+                result.message
+            );
+        }
     }
 
     /// Genesis content is two fields and nothing else. A restated founder
@@ -6133,6 +6170,30 @@ mod tests {
                 "should reject content {rejected:?}"
             );
         }
+    }
+
+    /// R15: the envelope (three tags, `csg-session` mirroring `sessionRef`)
+    /// is identical for both payload forms — only the content's optional
+    /// `adopts` key differs, and the DB-transactional adoption verification
+    /// (event.rs) is a separate concern from this pure envelope check.
+    #[test]
+    fn coding_session_genesis_envelope_accepts_the_adoption_form() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "sessionRef": GENESIS_SESSION_REF,
+            "v": 1,
+            "adopts": {
+                "createEventId": "ab".repeat(32),
+                "receiptEventId": "cd".repeat(32),
+            },
+        })
+        .to_string();
+        assert!(validate_coding_session_genesis_envelope(&genesis_event(
+            &content,
+            &channel,
+            GENESIS_SESSION_REF
+        ))
+        .is_ok());
     }
 
     /// The four provider-authored kinds are bounded by size alone — the relay

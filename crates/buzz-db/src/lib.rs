@@ -58,7 +58,7 @@ pub mod workflow;
 
 pub use error::{DbError, Result};
 pub use event::{
-    CodingSessionGenesisInsertOutcome, EventQuery, LegacyAdoptionRefusal,
+    CodingSessionGenesisInsertOutcome, EventQuery, GenesisAdoptionRefusal,
     ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT,
 };
 
