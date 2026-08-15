@@ -204,3 +204,42 @@ test("activity is the newest event per channel", () => {
     ],
   );
 });
+
+test("a transport-typed channel wins the resolution outright", () => {
+  assert.deepEqual(
+    resolveProjectSessionsChannel({
+      projectName: "Buzz Glue",
+      projectChannels: [
+        // A user-named decoy that matches rule 1 must not beat the type.
+        { id: "decoy", name: "Buzz Glue sessions", channelType: "stream" },
+        { id: "t2", name: "whatever", channelType: "transport" },
+        { id: "t1", name: "anything", channelType: "transport" },
+      ],
+      sessionActivityByChannel: new Map([
+        ["decoy", "2026-08-14T00:00:00.000Z"],
+      ]),
+    }),
+    // Deterministic across members: lowest id among transports.
+    { channelId: "t1", reason: "transport" },
+  );
+});
+
+test("transport-typed channels are always hidden; the name heuristic stays for legacy", () => {
+  const channels = [
+    { id: "t", name: "Anything At All", channelType: "transport" },
+    // Legacy transport: stream-typed but canonical name + hosting sessions.
+    { id: "legacy", name: "Buzz Glue sessions", channelType: "stream" },
+    // A user channel hosting a standalone session stays visible.
+    { id: "chat", name: "general chat", channelType: "stream" },
+    // A canonical name with no sessions is just a channel someone named.
+    { id: "named", name: "Buzz Glue sessions", channelType: "stream" },
+  ];
+  assert.deepEqual(
+    withoutProjectSessionTransportChannels({
+      projectName: "Buzz Glue",
+      channels,
+      codingSessions: [{ channelId: "legacy" }, { channelId: "chat" }],
+    }).map((channel) => channel.id),
+    ["chat", "named"],
+  );
+});

@@ -886,7 +886,21 @@ pub(crate) async fn check_coding_session_membership(
         .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
         .await
     {
-        Ok(is_member) => coding_session_membership_verdict(is_member),
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(error) => return Err(format!("error: database error: {error}")),
+    }
+    // Session-transport channels: project membership IS transport access —
+    // the project's owner and invited members may publish coding-session
+    // events without a channel_members row (the same positive ACL grant the
+    // read paths use). `None` (not a transport, or project unknown) keeps
+    // the strict-membership denial; lookup errors fail closed.
+    match state
+        .channel_transport_gate_cached(tenant.community(), channel_id)
+        .await
+    {
+        Ok(Some(gate)) if gate.admits(pubkey_bytes) => Ok(()),
+        Ok(_) => coding_session_membership_verdict(false),
         Err(error) => Err(format!("error: database error: {error}")),
     }
 }

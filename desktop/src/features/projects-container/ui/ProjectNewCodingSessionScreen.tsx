@@ -47,7 +47,9 @@ export function ProjectNewCodingSessionScreen({
   projectId: string;
 }) {
   const { projects } = useProjectContainers();
-  const channelsQuery = useChannelsQuery();
+  // Transports included: the resolver's rule 0 and the session buckets both
+  // need the hidden transport channel this screen exists to find or create.
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const identity = useIdentityQuery();
   const queryClient = useQueryClient();
   const createChannelMutation = useCreateChannelMutation();
@@ -103,16 +105,27 @@ export function ProjectNewCodingSessionScreen({
     // Channels must belong to a project, so a session created inside the local
     // General placeholder publishes the real General first.
     const target = await ensureRealProject(project);
-    const created = await createChannel({
+    // A hidden transport channel: identified by type (never surfaced to
+    // people), and the relay admits project members through the project ACL
+    // instead of explicit channel membership. Private: the transport gate is
+    // the read model; an open channel would advertise it community-wide. A
+    // relay that predates the transport type rejects the create — fall back
+    // to the legacy private stream (name-keyed, creator-only) so session
+    // creation never breaks against an old relay.
+    const transportInput = {
       name: projectSessionsChannelName(target.name),
-      channelType: "stream",
-      // Closed: a coding-session transcript is working material, and 442xx is
-      // strict-membership anyway — an open channel would advertise it to the
-      // whole community without making it any more readable.
-      visibility: "private",
+      channelType: "transport" as const,
+      visibility: "private" as const,
       description: projectSessionsChannelDescription(target.name),
       projectRef: target.address,
-    });
+    };
+    const created = await createChannel(transportInput).catch(
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/invalid channel_type/i.test(message)) throw error;
+        return createChannel({ ...transportInput, channelType: "stream" });
+      },
+    );
     if (target.owner === (selfPubkey ?? "")) {
       try {
         await addProjectMembers(target, { channelIds: [created.id] });

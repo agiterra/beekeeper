@@ -111,8 +111,11 @@ export function CodingSessionWorkspace({
     founderPubkeysByGenesisRef,
   );
   const closureDialog = useCodingSessionClosureDialog();
+  // Transports included: a project session's workspace lives in a hidden
+  // transport channel that the default channel view filters out.
   const channelsQuery = useChannelsQuery({
     enabled: true,
+    includeSessionTransports: true,
   });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;

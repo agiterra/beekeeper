@@ -11,6 +11,7 @@ import * as React from "react";
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { MAX_CODING_SESSION_NAME_BYTES } from "@/features/coding-sessions/lib/codingSessionName";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
@@ -81,7 +82,14 @@ export function NewCodingSessionScreen({
   const navigate = useNavigate();
   const router = useRouter();
   const canGoBack = useCanGoBack();
-  const channelsQuery = useChannelsQuery({ enabled: true });
+  // Session transports are included here on purpose: the provider-catalog
+  // subscription and the project flow's channel summary need them. They are
+  // filtered back out of the standalone picker below — a hidden transport is
+  // never a channel a person chooses.
+  const channelsQuery = useChannelsQuery({
+    enabled: true,
+    includeSessionTransports: true,
+  });
   const memberChannels = React.useMemo(
     () =>
       (channelsQuery.data ?? [])
@@ -89,15 +97,20 @@ export function NewCodingSessionScreen({
         .sort((left, right) => left.name.localeCompare(right.name)),
     [channelsQuery.data],
   );
+  const pickerChannels = React.useMemo(
+    () =>
+      memberChannels.filter((channel) => !isSessionTransportChannel(channel)),
+    [memberChannels],
+  );
   const [channelSelection, setChannelSelection] = React.useState<string | null>(
     initialChannelId ?? null,
   );
   const channelId = projectContext
     ? projectContext.channelId
     : (channelSelection ??
-      (memberChannels.some((channel) => channel.id === initialChannelId)
+      (pickerChannels.some((channel) => channel.id === initialChannelId)
         ? (initialChannelId ?? null)
-        : (memberChannels[0]?.id ?? null)));
+        : (pickerChannels[0]?.id ?? null)));
   const memberChannelIds = React.useMemo(
     () => memberChannels.map((channel) => channel.id).sort(),
     [memberChannels],
@@ -391,7 +404,7 @@ export function NewCodingSessionScreen({
           />
         ) : (
           <NewCodingSessionChannelPicker
-            channels={memberChannels}
+            channels={pickerChannels}
             disabled={transaction !== null}
             onChange={(next) => {
               setChannelSelection(next);

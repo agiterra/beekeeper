@@ -11,14 +11,19 @@
  * nothing else; teaching it channel ids would make a private, per-machine file
  * the authority on a value every member has to agree on. Instead:
  *
- *   1. The project channel named `<project name> sessions` wins. The name *is*
- *      the mapping — published, visible to every member, and reproducible by
- *      any client from data it already has.
+ *   0. The project channel with `channel_type = "transport"` wins outright —
+ *      the relay-assigned type is the identity, immune to a person naming an
+ *      ordinary channel the same way.
+ *   1. Failing that (legacy transports predate the type), the project channel
+ *      named `<project name> sessions` wins. The name *is* the mapping —
+ *      published, visible to every member, and reproducible by any client
+ *      from data it already has.
  *   2. Failing that, the project channel with the most recent session activity
  *      wins, so a project that already settled on some other channel is never
  *      handed a duplicate.
  *   3. Failing that there is no sessions channel yet, and the first
- *      project-scoped create publishes one (closed, bound to the project).
+ *      project-scoped create publishes one (a hidden transport channel bound
+ *      to the project).
  *
  * A rename leaves rule 2 holding the line: the old channel keeps the history,
  * so it keeps winning until someone deliberately moves.
@@ -53,17 +58,20 @@ type ProjectSessionTransportCandidate = {
   id: string;
   name: string;
   description?: string;
+  channelType?: string;
 };
 
 /**
- * Remove a project's dedicated session transport once a real session row can
- * represent it.
+ * Remove a project's dedicated session transport from user-facing lists.
  *
- * Project-scoped creates publish an ordinary stream channel because 442xx
+ * Project-scoped creates publish a hidden transport channel because 442xx
  * events are `h`-scoped. Showing that implementation channel beside the
  * session gives two plausible doors: one opens the workspace and the other an
- * empty chat timeline. Only a canonical generated name or description is
- * hidden; an ordinary chat channel hosting a standalone session stays visible.
+ * empty chat timeline. A `channel_type = "transport"` channel is always
+ * hidden (the relay-assigned type is the identity); the canonical
+ * name/description match remains as the legacy fallback for transports
+ * created before the type existed — an ordinary chat channel hosting a
+ * standalone session stays visible.
  */
 export function withoutProjectSessionTransportChannels<
   T extends ProjectSessionTransportCandidate,
@@ -81,21 +89,23 @@ export function withoutProjectSessionTransportChannels<
   );
   return input.channels.filter(
     (channel) =>
-      !sessionChannelIds.has(channel.id) ||
-      (!namesMatch(channel.name, canonicalName) &&
-        channel.description?.trim() !== canonicalDescription),
+      channel.channelType !== "transport" &&
+      (!sessionChannelIds.has(channel.id) ||
+        (!namesMatch(channel.name, canonicalName) &&
+          channel.description?.trim() !== canonicalDescription)),
   );
 }
 
 export type ProjectSessionsChannelCandidate = {
   id: string;
   name: string;
+  channelType?: string;
 };
 
 export type ProjectSessionsChannelResolution = {
   channelId: string;
   /** Which rule picked it — surfaced so the UI can say why. */
-  reason: "name" | "activity";
+  reason: "transport" | "name" | "activity";
 };
 
 /**
@@ -108,6 +118,11 @@ export function resolveProjectSessionsChannel(input: {
   projectChannels: readonly ProjectSessionsChannelCandidate[];
   sessionActivityByChannel?: ReadonlyMap<string, string>;
 }): ProjectSessionsChannelResolution | null {
+  const transport = [...input.projectChannels]
+    .filter((channel) => channel.channelType === "transport")
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  if (transport) return { channelId: transport.id, reason: "transport" };
+
   const wanted = projectSessionsChannelName(input.projectName);
   const named = [...input.projectChannels]
     .filter((channel) => namesMatch(channel.name, wanted))

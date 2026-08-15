@@ -104,7 +104,9 @@ export function ProjectSidebarSections({
   const personas = usePersonasQuery();
   const managedAgents = useManagedAgentsQuery();
   const createContainerMutation = useCreateProjectContainerMutation();
-  const channelsQuery = useChannelsQuery();
+  // Transports included: the session buckets subscribe to them; display
+  // lists filter them back out via withoutProjectSessionTransportChannels.
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const forumEnabled = useFeatureEnabled("forum");
 
   // Shells are hoisted once (the store is shared and module-level, so this is

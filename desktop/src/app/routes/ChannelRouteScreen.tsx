@@ -10,8 +10,11 @@ import {
   getThreadReference,
   isBroadcastReply,
 } from "@/features/messages/lib/threading";
+import { parseMemberRef } from "@/features/projects-container/lib/projectContainerModel";
 import { useProfileQuery } from "@/features/profile/hooks";
+import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { KIND_PROJECT } from "@/shared/constants/kinds";
 import { getEventById } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
@@ -105,13 +108,33 @@ export function ChannelRouteScreen({
   targetThreadRootId,
 }: ChannelRouteScreenProps) {
   const isHuddleTranscript = huddleWindowChannelId() !== null;
-  const { closeForumPost, goForumPost } = useAppNavigation();
-  const channelsQuery = useChannelsQuery();
+  const { closeForumPost, goForumPost, goProject } = useAppNavigation();
+  // Transports included so a deep link to a hidden session-transport channel
+  // can be recognized and redirected instead of rendering an empty timeline.
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const identityQuery = useIdentityQuery();
   const profileQuery = useProfileQuery();
   const channels = channelsQuery.data ?? [];
   const activeChannel =
     channels.find((channel) => channel.id === channelId) ?? null;
+
+  // A session-transport channel is never a user surface — a deep link to one
+  // (old link, pasted id) lands on its project's home, where the sessions it
+  // carries actually live.
+  const transportProjectId = React.useMemo(() => {
+    if (!activeChannel || !isSessionTransportChannel(activeChannel)) {
+      return null;
+    }
+    const ref = activeChannel.projectRef
+      ? parseMemberRef(activeChannel.projectRef)
+      : null;
+    return ref && ref.kind === KIND_PROJECT ? `${ref.owner}:${ref.dtag}` : null;
+  }, [activeChannel]);
+  React.useEffect(() => {
+    if (transportProjectId) {
+      void goProject(transportProjectId, { replace: true });
+    }
+  }, [goProject, transportProjectId]);
   const [targetMessageEvents, setTargetMessageEvents] = React.useState<
     RelayEvent[]
   >(() => {
@@ -187,6 +210,16 @@ export function ChannelRouteScreen({
       isCancelled = true;
     };
   }, [selectedPostId, targetMessageId, targetThreadRootId]);
+
+  if (transportProjectId) {
+    // Redirecting to the project home — never paint the transport's timeline.
+    return (
+      <ViewLoadingFallback
+        includeHeader
+        kind={selectedPostId ? "forum" : "channel"}
+      />
+    );
+  }
 
   if (channelsQuery.isPending && !activeChannel) {
     if (isHuddleTranscript) {

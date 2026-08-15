@@ -87,7 +87,9 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     goWorkflow,
   } = useAppNavigation();
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
-  const channelsQuery = useChannelsQuery();
+  // Transports included: the session buckets subscribe to them; the stream
+  // list below filters them out via withoutProjectSessionTransportChannels.
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const personas = usePersonasQuery();
   const managedAgents = useManagedAgentsQuery();
   const identity = useIdentityQuery();

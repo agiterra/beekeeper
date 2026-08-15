@@ -5,6 +5,7 @@ import { useChannelsQuery } from "@/features/channels/hooks";
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
+import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useStableArrayShallow } from "@/shared/hooks/useStableReference";
 import { getChannelsWorkflows } from "@/shared/api/tauriWorkflows";
@@ -372,7 +373,12 @@ export function useProjectCodingSessionBuckets(
   const sessionChannelIds = React.useMemo(
     () =>
       (channels ?? [])
-        .filter((channel) => channel.isMember)
+        // Session transports are readable through the project ACL without a
+        // channel_members row, so a member subscribes to them too — the relay
+        // only ever returns transports the reader is admitted to.
+        .filter(
+          (channel) => channel.isMember || isSessionTransportChannel(channel),
+        )
         .map((channel) => channel.id)
         .sort(),
     [channels],
@@ -427,7 +433,9 @@ export function useCodingSessionProject(
   projectRef: string | null,
 ): { id: string; name: string } | null {
   const { projects } = useProjectContainers();
-  const channelsQuery = useChannelsQuery();
+  // Transports included: a session hosted in a hidden transport channel must
+  // still resolve to its project for the header crumb.
+  const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   return React.useMemo(() => {
     if (!channelId) return null;
     const buckets = partitionChannels(projects, channelsQuery.data ?? []);
@@ -501,13 +509,22 @@ export function useProjectSidebarData(channels: Channel[], enabled: boolean) {
   // community (join-on-open in the sidebar), plus private channels you're a
   // member of — not just joined ones. The member-only `channels` prop still
   // drives the flag-off global sections below.
-  const allChannelsQuery = useChannelsQuery({ enabled });
+  const allChannelsQuery = useChannelsQuery({
+    enabled,
+    // Transports ride along for session/workflow placement; every display
+    // list downstream filters them via withoutProjectSessionTransportChannels.
+    includeSessionTransports: true,
+  });
   const projectChannels = React.useMemo(() => {
     if (!enabled) return channels;
     const community = (allChannelsQuery.data ?? []).filter(
       (channel) =>
         channel.archivedAt === null &&
-        (channel.isMember || channel.visibility === "open"),
+        (channel.isMember ||
+          channel.visibility === "open" ||
+          // A transport in the list is one the relay already admitted this
+          // reader to (project member) — membership rows never exist for it.
+          isSessionTransportChannel(channel)),
     );
     // Until the full community list arrives, fall back to the member list so
     // the sidebar never blanks out.
