@@ -152,7 +152,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 }
             },
             Some(event) = provider.next_session_event() => {
-                if let Err(error) = provider.handle_session_event(event).await {
+                if let Err(error) = provider.handle_session_event(event) {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
                 }
             }
@@ -1065,11 +1065,12 @@ impl Provider {
     /// Turn one report from the session inbox into durable state and queued
     /// events.
     ///
-    /// Nothing here awaits any more: every arm is bookkeeping plus an enqueue,
-    /// so no session's report can be delayed by another's. Work that has to
-    /// wait on the world — the worktree probe — is spawned and comes back
-    /// through this same inbox as [`SessionEvent::WorktreeObserved`].
-    pub async fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
+    /// Synchronous on purpose, and the loop depends on it: every arm is
+    /// bookkeeping plus an enqueue, so no session's report can be delayed by
+    /// another's. Work that has to wait on the world — the worktree probe — is
+    /// spawned and comes back through this same inbox as
+    /// [`SessionEvent::WorktreeObserved`].
+    pub(crate) fn handle_session_event(&mut self, event: SessionEvent) -> anyhow::Result<()> {
         match event {
             SessionEvent::TurnStarted {
                 session_id,
@@ -1467,7 +1468,7 @@ mod tests {
         while let Ok(Some(event)) =
             tokio::time::timeout(Duration::from_millis(250), provider.next_session_event()).await
         {
-            provider.handle_session_event(event).await.expect("record");
+            provider.handle_session_event(event).expect("record");
         }
     }
 
@@ -1516,7 +1517,7 @@ mod tests {
                     .expect("session event within timeout")
                     .expect("channel open");
             let finished = done(&event);
-            provider.handle_session_event(event).await.expect("record");
+            provider.handle_session_event(event).expect("record");
             if finished {
                 return;
             }
@@ -2297,7 +2298,7 @@ mod tests {
                 .await
                 .expect("turn start")
                 .expect("event");
-            first.handle_session_event(started).await.expect("record");
+            first.handle_session_event(started).expect("record");
             // The turn is genuinely open: the agent will never answer it. Record
             // its opening items so the synthesized result continues the
             // sequence rather than starting it.
@@ -2621,10 +2622,7 @@ mod tests {
             .await
             .expect("turn start")
             .expect("event");
-        provider
-            .handle_session_event(started)
-            .await
-            .expect("record");
+        provider.handle_session_event(started).expect("record");
 
         provider
             .handle_command_event(channel_id, &interrupt_event(channel_id, "int-1", &target))
