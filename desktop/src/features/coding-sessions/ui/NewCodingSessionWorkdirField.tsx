@@ -115,7 +115,9 @@ export function NewCodingSessionWorkdirField({
           aria-invalid={problem !== null}
           autoComplete="off"
           className={cn(
-            "font-mono text-xs",
+            // The example path is a hint, not a value — at mono/xs the stock
+            // placeholder color reads like a real filled-in path.
+            "font-mono text-xs placeholder:text-muted-foreground/50",
             problem && "border-destructive/60",
           )}
           data-testid="coding-session-workdir-input"
