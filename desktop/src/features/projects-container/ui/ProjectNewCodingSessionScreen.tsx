@@ -153,7 +153,6 @@ export function ProjectNewCodingSessionScreen({
             projectRef:
               project.id === LOCAL_GENERAL_ID ? null : project.address,
             channelId: resolvedChannel?.channelId ?? null,
-            pendingChannelName: projectSessionsChannelName(project.name),
             ensureChannelId,
           }
         : null,

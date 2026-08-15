@@ -50,8 +50,6 @@ export type NewCodingSessionProjectContext = {
   projectRef: string | null;
   /** The project's sessions channel, or null until this create publishes one. */
   channelId: string | null;
-  /** Name the sessions channel will be published under, when there is none. */
-  pendingChannelName: string;
   /**
    * Resolve — creating it if needed — the channel this session belongs in.
    * Called once, on submit: opening the screen and walking away must not leave
@@ -394,12 +392,6 @@ export function NewCodingSessionScreen({
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-5 py-7 sm:px-8">
         {projectContext ? (
           <NewCodingSessionProjectDestination
-            channelName={
-              memberChannels.find(
-                (channel) => channel.id === projectContext.channelId,
-              )?.name ?? null
-            }
-            pendingChannelName={projectContext.pendingChannelName}
             projectName={projectContext.projectName}
           />
         ) : (
@@ -581,17 +573,14 @@ export function NewCodingSessionScreen({
 }
 
 /**
- * Where a project-scoped session will live, stated rather than asked. A project
- * without a sessions channel yet names the one this create is about to publish,
- * so the side effect is visible before the button is pressed.
+ * Where a project-scoped session will live, stated rather than asked. The
+ * transport channel carrying the transcript is deliberately never named:
+ * members reach sessions through the project, so surfacing the channel would
+ * only advertise plumbing they cannot (and should not) interact with.
  */
 export function NewCodingSessionProjectDestination({
-  channelName,
-  pendingChannelName,
   projectName,
 }: {
-  channelName: string | null;
-  pendingChannelName: string;
   projectName: string;
 }) {
   return (
@@ -604,20 +593,8 @@ export function NewCodingSessionProjectDestination({
         <span className="truncate">{projectName}</span>
       </p>
       <p className="text-2xs text-muted-foreground">
-        {channelName ? (
-          <>
-            The session's signed transcript lives in{" "}
-            <span className="font-medium">#{channelName}</span>, visible to that
-            channel's members.
-          </>
-        ) : (
-          <>
-            This project has no sessions channel yet. Creating this session
-            publishes a closed channel called{" "}
-            <span className="font-medium">#{pendingChannelName}</span> inside
-            the project, and the transcript lives there.
-          </>
-        )}
+        The session and its signed transcript live in this project, visible to
+        project members.
       </p>
     </div>
   );

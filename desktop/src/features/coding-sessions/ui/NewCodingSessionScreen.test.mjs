@@ -293,32 +293,18 @@ test("the working-directory field names the exact reason a path will not work", 
   );
 });
 
-test("a project with a sessions channel states where the transcript will land", () => {
+test("the project destination card never names the transport channel", () => {
   const markup = renderToStaticMarkup(
     React.createElement(NewCodingSessionProjectDestination, {
-      channelName: "buzz glue sessions",
-      pendingChannelName: "Buzz Glue sessions",
       projectName: "Buzz Glue",
     }),
   );
 
   assert.match(markup, /Buzz Glue/);
-  assert.match(markup, /#buzz glue sessions/);
-  // Nothing is being created, so the screen must not say it will be.
-  assert.doesNotMatch(markup, /publishes a closed channel/);
-});
-
-test("a project without one names the channel this create is about to publish", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(NewCodingSessionProjectDestination, {
-      channelName: null,
-      pendingChannelName: "Buzz Glue sessions",
-      projectName: "Buzz Glue",
-    }),
-  );
-
-  // The side effect is disclosed before the button, not discovered after it.
-  assert.match(markup, /no sessions channel yet/);
-  assert.match(markup, /publishes a closed channel/);
-  assert.match(markup, /#Buzz Glue sessions/);
+  assert.match(markup, /visible to\s+project members/);
+  // The transport channel is plumbing: members reach sessions through the
+  // project, so the card must not mention channels at all — by name or
+  // otherwise.
+  assert.doesNotMatch(markup, /channel/i);
+  assert.doesNotMatch(markup, /#/);
 });
