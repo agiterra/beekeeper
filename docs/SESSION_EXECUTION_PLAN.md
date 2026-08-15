@@ -557,6 +557,57 @@ unverified items (P2's timing/pkt-line figures, P3's timing table, the
 concurrency mutation claim) are re-verified by a checking agent when B1
 consumes them — not before.
 
+### Rulings addendum — 2026-08-15 stop-point review (R15–R19)
+
+Adjudication of the R8 deviation Opus flagged and Sol's five findings.
+**The genesis E2E does not start until R15–R17 land**; the E2E is then
+written against the final contract, including negative cases (wrong and
+missing adoption references, both deletion mechanisms).
+
+- **R15 (explicit adoption — the implicit deviation is rejected).**
+  Adoption must be a durable statement **inside the signed genesis
+  payload**: an `adopts` object carrying the founding create's event id
+  and its receipt's event id (payload field — keeps the three-tag
+  envelope; no fourth tag, no separate adoption event). The relay
+  validates against the *referenced* events: they exist, the receipt
+  joins the create, the create bears the `sessionRef`, and the genesis
+  signer matches the create's signer (the projected founder). A signed
+  event's meaning must never depend on what a particular relay's local
+  database happens to contain (R13): without the reference, the same
+  event is an adoption on one relay and a fresh genesis on another, and
+  no auditor or replica can reconstruct its justification.
+  **Standing rule, phase-wide: a subagent's file-set boundary is never a
+  reason to alter a protocol contract — escalate instead.**
+- **R16 (ambiguity parity — security-significant).** The relay's
+  adoption validation must reproduce the desktop's rule exactly: for the
+  founding `commandId`, inspect **every** create in the channel bearing
+  that command id and reject on signer *or* `sessionRef` disagreement.
+  The current shape (filter to candidate `sessionRef` first, then check
+  signers) makes cross-`sessionRef` disagreement invisible to the relay
+  while the desktop treats it as ambiguous. Fix + DB test.
+- **R17 (probe fencing).** "Last arrival wins" is an observation, not a
+  guarantee: a slow old probe can overwrite newer state. Per-session
+  monotonic probe generation; results older than the latest applied
+  generation are discarded (or the prior probe is cancelled); add a
+  deterministic reversed-completion test.
+- **R18 (gate placement and hygiene).** `just ci` stays infra-free by
+  contract, so a green `just ci` must never be cited as proof of genesis
+  uniqueness — completion reports cite the gate run itself. The gate
+  must run wherever the infra path runs (`just test` and the repo CI
+  pipeline), and its database name must be unique per run (fixed
+  `buzz_genesis_gate` collides across simultaneous worktrees).
+- **R19 (export completeness — ledger item).** `buzz sessions export`
+  fetches only 44223/44224/44225: no operator commands, no genesis, no
+  future transitions — not a complete audit bundle. Either expand it to
+  the full command/authority record or rename it honestly as a
+  provider-transcript export. Does not block A1; must be resolved before
+  phase close (it is the "attributable corpus" story's tooling face).
+
+**Order:** R15 → R16 (adoption path finalized) with R17 in parallel →
+R18 → genesis E2E on the final contract. Sol's verification of R6/R7,
+the gate proofs (9/9), and the provider suite (131 + startup) is
+accepted as the current baseline.
+
 ### B.7 Patterns to copy from shipped work
 Project ACL composition + fail-closed gate:
 `crates/buzz-db/src/project_acl.rs`, `ProjectGate::admits` (see
