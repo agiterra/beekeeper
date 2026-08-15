@@ -1901,6 +1901,45 @@ fn coding_session_genesis_duplicate_result(
     }
 }
 
+/// The wire answer to a genesis over a `sessionRef` that predates genesis.
+///
+/// Sessions created before this kind existed already have a founder, recorded
+/// in accepted `session.create` history. A genesis over one of those references
+/// is only ever an *adoption* by that founder, and the relay projects the
+/// founder itself rather than believing a claim — so a refusal here is either
+/// "you are not that person" or "history does not name one person", and the
+/// message says which.
+///
+/// `invalid:` rather than `duplicate:`: nothing was duplicated. The reference is
+/// in use by history, not by a rival genesis, and telling those apart is the
+/// difference between "resolve to that founder" and "this session has no
+/// genesis yet and may never get one from you".
+fn coding_session_genesis_legacy_refusal_result(
+    event_id_hex: String,
+    refusal: &buzz_db::LegacyAdoptionRefusal,
+) -> IngestResult {
+    let message = match refusal {
+        buzz_db::LegacyAdoptionRefusal::NotTheFounder {
+            founder_pubkey,
+            founding_create_event_id,
+        } => format!(
+            "invalid: this coding session was founded before genesis by {} (create {}) — \
+             only that founder may adopt it",
+            hex::encode(founder_pubkey),
+            hex::encode(founding_create_event_id)
+        ),
+        buzz_db::LegacyAdoptionRefusal::FounderAmbiguous { reason } => format!(
+            "invalid: this coding session predates genesis and its founder is not \
+             determinable ({reason}) — it needs an audited admin adoption"
+        ),
+    };
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message,
+    }
+}
+
 /// Validate the exact public envelope for a coding-session command (44220).
 ///
 /// The signed event pubkey is the operator authority. The payload deliberately
@@ -3273,6 +3312,12 @@ async fn ingest_event_inner(
                 return Ok(coding_session_genesis_duplicate_result(
                     event_id_hex,
                     &existing_event_id,
+                ));
+            }
+            buzz_db::CodingSessionGenesisInsertOutcome::LegacySessionRefRefused { refusal } => {
+                return Ok(coding_session_genesis_legacy_refusal_result(
+                    event_id_hex,
+                    &refusal,
                 ));
             }
         }
@@ -6012,6 +6057,53 @@ mod tests {
             result.message.contains(&"ab".repeat(32)),
             "the refusal must name the winning genesis, got {:?}",
             result.message
+        );
+    }
+
+    /// A genesis over a session that predates the kind is refused, and the two
+    /// refusals must not read alike: one names a founder to resolve to, the
+    /// other says nobody can be resolved to and an admin has to settle it.
+    /// Neither may be reported as a `duplicate:` — nothing was duplicated, and
+    /// a client that saw one would look for a rival genesis that does not exist.
+    #[test]
+    fn coding_session_genesis_over_legacy_history_is_refused_without_a_receipt() {
+        let founder = "ab".repeat(32);
+        let create = "cd".repeat(32);
+        let not_founder = coding_session_genesis_legacy_refusal_result(
+            "ef".repeat(32),
+            &buzz_db::LegacyAdoptionRefusal::NotTheFounder {
+                founder_pubkey: hex::decode(&founder).expect("founder"),
+                founding_create_event_id: hex::decode(&create).expect("create"),
+            },
+        );
+        assert!(!not_founder.accepted);
+        assert!(
+            not_founder.message.starts_with("invalid:"),
+            "a reference held by history is not a duplicate genesis, got {:?}",
+            not_founder.message
+        );
+        assert!(
+            not_founder.message.contains(&founder) && not_founder.message.contains(&create),
+            "the refusal must name the founder and the create it projected from, got {:?}",
+            not_founder.message
+        );
+
+        let ambiguous = coding_session_genesis_legacy_refusal_result(
+            "ef".repeat(32),
+            &buzz_db::LegacyAdoptionRefusal::FounderAmbiguous {
+                reason: "the earliest create has no single provider-signed receipt",
+            },
+        );
+        assert!(!ambiguous.accepted);
+        assert!(
+            ambiguous.message.contains("admin adoption"),
+            "an unresolvable founder must point at the audited path, got {:?}",
+            ambiguous.message
+        );
+        assert!(
+            !ambiguous.message.contains(&founder),
+            "an ambiguous refusal must not name anyone as founder, got {:?}",
+            ambiguous.message
         );
     }
 

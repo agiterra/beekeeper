@@ -58,8 +58,8 @@ pub mod workflow;
 
 pub use error::{DbError, Result};
 pub use event::{
-    CodingSessionGenesisInsertOutcome, EventQuery, ReactionEventInsertOutcome,
-    DEFAULT_MAX_PAGE_LIMIT,
+    CodingSessionGenesisInsertOutcome, EventQuery, LegacyAdoptionRefusal,
+    ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT,
 };
 
 use buzz_datastore_tracing::datastore_span;
@@ -2307,7 +2307,8 @@ impl Db {
     }
 
     /// Atomically enforce one coding-session genesis (kind 44226) per
-    /// `(channel, sessionRef)` and store the event.
+    /// `(channel, sessionRef)`, refuse a claim over pre-genesis create
+    /// history, and store the event.
     ///
     /// See [`event::insert_coding_session_genesis_event`] for the serialization
     /// argument. No mention rows are written: the genesis envelope permits
