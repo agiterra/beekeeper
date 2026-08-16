@@ -10,6 +10,9 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
+use buzz_core::coding_session_authority_transition::{
+    decode_coding_session_authority_transition, CodingSessionAuthorityTransitionType,
+};
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CodingSessionGenesisAdoption,
 };
@@ -19,8 +22,9 @@ use buzz_core::coding_session_lifecycle_command::{
 use buzz_core::coding_session_payload::LifecycleReceipt;
 use buzz_core::kind::{
     event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AUTH,
-    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-    KIND_EVENT_REMINDER, KIND_HUDDLE_STARTED, SHARED_GATED_KINDS,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_EVENT_REMINDER, KIND_HUDDLE_STARTED,
+    SHARED_GATED_KINDS,
 };
 use buzz_core::{CommunityId, StoredEvent};
 
@@ -2089,6 +2093,373 @@ pub async fn insert_coding_session_genesis_event(
     tx.commit().await?;
 
     Ok(CodingSessionGenesisInsertOutcome::Founded {
+        stored_event: Box::new(stored_event),
+        was_inserted,
+    })
+}
+
+// ---- Coding-session authority chain (kind 44228) --------------------------
+
+/// The tag an authority-transition event mirrors its genesis reference into,
+/// for the same reason genesis mirrors `sessionRef` into `csg-session`: the
+/// relay's storage transaction needs an indexed way to find every transition
+/// for one genesis atomically with the insert, and content is opaque to the
+/// tag GIN. Re-derived from the decoded payload rather than trusted — see
+/// [`coding_session_authority_transition_genesis_ref`].
+///
+/// Consumers must never select the chain by this tag either, for the same
+/// reason `csg-session` is enforcement/diagnostics-only (R7): the chain
+/// resolves by walking `prevAccepted` links from an explicit id, not by
+/// scanning for tag matches.
+const CODING_SESSION_AUTHORITY_TAG: &str = "csat-genesis";
+
+/// Domain separator for the authority-transition advisory-lock key space —
+/// see [`CODING_SESSION_GENESIS_LOCK_DOMAIN`] for why a domain constant
+/// exists at all and why an accidental collision with it is harmless.
+const CODING_SESSION_AUTHORITY_LOCK_DOMAIN: &[u8] = b"buzz.coding-session.authority.v1";
+
+/// Derive the advisory-lock key that serializes transition writes for one
+/// `(community, channel, genesisRef)`.
+///
+/// Scoped like [`coding_session_genesis_lock_key`]: the signer is
+/// deliberately absent (two rival transitions for the same genesis must
+/// contend for the same lock regardless of who signed them), and
+/// `genesis_ref` plus `channel_id` are both folded in so unrelated chains
+/// never contend with each other.
+fn coding_session_authority_lock_key(
+    community_id: CommunityId,
+    channel_id: Uuid,
+    genesis_ref: &str,
+) -> i64 {
+    let mut hasher = Sha256::new();
+    hasher.update(CODING_SESSION_AUTHORITY_LOCK_DOMAIN);
+    hasher.update(community_id.as_uuid().as_bytes());
+    hasher.update(channel_id.as_bytes());
+    hasher.update((genesis_ref.len() as u64).to_le_bytes());
+    hasher.update(genesis_ref.as_bytes());
+    let digest = hasher.finalize();
+    let mut key = [0u8; 8];
+    key.copy_from_slice(&digest[..8]);
+    i64::from_le_bytes(key)
+}
+
+/// Read the genesis reference an authority-transition event mirrors into its
+/// tags, re-validating it is well-formed hex — the same "re-derive, don't
+/// trust" discipline as [`coding_session_genesis_session_ref`].
+fn coding_session_authority_transition_genesis_ref(event: &Event) -> Result<&str> {
+    event
+        .tags
+        .iter()
+        .find_map(|tag| {
+            let parts = tag.as_slice();
+            match parts {
+                [name, value, ..] if name == CODING_SESSION_AUTHORITY_TAG => Some(value.as_str()),
+                _ => None,
+            }
+        })
+        .ok_or_else(|| {
+            DbError::InvalidData(format!(
+                "coding-session authority transition is missing its {CODING_SESSION_AUTHORITY_TAG} tag"
+            ))
+        })
+}
+
+/// Why an authority transition could not be accepted. Every variant is a
+/// refusal: nothing is written for any of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthorityTransitionRefusal {
+    /// `genesisRef` does not name a stored, decodable coding-session genesis
+    /// (kind 44226) event. Soft-deleted genesis rows still count (R6: a
+    /// genesis is a permanent identity anchor), so this variant means the
+    /// reference never existed at all, not merely that it was later removed.
+    GenesisNotFound,
+    /// The referenced genesis was not published in this transition's own
+    /// channel, or its own stored envelope does not agree with itself
+    /// (`csg-session` disagreeing with its decoded `sessionRef`) — a defense-
+    /// in-depth re-check of the reference's integrity rather than a
+    /// consumer-facing distinction (R22's discipline applied here: verify the
+    /// resolved reference's envelope fully, never trust it by relay-shape
+    /// alone).
+    WrongChannel,
+    /// `prevAccepted` does not match the chain's current accepted head for
+    /// this `genesisRef` (or the chain has a head but `prevAccepted` was
+    /// `null`, or vice versa) — this transition named a stale or wrong
+    /// predecessor.
+    StaleHead {
+        /// The predecessor this transition should have named, for the
+        /// rejection message. `None` means the chain has no accepted
+        /// transitions yet, so only `prevAccepted: null` would have been
+        /// accepted.
+        expected_prev_accepted: Option<Vec<u8>>,
+    },
+    /// `seq` does not equal one more than the current head's `seq` (or `1`
+    /// when the chain is empty).
+    SeqMismatch {
+        /// The `seq` this transition should have carried.
+        expected_seq: u32,
+    },
+    /// The signer is not the session's current owner. Only the genesis
+    /// signer is ever the owner today — see
+    /// [`current_coding_session_authority_owner`].
+    SignerNotOwner {
+        /// The actual owner's pubkey, for the rejection message.
+        owner_pubkey: Vec<u8>,
+    },
+}
+
+/// Outcome of an attempted coding-session authority-transition (kind 44228)
+/// insert.
+#[derive(Debug)]
+pub enum CodingSessionAuthorityTransitionInsertOutcome {
+    /// This transition extended the chain (or was an idempotent replay of an
+    /// already-accepted one). The transaction committed.
+    Accepted {
+        /// The stored transition event.
+        stored_event: Box<StoredEvent>,
+        /// Whether the event row itself was newly inserted. `false` means an
+        /// idempotent resubmission of an already-accepted transition.
+        was_inserted: bool,
+    },
+    /// The transition could not be accepted. Nothing was written.
+    Refused {
+        /// Why.
+        refusal: AuthorityTransitionRefusal,
+    },
+}
+
+/// Resolve today's session owner: the genesis signer (the founder).
+///
+/// This is the single seam future transition types change. `grant-operator`
+/// never moves ownership — it only adds an operator — so today's owner
+/// resolution never needs to consult the chain itself, only the genesis. A
+/// future `transfer` or `takeover` type changes this function's body (to walk
+/// the chain for the most recent ownership-moving transition) without
+/// touching any of its callers, which continue to ask "who is the current
+/// owner" exactly as they do today.
+fn current_coding_session_authority_owner(genesis_event: &StoredEvent) -> Vec<u8> {
+    genesis_event.event.pubkey.as_bytes().to_vec()
+}
+
+/// Fetch and re-validate the genesis an authority transition references.
+///
+/// Fetches by id including soft-deleted rows (R6: identity facts are
+/// permanent, so a later deletion must not make a chain's root
+/// unresolvable), then re-checks the resolved genesis's own envelope rather
+/// than trusting its stored shape: it must decode, sit in the transition's
+/// channel, and its `csg-session` tag must agree with its own decoded
+/// `sessionRef` (R22's "validate the full envelope of a resolved reference,
+/// fail closed on any mismatch" discipline, applied to the relay's own
+/// storage-transaction reads).
+async fn fetch_and_verify_authority_genesis_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    genesis_ref: &str,
+) -> Result<std::result::Result<StoredEvent, AuthorityTransitionRefusal>> {
+    let Ok(genesis_id) = hex::decode(genesis_ref) else {
+        return Ok(Err(AuthorityTransitionRefusal::GenesisNotFound));
+    };
+    let Some(genesis_event) = fetch_coding_session_event_tx(
+        tx,
+        community_id,
+        &genesis_id,
+        KIND_CODING_SESSION_GENESIS as i32,
+    )
+    .await?
+    else {
+        return Ok(Err(AuthorityTransitionRefusal::GenesisNotFound));
+    };
+
+    if genesis_event.channel_id != Some(channel_id) {
+        return Ok(Err(AuthorityTransitionRefusal::WrongChannel));
+    }
+
+    let Ok(genesis_payload) = decode_coding_session_genesis(&genesis_event.event.content) else {
+        return Ok(Err(AuthorityTransitionRefusal::GenesisNotFound));
+    };
+    let tag_session_ref = coding_session_genesis_session_ref(&genesis_event.event)
+        .ok()
+        .map(str::to_owned);
+    if tag_session_ref.as_deref() != Some(genesis_payload.session_ref.as_str()) {
+        return Ok(Err(AuthorityTransitionRefusal::WrongChannel));
+    }
+
+    Ok(Ok(genesis_event))
+}
+
+/// One transition already stored for `genesis_ref`, decoded — used to derive
+/// the chain's current head. Kept minimal: only what the head computation and
+/// idempotency check need.
+struct StoredAuthorityTransition {
+    event_id: Vec<u8>,
+    seq: u32,
+}
+
+/// Every already-stored authority transition for `genesis_ref` in this
+/// channel, **excluding** `exclude_event_id`.
+///
+/// The exclusion is what makes resubmitting an already-accepted transition
+/// idempotent rather than self-contradictory: without it, a transition that
+/// is itself the current head would be compared against its own id as its
+/// required predecessor and always fail. See
+/// [`insert_coding_session_authority_transition_event`]'s `# Resubmission`
+/// section — the same shape as genesis's own resubmission handling.
+///
+/// Decode failures are skipped rather than failing the transaction, mirroring
+/// [`legacy_session_creates_tx`]: a row this build cannot decode was never a
+/// row any prior accept-path produced, since every accepted transition passed
+/// through [`decode_coding_session_authority_transition`] before it was
+/// stored.
+async fn stored_authority_transitions_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    community_id: CommunityId,
+    channel_id: Uuid,
+    genesis_ref: &str,
+    exclude_event_id: &[u8],
+) -> Result<Vec<StoredAuthorityTransition>> {
+    let probe = serde_json::json!([[CODING_SESSION_AUTHORITY_TAG, genesis_ref]]);
+    let rows: Vec<(Vec<u8>, String)> = sqlx::query_as(
+        "SELECT id, content FROM events \
+         WHERE community_id = $1 AND kind = $2 AND channel_id = $3 \
+         AND id <> $4 AND tags @> $5::jsonb",
+    )
+    .bind(community_id.as_uuid())
+    .bind(buzz_core::kind::KIND_CODING_SESSION_AUTHORITY_TRANSITION as i32)
+    .bind(channel_id)
+    .bind(exclude_event_id)
+    .bind(&probe)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(event_id, content)| {
+            let payload = decode_coding_session_authority_transition(&content).ok()?;
+            Some(StoredAuthorityTransition {
+                event_id,
+                seq: payload.seq,
+            })
+        })
+        .collect())
+}
+
+/// Atomically validate one authority-transition event against the chain and
+/// the current owner's standing, and store it.
+///
+/// # Why this lives here and not at ingest
+///
+/// Exactly [`insert_coding_session_genesis_event`]'s reasoning: "is this the
+/// next accepted link in the chain" is a question only the storage
+/// transaction can answer atomically, so `begin` → `pg_advisory_xact_lock` →
+/// probe the chain and the genesis → insert → `commit`, with the lock held
+/// across both the probe and the insert. Two rival transitions for the same
+/// genesis cannot both observe the same head: the loser blocks on the lock,
+/// and by the time it runs its own probe the winner's row is committed and
+/// visible — which is what turns "a transition naming a stale head" from an
+/// approximate check into the actual serialization point (this bite's whole
+/// architectural bet).
+///
+/// # Resubmission
+///
+/// [`stored_authority_transitions_tx`] excludes this event's own id from the
+/// chain scan, so replaying an already-accepted transition recomputes the
+/// *same* expected `(prevAccepted, seq)` it originally satisfied, passes
+/// validation again, and falls through to `ON CONFLICT DO NOTHING` —
+/// `Accepted { was_inserted: false, .. }` — exactly as genesis's own replay
+/// does. Only a genuinely different, non-extending transition is refused.
+pub async fn insert_coding_session_authority_transition_event(
+    pool: &PgPool,
+    community_id: CommunityId,
+    event: &Event,
+    channel_id: Uuid,
+    thread_meta: Option<ThreadMetadataParams<'_>>,
+) -> Result<CodingSessionAuthorityTransitionInsertOutcome> {
+    let genesis_ref = coding_session_authority_transition_genesis_ref(event)?.to_owned();
+    let payload =
+        decode_coding_session_authority_transition(&event.content).map_err(DbError::InvalidData)?;
+    // The `CodingSessionAuthorityTransitionType::GrantOperator` match below is
+    // exhaustive on purpose: adding a variant without teaching this function
+    // how to authorize it must be a compile error, not a silently-accepted
+    // transition.
+    let CodingSessionAuthorityTransitionType::GrantOperator = payload.transition_type;
+
+    let lock_key = coding_session_authority_lock_key(community_id, channel_id, &genesis_ref);
+    let id_bytes = event.id.as_bytes();
+
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(lock_key)
+        .execute(&mut *tx)
+        .await?;
+
+    let genesis_event = match fetch_and_verify_authority_genesis_tx(
+        &mut tx,
+        community_id,
+        channel_id,
+        &genesis_ref,
+    )
+    .await?
+    {
+        Ok(genesis_event) => genesis_event,
+        Err(refusal) => {
+            tx.rollback().await?;
+            return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused { refusal });
+        }
+    };
+
+    let others = stored_authority_transitions_tx(
+        &mut tx,
+        community_id,
+        channel_id,
+        &genesis_ref,
+        id_bytes.as_slice(),
+    )
+    .await?;
+    let current_head = others.iter().max_by_key(|t| t.seq);
+
+    let expected_prev_accepted = current_head.map(|head| head.event_id.clone());
+    let actual_prev_accepted = payload
+        .prev_accepted
+        .as_deref()
+        .map(|hex_id| hex::decode(hex_id).unwrap_or_default());
+    if actual_prev_accepted != expected_prev_accepted {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::StaleHead {
+                expected_prev_accepted,
+            },
+        });
+    }
+
+    let expected_seq = current_head.map(|head| head.seq + 1).unwrap_or(1);
+    if payload.seq != expected_seq {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::SeqMismatch { expected_seq },
+        });
+    }
+
+    let owner_pubkey = current_coding_session_authority_owner(&genesis_event);
+    if event.pubkey.as_bytes() != owner_pubkey.as_slice() {
+        tx.rollback().await?;
+        return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+            refusal: AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey },
+        });
+    }
+
+    let (stored_event, was_inserted) = insert_event_with_thread_metadata_tx(
+        &mut tx,
+        community_id,
+        event,
+        Some(channel_id),
+        thread_meta,
+    )
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(CodingSessionAuthorityTransitionInsertOutcome::Accepted {
         stored_event: Box::new(stored_event),
         was_inserted,
     })
@@ -4379,6 +4750,489 @@ mod tests {
                 1,
                 "round {round}: the store must agree with the outcomes it handed out"
             );
+        }
+    }
+
+    // ---- Coding-session authority chain (kind 44228) -----------------------
+
+    /// Build an authority-transition event in the exact envelope the relay's
+    /// validator admits, signed by `keys`.
+    fn make_authority_transition_event(
+        keys: &Keys,
+        channel_id: Uuid,
+        genesis_ref: &str,
+        prev_accepted: Option<&str>,
+        seq: u32,
+        grantee_pubkey: &str,
+    ) -> nostr::Event {
+        let channel = channel_id.to_string();
+        let prev_json = match prev_accepted {
+            Some(prev) => format!("\"{prev}\""),
+            None => "null".to_owned(),
+        };
+        let content = format!(
+            r#"{{"genesisRef":"{genesis_ref}","prevAccepted":{prev_json},"seq":{seq},"type":"grant-operator","granteePubkey":"{grantee_pubkey}"}}"#
+        );
+        EventBuilder::new(Kind::Custom(44228), content)
+            .tags(vec![
+                Tag::parse(["h", channel.as_str()]).expect("h tag"),
+                Tag::parse(["csat-v", "csat1-1"]).expect("csat-v tag"),
+                Tag::parse(["csat-genesis", genesis_ref]).expect("csat-genesis tag"),
+            ])
+            .sign_with_keys(keys)
+            .expect("sign authority transition")
+    }
+
+    /// Found a fresh session in `channel`, signed by `founder`, and return the
+    /// stored genesis event. Panics (via `expect`/`assert`) on any outcome
+    /// other than a clean founding — every authority-transition test starts
+    /// from a genesis it can trust is real.
+    async fn found_genesis_for_authority_tests(
+        pool: &PgPool,
+        community: CommunityId,
+        channel: Uuid,
+        founder: &Keys,
+    ) -> nostr::Event {
+        let session_ref = Uuid::new_v4().to_string();
+        let genesis = make_genesis_event(founder, channel, &session_ref);
+        let outcome = insert_coding_session_genesis_event(pool, community, &genesis, channel, None)
+            .await
+            .expect("found session for authority-transition test");
+        assert!(matches!(
+            outcome,
+            CodingSessionGenesisInsertOutcome::Founded {
+                was_inserted: true,
+                ..
+            }
+        ));
+        genesis
+    }
+
+    /// The chain's first link: `prevAccepted: null`, `seq: 1`, signed by the
+    /// founder (today's owner).
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_first_grant_is_accepted() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let grantee = Keys::generate().public_key().to_hex();
+
+        let transition = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &grantee,
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool,
+            community,
+            &transition,
+            channel,
+            None,
+        )
+        .await
+        .expect("first grant");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                was_inserted,
+                stored_event,
+            } => {
+                assert!(was_inserted);
+                assert_eq!(stored_event.event.id, transition.id);
+            }
+            other => panic!("first grant must be accepted, got {other:?}"),
+        }
+    }
+
+    /// A second transition that correctly names the first as `prevAccepted`
+    /// and increments `seq` extends the chain.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_second_grant_with_correct_linkage_is_accepted() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let genesis_ref = genesis.id.to_hex();
+
+        let first = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        insert_coding_session_authority_transition_event(&pool, community, &first, channel, None)
+            .await
+            .expect("first grant");
+
+        let second = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&first.id.to_hex()),
+            2,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &second, channel, None,
+        )
+        .await
+        .expect("second grant");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Accepted { was_inserted, .. } => {
+                assert!(was_inserted);
+            }
+            other => panic!("second grant must be accepted, got {other:?}"),
+        }
+    }
+
+    /// A transition naming anything other than the chain's actual current
+    /// head — even with the numerically correct next `seq` — is refused. This
+    /// is the serialization-point property the whole bite exists to prove.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_with_stale_prev_accepted_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let genesis_ref = genesis.id.to_hex();
+
+        let first = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        insert_coding_session_authority_transition_event(&pool, community, &first, channel, None)
+            .await
+            .expect("first grant");
+
+        // Correct next seq (2), but a prevAccepted that names something other
+        // than the real head (the genesis id, not the first transition's id).
+        let stale = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&genesis_ref),
+            2,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &stale, channel, None,
+        )
+        .await
+        .expect("stale transition attempt");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal:
+                    AuthorityTransitionRefusal::StaleHead {
+                        expected_prev_accepted,
+                    },
+            } => {
+                assert_eq!(
+                    expected_prev_accepted,
+                    Some(first.id.as_bytes().to_vec()),
+                    "the refusal must name the real head"
+                );
+            }
+            other => panic!("stale prevAccepted must be refused, got {other:?}"),
+        }
+    }
+
+    /// The numeric twin of the stale-head case: correct `prevAccepted`, wrong
+    /// `seq`.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_with_wrong_seq_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+        let genesis_ref = genesis.id.to_hex();
+
+        let first = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        insert_coding_session_authority_transition_event(&pool, community, &first, channel, None)
+            .await
+            .expect("first grant");
+
+        let wrong_seq = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis_ref,
+            Some(&first.id.to_hex()),
+            5,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool, community, &wrong_seq, channel, None,
+        )
+        .await
+        .expect("wrong-seq transition attempt");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SeqMismatch { expected_seq },
+            } => {
+                assert_eq!(expected_seq, 2);
+            }
+            other => panic!("wrong seq must be refused, got {other:?}"),
+        }
+    }
+
+    /// Only the session's owner (today: the genesis signer) may extend the
+    /// chain — a well-linked transition from anyone else is still refused.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_from_a_non_owner_signer_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let impostor = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+
+        let transition = make_authority_transition_event(
+            &impostor,
+            channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool,
+            community,
+            &transition,
+            channel,
+            None,
+        )
+        .await
+        .expect("non-owner transition attempt");
+        match outcome {
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey },
+            } => {
+                assert_eq!(owner_pubkey, founder.public_key().to_bytes().to_vec());
+            }
+            other => panic!("non-owner signer must be refused, got {other:?}"),
+        }
+    }
+
+    /// A `genesisRef` that names no stored genesis at all is refused —
+    /// nothing to root the chain at.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_against_an_unknown_genesis_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let signer = Keys::generate();
+        let fabricated_genesis_ref = "ab".repeat(32);
+
+        let transition = make_authority_transition_event(
+            &signer,
+            channel,
+            &fabricated_genesis_ref,
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool,
+            community,
+            &transition,
+            channel,
+            None,
+        )
+        .await
+        .expect("unknown-genesis transition attempt");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::GenesisNotFound,
+            }
+        ));
+    }
+
+    /// A genesis founded in one channel cannot anchor a transition published
+    /// in a different one — the channel is part of the reference's identity,
+    /// exactly as it is for genesis itself.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_against_a_cross_channel_genesis_is_rejected() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let home_channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let other_channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis =
+            found_genesis_for_authority_tests(&pool, community, home_channel, &founder).await;
+
+        let transition = make_authority_transition_event(
+            &founder,
+            other_channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+        let outcome = insert_coding_session_authority_transition_event(
+            &pool,
+            community,
+            &transition,
+            other_channel,
+            None,
+        )
+        .await
+        .expect("cross-channel transition attempt");
+        assert!(matches!(
+            outcome,
+            CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::WrongChannel,
+            }
+        ));
+    }
+
+    /// Replaying the exact same signed transition stays idempotent — the same
+    /// resubmission guarantee genesis gives, and for the same reason (a
+    /// dropped `OK` must not permanently look like someone else's chain).
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_resubmission_of_the_same_event_stays_idempotent() {
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+        let founder = Keys::generate();
+        let genesis = found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+
+        let transition = make_authority_transition_event(
+            &founder,
+            channel,
+            &genesis.id.to_hex(),
+            None,
+            1,
+            &Keys::generate().public_key().to_hex(),
+        );
+
+        for expected_insert in [true, false] {
+            let outcome = insert_coding_session_authority_transition_event(
+                &pool,
+                community,
+                &transition,
+                channel,
+                None,
+            )
+            .await
+            .expect("resubmit transition");
+            match outcome {
+                CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                    was_inserted, ..
+                } => {
+                    assert_eq!(was_inserted, expected_insert);
+                }
+                other => {
+                    panic!("a replay of an accepted transition is not a refusal, got {other:?}")
+                }
+            }
+        }
+    }
+
+    /// The claim this slice actually has to earn, mirrored from genesis's own
+    /// concurrency proof: four rival transitions, each claiming to be the
+    /// chain's first link, released simultaneously by a barrier. Exactly one
+    /// may commit — the advisory lock is the serialization point, not a
+    /// convention every caller has to honor.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires Postgres"]
+    async fn authority_transition_concurrent_rivals_resolve_to_exactly_one_winner() {
+        const RIVALS: usize = 4;
+        const ROUNDS: usize = 8;
+
+        let pool = setup_pool().await;
+        let community = CommunityId::from_uuid(make_test_community(&pool).await);
+        let channel = make_test_channel(&pool, *community.as_uuid(), None).await;
+
+        for round in 0..ROUNDS {
+            let founder = Keys::generate();
+            let genesis =
+                found_genesis_for_authority_tests(&pool, community, channel, &founder).await;
+            let genesis_ref = genesis.id.to_hex();
+
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(RIVALS));
+            let mut claims = Vec::with_capacity(RIVALS);
+
+            for _ in 0..RIVALS {
+                let rival = make_authority_transition_event(
+                    &founder,
+                    channel,
+                    &genesis_ref,
+                    None,
+                    1,
+                    &Keys::generate().public_key().to_hex(),
+                );
+                let pool = pool.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                claims.push(tokio::spawn(async move {
+                    drop(pool.acquire().await.expect("warm a pooled connection"));
+                    barrier.wait().await;
+                    let outcome = insert_coding_session_authority_transition_event(
+                        &pool, community, &rival, channel, None,
+                    )
+                    .await
+                    .expect("rival transition");
+                    (rival.id.as_bytes().to_vec(), outcome)
+                }));
+            }
+
+            let mut winners = Vec::new();
+            let mut refused = 0usize;
+            for claim in claims {
+                let (event_id, outcome) = claim.await.expect("join rival transition");
+                match outcome {
+                    CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                        was_inserted,
+                        ..
+                    } => {
+                        assert!(was_inserted, "round {round}: distinct rivals are new rows");
+                        winners.push(event_id);
+                    }
+                    CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                        refusal: AuthorityTransitionRefusal::StaleHead { .. },
+                    } => {
+                        refused += 1;
+                    }
+                    other => panic!(
+                        "round {round}: a losing rival must be refused as a stale head, got {other:?}"
+                    ),
+                }
+            }
+
+            assert_eq!(
+                winners.len(),
+                1,
+                "round {round}: exactly one rival may extend the chain, got {} winners",
+                winners.len()
+            );
+            assert_eq!(refused, RIVALS - 1, "round {round}");
         }
     }
 }

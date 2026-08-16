@@ -58,6 +58,7 @@ pub mod workflow;
 
 pub use error::{DbError, Result};
 pub use event::{
+    AuthorityTransitionRefusal, CodingSessionAuthorityTransitionInsertOutcome,
     CodingSessionGenesisInsertOutcome, EventQuery, GenesisAdoptionRefusal,
     ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT,
 };
@@ -2323,6 +2324,35 @@ impl Db {
         thread_meta: Option<event::ThreadMetadataParams<'_>>,
     ) -> Result<event::CodingSessionGenesisInsertOutcome> {
         event::insert_coding_session_genesis_event(
+            &self.pool,
+            community_id,
+            event,
+            channel_id,
+            thread_meta,
+        )
+        .await
+    }
+
+    /// Atomically validate one coding-session authority-transition (kind
+    /// 44228) against the chain and the current owner's standing, and store
+    /// it.
+    ///
+    /// See [`event::insert_coding_session_authority_transition_event`] for
+    /// the serialization argument. No mention rows are written: the
+    /// transition envelope permits exactly three tags — `h`, `csat-v`,
+    /// `csat-genesis` — so a transition can never carry a `p` tag to extract.
+    #[datastore_span(
+        name = "insert_coding_session_authority_transition_event",
+        system = "postgresql"
+    )]
+    pub async fn insert_coding_session_authority_transition_event(
+        &self,
+        community_id: CommunityId,
+        event: &nostr::Event,
+        channel_id: Uuid,
+        thread_meta: Option<event::ThreadMetadataParams<'_>>,
+    ) -> Result<event::CodingSessionAuthorityTransitionInsertOutcome> {
+        event::insert_coding_session_authority_transition_event(
             &self.pool,
             community_id,
             event,

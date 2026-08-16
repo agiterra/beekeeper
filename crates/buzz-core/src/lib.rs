@@ -9,6 +9,9 @@
 pub mod agent_turn_metric;
 /// Channel and membership enums shared across crates.
 pub mod channel;
+/// NIP-CSAT (draft): append-only coding-session authority-chain transitions
+/// (44228) — one `grant-operator` step at a time today.
+pub mod coding_session_authority_transition;
 /// NIP-CSC: Coding-session command — provider-neutral turn request payload.
 pub mod coding_session_command;
 /// NIP-CSG: Coding-session genesis — the operator-signed origin of an umbrella

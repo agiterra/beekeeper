@@ -7,6 +7,7 @@ import {
   CHANNEL_TIMELINE_CONTENT_KINDS,
   CODING_SESSION_EVENT_KINDS,
   isConversationalUnreadKind,
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_COMMAND,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
@@ -98,6 +99,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       transcript: KIND_CODING_SESSION_TRANSCRIPT,
       genesis: KIND_CODING_SESSION_GENESIS,
       goal: KIND_CODING_SESSION_GOAL,
+      authorityTransition: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     },
     {
       command: 44220,
@@ -108,9 +110,10 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       transcript: 44225,
       genesis: 44226,
       goal: 44227,
+      authorityTransition: 44228,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 8);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 9);
 });
 
 test("codingSessionKinds_neverEnterTheChatTimeline", () => {

@@ -620,6 +620,25 @@ pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
 /// `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
 pub const KIND_CODING_SESSION_GOAL: u32 = 44227;
 
+/// NIP-CSAT (draft): Coding-session authority transition — one append-only
+/// step of a session's authority chain.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag.
+/// Content is a public JSON
+/// [`crate::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload`]
+/// naming the session's genesis by event id, the previous accepted
+/// transition (or `null` for the chain's first link), a sequence number
+/// starting at 1, exactly one transition type (`grant-operator` today, the
+/// only type this build accepts), and the grantee pubkey. Ordered tags: `h`,
+/// `csat-v`, `csat-genesis`. The relay validates linkage against the chain
+/// and the signer's standing (the session's owner — today the genesis
+/// signer) at ingest, atomically with storage, and publishes a relay-signed
+/// acceptance receipt (kind 40099) naming the new canonical head. See
+/// `docs/nips/NIP-CSG.md` for the genesis this chain roots at; the
+/// transition's own spec text is drafted here and finalized after A6 per the
+/// sessions execution plan.
+pub const KIND_CODING_SESSION_AUTHORITY_TRANSITION: u32 = 44228;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -809,6 +828,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_TRANSCRIPT,
     KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1020,6 +1040,13 @@ const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GOAL));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GOAL));
 const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GOAL));
 const _: () = assert!(KIND_CODING_SESSION_GOAL <= u16::MAX as u32);
+
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_AUTHORITY_TRANSITION));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_AUTHORITY_TRANSITION));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION
+));
+const _: () = assert!(KIND_CODING_SESSION_AUTHORITY_TRANSITION <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

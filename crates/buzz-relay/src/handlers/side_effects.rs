@@ -6,12 +6,14 @@ use nostr::{Event, EventBuilder, Kind, Tag};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition;
 use buzz_core::kind::{
-    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_CODING_SESSION_GENESIS,
-    KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST,
-    KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA,
-    KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION, KIND_THREAD_SUMMARY,
+    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY,
+    KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
+    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
+    KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -33,7 +35,16 @@ pub fn is_admin_kind(kind: u32) -> bool {
 /// handled in `ingest_event()` before storage so we can short-circuit on
 /// duplicates without storing the event at all.
 pub fn is_side_effect_kind(kind: u32) -> bool {
-    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | 41001..=41003 | 40099)
+    matches!(
+        kind,
+        0 | 5
+            | 9000..=9022
+            | KIND_GIT_REPO_ANNOUNCEMENT
+            | KIND_AGENT_PROFILE
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | 41001..=41003
+            | 40099
+    )
 }
 
 async fn evict_live_channel_subscriptions(
@@ -216,6 +227,9 @@ pub async fn handle_side_effects(
         // NIP-34: Git repo announcement → reserve name + seed manifest pointer.
         KIND_GIT_REPO_ANNOUNCEMENT => handle_git_repo_announcement(tenant, event, state).await,
         KIND_AGENT_PROFILE => handle_agent_profile(tenant, event, state).await,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION => {
+            handle_coding_session_authority_transition_accepted(tenant, event, state).await
+        }
         // kind:7 (reaction) handled inline in ingest_event() before storage.
         _ => Ok(()),
     }
@@ -829,6 +843,43 @@ pub async fn emit_system_message(
     }
 
     Ok(())
+}
+
+/// Publish the relay-signed acceptance receipt for a just-accepted
+/// coding-session authority transition (kind 44228).
+///
+/// Runs only when [`super::event::dispatch_persistent_event`]'s caller has
+/// already confirmed the transition was newly inserted — `ingest_event_inner`
+/// short-circuits a replayed event with `duplicate:` before side effects ever
+/// fire, so a resubmission of an already-accepted transition does not mint a
+/// second receipt. The receipt is a `kind:40099` system message (the
+/// existing relay-signed-emission pattern) naming exactly the facts a
+/// consumer needs to establish the new canonical head: the genesis, the
+/// accepted transition, its sequence number, its type, and the grantee.
+async fn handle_coding_session_authority_transition_accepted(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let channel_id = extract_h_tag_channel(event)
+        .ok_or_else(|| anyhow::anyhow!("coding-session authority transition missing h tag"))?;
+    let payload = decode_coding_session_authority_transition(&event.content)
+        .map_err(|e| anyhow::anyhow!("undecodable accepted authority transition: {e}"))?;
+
+    emit_system_message(
+        tenant,
+        state,
+        channel_id,
+        serde_json::json!({
+            "type": "coding_session_authority_transition_accepted",
+            "genesisRef": payload.genesis_ref,
+            "acceptedEventId": event.id.to_hex(),
+            "seq": payload.seq,
+            "transitionType": payload.transition_type,
+            "granteePubkey": payload.grantee_pubkey,
+        }),
+    )
+    .await
 }
 
 /// Sign and fan out a fresh relay-signed `kind:39005` thread-summary overlay

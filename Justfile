@@ -315,13 +315,20 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 test: test-genesis
     ./scripts/run-tests.sh all
 
-# Genesis uniqueness proofs (kind 44226) against a throwaway database.
+# Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind
+# 44228) against a throwaway database.
 #
-# These prove a security property — that two rival claims on one session
-# reference cannot both be accepted — so they may not sit unexecuted. They are
-# `#[ignore]`d because they need Postgres, and `run-tests.sh` deliberately runs
-# `cargo test -p buzz-db` *without* `--ignored`, so nothing else in this repo
-# ever runs them.
+# These prove security properties — that two rival claims on one session
+# reference cannot both be accepted (genesis), and that two rival authority
+# transitions for one chain cannot both be accepted (authority transitions) —
+# so they may not sit unexecuted. They are `#[ignore]`d because they need
+# Postgres, and `run-tests.sh` deliberately runs `cargo test -p buzz-db`
+# *without* `--ignored`, so nothing else in this repo ever runs them.
+#
+# The filter is two substrings — `genesis` and `authority_transition` — passed
+# as separate libtest filter arguments, which libtest ORs together (this is
+# NOT cargo's own single-TESTNAME positional; both go after `--`). Extend this
+# list, not the DB name, the next time a Postgres-gated proof needs to join it.
 #
 # They cannot simply be pointed at the dev database. Each Postgres-backed
 # buzz-db test drops and rebuilds the schema from the *invoking worktree's*
@@ -343,9 +350,9 @@ test-genesis: _ensure-services
     scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
     # The event tests expect a migrated schema; they do not build one themselves.
     DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
-    echo "==> genesis uniqueness proofs against ${db} (serial, isolated)"
+    echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
     DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
-        cargo test -p buzz-db --lib genesis -- --ignored --test-threads=1
+        cargo test -p buzz-db --lib -- genesis authority_transition --ignored --test-threads=1
 
 # Run unit tests only (no infra needed)
 test-unit:

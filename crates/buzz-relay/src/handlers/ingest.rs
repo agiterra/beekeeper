@@ -14,8 +14,8 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
     KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
@@ -356,17 +356,19 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
-        // Coding sessions: the operator-signed session origin and goal
-        // revisions (44226/44227), the operator-authored commands
-        // (44220/44221), and the provider-authored facts they produce
-        // (44222-44225). All are durable, channel-scoped
-        // writes consumed by an out-of-relay provider adapter — the relay
-        // validates and stores them, and deliberately never executes them. See
-        // docs/nips/NIP-CSC.md, NIP-CSL.md, NIP-CSPC.md, NIP-CST.md, NIP-CSG.md.
+        // Coding sessions: the operator-signed session origin, goal
+        // revisions, and authority-chain transitions (44226/44227/44228),
+        // the operator-authored commands (44220/44221), and the
+        // provider-authored facts they produce (44222-44225). All are
+        // durable, channel-scoped writes consumed by an out-of-relay
+        // provider adapter — the relay validates and stores them, and
+        // deliberately never executes them. See docs/nips/NIP-CSC.md,
+        // NIP-CSL.md, NIP-CSPC.md, NIP-CST.md, NIP-CSG.md.
         KIND_CODING_SESSION_COMMAND
         | KIND_CODING_SESSION_LIFECYCLE_COMMAND
         | KIND_CODING_SESSION_GENESIS
         | KIND_CODING_SESSION_GOAL
+        | KIND_CODING_SESSION_AUTHORITY_TRANSITION
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -672,12 +674,13 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_TRANSCRIPT
             | KIND_CODING_SESSION_GENESIS
             | KIND_CODING_SESSION_GOAL
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
     )
 }
 
-/// Returns `true` for the eight coding-session kinds (44220–44227).
+/// Returns `true` for the nine coding-session kinds (44220–44228).
 ///
-/// One predicate for the strict-membership gate and the tests, so an eighth
+/// One predicate for the strict-membership gate and the tests, so a ninth
 /// kind cannot be added to one gate and forgotten by another.
 pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
     matches!(
@@ -690,14 +693,16 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_TRANSCRIPT
             | KIND_CODING_SESSION_GENESIS
             | KIND_CODING_SESSION_GOAL
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
     )
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220, 44221, 44226, and 44227 are bounded by their payload contracts in
-/// `buzz-core` instead (12 KiB of turn text, 16 KiB of signed content, 1 KiB of
-/// genesis), so they are absent here — and those bounds are the stricter ones,
+/// 44220, 44221, 44226, 44227, and 44228 are bounded by their payload
+/// contracts in `buzz-core` instead (12 KiB of turn text, 16 KiB of signed
+/// content, 1 KiB of genesis, 512 B of an authority transition), so they are
+/// absent here — and those bounds are the stricter ones,
 /// since their envelope validators run *before* this table is consulted. The
 /// four provider-authored kinds carry no envelope validator — the
 /// relay does not parse a provider's facts — so a size cap is the whole of
@@ -1962,6 +1967,98 @@ fn coding_session_genesis_adoption_refusal_result(
     }
 }
 
+/// Validate the exact public envelope for a coding-session authority
+/// transition (44228).
+///
+/// Three ordered two-field tags — `h`, `csat-v`, `csat-genesis` — mirroring
+/// genesis's own envelope shape. `csat-genesis` is re-derived from the
+/// decoded content rather than trusted, for the same reason `csg-session` is:
+/// the storage transaction's chain lookup matches on the tag, so a
+/// disagreement between tag and content would let a transition be stored
+/// under one genesis while filed under another.
+///
+/// # Not enforced here: chain linkage and owner standing
+///
+/// Like genesis's envelope validator, this is pure and cannot check whether
+/// `prevAccepted`/`seq` actually extend the chain, or whether the signer is
+/// the session's current owner — both require the current accepted head,
+/// which only the storage transaction can answer atomically. See
+/// `buzz_db::event::insert_coding_session_authority_transition_event`.
+fn validate_coding_session_authority_transition_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_authority_transition::{
+        decode_coding_session_authority_transition, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_authority_transition(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err(
+            "coding-session authority transition requires exactly three two-field tags".into(),
+        );
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err(
+            "coding-session authority transition first tag must be a channel UUID h tag".into(),
+        );
+    }
+    if tags[1][0] != "csat-v" || tags[1][1] != CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION {
+        return Err("unsupported coding-session authority transition tag version".into());
+    }
+    if tags[2][0] != "csat-genesis" || tags[2][1] != payload.genesis_ref {
+        return Err(
+            "coding-session authority transition csat-genesis does not match payload genesisRef"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The wire answer to an authority transition the chain refused.
+///
+/// Each variant of [`buzz_db::AuthorityTransitionRefusal`] gets a distinct,
+/// specific message — the publisher needs to know *which* invariant it
+/// missed (an unknown genesis is a very different bug from a stale head) to
+/// have any hope of resubmitting correctly.
+fn coding_session_authority_transition_refusal_result(
+    event_id_hex: String,
+    refusal: &buzz_db::AuthorityTransitionRefusal,
+) -> IngestResult {
+    let message = match refusal {
+        buzz_db::AuthorityTransitionRefusal::GenesisNotFound => {
+            "invalid: genesisRef does not name a coding-session genesis this relay has stored"
+                .to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::WrongChannel => {
+            "invalid: the referenced genesis was not published in this transition's channel, or \
+             its stored envelope does not agree with itself"
+                .to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::StaleHead {
+            expected_prev_accepted,
+        } => match expected_prev_accepted {
+            Some(expected) => format!(
+                "invalid: prevAccepted does not match the chain's current head (expected {})",
+                hex::encode(expected)
+            ),
+            None => "invalid: prevAccepted must be null — this chain has no accepted \
+                      transitions yet"
+                .to_string(),
+        },
+        buzz_db::AuthorityTransitionRefusal::SeqMismatch { expected_seq } => {
+            format!("invalid: seq does not extend the chain (expected {expected_seq})")
+        }
+        buzz_db::AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey } => format!(
+            "invalid: signer is not the session's current owner ({})",
+            hex::encode(owner_pubkey)
+        ),
+    };
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message,
+    }
+}
+
 /// Validate the exact public envelope for a coding-session command (44220).
 ///
 /// The signed event pubkey is the operator authority. The payload deliberately
@@ -2904,6 +3001,11 @@ async fn ingest_event_inner(
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
+    if kind_u32 == KIND_CODING_SESSION_AUTHORITY_TRANSITION {
+        validate_coding_session_authority_transition_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
     // The four provider-authored coding-session kinds get no envelope
     // validator: their content is the provider's own account of what a session
     // did, and a relay that parsed it would be asserting authority over facts
@@ -3343,6 +3445,39 @@ async fn ingest_event_inner(
             }
             buzz_db::CodingSessionGenesisInsertOutcome::AdoptionRefused { refusal } => {
                 return Ok(coding_session_genesis_adoption_refusal_result(
+                    event_id_hex,
+                    &refusal,
+                ));
+            }
+        }
+    } else if kind_u32 == KIND_CODING_SESSION_AUTHORITY_TRANSITION {
+        // Same shape as genesis just above: "does this transition extend the
+        // chain" is a question the storage transaction alone can answer
+        // atomically — see
+        // `buzz_db::event::insert_coding_session_authority_transition_event`.
+        let Some(transition_channel) = channel_id else {
+            return Err(IngestError::Rejected(
+                "invalid: coding-session authority transition requires a channel".into(),
+            ));
+        };
+        let thread_params = thread_meta.as_ref().map(|m| m.as_params());
+        match state
+            .db
+            .insert_coding_session_authority_transition_event(
+                tenant.community(),
+                &event,
+                transition_channel,
+                thread_params,
+            )
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        {
+            buzz_db::CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                stored_event,
+                was_inserted,
+            } => (*stored_event, was_inserted),
+            buzz_db::CodingSessionAuthorityTransitionInsertOutcome::Refused { refusal } => {
+                return Ok(coding_session_authority_transition_refusal_result(
                     event_id_hex,
                     &refusal,
                 ));
@@ -5662,11 +5797,11 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44227) -------------------------------------
+    // ---- Coding sessions (44220–44228) -------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
-    /// sweep it so an eighth kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 8] = [
+    /// sweep it so a tenth kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 9] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -5675,14 +5810,15 @@ mod tests {
         KIND_CODING_SESSION_TRANSCRIPT,
         KIND_CODING_SESSION_GENESIS,
         KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44227() {
+    fn coding_session_predicate_covers_exactly_44220_to_44228() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44227).contains(&kind),
+                (44220..=44228).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -5691,7 +5827,7 @@ mod tests {
         }
     }
 
-    /// All seven are channel-scoped message writes, and none is global-only —
+    /// All nine are channel-scoped message writes, and none is global-only —
     /// their whole containment story is the channel ACL, which only applies to
     /// h-scoped events.
     #[test]
@@ -6261,6 +6397,200 @@ mod tests {
         }
     }
 
+    /// The canonical genesis and grantee ids used by the authority-transition
+    /// envelope tests.
+    const AUTHORITY_TRANSITION_GENESIS_REF: &str =
+        "abababababababababababababababababababababababababababababababab";
+    const AUTHORITY_TRANSITION_GRANTEE: &str =
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
+    fn authority_transition_event(content: &str, channel: &str, genesis_tag: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            content,
+            &[
+                &["h", channel],
+                &["csat-v", "csat1-1"],
+                &["csat-genesis", genesis_tag],
+            ],
+        )
+    }
+
+    fn authority_transition_content(
+        genesis_ref: &str,
+        prev: &str,
+        seq: u32,
+        grantee: &str,
+    ) -> String {
+        format!(
+            r#"{{"genesisRef":"{genesis_ref}","prevAccepted":{prev},"seq":{seq},"type":"grant-operator","granteePubkey":"{grantee}"}}"#
+        )
+    }
+
+    #[test]
+    fn coding_session_authority_transition_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = authority_transition_content(
+            AUTHORITY_TRANSITION_GENESIS_REF,
+            "null",
+            1,
+            AUTHORITY_TRANSITION_GRANTEE,
+        );
+        assert!(validate_coding_session_authority_transition_envelope(
+            &authority_transition_event(&content, &channel, AUTHORITY_TRANSITION_GENESIS_REF)
+        )
+        .is_ok());
+
+        // Ordered, not merely present.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            &content,
+            &[
+                &["csat-v", "csat1-1"],
+                &["h", &channel],
+                &["csat-genesis", AUTHORITY_TRANSITION_GENESIS_REF],
+            ],
+        );
+        assert!(validate_coding_session_authority_transition_envelope(&reordered).is_err());
+
+        // A smuggled fourth tag.
+        let extra = make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            &content,
+            &[
+                &["h", &channel],
+                &["csat-v", "csat1-1"],
+                &["csat-genesis", AUTHORITY_TRANSITION_GENESIS_REF],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_authority_transition_envelope(&extra).is_err());
+    }
+
+    /// The tag is what the storage transaction's chain lookup routes on, so
+    /// it must be re-derivable from the content it claims to address — a
+    /// disagreement must never be silently stored.
+    #[test]
+    fn coding_session_authority_transition_rejects_a_tag_that_disagrees_with_content() {
+        let channel = Uuid::new_v4().to_string();
+        let content = authority_transition_content(
+            AUTHORITY_TRANSITION_GENESIS_REF,
+            "null",
+            1,
+            AUTHORITY_TRANSITION_GRANTEE,
+        );
+        let other_genesis = "11".repeat(32);
+        let substituted = authority_transition_event(&content, &channel, &other_genesis);
+        assert!(validate_coding_session_authority_transition_envelope(&substituted).is_err());
+    }
+
+    #[test]
+    fn coding_session_authority_transition_rejects_off_contract_content() {
+        let channel = Uuid::new_v4().to_string();
+        for rejected in [
+            // Missing granteePubkey.
+            serde_json::json!({
+                "genesisRef": AUTHORITY_TRANSITION_GENESIS_REF,
+                "prevAccepted": null,
+                "seq": 1,
+                "type": "grant-operator",
+            })
+            .to_string(),
+            // Unknown transition type.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                "null",
+                1,
+                AUTHORITY_TRANSITION_GRANTEE,
+            )
+            .replace("grant-operator", "takeover"),
+            // seq = 0.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                "null",
+                0,
+                AUTHORITY_TRANSITION_GRANTEE,
+            ),
+            // seq/prevAccepted disagreement.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                &format!("\"{}\"", "11".repeat(32)),
+                1,
+                AUTHORITY_TRANSITION_GRANTEE,
+            ),
+            String::new(),
+        ] {
+            let event =
+                authority_transition_event(&rejected, &channel, AUTHORITY_TRANSITION_GENESIS_REF);
+            assert!(
+                validate_coding_session_authority_transition_envelope(&event).is_err(),
+                "should reject content {rejected:?}"
+            );
+        }
+    }
+
+    /// Every [`buzz_db::AuthorityTransitionRefusal`] variant must map to a
+    /// distinct, specific wire message — mirroring the genesis adoption
+    /// refusal sweep.
+    #[test]
+    fn coding_session_authority_transition_refusals_are_reported_as_invalid() {
+        let event_id_hex = "ef".repeat(32);
+        let owner = vec![0xabu8; 32];
+        let stale_head = vec![0xcdu8; 32];
+
+        let cases: Vec<(buzz_db::AuthorityTransitionRefusal, &str)> = vec![
+            (
+                buzz_db::AuthorityTransitionRefusal::GenesisNotFound,
+                "genesisRef",
+            ),
+            (buzz_db::AuthorityTransitionRefusal::WrongChannel, "channel"),
+            (
+                buzz_db::AuthorityTransitionRefusal::StaleHead {
+                    expected_prev_accepted: Some(stale_head.clone()),
+                },
+                "current head",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::StaleHead {
+                    expected_prev_accepted: None,
+                },
+                "no accepted",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SeqMismatch { expected_seq: 3 },
+                "seq",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SignerNotOwner {
+                    owner_pubkey: owner.clone(),
+                },
+                "current owner",
+            ),
+        ];
+
+        let mut seen_messages = std::collections::HashSet::new();
+        for (refusal, expected_substring) in cases {
+            let result =
+                coding_session_authority_transition_refusal_result(event_id_hex.clone(), &refusal);
+            assert!(!result.accepted, "refusal must set accepted=false");
+            assert!(
+                result.message.starts_with("invalid:"),
+                "got {:?}",
+                result.message
+            );
+            assert!(
+                result.message.contains(expected_substring),
+                "expected {:?} to mention {expected_substring:?}",
+                result.message
+            );
+            assert!(
+                seen_messages.insert(result.message.clone()),
+                "duplicate wire message across refusal variants: {:?}",
+                result.message
+            );
+        }
+    }
+
     /// The four provider-authored kinds are bounded by size alone — the relay
     /// does not parse a provider's account of its own session. These are the
     /// exact caps the producer writes against.
@@ -6299,6 +6629,10 @@ mod tests {
             None
         );
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_AUTHORITY_TRANSITION),
+            None
+        );
         // And no other kind is bounded by this table.
         assert_eq!(coding_session_content_cap(KIND_STREAM_MESSAGE), None);
     }

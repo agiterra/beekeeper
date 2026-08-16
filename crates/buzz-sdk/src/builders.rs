@@ -4,6 +4,10 @@
 //! The caller signs: `builder.sign_with_keys(&keys)?`.
 
 use buzz_core::{
+    coding_session_authority_transition::{
+        CodingSessionAuthorityTransitionPayload, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+        MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
+    },
     coding_session_command::{
         coding_session_target_key, CodingSessionCommandPayload, CodingSessionTarget,
         CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
@@ -21,7 +25,8 @@ use buzz_core::{
     },
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
-        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
+        KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
         KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
@@ -2595,6 +2600,41 @@ pub fn build_coding_session_transcript_item(
     Ok(EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_TRANSCRIPT as u16),
         content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one coding-session authority-chain transition (kind 44228).
+///
+/// The **current session owner** signs the returned builder — today, always
+/// the genesis signer (see the module doc on
+/// [`buzz_core::coding_session_authority_transition`]). The relay validates
+/// the chain linkage (`prevAccepted`/`seq` against the current accepted
+/// head) and the signer's standing atomically at ingest; this builder only
+/// enforces the payload's own self-consistency before signing.
+///
+/// The `csat-genesis` tag is re-derived from the payload here and re-derived
+/// again by the relay, so the filterable reference and the signed reference
+/// are the same string by construction.
+pub fn build_coding_session_authority_transition(
+    channel_id: Uuid,
+    payload: &CodingSessionAuthorityTransitionPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!(
+            "coding-session authority-transition serialization: {error}"
+        ))
+    })?;
+    check_content(&content, MAX_AUTHORITY_TRANSITION_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION])?,
+        tag(&["csat-genesis", &payload.genesis_ref])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        content,
     )
     .tags(tags))
 }
@@ -5334,6 +5374,114 @@ mod tests {
                 .unwrap(),
             payload
         );
+    }
+
+    /// The chain's first link: three ordered tags, and a `csat-genesis` tag
+    /// that is the payload's own reference so a filter lookup and the signed
+    /// content can never disagree on which genesis this transition anchors
+    /// to.
+    #[test]
+    fn coding_session_authority_transition_builder_emits_ordered_payload_derived_tags() {
+        let channel = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let grantee = "cd".repeat(32);
+        let payload = CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            genesis_ref.clone(),
+            None,
+            1,
+            grantee.clone(),
+        );
+        let event = build_coding_session_authority_transition(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csat-v".into(), "csat1-1".into()),
+                ("csat-genesis".into(), genesis_ref.clone()),
+            ]
+        );
+        assert_eq!(
+            buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition(
+                &event.content
+            )
+            .unwrap(),
+            payload
+        );
+    }
+
+    /// A second, chained transition emits the same envelope shape with the
+    /// predecessor's id carried in content only — the tag still names the
+    /// genesis, not the predecessor.
+    #[test]
+    fn coding_session_authority_transition_builder_supports_a_chained_grant() {
+        let channel = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let prev = "11".repeat(32);
+        let grantee = "cd".repeat(32);
+        let payload = CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            genesis_ref.clone(),
+            Some(prev),
+            2,
+            grantee,
+        );
+        let event = build_coding_session_authority_transition(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csat-v".into(), "csat1-1".into()),
+                ("csat-genesis".into(), genesis_ref),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_authority_transition_builder_rejects_invalid_payloads() {
+        let channel = Uuid::new_v4();
+        // seq = 0 is never valid.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "ab".repeat(32),
+                None,
+                0,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
+        // seq/prevAccepted disagreement.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "ab".repeat(32),
+                Some("11".repeat(32)),
+                1,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
+        // Malformed genesisRef.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "not-hex",
+                None,
+                1,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
     }
 
     #[test]
