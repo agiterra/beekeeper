@@ -630,6 +630,40 @@ R18 → genesis E2E on the final contract. Sol's verification of R6/R7,
 the gate proofs (9/9), and the provider suite (131 + startup) is
 accepted as the current baseline.
 
+### Rulings addendum — Bite 1 halt (R20–R23, 2026-08-15)
+
+The pixels-sprint verifier correctly halted Bite 1: legacy authority was
+being projected from backfilled relay history (COUNT→QUERY, cached),
+which is wrong for multi-execution umbrellas and wrong in principle.
+
+- **R20 (legacy authority is per-execution, locally witnessed).** For a
+  no-genesis session, the provider enforces creator-of-this-execution:
+  it records the create's signer pubkey into the `SessionRecord` at the
+  moment it processes the create, and checks command signers against
+  that local fact. The COUNT→QUERY umbrella backfill is **deleted, not
+  fixed**. Umbrella-level founder projection remains a consumer concern
+  (NIP-CSL): the UI's foreign-attachment flag, never provider
+  enforcement. Correct umbrella-wide authority for a legacy session is
+  acquired by **adoption**, not by provider inference. Pre-existing
+  records with no stored creator: behavior unchanged, surfaced as
+  "ungoverned — adopt to govern."
+- **R21 (standing invariant).** A provider derives authority only from
+  (a) facts it locally witnessed and recorded at the time, or (b) signed
+  events resolved by explicit reference (`genesisRef` → genesis,
+  `adopts` → create/receipt). Never from projected, backfilled, counted,
+  or cached relay history. This generalizes R15's lesson from the relay
+  to the provider.
+- **R22 (strict genesis envelope validation).** The provider validates
+  the resolved genesis's full envelope — `h` channel, exact `csg-v`,
+  exact `csg-session` matching the create's `sessionRef` — fail closed
+  (`GENESIS_NOT_FOUND`-class refusal on mismatch).
+- **R23 (proof obligations for Bite 1 closure).** (1) Unit-level test:
+  provider resolves genesis by id and emits a created receipt; refusal
+  paths covered. (2) Live proof: a real session created in the dev app
+  whose founded-by rendering derives from a resolved genesis, evidenced
+  by screenshot plus the receipt/genesis rows in the store. (3) `just
+  ci` run to completion — a stopped CI is reported as not green, per §2.
+
 ### B.7 Patterns to copy from shipped work
 Project ACL composition + fail-closed gate:
 `crates/buzz-db/src/project_acl.rs`, `ProjectGate::admits` (see
