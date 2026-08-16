@@ -23,6 +23,7 @@ import {
   shouldShowTurnBlockProvenance,
   umbrellaWorkspaceStatus,
 } from "./CodingSessionUmbrellaWorkspace.tsx";
+import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail.tsx";
 
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const CLAUDE_SIGNER = "a".repeat(64);
@@ -157,6 +158,24 @@ function buildUmbrella({ claudePrompt, codexPrompt } = {}) {
   assert.equal(umbrellas[0].executions.length, 2);
   return umbrellas[0];
 }
+
+test("execution rail offers a consolidated overview and one tab per execution", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionExecutionRail, {
+      umbrella: buildUmbrella(),
+    }),
+  );
+
+  assert.match(markup, /Participants/);
+  assert.match(markup, />All agents</);
+  assert.match(markup, />Claude</);
+  assert.match(markup, />Codex</);
+  assert.match(markup, /All idle/);
+  assert.equal(
+    markup.match(/data-testid="coding-session-execution-card"/g)?.length,
+    2,
+  );
+});
 
 async function renderTimeline(props) {
   const rootRoute = createRootRoute({

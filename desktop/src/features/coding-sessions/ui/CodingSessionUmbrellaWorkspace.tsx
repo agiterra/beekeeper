@@ -31,12 +31,16 @@ import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSe
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { useElementWidthBreakpoint } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
+import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
+import { useCodingSessionRailWidth } from "./useCodingSessionRailWidth";
 import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
@@ -78,6 +82,10 @@ export function UmbrellaCodingSessionWorkspace({
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
   const [prefill, setPrefill] =
     React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
+  const [executionRailOpen, setExecutionRailOpen] = React.useState(true);
+  const [workspaceBodyRef, isNarrow] =
+    useElementWidthBreakpoint<HTMLDivElement>(960);
+  const railWidth = useCodingSessionRailWidth(workspaceBodyRef);
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -101,9 +109,12 @@ export function UmbrellaCodingSessionWorkspace({
           onAddProvider={onAddProvider}
           onBack={onBack}
           onPopout={surface === "main" ? handlePopout : undefined}
+          onToggleExecutionRail={() => setExecutionRailOpen((open) => !open)}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
           sessionTitle={umbrella.title}
           status={umbrellaWorkspaceStatus(umbrella)}
+          executionCount={umbrella.executions.length}
+          executionRailOpen={executionRailOpen}
         />
         <CodingSessionFounderLine
           founderPubkey={umbrella.founderPubkey}
@@ -119,7 +130,7 @@ export function UmbrellaCodingSessionWorkspace({
           />
         </div>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
         <section
           aria-label="Umbrella session narrative"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
@@ -146,7 +157,43 @@ export function UmbrellaCodingSessionWorkspace({
             </div>
           </div>
         </section>
+        {!isNarrow && executionRailOpen ? (
+          <div
+            className="relative min-h-0 shrink-0 border-l border-border/60"
+            style={{ width: railWidth.width }}
+          >
+            <button
+              aria-label="Resize agents panel"
+              className="group absolute inset-y-0 -left-1 z-30 w-2 cursor-col-resize touch-none"
+              onKeyDown={railWidth.onResizeKeyDown}
+              onPointerDown={railWidth.onResizeStart}
+              type="button"
+            >
+              <span className="absolute inset-y-0 left-1/2 w-px bg-transparent transition-colors group-hover:bg-primary/70 group-focus-visible:bg-primary" />
+            </button>
+            <CodingSessionExecutionRail
+              onClose={() => setExecutionRailOpen(false)}
+              umbrella={umbrella}
+            />
+          </div>
+        ) : null}
       </div>
+      {isNarrow ? (
+        <Sheet onOpenChange={setExecutionRailOpen} open={executionRailOpen}>
+          <SheetContent
+            aria-describedby={undefined}
+            className="w-[min(92vw,26rem)] max-w-none p-0"
+            side="right"
+          >
+            <SheetTitle className="sr-only">Session agents</SheetTitle>
+            <CodingSessionExecutionRail
+              onClose={() => setExecutionRailOpen(false)}
+              showCloseButton={false}
+              umbrella={umbrella}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </main>
   );
 }

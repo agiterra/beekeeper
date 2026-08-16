@@ -56,6 +56,13 @@ const TARGET = {
 };
 
 const TARGET_KEY = buildCodingSessionTargetKey(TARGET);
+const REVIEW_TARGET = {
+  driver: "codex-acp",
+  instanceId: "reviewer-instance",
+  sessionId: "66666666-7777-8888-9999-000000000000",
+  generation: 1,
+};
+const REVIEW_TARGET_KEY = buildCodingSessionTargetKey(REVIEW_TARGET);
 const BASE_CREATED_AT = 1_800_000_000;
 const BASE_TIMESTAMP_MS = 1_800_000_000_000;
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
@@ -186,6 +193,70 @@ function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
     },
     PROVIDER_SECRET,
   ) as unknown as RelayEvent;
+}
+
+function reviewEvents(): RelayEvent[] {
+  const metadata = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: BASE_CREATED_AT + 20,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", REVIEW_TARGET_KEY],
+        ["csm-key", codingSessionMetadataSemanticKey(REVIEW_TARGET)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: REVIEW_TARGET,
+        projectRef: null,
+        repoRef: null,
+        title: "Fix the reconnect bug",
+        agentRef: null,
+        provider: "codex-acp",
+        runtime: "codex-acp",
+        model: "gpt-5.6-sol",
+        status: "completed",
+        branch: null,
+        capabilities: {
+          threadTurnStart: true,
+          threadTurnInterrupt: true,
+          threadSteer: true,
+          context: false,
+          diff: true,
+          plan: true,
+        },
+        sessionRef: SESSION_REF,
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
+  const transcript = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_TRANSCRIPT,
+      created_at: BASE_CREATED_AT + 21,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cst-v", CODING_SESSION_TRANSCRIPT_TAG_VERSION],
+        ["cs-target", REVIEW_TARGET_KEY],
+        ["cst-seq", "1"],
+        ["cst-key", codingSessionTranscriptSemanticKey(REVIEW_TARGET, 1)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        session: REVIEW_TARGET,
+        eventSeq: 1,
+        timestamp: BASE_TIMESTAMP_MS + 21_000,
+        turnId: "review-turn",
+        item: {
+          kind: "assistant_text",
+          text: "The reconnect fix is focused and ready to merge.",
+        },
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
+  return [metadata, transcript];
 }
 
 function goalEvent(): RelayEvent {
@@ -404,6 +475,66 @@ test("a legacy session stays usable while naming its ungoverned state", async ({
   await waitForAnimations(page);
   await page.getByTestId("coding-session-composer").screenshot({
     path: "test-results/screenshots/bite3-ungoverned-session.png",
+  });
+});
+
+test("a multi-provider session exposes a resizable and collapsible agent rail", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: [...seededEvents(), ...reviewEvents()],
+    },
+  );
+
+  const trigger = page.getByTestId("channel-coding-sessions-trigger");
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (2)", {
+    timeout: 15_000,
+  });
+  await trigger.click();
+  await page.getByTestId("channel-coding-session-open").first().click();
+
+  const workspace = page.getByTestId("coding-session-umbrella-workspace");
+  const rail = page.getByTestId("coding-session-execution-rail");
+  await expect(workspace).toBeVisible({ timeout: 15_000 });
+  await expect(rail).toContainText("All agents");
+  await expect(rail).toContainText("Claude");
+  await expect(rail).toContainText("Codex");
+  await waitForAnimations(page);
+  await workspace.screenshot({
+    path: "test-results/screenshots/session-agents-open.png",
+  });
+
+  const resize = page.getByRole("button", { name: "Resize agents panel" });
+  const before = await rail.boundingBox();
+  const handle = await resize.boundingBox();
+  if (!before || !handle)
+    throw new Error("agents rail resize geometry missing");
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(handle.x - 120, handle.y + 120);
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await rail.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before.width + 80);
+  await waitForAnimations(page);
+  await workspace.screenshot({
+    path: "test-results/screenshots/session-agents-resized.png",
+  });
+
+  await page.getByLabel("Close agents panel").click();
+  await expect(rail).toHaveCount(0);
+  await waitForAnimations(page);
+  await workspace.screenshot({
+    path: "test-results/screenshots/session-agents-collapsed.png",
   });
 });
 

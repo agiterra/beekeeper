@@ -6,6 +6,7 @@ import {
   Info,
   ListChecks,
   UserPlus,
+  Users,
 } from "lucide-react";
 
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -15,6 +16,7 @@ import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
 import { CODING_SESSION_CHANGES_RAIL_ID } from "./CodingSessionChangesRail";
+import { CODING_SESSION_EXECUTION_RAIL_ID } from "./CodingSessionExecutionRail";
 
 type CodingSessionHeaderProps = {
   channelName: string | null;
@@ -33,6 +35,7 @@ type CodingSessionHeaderProps = {
   onPopout?: () => void;
   onToggleTaskRail?: () => void;
   onToggleChangesRail?: () => void;
+  onToggleExecutionRail?: () => void;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
@@ -43,6 +46,8 @@ type CodingSessionHeaderProps = {
   taskRailOpen?: boolean;
   changedFileCount?: number;
   changesRailOpen?: boolean;
+  executionCount?: number;
+  executionRailOpen?: boolean;
 };
 
 export function CodingSessionHeader({
@@ -57,6 +62,7 @@ export function CodingSessionHeader({
   onPopout,
   onToggleTaskRail,
   onToggleChangesRail,
+  onToggleExecutionRail,
   projectName = null,
   providerAuthorityPubkey = null,
   repoName = null,
@@ -67,6 +73,8 @@ export function CodingSessionHeader({
   taskRailOpen = false,
   changedFileCount = 0,
   changesRailOpen = false,
+  executionCount = 0,
+  executionRailOpen = false,
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
@@ -216,6 +224,35 @@ export function CodingSessionHeader({
               )}
             >
               {changedFileCount}
+            </span>
+          ) : null}
+        </Button>
+      ) : null}
+      {onToggleExecutionRail ? (
+        <Button
+          aria-controls={CODING_SESSION_EXECUTION_RAIL_ID}
+          aria-expanded={executionRailOpen}
+          aria-label={
+            executionRailOpen
+              ? "Hide session executions"
+              : "Show session executions"
+          }
+          data-testid="coding-session-execution-rail-toggle"
+          onClick={onToggleExecutionRail}
+          size={compact ? "icon" : "sm"}
+          type="button"
+          variant={executionRailOpen ? "secondary" : "ghost"}
+        >
+          <Users />
+          <span className={compact ? "sr-only" : undefined}>Executions</span>
+          {executionCount > 0 ? (
+            <span
+              className={cn(
+                "rounded-full bg-background/70 px-1.5 text-xs",
+                compact && "sr-only",
+              )}
+            >
+              {executionCount}
             </span>
           ) : null}
         </Button>
