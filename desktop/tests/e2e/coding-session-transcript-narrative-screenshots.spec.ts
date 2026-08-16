@@ -196,6 +196,62 @@ function planEvents(): RelayEvent[] {
   ];
 }
 
+function changeEvents(): RelayEvent[] {
+  return [
+    metadata(),
+    transcript(1, {
+      kind: "user_prompt",
+      content: "Make the session header clearer and keep the controls compact.",
+    }),
+    transcript(2, {
+      kind: "assistant_text",
+      text: "I’ll tighten the header hierarchy, then verify the focused session UI.",
+    }),
+    transcript(3, {
+      kind: "tool_call",
+      tool: {
+        toolName: "str_replace",
+        toolId: "edit-header",
+        input: {
+          path: "desktop/src/features/coding-sessions/ui/CodingSessionHeader.tsx",
+          oldString: "<span>Session</span>",
+          newString: "<span>Coding session</span>",
+        },
+      },
+    }),
+    transcript(4, {
+      kind: "tool_result",
+      toolId: "edit-header",
+      toolName: "str_replace",
+      content: "Edited successfully",
+      isError: false,
+    }),
+    transcript(5, {
+      kind: "tool_call",
+      tool: {
+        toolName: "str_replace",
+        toolId: "edit-model",
+        input: {
+          path: "desktop/src/features/coding-sessions/lib/codingSessionTranscriptModel.ts",
+          oldString: "const visible = items;",
+          newString: "const visible = groupItems(items);",
+        },
+      },
+    }),
+    transcript(6, {
+      kind: "tool_result",
+      toolId: "edit-model",
+      toolName: "str_replace",
+      content: "Edited successfully",
+      isError: false,
+    }),
+    transcript(7, {
+      kind: "assistant_text",
+      text: "The hierarchy is clearer and both focused checks pass.",
+    }),
+  ];
+}
+
 async function openSeededSession(
   page: import("@playwright/test").Page,
   seeded: RelayEvent[],
@@ -262,4 +318,21 @@ test("captures the latest plan snapshot collapsed and expanded", async ({
   await expect(page.getByRole("list", { name: "Plan steps" })).toBeVisible();
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/04-plan-expanded.png` });
+});
+
+test("captures signed changes in the transcript and workspace rail", async ({
+  page,
+}) => {
+  const workspace = await openSeededSession(page, changeEvents());
+  await expect(page.getByText("2 changed files")).toBeVisible();
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/05-changes-inline.png` });
+
+  await page.getByTestId("coding-session-changes-rail-toggle").click();
+  const rail = page.getByTestId("coding-session-changes-rail");
+  await expect(rail).toBeVisible();
+  await expect(rail).toContainText("CodingSessionHeader.tsx");
+  await expect(rail).toContainText("codingSessionTranscriptModel.ts");
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/06-changes-rail.png` });
 });

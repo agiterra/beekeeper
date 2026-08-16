@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Download,
   ExternalLink,
+  GitCompare,
   Info,
   ListChecks,
   UserPlus,
@@ -13,6 +14,7 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
+import { CODING_SESSION_CHANGES_RAIL_ID } from "./CodingSessionChangesRail";
 
 type CodingSessionHeaderProps = {
   channelName: string | null;
@@ -30,6 +32,7 @@ type CodingSessionHeaderProps = {
   onExport?: () => void;
   onPopout?: () => void;
   onToggleTaskRail?: () => void;
+  onToggleChangesRail?: () => void;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
@@ -38,6 +41,8 @@ type CodingSessionHeaderProps = {
   status: CodingSessionWorkspaceStatus;
   taskCount?: number;
   taskRailOpen?: boolean;
+  changedFileCount?: number;
+  changesRailOpen?: boolean;
 };
 
 export function CodingSessionHeader({
@@ -51,6 +56,7 @@ export function CodingSessionHeader({
   onExport,
   onPopout,
   onToggleTaskRail,
+  onToggleChangesRail,
   projectName = null,
   providerAuthorityPubkey = null,
   repoName = null,
@@ -59,6 +65,8 @@ export function CodingSessionHeader({
   status,
   taskCount = 0,
   taskRailOpen = false,
+  changedFileCount = 0,
+  changesRailOpen = false,
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
@@ -182,6 +190,33 @@ export function CodingSessionHeader({
               </span>
               <span className="sr-only">{taskCount} tasks</span>
             </>
+          ) : null}
+        </Button>
+      ) : null}
+      {onToggleChangesRail ? (
+        <Button
+          aria-controls={CODING_SESSION_CHANGES_RAIL_ID}
+          aria-expanded={changesRailOpen}
+          aria-label={
+            changesRailOpen ? "Hide session changes" : "Show session changes"
+          }
+          data-testid="coding-session-changes-rail-toggle"
+          onClick={onToggleChangesRail}
+          size={compact ? "icon" : "sm"}
+          type="button"
+          variant={changesRailOpen ? "secondary" : "ghost"}
+        >
+          <GitCompare />
+          <span className={compact ? "sr-only" : undefined}>Changes</span>
+          {changedFileCount > 0 ? (
+            <span
+              className={cn(
+                "rounded-full bg-background/70 px-1.5 text-xs",
+                compact && "sr-only",
+              )}
+            >
+              {changedFileCount}
+            </span>
           ) : null}
         </Button>
       ) : null}

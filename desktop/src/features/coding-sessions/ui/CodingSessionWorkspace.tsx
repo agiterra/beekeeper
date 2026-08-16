@@ -40,6 +40,8 @@ import {
   deriveCodingSessionTaskRailOpen,
 } from "./CodingSessionTaskRail";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
+import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 
 type CodingSessionWorkspaceProps = {
@@ -246,6 +248,11 @@ function ReadyCodingSessionWorkspace({
     () => deriveCodingSessionTaskModel(session.transcript),
     [session.transcript],
   );
+  const changedFiles = React.useMemo(
+    () => deriveCodingSessionChangedFiles(session.transcript),
+    [session.transcript],
+  );
+  const [changesRailOpen, setChangesRailOpen] = React.useState(false);
   const taskRailPreferenceKey = React.useMemo(
     () => codingSessionTaskRailPreferenceKey(channelId, generationId),
     [channelId, generationId],
@@ -304,13 +311,22 @@ function ReadyCodingSessionWorkspace({
           onBack={onBack}
           onExport={exportEnabled ? exportTranscript : undefined}
           onPopout={surface === "main" ? handlePopout : undefined}
-          onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
+          onToggleTaskRail={() => {
+            setChangesRailOpen(false);
+            setTaskRailOpen((open) => !open);
+          }}
+          onToggleChangesRail={() => {
+            setTaskRailOpen(false);
+            setChangesRailOpen((open) => !open);
+          }}
           providerAuthorityPubkey={session.providerAuthorityPubkey}
           runtimeLabel={runtimeLabel}
           sessionTitle={session.title}
           status={status}
           taskCount={taskModel?.tasks.length ?? 0}
           taskRailOpen={taskRailOpen}
+          changedFileCount={changedFiles.length}
+          changesRailOpen={changesRailOpen}
         />
         <CodingSessionFounderLine
           founderPubkey={founderPubkey}
@@ -401,6 +417,9 @@ function ReadyCodingSessionWorkspace({
         {!isNarrow && taskRailOpen ? (
           <CodingSessionTaskRail model={taskModel} />
         ) : null}
+        {!isNarrow && changesRailOpen ? (
+          <CodingSessionChangesRail files={changedFiles} />
+        ) : null}
       </div>
       {isNarrow ? (
         <Sheet onOpenChange={setTaskRailOpen} open={taskRailOpen}>
@@ -411,6 +430,18 @@ function ReadyCodingSessionWorkspace({
           >
             <SheetTitle className="sr-only">Session plan</SheetTitle>
             <CodingSessionTaskRail model={taskModel} variant="sheet" />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+      {isNarrow ? (
+        <Sheet onOpenChange={setChangesRailOpen} open={changesRailOpen}>
+          <SheetContent
+            aria-describedby={undefined}
+            className="w-[min(94vw,34rem)] max-w-none p-0"
+            side="right"
+          >
+            <SheetTitle className="sr-only">Session changes</SheetTitle>
+            <CodingSessionChangesRail files={changedFiles} variant="sheet" />
           </SheetContent>
         </Sheet>
       ) : null}
