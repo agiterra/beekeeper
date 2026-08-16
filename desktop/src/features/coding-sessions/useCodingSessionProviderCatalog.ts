@@ -120,10 +120,16 @@ export function useCodingSessionProviderCatalog(
       return;
     }
     if (authority.state !== "valid") {
+      // Config-resolved authority is only ever valid or invalid; the "open"
+      // read authority never reaches the provider catalog.
+      const errorMessage =
+        authority.state === "invalid"
+          ? authority.errorMessage
+          : "Coding session provider catalog requires a configured authority.";
       setSnapshot({
         ...emptySnapshot(authorityIdentity, scopeIdentity),
-        errorMessage: authority.errorMessage,
-        authorityErrorMessage: authority.errorMessage,
+        errorMessage,
+        authorityErrorMessage: errorMessage,
       });
       return;
     }

@@ -40,7 +40,13 @@ import { useTrustedCodingSessionIngress } from "./lib/useTrustedCodingSessionIng
 export function useCodingSessionCatalog(
   channelId: string | null,
   popoutBootstrap: CodingSessionPopoutBootstrap | null = null,
-  options: { requirePopoutBootstrap?: boolean } = {},
+  options: {
+    requirePopoutBootstrap?: boolean;
+    /** `open` reads by channel membership — display surfaces every reader of
+     * the channel should share. `config` (default) additionally restricts to
+     * this machine's trusted provider allowlist. */
+    authorityMode?: "config" | "open";
+  } = {},
 ): CodingSessionCatalogSnapshot {
   const ingressChannelIds = React.useMemo(
     () => (channelId ? [channelId] : []),
@@ -63,6 +69,7 @@ export function useCodingSessionCatalog(
     null,
     defaultRelayClient,
     ingressBootstrap,
+    options.authorityMode ?? "config",
   );
   // Operator authority rides a second, deliberately separate subscription:
   // 44221 creates are signed by humans, so they must never be admitted to the
@@ -194,8 +201,16 @@ type TrustedRawEventReader = ReturnType<
 /** The trusted session catalog across every source channel. */
 export function useGlobalCodingSessionCatalog(
   channelIds: readonly string[],
+  options: { authorityMode?: "config" | "open" } = {},
 ): GlobalCodingSessionCatalogSnapshot {
-  const trustedIngress = useTrustedCodingSessionIngress(channelIds);
+  const trustedIngress = useTrustedCodingSessionIngress(
+    channelIds,
+    null,
+    null,
+    defaultRelayClient,
+    null,
+    options.authorityMode ?? "config",
+  );
   return React.useMemo(
     () => ({
       entries: channelIds.flatMap((channelId) =>

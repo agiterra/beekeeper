@@ -237,9 +237,12 @@ export function classifyTrustedCodingSessionIngressEvent(
   ) {
     return { kind: "malformed" };
   }
-  if (authority.state !== "valid") return { kind: "malformed" };
-  const source = authority.byPubkey.get(normalizePubkey(event.pubkey));
-  if (!source) return { kind: "rejected-author" };
+  if (authority.state === "invalid") return { kind: "malformed" };
+  const signerPubkey = normalizePubkey(event.pubkey);
+  if (authority.state === "valid" && !authority.byPubkey.has(signerPubkey)) {
+    return { kind: "rejected-author" };
+  }
+  const source = { pubkey: signerPubkey };
   if (!hasValidSignature(event)) return { kind: "invalid-signature" };
 
   if (looksLikeReceipt) {

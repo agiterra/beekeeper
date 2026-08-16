@@ -13,6 +13,7 @@ import { createCodingSessionDiscoveryController } from "./codingSessionDiscovery
 import {
   buildCodingSessionIngressAuthorityIdentity,
   type CodingSessionIngressAuthority,
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
   resolveCodingSessionIngressAuthority,
 } from "./codingSessionIngressAuthority";
 import {
@@ -146,6 +147,7 @@ export function useTrustedCodingSessionIngress(
   providerAuthorityPubkey: string | null = null,
   client: CodingSessionIngressClient = defaultRelayClient,
   bootstrap: TrustedCodingSessionIngressBootstrap | null = null,
+  authorityMode: "config" | "open" = "config",
 ): TrustedCodingSessionIngressHookSnapshot {
   const stableChannelIdentity = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -155,13 +157,18 @@ export function useTrustedCodingSessionIngress(
         : [],
     [stableChannelIdentity],
   );
-  const { globalConfig, isLoading: isConfigLoading } = useGlobalAgentConfig();
+  const { globalConfig, isLoading: rawConfigLoading } = useGlobalAgentConfig();
+  // Open mode reads by channel membership, not the local allowlist — the
+  // config neither gates nor delays it.
+  const isConfigLoading = authorityMode === "open" ? false : rawConfigLoading;
   const authority = React.useMemo(
     () =>
-      resolveCodingSessionIngressAuthority(
-        globalConfig["allowed-bridge-pubkeys"],
-      ),
-    [globalConfig],
+      authorityMode === "open"
+        ? OPEN_CODING_SESSION_INGRESS_AUTHORITY
+        : resolveCodingSessionIngressAuthority(
+            globalConfig["allowed-bridge-pubkeys"],
+          ),
+    [authorityMode, globalConfig],
   );
   const authorityIdentity = React.useMemo(
     () => buildCodingSessionIngressAuthorityIdentity(authority),
@@ -197,7 +204,7 @@ export function useTrustedCodingSessionIngress(
     if (
       bootstrap &&
       bootstrap.authorityIdentity === authorityIdentity &&
-      authority.state === "valid"
+      authority.state !== "invalid"
     ) {
       store.ingestRelayEvents(
         bootstrap.relayEvents,
@@ -226,7 +233,7 @@ export function useTrustedCodingSessionIngress(
       });
       return;
     }
-    if (authority.state !== "valid") {
+    if (authority.state === "invalid") {
       setSnapshot({
         ...emptySnapshot(
           authorityIdentity,

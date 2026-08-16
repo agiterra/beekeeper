@@ -12,7 +12,11 @@ import {
   KIND_CODING_SESSION_TRANSCRIPT,
 } from "@/shared/constants/kinds.ts";
 import { buildCodingSessionTargetKey } from "./codingSessionCommand.ts";
-import { resolveCodingSessionIngressAuthority } from "./codingSessionIngressAuthority.ts";
+import {
+  buildCodingSessionIngressAuthorityIdentity,
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+  resolveCodingSessionIngressAuthority,
+} from "./codingSessionIngressAuthority.ts";
 import {
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
   BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
@@ -950,4 +954,49 @@ test("metadata accepts an optional canonical sessionRef and rejects every other 
       null,
     );
   }
+});
+
+test("open authority admits any verified author; signatures and scoping still gate", () => {
+  const allowed = new Set([CHANNEL_ID]);
+  const otherPubkey = getPublicKey(OTHER_SECRET);
+  const open = OPEN_CODING_SESSION_INGRESS_AUTHORITY;
+
+  // The config authority rejects a signer outside the local allowlist…
+  assert.equal(
+    classifyTrustedCodingSessionIngressEvent(
+      receiptEvent(createdReceipt(), { secret: OTHER_SECRET }),
+      allowed,
+      AUTHORITY,
+    ).kind,
+    "rejected-author",
+  );
+  // …the open authority admits them: channel membership is the authority,
+  // and the relay only accepts these kinds from members.
+  const classified = classifyTrustedCodingSessionIngressEvent(
+    receiptEvent(createdReceipt(), { secret: OTHER_SECRET }),
+    allowed,
+    open,
+  );
+  assert.equal(classified.kind, "receipt");
+  assert.equal(classified.signerPubkey, otherPubkey);
+
+  // Open never widens what a signature or channel scope would reject.
+  const forged = { ...receiptEvent(), pubkey: otherPubkey };
+  assert.equal(
+    classifyTrustedCodingSessionIngressEvent(forged, allowed, open).kind,
+    "invalid-signature",
+  );
+  assert.equal(
+    classifyTrustedCodingSessionIngressEvent(
+      receiptEvent(createdReceipt(), { channelId: "not-subscribed" }),
+      allowed,
+      open,
+    ).kind,
+    "malformed",
+  );
+
+  // No authors constraint on the relay filter; a stable authority identity.
+  const filter = buildTrustedCodingSessionIngressFilter([CHANNEL_ID], open, 10);
+  assert.equal("authors" in filter, false);
+  assert.equal(buildCodingSessionIngressAuthorityIdentity(open), "open");
 });

@@ -63,6 +63,9 @@ export function CodingSessionWorkspace({
   const identity = useIdentityQuery();
   const catalog = useCodingSessionCatalog(channelId, bootstrap, {
     requirePopoutBootstrap: requireBootstrap,
+    // Viewing is channel-membership authority: any member of the channel sees
+    // the same sessions. The local allowlist keeps gating what runs here.
+    authorityMode: "open",
   });
   const goalSnapshot = useCodingSessionGoals([channelId]);
   const channelsQuery = useChannelsQuery({ enabled: true });

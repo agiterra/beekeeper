@@ -20,7 +20,22 @@ export type CodingSessionIngressAuthority =
   | {
       state: "invalid";
       errorMessage: string;
+    }
+  | {
+      /**
+       * Channel membership is the authority: admit any signature-verified
+       * author whose events the relay accepted into a readable channel. The
+       * relay only accepts 442xx from channel members (or, for transport
+       * channels, project-ACL-admitted signers), so this is read-side parity
+       * with what the channel already contains — the local allowlist keeps
+       * governing which providers this machine may run and steer.
+       */
+      state: "open";
     };
+
+/** The read-side authority for display surfaces (project shelf, workspace). */
+export const OPEN_CODING_SESSION_INGRESS_AUTHORITY: CodingSessionIngressAuthority =
+  { state: "open" };
 
 /**
  * Resolve the trusted signer set.
@@ -73,6 +88,9 @@ export function resolveCodingSessionIngressAuthority(
 export function buildCodingSessionIngressAuthorityIdentity(
   authority: CodingSessionIngressAuthority,
 ): string {
+  if (authority.state === "open") {
+    return "open";
+  }
   if (authority.state !== "valid") {
     return `invalid:${authority.errorMessage}`;
   }

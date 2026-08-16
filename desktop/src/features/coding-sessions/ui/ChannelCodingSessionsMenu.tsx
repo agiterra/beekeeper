@@ -27,7 +27,9 @@ export function ChannelCodingSessionsMenu({
   channelId,
   variant = "inline",
 }: ChannelCodingSessionsMenuProps) {
-  const catalog = useCodingSessionCatalog(channelId);
+  const catalog = useCodingSessionCatalog(channelId, null, {
+    authorityMode: "open",
+  });
   const identity = useIdentityQuery();
   const goalSnapshot = useCodingSessionGoals(channelId ? [channelId] : []);
   const entries = React.useMemo(
