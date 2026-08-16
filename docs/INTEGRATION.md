@@ -77,6 +77,19 @@ dev machines; both are upstream-issue candidates):
   stdin wins the race; on loaded cores round 2 completes first and the turn
   legitimately ends `end_turn`, not `cancelled`. Test-design race.
 Re-check both if the runner topology changes.
+- `buzz-pair-relay` `integration::test_120s_timeout` /
+  `test_cancellation_immediate` — 2 s close-window assertions that flake
+  under a fully loaded gate (observed 2026-08-15 during a local ceremony);
+  51/51 pass in isolation. Load-sensitivity, not a regression.
+
+Local-ceremony environment notes (Brian's post-migration machine): run the
+script as `LEFTHOOK=0 CHECK_FILE_SIZES_BASE=$(git rev-parse upstream/main)
+scripts/integrate.sh` — there is no `origin/main` in this clone (origin is
+the relay), so the desktop file-size hook needs the explicit base, and the
+hook-driven `cargo fmt --all` otherwise dirties the tree mid-run. The
+feature stack and `integration/glue-base` must exist as local branches
+(created from `upstream/*`), and the rerere cache was rebuilt 2026-08-15 —
+the recurring cross-feature union resolutions replay automatically again.
 
 Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
 `/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
