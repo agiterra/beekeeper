@@ -35,6 +35,40 @@ replayed automatically on the next rebuild, so recurring conflicts are
 resolved once. A **new** conflict stops the script — resolve it, `git rebase
 --continue`, and rerun.
 
+## Developing a change (prototype first)
+
+Do **not** develop new work directly on the feature branches. Keeping the
+branches separate during iteration costs a cross-branch dance per edit; the
+separation is only actually needed at push time. Instead:
+
+1. **Prototype on the assembly.** Cut a scratch branch from the current
+   build: `git checkout -b wip/<topic> integrated-build`. Commit freely
+   there (still `git commit -s`); feature code and cross-feature wiring land
+   together.
+2. **Test with the user at each step.** Build and run locally after each
+   feature addition and wait for the user to confirm the behavior before
+   moving on. The scratch tree is byte-for-byte what would ship, so this is
+   the real test — not an approximation of it.
+3. **Split when the user confirms it's ready to push.** Distribute the work
+   to the branches that own each file, base-most first for stacked branches:
+   on each `feature/<name>`, `git checkout wip/<topic> -- <paths it owns>`
+   and commit with a real message. A file belongs to the branch that
+   introduced it (`git ls-tree feature/<name> -- <path>` to check); changes
+   to shared upstream files go to the feature they serve. Whatever remains —
+   cross-feature wiring, files only the assembly has — becomes an
+   `integration/glue` commit (added *after* the ceremony rebuild, per
+   "Adding a feature" / integrate.sh).
+4. **Reassemble and verify equivalence.** Run the ceremony, add the glue
+   commit(s) on the rebased glue, then confirm the shipped tree is the
+   tested tree: `git diff wip/<topic> integrated-build` must be empty (or
+   every remaining hunk explained). Then gate, push, and delete
+   `wip/<topic>`.
+
+If the ceremony refs move under you while a `wip/*` branch is in flight
+(someone else pushed a rebuild), rebase the wip branch onto the new
+`integrated-build` before splitting — patch-ids, not ahead/behind counts,
+tell you what's actually yours.
+
 ## Adding a feature
 
 1. `git checkout -b feature/<name> main` (or stack on another feature if it

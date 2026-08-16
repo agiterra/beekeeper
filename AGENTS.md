@@ -4,6 +4,12 @@
 > landing new features or fixes, read [docs/INTEGRATION.md](docs/INTEGRATION.md)
 > to understand the branch model (`main` mirror, `feature/*` branches,
 > `integration/glue`, rebuilt `integrated`) and how work gets integrated.
+>
+> **Prototype first, split later.** Develop new work on a `wip/*` branch cut
+> from the assembly (`integrated-build`), letting the user manually test each
+> feature addition there. Only after the user confirms a good result do you
+> split the patch into the owning `feature/*` branches + glue and push — see
+> [INTEGRATION.md § Developing a change](docs/INTEGRATION.md#developing-a-change-prototype-first).
 
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,
