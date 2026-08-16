@@ -392,7 +392,7 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
     `trusted ingress must retry past the bounded transport budget (attempts: ${JSON.stringify([...attemptsByFilterKind])})`,
   );
   assert.ok(
-    attemptsByFilterKind.get("44221,44224") >= 6,
+    attemptsByFilterKind.get("44221,44224,44226") >= 6,
     "create observations must retry past the bounded transport budget",
   );
   assert.equal(result.current.trusted.errorMessage, null);

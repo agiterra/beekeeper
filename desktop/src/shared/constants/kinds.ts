@@ -101,8 +101,8 @@ export const KIND_CODING_SESSION_LIFECYCLE_RECEIPT = 44224;
 // NIP-CST: one provider-authored, sequenced transcript step (`cst1-1`).
 export const KIND_CODING_SESSION_TRANSCRIPT = 44225;
 // NIP-CSG: the operator-signed origin of one umbrella session (`csg1-1`). The
-// signer is the founder; the `csg-session` tag makes that founder resolvable in
-// one filtered query rather than by scanning session history.
+// signer is the founder. Consumers resolve it only by the explicit event id in
+// a receipt-joined create; `csg-session` is relay enforcement/diagnostics only.
 export const KIND_CODING_SESSION_GENESIS = 44226;
 
 // Every coding-session kind, in one place, so the regression guard keeping them

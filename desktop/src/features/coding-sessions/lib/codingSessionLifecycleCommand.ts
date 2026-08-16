@@ -26,12 +26,17 @@ export const MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES = 12 * 1024;
  * producers always write it (explicit `null` means "no umbrella claimed"),
  * while an absent key is only ever the historical 8-key form re-serialized
  * byte-for-byte (durable-create replay).
+ *
+ * `genesisRef` is the immutable authority anchor. It is present only in the
+ * 10-key form and requires a non-null `sessionRef`; omitting it preserves the
+ * historical 8-key form or the interim 9-key umbrella form exactly.
  */
 export type CodingSessionCreateAction = {
   type: "session.create";
   projectRef: string | null;
   repoRef: string | null;
   sessionRef?: string | null;
+  genesisRef?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -97,6 +102,8 @@ export function buildCodingSessionCreateEvent(input: {
    * replay of pre-`sessionRef` transactions depends on.
    */
   sessionRef?: string | null;
+  /** Event id of the genesis this create explicitly names (10-key form). */
+  genesisRef?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -117,6 +124,9 @@ export function buildCodingSessionCreateEvent(input: {
       // through JSON (which drops undefined values) rebuilds the same bytes.
       ...(input.sessionRef !== undefined
         ? { sessionRef: input.sessionRef }
+        : {}),
+      ...(input.genesisRef !== undefined
+        ? { genesisRef: input.genesisRef }
         : {}),
       providerInstanceRef: input.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
@@ -148,6 +158,7 @@ export function validateCodingSessionCreateInput(input: {
   projectRef: string | null;
   repoRef: string | null;
   sessionRef?: string | null;
+  genesisRef?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -182,6 +193,14 @@ export function validateCodingSessionCreateInput(input: {
     throw new Error(
       "action.sessionRef must be a canonical lowercase hyphenated UUID",
     );
+  }
+  if (input.genesisRef !== undefined) {
+    if (input.sessionRef === undefined || input.sessionRef === null) {
+      throw new Error("action.genesisRef requires action.sessionRef");
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.genesisRef)) {
+      throw new Error("action.genesisRef must be a lowercase 64-hex event id");
+    }
   }
   validateRequired(
     input.providerInstanceRef,

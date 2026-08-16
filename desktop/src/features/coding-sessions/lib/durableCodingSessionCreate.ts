@@ -346,10 +346,11 @@ const DURABLE_CREATE_INPUT_KEYS = [
 ] as const;
 
 /**
- * Exactly the historical input key set, or exactly that set plus `sessionRef`
- * — nothing between, nothing beyond. Transactions persisted before the
- * umbrella field existed must stay resumable forever, and the byte-exact
- * event verification below is what actually guarantees their integrity.
+ * Exactly one of R9's three input forms: historical, sessionRef-bearing, or
+ * sessionRef + genesisRef-bearing. A genesisRef can never be smuggled into a
+ * create without its sessionRef. Transactions persisted before either field
+ * existed must stay resumable forever, and the byte-exact event verification
+ * below is what actually guarantees their integrity.
  */
 function isCreateInput(
   value: unknown,
@@ -357,7 +358,12 @@ function isCreateInput(
   return (
     isPlainRecord(value) &&
     (hasExactKeySet(value, DURABLE_CREATE_INPUT_KEYS) ||
-      hasExactKeySet(value, [...DURABLE_CREATE_INPUT_KEYS, "sessionRef"]))
+      hasExactKeySet(value, [...DURABLE_CREATE_INPUT_KEYS, "sessionRef"]) ||
+      hasExactKeySet(value, [
+        ...DURABLE_CREATE_INPUT_KEYS,
+        "sessionRef",
+        "genesisRef",
+      ]))
   );
 }
 

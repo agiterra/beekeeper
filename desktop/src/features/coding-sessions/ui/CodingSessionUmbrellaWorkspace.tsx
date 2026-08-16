@@ -33,6 +33,7 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import {
   CodingSessionUmbrellaComposer,
@@ -87,16 +88,22 @@ export function UmbrellaCodingSessionWorkspace({
       className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
       data-testid="coding-session-umbrella-workspace"
     >
-      <CodingSessionHeader
-        channelName={channelName}
-        generationLabel={`${umbrella.executions.length} executions`}
-        onAddProvider={onAddProvider}
-        onBack={onBack}
-        onPopout={surface === "main" ? handlePopout : undefined}
-        providerAuthorityPubkey={focusedExecution.signerPubkey}
-        sessionTitle={umbrella.title}
-        status={umbrellaWorkspaceStatus(umbrella)}
-      />
+      <div className="shrink-0" data-testid="coding-session-authority-summary">
+        <CodingSessionHeader
+          channelName={channelName}
+          generationLabel={`${umbrella.executions.length} executions`}
+          onAddProvider={onAddProvider}
+          onBack={onBack}
+          onPopout={surface === "main" ? handlePopout : undefined}
+          providerAuthorityPubkey={focusedExecution.signerPubkey}
+          sessionTitle={umbrella.title}
+          status={umbrellaWorkspaceStatus(umbrella)}
+        />
+        <CodingSessionFounderLine
+          founderPubkey={umbrella.founderPubkey}
+          genesisRef={umbrella.genesisRef}
+        />
+      </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <section
           aria-label="Umbrella session narrative"

@@ -7,6 +7,7 @@ import {
   createCodingSessionLifecycleCommandId,
   createCodingSessionSessionRef,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { publishCodingSessionGenesis } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { addChannelMembers } from "@/shared/api/tauri";
 import {
@@ -256,6 +257,8 @@ export function useNewCodingSessionCreate({
        * execution inside the same session. Omit to mint a fresh umbrella.
        */
       sessionRef?: string | null;
+      /** Existing genesis to carry when attaching to a founded umbrella. */
+      genesisRef?: string | null;
     }) => {
       // `transaction` only exists once prepare has resolved, so on its own it
       // leaves the whole in-flight window unguarded — and this flow puts
@@ -296,19 +299,17 @@ export function useNewCodingSessionCreate({
         });
 
         setHostPhase("publishing");
-        const prepared = await prepareDurableCodingSessionCreate(
-          scopeId,
-          buildNewCodingSessionCreateInput({
-            channelId: input.target.channelId,
-            commandId,
-            providerInstanceRef: input.target.provider.providerInstanceRef,
-            providerAuthorityPubkey: input.target.signerPubkey,
-            model: input.model,
-            title: input.title,
-            initialTurn: input.initialTurn,
-            ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
-          }),
-        );
+        const prepared = await prepareNewCodingSessionCreate(scopeId, {
+          channelId: input.target.channelId,
+          commandId,
+          providerInstanceRef: input.target.provider.providerInstanceRef,
+          providerAuthorityPubkey: input.target.signerPubkey,
+          model: input.model,
+          title: input.title,
+          initialTurn: input.initialTurn,
+          ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
+          ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
+        });
         if (!prepared.ok) {
           setDurabilityError(prepared.errorMessage);
           setHostPhase("idle");
@@ -394,6 +395,7 @@ export function buildNewCodingSessionCreateInput(input: {
   title: string | null;
   initialTurn: string | null;
   sessionRef?: string;
+  genesisRef?: string;
 }): Parameters<typeof prepareDurableCodingSessionCreate>[1] {
   return {
     channelId: input.channelId,
@@ -401,12 +403,54 @@ export function buildNewCodingSessionCreateInput(input: {
     projectRef: null,
     repoRef: null,
     sessionRef: input.sessionRef ?? createCodingSessionSessionRef(),
+    ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
     providerInstanceRef: input.providerInstanceRef,
     providerAuthorityPubkey: input.providerAuthorityPubkey,
     model: input.model,
     title: input.title,
     initialTurn: input.initialTurn,
   };
+}
+
+/**
+ * Prepare the durable create, publishing a genesis first only for founding.
+ *
+ * The returned genesis event id is the exact value written into the signed
+ * create. Joining an existing umbrella never publishes another genesis; it
+ * carries the umbrella's already-resolved id when one exists, while legacy
+ * umbrellas preserve the historical 9-key create form.
+ */
+export async function prepareNewCodingSessionCreate(
+  scopeId: string,
+  input: Parameters<typeof buildNewCodingSessionCreateInput>[0],
+  dependencies: {
+    publishGenesis?: typeof publishCodingSessionGenesis;
+    prepareCreate?: typeof prepareDurableCodingSessionCreate;
+  } = {},
+): ReturnType<typeof prepareDurableCodingSessionCreate> {
+  const createInput = buildNewCodingSessionCreateInput(input);
+  const prepareCreate =
+    dependencies.prepareCreate ?? prepareDurableCodingSessionCreate;
+  if (input.sessionRef !== undefined) {
+    return prepareCreate(scopeId, createInput);
+  }
+  const sessionRef = createInput.sessionRef;
+  if (!sessionRef) {
+    return {
+      ok: false,
+      errorMessage: "Unable to mint the coding session reference.",
+    };
+  }
+  const genesis = await (
+    dependencies.publishGenesis ?? publishCodingSessionGenesis
+  )({
+    channelId: input.channelId,
+    sessionRef,
+  });
+  return prepareCreate(scopeId, {
+    ...createInput,
+    genesisRef: genesis.eventId,
+  });
 }
 
 /**

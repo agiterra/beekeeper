@@ -170,6 +170,7 @@ test("the join is pinned to the session's channel", () => {
 
 test("the join create carries the umbrella's existing sessionRef", () => {
   const umbrella = singleClaudeUmbrella();
+  umbrella.genesisRef = "d".repeat(64);
   const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
   const payload = buildAddCodingSessionProviderSubmit({
     umbrella,
@@ -181,6 +182,7 @@ test("the join create carries the umbrella's existing sessionRef", () => {
   });
 
   assert.equal(payload.sessionRef, SESSION_REF);
+  assert.equal(payload.genesisRef, umbrella.genesisRef);
   assert.equal(payload.target.channelId, CHANNEL_ID);
   assert.equal(payload.model, "gpt-5.3-codex");
   // The session's title is inherited, not re-invented.
@@ -198,8 +200,10 @@ test("the join create carries the umbrella's existing sessionRef", () => {
     title: payload.title,
     initialTurn: payload.initialTurn,
     sessionRef: payload.sessionRef,
+    genesisRef: payload.genesisRef,
   });
   assert.equal(created.sessionRef, SESSION_REF);
+  assert.equal(created.genesisRef, umbrella.genesisRef);
   assert.equal(created.channelId, CHANNEL_ID);
   assert.equal(created.providerInstanceRef, "codex-primary");
 });

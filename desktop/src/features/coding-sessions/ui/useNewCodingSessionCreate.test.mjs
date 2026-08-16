@@ -267,3 +267,77 @@ test("every new create draft mints a fresh canonical umbrella sessionRef", async
   });
   assert.equal(joined.sessionRef, first.sessionRef);
 });
+
+test("founding publishes genesis before preparing the linked 10-key create", async () => {
+  const { prepareNewCodingSessionCreate } = await import(
+    "./useNewCodingSessionCreate.ts"
+  );
+  const order = [];
+  const genesisRef = "c".repeat(64);
+  let preparedInput = null;
+  const result = await prepareNewCodingSessionCreate(
+    "channel-1",
+    {
+      channelId: "channel-1",
+      commandId: "csc-1",
+      providerInstanceRef: "claude-primary",
+      providerAuthorityPubkey: "a".repeat(64),
+      model: null,
+      title: "Advance Buzz live sessions",
+      initialTurn: null,
+    },
+    {
+      publishGenesis: async (input) => {
+        order.push("genesis");
+        assert.match(input.sessionRef, /^[0-9a-f-]{36}$/);
+        return { eventId: genesisRef, kind: 44226 };
+      },
+      prepareCreate: async (_scopeId, input) => {
+        order.push("create");
+        preparedInput = input;
+        return { ok: false, errorMessage: "test sentinel" };
+      },
+    },
+  );
+  assert.deepEqual(order, ["genesis", "create"]);
+  assert.equal(preparedInput.genesisRef, genesisRef);
+  assert.equal(preparedInput.sessionRef.length, 36);
+  assert.deepEqual(result, { ok: false, errorMessage: "test sentinel" });
+});
+
+test("joining reuses authority without publishing a second genesis", async () => {
+  const { prepareNewCodingSessionCreate } = await import(
+    "./useNewCodingSessionCreate.ts"
+  );
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const genesisRef = "d".repeat(64);
+  let genesisPublishes = 0;
+  let preparedInput = null;
+  await prepareNewCodingSessionCreate(
+    "channel-1",
+    {
+      channelId: "channel-1",
+      commandId: "csc-join",
+      providerInstanceRef: "codex-primary",
+      providerAuthorityPubkey: "a".repeat(64),
+      model: null,
+      title: null,
+      initialTurn: null,
+      sessionRef,
+      genesisRef,
+    },
+    {
+      publishGenesis: async () => {
+        genesisPublishes += 1;
+        return { eventId: "e".repeat(64), kind: 44226 };
+      },
+      prepareCreate: async (_scopeId, input) => {
+        preparedInput = input;
+        return { ok: false, errorMessage: "test sentinel" };
+      },
+    },
+  );
+  assert.equal(genesisPublishes, 0);
+  assert.equal(preparedInput.sessionRef, sessionRef);
+  assert.equal(preparedInput.genesisRef, genesisRef);
+});

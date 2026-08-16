@@ -234,6 +234,44 @@ test("a sessionRef-bearing create round-trips through storage byte-exactly", asy
   assert.deepEqual(loaded.transaction, prepared.transaction);
 });
 
+test("a genesisRef-bearing create round-trips through storage byte-exactly", async () => {
+  const storage = memoryStorage();
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const genesisRef = "b".repeat(64);
+  const prepared = await prepareDurableCodingSessionCreate(
+    SCOPE,
+    input({ sessionRef, genesisRef }),
+    { signer, storage },
+  );
+
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.transaction.input.genesisRef, genesisRef);
+  assert.match(prepared.transaction.event.content, new RegExp(genesisRef));
+
+  const loaded = loadDurableCodingSessionCreate(SCOPE, storage);
+  assert.equal(loaded.errorMessage, null);
+  assert.deepEqual(loaded.transaction, prepared.transaction);
+});
+
+test("a stored genesisRef without sessionRef is rejected", async () => {
+  const storage = memoryStorage();
+  const prepared = await prepareDurableCodingSessionCreate(SCOPE, input(), {
+    signer,
+    storage,
+  });
+  assert.equal(prepared.ok, true);
+
+  const key = durableCodingSessionCreateStorageKey(SCOPE);
+  const stored = JSON.parse(storage.values.get(key));
+  stored.input.genesisRef = "b".repeat(64);
+  storage.values.set(key, JSON.stringify(stored));
+
+  assert.equal(
+    loadDurableCodingSessionCreate(SCOPE, storage).transaction,
+    null,
+  );
+});
+
 test("a stored pre-sessionRef transaction stays valid and resumable forever", async () => {
   const storage = memoryStorage();
   // The historical 9-field input: prepared by a build that predates the

@@ -145,6 +145,42 @@ test("a sessionRef serializes in canonical position between repoRef and provider
   ]);
 });
 
+test("genesisRef produces only the 10-key form and requires sessionRef", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const genesisRef = "cd".repeat(32);
+  const event = buildCodingSessionCreateEvent({
+    ...input,
+    sessionRef,
+    genesisRef,
+  });
+  assert.deepEqual(Object.keys(JSON.parse(event.content).action), [
+    "type",
+    "projectRef",
+    "repoRef",
+    "sessionRef",
+    "genesisRef",
+    "providerInstanceRef",
+    "providerAuthorityPubkey",
+    "model",
+    "title",
+    "initialTurn",
+  ]);
+  assert.equal(JSON.parse(event.content).action.genesisRef, genesisRef);
+  assert.throws(
+    () => buildCodingSessionCreateEvent({ ...input, genesisRef }),
+    /genesisRef requires action\.sessionRef/,
+  );
+  assert.throws(
+    () =>
+      buildCodingSessionCreateEvent({
+        ...input,
+        sessionRef,
+        genesisRef: "AB".repeat(32),
+      }),
+    /lowercase 64-hex event id/,
+  );
+});
+
 test("an explicit null sessionRef serializes; an absent key reproduces the 8-key historical form", () => {
   const withNull = buildCodingSessionCreateEvent({
     ...input,

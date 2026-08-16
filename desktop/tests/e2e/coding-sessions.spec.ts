@@ -6,10 +6,15 @@ import {
 } from "nostr-tools/pure";
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
+import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
   codingSessionMetadataSemanticKey,
   CODING_SESSION_METADATA_TAG_VERSION,
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+  lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
   BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
@@ -17,11 +22,13 @@ import {
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptPresentation";
 import {
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_TRANSCRIPT,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
 import { installMockBridge } from "../helpers/bridge";
+import { waitForAnimations } from "../helpers/animations";
 
 /**
  * The consumer's whole trust story is signature-first: an event that is not
@@ -34,6 +41,8 @@ import { installMockBridge } from "../helpers/bridge";
 
 const PROVIDER_SECRET = generateSecretKey();
 const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
+const FOUNDER_SECRET = generateSecretKey();
+const FOUNDER_PUBKEY = getPublicKey(FOUNDER_SECRET);
 const CHANNEL_NAME = "engineering";
 /** `engineering` in the mock channel fixture. The `h` tag must match exactly. */
 const CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
@@ -48,6 +57,70 @@ const TARGET = {
 const TARGET_KEY = buildCodingSessionTargetKey(TARGET);
 const BASE_CREATED_AT = 1_800_000_000;
 const BASE_TIMESTAMP_MS = 1_800_000_000_000;
+const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const COMMAND_ID = "csl-founded-session";
+
+function genesisEvent(): RelayEvent {
+  const built = buildCodingSessionGenesisEvent({
+    channelId: CHANNEL_ID,
+    sessionRef: SESSION_REF,
+  });
+  return finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: BASE_CREATED_AT - 2,
+      tags: built.tags,
+      content: built.content,
+    },
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+}
+
+function createAndReceiptEvents(genesisRef: string): RelayEvent[] {
+  const built = buildCodingSessionCreateEvent({
+    channelId: CHANNEL_ID,
+    commandId: COMMAND_ID,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: SESSION_REF,
+    genesisRef,
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: PROVIDER_PUBKEY,
+    model: "sonnet",
+    title: "Fix the reconnect bug",
+    initialTurn: null,
+  });
+  const create = finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: BASE_CREATED_AT - 1,
+      tags: built.tags,
+      content: built.content,
+    },
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: BASE_CREATED_AT,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", COMMAND_ID],
+        ["csl-key", lifecycleReceiptSemanticKey(COMMAND_ID)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: COMMAND_ID,
+        status: "created",
+        session: TARGET,
+        error: null,
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
+  return [create, receipt];
+}
 
 function metadataEvent(): RelayEvent {
   const payload = {
@@ -70,6 +143,7 @@ function metadataEvent(): RelayEvent {
       diff: false,
       plan: true,
     },
+    sessionRef: SESSION_REF,
   };
   return finalizeEvent(
     {
@@ -118,7 +192,10 @@ function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
  * answer, and the terminal result the completion footer is derived from.
  */
 function seededEvents(): RelayEvent[] {
+  const genesis = genesisEvent();
   return [
+    genesis,
+    ...createAndReceiptEvents(genesis.id),
     metadataEvent(),
     transcriptEvent(1, {
       kind: "user_prompt",
@@ -180,6 +257,12 @@ test.beforeEach(async ({ page }) => {
         { pubkey: PROVIDER_PUBKEY, label: "This computer (coding sessions)" },
       ],
     },
+    searchProfiles: [
+      {
+        pubkey: FOUNDER_PUBKEY,
+        displayName: "Alice Rivera",
+      },
+    ],
   });
   await page.goto("/");
 });
@@ -213,6 +296,13 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await expect(page.getByTestId("coding-session-header")).toContainText(
     "Fix the reconnect bug",
   );
+  const foundedBy = page.getByTestId("coding-session-founded-by");
+  await expect(foundedBy).toHaveText("Founded by Alice Rivera");
+  await expect(foundedBy).toHaveAttribute("data-genesis-ref", /^[0-9a-f]{64}$/);
+  await waitForAnimations(page);
+  await page.getByTestId("coding-session-authority-summary").screenshot({
+    path: "test-results/screenshots/bite1-founded-by.png",
+  });
 
   const transcript = page.getByTestId("coding-session-transcript");
   await expect(transcript).toBeVisible();

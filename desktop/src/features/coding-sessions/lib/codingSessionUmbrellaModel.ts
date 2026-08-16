@@ -36,6 +36,10 @@ export type CodingSessionUmbrellaCreateObservation = {
   /** Event `created_at`, in seconds. */
   createdAt: number;
   eventId: string;
+  /** Explicit authority anchor named by this create, or null for legacy. */
+  genesisRef: string | null;
+  /** Genesis signer resolved by that exact event id, never by session tag. */
+  genesisFounderPubkey: string | null;
   /**
    * The execution target the provider minted for this create (joined via the
    * 44224 receipt's commandId), when known.
@@ -65,10 +69,9 @@ export function buildCodingSessionExecutionKey(
  *   earlier ones become prior history (never merged, still per-record).
  * - Executions sharing a non-null `sessionRef` share an umbrella; records
  *   without one become implicit umbrellas of one.
- * - Founder = signer of the earliest create bearing the sessionRef
- *   (tie-break: lowest event id); an execution's operator = the signer of the
- *   create that minted its target. Both are null when no create observation
- *   resolves them.
+ * - Founder = signer of the exact genesis named by receipt-joined creates.
+ *   Legacy sessions alone fall back to the earliest create signer. An
+ *   execution's operator remains the signer of the create that minted it.
  * - Executions whose known operator differs from the founder are counted as
  *   foreign attachments — flagged, never hidden and never merged.
  */
@@ -283,7 +286,7 @@ function buildUmbrellaRecord(
       left.attachOrderMs - right.attachOrderMs ||
       left.executionKey.localeCompare(right.executionKey),
   );
-  const founderPubkey = resolveFounder(sessionRef, ordered, creates);
+  const authority = resolveFounder(sessionRef, ordered, creates);
   const latest = ordered.reduce((best, candidate) =>
     candidate.latestEventMs > best.latestEventMs ? candidate : best,
   );
@@ -306,7 +309,8 @@ function buildUmbrellaRecord(
         operatorPubkey,
       }),
     ),
-    founderPubkey,
+    founderPubkey: authority.founderPubkey,
+    genesisRef: authority.genesisRef,
     status: deriveUmbrellaStatus(ordered, latest),
     lastEventAt: new Date(
       Math.max(...ordered.map((execution) => execution.latestEventMs), 0),
@@ -316,28 +320,31 @@ function buildUmbrellaRecord(
       0,
     ),
     foreignAttachmentCount:
-      founderPubkey === null
+      authority.founderPubkey === null
         ? 0
         : ordered.filter(
             (execution) =>
               execution.operatorPubkey !== null &&
-              execution.operatorPubkey !== founderPubkey,
+              execution.operatorPubkey !== authority.founderPubkey,
           ).length,
   };
 }
 
 /**
- * Founder = signer of the earliest accepted create bearing this sessionRef
- * (tie-break: lowest event id). An implicit umbrella's founder is its one
- * execution's operator, when known.
+ * Genesis-bearing founder resolution follows explicit event ids only. When no
+ * create names a genesis, the legacy projection remains the earliest accepted
+ * create signer (or the one execution operator for an implicit umbrella).
  */
 function resolveFounder(
   sessionRef: string | null,
   executions: readonly ExecutionAccumulator[],
   creates: readonly CodingSessionUmbrellaCreateObservation[],
-): string | null {
+): { founderPubkey: string | null; genesisRef: string | null } {
   if (sessionRef === null) {
-    return executions[0]?.operatorPubkey ?? null;
+    return {
+      founderPubkey: executions[0]?.operatorPubkey ?? null,
+      genesisRef: null,
+    };
   }
   const matches = creates
     .filter((create) => create.sessionRef === sessionRef)
@@ -346,7 +353,30 @@ function resolveFounder(
         left.createdAt - right.createdAt ||
         left.eventId.localeCompare(right.eventId),
     );
-  return matches[0]?.signerPubkey ?? null;
+  const genesisRefs = [
+    ...new Set(
+      matches
+        .map((create) => create.genesisRef)
+        .filter((value): value is string => typeof value === "string"),
+    ),
+  ];
+  if (genesisRefs.length > 1) {
+    return { founderPubkey: null, genesisRef: null };
+  }
+  const genesisRef = genesisRefs[0] ?? null;
+  if (genesisRef !== null) {
+    const founders = new Set(
+      matches
+        .filter((create) => create.genesisRef === genesisRef)
+        .map((create) => create.genesisFounderPubkey)
+        .filter((value): value is string => typeof value === "string"),
+    );
+    return {
+      founderPubkey: founders.size === 1 ? [...founders][0] : null,
+      genesisRef,
+    };
+  }
+  return { founderPubkey: matches[0]?.signerPubkey ?? null, genesisRef: null };
 }
 
 function deriveUmbrellaStatus(

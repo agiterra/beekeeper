@@ -26,6 +26,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
+import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import {
   codingSessionTaskRailPreferenceKey,
@@ -120,6 +121,8 @@ export function CodingSessionWorkspace({
           key={`${channelId}:${generationId}`}
           onAddProvider={onAddProvider}
           onBack={onBack}
+          founderPubkey={umbrella.founderPubkey}
+          genesisRef={umbrella.genesisRef}
           session={resolution.session}
           surface={surface}
         />
@@ -145,6 +148,8 @@ function ReadyCodingSessionWorkspace({
   channelId,
   channelName,
   generationId,
+  founderPubkey,
+  genesisRef,
   isMember,
   onAddProvider,
   onBack,
@@ -154,6 +159,8 @@ function ReadyCodingSessionWorkspace({
   channelId: string;
   channelName: string | null;
   generationId: string;
+  founderPubkey: string | null;
+  genesisRef: string | null;
   isMember: boolean;
   onAddProvider?: () => void;
   onBack: () => void;
@@ -250,24 +257,30 @@ function ReadyCodingSessionWorkspace({
       data-testid="coding-session-workspace"
       ref={workspaceRef}
     >
-      <CodingSessionHeader
-        channelName={channelName}
-        compact={isNarrow}
-        generationLabel={session.label}
-        isExporting={isExporting}
-        model={session.model}
-        onAddProvider={onAddProvider}
-        onBack={onBack}
-        onExport={exportEnabled ? exportTranscript : undefined}
-        onPopout={surface === "main" ? handlePopout : undefined}
-        onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
-        providerAuthorityPubkey={session.providerAuthorityPubkey}
-        runtimeLabel={runtimeLabel}
-        sessionTitle={session.title}
-        status={status}
-        taskCount={taskModel?.tasks.length ?? 0}
-        taskRailOpen={taskRailOpen}
-      />
+      <div className="shrink-0" data-testid="coding-session-authority-summary">
+        <CodingSessionHeader
+          channelName={channelName}
+          compact={isNarrow}
+          generationLabel={session.label}
+          isExporting={isExporting}
+          model={session.model}
+          onAddProvider={onAddProvider}
+          onBack={onBack}
+          onExport={exportEnabled ? exportTranscript : undefined}
+          onPopout={surface === "main" ? handlePopout : undefined}
+          onToggleTaskRail={() => setTaskRailOpen((open) => !open)}
+          providerAuthorityPubkey={session.providerAuthorityPubkey}
+          runtimeLabel={runtimeLabel}
+          sessionTitle={session.title}
+          status={status}
+          taskCount={taskModel?.tasks.length ?? 0}
+          taskRailOpen={taskRailOpen}
+        />
+        <CodingSessionFounderLine
+          founderPubkey={founderPubkey}
+          genesisRef={genesisRef}
+        />
+      </div>
       <div className="flex min-h-0 flex-1">
         <section
           aria-label="Session transcript"

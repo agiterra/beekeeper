@@ -15,9 +15,11 @@ import {
 
 import {
   buildCodingSessionCreateObservationFilter,
+  classifyCodingSessionGenesisEvent,
   classifyCodingSessionCreateEvent,
   CodingSessionCreateObservationStore,
 } from "./codingSessionCreateObservations.ts";
+import { buildCodingSessionGenesisEvent } from "./codingSessionGenesis.ts";
 import { buildCodingSessionCreateEvent } from "./codingSessionLifecycleCommand.ts";
 import {
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
@@ -65,6 +67,7 @@ function createEvent({
   channelId = CHANNEL_ID,
   overrideContent = null,
   overrideTags = null,
+  genesisRef,
 } = {}) {
   const built = buildCodingSessionCreateEvent({
     channelId,
@@ -72,12 +75,33 @@ function createEvent({
     projectRef: null,
     repoRef: null,
     ...(omitSessionRef ? {} : { sessionRef }),
+    ...(genesisRef ? { genesisRef } : {}),
     providerInstanceRef: "claude-primary",
     providerAuthorityPubkey: PROVIDER_PUBKEY,
     model: null,
     title: "Advance Buzz live sessions",
     initialTurn: null,
   });
+  return finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: createdAt,
+      tags: overrideTags ?? built.tags,
+      content: overrideContent ?? built.content,
+    },
+    secret,
+  );
+}
+
+function genesisEvent({
+  secret = FOUNDER_SECRET,
+  sessionRef = SESSION_REF,
+  channelId = CHANNEL_ID,
+  createdAt = 1_799_999_999,
+  overrideContent = null,
+  overrideTags = null,
+} = {}) {
+  const built = buildCodingSessionGenesisEvent({ channelId, sessionRef });
   return finalizeEvent(
     {
       kind: built.kind,
@@ -153,12 +177,51 @@ function record({
 
 test("the subscription reads creates and receipts, unfiltered by author", () => {
   const filter = buildCodingSessionCreateObservationFilter([CHANNEL_ID], 500);
-  assert.deepEqual(filter.kinds, [44221, 44224]);
+  assert.deepEqual(filter.kinds, [44221, 44224, 44226]);
   assert.deepEqual(filter["#h"], [CHANNEL_ID]);
   assert.equal(filter.limit, 500);
   // Any member may found a session, so there is no allowlist to scope by —
   // and a p-gated relay still requires the explicit kinds above.
   assert.equal("authors" in filter, false);
+});
+
+test("founder resolves only through the create's exact genesis event id", () => {
+  const genesis = genesisEvent();
+  const create = createEvent({ genesisRef: genesis.id });
+  const store = ingest([create, receiptEvent(), genesis]);
+  const [observation] = store.snapshot([CHANNEL_ID]);
+  assert.equal(observation.genesisRef, genesis.id);
+  assert.equal(observation.genesisFounderPubkey, FOUNDER_PUBKEY);
+  const [umbrella] = groupCodingSessionCatalog([record()], [observation]);
+  assert.equal(umbrella.genesisRef, genesis.id);
+  assert.equal(umbrella.founderPubkey, FOUNDER_PUBKEY);
+
+  // A different valid genesis with the same tag is not a candidate: the
+  // create's event-id link remains the sole resolution path.
+  const unrelated = genesisEvent({ secret: TEAMMATE_SECRET });
+  const unresolved = ingest([create, receiptEvent(), unrelated]).snapshot([
+    CHANNEL_ID,
+  ])[0];
+  assert.equal(unresolved.genesisRef, genesis.id);
+  assert.equal(unresolved.genesisFounderPubkey, null);
+  assert.equal(
+    groupCodingSessionCatalog([record()], [unresolved])[0].founderPubkey,
+    null,
+  );
+});
+
+test("genesis classification rejects a session tag/content mismatch", () => {
+  const event = genesisEvent({
+    overrideTags: [
+      ["h", CHANNEL_ID],
+      ["csg-v", "csg1-1"],
+      ["csg-session", "11111111-2222-3333-4444-555555555555"],
+    ],
+  });
+  assert.equal(
+    classifyCodingSessionGenesisEvent(event, new Set([CHANNEL_ID])).kind,
+    "malformed",
+  );
 });
 
 test("a signed create joins its execution through the provider's receipt", () => {
@@ -267,6 +330,17 @@ test("envelope and payload are read exactly; a bad claim is refused", () => {
   });
   assert.equal(
     classifyCodingSessionCreateEvent(badSessionRef, allowed).kind,
+    "malformed",
+  );
+  const validContent = JSON.parse(createEvent().content);
+  const smuggledAction = createEvent({
+    overrideContent: JSON.stringify({
+      ...validContent,
+      action: { ...validContent.action, founderPubkey: TEAMMATE_PUBKEY },
+    }),
+  });
+  assert.equal(
+    classifyCodingSessionCreateEvent(smuggledAction, allowed).kind,
     "malformed",
   );
 });

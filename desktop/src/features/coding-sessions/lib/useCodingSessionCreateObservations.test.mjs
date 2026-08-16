@@ -172,11 +172,11 @@ test("creates ride their own subscription and only bind once the receipt lands",
   // kinds, scoped to the channel, and no `authors` narrowing — any member may
   // found a session, so there is no allowlist a create could be scoped by.
   assert.equal(historyCalls.length, 1);
-  assert.deepEqual(historyCalls[0].kinds, [44221, 44224]);
+  assert.deepEqual(historyCalls[0].kinds, [44221, 44224, 44226]);
   assert.deepEqual(historyCalls[0]["#h"], [CHANNEL_ID]);
   assert.equal("authors" in historyCalls[0], false);
   assert.equal(liveSubscriptions.length, 1);
-  assert.deepEqual(liveSubscriptions[0].filter.kinds, [44221, 44224]);
+  assert.deepEqual(liveSubscriptions[0].filter.kinds, [44221, 44224, 44226]);
   assert.equal(result.current.isLoading, false);
 
   // History held the create but no receipt: nothing is bound yet, so every

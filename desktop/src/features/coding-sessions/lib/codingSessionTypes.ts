@@ -80,8 +80,10 @@ export type CodingSessionUmbrellaRecord = {
   sessionRef: string | null;
   title: string;
   executions: CodingSessionExecution[];
-  /** Signer of the earliest accepted create bearing the sessionRef, or null. */
+  /** Genesis signer when linked, else the legacy founder projection. */
   founderPubkey: string | null;
+  /** Exact genesis event id reached through a receipt-joined create. */
+  genesisRef: string | null;
   /**
    * Derived: `running` if any execution runs, else `waiting_for_input` if any
    * waits, else the most recently active execution's status.

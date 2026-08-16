@@ -4,10 +4,10 @@
  * Creates are signed by *people*, so they can never enter the trusted ingress
  * store: that store's whole contract is "provider-authority-signed facts
  * only", and a human create is not a provider fact. Operator authority is
- * nevertheless a fact *about humans* — the design's rule is that the signer of
- * a create is that execution's operator, and the signer of the earliest create
- * bearing a `sessionRef` is the umbrella founder — so it is collected here, on
- * its own subscription, and deliberately kept out of the trusted store.
+ * nevertheless a fact *about humans*: a create signer is that execution's
+ * operator, while a genesis signer becomes founder only when reached through
+ * a receipt-joined create's explicit event-id reference. Both human-signed
+ * lanes live on this subscription and stay out of the trusted provider store.
  *
  * An observation asserts exactly one thing: *this pubkey signed a create with
  * this commandId claiming this sessionRef, and the provider-signed 44224
@@ -29,10 +29,16 @@
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 import {
+  KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
 } from "@/shared/constants/kinds";
 import { hasValidSignature } from "@/shared/lib/authors";
+import {
+  CODING_SESSION_GENESIS_SCHEMA_VERSION,
+  CODING_SESSION_GENESIS_TAG_VERSION,
+  MAX_CODING_SESSION_GENESIS_CONTENT_BYTES,
+} from "./codingSessionGenesis";
 import {
   buildCodingSessionTargetKey,
   type CodingSessionCommandTarget,
@@ -60,12 +66,13 @@ import {
 export type { CodingSessionUmbrellaCreateObservation };
 
 /**
- * The two kinds this collector reads: the human create and the provider
- * receipt that joins it to a minted execution target.
+ * Human create + genesis, and the provider receipt that joins a create to a
+ * minted execution target.
  */
 export const CODING_SESSION_CREATE_OBSERVATION_KINDS = [
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_GENESIS,
 ] as const;
 
 /**
@@ -93,6 +100,7 @@ export type CodingSessionCreateClassification =
       commandId: string;
       signerPubkey: string;
       sessionRef: string | null;
+      genesisRef: string | null;
     }
   | { kind: "irrelevant" }
   | { kind: "malformed" }
@@ -102,13 +110,11 @@ export type CodingSessionCreateClassification =
  * Read the three authority facts off a signed 44221: who signed it, which
  * command it is, and which umbrella it claimed.
  *
- * The envelope is checked exactly — kind, the producer's three tags in order,
- * the schema, and the commandId agreeing with its tag — but the *action* is
- * read leniently past `type` and `sessionRef`. This observer needs three
- * fields, not the whole command: the strict 8-or-9-key decoders are the
- * sidecar's and the relay's, and a create that reached a receipt already
- * passed the sidecar's. Going blind on a create form this client does not
- * fully understand would drop authority the provider itself honoured.
+ * The envelope and action are checked exactly — kind, the producer's three
+ * tags in order, the schema, the commandId agreeing with its tag, and one of
+ * R9's three accepted create forms. Unknown action keys bind no authority:
+ * the desktop must not give a smuggled payload a more permissive meaning than
+ * the provider that acts on it.
  */
 export function classifyCodingSessionCreateEvent(
   event: RelayEvent,
@@ -150,6 +156,26 @@ export function classifyCodingSessionCreateEvent(
   ) {
     return { kind: "malformed" };
   }
+  const hasSessionRef = Object.hasOwn(payload.action, "sessionRef");
+  const hasGenesisRef = Object.hasOwn(payload.action, "genesisRef");
+  const createKeys = [
+    "type",
+    "projectRef",
+    "repoRef",
+    ...(hasSessionRef ? ["sessionRef"] : []),
+    ...(hasGenesisRef ? ["genesisRef"] : []),
+    "providerInstanceRef",
+    "providerAuthorityPubkey",
+    "model",
+    "title",
+    "initialTurn",
+  ];
+  if (
+    !hasExactKeys(payload.action, createKeys) ||
+    (hasGenesisRef && !hasSessionRef)
+  ) {
+    return { kind: "malformed" };
+  }
   // Absent is the historical 8-key form ("no umbrella claimed"); an explicit
   // null means the same thing on a new create. Anything present must be a
   // canonical UUID — a malformed claim is refused rather than coerced.
@@ -161,12 +187,98 @@ export function classifyCodingSessionCreateEvent(
   ) {
     return { kind: "malformed" };
   }
+  const genesisRef = payload.action.genesisRef;
+  if (
+    genesisRef !== undefined &&
+    (typeof genesisRef !== "string" ||
+      !/^[0-9a-f]{64}$/.test(genesisRef) ||
+      !hasSessionRef ||
+      claimed === null)
+  ) {
+    return { kind: "malformed" };
+  }
   return {
     kind: "create",
     channelId: tags[0],
     commandId: payload.commandId,
     signerPubkey,
     sessionRef: claimed ?? null,
+    genesisRef: genesisRef ?? null,
+  };
+}
+
+export type CodingSessionGenesisClassification =
+  | {
+      kind: "genesis";
+      eventId: string;
+      channelId: string;
+      sessionRef: string;
+      founderPubkey: string;
+    }
+  | { kind: "irrelevant" }
+  | { kind: "malformed" }
+  | { kind: "invalid-signature" };
+
+/** Validate a genesis for storage by id; its session tag is never a selector. */
+export function classifyCodingSessionGenesisEvent(
+  event: RelayEvent,
+  allowedChannelIds: ReadonlySet<string>,
+): CodingSessionGenesisClassification {
+  if (
+    event.kind !== KIND_CODING_SESSION_GENESIS ||
+    !Array.isArray(event.tags)
+  ) {
+    return { kind: "irrelevant" };
+  }
+  const tags = parseExactTags(event.tags, ["h", "csg-v", "csg-session"]);
+  if (
+    !tags ||
+    !allowedChannelIds.has(tags[0]) ||
+    tags[1] !== CODING_SESSION_GENESIS_TAG_VERSION
+  ) {
+    return { kind: "malformed" };
+  }
+  const founderPubkey = normalizePubkey(event.pubkey);
+  if (!founderPubkey || !/^[0-9a-f]{64}$/.test(event.id)) {
+    return { kind: "malformed" };
+  }
+  if (!hasValidSignature(event)) return { kind: "invalid-signature" };
+  const payload = parseBoundedJson(
+    event.content,
+    MAX_CODING_SESSION_GENESIS_CONTENT_BYTES,
+  );
+  if (!isPlainRecord(payload)) return { kind: "malformed" };
+  const hasAdopts = Object.hasOwn(payload, "adopts");
+  if (
+    !hasExactKeys(
+      payload,
+      hasAdopts ? ["sessionRef", "v", "adopts"] : ["sessionRef", "v"],
+    ) ||
+    payload.v !== CODING_SESSION_GENESIS_SCHEMA_VERSION ||
+    !isCodingSessionSessionRef(payload.sessionRef) ||
+    payload.sessionRef !== tags[2]
+  ) {
+    return { kind: "malformed" };
+  }
+  if (hasAdopts) {
+    const adopts = payload.adopts;
+    if (
+      !isPlainRecord(adopts) ||
+      !hasExactKeys(adopts, ["createEventId", "receiptEventId"]) ||
+      typeof adopts.createEventId !== "string" ||
+      !/^[0-9a-f]{64}$/.test(adopts.createEventId) ||
+      typeof adopts.receiptEventId !== "string" ||
+      !/^[0-9a-f]{64}$/.test(adopts.receiptEventId)
+    ) {
+      return { kind: "malformed" };
+    }
+  }
+  return {
+    kind: "genesis",
+    eventId: event.id,
+    channelId: tags[0],
+    sessionRef: payload.sessionRef,
+    founderPubkey,
   };
 }
 
@@ -176,8 +288,14 @@ type StoredCreate = {
   commandId: string;
   signerPubkey: string;
   sessionRef: string | null;
+  genesisRef: string | null;
   createdAt: number;
 };
+
+type StoredGenesis = Extract<
+  CodingSessionGenesisClassification,
+  { kind: "genesis" }
+>;
 
 type StoredReceiptTarget = {
   eventId: string;
@@ -197,6 +315,8 @@ export class CodingSessionCreateObservationStore {
     string,
     Map<string, StoredReceiptTarget>
   >();
+  /** Keyed only by the explicit event id a receipt-joined create names. */
+  private readonly geneses = new Map<string, StoredGenesis>();
   private readonly dispositions = new Map<string, string>();
   private malformedCount = 0;
   private invalidSignatureCount = 0;
@@ -209,6 +329,21 @@ export class CodingSessionCreateObservationStore {
     const allowedChannels = new Set(channelIds);
     for (const event of events) {
       if (this.dispositions.has(event.id)) continue;
+      if (event.kind === KIND_CODING_SESSION_GENESIS) {
+        const classified = classifyCodingSessionGenesisEvent(
+          event,
+          allowedChannels,
+        );
+        this.dispositions.set(event.id, classified.kind);
+        if (classified.kind === "malformed") this.malformedCount += 1;
+        if (classified.kind === "invalid-signature") {
+          this.invalidSignatureCount += 1;
+        }
+        if (classified.kind === "genesis") {
+          this.geneses.set(classified.eventId, classified);
+        }
+        continue;
+      }
       if (event.kind === KIND_CODING_SESSION_LIFECYCLE_COMMAND) {
         const classified = classifyCodingSessionCreateEvent(
           event,
@@ -228,6 +363,7 @@ export class CodingSessionCreateObservationStore {
           commandId: classified.commandId,
           signerPubkey: classified.signerPubkey,
           sessionRef: classified.sessionRef,
+          genesisRef: classified.genesisRef,
           createdAt: event.created_at,
         });
         this.creates.set(key, bucket);
@@ -280,16 +416,26 @@ export class CodingSessionCreateObservationStore {
       // disputed and binds nothing.
       const disputed =
         new Set(records.map((record) => record.signerPubkey)).size > 1 ||
-        new Set(records.map((record) => record.sessionRef)).size > 1;
+        new Set(records.map((record) => record.sessionRef)).size > 1 ||
+        new Set(records.map((record) => record.genesisRef)).size > 1;
       if (disputed) continue;
       const target = this.resolveJoinedTarget(key);
       if (!target) continue;
+      const genesis = first.genesisRef
+        ? (this.geneses.get(first.genesisRef) ?? null)
+        : null;
       observations.push({
         sessionRef: first.sessionRef,
         signerPubkey: first.signerPubkey,
         createdAt: first.createdAt,
         eventId: first.eventId,
         target,
+        genesisRef: first.genesisRef,
+        genesisFounderPubkey:
+          genesis?.channelId === first.channelId &&
+          genesis.sessionRef === first.sessionRef
+            ? genesis.founderPubkey
+            : null,
       });
     }
     observations.sort(
