@@ -26,6 +26,7 @@ import type {
   CodingSessionUmbrellaRecord,
   CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
+import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
@@ -34,6 +35,7 @@ import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import {
   CodingSessionUmbrellaComposer,
@@ -56,6 +58,8 @@ export function UmbrellaCodingSessionWorkspace({
   surface,
   umbrella,
   focusedExecution,
+  currentUserPubkey,
+  goal,
 }: {
   channelId: string;
   channelName: string | null;
@@ -67,6 +71,8 @@ export function UmbrellaCodingSessionWorkspace({
   surface: CodingSessionSurface;
   umbrella: CodingSessionUmbrellaRecord;
   focusedExecution: CodingSessionExecution;
+  currentUserPubkey: string | null;
+  goal: CodingSessionGoal | null;
 }) {
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
@@ -103,6 +109,15 @@ export function UmbrellaCodingSessionWorkspace({
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
         />
+        <div className="px-5 pb-2 sm:px-8">
+          <CodingSessionGoalPill
+            channelId={channelId}
+            currentUserPubkey={currentUserPubkey}
+            founderPubkey={umbrella.founderPubkey}
+            goal={goal}
+            sessionRef={umbrella.sessionRef}
+          />
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <section

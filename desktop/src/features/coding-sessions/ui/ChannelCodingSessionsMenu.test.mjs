@@ -63,6 +63,43 @@ test("channel session list renders labels, statuses, and both actions", () => {
   assert.match(markup, /data-generation-id="instance:seat:6"/);
 });
 
+test("catalog goal is visible to everyone but edit is founder-gated", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const founderPubkey = "a".repeat(64);
+  const authorityByGeneration = new Map([
+    [entries[0].session.generationId, { founderPubkey, sessionRef }],
+  ]);
+  const goals = new Map([
+    [
+      `channel-1\u0000${sessionRef}\u0000${founderPubkey}`,
+      {
+        channelId: "channel-1",
+        content: "Ship the authority surface",
+        createdAt: 1,
+        eventId: "b".repeat(64),
+        founderPubkey,
+        sessionRef,
+      },
+    ],
+  ]);
+  const render = (currentUserPubkey) =>
+    renderToStaticMarkup(
+      React.createElement(ChannelCodingSessionList, {
+        authorityByGeneration,
+        channelId: "channel-1",
+        currentUserPubkey,
+        entries: [entries[0]],
+        goals,
+        onOpen() {},
+        onPopout() {},
+      }),
+    );
+
+  assert.match(render("c".repeat(64)), /Ship the authority surface/);
+  assert.doesNotMatch(render("c".repeat(64)), /Edit session goal/);
+  assert.match(render(founderPubkey), /Edit session goal/);
+});
+
 test("channel session list forwards only the clicked exact generation ids", () => {
   const opened = [];
   const poppedOut = [];
@@ -72,8 +109,8 @@ test("channel session list forwards only the clicked exact generation ids", () =
     onPopout: (generationId) => poppedOut.push(generationId),
   });
   const rows = element.props.children;
-  const newestActions = rows[0].props.children[1].props.children;
-  const olderActions = rows[1].props.children[1].props.children;
+  const newestActions = rows[0].props.children[2].props.children;
+  const olderActions = rows[1].props.children[2].props.children;
 
   newestActions[0].props.onClick();
   olderActions[1].props.onClick();

@@ -7,6 +7,7 @@ import {
 
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { buildCodingSessionGenesisEvent } from "@/features/coding-sessions/lib/codingSessionGenesis";
+import { buildCodingSessionGoalEvent } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
   codingSessionMetadataSemanticKey,
@@ -187,6 +188,23 @@ function transcriptEvent(eventSeq: number, item: unknown): RelayEvent {
   ) as unknown as RelayEvent;
 }
 
+function goalEvent(): RelayEvent {
+  const built = buildCodingSessionGoalEvent({
+    channelId: CHANNEL_ID,
+    content: "Make authority visible at every decision point",
+    sessionRef: SESSION_REF,
+  });
+  return finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: BASE_CREATED_AT + 10,
+      tags: built.tags,
+      content: built.content,
+    },
+    FOUNDER_SECRET,
+  ) as unknown as RelayEvent;
+}
+
 /**
  * One complete turn: a prompt, a tool call and its result, an assistant
  * answer, and the terminal result the completion footer is derived from.
@@ -196,6 +214,7 @@ function seededEvents(): RelayEvent[] {
   return [
     genesis,
     ...createAndReceiptEvents(genesis.id),
+    goalEvent(),
     metadataEvent(),
     transcriptEvent(1, {
       kind: "user_prompt",
@@ -288,6 +307,13 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   const entry = page.getByTestId("channel-coding-session-entry");
   await expect(entry).toHaveCount(1);
   await expect(entry).toContainText("Claude Agent Acp");
+  await expect(page.getByTestId("coding-session-goal-catalog")).toContainText(
+    "Make authority visible at every decision point",
+  );
+  await waitForAnimations(page);
+  await entry.screenshot({
+    path: "test-results/screenshots/bite2-goal-catalog.png",
+  });
 
   await page.getByTestId("channel-coding-session-open").click();
 
@@ -299,9 +325,15 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   const foundedBy = page.getByTestId("coding-session-founded-by");
   await expect(foundedBy).toHaveText("Founded by Alice Rivera");
   await expect(foundedBy).toHaveAttribute("data-genesis-ref", /^[0-9a-f]{64}$/);
+  await expect(page.getByTestId("coding-session-goal-workspace")).toContainText(
+    "Make authority visible at every decision point",
+  );
   await waitForAnimations(page);
   await page.getByTestId("coding-session-authority-summary").screenshot({
     path: "test-results/screenshots/bite1-founded-by.png",
+  });
+  await page.getByTestId("coding-session-goal-workspace").screenshot({
+    path: "test-results/screenshots/bite2-goal-workspace.png",
   });
 
   const transcript = page.getByTestId("coding-session-transcript");

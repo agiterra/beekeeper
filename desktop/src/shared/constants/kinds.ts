@@ -104,6 +104,9 @@ export const KIND_CODING_SESSION_TRANSCRIPT = 44225;
 // signer is the founder. Consumers resolve it only by the explicit event id in
 // a receipt-joined create; `csg-session` is relay enforcement/diagnostics only.
 export const KIND_CODING_SESSION_GENESIS = 44226;
+// NIP-CSGL: operator-authored append-only goal revision (`csgl1-1`). Regular
+// events preserve every revision; consumers fold the latest per (h, d).
+export const KIND_CODING_SESSION_GOAL = 44227;
 
 // Every coding-session kind, in one place, so the regression guard keeping them
 // out of the chat timeline cannot silently miss a newly added member.
@@ -115,6 +118,7 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_TRANSCRIPT,
   KIND_CODING_SESSION_GENESIS,
+  KIND_CODING_SESSION_GOAL,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

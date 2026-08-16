@@ -5,11 +5,18 @@ import { toast } from "sonner";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import type { ChannelCodingSessionIngressEntry } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
 import { resolveChannelCodingSessionIngress } from "@/features/coding-sessions/lib/channelCodingSessionIngress";
+import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
+import {
+  codingSessionGoalKey,
+  useCodingSessionGoals,
+} from "@/features/coding-sessions/useCodingSessionGoals";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 
 type ChannelCodingSessionsMenuProps = {
   channelId: string | null;
@@ -21,6 +28,8 @@ export function ChannelCodingSessionsMenu({
   variant = "inline",
 }: ChannelCodingSessionsMenuProps) {
   const catalog = useCodingSessionCatalog(channelId);
+  const identity = useIdentityQuery();
+  const goalSnapshot = useCodingSessionGoals(channelId ? [channelId] : []);
   const entries = React.useMemo(
     () =>
       resolveChannelCodingSessionIngress({
@@ -31,6 +40,29 @@ export function ChannelCodingSessionsMenu({
   );
   const { goCodingSession, goNewCodingSession } = useAppNavigation();
   const [open, setOpen] = React.useState(false);
+  const authorityByGeneration = React.useMemo(() => {
+    const result = new Map<
+      string,
+      { founderPubkey: string | null; sessionRef: string | null }
+    >();
+    for (const umbrella of groupCodingSessionCatalog(
+      catalog.entries,
+      catalog.creates,
+    )) {
+      for (const execution of umbrella.executions) {
+        for (const generation of [
+          ...execution.priorGenerations,
+          execution.activeGeneration,
+        ]) {
+          result.set(generation.generationId, {
+            founderPubkey: umbrella.founderPubkey,
+            sessionRef: umbrella.sessionRef,
+          });
+        }
+      }
+    }
+    return result;
+  }, [catalog.creates, catalog.entries]);
 
   const handleOpen = React.useCallback(
     (generationId: string) => {
@@ -91,7 +123,11 @@ export function ChannelCodingSessionsMenu({
           </p>
         </div>
         <ChannelCodingSessionList
+          authorityByGeneration={authorityByGeneration}
+          channelId={channelId}
+          currentUserPubkey={identity.data?.pubkey ?? null}
           entries={entries}
+          goals={goalSnapshot.goals}
           onOpen={handleOpen}
           onPopout={handlePopout}
         />
@@ -157,11 +193,25 @@ export const ChannelCodingSessionsTrigger = React.forwardRef<
 });
 
 export function ChannelCodingSessionList({
+  authorityByGeneration = new Map(),
+  channelId = "",
+  currentUserPubkey = null,
   entries,
+  goals = new Map(),
   onOpen,
   onPopout,
 }: {
+  authorityByGeneration?: ReadonlyMap<
+    string,
+    { founderPubkey: string | null; sessionRef: string | null }
+  >;
+  channelId?: string;
+  currentUserPubkey?: string | null;
   entries: ChannelCodingSessionIngressEntry[];
+  goals?: ReadonlyMap<
+    string,
+    import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
+  >;
   onOpen: (generationId: string) => void;
   onPopout: (generationId: string) => void;
 }) {
@@ -179,57 +229,81 @@ export function ChannelCodingSessionList({
 
   return (
     <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-      {entries.map(({ session, status }) => (
-        <div
-          className="rounded-lg border border-border/60 bg-background/60 p-2.5"
-          data-generation-id={session.generationId}
-          data-testid="channel-coding-session-entry"
-          key={session.generationId}
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <span
-              aria-hidden
-              className={cn(
-                "h-2 w-2 shrink-0 rounded-full",
-                status.kind === "working"
-                  ? "bg-emerald-500"
-                  : status.kind === "idle"
-                    ? "bg-muted-foreground/50"
-                    : "bg-amber-500",
-              )}
+      {entries.map(({ session, status }) => {
+        const authority = authorityByGeneration.get(session.generationId) ?? {
+          founderPubkey: null,
+          sessionRef: session.sessionRef,
+        };
+        const goal =
+          authority.sessionRef && authority.founderPubkey
+            ? (goals.get(
+                codingSessionGoalKey(
+                  channelId,
+                  authority.sessionRef,
+                  authority.founderPubkey,
+                ),
+              ) ?? null)
+            : null;
+        return (
+          <div
+            className="rounded-lg border border-border/60 bg-background/60 p-2.5"
+            data-generation-id={session.generationId}
+            data-testid="channel-coding-session-entry"
+            key={session.generationId}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden
+                className={cn(
+                  "h-2 w-2 shrink-0 rounded-full",
+                  status.kind === "working"
+                    ? "bg-emerald-500"
+                    : status.kind === "idle"
+                      ? "bg-muted-foreground/50"
+                      : "bg-amber-500",
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {session.label}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {status.label}
+              </span>
+            </div>
+            <CodingSessionGoalPill
+              channelId={channelId}
+              currentUserPubkey={currentUserPubkey}
+              founderPubkey={authority.founderPubkey}
+              goal={goal}
+              sessionRef={authority.sessionRef}
+              variant="catalog"
             />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {session.label}
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {status.label}
-            </span>
+            <div className="mt-2 flex items-center justify-end gap-1.5">
+              <Button
+                aria-label={`Open ${session.label}`}
+                data-testid="channel-coding-session-open"
+                onClick={() => onOpen(session.generationId)}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Open
+              </Button>
+              <Button
+                aria-label={`Pop out ${session.label}`}
+                data-testid="channel-coding-session-popout"
+                onClick={() => onPopout(session.generationId)}
+                size="icon-xs"
+                title="Pop out"
+                type="button"
+                variant="ghost"
+              >
+                <ExternalLink />
+              </Button>
+            </div>
           </div>
-          <div className="mt-2 flex items-center justify-end gap-1.5">
-            <Button
-              aria-label={`Open ${session.label}`}
-              data-testid="channel-coding-session-open"
-              onClick={() => onOpen(session.generationId)}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              Open
-            </Button>
-            <Button
-              aria-label={`Pop out ${session.label}`}
-              data-testid="channel-coding-session-popout"
-              onClick={() => onPopout(session.generationId)}
-              size="icon-xs"
-              title="Pop out"
-              type="button"
-              variant="ghost"
-            >
-              <ExternalLink />
-            </Button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

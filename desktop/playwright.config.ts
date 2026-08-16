@@ -23,6 +23,7 @@ export default defineConfig({
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",
+        "**/coding-session-goal.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
         "**/identity-key-help.spec.ts",
         "**/key-import-reveal.spec.ts",

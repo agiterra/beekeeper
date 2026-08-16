@@ -15,6 +15,10 @@ import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
+import {
+  codingSessionGoalKey,
+  useCodingSessionGoals,
+} from "@/features/coding-sessions/useCodingSessionGoals";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
@@ -27,6 +31,7 @@ import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import {
   codingSessionTaskRailPreferenceKey,
@@ -59,6 +64,7 @@ export function CodingSessionWorkspace({
   const catalog = useCodingSessionCatalog(channelId, bootstrap, {
     requirePopoutBootstrap: requireBootstrap,
   });
+  const goalSnapshot = useCodingSessionGoals([channelId]);
   const channelsQuery = useChannelsQuery({ enabled: true });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
@@ -80,6 +86,16 @@ export function CodingSessionWorkspace({
 
   const isMember = channel?.isMember ?? false;
   const umbrella = resolution.umbrella;
+  const goal =
+    umbrella.sessionRef && umbrella.founderPubkey
+      ? (goalSnapshot.goals.get(
+          codingSessionGoalKey(
+            channelId,
+            umbrella.sessionRef,
+            umbrella.founderPubkey,
+          ),
+        ) ?? null)
+      : null;
   // Joining needs a claimed umbrella ref to join *to* (a pre-Step-4 session has
   // none, so it gets no affordance rather than a button that cannot work), and
   // v1 authority is founder-only — when an observed create binds a founder who
@@ -106,11 +122,13 @@ export function CodingSessionWorkspace({
           focusedExecution={resolution.focusedExecution}
           generationId={generationId}
           isMember={isMember}
+          currentUserPubkey={identity.data?.pubkey ?? null}
           key={`${channelId}:${umbrella.umbrellaKey}`}
           onAddProvider={onAddProvider}
           onBack={onBack}
           surface={surface}
           umbrella={umbrella}
+          goal={goal}
         />
       ) : (
         <ReadyCodingSessionWorkspace
@@ -123,6 +141,9 @@ export function CodingSessionWorkspace({
           onBack={onBack}
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
+          goal={goal}
+          currentUserPubkey={identity.data?.pubkey ?? null}
+          sessionRef={umbrella.sessionRef}
           session={resolution.session}
           surface={surface}
         />
@@ -150,6 +171,9 @@ function ReadyCodingSessionWorkspace({
   generationId,
   founderPubkey,
   genesisRef,
+  goal,
+  currentUserPubkey,
+  sessionRef,
   isMember,
   onAddProvider,
   onBack,
@@ -161,6 +185,11 @@ function ReadyCodingSessionWorkspace({
   generationId: string;
   founderPubkey: string | null;
   genesisRef: string | null;
+  goal:
+    | import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
+    | null;
+  currentUserPubkey: string | null;
+  sessionRef: string | null;
   isMember: boolean;
   onAddProvider?: () => void;
   onBack: () => void;
@@ -280,6 +309,15 @@ function ReadyCodingSessionWorkspace({
           founderPubkey={founderPubkey}
           genesisRef={genesisRef}
         />
+        <div className="px-5 pb-2 sm:px-8">
+          <CodingSessionGoalPill
+            channelId={channelId}
+            currentUserPubkey={currentUserPubkey}
+            founderPubkey={founderPubkey}
+            goal={goal}
+            sessionRef={sessionRef}
+          />
+        </div>
       </div>
       <div className="flex min-h-0 flex-1">
         <section
