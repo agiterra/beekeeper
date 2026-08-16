@@ -2,6 +2,8 @@ import * as React from "react";
 import {
   Check,
   ChevronDown,
+  Circle,
+  CircleDot,
   CircleStop,
   Clock3,
   FileDiff,
@@ -21,6 +23,10 @@ import {
   type CodingSessionChangedFile,
   type CodingSessionTranscriptTurn,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import type {
+  CodingSessionTask,
+  CodingSessionTaskModel,
+} from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { cn } from "@/shared/lib/cn";
 
 /**
@@ -138,6 +144,113 @@ function useLiveCodingSessionDuration(startedAt: string | null): string | null {
   const start = Date.parse(startedAt);
   if (!Number.isFinite(start)) return null;
   return formatCodingSessionDuration(Math.max(0, now - start));
+}
+
+export function CodingSessionInlinePlan({
+  disclosureId,
+  model,
+  onOpenChange,
+  open,
+}: {
+  disclosureId: string;
+  model: CodingSessionTaskModel;
+  onOpenChange: (id: string, open: boolean) => void;
+  open: boolean;
+}) {
+  const currentTask =
+    model.tasks.find((task) => task.status === "in_progress") ??
+    model.tasks.find((task) => task.status !== "completed") ??
+    model.tasks.at(-1);
+  const label =
+    model.state === "empty" ? "Plan cleared" : (currentTask?.text ?? "Plan");
+
+  return (
+    <details
+      className="group/plan text-xs"
+      data-plan-state={model.state}
+      data-testid="coding-session-inline-plan"
+      onToggle={(event) => onOpenChange(disclosureId, event.currentTarget.open)}
+      open={open}
+    >
+      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-md px-0.5 text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground">
+        <ChevronDown className="size-3.5 shrink-0 -rotate-90 transition-transform group-open/plan:rotate-0" />
+        {model.tasks.length > 1 ? (
+          <span
+            aria-hidden
+            className="flex max-w-28 shrink-0 items-center gap-0.5"
+          >
+            {model.tasks.slice(0, 8).map((task) => (
+              <span
+                className={cn(
+                  "h-1 min-w-2 flex-1 rounded-full",
+                  task.status === "completed"
+                    ? "bg-emerald-500"
+                    : task.status === "in_progress"
+                      ? "bg-primary"
+                      : task.status === "blocked" || task.status === "failed"
+                        ? "bg-destructive"
+                        : "bg-muted-foreground/25",
+                )}
+                key={task.id}
+              />
+            ))}
+          </span>
+        ) : null}
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            model.state === "complete"
+              ? "text-muted-foreground/70"
+              : "font-medium text-foreground/85",
+          )}
+        >
+          {label}
+        </span>
+        {model.tasks.length > 1 ? (
+          <span className="ml-auto shrink-0 tabular-nums text-muted-foreground/70">
+            {model.completedCount}/{model.tasks.length}
+          </span>
+        ) : null}
+      </summary>
+      {open && model.tasks.length > 0 ? (
+        <div className="mt-1 ml-1 flex flex-col gap-0.5 border-l border-border/60 pl-4">
+          {model.explanation ? (
+            <p className="mb-1 text-muted-foreground">{model.explanation}</p>
+          ) : null}
+          <ol aria-label="Plan steps" className="flex flex-col gap-0.5">
+            {model.tasks.map((task) => (
+              <CodingSessionInlinePlanStep key={task.id} task={task} />
+            ))}
+          </ol>
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function CodingSessionInlinePlanStep({ task }: { task: CodingSessionTask }) {
+  const Icon =
+    task.status === "completed"
+      ? Check
+      : task.status === "in_progress"
+        ? CircleDot
+        : task.status === "failed" || task.status === "blocked"
+          ? X
+          : Circle;
+  return (
+    <li
+      className={cn(
+        "flex min-h-6 items-start gap-2 py-0.5",
+        task.status === "completed" && "text-muted-foreground/65",
+        (task.status === "failed" || task.status === "blocked") &&
+          "text-destructive",
+      )}
+      data-plan-step-status={task.status}
+    >
+      <Icon className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 wrap-break-word">{task.text}</span>
+    </li>
+  );
 }
 
 export function CodingSessionChangedFilesCard({

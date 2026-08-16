@@ -73,6 +73,47 @@ function tool({
   };
 }
 
+function planTool(id, plan) {
+  return {
+    ...tool({ id, renderClass: "status" }),
+    descriptor: {
+      renderClass: "status",
+      label: "Updated plan",
+      preview: "",
+    },
+    title: "Update plan",
+    toolName: "functions.update_plan",
+    args: { plan },
+  };
+}
+
+test("coalesces replacement plan snapshots at their first narrative position", () => {
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Ship it" }),
+      planTool("plan-1", [
+        { step: "Inspect", status: "in_progress" },
+        { step: "Verify", status: "pending" },
+      ]),
+      tool({ id: "read" }),
+      planTool("plan-2", [
+        { step: "Inspect", status: "completed" },
+        { step: "Verify", status: "in_progress" },
+      ]),
+    ],
+    { isWorking: false },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.kind, "turn");
+  assert.deepEqual(
+    turn.entries.map((entry) =>
+      entry.kind === "item" ? entry.item.id : entry.id,
+    ),
+    ["prompt", "plan-2", "read"],
+  );
+});
+
 test("keeps user and assistant content while omitting valid system init metadata", () => {
   const systemInit = lifecycle({
     id: "system",

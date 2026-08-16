@@ -4,6 +4,7 @@ import {
 } from "@/features/agents/ui/agentSessionFileEditDiff";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { getToolString } from "@/features/agents/ui/agentSessionUtils";
+import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 
 export type CodingSessionTurnCompletion = {
   durationMs: number | null;
@@ -410,21 +411,30 @@ function deriveTurnStartedAt(items: TranscriptItem[]): string | null {
 function groupAdjacentTools(
   items: TranscriptItem[],
 ): CodingSessionTranscriptEntry[] {
+  const narrativeItems = coalescePlanSnapshots(items);
   const visibleToolTail = 3;
   const entries: CodingSessionTranscriptEntry[] = [];
 
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
-    if (!isCompletedSuccessfulTool(item)) {
+  for (let index = 0; index < narrativeItems.length; index += 1) {
+    const item = narrativeItems[index];
+    if (
+      !isCompletedSuccessfulTool(item) ||
+      deriveCodingSessionTaskModel([item]) !== null
+    ) {
       entries.push({ kind: "item", item });
       continue;
     }
 
     const tools = [item];
     let cursor = index + 1;
-    while (cursor < items.length) {
-      const candidate = items[cursor];
-      if (!candidate || !isCompletedSuccessfulTool(candidate)) break;
+    while (cursor < narrativeItems.length) {
+      const candidate = narrativeItems[cursor];
+      if (
+        !candidate ||
+        !isCompletedSuccessfulTool(candidate) ||
+        deriveCodingSessionTaskModel([candidate]) !== null
+      )
+        break;
       tools.push(candidate);
       cursor += 1;
     }
@@ -448,6 +458,27 @@ function groupAdjacentTools(
   }
 
   return entries;
+}
+
+/** Keep a plan's first narrative position while replacing it with its latest snapshot. */
+function coalescePlanSnapshots(items: TranscriptItem[]): TranscriptItem[] {
+  const planIndexes = items.flatMap((item, index) =>
+    isRenderablePlanSnapshot(item) ? [index] : [],
+  );
+  if (planIndexes.length < 2) return items;
+
+  const firstPlanIndex = planIndexes[0];
+  const latestPlan = items[planIndexes.at(-1) ?? firstPlanIndex];
+  const planIndexSet = new Set(planIndexes);
+  return items.flatMap((item, index) => {
+    if (index === firstPlanIndex) return [latestPlan];
+    return planIndexSet.has(index) ? [] : [item];
+  });
+}
+
+function isRenderablePlanSnapshot(item: TranscriptItem): boolean {
+  if (deriveCodingSessionTaskModel([item]) === null) return false;
+  return item.type === "plan" || isCompletedSuccessfulTool(item);
 }
 
 function formatToolGroupLabel(

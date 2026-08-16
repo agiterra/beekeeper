@@ -8,17 +8,20 @@ import {
   deriveCodingSessionTranscriptModel,
   formatCodingSessionDuration,
   isCodingSessionTranscriptError,
+  isCompletedSuccessfulCodingSessionTool,
   stabilizeCodingSessionTranscriptModel,
   type CodingSessionTranscriptModel,
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptTurn,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { Markdown } from "@/shared/ui/markdown";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
 import {
   CodingSessionActiveTool,
   CodingSessionChangedFilesCard,
   CodingSessionDiagnostics,
+  CodingSessionInlinePlan,
   CodingSessionTurnCompletion,
   CodingSessionWorking,
 } from "./CodingSessionTranscriptParts";
@@ -445,6 +448,8 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
   onDisclosureOpenChange: (id: string, open: boolean) => void;
   openDisclosures: ReadonlySet<string>;
 }) {
+  const planModel = deriveCodingSessionTaskModel([item]);
+
   if (item.type === "message") {
     if (item.role === "user") {
       return (
@@ -476,6 +481,16 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
   }
 
   if (item.type === "tool") {
+    if (planModel && isCompletedSuccessfulCodingSessionTool(item)) {
+      return (
+        <CodingSessionInlinePlan
+          disclosureId={disclosureId}
+          model={planModel}
+          onOpenChange={onDisclosureOpenChange}
+          open={openDisclosures.has(disclosureId)}
+        />
+      );
+    }
     if (item.status === "executing" || item.status === "pending") {
       return (
         <CodingSessionActiveTool
@@ -491,6 +506,17 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
         {...GENERIC_AGENT_IDENTITY}
         agentPubkey={generationId}
         item={item}
+      />
+    );
+  }
+
+  if (item.type === "plan" && planModel) {
+    return (
+      <CodingSessionInlinePlan
+        disclosureId={disclosureId}
+        model={planModel}
+        onOpenChange={onDisclosureOpenChange}
+        open={openDisclosures.has(disclosureId)}
       />
     );
   }

@@ -60,6 +60,55 @@ function tool(id, status = "completed") {
   };
 }
 
+function planTool(id, plan, explanation = null) {
+  return {
+    ...tool(id),
+    renderClass: "status",
+    descriptor: {
+      renderClass: "status",
+      label: "Updated plan",
+      preview: "",
+    },
+    title: "Update plan",
+    toolName: "functions.update_plan",
+    args: { explanation, plan },
+  };
+}
+
+test("renders the latest plan snapshot as a compact expandable narrative row", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [
+      message("prompt", "user", "Ship it"),
+      planTool("plan-1", [
+        { step: "Inspect", status: "in_progress" },
+        { step: "Implement", status: "pending" },
+        { step: "Verify", status: "pending" },
+      ]),
+      planTool(
+        "plan-2",
+        [
+          { step: "Inspect", status: "completed" },
+          { step: "Implement", status: "in_progress" },
+          { step: "Verify", status: "pending" },
+        ],
+        "Working in order",
+      ),
+    ],
+  });
+
+  assert.equal(
+    markup.match(/data-testid="coding-session-inline-plan"/g)?.length,
+    1,
+  );
+  assert.match(markup, /Implement/);
+  assert.match(markup, />1\/3</);
+  assert.match(markup, /data-plan-state="active"/);
+  assert.doesNotMatch(markup, /transcript-tool-item/);
+  assert.doesNotMatch(markup, /Working in order/);
+});
+
 function fileEdit(id, path, result) {
   return {
     id,

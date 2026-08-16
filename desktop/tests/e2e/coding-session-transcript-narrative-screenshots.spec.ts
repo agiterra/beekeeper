@@ -164,9 +164,42 @@ function events(): RelayEvent[] {
   return rows;
 }
 
-test("captures the busy transcript narrative collapsed and expanded", async ({
-  page,
-}) => {
+function planEvents(): RelayEvent[] {
+  return [
+    metadata(),
+    transcript(1, {
+      kind: "user_prompt",
+      content: "Make reconnect recovery observable.",
+    }),
+    transcript(2, {
+      kind: "plan",
+      entries: [
+        { content: "Trace the reconnect lifecycle", status: "in_progress" },
+        { content: "Bound retry state", status: "pending" },
+        { content: "Add focused verification", status: "pending" },
+        { content: "Capture the final UI", status: "pending" },
+      ],
+    }),
+    transcript(3, {
+      kind: "assistant_text",
+      text: "The lifecycle trace identified stale retry state after the socket closes.",
+    }),
+    transcript(4, {
+      kind: "plan",
+      entries: [
+        { content: "Trace the reconnect lifecycle", status: "completed" },
+        { content: "Bound retry state", status: "completed" },
+        { content: "Add focused verification", status: "in_progress" },
+        { content: "Capture the final UI", status: "pending" },
+      ],
+    }),
+  ];
+}
+
+async function openSeededSession(
+  page: import("@playwright/test").Page,
+  seeded: RelayEvent[],
+) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMockBridge(page, {
     globalAgentConfig: {
@@ -179,12 +212,12 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   await page.goto("/");
   await page.getByTestId(`channel-${channelName}`).click();
   await page.evaluate(
-    ({ channelName: name, events: seeded }) => {
+    ({ channelName: name, events: signedEvents }) => {
       const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
       if (!seed) throw new Error("signed-event seeding hook is missing");
-      for (const event of seeded) seed({ channelName: name, event });
+      for (const event of signedEvents) seed({ channelName: name, event });
     },
-    { channelName, events: events() },
+    { channelName, events: seeded },
   );
 
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
@@ -193,8 +226,13 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   });
   await trigger.click();
   await page.getByTestId("channel-coding-session-open").click();
+  return page.getByTestId("coding-session-workspace");
+}
 
-  const workspace = page.getByTestId("coding-session-workspace");
+test("captures the busy transcript narrative collapsed and expanded", async ({
+  page,
+}) => {
+  const workspace = await openSeededSession(page, events());
   const disclosure = page.getByText("+3 previous tool calls");
   await expect(disclosure).toBeVisible();
   await expect(
@@ -207,4 +245,21 @@ test("captures the busy transcript narrative collapsed and expanded", async ({
   await expect(page.getByText("Show fewer tool calls")).toBeVisible();
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/02-expanded.png` });
+});
+
+test("captures the latest plan snapshot collapsed and expanded", async ({
+  page,
+}) => {
+  const workspace = await openSeededSession(page, planEvents());
+  const plan = page.getByTestId("coding-session-inline-plan");
+  await expect(plan).toHaveCount(1);
+  await expect(plan).toContainText("Add focused verification");
+  await expect(plan).toContainText("2/4");
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/03-plan-collapsed.png` });
+
+  await plan.locator("summary").click();
+  await expect(page.getByRole("list", { name: "Plan steps" })).toBeVisible();
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/04-plan-expanded.png` });
 });
