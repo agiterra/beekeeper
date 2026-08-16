@@ -27,7 +27,7 @@ test("project groups separate channels from repositories and tools", async ({
   const repoRow = group.getByTestId("project-code-row").first();
   await expect(repoRow).toBeVisible();
 
-  await expect(group.getByRole("region", { name: "Sessions" })).toBeVisible();
+  await expect(group.getByRole("region", { name: "Sessions" })).toHaveCount(0);
   await expect(group.getByRole("region", { name: "Channels" })).toBeVisible();
   await expect(
     group.getByRole("region", { name: "Repositories & tools" }),
@@ -41,12 +41,19 @@ test("project groups separate channels from repositories and tools", async ({
   const repoBox = await repoRow.boundingBox();
   expect(channelBox && repoBox && channelBox.y < repoBox.y).toBe(true);
 
+  // Shelves collapse independently: hiding channels must not hide project
+  // tools, and the persisted choice survives the project's own collapse.
+  await group.getByRole("button", { name: "Channels" }).click();
+  await expect(children.getByTestId("channel-general")).toHaveCount(0);
+  await expect(repoRow).toBeVisible();
+
   // Collapsing the project hides the whole child list.
   await group.getByTestId("project-group-toggle-general").click();
   await expect(group.getByTestId("project-children-general")).toHaveCount(0);
   await expect(group.getByTestId("project-code-row")).toHaveCount(0);
   await group.getByTestId("project-group-toggle-general").click();
   await expect(group.getByTestId("project-children-general")).toBeVisible();
+  await expect(children.getByTestId("channel-general")).toHaveCount(0);
 
   await waitForAnimations(page);
   await page.screenshot({

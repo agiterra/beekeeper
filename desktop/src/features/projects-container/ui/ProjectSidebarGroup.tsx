@@ -19,6 +19,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 
 import { cn } from "@/shared/lib/cn";
+import { getStorageItem, setStorageItem } from "@/shared/lib/safeStorage";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
@@ -206,6 +207,12 @@ export function ProjectSidebarGroup({
   );
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
+  const activeSessionRows = sessionRows.filter(
+    (row) => row.entry.status.kind !== "idle",
+  );
+  const settledSessionRows = sessionRows.filter(
+    (row) => row.entry.status.kind === "idle",
+  );
   const channelRows = children.filter(
     (row) => row.type === "channel" || row.type === "forum",
   );
@@ -360,27 +367,51 @@ export function ProjectSidebarGroup({
             className="px-2"
             data-testid={`project-children-${project.dtag}`}
           >
-            <ProjectChildSection label="Sessions">
-              {sessionRows.length > 0 ? sessionRows.map(renderRow) : null}
-              {(codingSessions?.length ?? 0) > PROJECT_SIDEBAR_SESSION_LIMIT ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="text-2xs text-sidebar-foreground/55"
-                    onClick={onOpenProject}
-                    type="button"
+            {sessionRows.length > 0 ? (
+              <ProjectChildSection
+                label="Sessions"
+                storageKey={`buzz-project-sidebar:${project.id}:sessions`}
+              >
+                {activeSessionRows.map(renderRow)}
+                {settledSessionRows.length > 0 ? (
+                  <ProjectChildSection
+                    compact
+                    defaultExpanded={false}
+                    label="Settled"
+                    storageKey={`buzz-project-sidebar:${project.id}:settled`}
                   >
-                    <span className="pl-6">
-                      View all {codingSessions?.length ?? 0} sessions
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
-            </ProjectChildSection>
-            <ProjectChildSection label="Channels">
-              {channelRows.map(renderRow)}
-            </ProjectChildSection>
+                    {settledSessionRows.map(renderRow)}
+                  </ProjectChildSection>
+                ) : null}
+                {(codingSessions?.length ?? 0) >
+                PROJECT_SIDEBAR_SESSION_LIMIT ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      className="text-2xs text-sidebar-foreground/55"
+                      onClick={onOpenProject}
+                      type="button"
+                    >
+                      <span className="pl-6">
+                        View all {codingSessions?.length ?? 0} sessions
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
+              </ProjectChildSection>
+            ) : null}
+            {channelRows.length > 0 ? (
+              <ProjectChildSection
+                label="Channels"
+                storageKey={`buzz-project-sidebar:${project.id}:channels`}
+              >
+                {channelRows.map(renderRow)}
+              </ProjectChildSection>
+            ) : null}
             {otherRows.length > 0 ? (
-              <ProjectChildSection label="Repositories & tools">
+              <ProjectChildSection
+                label="Repositories & tools"
+                storageKey={`buzz-project-sidebar:${project.id}:tools`}
+              >
                 {otherRows.map(renderRow)}
               </ProjectChildSection>
             ) : null}
@@ -393,17 +424,55 @@ export function ProjectSidebarGroup({
 
 function ProjectChildSection({
   children,
+  compact = false,
+  defaultExpanded = true,
   label,
+  storageKey,
 }: {
   children: React.ReactNode;
+  compact?: boolean;
+  defaultExpanded?: boolean;
   label: string;
+  storageKey: string;
 }) {
+  const [expanded, setExpanded] = React.useState(() => {
+    const stored = getStorageItem(storageKey);
+    return stored === null ? defaultExpanded : stored === "1";
+  });
+  const toggle = React.useCallback(() => {
+    setExpanded((current) => {
+      const next = !current;
+      setStorageItem(storageKey, next ? "1" : "0");
+      return next;
+    });
+  }, [storageKey]);
+  const headingId = React.useId();
+
   return (
-    <section className="pb-1" aria-label={label}>
-      <p className="px-2 pt-2 pb-1 text-2xs font-medium text-sidebar-foreground/45">
-        {label}
-      </p>
-      <SidebarMenu>{children}</SidebarMenu>
+    <section
+      className={cn(compact ? "pb-0" : "pb-1")}
+      aria-labelledby={headingId}
+    >
+      <button
+        type="button"
+        id={headingId}
+        aria-expanded={expanded}
+        onClick={toggle}
+        className={cn(
+          "group/section-toggle flex w-full items-center rounded-md px-2 text-2xs font-medium text-sidebar-foreground/45 outline-none transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          compact ? "pt-1 pb-0.5" : "pt-2 pb-1",
+        )}
+      >
+        <span>{label}</span>
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "ml-auto size-3 transition-transform",
+            expanded ? "rotate-0" : "-rotate-90",
+          )}
+        />
+      </button>
+      {expanded ? <SidebarMenu>{children}</SidebarMenu> : null}
     </section>
   );
 }
