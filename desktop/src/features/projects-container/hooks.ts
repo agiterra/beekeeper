@@ -384,7 +384,11 @@ export function useProjectCodingSessionBuckets(
     [channels],
   );
   const stableChannelIds = useStableArrayShallow(sessionChannelIds);
-  const catalog = useGlobalCodingSessionCatalog(stableChannelIds);
+  // Channel membership is the read authority: every project member sees the
+  // same session rows, whether or not they provisioned a provider themselves.
+  const catalog = useGlobalCodingSessionCatalog(stableChannelIds, {
+    authorityMode: "open",
+  });
 
   const placementIndex = React.useMemo(() => {
     const projectIdByRef = new Map<string, string>();
