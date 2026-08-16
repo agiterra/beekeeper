@@ -214,6 +214,10 @@ function ReadyCodingSessionWorkspace({
         : null,
     [session.provider],
   );
+  const composerAuthority = resolveCodingSessionUmbrellaComposerAuthority({
+    umbrella: { founderPubkey, genesisRef },
+    currentUserPubkey,
+  });
   const blockIds = React.useMemo(
     () => deriveTranscriptItemBlockIds(session.transcript),
     [session.transcript],
@@ -361,11 +365,13 @@ function ReadyCodingSessionWorkspace({
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
               <div className="pointer-events-auto mx-auto w-full max-w-3xl">
                 <CodingSessionComposer
+                  authorityReason={composerAuthority.reason}
                   canInterrupt={
                     codingSessionTargetSupportsInterrupt(
                       session.commandTarget,
                     ) && session.capabilities?.threadTurnInterrupt !== false
                   }
+                  canControl={composerAuthority.canPromptExecutions}
                   canSteer={session.capabilities?.threadSteer === true}
                   channelId={channelId}
                   controlContext={{
@@ -378,6 +384,7 @@ function ReadyCodingSessionWorkspace({
                   immersive
                   isMember={isMember}
                   isWorking={isWorking}
+                  isUngovernedSession={composerAuthority.isUngovernedSession}
                   lifecycleStatus={session.status}
                   layout={isNarrow ? "stacked" : "inline"}
                   providerAuthorityPubkey={session.providerAuthorityPubkey}

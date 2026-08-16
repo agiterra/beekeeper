@@ -26,6 +26,8 @@ import { cn } from "@/shared/lib/cn";
 
 type CodingSessionComposerProps = {
   canInterrupt: boolean;
+  canControl?: boolean;
+  authorityReason?: string | null;
   canSteer?: boolean;
   channelId: string;
   controlContext?: {
@@ -45,6 +47,7 @@ type CodingSessionComposerProps = {
   immersive?: boolean;
   isMember: boolean;
   isWorking: boolean;
+  isUngovernedSession?: boolean;
   lifecycleStatus?: CodingSessionStatus;
   layout?: "inline" | "stacked";
   /**
@@ -71,13 +74,16 @@ type CodingSessionComposerProps = {
 
 /** Composer for steering a selected governed coding-session generation. */
 export function CodingSessionComposer({
+  authorityReason = null,
   canInterrupt,
+  canControl = true,
   canSteer = true,
   channelId,
   controlContext,
   immersive = false,
   isMember,
   isWorking,
+  isUngovernedSession = false,
   lifecycleStatus,
   layout = "inline",
   onTextChange,
@@ -115,8 +121,12 @@ export function CodingSessionComposer({
   const isEnded = lifecycleStatus === "stopped";
   const isUnavailable = isDisconnected || isEnded;
   const canSubmitText =
-    !isUnavailable && state.canSend && (!immersive || !isWorking || canSteer);
+    canControl &&
+    !isUnavailable &&
+    state.canSend &&
+    (!immersive || !isWorking || canSteer);
   const editorDisabled =
+    !canControl ||
     !isMember ||
     isSending ||
     isUnavailable ||
@@ -150,7 +160,7 @@ export function CodingSessionComposer({
   }, [submit]);
 
   const handleStop = React.useCallback(async () => {
-    if (!isMember || !canInterrupt || isSending) return;
+    if (!canControl || !isMember || !canInterrupt || isSending) return;
     setPendingAction("interrupt");
     setError(null);
     try {
@@ -168,10 +178,16 @@ export function CodingSessionComposer({
     } finally {
       setPendingAction(null);
     }
-  }, [canInterrupt, channelId, isMember, isSending, target]);
+  }, [canControl, canInterrupt, channelId, isMember, isSending, target]);
 
   const handleResume = React.useCallback(async () => {
-    if (!isMember || !isDisconnected || isSending || !providerAuthorityPubkey) {
+    if (
+      !canControl ||
+      !isMember ||
+      !isDisconnected ||
+      isSending ||
+      !providerAuthorityPubkey
+    ) {
       return;
     }
     setPendingAction("resume");
@@ -194,6 +210,7 @@ export function CodingSessionComposer({
     }
   }, [
     channelId,
+    canControl,
     isDisconnected,
     isMember,
     isSending,
@@ -202,7 +219,8 @@ export function CodingSessionComposer({
   ]);
 
   const handleSessionStop = React.useCallback(async () => {
-    if (!isMember || isSending || !providerAuthorityPubkey) return;
+    if (!canControl || !isMember || isSending || !providerAuthorityPubkey)
+      return;
     setPendingAction("stop");
     setError(null);
     try {
@@ -221,7 +239,14 @@ export function CodingSessionComposer({
     } finally {
       setPendingAction(null);
     }
-  }, [channelId, isMember, isSending, providerAuthorityPubkey, target]);
+  }, [
+    canControl,
+    channelId,
+    isMember,
+    isSending,
+    providerAuthorityPubkey,
+    target,
+  ]);
 
   return (
     <div
@@ -243,6 +268,23 @@ export function CodingSessionComposer({
           requires an allowlisted operator.
         </p>
       ) : null}
+      {isUngovernedSession ? (
+        <p
+          className="mb-2 text-xs text-muted-foreground"
+          data-testid="coding-session-ungoverned-hint"
+        >
+          ungoverned — adopt to govern.
+        </p>
+      ) : null}
+      {!canControl ? (
+        <p
+          className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
+          data-testid="coding-session-composer-authority-gated"
+        >
+          {authorityReason ??
+            "Only the session founder can control this session."}
+        </p>
+      ) : null}
       {error ? <p className="mb-2 text-sm text-destructive">{error}</p> : null}
       {isDisconnected ? (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
@@ -252,7 +294,12 @@ export function CodingSessionComposer({
           <div className="flex shrink-0 items-center gap-2">
             <Button
               data-testid="coding-session-composer-resume"
-              disabled={!isMember || !providerAuthorityPubkey || isSending}
+              disabled={
+                !canControl ||
+                !isMember ||
+                !providerAuthorityPubkey ||
+                isSending
+              }
               onClick={() => void handleResume()}
               size="sm"
               type="button"
@@ -261,7 +308,12 @@ export function CodingSessionComposer({
             </Button>
             <Button
               data-testid="coding-session-composer-session-stop"
-              disabled={!isMember || !providerAuthorityPubkey || isSending}
+              disabled={
+                !canControl ||
+                !isMember ||
+                !providerAuthorityPubkey ||
+                isSending
+              }
               onClick={() => void handleSessionStop()}
               size="sm"
               type="button"
@@ -327,7 +379,9 @@ export function CodingSessionComposer({
             {state.showStopAction ? (
               <Button
                 data-testid="coding-session-composer-stop"
-                disabled={!isMember || !canInterrupt || isSending}
+                disabled={
+                  !canControl || !isMember || !canInterrupt || isSending
+                }
                 onClick={() => void handleStop()}
                 title={
                   canInterrupt
@@ -346,6 +400,7 @@ export function CodingSessionComposer({
       {immersive ? (
         <ImmersiveCodingSessionControlDeck
           canInterrupt={canInterrupt}
+          canControl={canControl}
           canSteer={canSteer}
           context={controlContext}
           isMember={isMember}
@@ -363,6 +418,7 @@ export function CodingSessionComposer({
 
 function ImmersiveCodingSessionControlDeck({
   canInterrupt,
+  canControl,
   canSteer,
   context,
   isMember,
@@ -374,6 +430,7 @@ function ImmersiveCodingSessionControlDeck({
   steerDisabled,
 }: {
   canInterrupt: boolean;
+  canControl: boolean;
   canSteer: boolean;
   context: CodingSessionComposerProps["controlContext"];
   isMember: boolean;
@@ -439,7 +496,12 @@ function ImmersiveCodingSessionControlDeck({
             ) : null}
             <Button
               data-testid="coding-session-composer-interrupt"
-              disabled={!isMember || !canInterrupt || pendingAction !== null}
+              disabled={
+                !canControl ||
+                !isMember ||
+                !canInterrupt ||
+                pendingAction !== null
+              }
               onClick={onInterrupt}
               size="sm"
               title={

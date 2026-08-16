@@ -250,6 +250,20 @@ function seededEvents(): RelayEvent[] {
   ];
 }
 
+function legacyUngovernedEvents(): RelayEvent[] {
+  return [
+    metadataEvent(),
+    transcriptEvent(1, {
+      kind: "user_prompt",
+      content: "Keep this legacy execution moving",
+    }),
+    transcriptEvent(2, {
+      kind: "assistant_text",
+      text: "Legacy execution is ready for another instruction.",
+    }),
+  ];
+}
+
 async function seedCodingSession(page: import("@playwright/test").Page) {
   await page.evaluate(
     async ({ channelName, events }) => {
@@ -361,6 +375,43 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await expect(completion).toContainText("$0.32");
 
   await expect(page.getByTestId("coding-session-composer")).toBeVisible();
+  const gatedComposer = page.getByTestId("coding-session-composer");
+  await expect(
+    page.getByTestId("coding-session-composer-authority-gated"),
+  ).toContainText("Only the session founder");
+  await expect(page.getByLabel("Coding-session instruction")).toBeDisabled();
+  await waitForAnimations(page);
+  await gatedComposer.screenshot({
+    path: "test-results/screenshots/bite3-gated-composer.png",
+  });
+});
+
+test("a legacy session stays usable while naming its ungoverned state", async ({
+  page,
+}) => {
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.evaluate(
+    async ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    { channelName: CHANNEL_NAME, events: legacyUngovernedEvents() },
+  );
+  const trigger = page.getByTestId("channel-coding-sessions-trigger");
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (1)", {
+    timeout: 15_000,
+  });
+  await trigger.click();
+  await page.getByTestId("channel-coding-session-open").click();
+
+  const hint = page.getByTestId("coding-session-ungoverned-hint");
+  await expect(hint).toHaveText("ungoverned — adopt to govern.");
+  await expect(page.getByLabel("Coding-session instruction")).toBeEnabled();
+  await waitForAnimations(page);
+  await page.getByTestId("coding-session-composer").screenshot({
+    path: "test-results/screenshots/bite3-ungoverned-session.png",
+  });
 });
 
 test("the channel timeline never renders coding-session kinds", async ({

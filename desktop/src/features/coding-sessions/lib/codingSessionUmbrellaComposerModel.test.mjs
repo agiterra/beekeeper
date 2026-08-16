@@ -11,6 +11,7 @@ import { groupCodingSessionCatalog } from "./codingSessionUmbrellaModel.ts";
 const FOUNDER = "f".repeat(64);
 const TEAMMATE = "e".repeat(64);
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const GENESIS_REF = "a".repeat(64);
 
 function executionParticipant(executionKey, lastEventAt) {
   return {
@@ -30,13 +31,17 @@ function executionParticipant(executionKey, lastEventAt) {
 test("the founder may prompt executions; everyone else gets an honest disabled reason", () => {
   assert.deepEqual(
     resolveCodingSessionUmbrellaComposerAuthority({
-      umbrella: { founderPubkey: FOUNDER },
+      umbrella: { founderPubkey: FOUNDER, genesisRef: GENESIS_REF },
       currentUserPubkey: FOUNDER,
     }),
-    { canPromptExecutions: true, reason: null },
+    {
+      canPromptExecutions: true,
+      reason: null,
+      isUngovernedSession: false,
+    },
   );
   const gated = resolveCodingSessionUmbrellaComposerAuthority({
-    umbrella: { founderPubkey: FOUNDER },
+    umbrella: { founderPubkey: FOUNDER, genesisRef: GENESIS_REF },
     currentUserPubkey: TEAMMATE,
   });
   assert.equal(gated.canPromptExecutions, false);
@@ -44,22 +49,29 @@ test("the founder may prompt executions; everyone else gets an honest disabled r
   assert.match(gated.reason, /lane stays open/);
 });
 
-test("an unresolved founder defers to the relay's Step-3 membership gate", () => {
-  // No observed create binds a founder — there is no client-side claim to
-  // enforce, so the composer must not lock the legitimate operator out.
+test("legacy null-founder sessions stay usable and are marked ungoverned", () => {
+  const authority = resolveCodingSessionUmbrellaComposerAuthority({
+    umbrella: { founderPubkey: null, genesisRef: null },
+    currentUserPubkey: TEAMMATE,
+  });
+  assert.equal(authority.canPromptExecutions, true);
+  assert.equal(authority.isUngovernedSession, true);
+});
+
+test("genesis-bearing sessions fail closed while founder or identity is unresolved", () => {
   assert.equal(
     resolveCodingSessionUmbrellaComposerAuthority({
-      umbrella: { founderPubkey: null },
+      umbrella: { founderPubkey: null, genesisRef: GENESIS_REF },
       currentUserPubkey: TEAMMATE,
     }).canPromptExecutions,
-    true,
+    false,
   );
   assert.equal(
     resolveCodingSessionUmbrellaComposerAuthority({
-      umbrella: { founderPubkey: FOUNDER },
+      umbrella: { founderPubkey: FOUNDER, genesisRef: GENESIS_REF },
       currentUserPubkey: null,
     }).canPromptExecutions,
-    true,
+    false,
   );
 });
 
@@ -93,7 +105,8 @@ function catalogRecord(sessionId, signerPubkey) {
 test("gating tracks the umbrella the catalog actually grouped from observed creates", () => {
   // The end-to-end shape production now uses: receipt-joined create
   // observations flow into grouping, and the composer reads the founder they
-  // resolved. Without them the same catalog stays ungated.
+  // resolved. Without them the same legacy catalog stays permissive and is
+  // visibly ungoverned.
   const founded = catalogRecord("claude-session", "a".repeat(64));
   const attached = catalogRecord("codex-session", "b".repeat(64));
   const creates = [

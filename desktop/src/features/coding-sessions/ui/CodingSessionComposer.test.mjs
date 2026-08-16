@@ -215,3 +215,70 @@ test("immersive controls fail closed when authority and interrupt capability are
   assert.match(markup, /Current-turn interrupt is unavailable/);
   assert.match(markup, /coding-session-composer-interrupt[^>]*disabled=""/);
 });
+
+test("founder authority gates send, interrupt, resume, and stop together", () => {
+  const working = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      authorityReason: "Only the session founder can control this session.",
+      canControl: false,
+      canInterrupt: true,
+      canSteer: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: true,
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(working, /coding-session-composer-authority-gated/);
+  assert.match(working, /Only the session founder/);
+  assert.match(working, /coding-session-composer-interrupt[^>]*disabled=""/);
+  assert.match(
+    working,
+    /aria-label="Coding-session instruction"[^>]*disabled=""/,
+  );
+
+  const disconnected = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canControl: false,
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      lifecycleStatus: "disconnected",
+      providerAuthorityPubkey: "ab".repeat(32),
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(disconnected, /coding-session-composer-resume[^>]*disabled=""/);
+  assert.match(
+    disconnected,
+    /coding-session-composer-session-stop[^>]*disabled=""/,
+  );
+});
+
+test("legacy sessions retain controls with an honest ungoverned hint", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canControl: true,
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isUngovernedSession: true,
+      isWorking: false,
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(markup, /coding-session-ungoverned-hint/);
+  assert.match(markup, />ungoverned — adopt to govern\.</);
+  assert.doesNotMatch(markup, /coding-session-composer-authority-gated/);
+  assert.doesNotMatch(
+    markup,
+    /aria-label="Coding-session instruction"[^>]*disabled=""/,
+  );
+});

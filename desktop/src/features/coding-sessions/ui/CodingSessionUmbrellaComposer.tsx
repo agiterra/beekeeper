@@ -215,6 +215,7 @@ export function CodingSessionUmbrellaComposer({
         </p>
       ) : (
         <ExecutionComposer
+          authority={authority}
           channelId={channelId}
           isMember={isMember}
           // Keyed by explicit selection: the editor holds its draft in local
@@ -242,6 +243,7 @@ export function CodingSessionUmbrellaComposer({
 }
 
 function ExecutionComposer({
+  authority,
   channelId,
   isMember,
   layout,
@@ -250,6 +252,7 @@ function ExecutionComposer({
   prepareText,
   prefill,
 }: {
+  authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
   channelId: string;
   isMember: boolean;
   layout: "inline" | "stacked";
@@ -284,10 +287,12 @@ function ExecutionComposer({
   }
   return (
     <CodingSessionComposer
+      authorityReason={authority.reason}
       canInterrupt={
         codingSessionTargetSupportsInterrupt(target) &&
         record.capabilities?.threadTurnInterrupt !== false
       }
+      canControl={authority.canPromptExecutions}
       canSteer={record.capabilities?.threadSteer === true}
       channelId={channelId}
       controlContext={{
@@ -300,6 +305,7 @@ function ExecutionComposer({
       immersive
       isMember={isMember}
       isWorking={isWorking}
+      isUngovernedSession={authority.isUngovernedSession}
       lifecycleStatus={record.status}
       layout={layout}
       onTextChange={onTextChange}
