@@ -1,15 +1,13 @@
 import { expect, test } from "@playwright/test";
-
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const SHOTS = "test-results/projects-sidebar";
 
-// The Projects experiment turns the sidebar's flat Channels/Forums sections
-// into per-project collapsible groups. This spec covers the group skeleton: the
-// Projects header and the General group (local placeholder — the mock relay
-// has no kind:30621 events) with its flat, icon-differentiated child list.
-test("project groups render a flat child list in the sidebar", async ({
+// Project children stay directly reachable while their labels make the
+// difference between a durable session, a conversation channel, and project
+// tooling explicit.
+test("project groups separate channels from repositories and tools", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -23,15 +21,20 @@ test("project groups render a flat child list in the sidebar", async ({
 
   const group = page.getByTestId("project-group-general");
   await expect(group).toBeVisible({ timeout: 10_000 });
-
-  // The seeded mock repo is unclaimed, so it lands in General's child list —
-  // no per-type sub-folder, just a repo row identified by its icon.
+  // The seeded mock repo is unclaimed, so it lands in General's project group.
   const children = group.getByTestId("project-children-general");
   await expect(children).toBeVisible();
   const repoRow = group.getByTestId("project-code-row").first();
   await expect(repoRow).toBeVisible();
 
-  // Flat order is type-ranked: channels come before repos.
+  await expect(group.getByRole("region", { name: "Sessions" })).toBeVisible();
+  await expect(group.getByRole("region", { name: "Channels" })).toBeVisible();
+  await expect(
+    group.getByRole("region", { name: "Repositories & tools" }),
+  ).toBeVisible();
+
+  // Group order keeps channels ahead of repositories without presenting them
+  // as the same kind of child.
   const channelRow = children.getByTestId("channel-general");
   await expect(channelRow).toBeVisible();
   const channelBox = await channelRow.boundingBox();

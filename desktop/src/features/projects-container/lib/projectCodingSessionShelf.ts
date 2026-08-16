@@ -20,6 +20,10 @@ export type ProjectCodingSessionShelfEntry = {
   label: string;
   sourceChannelLabel: string | null;
   runtimeLabel: string | null;
+  /** Distinct provider/runtime labels participating in this durable session. */
+  runtimeLabels: string[];
+  /** Number of provider executions represented by this one session row. */
+  executionCount: number;
   status: CodingSessionWorkspaceStatus;
   session: CodingSessionCatalogRecord;
 };
@@ -89,38 +93,40 @@ export function resolveProjectCodingSessionShelf(
     };
   }
 
-  const entries = collapseProjectCodingSessionUmbrellas(
-    catalog.entries.map(({ channelId, session }) => {
-      const placement = resolveProjectCodingSessionPlacement(
-        session.projectRef,
-        channelId,
-        index,
-      );
-      return {
-        placement: placement.projectId
-          ? ("project" as const)
-          : ("unassigned" as const),
-        projectId: placement.projectId,
-        placedBy: placement.placedBy,
-        channelId,
-        generationId: session.generationId,
-        label: buildProjectCodingSessionLabel(session),
-        // Presentation provenance only. It is intentionally not passed to any
-        // project-placement decision or exact session action.
-        sourceChannelLabel: sourceChannelLabels.get(channelId)?.trim() || null,
-        runtimeLabel: buildRuntimeLabel(session),
-        // The lifecycle status matters here: a session ended via the durable
-        // stop command reports `stopped` in its final metadata while its
-        // transcript still ends in an ordinary turn result — transcript-only
-        // derivation would call it "Idle" forever.
-        status: deriveCodingSessionWorkspaceStatus(
-          session.transcript,
-          session.status,
-        ),
-        session,
-      };
-    }),
-  ).sort(compareProjectCodingSessionEntries);
+  const executionEntries = catalog.entries.map(({ channelId, session }) => {
+    const placement = resolveProjectCodingSessionPlacement(
+      session.projectRef,
+      channelId,
+      index,
+    );
+    const runtimeLabel = buildRuntimeLabel(session);
+    return {
+      placement: placement.projectId
+        ? ("project" as const)
+        : ("unassigned" as const),
+      projectId: placement.projectId,
+      placedBy: placement.placedBy,
+      channelId,
+      generationId: session.generationId,
+      label: buildProjectCodingSessionLabel(session),
+      // Presentation provenance only. It is intentionally not passed to any
+      // project-placement decision or exact session action.
+      sourceChannelLabel: sourceChannelLabels.get(channelId)?.trim() || null,
+      runtimeLabel,
+      runtimeLabels: runtimeLabel ? [runtimeLabel] : [],
+      executionCount: 1,
+      // Lifecycle metadata is required here: a durable stop can otherwise
+      // look like an ordinary idle transcript forever.
+      status: deriveCodingSessionWorkspaceStatus(
+        session.transcript,
+        session.status,
+      ),
+      session,
+    };
+  });
+  const entries = groupProjectCodingSessionEntries(executionEntries).sort(
+    compareProjectCodingSessionEntries,
+  );
 
   if (catalog.errorMessage) {
     return {
@@ -299,12 +305,50 @@ export function compareProjectCodingSessionEntries(
 function buildProjectCodingSessionLabel(
   session: CodingSessionCatalogRecord,
 ): string {
-  const title =
-    session.title.trim().length > 0 ? session.title.trim() : "Coding session";
-  const generation = session.commandTarget?.generation;
-  return generation && Number.isSafeInteger(generation)
-    ? `${title} · generation ${generation}`
-    : title;
+  return session.title.trim().length > 0
+    ? session.title.trim()
+    : "Coding session";
+}
+
+/**
+ * Collapse provider executions sharing one signed umbrella reference into one
+ * project-navigation row. The newest execution supplies the compatibility
+ * route; opening it resolves the complete umbrella in the session workspace.
+ */
+function groupProjectCodingSessionEntries(
+  entries: ProjectCodingSessionShelfEntry[],
+): ProjectCodingSessionShelfEntry[] {
+  const groups = new Map<string, ProjectCodingSessionShelfEntry[]>();
+  for (const entry of entries) {
+    const key = entry.session.sessionRef
+      ? `umbrella:${entry.channelId}:${entry.session.sessionRef}`
+      : `execution:${entry.channelId}:${entry.generationId}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+  return [...groups.values()].map((group) => {
+    const ordered = [...group].sort((left, right) =>
+      right.session.lastEventAt.localeCompare(left.session.lastEventAt),
+    );
+    const representative = ordered[0];
+    const runtimeLabels = [
+      ...new Set(group.flatMap((entry) => entry.runtimeLabels)),
+    ];
+    const status =
+      [...group].sort(
+        (left, right) =>
+          umbrellaStatusPriority(left.status) -
+          umbrellaStatusPriority(right.status),
+      )[0]?.status ?? representative.status;
+    return {
+      ...representative,
+      runtimeLabel: runtimeLabels.join(" + ") || null,
+      runtimeLabels,
+      executionCount: group.length,
+      status,
+    };
+  });
 }
 
 function buildRuntimeLabel(session: CodingSessionCatalogRecord): string | null {

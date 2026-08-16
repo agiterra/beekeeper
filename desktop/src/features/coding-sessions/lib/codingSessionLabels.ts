@@ -7,6 +7,11 @@
  */
 
 export function formatCodingSessionRuntimeLabel(runtime: string): string {
+  const normalized = runtime.trim().toLowerCase().replaceAll("_", "-");
+  if (normalized === "claude-agent-acp" || normalized === "claude-code") {
+    return "Claude Code";
+  }
+  if (normalized === "codex-acp") return "Codex";
   return runtime
     .split(/[-_\s]+/)
     .filter(Boolean)

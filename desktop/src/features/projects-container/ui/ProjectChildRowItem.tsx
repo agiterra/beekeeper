@@ -49,7 +49,7 @@ export function ProjectChildRowItem({
     case "coding-session": {
       if (!onOpenCodingSession) return null;
       const { entry } = row;
-      const details = [entry.runtimeLabel, entry.status.label]
+      const details = [entry.sourceChannelLabel, entry.runtimeLabel]
         .filter(Boolean)
         .join(" · ");
       return (
@@ -70,14 +70,9 @@ export function ProjectChildRowItem({
             }
             type="button"
           >
-            {entry.status.kind === "working" ? (
-              <Circle
-                aria-hidden
-                className="size-2.5 shrink-0 fill-current text-emerald-500"
-              />
-            ) : (
-              <Terminal className="size-4 shrink-0" />
-            )}
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-sidebar-foreground/65">
+              <Bot className="size-3.5" />
+            </span>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate">{entry.label}</span>
               {details ? (
@@ -85,6 +80,19 @@ export function ProjectChildRowItem({
                   {details}
                 </span>
               ) : null}
+            </span>
+            <span
+              className={cn(
+                "ml-1 flex shrink-0 items-center gap-1 text-2xs",
+                entry.status.kind === "working"
+                  ? "text-emerald-500"
+                  : "text-sidebar-foreground/45",
+              )}
+            >
+              {entry.status.kind === "working" ? (
+                <Circle className="size-1.5 fill-current" aria-hidden />
+              ) : null}
+              {entry.status.label}
             </span>
           </SidebarMenuButton>
         </SidebarMenuItem>

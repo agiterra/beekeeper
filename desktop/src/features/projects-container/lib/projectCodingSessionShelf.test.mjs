@@ -22,6 +22,7 @@ function session(overrides = {}) {
     conflictCount: 0,
     projectRef: null,
     repoRef: null,
+    sessionRef: null,
     provider: null,
     runtime: null,
     model: null,
@@ -72,13 +73,46 @@ test("trusted global entries stay unassigned and preserve exact route coordinate
   assert.equal(entries[0].projectId, null);
   assert.equal(entries[0].channelId, "sessions-channel");
   assert.equal(entries[0].generationId, "opaque-generation-id");
-  assert.equal(entries[0].label, "buzz-glue · generation 7");
+  assert.equal(entries[0].label, "buzz-glue");
   assert.equal(entries[0].sourceChannelLabel, "Project Sessions");
   assert.equal(entries[0].runtimeLabel, "Hive Seat");
   assert.doesNotMatch(
     entries[0].label,
     /actor-secret|private-instance|private-seat/,
   );
+});
+
+test("provider executions sharing an umbrella render as one durable session row", () => {
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "claude-generation",
+          sessionRef: "shared-session",
+          runtime: "claude-code",
+          title: "Improve coding-session transcripts",
+        }),
+      },
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "codex-generation",
+          sessionRef: "shared-session",
+          runtime: "codex-acp",
+          title: "Improve coding-session transcripts",
+          lastEventAt: "2026-07-30T12:05:00.000Z",
+        }),
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].label, "Improve coding-session transcripts");
+  assert.equal(entries[0].executionCount, 2);
+  assert.deepEqual(entries[0].runtimeLabels, ["Claude Code", "Codex"]);
+  assert.equal(entries[0].runtimeLabel, "Claude Code + Codex");
+  assert.equal(entries[0].generationId, "codex-generation");
 });
 
 test("active sessions sort before compact idle and unknown rows", () => {

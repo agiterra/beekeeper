@@ -80,10 +80,9 @@ export type ProjectChannelHandlers = {
 };
 
 /**
- * One collapsible project group in the sidebar: a single flat list of every
- * child the project owns — channels, forums, repos, workflows, agents, and
- * shells — type-ranked and identified by icon. Collapsing the header hides
- * all of it.
+ * One collapsible project group in the sidebar. Sessions and channels are
+ * distinct navigation concepts, so each gets a labelled section; repositories
+ * and operational children share a quieter final section.
  */
 export function ProjectSidebarGroup({
   project,
@@ -206,7 +205,17 @@ export function ProjectSidebarGroup({
     ],
   );
 
-  const childRows = children.map((row) => (
+  const sessionRows = children.filter((row) => row.type === "coding-session");
+  const channelRows = children.filter(
+    (row) => row.type === "channel" || row.type === "forum",
+  );
+  const otherRows = children.filter(
+    (row) =>
+      row.type !== "coding-session" &&
+      row.type !== "channel" &&
+      row.type !== "forum",
+  );
+  const renderRow = (row: (typeof children)[number]) => (
     <ProjectChildRowItem
       key={projectChildKey(row)}
       row={row}
@@ -221,7 +230,7 @@ export function ProjectSidebarGroup({
       onRequestCloseShell={onRequestCloseShell}
       onObserveShell={onObserveShell}
     />
-  ));
+  );
 
   return (
     <SidebarGroup
@@ -347,14 +356,54 @@ export function ProjectSidebarGroup({
       </div>
       {collapsed ? null : (
         <SidebarGroupContent className="pl-2">
-          <SidebarMenu
+          <div
             className="px-2"
             data-testid={`project-children-${project.dtag}`}
           >
-            {childRows}
-          </SidebarMenu>
+            <ProjectChildSection label="Sessions">
+              {sessionRows.length > 0 ? sessionRows.map(renderRow) : null}
+              {(codingSessions?.length ?? 0) > PROJECT_SIDEBAR_SESSION_LIMIT ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    className="text-2xs text-sidebar-foreground/55"
+                    onClick={onOpenProject}
+                    type="button"
+                  >
+                    <span className="pl-6">
+                      View all {codingSessions?.length ?? 0} sessions
+                    </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : null}
+            </ProjectChildSection>
+            <ProjectChildSection label="Channels">
+              {channelRows.map(renderRow)}
+            </ProjectChildSection>
+            {otherRows.length > 0 ? (
+              <ProjectChildSection label="Repositories & tools">
+                {otherRows.map(renderRow)}
+              </ProjectChildSection>
+            ) : null}
+          </div>
         </SidebarGroupContent>
       )}
     </SidebarGroup>
+  );
+}
+
+function ProjectChildSection({
+  children,
+  label,
+}: {
+  children: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <section className="pb-1" aria-label={label}>
+      <p className="px-2 pt-2 pb-1 text-2xs font-medium text-sidebar-foreground/45">
+        {label}
+      </p>
+      <SidebarMenu>{children}</SidebarMenu>
+    </section>
   );
 }
