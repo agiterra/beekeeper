@@ -299,8 +299,13 @@ the same host-grants-control and continuation shapes as this bite and
 B-track. A7's lease UX must rhyme with those toggles (one consent
 vocabulary across terminals and coding sessions, per the vision's
 "single shared reality"), and the B-track continuation copy should match
-the plain "reopen to respawn where it left off" register. Coordinate
-with Andy before A7's UI lands.
+the plain "reopen to respawn where it left off" register.
+**[DECIDED 2026-08-15]** Brian: both tiers coexist on their own tracks —
+terminals stay Andy's, lightweight and host-local; sessions stay this
+phase's, durable and multiplayer. No unification is pursued or implied
+this phase; D6's unification question stays parked as an option, not a
+goal. The only obligation is cheap cosmetic rhyme: A7's consent UI
+borrows the INTERACT/AGENTS vocabulary rather than minting a rival one.
 
 ### A8 — Invite/grant UI (after A6)
 **Goal:** must-have #3's visible face: invite a channel member as
