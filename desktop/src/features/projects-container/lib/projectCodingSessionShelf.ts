@@ -328,10 +328,9 @@ function groupProjectCodingSessionEntries(
     else groups.set(key, [entry]);
   }
   return [...groups.values()].map((group) => {
-    const ordered = [...group].sort((left, right) =>
-      right.session.lastEventAt.localeCompare(left.session.lastEventAt),
+    const representative = group.reduce((current, candidate) =>
+      representsUmbrellaBetter(candidate, current) ? candidate : current,
     );
-    const representative = ordered[0];
     const runtimeLabels = [
       ...new Set(group.flatMap((entry) => entry.runtimeLabels)),
     ];
