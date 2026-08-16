@@ -7,7 +7,6 @@ import { TranscriptActivityItem } from "@/features/agents/ui/activityRenderClass
 import {
   deriveCodingSessionTranscriptModel,
   formatCodingSessionDuration,
-  isCompletedSuccessfulCodingSessionTool,
   isCodingSessionTranscriptError,
   stabilizeCodingSessionTranscriptModel,
   type CodingSessionTranscriptModel,
@@ -566,11 +565,11 @@ function isFoldableWorkEntry(
   index: number,
   terminalAssistantIndex: number,
 ): boolean {
-  if (entry.kind === "tool-group") return true;
+  if (entry.kind === "tool-group") return false;
   if (entry.item.type === "message") {
     return entry.item.role === "assistant" && index < terminalAssistantIndex;
   }
-  return isCompletedSuccessfulCodingSessionTool(entry.item);
+  return false;
 }
 
 function CodingSessionWorkedFold({

@@ -99,7 +99,7 @@ async function renderTranscript(props) {
   return renderToStaticMarkup(React.createElement(RouterProvider, { router }));
 }
 
-test("renders a conversation-first settled turn with a T3-style work fold", async () => {
+test("renders a settled turn with recent work visible in the narrative", async () => {
   const markup = await renderTranscript({
     generationId: "generation-1",
     isWorking: false,
@@ -128,9 +128,9 @@ test("renders a conversation-first settled turn with a T3-style work fold", asyn
   assert.match(markup, /Fix the reconnect bug/);
   assert.match(markup, /coding-session-assistant-message/);
   assert.match(markup, /Reconnect now recovers cleanly/);
-  assert.match(markup, /coding-session-worked-fold/);
+  assert.doesNotMatch(markup, /coding-session-worked-fold/);
+  assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 2);
   assert.match(markup, /Worked for 3\.6s/);
-  assert.match(markup, /Completed/);
   assert.match(markup, /\$0\.32/);
   assert.doesNotMatch(markup, /ceremony key|d7d05d957388/);
   assert.equal(markup.match(/Reconnect now recovers cleanly/g)?.length, 1);
@@ -268,7 +268,7 @@ test("shows errors and a streaming working affordance in the primary turn", asyn
   assert.match(markup, /Working for/);
 });
 
-test("keeps the newest successful tool visible after the previous-tool disclosure", async () => {
+test("keeps three successful tools visible after the previous-tool disclosure", async () => {
   const markup = await renderTranscript({
     generationId: "generation-1",
     isWorking: true,
@@ -276,13 +276,17 @@ test("keeps the newest successful tool visible after the previous-tool disclosur
       message("prompt", "user", "Run the checks"),
       tool("tool-1"),
       tool("tool-2"),
+      tool("tool-3"),
+      tool("tool-4"),
+      tool("tool-5"),
     ],
   });
 
   assert.match(markup, /coding-session-tool-group/);
-  assert.match(markup, /\+1 previous tool call/);
+  assert.match(markup, /\+2 previous tool calls/);
+  assert.doesNotMatch(markup, /coding-session-worked-fold/);
   assert.match(markup, /Show fewer tool calls/);
-  assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 2);
+  assert.equal(markup.match(/data-testid="transcript-tool-item"/g)?.length, 5);
   assert.doesNotMatch(
     markup,
     /coding-session-tool-group[^>]+border border-border/,

@@ -420,14 +420,17 @@ test("suppresses an exact ceremonial result body while keeping turn completion",
   assert.equal(turn.completion.state, "completed");
 });
 
-test("collapses only the prefix of adjacent successful tools", () => {
+test("keeps the three most recent successful tools and collapses only the older prefix", () => {
   const model = deriveCodingSessionTranscriptModel(
     [
       message({ id: "prompt", role: "user", text: "Run checks" }),
       tool({ id: "tool-1" }),
       tool({ id: "tool-2" }),
-      tool({ id: "tool-failed", isError: true }),
       tool({ id: "tool-3" }),
+      tool({ id: "tool-4" }),
+      tool({ id: "tool-5" }),
+      tool({ id: "tool-failed", isError: true }),
+      tool({ id: "tool-6" }),
     ],
     { isWorking: true },
   );
@@ -435,18 +438,43 @@ test("collapses only the prefix of adjacent successful tools", () => {
 
   assert.equal(turn.kind, "turn");
   assert.equal(turn.entries[1].kind, "tool-group");
-  assert.equal(turn.entries[1].label, "Ran 1 command");
+  assert.equal(turn.entries[1].label, "Ran 2 commands");
   assert.deepEqual(
     turn.entries[1].items.map((item) => item.id),
-    ["tool-1"],
+    ["tool-1", "tool-2"],
   );
   assert.equal(turn.entries[2].kind, "item");
-  assert.equal(turn.entries[2].item.id, "tool-2");
+  assert.equal(turn.entries[2].item.id, "tool-3");
   assert.equal(turn.entries[3].kind, "item");
-  assert.equal(turn.entries[3].item.id, "tool-failed");
+  assert.equal(turn.entries[3].item.id, "tool-4");
   assert.equal(turn.entries[4].kind, "item");
-  assert.equal(turn.entries[4].item.id, "tool-3");
+  assert.equal(turn.entries[4].item.id, "tool-5");
+  assert.equal(turn.entries[5].kind, "item");
+  assert.equal(turn.entries[5].item.id, "tool-failed");
+  assert.equal(turn.entries[6].kind, "item");
+  assert.equal(turn.entries[6].item.id, "tool-6");
   assert.equal(turn.isWorking, true);
+});
+
+test("keeps short successful tool runs fully visible", () => {
+  const model = deriveCodingSessionTranscriptModel(
+    [
+      message({ id: "prompt", role: "user", text: "Run checks" }),
+      tool({ id: "tool-1" }),
+      tool({ id: "tool-2" }),
+      tool({ id: "tool-3" }),
+    ],
+    { isWorking: true },
+  );
+  const turn = model.blocks[0];
+
+  assert.equal(turn.kind, "turn");
+  assert.deepEqual(
+    turn.entries.map((entry) =>
+      entry.kind === "item" ? entry.item.id : entry.id,
+    ),
+    ["prompt", "tool-1", "tool-2", "tool-3"],
+  );
 });
 
 test("never groups pending, executing, permission, or error rows", () => {

@@ -358,20 +358,13 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await expect(
     page.getByTestId("coding-session-assistant-message"),
   ).toContainText("Reconnect now recovers cleanly.");
-  // A settled turn folds its finished work away, so the tool call is present
-  // but collapsed until the fold is opened. Asserting both halves keeps the
-  // fold honest: the work is there, and it is hidden on purpose.
-  const workedFold = page.getByTestId("coding-session-worked-fold");
-  await expect(workedFold).toContainText("Worked for 3.6s");
-  await expect(page.getByTestId("transcript-tool-item").first()).toBeHidden();
-  await workedFold.locator("> summary").click();
+  // Recent consequential work remains part of the settled turn's readable
+  // narrative. Only an older prefix is eligible for progressive disclosure.
   await expect(page.getByTestId("transcript-tool-item").first()).toBeVisible();
 
-  // The duration already lives in the fold's summary, so the footer states
-  // the outcome and the cost rather than repeating it.
   const completion = page.getByTestId("coding-session-turn-completion");
   await expect(completion).toHaveAttribute("data-turn-state", "completed");
-  await expect(completion).toContainText("Completed");
+  await expect(completion).toContainText("Worked for 3.6s");
   await expect(completion).toContainText("$0.32");
 
   await expect(page.getByTestId("coding-session-composer")).toBeVisible();

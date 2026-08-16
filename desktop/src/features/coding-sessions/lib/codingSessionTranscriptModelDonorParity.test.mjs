@@ -248,11 +248,19 @@ test("divergence (Buzz canonical): grouping keys on settled success, the donor e
       }),
       tool({ id: "run-1" }),
       tool({ id: "run-2" }),
+      tool({ id: "run-3" }),
+      tool({ id: "run-4" }),
     ],
     { isWorking: false },
   );
   const turn = model.blocks[0];
-  assert.deepEqual(entryIds(turn), ["prompt", "tools:ask", "run-2"]);
+  assert.deepEqual(entryIds(turn), [
+    "prompt",
+    "tools:ask",
+    "run-2",
+    "run-3",
+    "run-4",
+  ]);
   const group = turn.entries[1];
   assert.equal(group.kind, "tool-group");
   assert.deepEqual(
@@ -272,7 +280,16 @@ test("characterization: tool group labels count a single render class by verb", 
       ],
       { isWorking: false },
     ).blocks[0].entries[1];
-  assert.equal(derive(["s1", "s2", "s3"], "shell").label, "Ran 2 commands");
-  assert.equal(derive(["r1", "r2", "r3"], "file-read").label, "Read 2 files");
-  assert.equal(derive(["e1", "e2", "e3"], "file-edit").label, "Edited 2 files");
+  assert.equal(
+    derive(["s1", "s2", "s3", "s4", "s5"], "shell").label,
+    "Ran 2 commands",
+  );
+  assert.equal(
+    derive(["r1", "r2", "r3", "r4", "r5"], "file-read").label,
+    "Read 2 files",
+  );
+  assert.equal(
+    derive(["e1", "e2", "e3", "e4", "e5"], "file-edit").label,
+    "Edited 2 files",
+  );
 });

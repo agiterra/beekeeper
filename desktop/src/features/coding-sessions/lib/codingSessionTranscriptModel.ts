@@ -410,6 +410,7 @@ function deriveTurnStartedAt(items: TranscriptItem[]): string | null {
 function groupAdjacentTools(
   items: TranscriptItem[],
 ): CodingSessionTranscriptEntry[] {
+  const visibleToolTail = 3;
   const entries: CodingSessionTranscriptEntry[] = [];
 
   for (let index = 0; index < items.length; index += 1) {
@@ -428,19 +429,21 @@ function groupAdjacentTools(
       cursor += 1;
     }
 
-    const latestTool = tools.at(-1);
-    if (tools.length === 1 || !latestTool) {
-      entries.push({ kind: "item", item });
-    } else {
-      const previousTools = tools.slice(0, -1);
+    const previousTools = tools.slice(0, -visibleToolTail);
+    const recentTools = tools.slice(-visibleToolTail);
+    if (previousTools.length > 0) {
       entries.push({
         kind: "tool-group",
         id: `tools:${tools[0].id}`,
         label: formatToolGroupLabel(previousTools),
         items: previousTools,
       });
-      entries.push({ kind: "item", item: latestTool });
     }
+    entries.push(
+      ...recentTools.map(
+        (tool): CodingSessionTranscriptEntry => ({ kind: "item", item: tool }),
+      ),
+    );
     index = cursor - 1;
   }
 
