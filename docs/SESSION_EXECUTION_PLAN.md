@@ -677,6 +677,23 @@ which is wrong for multi-execution umbrellas and wrong in principle.
   by screenshot plus the receipt/genesis rows in the store. (3) `just
   ci` run to completion — a stopped CI is reported as not green, per §2.
 
+### Rulings addendum — 2026-08-16 (R25, Brian)
+
+- **R25 (custody AND co-input — Brian, 2026-08-16).** Both interaction
+  modes ship rather than one replacing the other: **custody**
+  (implicit-acquire control token — taken by driving when nobody holds it,
+  held while active, auto-released on idle, owner/admin reclaim, handoffs
+  visible in the transcript) **and open co-input** (any authorized operator
+  may send; turns queue with visible queue-position receipts). The mode is
+  owner-selectable per session. Composition with A7 is unchanged: the
+  lease/capability intersection defines **who is eligible to drive**; the
+  mode governs **how eligible drivers interleave**. Contributing context is
+  never gated by mode. A5's queue receipts serve both modes (they make
+  custody handoffs and queue order equally visible). Orchestrator default,
+  flagged as reversible: custody is the default mode when more than one
+  operator holds capability; a solo session has no mode ceremony at all
+  (vision invariant 2 — one provider stays effortless).
+
 ### B.7 Patterns to copy from shipped work
 Project ACL composition + fail-closed gate:
 `crates/buzz-db/src/project_acl.rs`, `ProjectGate::admits` (see
