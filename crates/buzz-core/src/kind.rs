@@ -611,6 +611,15 @@ pub const KIND_CODING_SESSION_TRANSCRIPT: u32 = 44225;
 /// See `docs/nips/NIP-CSG.md`.
 pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
 
+/// NIP-CSG: Coding-session goal — one human-authored revision of the umbrella
+/// session's durable goal.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Content is raw prose. Ordered tags:
+/// `h`, `d`, `csgl-v`. Consumers retain every revision and fold latest by
+/// `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_GOAL: u32 = 44227;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -799,6 +808,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_TRANSCRIPT,
     KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_GOAL,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1004,6 +1014,12 @@ const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GENESIS));
 const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GENESIS));
 const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GENESIS));
 const _: () = assert!(KIND_CODING_SESSION_GENESIS <= u16::MAX as u32);
+// Goal revisions must remain regular events: the d tag groups history but does
+// not opt the kind into NIP-33 replacement, so older revisions stay queryable.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(KIND_CODING_SESSION_GOAL <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

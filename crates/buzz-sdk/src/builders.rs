@@ -11,13 +11,17 @@ use buzz_core::{
     coding_session_genesis::{
         CodingSessionGenesisPayload, CODING_SESSION_GENESIS_TAG_VERSION, MAX_GENESIS_CONTENT_BYTES,
     },
+    coding_session_goal::{
+        validate_coding_session_goal_content, validate_coding_session_goal_session_ref,
+        CODING_SESSION_GOAL_TAG_VERSION,
+    },
     coding_session_lifecycle_command::{
         CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
         MAX_LIFECYCLE_CONTENT_BYTES,
     },
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
-        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
         KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
@@ -2392,6 +2396,30 @@ pub fn build_coding_session_genesis(
         tag(&["csg-session", &payload.session_ref])?,
     ];
     Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_GENESIS as u16), content).tags(tags))
+}
+
+/// Build one append-only coding-session goal revision (kind 44227).
+///
+/// The human operator signs this builder. `d=sessionRef` groups revisions but
+/// does not replace them; consumers fold the regular events by `(created_at,
+/// event id)` so every earlier goal remains queryable.
+pub fn build_coding_session_goal(
+    channel_id: Uuid,
+    session_ref: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    validate_coding_session_goal_session_ref(session_ref).map_err(SdkError::InvalidInput)?;
+    validate_coding_session_goal_content(content).map_err(SdkError::InvalidInput)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", session_ref])?,
+        tag(&["csgl-v", CODING_SESSION_GOAL_TAG_VERSION])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_GOAL as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
 }
 
 /// Build a provider-neutral coding-session command (kind 44220).
@@ -5238,6 +5266,40 @@ mod tests {
         let mut payload = CodingSessionGenesisPayload::new("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
         payload.v = 2;
         assert!(build_coding_session_genesis(channel, &payload).is_err());
+    }
+
+    #[test]
+    fn coding_session_goal_builder_emits_regular_revision_envelope() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = build_coding_session_goal(channel, session_ref, "Make authority visible")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GOAL);
+        assert_eq!(event.content, "Make authority visible");
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("csgl-v".into(), "csgl1-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_goal_builder_rejects_invalid_and_blank_inputs() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_goal(channel, "umbrella", "goal").is_err());
+        assert!(
+            build_coding_session_goal(channel, "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10", "goal")
+                .is_err()
+        );
+        assert!(
+            build_coding_session_goal(channel, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10", "  \n")
+                .is_err()
+        );
     }
 
     /// The adoption form emits the same three-tag envelope as a fresh

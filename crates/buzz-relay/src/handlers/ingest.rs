@@ -15,12 +15,12 @@ use buzz_core::kind::{
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
     KIND_CANVAS, KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
-    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
-    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
-    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
+    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
     KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
@@ -356,15 +356,17 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
-        // Coding sessions: the operator-signed session origin (44226), the
-        // operator-authored commands (44220/44221), and the provider-authored
-        // facts they produce (44222-44225). All are durable, channel-scoped
+        // Coding sessions: the operator-signed session origin and goal
+        // revisions (44226/44227), the operator-authored commands
+        // (44220/44221), and the provider-authored facts they produce
+        // (44222-44225). All are durable, channel-scoped
         // writes consumed by an out-of-relay provider adapter — the relay
         // validates and stores them, and deliberately never executes them. See
         // docs/nips/NIP-CSC.md, NIP-CSL.md, NIP-CSPC.md, NIP-CST.md, NIP-CSG.md.
         KIND_CODING_SESSION_COMMAND
         | KIND_CODING_SESSION_LIFECYCLE_COMMAND
         | KIND_CODING_SESSION_GENESIS
+        | KIND_CODING_SESSION_GOAL
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -669,10 +671,11 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
             | KIND_CODING_SESSION_TRANSCRIPT
             | KIND_CODING_SESSION_GENESIS
+            | KIND_CODING_SESSION_GOAL
     )
 }
 
-/// Returns `true` for the seven coding-session kinds (44220–44226).
+/// Returns `true` for the eight coding-session kinds (44220–44227).
 ///
 /// One predicate for the strict-membership gate and the tests, so an eighth
 /// kind cannot be added to one gate and forgotten by another.
@@ -686,12 +689,13 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
             | KIND_CODING_SESSION_TRANSCRIPT
             | KIND_CODING_SESSION_GENESIS
+            | KIND_CODING_SESSION_GOAL
     )
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220, 44221, and 44226 are bounded by their payload contracts in
+/// 44220, 44221, 44226, and 44227 are bounded by their payload contracts in
 /// `buzz-core` instead (12 KiB of turn text, 16 KiB of signed content, 1 KiB of
 /// genesis), so they are absent here — and those bounds are the stricter ones,
 /// since their envelope validators run *before* this table is consulted. The
@@ -2892,6 +2896,11 @@ async fn ingest_event_inner(
 
     if kind_u32 == KIND_CODING_SESSION_GENESIS {
         validate_coding_session_genesis_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_GOAL {
+        buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&event)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
@@ -5653,11 +5662,11 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44226) -------------------------------------
+    // ---- Coding sessions (44220–44227) -------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
     /// sweep it so an eighth kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 7] = [
+    const CODING_SESSION_TEST_KINDS: [u32; 8] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -5665,14 +5674,15 @@ mod tests {
         KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_TRANSCRIPT,
         KIND_CODING_SESSION_GENESIS,
+        KIND_CODING_SESSION_GOAL,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44226() {
+    fn coding_session_predicate_covers_exactly_44220_to_44227() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44226).contains(&kind),
+                (44220..=44227).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -6196,6 +6206,61 @@ mod tests {
         .is_ok());
     }
 
+    fn goal_event(content: &str, channel: &str, session_ref: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_GOAL,
+            content,
+            &[&["h", channel], &["d", session_ref], &["csgl-v", "csgl1-1"]],
+        )
+    }
+
+    #[test]
+    fn coding_session_goal_requires_exact_regular_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        assert!(
+            buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&goal_event(
+                "Make authority visible",
+                &channel,
+                GENESIS_SESSION_REF
+            ))
+            .is_ok()
+        );
+
+        let smuggled = make_event_with_tags(
+            KIND_CODING_SESSION_GOAL,
+            "Make authority visible",
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["csgl-v", "csgl1-1"],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&smuggled)
+                .is_err()
+        );
+
+        for event in [
+            goal_event("", &channel, GENESIS_SESSION_REF),
+            goal_event("goal", &channel, &GENESIS_SESSION_REF.to_uppercase()),
+            make_event_with_tags(
+                KIND_CODING_SESSION_GOAL,
+                "goal",
+                &[
+                    &["d", GENESIS_SESSION_REF],
+                    &["h", &channel],
+                    &["csgl-v", "csgl1-1"],
+                ],
+            ),
+        ] {
+            assert!(
+                buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&event)
+                    .is_err()
+            );
+        }
+    }
+
     /// The four provider-authored kinds are bounded by size alone — the relay
     /// does not parse a provider's account of its own session. These are the
     /// exact caps the producer writes against.
@@ -6217,7 +6282,7 @@ mod tests {
             coding_session_content_cap(KIND_CODING_SESSION_TRANSCRIPT),
             Some(32 * 1024)
         );
-        // The three operator-authored kinds are bounded by their payload
+        // The four operator-authored kinds are bounded by their payload
         // contracts in buzz-core instead, so they must not also carry a cap
         // here. Their envelope validators run first, and each one rejects
         // oversized content before parsing it.
@@ -6233,6 +6298,7 @@ mod tests {
             coding_session_content_cap(KIND_CODING_SESSION_GENESIS),
             None
         );
+        assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
         // And no other kind is bounded by this table.
         assert_eq!(coding_session_content_cap(KIND_STREAM_MESSAGE), None);
     }
