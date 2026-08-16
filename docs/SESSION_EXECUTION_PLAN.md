@@ -657,6 +657,19 @@ which is wrong for multi-execution umbrellas and wrong in principle.
   the resolved genesis's full envelope — `h` channel, exact `csg-v`,
   exact `csg-session` matching the create's `sessionRef` — fail closed
   (`GENESIS_NOT_FOUND`-class refusal on mismatch).
+- **R24 (subagent activity vocabulary — logged 2026-08-15, transcript-UI
+  track finding).** Current signed 44225 data cannot support a truthful
+  T3-style internal-subagent surface: the provider publishes
+  tools/plans/messages/results but no stable child agent id, parent
+  linkage, spawn turn, lifecycle, child-attributed activity, usage, or
+  workflow phase. Direction: a **provider-owned signed subagent activity
+  vocabulary** must precede any Agents-tab implementation, and child
+  state must never be inferred from `Task`/`spawn_agent` tool text
+  (attribution-≠-verification applies). This is protocol work on the
+  A/B tracks, adjacent to must-have #2's eventual return; the
+  transcript-UI track proceeds with slices that need no new data (diff
+  presentation next). The tabbed Diff/Agents workspace host stays
+  deferred until its integration seam is coordinated.
 - **R23 (proof obligations for Bite 1 closure).** (1) Unit-level test:
   provider resolves genesis by id and emits a created receipt; refusal
   paths covered. (2) Live proof: a real session created in the dev app
