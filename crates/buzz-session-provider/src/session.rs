@@ -264,6 +264,16 @@ pub enum SessionEvent {
         generation: u64,
         /// What git reported — every field optional, nothing fatal.
         observed: crate::git_probe::GitProbe,
+        /// Whether the relay confirmed `observed.commit`'s presence in its
+        /// git storage, and when — `None` when not checked (no commit to
+        /// check, no repository coordinate, or the check itself did not
+        /// complete). Carries the *same* `generation` stamp as `observed`:
+        /// both come from the one task [`crate::Provider::spawn_git_probe`]
+        /// spawns, so R17's fencing covers this exactly like the local
+        /// observation, and a commit change between probes cannot leave a
+        /// stale reachability claim behind (see the apply site in
+        /// `Provider::handle_session_event`).
+        reachability: Option<crate::reachability::ReachabilityFact>,
     },
 }
 

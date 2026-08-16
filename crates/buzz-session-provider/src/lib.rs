@@ -37,6 +37,7 @@ mod git_probe;
 mod model_catalog;
 pub mod payload;
 pub mod publish;
+mod reachability;
 pub mod session;
 pub mod state;
 pub mod transcript;
@@ -48,7 +49,7 @@ use nostr::{Event, Kind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use buzz_acp::relay::HarnessRelay;
+use buzz_acp::relay::{HarnessRelay, RestClient};
 use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::coding_session_genesis::{
@@ -131,6 +132,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     )
     .await?;
     relay.set_startup_watermark(now_secs()).await?;
+    provider.set_rest_client(relay.rest_client());
 
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
@@ -231,6 +233,20 @@ pub struct Provider {
     /// match arm). Absent entry means "no probe has ever been launched for
     /// this session id," which compares as generation `0`.
     git_probe_generation: HashMap<String, u64>,
+    /// Last relay-confirmed reachability fact per session id, keyed and
+    /// applied under the exact same generation fence as `git_probes` — see
+    /// [`session::SessionEvent::WorktreeObserved`]. Absent, like a `None`
+    /// reachability result, means "not checked."
+    git_reachability: HashMap<String, reachability::ReachabilityFact>,
+    /// Shared HTTP client for relay REST calls made off the event loop
+    /// (currently: [`Provider::spawn_git_probe`]'s reachability check).
+    ///
+    /// `None` until [`Provider::set_rest_client`] is called after the relay
+    /// connects — `Provider::new` runs before that connection exists. A
+    /// probe launched before it is set simply skips the reachability leg,
+    /// which is exactly the "not checked" outcome the honesty contract
+    /// already models, so no session ever waits on it.
+    rest_client: Option<RestClient>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
 }
@@ -253,9 +269,19 @@ impl Provider {
             last_metadata: HashMap::new(),
             git_probes: HashMap::new(),
             git_probe_generation: HashMap::new(),
+            git_reachability: HashMap::new(),
+            rest_client: None,
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
         })
+    }
+
+    /// Wire in the shared relay REST client once the relay connection is
+    /// live. Called once from [`run_with`] after [`HarnessRelay::connect`]
+    /// succeeds; every subsequent worktree probe can then attempt the
+    /// reachability leg.
+    pub fn set_rest_client(&mut self, rest_client: RestClient) {
+        self.rest_client = Some(rest_client);
     }
 
     /// Repair state left behind by an unclean exit.
@@ -1016,10 +1042,7 @@ impl Provider {
             status,
             // Filled from the last bounded worktree observation, or left null
             // when the cwd is not a repository, sits on a detached HEAD, or was
-            // never successfully observed. Note what is *not* here: the probe
-            // also learns dirty state, and deliberately keeps it internal —
-            // carrying that as a signed fact is a schema question, not a
-            // free ride on a field that already exists.
+            // never successfully observed.
             branch: self
                 .git_probes
                 .get(&target.session_id)
@@ -1031,6 +1054,26 @@ impl Provider {
             // the key entirely, so unclaimed sessions keep the exact 12-key
             // shape pre-amendment consumers require.
             session_ref: record.and_then(|record| record.session_ref.clone()),
+            // B1 coordinate facts (D4a) — same probe as `branch`, plus the
+            // relay-confirmed reachability of `observed_commit`. See the
+            // struct doc on `SessionMetadata` for why these four ride here
+            // rather than on the lifecycle receipt.
+            observed_commit: self
+                .git_probes
+                .get(&target.session_id)
+                .and_then(|observed| observed.commit.clone()),
+            dirty: self
+                .git_probes
+                .get(&target.session_id)
+                .and_then(|observed| observed.dirty),
+            relay_reachable: self
+                .git_reachability
+                .get(&target.session_id)
+                .map(|fact| fact.reachable),
+            verified_at: self
+                .git_reachability
+                .get(&target.session_id)
+                .map(|fact| fact.verified_at),
         }
     }
 
@@ -1053,16 +1096,26 @@ impl Provider {
         Ok(())
     }
 
-    /// Start a bounded re-observation of `session_id`'s working directory.
+    /// Start a bounded re-observation of `session_id`'s working directory,
+    /// followed — when there is something to confirm — by a bounded relay
+    /// reachability check of the commit it found.
     ///
-    /// The probe runs up to two short-lived `git` processes, each under
-    /// [`git_probe`]'s own ceiling, so awaiting it here would stall *every other*
-    /// session's transcript delivery and the outbox flush for as long as the
-    /// slowest of them. It therefore runs on its own task and reports back as
-    /// [`SessionEvent::WorktreeObserved`], which the loop folds in exactly like
-    /// an actor report. The consequence is deliberate: metadata is published
-    /// immediately without a branch and corrected a moment later, rather than
-    /// published late but complete.
+    /// The local probe runs up to three short-lived `git` processes, each
+    /// under [`git_probe`]'s own ceiling; the reachability check (B1/D4a) is
+    /// one bounded HTTP request under [`reachability`]'s own ceiling. Both
+    /// run off the event loop — awaiting either here would stall *every
+    /// other* session's transcript delivery and the outbox flush for as long
+    /// as the slowest of them — and report back together as one
+    /// [`SessionEvent::WorktreeObserved`], which the loop folds in exactly
+    /// like an actor report. The consequence is deliberate: metadata is
+    /// published immediately without these facts and corrected a moment
+    /// later, rather than published late but complete.
+    ///
+    /// The reachability check only runs when there is an observed commit and
+    /// a repository coordinate to check it against, and only when a relay
+    /// client has been wired in ([`Provider::set_rest_client`]) — every other
+    /// case reports `None`, "not checked," rather than skipping the field
+    /// silently.
     ///
     /// A session whose record has vanished is a no-op, not an error. Two probes
     /// in flight for one session are allowed rather than serialized: both are
@@ -1071,15 +1124,15 @@ impl Provider {
     /// generation minted here, and [`SessionEvent::WorktreeObserved`] fences
     /// out any result whose generation is not the newest one launched (see the
     /// invariant on that match arm), so a slow older probe can never overwrite
-    /// a faster newer one.
+    /// a faster newer one — and because the reachability check travels with
+    /// its probe under that same stamp, a commit that has since changed can
+    /// never be left wearing a stale reachability claim either.
     fn spawn_git_probe(&mut self, session_id: &str) {
-        let Some(cwd) = self
-            .state
-            .session(session_id)
-            .map(|record| record.cwd.clone())
-        else {
+        let Some(record) = self.state.session(session_id) else {
             return;
         };
+        let cwd = record.cwd.clone();
+        let repo_ref = record.repo_ref.clone();
         let generation = {
             let next = self
                 .git_probe_generation
@@ -1089,9 +1142,16 @@ impl Provider {
             *next
         };
         let events = self.session_events_tx.clone();
+        let rest_client = self.rest_client.clone();
         let session_id = session_id.to_owned();
         tokio::spawn(async move {
             let observed = git_probe::probe(&cwd).await;
+            let reachability = match (&observed.commit, &repo_ref, &rest_client) {
+                (Some(oid), Some(repo_ref), Some(rest_client)) => {
+                    reachability::check(rest_client, repo_ref, oid).await
+                }
+                _ => None,
+            };
             // A closed receiver means the provider loop is gone — shutdown, or
             // a dropped `Provider` in a test. The observation has nowhere to be
             // published, so it is dropped rather than logged as a failure.
@@ -1100,6 +1160,7 @@ impl Provider {
                     session_id,
                     generation,
                     observed,
+                    reachability,
                 })
                 .await;
         });
@@ -1314,6 +1375,7 @@ impl Provider {
                 session_id,
                 generation,
                 observed,
+                reachability,
             } => {
                 // Invariant: a result is applied only when its generation is
                 // the newest one launched for this session id — never merely
@@ -1365,9 +1427,25 @@ impl Provider {
                     %session_id,
                     branch = ?observed.branch,
                     dirty = ?observed.dirty,
+                    commit = ?observed.commit,
+                    reachable = ?reachability.map(|fact| fact.reachable),
                     "observed the session worktree"
                 );
                 self.git_probes.insert(session_id.clone(), observed);
+                // Applied together with `git_probes`, under the same fence,
+                // so a commit change between probes can never leave a stale
+                // reachability claim behind: a fresh probe that observed no
+                // commit (or whose check did not complete) clears any prior
+                // confirmation rather than letting it linger unattached to
+                // the coordinate it was actually about.
+                match reachability {
+                    Some(fact) => {
+                        self.git_reachability.insert(session_id.clone(), fact);
+                    }
+                    None => {
+                        self.git_reachability.remove(&session_id);
+                    }
+                }
                 // Republished under the status the last publication claimed:
                 // the observation corrects the branch, it says nothing about
                 // the lifecycle. When the branch is unchanged the serialized
@@ -2454,7 +2532,13 @@ mod tests {
     }
 
     /// The probe is observable end to end: a create in a real checkout carries
-    /// the branch git reported into signed metadata.
+    /// the branch, commit, and dirty state git reported into signed metadata.
+    ///
+    /// B1 (D4a) overturns the P3-era boundary this test used to assert —
+    /// dirty state was deliberately kept off signed content until the schema
+    /// question of *where* it lands was answered. It is now answered:
+    /// `SessionMetadata` carries it, so this test's job flips from "dirty
+    /// never leaks" to "dirty (and the commit) reliably arrive."
     #[tokio::test]
     async fn a_create_in_a_checkout_publishes_its_branch() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2480,10 +2564,17 @@ mod tests {
         let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0]["branch"], "probe-branch");
+        assert_eq!(metadata[0]["dirty"], false);
+        let observed_commit = metadata[0]["observedCommit"]
+            .as_str()
+            .expect("observedCommit present");
+        assert_eq!(observed_commit.len(), 40);
 
-        // Dirty state is observed but deliberately *not* published: carrying it
-        // as a signed fact is a schema question, and smuggling it into `branch`
-        // would answer that question by accident.
+        // No relay client was wired in for this test provider, so the
+        // reachability leg never ran — "not checked," not "confirmed absent."
+        assert!(metadata[0]["relayReachable"].is_null());
+        assert!(metadata[0]["verifiedAt"].is_null());
+
         let session_id = &provider
             .state()
             .sessions()
@@ -2495,10 +2586,112 @@ mod tests {
             provider.git_probes.get(session_id).and_then(|p| p.dirty),
             Some(false)
         );
-        for event in sink.all() {
-            let serialized = serde_json::to_string(&event).expect("serialize");
-            assert!(!serialized.contains("dirty"), "dirty leaked: {serialized}");
-        }
+        assert_eq!(
+            provider
+                .git_probes
+                .get(session_id)
+                .and_then(|p| p.commit.clone()),
+            Some(observed_commit.to_owned())
+        );
+        assert!(!provider.git_reachability.contains_key(session_id));
+    }
+
+    /// A repo-bound session with no relay client wired in must still publish
+    /// `relayReachable: null` / `verifiedAt: null` — never a guessed `false`.
+    /// This is the "absent check" half of the honesty contract; the
+    /// "failed check" half is covered directly in `reachability`'s own tests
+    /// (`a_network_failure_reports_not_checked`).
+    #[tokio::test]
+    async fn a_repo_bound_session_without_a_relay_client_reports_reachability_as_not_checked() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "probe-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        assert!(
+            provider.rest_client.is_none(),
+            "the test harness never wires a relay client in"
+        );
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        pump_until_worktree_observed(&mut provider).await;
+
+        let session_id = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+        assert!(
+            !provider.git_reachability.contains_key(&session_id),
+            "no relay client means the check never ran"
+        );
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert!(metadata.last().expect("metadata")["relayReachable"].is_null());
+        assert!(metadata.last().expect("metadata")["verifiedAt"].is_null());
+    }
+
+    /// A populated reachability fact — as `spawn_git_probe` would produce
+    /// with a relay client wired in and a successful check — is read
+    /// straight through into the next metadata publication, `Some(true)` and
+    /// its timestamp both intact.
+    #[tokio::test]
+    async fn a_confirmed_reachability_fact_is_published_into_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        init_repo(&cwd, "probe-branch");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        pump_until_worktree_observed(&mut provider).await;
+
+        let record = provider.state().sessions().next().expect("session").clone();
+        let observed_commit = provider
+            .git_probes
+            .get(&record.session_id)
+            .and_then(|probe| probe.commit.clone())
+            .expect("commit observed");
+
+        // Fold in a reachability fact the way `WorktreeObserved` would — this
+        // is the apply step under test, exercised directly rather than via a
+        // live relay.
+        let fact = reachability::ReachabilityFact {
+            reachable: true,
+            verified_at: 1_700_000_000,
+        };
+        provider
+            .git_reachability
+            .insert(record.session_id.clone(), fact);
+        provider
+            .publish_metadata(
+                channel_id,
+                &record.target("instance-1"),
+                SessionStatus::Idle,
+            )
+            .expect("publish");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        let last = metadata.last().expect("metadata");
+        assert_eq!(last["relayReachable"], true);
+        assert_eq!(last["verifiedAt"], 1_700_000_000);
+        assert_eq!(last["observedCommit"], observed_commit);
     }
 
     /// A finished turn re-observes the worktree, so a branch the agent switched
@@ -2715,10 +2908,24 @@ mod tests {
         let older = git_probe::GitProbe {
             branch: Some("branch-a".to_owned()),
             dirty: Some(false),
+            commit: Some("a".repeat(40)),
         };
         let newer = git_probe::GitProbe {
             branch: Some("branch-b".to_owned()),
             dirty: Some(true),
+            commit: Some("b".repeat(40)),
+        };
+        // Reachability travels with each probe under the same generation, so
+        // this test also proves R17 covers it: the stale generation's
+        // confirmed-reachable fact must not survive over the newer
+        // generation's confirmed-not-reachable one.
+        let older_reachability = reachability::ReachabilityFact {
+            reachable: true,
+            verified_at: 1_000,
+        };
+        let newer_reachability = reachability::ReachabilityFact {
+            reachable: false,
+            verified_at: 2_000,
         };
 
         // B (generation 3, launched second) completes first.
@@ -2727,6 +2934,7 @@ mod tests {
                 session_id: session_id.clone(),
                 generation: 3,
                 observed: newer.clone(),
+                reachability: Some(newer_reachability),
             })
             .expect("record newer");
         // A (generation 2, launched first) completes after — the reversed
@@ -2736,6 +2944,7 @@ mod tests {
                 session_id: session_id.clone(),
                 generation: 2,
                 observed: older,
+                reachability: Some(older_reachability),
             })
             .expect("record older");
 
@@ -2743,6 +2952,11 @@ mod tests {
             provider.git_probes.get(&session_id),
             Some(&newer),
             "the older, later-arriving probe overwrote the newer one"
+        );
+        assert_eq!(
+            provider.git_reachability.get(&session_id),
+            Some(&newer_reachability),
+            "the older, later-arriving reachability fact overwrote the newer one"
         );
     }
 

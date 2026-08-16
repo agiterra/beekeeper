@@ -278,9 +278,34 @@ impl Capabilities {
 
 /// Immutable facts about one session generation (kind 44223).
 ///
-/// Field order is the consumer's declared key order; `agentRef` and `branch` are
-/// structurally required and always `null` here — this provider is not a managed
-/// agent and does not claim to know the checkout's branch.
+/// Field order is the consumer's declared key order; `agentRef` is
+/// structurally required and always `null` here — this provider is not a
+/// managed agent.
+///
+/// # B1: coordinate facts (D4a)
+///
+/// `observedCommit`, `dirty`, `relayReachable`, and `verifiedAt` land here
+/// rather than on [`LifecycleReceipt`] because their cadence matches this
+/// event's, not the receipt's: [`crate::coding_session_payload`]'s consumer
+/// contract already republishes metadata at generation start and at every
+/// turn end (`Provider::spawn_git_probe`'s call sites), which is exactly the
+/// cadence D4a specifies for these facts. A lifecycle receipt answers one
+/// `commandId` once — create, resume, or stop — and is never republished as
+/// the working tree changes underneath a long-running generation, so it
+/// would go stale as a home for a per-turn fact the moment the second turn
+/// started. `repoRef` is not repeated in that list: it is the existing field
+/// above, reused rather than re-derived, per instructions.
+///
+/// Five separate facts, never collapsed into one "recoverable" claim:
+/// `observedCommit` is what `git` reported the local `HEAD` to be;
+/// `repoRef` is the repository coordinate already carried by the session;
+/// `dirty` is whether the worktree had uncommitted changes at that same
+/// observation (honesty rule: dirty is recorded as dirty, never inferred
+/// away — a probe that could not run leaves this `null` rather than
+/// guessing `false`); `relayReachable` is whether the relay's git storage
+/// was confirmed to already hold `observedCommit`; `verifiedAt` is when
+/// that confirmation happened. "Recoverable" is a UI-side word for
+/// `relayReachable == true`, never asserted by the provider itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMetadata {
@@ -304,7 +329,9 @@ pub struct SessionMetadata {
     pub model: Option<String>,
     /// Current lifecycle status.
     pub status: SessionStatus,
-    /// Checked-out branch. Always `null` — not observed over ACP.
+    /// Checked-out branch, from the same bounded worktree probe as
+    /// `observedCommit`/`dirty`, or `null` when not observed (no
+    /// repository, a detached `HEAD`, or the probe has not completed yet).
     pub branch: Option<String>,
     /// Capabilities in force for this generation.
     pub capabilities: Capabilities,
@@ -318,6 +345,107 @@ pub struct SessionMetadata {
     /// remains the authoritative membership claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_ref: Option<String>,
+    /// The local `HEAD` commit the provider most recently observed, as a
+    /// lowercase hex object id, or `null` when never observed (no
+    /// repository, no commits yet, or the probe failed or has not completed).
+    ///
+    /// B1 additive field: see the struct-level doc for why it lands here.
+    #[serde(default)]
+    pub observed_commit: Option<String>,
+    /// Whether the worktree had uncommitted changes at the same observation
+    /// as `observedCommit`, or `null` when not observed. Honesty rule: dirty
+    /// is recorded as dirty, never inferred away.
+    #[serde(default)]
+    pub dirty: Option<bool>,
+    /// Whether `observedCommit` was confirmed present in the relay's git
+    /// storage. Tri-state, represented as a nullable bool: `null` means "not
+    /// checked" — no repository coordinate, no observed commit, or the check
+    /// itself could not complete (network/auth failure, malformed response).
+    /// `Some(false)` is a positive claim that the check ran and the relay's
+    /// advertised refs did not include the commit, never a stand-in for a
+    /// failed check. `null` is never read as "confirmed not reachable".
+    #[serde(default)]
+    pub relay_reachable: Option<bool>,
+    /// Unix seconds when the check that produced `relayReachable` ran.
+    ///
+    /// `null` exactly when `relayReachable` is `null` — there is no "checked
+    /// but the outcome is unknown" state; a check either lands a confirmed
+    /// `true`/`false` with its timestamp, or it did not happen and both
+    /// fields stay `null` together.
+    #[serde(default)]
+    pub verified_at: Option<i64>,
+}
+
+/// Expected JSON key sets for [`SessionMetadata`], oldest first.
+///
+/// Two independent additive amendments have landed on this struct at
+/// different times — the `sessionRef` echo, then B1's four coordinate-fact
+/// keys — so there are four valid shapes, not two: base, base+sessionRef,
+/// base+facts, and base+sessionRef+facts. Mirrors the exact-fields
+/// discipline in `coding_session_lifecycle_command.rs`
+/// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
+/// in between or beyond these four — a partial subset of the four fact
+/// keys, or any field this struct does not know — is rejected, not
+/// tolerated.
+const METADATA_BASE_FIELDS: &[&str] = &[
+    "schema",
+    "session",
+    "projectRef",
+    "repoRef",
+    "title",
+    "agentRef",
+    "provider",
+    "runtime",
+    "model",
+    "status",
+    "branch",
+    "capabilities",
+];
+const METADATA_SESSION_REF_FIELD: &str = "sessionRef";
+const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachable", "verifiedAt"];
+
+/// Strictly decode and validate signed metadata content (kind 44223).
+///
+/// Accepts exactly the four field-set shapes documented above
+/// `METADATA_BASE_FIELDS`; anything else — an unknown key, or a B1 fact
+/// key present without its three siblings — is a hard rejection. A second
+/// pass through `serde_json` (after the shape check) picks up serde's own
+/// duplicate-key detection, matching the two-pass pattern used for lifecycle
+/// commands.
+pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, String> {
+    let value: serde_json::Value = serde_json::from_str(content)
+        .map_err(|_| "malformed coding-session metadata".to_string())?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "coding-session metadata must be an object".to_string())?;
+
+    let has_session_ref = object.contains_key(METADATA_SESSION_REF_FIELD);
+    let has_all_facts = METADATA_FACT_FIELDS
+        .iter()
+        .all(|key| object.contains_key(*key));
+    let has_any_fact = METADATA_FACT_FIELDS
+        .iter()
+        .any(|key| object.contains_key(*key));
+    if has_any_fact && !has_all_facts {
+        return Err("coding-session metadata has some but not all B1 fact fields".to_string());
+    }
+
+    let mut expected: Vec<&str> = METADATA_BASE_FIELDS.to_vec();
+    if has_session_ref {
+        expected.push(METADATA_SESSION_REF_FIELD);
+    }
+    if has_all_facts {
+        expected.extend_from_slice(METADATA_FACT_FIELDS);
+    }
+    let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
+    let complete = expected.iter().all(|key| object.contains_key(*key));
+    if !recognized || !complete || object.len() != expected.len() {
+        return Err("coding-session metadata has missing or unsupported fields".to_string());
+    }
+
+    let metadata: SessionMetadata = serde_json::from_str(content)
+        .map_err(|_| "malformed coding-session metadata".to_string())?;
+    Ok(metadata)
 }
 
 /// One transcript item's signed envelope (kind 44225).
@@ -605,6 +733,10 @@ mod tests {
             branch: None,
             capabilities: Capabilities::v1_claude(),
             session_ref: None,
+            observed_commit: None,
+            dirty: None,
+            relay_reachable: None,
+            verified_at: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -622,6 +754,10 @@ mod tests {
                 "status",
                 "branch",
                 "capabilities",
+                "observedCommit",
+                "dirty",
+                "relayReachable",
+                "verifiedAt",
             ])
         );
         // Signed bytes come from `to_string`, which keeps declaration order.
@@ -664,6 +800,10 @@ mod tests {
             branch: None,
             capabilities: Capabilities::v1_baseline(),
             session_ref: None,
+            observed_commit: None,
+            dirty: None,
+            relay_reachable: None,
+            verified_at: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -692,6 +832,135 @@ mod tests {
             reloaded.session_ref.as_deref(),
             Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
         );
+    }
+
+    /// A pre-B1 event — 12 keys, or 13 with the `sessionRef` echo — carries
+    /// none of the four coordinate-fact keys. `decode_coding_session_metadata`
+    /// must still accept it, with every new fact field landing as `None`.
+    #[test]
+    fn decode_metadata_accepts_historical_forms_without_the_facts() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": null,
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+        });
+        let decoded = decode_coding_session_metadata(&base.to_string()).expect("12-key form");
+        assert!(decoded.observed_commit.is_none());
+        assert!(decoded.dirty.is_none());
+        assert!(decoded.relay_reachable.is_none());
+        assert!(decoded.verified_at.is_none());
+        assert!(decoded.session_ref.is_none());
+
+        let mut with_session_ref = base.clone();
+        with_session_ref["sessionRef"] = serde_json::json!("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        let decoded =
+            decode_coding_session_metadata(&with_session_ref.to_string()).expect("13-key form");
+        assert_eq!(
+            decoded.session_ref.as_deref(),
+            Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
+        );
+        assert!(decoded.observed_commit.is_none());
+    }
+
+    /// The two current B1 forms — facts alone, and facts plus `sessionRef` —
+    /// decode, and every fact is independently readable including the
+    /// `Some(false)` "confirmed not reachable" case.
+    #[test]
+    fn decode_metadata_accepts_the_current_fact_bearing_forms() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:repo",
+            "title": null,
+            "agentRef": null,
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "idle",
+            "branch": "main",
+            "capabilities": Capabilities::v1_claude(),
+            "observedCommit": "a".repeat(40),
+            "dirty": false,
+            "relayReachable": false,
+            "verifiedAt": 1_700_000_000i64,
+        });
+        let decoded = decode_coding_session_metadata(&base.to_string()).expect("16-key form");
+        assert_eq!(
+            decoded.observed_commit.as_deref(),
+            Some("a".repeat(40).as_str())
+        );
+        assert_eq!(decoded.dirty, Some(false));
+        assert_eq!(decoded.relay_reachable, Some(false));
+        assert_eq!(decoded.verified_at, Some(1_700_000_000));
+
+        let mut with_session_ref = base.clone();
+        with_session_ref["sessionRef"] = serde_json::json!("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        let decoded =
+            decode_coding_session_metadata(&with_session_ref.to_string()).expect("17-key form");
+        assert_eq!(decoded.relay_reachable, Some(false));
+        assert_eq!(
+            decoded.session_ref.as_deref(),
+            Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
+        );
+    }
+
+    /// Canonical smuggle-rejection test, mirroring
+    /// `rejects_action_shapes_between_and_beyond_the_two_forms` in
+    /// `coding_session_lifecycle_command.rs`: a shape with some but not all
+    /// of the four fact keys, and a shape with an unrecognized key, are both
+    /// rejected — never silently accepted with the missing keys defaulted.
+    #[test]
+    fn decode_metadata_rejects_shapes_between_and_beyond_the_known_forms() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": null,
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+        });
+
+        // Between: only two of the four fact keys present.
+        let mut partial = base.clone();
+        partial["observedCommit"] = serde_json::json!(null);
+        partial["dirty"] = serde_json::json!(null);
+        let error =
+            decode_coding_session_metadata(&partial.to_string()).expect_err("partial facts");
+        assert!(error.contains("some but not all"));
+
+        // Beyond: a smuggled key no known form recognizes.
+        let mut smuggled = base.clone();
+        smuggled["observedCommit"] = serde_json::json!(null);
+        smuggled["dirty"] = serde_json::json!(null);
+        smuggled["relayReachable"] = serde_json::json!(null);
+        smuggled["verifiedAt"] = serde_json::json!(null);
+        smuggled["hostPath"] = serde_json::json!("/etc/passwd");
+        let error =
+            decode_coding_session_metadata(&smuggled.to_string()).expect_err("smuggled field");
+        assert!(error.contains("missing or unsupported"));
+
+        // Beyond: sessionRef present together with only a partial fact set.
+        let mut mixed = base.clone();
+        mixed["sessionRef"] = serde_json::json!("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        mixed["observedCommit"] = serde_json::json!(null);
+        let error = decode_coding_session_metadata(&mixed.to_string()).expect_err("mixed shape");
+        assert!(error.contains("some but not all"));
     }
 
     #[test]

@@ -51,3 +51,4 @@ anyhow = { workspace = true }
 [dev-dependencies]
 axum = { workspace = true }
 tempfile = "3"
+reqwest = { workspace = true }

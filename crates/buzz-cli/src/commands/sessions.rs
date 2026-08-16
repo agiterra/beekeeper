@@ -1208,6 +1208,10 @@ mod tests {
             branch: None,
             capabilities: Capabilities::v1_claude(),
             session_ref: None,
+            observed_commit: None,
+            dirty: None,
+            relay_reachable: None,
+            verified_at: None,
         }
     }
 

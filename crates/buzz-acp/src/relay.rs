@@ -521,6 +521,184 @@ impl RestClient {
         }
         serde_json::from_str(&text).map_err(|e| RelayError::Http(e.to_string()))
     }
+
+    /// Check whether `oid` is present in the relay's git storage for
+    /// `repo_ref` (a NIP-MP repository coordinate,
+    /// `30617:<owner-hex>:<repo-d>`) — the narrow reachability primitive
+    /// B1/D4a needs to tell "recorded" apart from "recoverable."
+    ///
+    /// # Signing contract (R4/R10)
+    ///
+    /// This reproduces the **git credential helper's repo-root NIP-98
+    /// signing** (`crates/git-credential-nostr/src/lib.rs`), not the
+    /// exact-path binding `RestClient::bridge_post` uses for the `/query`,
+    /// `/count`, and `/events` bridge. The relay's git routes
+    /// (`crates/buzz-relay/src/api/git/transport.rs`) verify the signed `u`
+    /// tag against the *repo-root* URL (`{base}/git/{owner}/{repo}`,
+    /// stripped of `/info/refs`, its query string, and the pack-endpoint
+    /// suffixes) regardless of which of the three routes the token
+    /// authorizes — the credential helper signs once and git reuses the
+    /// token across GET and POST. Signing the exact request URL here (as
+    /// `bridge_post` does) would be rejected: `u` would carry a path the
+    /// relay's `git_expected_url` never produces.
+    ///
+    /// # What this actually checks
+    ///
+    /// A single `GET .../info/refs?service=git-upload-pack` — the same
+    /// advertisement a `git fetch` reads first — checked for `oid` among the
+    /// advertised ref tips. This is a conservative, cheap approximation of
+    /// "reachable": a commit that was pushed and is still a ref tip matches
+    /// directly; older, superseded ancestors of a ref that has since moved
+    /// on are not distinguished from genuinely absent commits, because
+    /// telling them apart needs a full pack negotiation this narrow check
+    /// deliberately does not attempt (documented debt, see R10). In this
+    /// crate's actual call pattern that gap does not bite: the provider
+    /// always checks its own *current* `HEAD`, which — when pushed at all —
+    /// is exactly the tip the checkout most recently advanced to.
+    ///
+    /// # Honesty contract
+    ///
+    /// `Ok(true)`/`Ok(false)` are both *confirmed* answers: the advertisement
+    /// was read successfully and `oid` was, or was not, among the tips.
+    /// Every failure mode this method cannot resolve unambiguously —
+    /// malformed `repo_ref`/`oid`, a network or auth failure, a non-success
+    /// status, a response too large or malformed to parse — is `Err`, and
+    /// callers must treat `Err` as "not checked," never as "confirmed not
+    /// reachable" — see the caller in `buzz-session-provider`'s
+    /// `reachability` module, which applies exactly that mapping.
+    pub async fn git_object_reachable(
+        &self,
+        repo_ref: &str,
+        oid: &str,
+    ) -> Result<bool, RelayError> {
+        let (owner, repo) = parse_git_repo_ref(repo_ref)
+            .ok_or_else(|| RelayError::Http(format!("not a git repo coordinate: {repo_ref:?}")))?;
+        if !is_git_oid(oid) {
+            return Err(RelayError::Http(format!("not a git object id: {oid:?}")));
+        }
+
+        let repo_root = format!("{}/git/{owner}/{repo}", self.base_url);
+        let auth = self.nip98_header("GET", &repo_root, None)?;
+        let url = format!("{repo_root}/info/refs?service=git-upload-pack");
+
+        let response = self
+            .http
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(|e| RelayError::Http(format!("git reachability request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "git reachability check returned HTTP {}",
+                response.status()
+            )));
+        }
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| RelayError::Http(format!("git reachability body read failed: {e}")))?;
+        if body.len() > GIT_REACHABILITY_MAX_RESPONSE_BYTES {
+            return Err(RelayError::Http(format!(
+                "git reachability response exceeded {GIT_REACHABILITY_MAX_RESPONSE_BYTES} bytes"
+            )));
+        }
+        let advertised = parse_advertised_oids(&body)
+            .ok_or_else(|| RelayError::Http("malformed git ref advertisement".to_string()))?;
+        Ok(advertised.contains(oid))
+    }
+}
+
+/// Firm cap on a reachability check's response body. The relay's own
+/// `info/refs` handler caps its advertisement at 4 MiB
+/// (`INFO_REFS_MAX_OUTPUT_BYTES`); this is a client-side backstop set
+/// comfortably above that so a well-behaved relay never trips it, while
+/// still bounding memory for whatever answered on the other end of the URL.
+const GIT_REACHABILITY_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Whether `value` is a well-formed lowercase-hex git object id (SHA-1 or
+/// SHA-256 length).
+fn is_git_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Split a NIP-MP repository coordinate (`30617:<owner-hex>:<repo-d>`) into
+/// the `(owner, repo)` path segments `buzz-relay`'s git routes expect.
+///
+/// Mirrors the grammar `validate_repo_id` enforces server-side
+/// (`crates/buzz-relay/src/api/git/transport.rs`): a 64-lowercase-hex owner
+/// pubkey and a non-empty repo `d`-tag. Returns `None` on anything that
+/// doesn't match, which `git_object_reachable` turns into "not checked"
+/// rather than guessing at a URL.
+fn parse_git_repo_ref(repo_ref: &str) -> Option<(String, String)> {
+    let mut segments = repo_ref.splitn(3, ':');
+    let (Some(kind), Some(owner), Some(repo)) = (segments.next(), segments.next(), segments.next())
+    else {
+        return None;
+    };
+    if kind.parse::<u32>() != Ok(buzz_core::kind::KIND_GIT_REPO_ANNOUNCEMENT) {
+        return None;
+    }
+    if owner.len() != 64
+        || !owner
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return None;
+    }
+    if repo.is_empty() || repo.len() > 64 {
+        return None;
+    }
+    Some((owner.to_owned(), repo.to_owned()))
+}
+
+/// Parse a git smart-HTTP `info/refs` advertisement body into the set of
+/// advertised ref-tip object ids.
+///
+/// Reads only the pkt-line envelope well enough to extract `<oid> <ref>`
+/// lines (skipping the leading `# service=...` header line and any flush
+/// packets, and trimming the first ref line's NUL-delimited capability
+/// list). `None` on any framing this minimal parser cannot make sense of —
+/// a length prefix that isn't 4 hex digits, or a length that runs past the
+/// end of the body — rather than silently returning a partial (and
+/// therefore misleadingly small) set.
+fn parse_advertised_oids(body: &[u8]) -> Option<HashSet<String>> {
+    let mut oids = HashSet::new();
+    let mut i = 0usize;
+    while i < body.len() {
+        if i + 4 > body.len() {
+            return None;
+        }
+        let len_hex = std::str::from_utf8(&body[i..i + 4]).ok()?;
+        let len = usize::from_str_radix(len_hex, 16).ok()?;
+        if len == 0 {
+            // flush-pkt
+            i += 4;
+            continue;
+        }
+        if len < 4 || len > body.len() - i {
+            return None;
+        }
+        let payload = &body[i + 4..i + len];
+        i += len;
+        let Ok(line) = std::str::from_utf8(payload) else {
+            continue;
+        };
+        let line = line.trim_end_matches('\n');
+        if line.starts_with('#') {
+            continue;
+        }
+        // The first ref line carries `<oid> <ref>\0<capabilities>`; later
+        // lines are plain `<oid> <ref>`. Splitting on NUL is a no-op for the
+        // lines that don't have one.
+        let line = line.split('\0').next().unwrap_or(line);
+        if let Some((oid, _rest)) = line.split_once(' ') {
+            if is_git_oid(oid) {
+                oids.insert(oid.to_ascii_lowercase());
+            }
+        }
+    }
+    Some(oids)
 }
 
 /// Events the harness cares about.
@@ -6380,5 +6558,267 @@ mod tests {
             !state.channel_dropped_since.contains_key(&channel_id),
             "channel_dropped_since must be cleared on successful drain"
         );
+    }
+
+    // ---- git_object_reachable (B1/D4a) ----
+
+    fn test_rest_client(base_url: &str) -> RestClient {
+        RestClient {
+            http: reqwest::Client::new(),
+            base_url: base_url.to_owned(),
+            keys: nostr::Keys::generate(),
+            auth_tag_json: None,
+        }
+    }
+
+    fn pkt_line(payload: &str) -> Vec<u8> {
+        format!("{:04x}{payload}", payload.len() + 4).into_bytes()
+    }
+
+    const FLUSH_PKT: &[u8] = b"0000";
+
+    /// Build a well-formed `info/refs` advertisement body advertising exactly
+    /// the given ref tips, all under made-up ref names.
+    fn info_refs_body(tip_oids: &[&str]) -> Vec<u8> {
+        let mut body = pkt_line("# service=git-upload-pack\n");
+        body.extend_from_slice(FLUSH_PKT);
+        for (index, oid) in tip_oids.iter().enumerate() {
+            let line = if index == 0 {
+                format!("{oid} refs/heads/ref-{index}\0multi_ack thin-pack\n")
+            } else {
+                format!("{oid} refs/heads/ref-{index}\n")
+            };
+            body.extend(pkt_line(&line));
+        }
+        body.extend_from_slice(FLUSH_PKT);
+        body
+    }
+
+    /// One captured HTTP request, for asserting method/path/headers.
+    struct MockRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+    }
+
+    /// Bind an ephemeral listener, accept exactly one HTTP/1.1 request,
+    /// capture its request line and headers, and reply with `status` and
+    /// `body`. Returns the base URL to point a [`RestClient`] at and a
+    /// receiver for the captured request.
+    async fn mock_http_once(
+        status: &str,
+        body: Vec<u8>,
+    ) -> (String, tokio::sync::oneshot::Receiver<MockRequest>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock http listener");
+        let addr = listener.local_addr().expect("mock http local addr");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let status = status.to_owned();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.expect("accept mock http conn");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).await.expect("read mock http req");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            let mut lines = text.split("\r\n");
+            let request_line = lines.next().unwrap_or_default();
+            let mut parts = request_line.split_whitespace();
+            let method = parts.next().unwrap_or_default().to_owned();
+            let path = parts.next().unwrap_or_default().to_owned();
+            let mut headers = HashMap::new();
+            for line in lines {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    headers.insert(key.trim().to_ascii_lowercase(), value.trim().to_owned());
+                }
+            }
+            let _ = tx.send(MockRequest {
+                method,
+                path,
+                headers,
+            });
+            let mut response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            response.extend(body);
+            stream
+                .write_all(&response)
+                .await
+                .expect("write mock http response");
+            let _ = stream.shutdown().await;
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    fn decode_nip98_u_tag(authorization: &str) -> String {
+        use base64::Engine;
+        let token = authorization
+            .strip_prefix("Nostr ")
+            .expect("Authorization: Nostr <base64>");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(token)
+            .expect("valid base64 credential");
+        let event: nostr::Event =
+            serde_json::from_slice(&bytes).expect("credential decodes to a nostr event");
+        event
+            .tags
+            .iter()
+            .find(|tag| tag.as_slice().first().map(String::as_str) == Some("u"))
+            .and_then(|tag| tag.as_slice().get(1))
+            .expect("NIP-98 event carries a u tag")
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_confirms_a_tip_oid() {
+        let oid = "a".repeat(40);
+        let (base_url, rx) = mock_http_once("200 OK", info_refs_body(&[&oid])).await;
+        let client = test_rest_client(&base_url);
+        let owner = "b".repeat(64);
+        let repo_ref = format!("30617:{owner}:my-repo");
+
+        let reachable = client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+        assert!(reachable);
+
+        let request = rx.await.expect("request captured");
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.path,
+            format!("/git/{owner}/my-repo/info/refs?service=git-upload-pack")
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_confirms_absence_when_advertisement_lacks_the_oid() {
+        let oid = "a".repeat(40);
+        let other = "c".repeat(40);
+        let (base_url, _rx) = mock_http_once("200 OK", info_refs_body(&[&other])).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let reachable = client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+        assert!(!reachable, "the oid was never advertised");
+    }
+
+    /// R4: the signed `u` tag must be the *repo-root* URL — no `/info/refs`,
+    /// no query string — reproducing the git credential helper's contract,
+    /// not `bridge_post`'s exact-path binding. The relay's `GitAuth`
+    /// extractor (`crates/buzz-relay/src/api/git/transport.rs`) verifies
+    /// against exactly that root, regardless of which git route the token
+    /// authorizes.
+    #[tokio::test]
+    async fn git_object_reachable_signs_the_repo_root_url_not_the_request_path() {
+        let oid = "a".repeat(40);
+        let (base_url, rx) = mock_http_once("200 OK", info_refs_body(&[&oid])).await;
+        let client = test_rest_client(&base_url);
+        let owner = "b".repeat(64);
+        let repo_ref = format!("30617:{owner}:my-repo");
+
+        client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+
+        let request = rx.await.expect("request captured");
+        let authorization = request
+            .headers
+            .get("authorization")
+            .expect("Authorization header present");
+        let signed_url = decode_nip98_u_tag(authorization);
+        assert_eq!(signed_url, format!("{base_url}/git/{owner}/my-repo"));
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_treats_a_non_success_status_as_not_checked() {
+        let oid = "a".repeat(40);
+        let (base_url, _rx) = mock_http_once("404 Not Found", Vec::new()).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let result = client.git_object_reachable(&repo_ref, &oid).await;
+        assert!(
+            result.is_err(),
+            "a 404 must not be read as confirmed absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_treats_a_malformed_response_as_not_checked() {
+        let oid = "a".repeat(40);
+        let (base_url, _rx) = mock_http_once("200 OK", b"not a pkt-line body".to_vec()).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let result = client.git_object_reachable(&repo_ref, &oid).await;
+        assert!(
+            result.is_err(),
+            "a response this parser cannot make sense of must not be read as confirmed absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_rejects_a_malformed_coordinate_without_a_request() {
+        let client = test_rest_client("http://127.0.0.1:1");
+        let result = client
+            .git_object_reachable("not-a-coordinate", &"a".repeat(40))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_git_repo_ref_accepts_the_nip_mp_grammar() {
+        let owner = "b".repeat(64);
+        let (parsed_owner, parsed_repo) =
+            parse_git_repo_ref(&format!("30617:{owner}:my-repo")).expect("valid coordinate");
+        assert_eq!(parsed_owner, owner);
+        assert_eq!(parsed_repo, "my-repo");
+    }
+
+    #[test]
+    fn parse_git_repo_ref_rejects_wrong_kind_and_malformed_owner() {
+        let owner = "b".repeat(64);
+        assert!(parse_git_repo_ref(&format!("30621:{owner}:my-repo")).is_none());
+        assert!(parse_git_repo_ref("30617:short:my-repo").is_none());
+        assert!(parse_git_repo_ref(&format!("30617:{}:", "b".repeat(64))).is_none());
+        assert!(parse_git_repo_ref("garbage").is_none());
+    }
+
+    #[test]
+    fn parse_advertised_oids_skips_the_service_header_and_reads_ref_tips() {
+        let oid_a = "a".repeat(40);
+        let oid_b = "c".repeat(40);
+        let body = info_refs_body(&[&oid_a, &oid_b]);
+        let oids = parse_advertised_oids(&body).expect("well-formed advertisement");
+        assert!(oids.contains(&oid_a));
+        assert!(oids.contains(&oid_b));
+        assert_eq!(oids.len(), 2);
+    }
+
+    #[test]
+    fn parse_advertised_oids_rejects_truncated_framing() {
+        let mut body = info_refs_body(&["a".repeat(40).as_str()]);
+        body.truncate(body.len() - 2); // cut a pkt-line length prefix in half
+        assert!(parse_advertised_oids(&body).is_none());
     }
 }

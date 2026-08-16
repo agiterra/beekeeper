@@ -1,21 +1,27 @@
 //! Bounded, best-effort git observation of a session's working directory.
 //!
-//! **Proof spike (P3).** The question this module exists to answer is whether
-//! the provider can cheaply and safely read `HEAD` and dirty state from the
-//! `cwd` it already holds on every [`crate::state::SessionRecord`]. It is
-//! deliberately minimal: two `git` invocations, each under its own timeout,
-//! every failure degrading to `None` rather than surfacing to the operator.
+//! **Proof spike (P3), extended by B1.** The question P3 exists to answer is
+//! whether the provider can cheaply and safely read `HEAD` and dirty state
+//! from the `cwd` it already holds on every [`crate::state::SessionRecord`].
+//! B1 (D4a, coordinate facts) adds the commit object id itself: P3 kept dirty
+//! state internal on purpose ("carrying that as a signed fact is a schema
+//! question"), and B1 is that schema question answered — both the commit and
+//! the dirty flag are now folded into [`crate::payload::SessionMetadata`] by
+//! [`crate::Provider::metadata_for`]. It is deliberately minimal: three `git`
+//! invocations, each under its own timeout, every failure degrading to
+//! `None` rather than surfacing to the operator.
 //!
 //! # Boundaries
 //!
 //! - **Never fatal.** [`probe`] returns [`GitProbe`] infallibly. A missing
 //!   `git`, a non-repository `cwd`, a timeout, and a repository with no commits
 //!   all produce the same shape: fields the caller must treat as unknown.
-//! - **Never leaks a host path.** Only the *branch shortname* is captured.
-//!   Nothing here runs `rev-parse --show-toplevel` or any other command whose
-//!   output is an absolute path, because the branch is published in signed
-//!   content and `no_published_event_ever_carries_the_host_working_directory`
-//!   asserts that boundary.
+//! - **Never leaks a host path.** Only the *branch shortname* and the *commit
+//!   object id* are captured — both host-independent. Nothing here runs
+//!   `rev-parse --show-toplevel` or any other command whose output is an
+//!   absolute path, because both are published in signed content and
+//!   `no_published_event_ever_carries_the_host_working_directory` asserts
+//!   that boundary.
 //! - **Never mutates the repository.** Every invocation passes
 //!   `--no-optional-locks`, so a probe cannot contend with the session's own
 //!   agent for `.git/index.lock`.
@@ -37,6 +43,13 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longest branch shortname accepted into published content.
 const MAX_BRANCH_LEN: usize = 255;
 
+/// Exact byte length of a lowercase-hex git object id under the default
+/// SHA-1 object format. A SHA-256 repository's id is 64 hex characters;
+/// both lengths are accepted so this probe does not have an opinion about
+/// which object format a checkout uses.
+const OID_LEN_SHA1: usize = 40;
+const OID_LEN_SHA256: usize = 64;
+
 /// What one bounded look at a session's working directory saw.
 ///
 /// Every field is independently optional: `None` means "not observed", never
@@ -51,29 +64,56 @@ pub struct GitProbe {
     /// non-repository, or any failure.
     pub branch: Option<String>,
     /// Whether the worktree has uncommitted changes, or `None` if not observed.
-    ///
-    /// P3 keeps this internal on purpose. Carrying dirty state as a *signed*
-    /// fact is B1's work, and a boolean smuggled into `branch` would be a
-    /// schema change wearing a disguise.
     pub dirty: Option<bool>,
+    /// The `HEAD` commit object id, lowercase hex, or `None` on a
+    /// non-repository, an unborn branch with no commits yet, or any failure.
+    ///
+    /// Captured independently of `branch`: a detached `HEAD` has no branch to
+    /// name but still has a commit, and B1's `observedCommit` fact needs to
+    /// be available in exactly that state.
+    pub commit: Option<String>,
 }
 
 /// Look at `cwd` with `git`, bounded and best effort.
 ///
-/// Runs at most two short-lived `git` processes. Neither can outlive
+/// Runs up to three short-lived `git` processes. None can outlive
 /// [`PROBE_TIMEOUT`]; `kill_on_drop` guarantees a timed-out child is reaped
 /// rather than orphaned.
 pub(crate) async fn probe(cwd: &Path) -> GitProbe {
+    // `branch` and `commit` are independent observations — a detached `HEAD`
+    // answers the second and not the first — so both always run rather than
+    // gating one on the other.
     let branch = branch(cwd).await;
-    // Skipped when the branch probe already proved this is not a repository:
-    // the second invocation could only fail the same way, and a create should
-    // not pay 7ms to re-learn it.
-    let dirty = if branch.is_some() {
+    let commit = commit(cwd).await;
+    // Skipped only when neither of the above found anything: that combination
+    // means `cwd` is not a repository (or an unborn one with no commits and
+    // a name `--show-current` still reported would have set `branch`), so the
+    // third invocation could only fail the same way.
+    let dirty = if branch.is_some() || commit.is_some() {
         dirty(cwd).await
     } else {
         None
     };
-    GitProbe { branch, dirty }
+    GitProbe {
+        branch,
+        dirty,
+        commit,
+    }
+}
+
+/// Current `HEAD` commit object id, or `None` if there is not exactly one.
+///
+/// Works on a detached `HEAD` (unlike [`branch`]) and fails the same way
+/// `branch` does on an unborn branch with no commits yet — `rev-parse HEAD`
+/// has nothing to print until the first commit exists.
+async fn commit(cwd: &Path) -> Option<String> {
+    let stdout = run_git(cwd, &["rev-parse", "HEAD"]).await?;
+    let oid = stdout.trim();
+    let valid_len = oid.len() == OID_LEN_SHA1 || oid.len() == OID_LEN_SHA256;
+    if !valid_len || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(oid.to_ascii_lowercase())
 }
 
 /// Current branch shortname, or `None` if there is not exactly one.
@@ -217,6 +257,26 @@ mod tests {
         let observed = probe(dir.path()).await;
         assert_eq!(observed.branch.as_deref(), Some("probe-branch"));
         assert_eq!(observed.dirty, Some(false));
+        let oid = observed.commit.as_deref().expect("commit observed");
+        assert_eq!(oid.len(), 40);
+        assert!(oid
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+    }
+
+    /// A second commit changes `HEAD`, and the probe reports the new tip —
+    /// proving `observedCommit` tracks the exact commit, not merely "a repo
+    /// with commits."
+    #[tokio::test]
+    async fn a_second_commit_changes_the_observed_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        repo(dir.path());
+        let first = probe(dir.path()).await.commit.expect("first commit");
+        std::fs::write(dir.path().join("b.txt"), "b").expect("write");
+        git(dir.path(), &["add", "b.txt"]);
+        commit(dir.path(), "two");
+        let second = probe(dir.path()).await.commit.expect("second commit");
+        assert_ne!(first, second);
     }
 
     #[tokio::test]
@@ -249,9 +309,30 @@ mod tests {
         assert_eq!(probe(dir.path()).await.branch, None);
     }
 
+    /// A detached `HEAD` has no branch, but it does have a commit — and
+    /// dirty state must not be silently skipped just because `branch` came
+    /// back empty. This is the case B1 exists to fix: before `commit`
+    /// stopped `probe` from gating `dirty` on `branch.is_some()`, a session
+    /// checked out at a fixed commit would have published `observedCommit`
+    /// as `null` even though `git` could answer.
+    #[tokio::test]
+    async fn a_detached_head_still_reports_its_commit_and_dirty_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        repo(dir.path());
+        git(dir.path(), &["checkout", "-q", "--detach", "HEAD"]);
+        let observed = probe(dir.path()).await;
+        assert!(observed.branch.is_none());
+        assert!(observed.commit.is_some());
+        assert_eq!(observed.dirty, Some(false));
+
+        std::fs::write(dir.path().join("a.txt"), "changed").expect("write");
+        assert_eq!(probe(dir.path()).await.dirty, Some(true));
+    }
+
     /// A freshly initialized repository has an unborn branch and no commits.
     /// `--show-current` still names it, so a session created in a repository
     /// before its first commit is not indistinguishable from a plain directory.
+    /// `rev-parse HEAD` has nothing to print yet, so `commit` stays `None`.
     #[tokio::test]
     async fn an_empty_repository_still_names_its_unborn_branch() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -259,6 +340,7 @@ mod tests {
         let observed = probe(dir.path()).await;
         assert_eq!(observed.branch.as_deref(), Some("unborn"));
         assert_eq!(observed.dirty, Some(false));
+        assert_eq!(observed.commit, None);
     }
 
     /// Proves the bound is real rather than decorative: with the ceiling driven
