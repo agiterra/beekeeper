@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { withoutEndedProjectCodingSessions } from "../lib/projectCodingSessionShelf";
 import { FolderGit2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -309,10 +310,10 @@ export function ProjectSidebarSections({
               personasById,
               managedAgentsByPubkey,
             )}
-            codingSessions={[
+            codingSessions={withoutEndedProjectCodingSessions([
               ...(sessionBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? sessionBuckets.unclaimed : []),
-            ]}
+            ])}
             streamChannels={[
               ...(channelsByProject.get(project.id) ?? []),
               ...(isGeneral ? globalChannels : []),

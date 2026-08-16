@@ -109,7 +109,14 @@ export function resolveProjectCodingSessionShelf(
         // project-placement decision or exact session action.
         sourceChannelLabel: sourceChannelLabels.get(channelId)?.trim() || null,
         runtimeLabel: buildRuntimeLabel(session),
-        status: deriveCodingSessionWorkspaceStatus(session.transcript),
+        // The lifecycle status matters here: a session ended via the durable
+        // stop command reports `stopped` in its final metadata while its
+        // transcript still ends in an ordinary turn result — transcript-only
+        // derivation would call it "Idle" forever.
+        status: deriveCodingSessionWorkspaceStatus(
+          session.transcript,
+          session.status,
+        ),
         session,
       };
     }),
@@ -235,6 +242,17 @@ function umbrellaStatusPriority(status: CodingSessionWorkspaceStatus): number {
     case "unknown":
       return 3;
   }
+}
+
+/**
+ * The sidebar shows live work: ended sessions drop out of the project group
+ * rows. They stay on the project screen's sessions list (sorted last) — that
+ * list is the archive a finished session retires to.
+ */
+export function withoutEndedProjectCodingSessions(
+  entries: readonly ProjectCodingSessionShelfEntry[],
+): ProjectCodingSessionShelfEntry[] {
+  return entries.filter((entry) => entry.status.kind !== "ended");
 }
 
 /** Split resolved entries into the per-project buckets the sidebar renders. */

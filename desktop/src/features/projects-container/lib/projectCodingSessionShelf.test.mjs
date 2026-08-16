@@ -6,6 +6,7 @@ import {
   parseActiveProjectCodingSessionPath,
   resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
+  withoutEndedProjectCodingSessions,
 } from "./projectCodingSessionShelf.ts";
 
 function session(overrides = {}) {
@@ -391,4 +392,54 @@ test("within an umbrella, an active transcripted execution beats a finished one"
   assert.equal(shelf.entries.length, 1);
   assert.equal(shelf.entries[0].generationId, "active");
   assert.equal(shelf.entries[0].status.kind, "working");
+});
+
+test("a session stopped via the durable command reads ended, not idle", () => {
+  // The provider's final 44223 says `stopped` while the transcript still ends
+  // in an ordinary turn result — the lifecycle status must win.
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          status: "stopped",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+        }),
+      },
+    ]),
+  );
+  assert.equal(entries[0].status.kind, "ended");
+});
+
+test("ended sessions leave the sidebar rows and live ones stay", () => {
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "done",
+          sessionRef: "u-done",
+          status: "stopped",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "live",
+          sessionRef: "u-live",
+          transcript: [{ type: "lifecycle", title: "Status", text: "running" }],
+        }),
+      },
+    ]),
+  );
+  assert.deepEqual(
+    withoutEndedProjectCodingSessions(entries).map((e) => e.generationId),
+    ["live"],
+  );
+  // The unfiltered list keeps the archive: ended sorts last, never vanishes.
+  assert.deepEqual(
+    entries.map((e) => e.generationId),
+    ["live", "done"],
+  );
 });
