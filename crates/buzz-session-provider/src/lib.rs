@@ -44,18 +44,22 @@ pub mod transcript;
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
-use nostr::Event;
+use nostr::{Event, Kind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use buzz_acp::relay::HarnessRelay;
 use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_genesis::{
+    decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
+};
 use buzz_core::kind::{
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -74,7 +78,8 @@ use commands::{
 use config::Config;
 use payload::{
     Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope,
-    METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
+    GENESIS_NOT_FOUND, METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
+    UNAUTHORIZED_OPERATOR,
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{
@@ -86,6 +91,10 @@ use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore}
 const OUTBOX_TICK: Duration = Duration::from_secs(2);
 /// Backlog of actor reports the provider loop will buffer.
 const SESSION_EVENT_CAPACITY: usize = 256;
+/// A genesis published immediately before its create may take a brief moment
+/// to become query-visible through the HTTP bridge.
+const GENESIS_QUERY_ATTEMPTS: usize = 4;
+const GENESIS_QUERY_RETRY_DELAY: Duration = Duration::from_millis(150);
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -459,7 +468,8 @@ impl Provider {
                 relay.unsubscribe_channel(channel_id).await?;
             }
             _ => {
-                self.handle_command_event(channel_id, event).await?;
+                self.handle_command_event_inner(channel_id, event, Some(&*relay))
+                    .await?;
             }
         }
         Ok(())
@@ -471,15 +481,33 @@ impl Provider {
         channel_id: Uuid,
         event: &Event,
     ) -> anyhow::Result<()> {
+        self.handle_command_event_inner(channel_id, event, None)
+            .await
+    }
+
+    async fn handle_command_event_inner(
+        &mut self,
+        channel_id: Uuid,
+        event: &Event,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<()> {
         let kind = u32::from(event.kind.as_u16());
         let created_at = event.created_at.as_secs();
+        let operator_pubkey = event.pubkey.to_hex();
         match kind {
             KIND_CODING_SESSION_LIFECYCLE_COMMAND => {
-                self.on_lifecycle(channel_id, created_at, &event.content)
-                    .await?;
+                self.on_lifecycle(
+                    channel_id,
+                    created_at,
+                    &operator_pubkey,
+                    &event.content,
+                    relay,
+                )
+                .await?;
             }
             KIND_CODING_SESSION_COMMAND => {
-                self.on_turn(channel_id, created_at, &event.content).await?;
+                self.on_turn(channel_id, created_at, &operator_pubkey, &event.content)
+                    .await?;
             }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
@@ -494,12 +522,19 @@ impl Provider {
         &mut self,
         channel_id: Uuid,
         created_at: u64,
+        operator_pubkey: &str,
         content: &str,
+        relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
         // Re-read on every command so an operator can fix a missing working
         // directory and republish without restarting the provider.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
-        let decision = decide_lifecycle(&self.context(&projects), channel_id, created_at, content);
+        let decision = decide_lifecycle(
+            &self.context(&projects, operator_pubkey),
+            channel_id,
+            created_at,
+            content,
+        );
         match decision {
             LifecycleDecision::Ignore(reason) => {
                 log_ignored("session.create", &reason);
@@ -516,10 +551,49 @@ impl Provider {
                 // transaction already knows how to retry under a fresh id.
                 self.state.consume_command(&command_id, now_secs())?;
                 let receipt = LifecycleReceipt::failed(&command_id, code, &message);
-                tracing::warn!(target: "csp", %command_id, code, "create rejected: {message}");
+                tracing::warn!(target: "csp", %command_id, code, "lifecycle command rejected: {message}");
                 self.enqueue_receipt(channel_id, &command_id, &receipt)
             }
-            LifecycleDecision::Create(plan) => self.create_session(*plan).await,
+            LifecycleDecision::Create(plan) => {
+                let mut plan = *plan;
+                if let Some(genesis_ref) = plan.genesis_ref.as_deref() {
+                    let founder = match relay {
+                        Some(relay) => {
+                            resolve_genesis_founder(
+                                relay,
+                                channel_id,
+                                plan.session_ref.as_deref(),
+                                genesis_ref,
+                            )
+                            .await
+                        }
+                        None => Err("no relay resolver is available for this command".into()),
+                    };
+                    match founder {
+                        Ok(founder) => plan.founder_pubkey = founder,
+                        Err(message) => {
+                            self.state.consume_command(&plan.command_id, now_secs())?;
+                            let receipt = LifecycleReceipt::failed(
+                                &plan.command_id,
+                                GENESIS_NOT_FOUND,
+                                &message,
+                            );
+                            tracing::warn!(
+                                target: "csp",
+                                command_id = %plan.command_id,
+                                genesis_ref,
+                                "genesis-bearing create rejected: {message}"
+                            );
+                            return self.enqueue_receipt(
+                                plan.channel_id,
+                                &plan.command_id,
+                                &receipt,
+                            );
+                        }
+                    }
+                }
+                self.create_session(plan).await
+            }
             LifecycleDecision::Resume(plan) => self.resume_session(plan).await,
             LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
@@ -596,6 +670,8 @@ impl Provider {
             project_ref: plan.project_ref.clone(),
             repo_ref: plan.repo_ref.clone(),
             session_ref: plan.session_ref.clone(),
+            genesis_ref: plan.genesis_ref.clone(),
+            founder_pubkey: Some(plan.founder_pubkey.clone()),
             model: startup.model.clone().or_else(|| plan.model.clone()),
             resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
@@ -810,16 +886,36 @@ impl Provider {
 
     async fn on_turn(
         &mut self,
-        _channel_id: Uuid,
+        channel_id: Uuid,
         created_at: u64,
+        operator_pubkey: &str,
         content: &str,
     ) -> anyhow::Result<()> {
         let projects = ProjectsFile::default();
-        let decision = commands::decide_turn(&self.context(&projects), created_at, content);
+        let decision = commands::decide_turn(
+            &self.context(&projects, operator_pubkey),
+            created_at,
+            content,
+        );
         let (command_id, session_id, message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
                 return Ok(());
+            }
+            TurnDecision::Fail {
+                command_id,
+                message,
+            } => {
+                self.state.consume_command(&command_id, now_secs())?;
+                let receipt =
+                    LifecycleReceipt::failed(&command_id, UNAUTHORIZED_OPERATOR, &message);
+                tracing::warn!(
+                    target: "csp",
+                    %command_id,
+                    %operator_pubkey,
+                    "turn command rejected: {message}"
+                );
+                return self.enqueue_receipt(channel_id, &command_id, &receipt);
             }
             TurnDecision::Start {
                 command_id,
@@ -859,9 +955,14 @@ impl Provider {
         Ok(())
     }
 
-    fn context<'a>(&'a self, projects: &'a ProjectsFile) -> CommandContext<'a> {
+    fn context<'a>(
+        &'a self,
+        projects: &'a ProjectsFile,
+        operator_pubkey: &'a str,
+    ) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: &self.pubkey_hex,
+            operator_pubkey,
             runtimes: &self.config.runtimes,
             instance_id: &self.config.instance_id,
             now_secs: now_secs(),
@@ -1316,6 +1417,71 @@ impl Provider {
     }
 }
 
+fn validate_genesis_envelope(
+    event: &Event,
+    channel_id: Uuid,
+    session_ref: &str,
+) -> Result<(), String> {
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    let channel = channel_id.to_string();
+    if tags.len() != 3 || tags.iter().any(|tag| tag.len() != 2) {
+        return Err("referenced genesis must carry exactly three two-field tags".into());
+    }
+    if tags[0][0] != "h" || tags[0][1] != channel {
+        return Err("referenced genesis is not scoped to the create channel".into());
+    }
+    if tags[1][0] != "csg-v" || tags[1][1] != CODING_SESSION_GENESIS_TAG_VERSION {
+        return Err("referenced genesis has an unsupported csg-v envelope".into());
+    }
+    if tags[2][0] != "csg-session" || tags[2][1] != session_ref {
+        return Err("referenced genesis csg-session does not match the create sessionRef".into());
+    }
+    Ok(())
+}
+
+/// Resolve the exact genesis named by a create, with a short visibility retry.
+///
+/// Selection is always by event id. The payload and channel are checked only
+/// after that exact event has been found; neither is ever used as a lookup.
+async fn resolve_genesis_founder(
+    relay: &HarnessRelay,
+    channel_id: Uuid,
+    session_ref: Option<&str>,
+    genesis_ref: &str,
+) -> Result<String, String> {
+    let session_ref = session_ref.ok_or_else(|| "genesisRef requires sessionRef".to_owned())?;
+    let mut last_error = None;
+    for attempt in 0..GENESIS_QUERY_ATTEMPTS {
+        match relay
+            .query_event_by_id(
+                genesis_ref,
+                Kind::Custom(KIND_CODING_SESSION_GENESIS as u16),
+            )
+            .await
+        {
+            Ok(Some(event)) => {
+                let payload = decode_coding_session_genesis(&event.content)
+                    .map_err(|error| format!("referenced genesis payload is invalid: {error}"))?;
+                if payload.session_ref != session_ref {
+                    return Err("referenced genesis names a different sessionRef".into());
+                }
+                validate_genesis_envelope(&event, channel_id, session_ref)?;
+                return Ok(event.pubkey.to_hex());
+            }
+            Ok(None) => {
+                last_error = Some("referenced genesis is not query-visible".to_owned());
+            }
+            Err(error) => {
+                last_error = Some(format!("genesis lookup failed: {error}"));
+            }
+        }
+        if attempt + 1 < GENESIS_QUERY_ATTEMPTS {
+            tokio::time::sleep(GENESIS_QUERY_RETRY_DELAY).await;
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "referenced genesis was not found".into()))
+}
+
 /// Map a turn outcome onto its terminal transcript item, the generation's next
 /// status, and whether the session can serve another turn.
 fn turn_result(
@@ -1400,8 +1566,12 @@ fn log_ignored(what: &str, reason: &Ignored) {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex, OnceLock};
 
+    use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
+    use axum::extract::State;
+    use axum::routing::{get, post};
+    use axum::{Json, Router};
     use nostr::Keys;
 
     use crate::session::testing::{fake_agent, GOOD_AGENT, RESUMABLE_AGENT, STALLING_AGENT};
@@ -1440,6 +1610,96 @@ mod tests {
     }
 
     use buzz_core::coding_session_runtime::RuntimeDescriptor;
+
+    #[derive(Clone)]
+    struct TestRelayState {
+        event: Option<Event>,
+        queries: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    async fn test_relay_ws(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
+        ws.on_upgrade(|socket| async move { serve_test_relay_socket(socket).await })
+    }
+
+    async fn serve_test_relay_socket(mut socket: WebSocket) {
+        socket
+            .send(AxumWsMessage::Text(
+                serde_json::json!(["AUTH", "genesis-unit-test"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("send auth challenge");
+        let auth = socket
+            .recv()
+            .await
+            .expect("auth response")
+            .expect("valid websocket message");
+        let AxumWsMessage::Text(auth) = auth else {
+            panic!("expected text AUTH response");
+        };
+        let auth: serde_json::Value = serde_json::from_str(auth.as_str()).expect("AUTH json");
+        let event_id = auth
+            .pointer("/1/id")
+            .and_then(serde_json::Value::as_str)
+            .expect("AUTH event id");
+        socket
+            .send(AxumWsMessage::Text(
+                serde_json::json!(["OK", event_id, true, "authenticated"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .expect("send auth OK");
+        while socket.recv().await.is_some() {}
+    }
+
+    async fn test_relay_query(
+        State(state): State<TestRelayState>,
+        Json(query): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        state.queries.lock().expect("queries lock").push(query);
+        Json(match &state.event {
+            Some(event) => serde_json::json!([event]),
+            None => serde_json::json!([]),
+        })
+    }
+
+    async fn spawn_test_relay(
+        keys: &Keys,
+        event: Option<Event>,
+    ) -> (
+        HarnessRelay,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let state = TestRelayState {
+            event,
+            queries: queries.clone(),
+        };
+        let app = Router::new()
+            .route("/", get(test_relay_ws))
+            .route("/query", post(test_relay_query))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test relay");
+        let address = listener.local_addr().expect("test relay address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test relay");
+        });
+        let relay_url = format!("ws://{address}");
+        let relay = HarnessRelay::connect(&relay_url, keys, &keys.public_key().to_hex(), None)
+            .await
+            .expect("connect test relay");
+        (relay, queries, server)
+    }
+
+    fn test_operator_keys() -> &'static Keys {
+        static KEYS: OnceLock<Keys> = OnceLock::new();
+        KEYS.get_or_init(Keys::generate)
+    }
 
     fn claude_runtime(agent_command: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
@@ -1666,6 +1926,54 @@ mod tests {
         signed_lifecycle_event(channel_id, content)
     }
 
+    fn create_event_with_genesis_ref(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        session_ref: &str,
+        genesis_ref: &str,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "sessionRef": session_ref,
+                "genesisRef": genesis_ref,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": null,
+            },
+        })
+        .to_string();
+        signed_lifecycle_event(channel_id, content)
+    }
+
+    fn genesis_event(channel_id: Uuid, session_ref: &str) -> Event {
+        let payload =
+            buzz_core::coding_session_genesis::CodingSessionGenesisPayload::new(session_ref);
+        buzz_sdk::builders::build_coding_session_genesis(channel_id, &payload)
+            .expect("genesis builder")
+            .sign_with_keys(test_operator_keys())
+            .expect("sign genesis")
+    }
+
+    fn genesis_event_with_tags(session_ref: &str, tags: Vec<nostr::Tag>) -> Event {
+        let payload =
+            buzz_core::coding_session_genesis::CodingSessionGenesisPayload::new(session_ref);
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_CODING_SESSION_GENESIS as u16),
+            serde_json::to_string(&payload).expect("genesis content"),
+        )
+        .tags(tags)
+        .sign_with_keys(test_operator_keys())
+        .expect("sign genesis")
+    }
+
     fn create_event_inner(
         provider: &Provider,
         channel_id: Uuid,
@@ -1692,6 +2000,10 @@ mod tests {
     }
 
     fn signed_lifecycle_event(channel_id: Uuid, content: String) -> Event {
+        signed_lifecycle_event_by(channel_id, content, test_operator_keys())
+    }
+
+    fn signed_lifecycle_event_by(channel_id: Uuid, content: String, keys: &Keys) -> Event {
         nostr::EventBuilder::new(
             nostr::Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
             content,
@@ -1699,7 +2011,7 @@ mod tests {
         .tags(vec![
             nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
         ])
-        .sign_with_keys(&Keys::generate())
+        .sign_with_keys(keys)
         .expect("sign")
     }
 
@@ -1747,6 +2059,16 @@ mod tests {
         target: &CodingSessionTarget,
         action: serde_json::Value,
     ) -> Event {
+        command_event_by(channel_id, command_id, target, action, test_operator_keys())
+    }
+
+    fn command_event_by(
+        channel_id: Uuid,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        action: serde_json::Value,
+        keys: &Keys,
+    ) -> Event {
         let content = serde_json::json!({
             "schema": "buzz-coding-session-command/v1",
             "commandId": command_id,
@@ -1761,7 +2083,7 @@ mod tests {
         .tags(vec![
             nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
         ])
-        .sign_with_keys(&Keys::generate())
+        .sign_with_keys(keys)
         .expect("sign")
     }
 
@@ -1804,6 +2126,274 @@ mod tests {
 
         assert_eq!(provider.state().sessions().count(), 1);
         assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn unresolved_genesis_fails_closed_with_a_receipt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = create_event_with_genesis_ref(
+            &provider,
+            channel_id,
+            "create-genesis-missing",
+            session_ref,
+            &"12".repeat(32),
+        );
+        let (mut relay, queries, server) = spawn_test_relay(&provider.config.keys, None).await;
+
+        provider
+            .handle_relay_event(&mut relay, channel_id, &event)
+            .await
+            .expect("handle");
+        assert_eq!(provider.state().sessions().count(), 0);
+        assert!(provider
+            .state()
+            .is_command_consumed("create-genesis-missing"));
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(receipts[0]["error"]["code"], GENESIS_NOT_FOUND);
+        assert_eq!(
+            queries.lock().expect("queries lock").len(),
+            GENESIS_QUERY_ATTEMPTS,
+            "a not-yet-visible genesis is retried before the refusal receipt"
+        );
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn referenced_genesis_resolves_by_id_and_create_emits_created_receipt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis = genesis_event(channel_id, session_ref);
+        let create = create_event_with_genesis_ref(
+            &provider,
+            channel_id,
+            "create-genesis-resolved",
+            session_ref,
+            &genesis.id.to_hex(),
+        );
+        let (mut relay, queries, server) =
+            spawn_test_relay(&provider.config.keys, Some(genesis.clone())).await;
+
+        provider
+            .handle_relay_event(&mut relay, channel_id, &create)
+            .await
+            .expect("resolve genesis and create");
+
+        let record = provider.state().sessions().next().expect("session record");
+        assert_eq!(
+            record.genesis_ref.as_deref(),
+            Some(genesis.id.to_hex().as_str())
+        );
+        assert_eq!(
+            record.founder_pubkey.as_deref(),
+            Some(genesis.pubkey.to_hex().as_str())
+        );
+        {
+            let captured = queries.lock().expect("queries lock");
+            assert_eq!(captured.len(), 1);
+            assert_eq!(captured[0][0]["ids"][0], genesis.id.to_hex());
+            assert_eq!(captured[0][0]["kinds"][0], KIND_CODING_SESSION_GENESIS);
+        }
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "create-genesis-resolved")
+            .expect("created receipt");
+        assert_eq!(receipt["status"], "created");
+        assert!(receipt["session"].is_object());
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn resolved_genesis_with_wrong_envelope_fails_closed_with_receipts() {
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let channel_id = Uuid::new_v4();
+        let channel = channel_id.to_string();
+        let other_channel = Uuid::new_v4().to_string();
+        let other_session_ref = "11111111-2222-3333-4444-555555555555";
+        let tag = |fields: &[&str]| nostr::Tag::parse(fields.iter().copied()).expect("tag");
+        let cases = [
+            (
+                "wrong-channel",
+                vec![
+                    tag(&["h", &other_channel]),
+                    tag(&["csg-v", CODING_SESSION_GENESIS_TAG_VERSION]),
+                    tag(&["csg-session", session_ref]),
+                ],
+            ),
+            (
+                "wrong-version",
+                vec![
+                    tag(&["h", &channel]),
+                    tag(&["csg-v", "csg1-2"]),
+                    tag(&["csg-session", session_ref]),
+                ],
+            ),
+            (
+                "wrong-session-tag",
+                vec![
+                    tag(&["h", &channel]),
+                    tag(&["csg-v", CODING_SESSION_GENESIS_TAG_VERSION]),
+                    tag(&["csg-session", other_session_ref]),
+                ],
+            ),
+            (
+                "extra-tag",
+                vec![
+                    tag(&["h", &channel]),
+                    tag(&["csg-v", CODING_SESSION_GENESIS_TAG_VERSION]),
+                    tag(&["csg-session", session_ref]),
+                    tag(&["x", "smuggled"]),
+                ],
+            ),
+        ];
+
+        for (case, tags) in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let cwd = dir.path().join("checkout");
+            std::fs::create_dir_all(&cwd).expect("mkdir");
+            let projects = write_projects(dir.path(), channel_id, &cwd);
+            let mut provider = provider(&dir.path().join("state"), Some(&projects));
+            let genesis = genesis_event_with_tags(session_ref, tags);
+            let command_id = format!("create-{case}");
+            let create = create_event_with_genesis_ref(
+                &provider,
+                channel_id,
+                &command_id,
+                session_ref,
+                &genesis.id.to_hex(),
+            );
+            let (mut relay, _queries, server) =
+                spawn_test_relay(&provider.config.keys, Some(genesis)).await;
+
+            provider
+                .handle_relay_event(&mut relay, channel_id, &create)
+                .await
+                .expect("refuse invalid envelope");
+            assert_eq!(provider.state().sessions().count(), 0, "case {case}");
+            let sink = CollectingSink::new();
+            provider.flush(&sink).await.expect("flush");
+            let receipt = sink
+                .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+                .into_iter()
+                .find(|receipt| receipt["commandId"] == command_id)
+                .expect("failure receipt");
+            assert_eq!(receipt["status"], "failed", "case {case}");
+            assert_eq!(receipt["error"]["code"], GENESIS_NOT_FOUND, "case {case}");
+
+            relay.shutdown().await;
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn non_founder_turn_stop_and_resume_each_publish_unauthorized_receipts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let create = create_event(&provider, channel_id, "create-authorized");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let record = provider.state().sessions().next().expect("session");
+        assert_eq!(
+            record.founder_pubkey.as_deref(),
+            Some(create.pubkey.to_hex().as_str()),
+            "legacy authority is the locally witnessed create signer"
+        );
+        let target = record.target(&provider.config.instance_id);
+        let stranger = Keys::generate();
+
+        let turn = command_event_by(
+            channel_id,
+            "turn-unauthorized",
+            &target,
+            serde_json::json!({ "type": "thread.turn.start", "text": "no" }),
+            &stranger,
+        );
+        let stop_content = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "stop-unauthorized",
+            "session.stop",
+            &target,
+        )
+        .content;
+        let stop = signed_lifecycle_event_by(channel_id, stop_content, &stranger);
+        let resume_content = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "resume-unauthorized",
+            "session.resume",
+            &target,
+        )
+        .content;
+        let resume = signed_lifecycle_event_by(channel_id, resume_content, &stranger);
+
+        for event in [&turn, &stop, &resume] {
+            provider
+                .handle_command_event(channel_id, event)
+                .await
+                .expect("refuse");
+        }
+        assert!(
+            !provider
+                .state()
+                .session(&target.session_id)
+                .expect("session")
+                .closed
+        );
+        assert_eq!(
+            provider
+                .state()
+                .session(&target.session_id)
+                .expect("session")
+                .generation,
+            1
+        );
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        for command_id in [
+            "turn-unauthorized",
+            "stop-unauthorized",
+            "resume-unauthorized",
+        ] {
+            let receipt = receipts
+                .iter()
+                .find(|receipt| receipt["commandId"] == command_id)
+                .expect("unauthorized receipt");
+            assert_eq!(receipt["status"], "failed");
+            assert_eq!(receipt["error"]["code"], UNAUTHORIZED_OPERATOR);
+            assert!(provider.state().is_command_consumed(command_id));
+        }
     }
 
     /// Initialize `cwd` as a repository on `branch` with one commit.
@@ -2631,6 +3221,8 @@ mod tests {
                     project_ref: None,
                     repo_ref: None,
                     session_ref: None,
+                    genesis_ref: None,
+                    founder_pubkey: Some("ab".repeat(32)),
                     model: None,
                     resume_cursor: Some("private-acp-cursor".into()),
                     title: None,

@@ -24,8 +24,9 @@ Provider-neutral rendering after creation uses the signed
 >    the `30178:` team-catalog kind; sessions here bind to NIP-MP projects
 >    (`kind:30621`) and nothing else.
 > 4. **`sessionRef` groups executions into an umbrella session.** A nullable,
->    client-minted UUID added after v1 shipped; the action is exactly the
->    historical 8-key form or exactly the 9-key form including it. See below.
+>    client-minted UUID added after v1 shipped. Authority-aware creates also
+>    carry `genesisRef`, the exact founder event id. The action has exactly the
+>    historical 8-key, 9-key `sessionRef`, or 10-key linked form. See below.
 > 5. **Continuation is generation-fenced.** `session.resume` and
 >    `session.stop` address an exact published `cs-target`. Resume never carries
 >    the provider's opaque ACP cursor; that cursor remains host-private. A
@@ -46,6 +47,7 @@ an explicit `null`, and additional or missing fields are invalid:
     "projectRef": "30621:<lowercase-64-hex-owner>:<project-d>",
     "repoRef": "30617:owner:repository",
     "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+    "genesisRef": "64-lowercase-hex-genesis-event-id",
     "providerInstanceRef": "capability-advertised-instance",
     "providerAuthorityPubkey": "64-lowercase-hex-catalog-signer",
     "model": "provider-neutral-model-id",
@@ -102,7 +104,8 @@ for a successful turn when metadata is absent.
 authority is exactly the lowercase 64-hex signer of the selected
 [provider-catalog](NIP-CSPC.md) event; it addresses the command to one adapter
 even when several share a channel. `projectRef`, `repoRef`, `sessionRef`, `model`,
-`title`, and `initialTurn` are nullable; a present string must be nonempty
+`title`, and `initialTurn` are nullable; `genesisRef`, when its key is present,
+must be a non-null lowercase 64-hex event id. A present string must be nonempty
 after trimming (`sessionRef` carries its own stricter shape, below). Limits are
 UTF-8 byte limits:
 
@@ -152,13 +155,12 @@ semantics, an implicit umbrella of one.
 in the schema from v1, so its key is structurally required and only its value
 may be `null`. `sessionRef` was added to an already-deployed schema: signed
 v1 events without the key exist and must stay valid forever. The action is
-therefore **exactly the 8-key v1 set, or exactly the 9-key set including
-`sessionRef`** — nothing between, nothing beyond. New producers always write
-the key (explicit `null` or a UUID); the 8-key form is accepted only as the
-historical form. This is the versioned additive discipline the explicit-null
-rule exists to protect: an omitted key on a *new* event is still
-indistinguishable from truncation, so new clients never omit it — but the
-decoder cannot reject the past.
+therefore **exactly the 8-key v1 set, exactly the 9-key set including
+`sessionRef`, or exactly the 10-key set including both `sessionRef` and
+`genesisRef`** — nothing between, nothing beyond. `genesisRef` without a
+non-null `sessionRef` is invalid. New producers always write `sessionRef`
+(explicit `null` or a UUID); authority-aware producers add `genesisRef`. The
+8-key form is accepted only as historical replay.
 
 Optional is still not unvalidated. The reference travels in no tag, so nothing
 downstream normalizes it; two clients agree on umbrella membership only if the
@@ -167,11 +169,12 @@ uppercase hex, braces, URN prefixes, and truncations are rejected rather than
 coerced, because a non-canonical spelling would silently split an umbrella in
 two.
 
-No tag carries the reference, so umbrella and non-umbrella creates produce
-identically shaped envelopes — the same property `projectRef` has. The relay
-learns nothing new: it validates through this same decoder and remains a
-validating store. Grouping, founder authority (the signer of the earliest
-create bearing a `sessionRef`), and rendering are consumer concerns.
+No tag carries either reference. A `genesisRef` is resolved only by its event
+id; consumers MUST NOT select authority by querying a genesis tag or by
+choosing among events with the same `sessionRef`. The resolved genesis must be
+signature-valid, kind 44226, scoped to the create's channel, and carry the
+same `sessionRef`. Its signer is the founder. Creates without `genesisRef`
+retain the interim legacy projection: founder is the founding create signer.
 
 The provider echoes a claimed reference into `kind:44223` metadata as an
 *optional* `sessionRef` key — emitted only when non-null, never as an explicit
@@ -250,6 +253,11 @@ statuses, lifecycle continuation uses:
   `error` is `{ "code": "CONTEXT_NOT_RECOVERED", "message": "..." }`;
 - `stopped`: `session` is the stopped exact target and `error` is `null`;
 - `failed`: unchanged, with `session: null` and a stable error object.
+
+Authority refusals use stable codes: `GENESIS_NOT_FOUND` when an exact genesis
+cannot be resolved and verified, and `UNAUTHORIZED_OPERATOR` when a turn,
+interrupt, stop, or resume signer is not the cached founder. Both are durable
+receipts; the provider must never execute or silently discard these cases.
 
 An old consumer that does not recognize a new status rejects that receipt; it
 must never coerce the outcome into `created`. The new generation's metadata and

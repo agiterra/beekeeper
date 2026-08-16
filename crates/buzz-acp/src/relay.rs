@@ -454,6 +454,44 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Resolve one signed event by its exact id and expected kind.
+    ///
+    /// The explicit kind keeps the bridge query within the relay's p-gate;
+    /// callers must still validate any domain-specific payload and tags.
+    pub async fn query_event_by_id(
+        &self,
+        event_id: &str,
+        expected_kind: Kind,
+    ) -> Result<Option<Event>, RelayError> {
+        let id = nostr::EventId::from_hex(event_id)
+            .map_err(|error| RelayError::Http(format!("invalid event id: {error}")))?;
+        let value = self
+            .query(&[nostr::Filter::new().id(id).kind(expected_kind)])
+            .await?;
+        let rows = value
+            .as_array()
+            .ok_or_else(|| RelayError::Http("expected JSON array from /query (event id)".into()))?;
+        if rows.len() > 1 {
+            return Err(RelayError::Http(format!(
+                "event-id query returned {} rows",
+                rows.len()
+            )));
+        }
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let event: Event = serde_json::from_value(row.clone())?;
+        event.verify().map_err(|error| {
+            RelayError::Http(format!("queried event failed verification: {error}"))
+        })?;
+        if event.id != id || event.kind != expected_kind {
+            return Err(RelayError::Http(
+                "event-id query returned a mismatched event".into(),
+            ));
+        }
+        Ok(Some(event))
+    }
+
     /// Count events via the HTTP bridge: `POST /count` with NIP-98 auth.
     ///
     /// Accepts a slice of `nostr::Filter` (serialized as JSON array).
@@ -952,6 +990,17 @@ impl HarnessRelay {
             .await
             .map_err(|_| RelayError::ConnectionClosed)?;
         Ok(())
+    }
+
+    /// Resolve one signed event through the authenticated HTTP bridge.
+    pub async fn query_event_by_id(
+        &self,
+        event_id: &str,
+        expected_kind: Kind,
+    ) -> Result<Option<Event>, RelayError> {
+        self.rest_client()
+            .query_event_by_id(event_id, expected_kind)
+            .await
     }
 }
 

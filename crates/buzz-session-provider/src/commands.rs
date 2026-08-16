@@ -23,7 +23,9 @@ use buzz_core::coding_session_lifecycle_command::{
 };
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
-use crate::payload::{PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_LIMIT};
+use crate::payload::{
+    PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_LIMIT, UNAUTHORIZED_OPERATOR,
+};
 use crate::state::StateStore;
 
 /// Why a command produced no side effect.
@@ -85,6 +87,11 @@ pub struct CreatePlan {
     pub repo_ref: Option<String>,
     /// Umbrella session reference from the create, or `None` when unclaimed.
     pub session_ref: Option<String>,
+    /// Explicit genesis event id to resolve before execution starts.
+    pub genesis_ref: Option<String>,
+    /// Locally witnessed create signer, replaced by the explicitly referenced
+    /// genesis signer for authority-aware creates.
+    pub founder_pubkey: String,
     /// Requested model, or `None`.
     pub model: Option<String>,
     /// Operator-facing title, or `None`.
@@ -120,6 +127,13 @@ pub struct StopPlan {
 pub enum TurnDecision {
     /// Do nothing.
     Ignore(Ignored),
+    /// Refuse visibly because the signer lacks session authority.
+    Fail {
+        /// The command being answered.
+        command_id: String,
+        /// Operator-facing detail.
+        message: String,
+    },
     /// Deliver a prompt to a live session.
     Start {
         /// The command being answered.
@@ -142,6 +156,8 @@ pub enum TurnDecision {
 pub struct CommandContext<'a> {
     /// This provider's signing pubkey, lowercase hex.
     pub provider_pubkey: &'a str,
+    /// Pubkey that signed the command currently being decided.
+    pub operator_pubkey: &'a str,
     /// Every runtime this provider offers.
     pub runtimes: &'a [RuntimeDescriptor],
     /// Instance id in every `cs-target` this provider mints.
@@ -220,6 +236,13 @@ pub fn decide_lifecycle(
         if record.generation != session.generation {
             return LifecycleDecision::Ignore(Ignored::StaleGeneration);
         }
+        if !operator_has_authority(record, context.operator_pubkey) {
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: UNAUTHORIZED_OPERATOR,
+                message: "only the session founder may stop or resume this execution".into(),
+            };
+        }
 
         return match &payload.action {
             CodingSessionLifecycleAction::SessionResume { .. } if record.closed => {
@@ -245,6 +268,7 @@ pub fn decide_lifecycle(
         project_ref,
         repo_ref,
         session_ref,
+        genesis_ref,
         provider_instance_ref,
         provider_authority_pubkey: _,
         model,
@@ -315,6 +339,8 @@ pub fn decide_lifecycle(
         project_ref: project_ref.clone(),
         repo_ref: repo_ref.clone(),
         session_ref: session_ref.clone(),
+        genesis_ref: genesis_ref.clone(),
+        founder_pubkey: context.operator_pubkey.to_owned(),
         model: model.clone(),
         title: title.clone(),
         initial_turn: initial_turn.clone(),
@@ -351,6 +377,12 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     if record.generation != command.target.generation {
         return TurnDecision::Ignore(Ignored::StaleGeneration);
     }
+    if !operator_has_authority(record, context.operator_pubkey) {
+        return TurnDecision::Fail {
+            command_id: command.command_id,
+            message: "only the session founder may steer this execution".into(),
+        };
+    }
     if record.closed {
         return TurnDecision::Ignore(Ignored::SessionClosed);
     }
@@ -365,6 +397,16 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
             command_id: command.command_id,
             target: command.target,
         },
+    }
+}
+
+/// Check only authority facts persisted when this provider witnessed the
+/// create. Old no-genesis records predate that field and remain ungoverned;
+/// genesis-bearing records can never fall open when their founder is absent.
+fn operator_has_authority(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
+    match record.founder_pubkey.as_deref() {
+        Some(founder) => founder == operator_pubkey,
+        None => record.genesis_ref.is_none(),
     }
 }
 
@@ -543,6 +585,7 @@ mod tests {
     ) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: AUTHORITY,
+            operator_pubkey: AUTHORITY,
             runtimes: runtimes(),
             instance_id: "instance-1",
             now_secs,
@@ -596,6 +639,8 @@ mod tests {
             project_ref: None,
             repo_ref: None,
             session_ref: None,
+            genesis_ref: None,
+            founder_pubkey: Some(AUTHORITY.into()),
             model: None,
             resume_cursor: None,
             title: None,
@@ -859,6 +904,62 @@ mod tests {
             ),
             LifecycleDecision::Ignore(Ignored::StaleGeneration)
         );
+    }
+
+    #[test]
+    fn pre_authority_legacy_records_stay_ungoverned_but_genesis_never_falls_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let projects = ProjectsFile::default();
+
+        let mut legacy_state = store(&dir.path().join("legacy"));
+        let mut legacy = session("legacy", dir.path());
+        legacy.founder_pubkey = None;
+        legacy_state.insert_session(legacy).expect("insert legacy");
+        assert!(matches!(
+            decide_turn(
+                &ctx(&legacy_state, &projects, 1_000),
+                1_000,
+                &turn_content("turn-legacy", "legacy", 1),
+            ),
+            TurnDecision::Start { .. }
+        ));
+        assert!(matches!(
+            decide_lifecycle(
+                &ctx(&legacy_state, &projects, 1_000),
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-legacy", "legacy", 1),
+            ),
+            LifecycleDecision::Stop(_)
+        ));
+
+        let mut genesis_state = store(&dir.path().join("genesis"));
+        let mut unresolved = session("genesis", dir.path());
+        unresolved.genesis_ref = Some("12".repeat(32));
+        unresolved.founder_pubkey = None;
+        genesis_state
+            .insert_session(unresolved)
+            .expect("insert genesis");
+        assert!(matches!(
+            decide_turn(
+                &ctx(&genesis_state, &projects, 1_000),
+                1_000,
+                &turn_content("turn-genesis", "genesis", 1),
+            ),
+            TurnDecision::Fail { .. }
+        ));
+        assert!(matches!(
+            decide_lifecycle(
+                &ctx(&genesis_state, &projects, 1_000),
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-genesis", "genesis", 1),
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
     }
 
     #[test]

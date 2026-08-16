@@ -21,10 +21,11 @@
 //! lowercase UUID grouping several provider executions into one user-facing
 //! umbrella session. Unlike `projectRef`, this field was added *after* the v1
 //! schema shipped, so signed events without the key exist and must stay valid
-//! forever. The decoder therefore accepts exactly the historical 8-key action
-//! or exactly the 9-key action including `sessionRef` — nothing between,
-//! nothing beyond. New producers always write the key (explicit `null` or a
-//! UUID); only the past may omit it. See `docs/nips/NIP-CSL.md`.
+//! forever. The decoder therefore accepts exactly one of three forms: the
+//! historical 8-key action, the 9-key action including `sessionRef`, or the
+//! 10-key action including both `sessionRef` and `genesisRef`. `genesisRef`
+//! can never appear without `sessionRef`; nothing between or beyond those
+//! forms is accepted. See `docs/nips/NIP-CSL.md`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -82,6 +83,13 @@ pub enum CodingSessionLifecycleAction {
         /// `None` both from an explicit `null` and from the historical 8-key
         /// form that predates the field.
         session_ref: Option<String>,
+        /// Optional event id of the immutable genesis founding this umbrella.
+        ///
+        /// Emitted only for the 10-key authority-aware form. A present
+        /// reference requires a present `sessionRef`; consumers resolve it by
+        /// event id rather than querying by the umbrella label.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        genesis_ref: Option<String>,
         /// Required capability-advertised provider instance reference.
         provider_instance_ref: String,
         /// Required signing pubkey of the selected provider catalog authority.
@@ -139,6 +147,7 @@ impl CodingSessionLifecycleCommandPayload {
                 project_ref,
                 repo_ref,
                 session_ref,
+                genesis_ref,
                 provider_instance_ref,
                 provider_authority_pubkey,
                 model,
@@ -155,6 +164,14 @@ impl CodingSessionLifecycleCommandPayload {
                 }
                 if let Some(session_ref) = session_ref {
                     validate_session_ref(session_ref)?;
+                }
+                if let Some(genesis_ref) = genesis_ref {
+                    if session_ref.is_none() {
+                        return Err(
+                            "action.genesisRef requires a non-null action.sessionRef".into()
+                        );
+                    }
+                    validate_event_id_hex("action.genesisRef", genesis_ref)?;
                 }
                 validate_optional(repo_ref, "action.repoRef", MAX_LIFECYCLE_REFERENCE_BYTES)?;
                 validate_required(
@@ -191,9 +208,9 @@ impl CodingSessionLifecycleCommandPayload {
 ///
 /// Nullable action fields must be present explicitly, even when their value is
 /// `null`. Unknown, duplicate, or missing fields are rejected. The one
-/// exception is `sessionRef`, added after v1 shipped: the action must carry
-/// exactly the historical 8-key set or exactly the 9-key set including
-/// `sessionRef` — an omitted key is accepted only as the historical form.
+/// exceptions are the additive authority fields: create carries exactly the
+/// historical 8-key set, the 9-key set including `sessionRef`, or the 10-key
+/// set including both `sessionRef` and `genesisRef`.
 pub fn decode_coding_session_lifecycle_command(
     content: &str,
 ) -> Result<CodingSessionLifecycleCommandPayload, String> {
@@ -210,21 +227,56 @@ pub fn decode_coding_session_lifecycle_command(
         .get("action")
         .ok_or_else(|| "coding-session lifecycle command payload missing action".to_string())?;
     match action.get("type").and_then(Value::as_str) {
-        Some("session.create") => require_exact_fields_with_optional(
-            action,
-            &[
-                "type",
-                "projectRef",
-                "repoRef",
-                "providerInstanceRef",
-                "providerAuthorityPubkey",
-                "model",
-                "title",
-                "initialTurn",
-            ],
-            &["sessionRef"],
-            "action",
-        )?,
+        Some("session.create") => {
+            require_exact_field_forms(
+                action,
+                &[
+                    &[
+                        "type",
+                        "projectRef",
+                        "repoRef",
+                        "providerInstanceRef",
+                        "providerAuthorityPubkey",
+                        "model",
+                        "title",
+                        "initialTurn",
+                    ],
+                    &[
+                        "type",
+                        "projectRef",
+                        "repoRef",
+                        "sessionRef",
+                        "providerInstanceRef",
+                        "providerAuthorityPubkey",
+                        "model",
+                        "title",
+                        "initialTurn",
+                    ],
+                    &[
+                        "type",
+                        "projectRef",
+                        "repoRef",
+                        "sessionRef",
+                        "genesisRef",
+                        "providerInstanceRef",
+                        "providerAuthorityPubkey",
+                        "model",
+                        "title",
+                        "initialTurn",
+                    ],
+                ],
+                "action",
+            )?;
+            if action.get("genesisRef").is_some()
+                && (action.get("sessionRef").and_then(Value::as_str).is_none()
+                    || action.get("genesisRef").and_then(Value::as_str).is_none())
+            {
+                return Err(
+                    "coding-session lifecycle command action.genesisRef requires non-null string sessionRef and genesisRef"
+                        .into(),
+                );
+            }
+        }
         Some("session.resume" | "session.stop") => require_exact_fields(
             action,
             &["type", "session", "providerAuthorityPubkey"],
@@ -308,6 +360,18 @@ pub fn validate_session_ref(session_ref: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Check that a Nostr event reference is canonical lowercase 64-hex.
+pub fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{field} must be a lowercase 64-hex event id"));
+    }
+    Ok(())
+}
+
 fn require_exact_fields(value: &Value, expected: &[&str], field: &str) -> Result<(), String> {
     require_exact_fields_with_optional(value, expected, &[], field)
 }
@@ -335,6 +399,25 @@ fn require_exact_fields_with_optional(
         ));
     }
     Ok(())
+}
+
+fn require_exact_field_forms(
+    value: &Value,
+    accepted: &[&[&str]],
+    field: &str,
+) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("coding-session lifecycle command {field} must be an object"))?;
+    if accepted
+        .iter()
+        .any(|keys| object.len() == keys.len() && keys.iter().all(|key| object.contains_key(*key)))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "coding-session lifecycle command {field} has missing or unsupported fields"
+    ))
 }
 
 fn validate_required(value: &str, field: &str, max_bytes: usize) -> Result<(), String> {
@@ -401,6 +484,7 @@ mod tests {
                 project_ref: Some(project_coordinate()),
                 repo_ref: Some("30617:owner:amas-redux".into()),
                 session_ref: Some(session_reference()),
+                genesis_ref: Some("12".repeat(32)),
                 provider_instance_ref: "claude-primary".into(),
                 provider_authority_pubkey: "ab".repeat(32),
                 model: Some("claude-sonnet-4-6".into()),
@@ -423,6 +507,17 @@ mod tests {
     fn lifecycle_content_with_session_ref(session_ref_json: &str) -> String {
         format!(
             r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":{session_ref_json},"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
+            "ab".repeat(32)
+        )
+    }
+
+    /// The authority-aware 10-key action carries both references.
+    fn lifecycle_content_with_genesis_ref(
+        session_ref_json: &str,
+        genesis_ref_json: &str,
+    ) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":{session_ref_json},"genesisRef":{genesis_ref_json},"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
             "ab".repeat(32)
         )
     }
@@ -526,10 +621,10 @@ mod tests {
     }
 
     /// Fork amendment: the action is exactly the historical 8-key form or
-    /// exactly the 9-key form with `sessionRef` — both decode, and the 8-key
-    /// form reads as "no umbrella claimed".
+    /// exactly the 9-key form with `sessionRef`, or exactly the 10-key form
+    /// with both references. The 8-key form reads as "no umbrella claimed".
     #[test]
-    fn accepts_both_the_8_key_and_9_key_action_forms() {
+    fn accepts_exactly_the_8_key_9_key_and_10_key_action_forms() {
         let historical = lifecycle_content("null");
         let decoded = decode_coding_session_lifecycle_command(&historical).unwrap();
         let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &decoded.action
@@ -556,11 +651,56 @@ mod tests {
             panic!("expected create action")
         };
         assert_eq!(session_ref.as_deref(), Some(session_reference().as_str()));
+
+        let genesis_ref = "12".repeat(32);
+        let linked = lifecycle_content_with_genesis_ref(
+            &format!("\"{}\"", session_reference()),
+            &format!("\"{genesis_ref}\""),
+        );
+        let decoded = decode_coding_session_lifecycle_command(&linked).unwrap();
+        let CodingSessionLifecycleAction::SessionCreate {
+            session_ref,
+            genesis_ref: decoded_genesis_ref,
+            ..
+        } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
+        assert_eq!(session_ref.as_deref(), Some(session_reference().as_str()));
+        assert_eq!(decoded_genesis_ref.as_deref(), Some(genesis_ref.as_str()));
     }
 
-    /// New producers always write the key: the serializer emits `sessionRef`
-    /// even when no umbrella is claimed, so an omitted key stays exclusively a
-    /// historical artifact and never something a new signer produces.
+    #[test]
+    fn genesis_ref_is_non_null_canonical_and_requires_session_ref() {
+        let session_ref = format!("\"{}\"", session_reference());
+        for rejected_genesis in ["null".to_owned(), "\"short\"".to_owned()] {
+            assert!(
+                decode_coding_session_lifecycle_command(&lifecycle_content_with_genesis_ref(
+                    &session_ref,
+                    &rejected_genesis
+                ))
+                .is_err()
+            );
+        }
+        assert!(
+            decode_coding_session_lifecycle_command(&lifecycle_content_with_genesis_ref(
+                "null",
+                &format!("\"{}\"", "12".repeat(32))
+            ))
+            .is_err()
+        );
+
+        let mut payload = valid_payload();
+        let CodingSessionLifecycleAction::SessionCreate { session_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
+        *session_ref = None;
+        assert!(payload.validate().is_err());
+    }
+
+    /// Authority-aware producers write both keys; legacy serializers keep
+    /// emitting the 9-key `sessionRef` form when no genesis is named.
     #[test]
     fn new_producers_always_write_the_session_ref_key() {
         let mut payload = valid_payload();
@@ -569,6 +709,11 @@ mod tests {
             panic!("expected create action")
         };
         *session_ref = None;
+        let CodingSessionLifecycleAction::SessionCreate { genesis_ref, .. } = &mut payload.action
+        else {
+            panic!("expected create action")
+        };
+        *genesis_ref = None;
         let content = serde_json::to_string(&payload).unwrap();
         assert!(content.contains("\"sessionRef\":null"));
         assert_eq!(
@@ -619,11 +764,9 @@ mod tests {
         assert!(payload.validate().is_err());
     }
 
-    /// "8-key or 9-key" admits nothing between and nothing beyond: an action
-    /// that trades a required key for `sessionRef`, or that carries a tenth
-    /// key alongside it, is rejected.
+    /// The three exact forms admit nothing between and nothing beyond.
     #[test]
-    fn rejects_action_shapes_between_and_beyond_the_two_forms() {
+    fn rejects_action_shapes_between_and_beyond_the_three_forms() {
         // 8 keys, but sessionRef standing in for the required repoRef.
         let swapped = format!(
             r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"sessionRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
@@ -631,12 +774,30 @@ mod tests {
         );
         assert!(decode_coding_session_lifecycle_command(&swapped).is_err());
 
-        // 10 keys: the 9-key form plus a smuggled host path.
+        // 10 keys, but not the accepted 10-key form: smuggled host path.
         let beyond = format!(
             r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null,"cwd":"/tmp"}}}}"#,
             "ab".repeat(32)
         );
         assert!(decode_coding_session_lifecycle_command(&beyond).is_err());
+
+        // A 9-key form with genesisRef but no sessionRef is never authority-
+        // bearing: it is rejected structurally before semantic validation.
+        let genesis_without_session = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"genesisRef":"{}","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null}}}}"#,
+            "12".repeat(32),
+            "ab".repeat(32)
+        );
+        assert!(decode_coding_session_lifecycle_command(&genesis_without_session).is_err());
+
+        // 11 keys: the accepted 10-key form plus smuggled content.
+        let beyond_authority = format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":"{}","genesisRef":"{}","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}","model":null,"title":null,"initialTurn":null,"cwd":"/tmp"}}}}"#,
+            session_reference(),
+            "12".repeat(32),
+            "ab".repeat(32)
+        );
+        assert!(decode_coding_session_lifecycle_command(&beyond_authority).is_err());
     }
 
     #[test]

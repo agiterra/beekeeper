@@ -1374,6 +1374,7 @@ name = "buzz-session-provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "buzz-acp",
  "buzz-core",
  "buzz-sdk",

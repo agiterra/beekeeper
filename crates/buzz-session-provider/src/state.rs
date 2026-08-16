@@ -74,6 +74,13 @@ pub struct SessionRecord {
     /// field existed — those creates could not have claimed an umbrella.
     #[serde(default)]
     pub session_ref: Option<String>,
+    /// Explicit genesis event id for authority-aware sessions.
+    #[serde(default)]
+    pub genesis_ref: Option<String>,
+    /// Founder pubkey resolved from genesis, or the locally witnessed create
+    /// signer for legacy sessions. `None` is retained for pre-field records.
+    #[serde(default)]
+    pub founder_pubkey: Option<String>,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
     /// Opaque ACP session id used only to reattach this host's adapter.
@@ -481,6 +488,8 @@ mod tests {
             project_ref: None,
             repo_ref: None,
             session_ref: None,
+            genesis_ref: None,
+            founder_pubkey: Some("ab".repeat(32)),
             model: None,
             resume_cursor: None,
             title: None,
@@ -643,18 +652,21 @@ mod tests {
         assert!(store.allocate_seq("ghost").expect("allocate").is_none());
     }
 
-    /// Records written before `sessionRef` existed must still load, and they
-    /// load with no umbrella — the only claim those creates could have made.
+    /// Records written before the umbrella and authority fields existed still
+    /// load as ungoverned legacy executions; no authority is inferred.
     #[test]
-    fn pre_session_ref_records_load_with_no_umbrella() {
+    fn pre_authority_records_load_ungoverned_without_inference() {
         let mut value = serde_json::to_value(record("s1")).expect("serialize");
-        value
-            .as_object_mut()
-            .expect("object")
-            .remove("sessionRef")
-            .expect("field present in current records");
+        let object = value.as_object_mut().expect("object");
+        for field in ["sessionRef", "genesisRef", "founderPubkey"] {
+            object
+                .remove(field)
+                .expect("field present in current records");
+        }
         let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
         assert!(loaded.session_ref.is_none());
+        assert!(loaded.genesis_ref.is_none());
+        assert!(loaded.founder_pubkey.is_none());
     }
 
     /// Records written before the runtime fields existed must still load, and

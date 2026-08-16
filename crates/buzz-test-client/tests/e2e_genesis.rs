@@ -233,6 +233,7 @@ async fn genesis_adoption_validates_referenced_history_live() {
             project_ref: None,
             repo_ref: None,
             session_ref: Some(session_ref.clone()),
+            genesis_ref: None,
             provider_instance_ref: "claude-primary".to_string(),
             provider_authority_pubkey: provider_pubkey_hex.clone(),
             model: None,
@@ -426,4 +427,74 @@ async fn genesis_adoption_validates_referenced_history_live() {
     founder_ws.disconnect().await.expect("founder disconnect");
     provider_ws.disconnect().await.expect("provider disconnect");
     outsider_ws.disconnect().await.expect("outsider disconnect");
+}
+
+/// End-to-end bootstrap happy path: a fresh genesis is accepted first, then
+/// the founder's create explicitly names that exact event id. This is the
+/// only authority join consumers and providers may follow; the diagnostic
+/// `csg-session` tag is deliberately not used for selection.
+#[tokio::test]
+#[ignore]
+async fn genesis_is_linked_from_session_create_live() {
+    let url = relay_url();
+    let founder = Keys::generate();
+    let channel_id = create_test_channel(&founder).await;
+    let mut founder_ws = BuzzTestClient::connect(&url, &founder)
+        .await
+        .expect("founder connect");
+
+    let provider = Keys::generate();
+    let mut provider_ws = BuzzTestClient::connect(&url, &provider)
+        .await
+        .expect("provider connect");
+    join_channel(&mut provider_ws, &provider, channel_id).await;
+
+    let session_ref = Uuid::new_v4().to_string();
+    let genesis = build_coding_session_genesis(
+        channel_id,
+        &CodingSessionGenesisPayload::new(session_ref.clone()),
+    )
+    .expect("build genesis")
+    .sign_with_keys(&founder)
+    .expect("sign genesis");
+    let genesis_ref = genesis.id.to_hex();
+    let genesis_ok = founder_ws.send_event(genesis).await.expect("send genesis");
+    assert!(
+        genesis_ok.accepted,
+        "founding genesis should be accepted: {}",
+        genesis_ok.message
+    );
+
+    let command_id = format!("create-{}", Uuid::new_v4());
+    let create_payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_string(),
+        command_id: command_id.clone(),
+        action: CodingSessionLifecycleAction::SessionCreate {
+            project_ref: None,
+            repo_ref: None,
+            session_ref: Some(session_ref),
+            genesis_ref: Some(genesis_ref.clone()),
+            provider_instance_ref: "claude-primary".to_string(),
+            provider_authority_pubkey: provider.public_key().to_hex(),
+            model: None,
+            title: Some("Genesis link E2E".to_string()),
+            initial_turn: None,
+        },
+    };
+    let create = build_coding_session_lifecycle_command(channel_id, &create_payload)
+        .expect("build genesis-bearing create")
+        .sign_with_keys(&founder)
+        .expect("sign genesis-bearing create");
+    let create_ok = founder_ws
+        .send_event(create)
+        .await
+        .expect("send genesis-bearing create");
+    assert!(
+        create_ok.accepted,
+        "create linked to accepted genesis {genesis_ref} should be accepted: {}",
+        create_ok.message
+    );
+
+    founder_ws.disconnect().await.expect("founder disconnect");
+    provider_ws.disconnect().await.expect("provider disconnect");
 }

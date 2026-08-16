@@ -47,6 +47,10 @@ pub const PROVIDER_UNAVAILABLE: &str = "PROVIDER_UNAVAILABLE";
 pub const SESSION_ALREADY_ATTACHED: &str = "SESSION_ALREADY_ATTACHED";
 /// A new generation started, but the provider could not recover prior context.
 pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
+/// A create named a genesis event that could not be resolved and verified.
+pub const GENESIS_NOT_FOUND: &str = "GENESIS_NOT_FOUND";
+/// The command signer is not authorized to operate the addressed session.
+pub const UNAUTHORIZED_OPERATOR: &str = "UNAUTHORIZED_OPERATOR";
 
 /// Lifecycle outcome for exactly one create, resume, or stop command (kind 44224).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
