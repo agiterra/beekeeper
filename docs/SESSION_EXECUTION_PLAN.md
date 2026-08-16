@@ -291,6 +291,16 @@ common owner==launcher case (it must stay invisible there).
 **Stop-and-reassess if:** [OPEN-BRIAN] custody question is answered by
 Brian before this bite — custody (control token) would *replace* parts of
 this design; ask before building if the answer hasn't arrived.
+**Convergence note (2026-08-15):** builtin-shell's Terminals settings
+already ship per-session host consent toggles (INTERACT / AGENTS, "gated
+by per-session consent" via the local session broker) plus
+persist-across-restarts with honest dead-session rows — independently
+the same host-grants-control and continuation shapes as this bite and
+B-track. A7's lease UX must rhyme with those toggles (one consent
+vocabulary across terminals and coding sessions, per the vision's
+"single shared reality"), and the B-track continuation copy should match
+the plain "reopen to respawn where it left off" register. Coordinate
+with Andy before A7's UI lands.
 
 ### A8 — Invite/grant UI (after A6)
 **Goal:** must-have #3's visible face: invite a channel member as
