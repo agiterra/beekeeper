@@ -29,6 +29,8 @@ use uuid::Uuid;
 
 use buzz_core::coding_session_command::CodingSessionTarget;
 
+use crate::session::BootstrapTransport;
+
 /// On-disk format version for `state.json`.
 pub const STATE_VERSION: u32 = 1;
 
@@ -112,6 +114,12 @@ pub struct SessionRecord {
     pub created_at_ms: i64,
     /// Next `event_seq` to hand out. Sequences start at 1.
     pub next_seq: u64,
+    /// How this generation's rehydration continuity bootstrap was delivered, or
+    /// `None` when the open needed no bootstrap. Host-local diagnostic: never
+    /// published, and defaults to `None` for records written before the field
+    /// existed.
+    #[serde(default)]
+    pub bootstrap_transport: Option<BootstrapTransport>,
     /// The turn currently believed to be in flight, if any.
     pub open_turn: Option<OpenTurn>,
     /// Whether this generation has been retired (no further turns accepted).
@@ -516,6 +524,7 @@ mod tests {
             title: None,
             created_at_ms: 1_700_000_000_000,
             next_seq: 1,
+            bootstrap_transport: None,
             open_turn: None,
             closed: false,
         }
@@ -711,6 +720,24 @@ mod tests {
         assert_eq!(loaded.provider_instance_ref, "claude-primary");
         assert_eq!(loaded.runtime, "claude");
         assert_eq!(loaded.driver, "claude-agent-acp");
+    }
+
+    /// The bootstrap transport is a diagnostic added after `STATE_VERSION` was
+    /// pinned, so a record written without it must still load — as "no
+    /// bootstrap recorded", which is exactly what those records mean.
+    #[test]
+    fn pre_bootstrap_transport_records_load_without_one() {
+        let mut written = record("s1");
+        written.bootstrap_transport = Some(BootstrapTransport::SystemPrompt);
+        let mut value = serde_json::to_value(&written).expect("serialize");
+        let object = value.as_object_mut().expect("object");
+        assert_eq!(
+            object.remove("bootstrapTransport"),
+            Some(serde_json::json!("systemPrompt")),
+            "the field is persisted under its camelCase name"
+        );
+        let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
+        assert_eq!(loaded.bootstrap_transport, None);
     }
 
     /// The persisted driver — not the live descriptor table — names the wire

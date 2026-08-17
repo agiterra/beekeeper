@@ -799,17 +799,18 @@ impl Provider {
             title: plan.title.clone(),
             created_at_ms: now_ms(),
             next_seq: 1,
+            bootstrap_transport: startup.bootstrap_transport,
             open_turn: None,
             closed: false,
         };
         self.state.insert_session(record)?;
 
-        if startup.continuity == SessionContinuity::Rehydrated {
+        if let Some(status) = create_disclosure_status(&startup.continuity) {
             self.enqueue_transcript(
                 plan.channel_id,
                 &target,
                 None,
-                payload::status_item("session_rehydrated"),
+                payload::status_item(status),
                 Priority::High,
             )?;
         }
@@ -2136,6 +2137,23 @@ fn turn_result(
     }
 }
 
+/// The status slug a *create* publishes to disclose what context its execution
+/// actually starts from, or `None` when the open was a reattachment (those are
+/// disclosed by the attach path, which has its own richer slug set).
+///
+/// Both answers are stated out loud: a fresh execution says so rather than
+/// staying silent, because silence is exactly what an operator misreads as
+/// continuity.
+fn create_disclosure_status(continuity: &SessionContinuity) -> Option<&'static str> {
+    match continuity {
+        SessionContinuity::Rehydrated => Some("session_rehydrated"),
+        SessionContinuity::Fresh => Some("session_fresh"),
+        SessionContinuity::Resumed
+        | SessionContinuity::Loaded
+        | SessionContinuity::RestartedWithoutContext { .. } => None,
+    }
+}
+
 fn stop_reason_text(stop_reason: &buzz_acp::acp::StopReason) -> &'static str {
     use buzz_acp::acp::StopReason;
     match stop_reason {
@@ -2715,6 +2733,7 @@ mod tests {
             title: None,
             created_at_ms: now_ms(),
             next_seq: 1,
+            bootstrap_transport: None,
             open_turn: None,
             closed: false,
         }
@@ -2872,6 +2891,60 @@ mod tests {
 
         assert_eq!(provider.state().sessions().count(), 1);
         assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    /// A create that starts with no prior context says so in the transcript.
+    /// Silence would read as continuity the execution does not have.
+    #[tokio::test]
+    async fn a_fresh_create_discloses_that_it_starts_without_prior_context() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = create_event(&provider, channel_id, "create-fresh-1");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let disclosures: Vec<_> = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .filter(|item| item["item"]["kind"] == "status")
+            .map(|item| item["item"]["status"].clone())
+            .collect();
+        assert_eq!(
+            disclosures,
+            vec![serde_json::json!("session_fresh")],
+            "a fresh create publishes exactly one continuity disclosure"
+        );
+    }
+
+    /// The disclosure slug per continuity mode. Rehydrated keeps the slug it
+    /// already had; reattachments are disclosed by the attach path instead.
+    #[test]
+    fn every_create_continuity_maps_to_its_disclosure() {
+        assert_eq!(
+            create_disclosure_status(&SessionContinuity::Rehydrated),
+            Some("session_rehydrated")
+        );
+        assert_eq!(
+            create_disclosure_status(&SessionContinuity::Fresh),
+            Some("session_fresh")
+        );
+        assert_eq!(create_disclosure_status(&SessionContinuity::Resumed), None);
+        assert_eq!(create_disclosure_status(&SessionContinuity::Loaded), None);
+        assert_eq!(
+            create_disclosure_status(&SessionContinuity::RestartedWithoutContext {
+                reason: "adapter rejected session resume"
+            }),
+            None
+        );
     }
 
     #[tokio::test]
@@ -4291,7 +4364,9 @@ mod tests {
             .expect("replay");
 
         assert_eq!(provider.state().sessions().count(), 1);
-        assert_eq!(provider.pending_publishes(), 2);
+        // Receipt, metadata, and the one continuity disclosure — the replay adds
+        // nothing.
+        assert_eq!(provider.pending_publishes(), 3);
     }
 
     /// Restart mid-flight: the durable ledger, not memory, is what makes the
@@ -4576,6 +4651,7 @@ mod tests {
                     title: None,
                     created_at_ms: now_ms(),
                     next_seq: 3,
+                    bootstrap_transport: None,
                     open_turn: Some(OpenTurn {
                         turn_id: "turn-1".into(),
                         command_id: Some("turn-cmd-1".into()),
@@ -4647,7 +4723,11 @@ mod tests {
             .iter()
             .filter_map(|item| item["item"]["kind"].as_str())
             .collect();
-        assert_eq!(kinds, vec!["user_prompt", "assistant_text", "result"]);
+        assert_eq!(
+            kinds,
+            vec!["status", "user_prompt", "assistant_text", "result"],
+            "the create's continuity disclosure opens the transcript"
+        );
 
         // Sequences are dense and start at 1, and every item of the turn shares
         // the producer-minted turn id the consumer groups on.
@@ -4655,7 +4735,7 @@ mod tests {
             .iter()
             .filter_map(|item| item["eventSeq"].as_u64())
             .collect();
-        assert_eq!(seqs, vec![1, 2, 3]);
+        assert_eq!(seqs, vec![1, 2, 3, 4]);
         let turn_ids: Vec<&str> = transcripts
             .iter()
             .filter_map(|item| item["turnId"].as_str())
@@ -5187,6 +5267,7 @@ mod tests {
                     .expect("transcript"),
             );
         }
-        assert_eq!(seqs, vec![Some(1), Some(2), Some(3)]);
+        // Sequence 1 was spent on the create's own continuity disclosure.
+        assert_eq!(seqs, vec![Some(2), Some(3), Some(4)]);
     }
 }

@@ -695,6 +695,7 @@ mod tests {
             title: None,
             created_at_ms: 0,
             next_seq: 1,
+            bootstrap_transport: None,
             open_turn: None,
             closed: false,
         }

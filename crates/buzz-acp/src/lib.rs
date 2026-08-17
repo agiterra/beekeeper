@@ -4670,14 +4670,7 @@ fn spawn_respawn_task(
 }
 
 fn normalized_agent_name(init_result: &serde_json::Value) -> String {
-    init_result
-        .get("agentInfo")
-        .or_else(|| init_result.get("serverInfo"))
-        .and_then(|info| info.get("name"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("unknown")
-        .trim()
-        .to_ascii_lowercase()
+    crate::acp::normalized_agent_name(init_result)
 }
 
 async fn shutdown_agent_slots(slots: &mut [Option<OwnedAgent>]) {

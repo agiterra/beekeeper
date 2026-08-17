@@ -225,6 +225,13 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// Normalized adapter identity from `initialize` (`agentInfo.name`, else
+    /// `serverInfo.name`). `"unknown"` until `initialize` answers.
+    agent_name: String,
+    /// ACP protocol version reported by the adapter at `initialize`. `1` until
+    /// `initialize` answers, matching the pool's own default for adapters that
+    /// omit the field.
+    protocol_version: u32,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -614,6 +621,8 @@ impl AcpClient {
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            agent_name: "unknown".to_owned(),
+            protocol_version: 1,
         })
     }
 
@@ -761,6 +770,11 @@ impl AcpClient {
     /// [`steering_supported`](Self::steering_supported) so the read loop's steer
     /// arm can choose [`ACP_STEER_METHOD`] for adapters that implement it.
     /// Parsed here rather than at each call site so no caller can forget it.
+    ///
+    /// The adapter's identity and protocol version are recorded the same way,
+    /// into [`agent_name`](Self::agent_name) and
+    /// [`protocol_version`](Self::protocol_version), so any caller can reach the
+    /// system-prompt capability gates without re-parsing the response.
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
@@ -777,6 +791,8 @@ impl AcpClient {
         self.session_resume_supported = result
             .pointer("/agentCapabilities/sessionCapabilities/resume")
             .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false));
+        self.agent_name = normalized_agent_name(&result);
+        self.protocol_version = result["protocolVersion"].as_u64().unwrap_or(1) as u32;
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
     }
@@ -1105,6 +1121,20 @@ impl AcpClient {
     /// Whether initialization advertised `sessionCapabilities.resume`.
     pub fn session_resume_supported(&self) -> bool {
         self.session_resume_supported
+    }
+
+    /// Normalized adapter identity recorded at `initialize`.
+    ///
+    /// `"unknown"` before `initialize` answers, or when the adapter reported no
+    /// name. Feed this to [`session_new_system_prompt`] rather than a display
+    /// name — the capability gates key on the package identity.
+    pub fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+
+    /// ACP protocol version recorded at `initialize` (`1` when unreported).
+    pub fn protocol_version(&self) -> u32 {
+        self.protocol_version
     }
 
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
@@ -2387,6 +2417,77 @@ pub enum SystemPromptTransport<'a> {
     Field(&'a str),
     /// Deliver as `_meta.systemPrompt: {"append": text}`.
     ClaudeMeta(&'a str),
+}
+
+/// Package name reported by `claude-agent-acp` in its `initialize` response.
+///
+/// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
+/// on `session/new` — the feature landed in v0.6.0 (Oct 2025), before the
+/// `@zed-industries/claude-code-acp` → `@agentclientprotocol/claude-agent-acp`
+/// rename, so the new name is a reliable capability gate.
+pub const CLAUDE_AGENT_ACP_NAME: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// Whether an adapter can receive a system prompt through *any* supported
+/// transport (`session/new` for standard adapters, the custom post-`session/new`
+/// request for goose).
+///
+/// `agent_name` is the normalized identity from `initialize` — see
+/// [`normalized_agent_name`]. `goose_system_prompt_supported` is goose's probe
+/// result (`None` before the first probe, i.e. "not known to work").
+///
+/// Callers that cannot use goose's custom request — anything that only speaks
+/// `session/new` — must gate on [`session_new_system_prompt`] instead, which
+/// reports `None` for goose.
+pub fn has_system_prompt_support(
+    protocol_version: u32,
+    agent_name: &str,
+    goose_system_prompt_supported: Option<bool>,
+) -> bool {
+    if agent_name == "goose" {
+        goose_system_prompt_supported == Some(true)
+    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
+        true
+    } else {
+        protocol_version >= 2
+    }
+}
+
+/// Pick the `session/new` system-prompt transport for an adapter, if it has one.
+///
+/// `None` means the adapter has no supported `session/new` transport and the
+/// caller must fall back to its own framing (a user-message section for the
+/// harness, a first-turn preamble for the session provider). Goose is always
+/// `None` here: it takes its system prompt through
+/// [`AcpClient::session_set_goose_system_prompt`] after the session exists.
+pub fn session_new_system_prompt<'a>(
+    is_goose: bool,
+    protocol_version: u32,
+    agent_name: &str,
+    prompt: Option<&'a str>,
+) -> Option<SystemPromptTransport<'a>> {
+    if is_goose || (protocol_version < 2 && agent_name != CLAUDE_AGENT_ACP_NAME) {
+        None
+    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
+        prompt.map(SystemPromptTransport::ClaudeMeta)
+    } else {
+        prompt.map(SystemPromptTransport::Field)
+    }
+}
+
+/// Normalized adapter identity from an `initialize` response.
+///
+/// Reads `agentInfo.name`, falling back to `serverInfo.name`, and lowercases it
+/// so capability gates like [`CLAUDE_AGENT_ACP_NAME`] compare reliably.
+/// `"unknown"` when the adapter reported no name at all.
+pub fn normalized_agent_name(init_result: &serde_json::Value) -> String {
+    init_result
+        .get("agentInfo")
+        .or_else(|| init_result.get("serverInfo"))
+        .and_then(|info| info.get("name"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 /// How to switch to a particular model on a session.
