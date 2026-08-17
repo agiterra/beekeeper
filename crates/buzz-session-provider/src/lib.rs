@@ -103,6 +103,15 @@ const GENESIS_QUERY_RETRY_DELAY: Duration = Duration::from_millis(150);
 /// receipt still falls off the page, the contiguous fold stalls — grants stay
 /// unapplied (fail closed) until a live receipt or restart retries.
 const AUTHORITY_BACKFILL_QUERY_LIMIT: usize = 1000;
+/// Replay-floor slack for channels with no consumed-command watermark.
+///
+/// A 44221 can legally precede the floor it would replay from: a membership
+/// grant applies moments after the create that motivated it, and a restart's
+/// floor of "now" postdates anything that arrived while the provider was
+/// down. Ten minutes covers every observed ordering while keeping replay
+/// volume trivial — 442xx commands are low-rate, and a re-delivered command
+/// dedupes as `AlreadyConsumed`.
+const REPLAY_GRACE_SECS: u64 = 600;
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -164,7 +173,13 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
 
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
-        provider.subscribe(&mut relay, channel_id, None).await?;
+        // `Some(now)` — not `None` — so a channel with no consumed-command
+        // watermark replays the last `REPLAY_GRACE_SECS` instead of starting
+        // at the startup watermark, which would skip any command that arrived
+        // while the provider was down.
+        provider
+            .subscribe(&mut relay, channel_id, Some(now_secs()))
+            .await?;
     }
     relay.subscribe_membership_notifications().await?;
     provider.refresh_catalog(true)?;
@@ -506,8 +521,8 @@ impl Provider {
         // A newly granted membership and the first command are published back
         // to back. `subscribe_channel_from` only queues the REQ, so falling
         // back to `since=now` when the background relay task eventually sends
-        // it can skip the command by one second. Replay from the membership
-        // notification until a consumed-command watermark exists.
+        // it can skip the command by one second. Replay from before the
+        // membership notification until a consumed-command watermark exists.
         let replay_since = self.subscription_replay_since(channel_id, membership_created_at);
         relay
             .subscribe_channel_from(channel_id, filter, replay_since)
@@ -521,7 +536,18 @@ impl Provider {
         channel_id: Uuid,
         membership_created_at: Option<u64>,
     ) -> Option<u64> {
-        self.state.watermark(channel_id).or(membership_created_at)
+        // The grace covers commands that legally precede the floor: a create
+        // can be published moments before this provider's membership applies
+        // (the desktop sends both back to back, and a delayed grant leaves the
+        // command strictly older), and a startup floor of "now" would skip
+        // anything that arrived while the provider was down. Replaying a
+        // bounded window instead of full history respects relay REQ limits,
+        // and re-delivered commands are no-ops under the consumed-command
+        // dedupe (`AlreadyConsumed`). Commands older than the grace on a
+        // watermark-less channel remain lost by design.
+        self.state
+            .watermark(channel_id)
+            .or_else(|| membership_created_at.map(|floor| floor.saturating_sub(REPLAY_GRACE_SECS)))
     }
 
     /// Route one relay event.
@@ -4629,15 +4655,23 @@ mod tests {
     }
 
     #[test]
-    fn first_membership_subscription_replays_from_the_membership_event() {
+    fn first_membership_subscription_replays_from_before_the_membership_event() {
         let dir = tempfile::tempdir().expect("tempdir");
         let channel_id = Uuid::new_v4();
         let mut provider = provider(&dir.path().join("state"), None);
 
         assert_eq!(
-            provider.subscription_replay_since(channel_id, Some(1_000)),
-            Some(1_000),
-            "a queued first subscription must not fall forward to since=now"
+            provider.subscription_replay_since(channel_id, Some(10_000)),
+            Some(10_000 - REPLAY_GRACE_SECS),
+            "a queued first subscription must reach behind the grant: a \
+             create published before the membership applied is otherwise \
+             below the floor forever"
+        );
+
+        assert_eq!(
+            provider.subscription_replay_since(channel_id, Some(REPLAY_GRACE_SECS / 2)),
+            Some(0),
+            "the grace saturates rather than underflowing near the epoch"
         );
 
         provider
@@ -4645,9 +4679,39 @@ mod tests {
             .record_watermark(channel_id, 900)
             .expect("watermark");
         assert_eq!(
-            provider.subscription_replay_since(channel_id, Some(1_000)),
+            provider.subscription_replay_since(channel_id, Some(10_000)),
             Some(900),
-            "an existing command watermark remains the earliest safe replay floor"
+            "an existing command watermark remains the earliest safe replay \
+             floor — everything below it was already consumed or skipped"
+        );
+    }
+
+    /// A command re-delivered because the graced floor reaches below the last
+    /// consumed one must dedupe, not double-create.
+    #[tokio::test]
+    async fn a_replayed_consumed_command_stays_consumed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = create_event(&provider, channel_id, "create-replayed");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("first delivery");
+        let sessions_after_first = provider.state().sessions().count();
+
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("replayed delivery");
+        assert_eq!(
+            provider.state().sessions().count(),
+            sessions_after_first,
+            "a replayed command must be AlreadyConsumed, not a second session"
         );
     }
 
