@@ -502,6 +502,11 @@ fn spawn_provider_child(
         // Computed per spawn: installing an adapter takes effect on the next
         // provider (re)start, matching the rest of the discovery surface.
         runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),
+        // The adapters the provider spawns are `#!/usr/bin/env node` shims;
+        // a Finder-launched desktop's GUI PATH has no `node`, so hand down
+        // the same augmented PATH managed-agent launches use.
+        augmented_path: crate::managed_agents::readiness::cli_probe::augmented_path_with_inherited(
+        ),
     });
     for (key, value) in env {
         command.env(key, value);

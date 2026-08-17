@@ -221,6 +221,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         agent_command: Some(PathBuf::from("/opt/buzz/bin/claude-agent-acp")),
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
         runtimes: sample_runtimes(),
+        augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),
     })
 }
 
@@ -260,6 +261,12 @@ fn env_carries_the_required_provider_contract() {
         Some("/usr/local/bin/claude")
     );
     assert!(env.contains_key("RUST_LOG"));
+    // The provider's adapters are `env node` shims; the augmented PATH is how
+    // they find `node` when the desktop was launched with a bare GUI PATH.
+    assert_eq!(
+        env.get("PATH").map(String::as_str),
+        Some("/opt/buzz/bin:/usr/bin")
+    );
 }
 
 /// `BUZZ_CSP_RUNTIMES` must round-trip through the exact parser the sidecar
@@ -290,8 +297,11 @@ fn env_omits_an_empty_runtime_list() {
         agent_command: None,
         claude_code_executable: None,
         runtimes: Vec::new(),
+        augmented_path: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
+    // Without an augmented PATH the child inherits the process PATH unchanged.
+    assert!(!env.contains_key("PATH"));
 }
 
 /// `BUZZ_AUTH_TAG` is parsed by the provider as a JSON array of strings and

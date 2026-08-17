@@ -46,6 +46,12 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// reads this as the complete offer; an older one ignores it and keeps
     /// using the legacy variables above, which stay exported alongside it.
     pub runtimes: Vec<RuntimeDescriptor>,
+    /// Augmented `PATH` for the provider and every adapter it spawns. A
+    /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
+    /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
+    /// without this the provider spawns them into `env: node: No such file or
+    /// directory`. `None` leaves the inherited `PATH` untouched.
+    pub augmented_path: Option<String>,
 }
 
 /// Build the child's Buzz-owned environment.
@@ -88,6 +94,9 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
             "BUZZ_CSP_AGENT_COMMAND".to_string(),
             agent_command.to_string_lossy().into_owned(),
         );
+    }
+    if let Some(path) = &inputs.augmented_path {
+        env.insert("PATH".to_string(), path.clone());
     }
     env.insert("RUST_LOG".to_string(), DEFAULT_RUST_LOG.to_string());
     if let Some(cli) = &inputs.claude_code_executable {
