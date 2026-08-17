@@ -1386,6 +1386,18 @@ struct BgState {
     /// the elevated rung it earned. Reset to 0 by the stability block once the
     /// connection has been up for `STABLE_CONNECTION_SECS`.
     backoff_step: usize,
+    /// Connection-drop sentinels (`None` on the event channel) sent to the
+    /// caller and not yet echoed back as a `Reconnect` command.
+    ///
+    /// Every drop this task reports is also repaired by this task, inline,
+    /// before the main select loop runs again — so by the time the caller's
+    /// echoing `Reconnect` arrives, the connection it complains about has
+    /// already been replaced. Without this count each stale echo tears down
+    /// the healthy socket and runs a full reconnect + AUTH + resubscribe
+    /// cycle again, one per queued echo — the "reconnect attempts multiply
+    /// across an outage" failure. A `Reconnect` that arrives with no
+    /// outstanding sentinel is honored as a genuine caller request.
+    pending_drop_notices: u32,
 }
 
 impl BgState {
@@ -1412,7 +1424,26 @@ impl BgState {
             gated_observer_dropped: 0,
             resubscribe_retry: HashSet::new(),
             backoff_step: 0,
+            pending_drop_notices: 0,
         }
+    }
+
+    /// Note that a drop sentinel reached the caller; its `Reconnect` echo (if
+    /// the caller sends one) is stale by construction. See
+    /// [`BgState::pending_drop_notices`].
+    fn record_drop_notice(&mut self) {
+        self.pending_drop_notices = self.pending_drop_notices.saturating_add(1);
+    }
+
+    /// Consume one outstanding drop notice, if any. Returns `true` when the
+    /// `Reconnect` command being processed was a stale echo of a drop this
+    /// task already repaired.
+    fn consume_drop_notice(&mut self) -> bool {
+        if self.pending_drop_notices == 0 {
+            return false;
+        }
+        self.pending_drop_notices -= 1;
+        true
     }
 
     /// Record a received event for dedup and `since` tracking.
@@ -1615,8 +1646,11 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
                 state.park_gated_observer_frame(event);
             }
         }
-        // Already reconnecting — redundant.
-        RelayCommand::Reconnect => {}
+        // Already reconnecting — redundant. Still consumes its drop notice so
+        // the sentinel/echo accounting stays balanced.
+        RelayCommand::Reconnect => {
+            state.consume_drop_notice();
+        }
         // Callers MUST handle Shutdown before calling this function.
         RelayCommand::Shutdown => {
             debug_assert!(
@@ -1858,6 +1892,15 @@ async fn execute_connected_command(
 /// The main background task loop.
 ///
 /// Owns the WebSocket stream, responds to Pings, forwards events, and handles
+/// Report a connection drop to the caller without blocking, remembering the
+/// sentinel so the caller's echoing `Reconnect` command is recognized as a
+/// stale reference to a drop this task repairs itself.
+fn notify_connection_lost(event_tx: &mpsc::Sender<Option<BuzzEvent>>, state: &mut BgState) {
+    if event_tx.try_send(None).is_ok() {
+        state.record_drop_notice();
+    }
+}
+
 /// reconnection.
 #[allow(clippy::too_many_arguments)]
 async fn run_background_task(
@@ -1889,7 +1932,7 @@ async fn run_background_task(
         warn!("handshake buffer contained a drop signal — attempting autonomous reconnect");
         // Don't wait for a caller-driven Reconnect command — the caller was
         // never notified (no sentinel sent). Go straight to reconnect loop.
-        let _ = event_tx.try_send(None);
+        notify_connection_lost(&event_tx, &mut state);
         match try_autonomous_reconnect(
             &mut ws,
             &mut cmd_rx,
@@ -1972,7 +2015,7 @@ async fn run_background_task(
                 ResubscribeResult::Shutdown => return,
                 ResubscribeResult::RetryConnection => {
                     warn!("proactive resubscribe had failures — triggering reconnect");
-                    let _ = event_tx.try_send(None);
+                    notify_connection_lost(&event_tx, &mut state);
                     match try_autonomous_reconnect(
                         &mut ws,
                         &mut cmd_rx,
@@ -2146,9 +2189,9 @@ async fn run_background_task(
 
                        if socket_lost {
                            // Signal the caller, then attempt autonomous reconnect.
-                           // Use try_send to avoid blocking on backpressure — recovery
-                           // must not stall when the event channel is full.
-                           let _ = event_tx.try_send(None);
+                           // The notification never blocks — recovery must not
+                           // stall when the event channel is full.
+                           notify_connection_lost(&event_tx, &mut state);
                            let outcome = try_autonomous_reconnect(
                                &mut ws,
                                &mut cmd_rx,
@@ -2195,6 +2238,15 @@ async fn run_background_task(
                    cmd = cmd_rx.recv() => {
                        match cmd {
                            Some(RelayCommand::Reconnect) => {
+                               // A `Reconnect` echoing a drop sentinel refers to a
+                               // connection this task already replaced inline —
+                               // honoring it would tear down the healthy socket and
+                               // run the whole reconnect + resubscribe cycle once
+                               // per queued echo. Reconnect must replace the prior
+                               // connection, never multiply cycles over it.
+                               if state.consume_drop_notice() {
+                                   debug!("dropping stale Reconnect — the drop it echoes was already repaired");
+                               } else {
                                if matches!(
                                    wait_for_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
@@ -2207,6 +2259,7 @@ async fn run_background_task(
                                last_pong = Instant::now();
                                connected_since = Instant::now();
                                stable_logged = false;
+                               }
                            }
                            Some(RelayCommand::Shutdown) | None => {
                                debug!("background task shutting down — sending close frame");
@@ -2229,7 +2282,7 @@ async fn run_background_task(
                                if !ok {
                                    // Send failed — socket is likely dead. Trigger reconnect.
                                    warn!("command send failed — triggering reconnect");
-                                   let _ = event_tx.try_send(None);
+                                   notify_connection_lost(&event_tx, &mut state);
                                    match try_autonomous_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -2267,8 +2320,8 @@ async fn run_background_task(
                        if ping_sent && last_pong.elapsed() > PONG_TIMEOUT {
                            // No pong received after our last ping — connection is dead.
                            warn!("no pong received within {:?} — connection dead, reconnecting", PONG_TIMEOUT);
-                           // Use try_send to avoid blocking on backpressure during recovery.
-                           let _ = event_tx.try_send(None);
+                           // Never blocks — recovery must not stall on backpressure.
+                           notify_connection_lost(&event_tx, &mut state);
                            match try_autonomous_reconnect(
                                &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -2300,8 +2353,8 @@ async fn run_background_task(
                        } else if !ping_sent {
                            if let Err(e) = ws_send_timeout(&mut ws, Message::Ping(vec![].into()), WS_SEND_TIMEOUT_SECS).await {
                                warn!("failed to send ping: {e} — triggering reconnect");
-                               // Use try_send to avoid blocking on backpressure during recovery.
-                               let _ = event_tx.try_send(None);
+                               // Never blocks — recovery must not stall on backpressure.
+                               notify_connection_lost(&event_tx, &mut state);
                                match try_autonomous_reconnect(
                                    &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -3145,7 +3198,9 @@ async fn drain_commands(
                     let _ = ws_send_timeout(ws, Message::Close(None), WS_SEND_TIMEOUT_SECS).await;
                     return ReconnectOutcome::Shutdown;
                 }
-                RelayCommand::Reconnect => {}
+                RelayCommand::Reconnect => {
+                    state.consume_drop_notice();
+                }
                 cmd => retain_failed_command_intent(state, cmd),
             }
             continue;
@@ -3153,6 +3208,7 @@ async fn drain_commands(
 
         match cmd {
             RelayCommand::Reconnect => {
+                state.consume_drop_notice();
                 debug!("drained stale Reconnect after reconnect");
             }
             RelayCommand::Shutdown => {
@@ -3366,7 +3422,10 @@ async fn wait_for_reconnect(
         // Other commands update state so reconnect reflects latest intent.
         loop {
             match cmd_rx.recv().await {
-                Some(RelayCommand::Reconnect) => break,
+                Some(RelayCommand::Reconnect) => {
+                    state.consume_drop_notice();
+                    break;
+                }
                 Some(RelayCommand::Shutdown) | None => return ReconnectOutcome::Shutdown,
                 Some(cmd) => apply_command_to_state(state, cmd),
             }
@@ -4929,6 +4988,55 @@ mod tests {
         assert!(deferred.is_empty());
         assert!(state.active_subscriptions.contains_key(&kept_channel));
         assert!(!state.active_subscriptions.contains_key(&removed_channel));
+    }
+
+    /// Each drop sentinel reserves exactly one stale `Reconnect` echo. During
+    /// an outage the caller echoes every sentinel back as a `Reconnect`, but
+    /// the background task repairs every reported drop inline — honoring the
+    /// echoes would run one extra full reconnect cycle per echo against an
+    /// already-healthy connection (the "autonomous reconnect multiplies"
+    /// failure). A `Reconnect` beyond the outstanding sentinels is genuine.
+    #[test]
+    fn drop_notices_pair_each_sentinel_with_exactly_one_stale_echo() {
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let mut state = BgState::new();
+
+        notify_connection_lost(&event_tx, &mut state);
+        notify_connection_lost(&event_tx, &mut state);
+        assert!(event_rx.try_recv().expect("first sentinel").is_none());
+        assert!(event_rx.try_recv().expect("second sentinel").is_none());
+        assert_eq!(state.pending_drop_notices, 2);
+
+        assert!(state.consume_drop_notice(), "first echo is stale");
+        assert!(state.consume_drop_notice(), "second echo is stale");
+        assert!(
+            !state.consume_drop_notice(),
+            "a Reconnect with no outstanding sentinel is a genuine request"
+        );
+    }
+
+    /// When the event channel is full the sentinel never reaches the caller,
+    /// so no echo can come back for it — it must not reserve one.
+    #[test]
+    fn an_unreported_drop_reserves_no_stale_echo() {
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        let mut state = BgState::new();
+        notify_connection_lost(&event_tx, &mut state); // delivered
+        notify_connection_lost(&event_tx, &mut state); // channel full, dropped
+        assert_eq!(state.pending_drop_notices, 1);
+    }
+
+    /// Reconnect commands consumed while a reconnect is already in progress
+    /// (via `apply_command_to_state` during backoff sleeps) settle their
+    /// sentinel too, keeping the pairing balanced across an outage.
+    #[test]
+    fn a_reconnect_absorbed_mid_reconnect_settles_its_sentinel() {
+        let (event_tx, _event_rx) = mpsc::channel(4);
+        let mut state = BgState::new();
+        notify_connection_lost(&event_tx, &mut state);
+        apply_command_to_state(&mut state, RelayCommand::Reconnect);
+        assert_eq!(state.pending_drop_notices, 0);
+        assert!(!state.consume_drop_notice());
     }
 
     #[test]
