@@ -328,7 +328,7 @@ test("captures signed changes in the transcript and workspace rail", async ({
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/05-changes-inline.png` });
 
-  await page.getByTestId("coding-session-changes-rail-toggle").click();
+  await page.getByTestId("coding-session-surface-toggle-changes").click();
   const rail = page.getByTestId("coding-session-changes-rail");
   await expect(rail).toBeVisible();
   await expect(rail).toContainText("CodingSessionHeader.tsx");

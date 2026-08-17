@@ -503,35 +503,38 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   await page.getByTestId("channel-coding-session-open").first().click();
 
   const workspace = page.getByTestId("coding-session-umbrella-workspace");
-  const rail = page.getByTestId("coding-session-execution-rail");
+  const host = page.getByTestId("coding-session-surface-host");
   await expect(workspace).toBeVisible({ timeout: 15_000 });
-  await expect(rail).toContainText("All agents");
-  await expect(rail).toContainText("Claude");
-  await expect(rail).toContainText("Codex");
+  // The umbrella opens on the Agents surface of the shared host.
+  await expect(host).toContainText("All agents");
+  await expect(host).toContainText("Claude");
+  await expect(host).toContainText("Codex");
   await waitForAnimations(page);
   await workspace.screenshot({
     path: "test-results/screenshots/session-agents-open.png",
   });
 
-  const resize = page.getByRole("button", { name: "Resize agents panel" });
-  const before = await rail.boundingBox();
+  const resize = page.getByRole("separator", {
+    name: "Resize session surface",
+  });
+  const before = await host.boundingBox();
   const handle = await resize.boundingBox();
   if (!before || !handle)
-    throw new Error("agents rail resize geometry missing");
+    throw new Error("surface host resize geometry missing");
   await page.mouse.move(handle.x + handle.width / 2, handle.y + 120);
   await page.mouse.down();
   await page.mouse.move(handle.x - 120, handle.y + 120);
   await page.mouse.up();
   await expect
-    .poll(async () => (await rail.boundingBox())?.width ?? 0)
+    .poll(async () => (await host.boundingBox())?.width ?? 0)
     .toBeGreaterThan(before.width + 80);
   await waitForAnimations(page);
   await workspace.screenshot({
     path: "test-results/screenshots/session-agents-resized.png",
   });
 
-  await page.getByLabel("Close agents panel").click();
-  await expect(rail).toHaveCount(0);
+  await page.getByLabel("Close session surface").click();
+  await expect(host).toHaveCount(0);
   await waitForAnimations(page);
   await workspace.screenshot({
     path: "test-results/screenshots/session-agents-collapsed.png",
