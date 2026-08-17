@@ -3,8 +3,11 @@ import * as React from "react";
 import { getStorageItem, setStorageItem } from "@/shared/lib/safeStorage";
 
 const DEFAULT_WIDTH_PX = 360;
-const MIN_WIDTH_PX = 288;
-const MAX_WIDTH_PX = 720;
+/** Exported so the surface host's resizer can expose honest value semantics. */
+export const CODING_SESSION_RAIL_MIN_WIDTH_PX = 288;
+export const CODING_SESSION_RAIL_MAX_WIDTH_PX = 720;
+const MIN_WIDTH_PX = CODING_SESSION_RAIL_MIN_WIDTH_PX;
+const MAX_WIDTH_PX = CODING_SESSION_RAIL_MAX_WIDTH_PX;
 const MIN_NARRATIVE_WIDTH_PX = 420;
 const STORAGE_KEY = "buzz.desktop.coding-session-rail-width";
 
@@ -19,10 +22,28 @@ export function clampCodingSessionRailWidth(
   return Math.max(MIN_WIDTH_PX, Math.min(MAX_WIDTH_PX, available, width));
 }
 
+/**
+ * Strictly parse a persisted rail width. Anything that is not a plain
+ * base-10 integer inside the legal width range — trailing garbage,
+ * exponents, negatives, absurd magnitudes — is rejected as corrupt rather
+ * than "best-effort" coerced into layout.
+ */
+export function parsePersistedCodingSessionRailWidth(
+  raw: string | null,
+): number | null {
+  if (raw === null || !/^\d{1,4}$/.test(raw)) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed < MIN_WIDTH_PX || parsed > MAX_WIDTH_PX) return null;
+  return parsed;
+}
+
 function initialWidth(): number {
   if (typeof window === "undefined") return DEFAULT_WIDTH_PX;
-  const parsed = Number.parseInt(getStorageItem(STORAGE_KEY, "") ?? "", 10);
-  return Number.isFinite(parsed) ? parsed : DEFAULT_WIDTH_PX;
+  return (
+    parsePersistedCodingSessionRailWidth(getStorageItem(STORAGE_KEY, null)) ??
+    DEFAULT_WIDTH_PX
+  );
 }
 
 export function useCodingSessionRailWidth(
@@ -39,6 +60,15 @@ export function useCodingSessionRailWidth(
     },
     [],
   );
+
+  /**
+   * Abort any in-flight drag and restore `document.body` cursor/user-select.
+   * The host calls this on breakpoint transitions (inline panel → sheet) so a
+   * drag interrupted by a layout change never leaks global styles.
+   */
+  const cancelDrag = React.useCallback(() => {
+    activeDragCleanupRef.current?.();
+  }, []);
 
   const clampToContainer = React.useCallback(
     (candidate: number) =>
@@ -140,5 +170,5 @@ export function useCodingSessionRailWidth(
     [clampToContainer],
   );
 
-  return { onResizeKeyDown, onResizeStart, width };
+  return { cancelDrag, onResizeKeyDown, onResizeStart, width };
 }
