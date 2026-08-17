@@ -341,7 +341,12 @@ impl Outbox {
             .create(true)
             .append(true)
             .open(&self.path)?;
-        writeln!(file, "{}", serde_json::to_string(row)?)?;
+        // One `write` call for the whole line (payload + newline) on an
+        // O_APPEND handle: an interleaving writer can order lines, but it can
+        // never tear one in half.
+        let mut line = serde_json::to_string(row)?;
+        line.push('\n');
+        file.write_all(line.as_bytes())?;
         file.sync_all()
     }
 

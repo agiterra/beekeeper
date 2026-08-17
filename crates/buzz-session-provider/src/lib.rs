@@ -134,6 +134,22 @@ fn init_tracing() {
 
 /// Run the provider against an already-resolved configuration.
 pub async fn run_with(config: Config) -> anyhow::Result<()> {
+    // At most one live provider per state directory (the managed-agents
+    // at-most-one-live-instance invariant, applied here): a second instance
+    // would double-consume commands and interleave ledger appends. Fail fast
+    // and loudly; the lock is held until this process exits.
+    let _state_dir_lock = match state::acquire_state_dir_lock(&config.state_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            tracing::error!(
+                target: "csp",
+                "refusing to start: {error} — exactly one provider instance may own a state \
+                 directory"
+            );
+            return Err(error.into());
+        }
+    };
+
     let mut provider = Provider::new(config)?;
     provider.recover()?;
 

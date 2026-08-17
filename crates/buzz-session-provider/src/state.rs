@@ -36,6 +36,60 @@ pub const STATE_VERSION: u32 = 1;
 
 const STATE_FILE: &str = "state.json";
 const COMMANDS_FILE: &str = "commands.jsonl";
+/// Single-instance lock file. See [`acquire_state_dir_lock`].
+pub const LOCK_FILE: &str = "provider.lock";
+
+/// Exclusive single-instance lock on one provider state directory.
+///
+/// Held for the owning process's lifetime; the OS releases it when the file
+/// handle closes, including on a crash, so a stale lock can never outlive its
+/// process. Dropping this value releases the lock.
+#[derive(Debug)]
+pub struct StateDirLock {
+    // Held only for its advisory lock; the handle itself is never read again.
+    _file: File,
+}
+
+/// Take the exclusive advisory lock that makes this process the *only*
+/// provider allowed to touch `dir`.
+///
+/// Two providers sharing one state directory consume each command up to twice
+/// (one create → several sessions) and interleave appends into the same
+/// ledger files, physically corrupting them. This is the same
+/// at-most-one-live-instance rule the managed-agents tier already enforces
+/// (docs/remote-agents.md, invariant I4), applied to coding-session providers.
+///
+/// On conflict the error names the directory and, when readable, the pid the
+/// current owner recorded — callers must fail fast and exit nonzero rather
+/// than proceed unlocked. On success the caller's pid is recorded in the lock
+/// file so a supervisor can identify (and take over from) an orphaned owner.
+pub fn acquire_state_dir_lock(dir: &Path) -> io::Result<StateDirLock> {
+    fs::create_dir_all(dir)?;
+    restrict_directory(dir)?;
+    let path = dir.join(LOCK_FILE);
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    restrict_new_file(&mut options);
+    let mut file = options.open(&path)?;
+    restrict_file(&path)?;
+    if let Err(error) = file.try_lock() {
+        let owner = fs::read_to_string(&path).unwrap_or_default();
+        let owner = owner.trim();
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            format!(
+                "another buzz-session-provider instance already owns {} (owner pid: {}): {error}",
+                dir.display(),
+                if owner.is_empty() { "unknown" } else { owner },
+            ),
+        ));
+    }
+    // Recorded only while the lock is held, so the pid is always the owner's.
+    file.set_len(0)?;
+    file.write_all(format!("{}\n", std::process::id()).as_bytes())?;
+    file.sync_all()?;
+    Ok(StateDirLock { _file: file })
+}
 
 /// Host-local record of one session generation this provider owns.
 ///
@@ -276,7 +330,12 @@ impl StateStore {
         let path = self.dir.join(COMMANDS_FILE);
         let mut file = options.open(&path)?;
         restrict_file(&path)?;
-        writeln!(file, "{}", serde_json::to_string(&record)?)?;
+        // The whole line — payload and newline — goes down in a single
+        // `write` call on an O_APPEND handle, so even a second writer (a bug
+        // the state-dir lock exists to prevent) could not tear it in half.
+        let mut line = serde_json::to_string(&record)?;
+        line.push('\n');
+        file.write_all(line.as_bytes())?;
         file.sync_all()
     }
 
@@ -759,6 +818,35 @@ mod tests {
         assert_eq!(target.instance_id, "instance-1");
         assert_eq!(target.session_id, "s1");
         assert_eq!(target.generation, 1);
+    }
+
+    /// One state directory, one provider: the second lock attempt must fail
+    /// while the first is held, and succeed once it is released. (flock
+    /// conflicts apply across open file descriptions, so two handles in one
+    /// process exercise the same contention two processes would.)
+    #[test]
+    fn the_state_dir_lock_admits_exactly_one_holder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = acquire_state_dir_lock(dir.path()).expect("first lock");
+        let second = acquire_state_dir_lock(dir.path());
+        let error = second.expect_err("a second holder must be refused");
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(
+            error.to_string().contains(&std::process::id().to_string()),
+            "the refusal names the owning pid: {error}"
+        );
+        drop(first);
+        acquire_state_dir_lock(dir.path()).expect("lock is free after release");
+    }
+
+    /// The lock file records the owner's pid so a supervisor can identify an
+    /// orphaned provider to take over from.
+    #[test]
+    fn the_lock_file_records_the_owner_pid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _lock = acquire_state_dir_lock(dir.path()).expect("lock");
+        let recorded = fs::read_to_string(dir.path().join(LOCK_FILE)).expect("read lock file");
+        assert_eq!(recorded.trim(), std::process::id().to_string());
     }
 
     #[test]

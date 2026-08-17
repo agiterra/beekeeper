@@ -24,8 +24,8 @@ use crate::session_provider::store::{
     CodingSessionProviderRecord, CodingSessionProviderStore, STORE_VERSION,
 };
 use crate::session_provider::supervisor::{
-    plan_restart, RestartDecision, BASE_RESTART_DELAY, MAX_RESTARTS_PER_WINDOW, MAX_RESTART_DELAY,
-    RESTART_WINDOW,
+    parse_lock_owner_pid, plan_restart, RestartDecision, BASE_RESTART_DELAY,
+    MAX_RESTARTS_PER_WINDOW, MAX_RESTART_DELAY, RESTART_WINDOW,
 };
 use crate::session_provider::trust::{append_allowed_bridge_pubkey, LOCAL_PROVIDER_LABEL};
 
@@ -436,6 +436,19 @@ fn an_expired_window_resets_the_failure_count() {
             failures: 1,
         }
     );
+}
+
+/// Lock-file contents that are not exactly one plausible pid must never
+/// become a kill target: the takeover path signals whatever pid this returns.
+#[test]
+fn lock_owner_pid_parsing_rejects_garbage_and_system_pids() {
+    assert_eq!(parse_lock_owner_pid("4242\n"), Some(4242));
+    assert_eq!(parse_lock_owner_pid("  4242  "), Some(4242));
+    assert_eq!(parse_lock_owner_pid(""), None);
+    assert_eq!(parse_lock_owner_pid("not-a-pid"), None);
+    assert_eq!(parse_lock_owner_pid("-7"), None);
+    assert_eq!(parse_lock_owner_pid("0"), None, "never signal pid 0");
+    assert_eq!(parse_lock_owner_pid("1"), None, "never signal launchd/init");
 }
 
 // ── trust seeding ────────────────────────────────────────────────────────────

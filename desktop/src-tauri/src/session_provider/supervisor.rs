@@ -243,6 +243,15 @@ fn start_supervisor(
     let stop = Arc::new(AtomicBool::new(false));
     let child_pid = Arc::new(AtomicU32::new(0));
 
+    // The provider holds an exclusive lock on its state directory (one live
+    // instance per directory — the same at-most-one-live-instance invariant
+    // the managed-agents tier enforces). An orphan from a previous desktop
+    // run would make the child we are about to spawn fail that lock, so any
+    // stale owner is stopped first. "Kill stale, then start" is the takeover
+    // this architecture supports: the supervisor owns the provider strictly
+    // as a child process and has no channel to adopt a foreign one.
+    take_over_stale_provider(&state_dir, &log_path);
+
     let mut child = spawn_provider_child(&binary, &record, &relay_url, &state_dir, &log_path)?;
     child_pid.store(child.id(), Ordering::Release);
 
@@ -460,6 +469,79 @@ fn signal_group(pid: u32, _signal: Signal) {
 #[cfg(not(unix))]
 fn pid_is_running(_pid: u32) -> bool {
     false
+}
+
+/// Lock file the provider holds inside its state directory (see
+/// `buzz-session-provider`'s `state::acquire_state_dir_lock`). Its contents
+/// are the owner's pid, written while holding the lock.
+const PROVIDER_LOCK_FILE: &str = "provider.lock";
+/// How long a stale owner's lock is given to clear after it was signalled.
+const TAKEOVER_LOCK_WAIT: Duration = Duration::from_secs(5);
+
+/// Stop an orphaned provider that still owns `state_dir`, if there is one.
+///
+/// A desktop that exited uncleanly leaves its provider running (reparented to
+/// launchd) and holding the state-dir lock. Best effort by design: when
+/// nothing holds the lock this is a no-op, and when takeover fails the child
+/// spawned next fails its own lock with a clear log line and the restart
+/// ladder gives up rather than corrupting shared state. The graceful SIGINT
+/// first lets the orphan flush its durable outbox before it dies.
+fn take_over_stale_provider(state_dir: &Path, log_path: &Path) {
+    let lock_path = state_dir.join(PROVIDER_LOCK_FILE);
+    let Ok(file) = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+    else {
+        return; // No lock file: no provider has ever owned this directory.
+    };
+    if file.try_lock().is_ok() {
+        // Nothing holds it. Release before spawning so the child can lock it.
+        let _ = file.unlock();
+        return;
+    }
+    let owner_pid = std::fs::read_to_string(&lock_path)
+        .ok()
+        .and_then(|contents| parse_lock_owner_pid(&contents));
+    let Some(pid) = owner_pid else {
+        let _ = append_log_marker(
+            log_path,
+            "=== a stale provider holds the state-dir lock but recorded no readable pid; \
+             the new child will refuse to start until it exits ===",
+        );
+        return;
+    };
+    if pid == std::process::id() || !pid_is_running(pid) {
+        return;
+    }
+    let _ = append_log_marker(
+        log_path,
+        &format!(
+            "=== taking over the provider state dir from stale pid {pid} at {} ===",
+            now_iso()
+        ),
+    );
+    terminate_gracefully_blocking(pid);
+    // The OS drops the lock when the owner dies; wait for that to be visible
+    // so the child we spawn next does not lose a takeover race it just won.
+    let deadline = std::time::Instant::now() + TAKEOVER_LOCK_WAIT;
+    while std::time::Instant::now() < deadline {
+        if file.try_lock().is_ok() {
+            let _ = file.unlock();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = append_log_marker(
+        log_path,
+        &format!("=== stale pid {pid} did not release the state-dir lock in time ==="),
+    );
+}
+
+/// The owning pid recorded in a provider lock file, if the contents are one.
+pub(crate) fn parse_lock_owner_pid(contents: &str) -> Option<u32> {
+    let pid = contents.trim().parse::<u32>().ok()?;
+    (pid > 1).then_some(pid)
 }
 
 /// Build and launch one provider process.
