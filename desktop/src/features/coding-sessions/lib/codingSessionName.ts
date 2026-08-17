@@ -18,6 +18,21 @@ export type CodingSessionName = {
   sessionRef: string;
 };
 
+type AcceptedCodingSessionNameListener = (event: RelayEvent) => void;
+
+// A publish receipt and the relay's live echo are separate paths. Keep local
+// consumers coherent even when one mounted subscription misses or trails the
+// echo; their event-id maps make delivery through both paths harmless.
+const acceptedCodingSessionNameListeners =
+  new Set<AcceptedCodingSessionNameListener>();
+
+export function subscribeToAcceptedCodingSessionNames(
+  listener: AcceptedCodingSessionNameListener,
+): () => void {
+  acceptedCodingSessionNameListeners.add(listener);
+  return () => acceptedCodingSessionNameListeners.delete(listener);
+}
+
 export function codingSessionNameKey(
   channelId: string,
   sessionRef: string,
@@ -155,9 +170,17 @@ export async function publishCodingSessionName(
   const event = await (dependencies.signer ?? signRelayEvent)(
     buildCodingSessionNameEvent(input),
   );
-  return await (dependencies.publisher ?? relayClient).publishEvent(
+  const accepted = await (dependencies.publisher ?? relayClient).publishEvent(
     event,
     "Timed out while renaming the session.",
     "Failed to rename the session.",
   );
+  for (const listener of acceptedCodingSessionNameListeners) {
+    try {
+      listener(accepted);
+    } catch (error) {
+      console.error("Failed to apply an accepted coding-session name", error);
+    }
+  }
+  return accepted;
 }

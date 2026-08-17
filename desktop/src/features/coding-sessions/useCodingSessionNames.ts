@@ -6,6 +6,7 @@ import type { RelayEvent } from "@/shared/api/types";
 import {
   buildCodingSessionNameFilter,
   foldLatestCodingSessionNamesByFounder,
+  subscribeToAcceptedCodingSessionNames,
   type CodingSessionName,
 } from "./lib/codingSessionName";
 
@@ -88,10 +89,14 @@ export function useCodingSessionNames(
         }
       });
     const unsubscribeReconnect = client.subscribeToReconnects?.(load);
+    const unsubscribeAccepted = subscribeToAcceptedCodingSessionNames((event) =>
+      admit([event]),
+    );
     return () => {
       cancelled = true;
       unsubscribeLive?.();
       unsubscribeReconnect?.();
+      unsubscribeAccepted();
     };
   }, [client, stableChannelIds]);
 
