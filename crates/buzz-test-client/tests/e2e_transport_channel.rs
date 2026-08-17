@@ -37,6 +37,33 @@ fn sub_id(name: &str) -> String {
     format!("e2e-transport-{name}-{}", uuid::Uuid::new_v4())
 }
 
+/// Read a member's authoritative role from the relay-signed kind:39002 member
+/// list — the relay's own view of membership, which an `accepted` OK for a
+/// kind:9000 does not prove (the event can be stored while its membership side
+/// effect fails).
+async fn member_role(url: &str, keys: &Keys, channel_id: &str, pubkey_hex: &str) -> Option<String> {
+    let mut ws = BuzzTestClient::connect(url, keys).await.expect("connect");
+    let sid = sub_id("members");
+    let filter = Filter::new()
+        .kind(Kind::Custom(39002))
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::D), [channel_id]);
+    ws.subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe 39002");
+    let events = ws
+        .collect_until_eose(&sid, Duration::from_secs(5))
+        .await
+        .expect("39002 EOSE");
+    ws.disconnect().await.ok();
+    // Latest 39002 wins; the p tag shape is ["p", pubkey, relay_url, role].
+    events.iter().max_by_key(|e| e.created_at).and_then(|e| {
+        e.tags.iter().find_map(|t| {
+            let p = t.as_slice();
+            (p.len() >= 4 && p[0] == "p" && p[1] == pubkey_hex).then(|| p[3].clone())
+        })
+    })
+}
+
 fn unique(prefix: &str) -> String {
     format!("{prefix}-{}", &uuid::Uuid::new_v4().to_string()[..8])
 }
@@ -365,6 +392,23 @@ async fn test_transport_channel_bot_add_authority() {
         ok.accepted,
         "project member's bot add must be accepted: {}",
         ok.message
+    );
+
+    // `accepted` means "stored", not "applied": a 9000 whose membership side
+    // effect fails leaves the roster unchanged while the OK reports success.
+    // Re-read the relay-signed 39002 roster — the assertion that would have
+    // caught the validator/apply divergence this test file was blind to.
+    let bot_role = member_role(
+        &relay_url(),
+        &owner,
+        &transport_id,
+        &bot.public_key().to_hex(),
+    )
+    .await;
+    assert_eq!(
+        bot_role.as_deref(),
+        Some("bot"),
+        "the accepted bot add must actually appear in the 39002 roster"
     );
 
     // The same member may NOT grant an elevated role.

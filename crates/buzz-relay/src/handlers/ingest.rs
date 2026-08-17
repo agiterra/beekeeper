@@ -3284,6 +3284,20 @@ async fn ingest_event_inner(
             // RUST_LOG=error, so warn! made these failures invisible during
             // the #3527 triage.
             error!(event_id = %event_id_hex, kind = kind_u32, "Side effect failed: {e}");
+            if crate::handlers::side_effects::is_admin_kind(kind_u32) {
+                // An admin event's entire meaning is its side effect: a 9000
+                // whose membership apply failed is stored, but answering
+                // "accepted" over an unchanged roster is the lie that produced
+                // silently wedged transport channels. The event stays stored —
+                // a client retry of the same bytes lands on the duplicate path
+                // above and converges idempotently; producers should treat
+                // this error as "the effect did not apply, issue a fresh
+                // event". Non-admin side-effect kinds keep best-effort
+                // semantics.
+                return Err(IngestError::Rejected(format!(
+                    "error: stored but its effect did not apply: {e}"
+                )));
+            }
         }
     }
 
