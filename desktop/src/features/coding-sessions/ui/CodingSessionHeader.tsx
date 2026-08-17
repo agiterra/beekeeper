@@ -15,8 +15,19 @@ import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { CODING_SESSION_TASK_RAIL_ID } from "./CodingSessionTaskRail";
-import { CODING_SESSION_CHANGES_RAIL_ID } from "./CodingSessionChangesRail";
-import { CODING_SESSION_EXECUTION_RAIL_ID } from "./CodingSessionExecutionRail";
+
+/**
+ * A compact direct affordance for one surface tab of the shared right-side
+ * surface host. Clicking an inactive affordance opens the host on that tab;
+ * clicking the active one closes the host.
+ */
+export type CodingSessionHeaderSurfaceTab = {
+  id: string;
+  label: string;
+  icon: "agents" | "changes";
+  count?: number;
+  active: boolean;
+};
 
 type CodingSessionHeaderProps = {
   channelName: string | null;
@@ -34,20 +45,19 @@ type CodingSessionHeaderProps = {
   onExport?: () => void;
   onPopout?: () => void;
   onToggleTaskRail?: () => void;
-  onToggleChangesRail?: () => void;
-  onToggleExecutionRail?: () => void;
+  /** Toggles the shared surface host open/closed on the given surface tab. */
+  onToggleSurface?: (id: string) => void;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
   runtimeLabel?: string | null;
   sessionTitle?: string | null;
   status: CodingSessionWorkspaceStatus;
+  /** DOM id of the surface host panel, for `aria-controls`. */
+  surfaceHostId?: string;
+  surfaceTabs?: readonly CodingSessionHeaderSurfaceTab[];
   taskCount?: number;
   taskRailOpen?: boolean;
-  changedFileCount?: number;
-  changesRailOpen?: boolean;
-  executionCount?: number;
-  executionRailOpen?: boolean;
 };
 
 export function CodingSessionHeader({
@@ -61,20 +71,17 @@ export function CodingSessionHeader({
   onExport,
   onPopout,
   onToggleTaskRail,
-  onToggleChangesRail,
-  onToggleExecutionRail,
+  onToggleSurface,
   projectName = null,
   providerAuthorityPubkey = null,
   repoName = null,
   runtimeLabel = null,
   sessionTitle = null,
   status,
+  surfaceHostId,
+  surfaceTabs,
   taskCount = 0,
   taskRailOpen = false,
-  changedFileCount = 0,
-  changesRailOpen = false,
-  executionCount = 0,
-  executionRailOpen = false,
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
@@ -201,62 +208,40 @@ export function CodingSessionHeader({
           ) : null}
         </Button>
       ) : null}
-      {onToggleChangesRail ? (
-        <Button
-          aria-controls={CODING_SESSION_CHANGES_RAIL_ID}
-          aria-expanded={changesRailOpen}
-          aria-label={
-            changesRailOpen ? "Hide session changes" : "Show session changes"
-          }
-          data-testid="coding-session-changes-rail-toggle"
-          onClick={onToggleChangesRail}
-          size={compact ? "icon" : "sm"}
-          type="button"
-          variant={changesRailOpen ? "secondary" : "ghost"}
-        >
-          <GitCompare />
-          <span className={compact ? "sr-only" : undefined}>Changes</span>
-          {changedFileCount > 0 ? (
-            <span
-              className={cn(
-                "rounded-full bg-background/70 px-1.5 text-xs",
-                compact && "sr-only",
-              )}
+      {onToggleSurface && surfaceTabs
+        ? surfaceTabs.map((tab) => (
+            <Button
+              aria-controls={surfaceHostId}
+              aria-expanded={tab.active}
+              aria-label={
+                tab.active
+                  ? `Hide ${tab.label.toLowerCase()}`
+                  : `Show ${tab.label.toLowerCase()}`
+              }
+              data-testid={`coding-session-surface-toggle-${tab.id}`}
+              key={tab.id}
+              onClick={() => onToggleSurface(tab.id)}
+              size={compact ? "icon" : "sm"}
+              type="button"
+              variant={tab.active ? "secondary" : "ghost"}
             >
-              {changedFileCount}
-            </span>
-          ) : null}
-        </Button>
-      ) : null}
-      {onToggleExecutionRail ? (
-        <Button
-          aria-controls={CODING_SESSION_EXECUTION_RAIL_ID}
-          aria-expanded={executionRailOpen}
-          aria-label={
-            executionRailOpen
-              ? "Hide session executions"
-              : "Show session executions"
-          }
-          data-testid="coding-session-execution-rail-toggle"
-          onClick={onToggleExecutionRail}
-          size={compact ? "icon" : "sm"}
-          type="button"
-          variant={executionRailOpen ? "secondary" : "ghost"}
-        >
-          <Users />
-          <span className={compact ? "sr-only" : undefined}>Executions</span>
-          {executionCount > 0 ? (
-            <span
-              className={cn(
-                "rounded-full bg-background/70 px-1.5 text-xs",
-                compact && "sr-only",
-              )}
-            >
-              {executionCount}
-            </span>
-          ) : null}
-        </Button>
-      ) : null}
+              {tab.icon === "agents" ? <Users /> : <GitCompare />}
+              <span className={compact ? "sr-only" : undefined}>
+                {tab.label}
+              </span>
+              {tab.count !== undefined && tab.count > 0 ? (
+                <span
+                  className={cn(
+                    "rounded-full bg-background/70 px-1.5 text-xs",
+                    compact && "sr-only",
+                  )}
+                >
+                  {tab.count}
+                </span>
+              ) : null}
+            </Button>
+          ))
+        : null}
       {onAddProvider ? (
         <Button
           aria-label="Add a provider to this session"

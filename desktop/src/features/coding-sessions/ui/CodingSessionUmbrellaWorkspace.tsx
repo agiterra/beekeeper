@@ -29,18 +29,23 @@ import type {
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
+import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import { useElementWidthBreakpoint } from "@/shared/hooks/use-mobile";
+import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
-import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
-import { useCodingSessionRailWidth } from "./useCodingSessionRailWidth";
+import {
+  CodingSessionSurfaceHost,
+  useCodingSessionSurfaceHostState,
+  type CodingSessionSurfaceDescriptor,
+} from "./CodingSessionSurfaceHost";
 import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
@@ -82,10 +87,47 @@ export function UmbrellaCodingSessionWorkspace({
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
   const [prefill, setPrefill] =
     React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
-  const [executionRailOpen, setExecutionRailOpen] = React.useState(true);
-  const [workspaceBodyRef, isNarrow] =
-    useElementWidthBreakpoint<HTMLDivElement>(960);
-  const railWidth = useCodingSessionRailWidth(workspaceBodyRef);
+  const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
+  const isNarrow = bodyWidthPx > 0 && bodyWidthPx < 960;
+  // Observed changes across every execution the umbrella narrative renders —
+  // prior generations included, in the same order the timeline ingests them.
+  const changedFiles = React.useMemo(
+    () =>
+      deriveCodingSessionChangedFiles(
+        umbrella.executions.flatMap((execution) =>
+          [...execution.priorGenerations, execution.activeGeneration].flatMap(
+            (record) => record.transcript,
+          ),
+        ),
+      ),
+    [umbrella.executions],
+  );
+  const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
+    () => [
+      {
+        id: "agents",
+        label: "Agents",
+        count: umbrella.executions.length,
+        content: <CodingSessionExecutionRail umbrella={umbrella} />,
+      },
+      {
+        id: "changes",
+        label: "Observed changes",
+        count: changedFiles.length,
+        content: <CodingSessionChangesRail files={changedFiles} />,
+      },
+    ],
+    [changedFiles, umbrella],
+  );
+  const surfaceIds = React.useMemo(
+    () => surfaces.map((surfaceEntry) => surfaceEntry.id),
+    [surfaces],
+  );
+  // The umbrella surface keeps its historical default: agents visible on open.
+  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds, {
+    initialTab: "agents",
+  });
+  const surfaceHostId = React.useId();
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -109,12 +151,18 @@ export function UmbrellaCodingSessionWorkspace({
           onAddProvider={onAddProvider}
           onBack={onBack}
           onPopout={surface === "main" ? handlePopout : undefined}
-          onToggleExecutionRail={() => setExecutionRailOpen((open) => !open)}
+          onToggleSurface={(id) => surfaceHost.toggle(id)}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
           sessionTitle={umbrella.title}
           status={umbrellaWorkspaceStatus(umbrella)}
-          executionCount={umbrella.executions.length}
-          executionRailOpen={executionRailOpen}
+          surfaceHostId={surfaceHostId}
+          surfaceTabs={surfaces.map((surfaceEntry) => ({
+            id: surfaceEntry.id,
+            label: surfaceEntry.label,
+            icon: surfaceEntry.id === "agents" ? "agents" : "changes",
+            count: surfaceEntry.count ?? 0,
+            active: surfaceHost.activeTab === surfaceEntry.id,
+          }))}
         />
         <CodingSessionFounderLine
           founderPubkey={umbrella.founderPubkey}
@@ -157,43 +205,18 @@ export function UmbrellaCodingSessionWorkspace({
             </div>
           </div>
         </section>
-        {!isNarrow && executionRailOpen ? (
-          <div
-            className="relative min-h-0 shrink-0 border-l border-border/60"
-            style={{ width: railWidth.width }}
-          >
-            <button
-              aria-label="Resize agents panel"
-              className="group absolute inset-y-0 -left-1 z-30 w-2 cursor-col-resize touch-none"
-              onKeyDown={railWidth.onResizeKeyDown}
-              onPointerDown={railWidth.onResizeStart}
-              type="button"
-            >
-              <span className="absolute inset-y-0 left-1/2 w-px bg-transparent transition-colors group-hover:bg-primary/70 group-focus-visible:bg-primary" />
-            </button>
-            <CodingSessionExecutionRail
-              onClose={() => setExecutionRailOpen(false)}
-              umbrella={umbrella}
-            />
-          </div>
+        {surfaceHost.activeTab !== null ? (
+          <CodingSessionSurfaceHost
+            activeSurfaceId={surfaceHost.activeTab}
+            hostId={surfaceHostId}
+            layout={bodyWidthPx <= 0 ? null : isNarrow ? "sheet" : "inline"}
+            onClose={surfaceHost.close}
+            onSelectSurface={surfaceHost.select}
+            surfaces={surfaces}
+            widthContainerRef={workspaceBodyRef}
+          />
         ) : null}
       </div>
-      {isNarrow ? (
-        <Sheet onOpenChange={setExecutionRailOpen} open={executionRailOpen}>
-          <SheetContent
-            aria-describedby={undefined}
-            className="w-[min(92vw,26rem)] max-w-none p-0"
-            side="right"
-          >
-            <SheetTitle className="sr-only">Session agents</SheetTitle>
-            <CodingSessionExecutionRail
-              onClose={() => setExecutionRailOpen(false)}
-              showCloseButton={false}
-              umbrella={umbrella}
-            />
-          </SheetContent>
-        </Sheet>
-      ) : null}
     </main>
   );
 }

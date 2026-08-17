@@ -73,6 +73,51 @@ test("header disables the export button while an export is running", () => {
   assert.match(exportButton[0], /disabled/);
 });
 
+test("surface affordances are compact direct tabs into the shared host", () => {
+  const baseProps = {
+    channelName: "Hive Sessions",
+    generationLabel: "Keystone Session · generation 2",
+    onBack() {},
+    status: { kind: "idle", label: "Idle" },
+  };
+
+  // No surface wiring, no affordances — the workspace-state header stays bare.
+  const withoutSurfaces = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, baseProps),
+  );
+  assert.doesNotMatch(withoutSurfaces, /coding-session-surface-toggle/);
+
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      onToggleSurface() {},
+      surfaceHostId: "surface-host-1",
+      surfaceTabs: [
+        {
+          id: "agents",
+          label: "Agents",
+          icon: "agents",
+          count: 2,
+          active: true,
+        },
+        {
+          id: "changes",
+          label: "Observed changes",
+          icon: "changes",
+          count: 0,
+          active: false,
+        },
+      ],
+    }),
+  );
+  assert.match(markup, /data-testid="coding-session-surface-toggle-agents"/);
+  assert.match(markup, /data-testid="coding-session-surface-toggle-changes"/);
+  assert.match(markup, /aria-label="Hide agents"/);
+  assert.match(markup, /aria-label="Show observed changes"/);
+  assert.match(markup, /aria-controls="surface-host-1"/);
+  assert.match(markup, />Observed changes</);
+});
+
 test("the add-provider affordance appears only when this session can take one", () => {
   const baseProps = {
     channelName: "Hive Sessions",

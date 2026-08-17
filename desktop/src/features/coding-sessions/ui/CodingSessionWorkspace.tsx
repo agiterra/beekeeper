@@ -41,7 +41,14 @@ import {
 } from "./CodingSessionTaskRail";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
+import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
+import {
+  CodingSessionSurfaceHost,
+  useCodingSessionSurfaceHostState,
+  type CodingSessionSurfaceDescriptor,
+} from "./CodingSessionSurfaceHost";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
 
 type CodingSessionWorkspaceProps = {
@@ -151,6 +158,7 @@ export function CodingSessionWorkspace({
           sessionRef={umbrella.sessionRef}
           session={resolution.session}
           surface={surface}
+          umbrella={umbrella}
         />
       )}
       {/* Deliberately a sibling of both branches: the first join flips the
@@ -184,6 +192,7 @@ function ReadyCodingSessionWorkspace({
   onBack,
   session,
   surface,
+  umbrella,
 }: {
   channelId: string;
   channelName: string | null;
@@ -203,11 +212,13 @@ function ReadyCodingSessionWorkspace({
     { kind: "ready" }
   >["session"];
   surface: CodingSessionSurface;
+  umbrella: CodingSessionUmbrellaRecord;
 }) {
   const workspaceRef = React.useRef<HTMLElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
-  const isNarrow = useNarrowCodingSessionWorkspace(workspaceRef);
+  const narrowState = useNarrowCodingSessionWorkspace(workspaceRef);
+  const isNarrow = narrowState === true;
   const runtimeLabel = React.useMemo(() => {
     const runtime = session.runtime ?? session.provider;
     return runtime ? formatCodingSessionRuntimeLabel(runtime) : null;
@@ -252,7 +263,36 @@ function ReadyCodingSessionWorkspace({
     () => deriveCodingSessionChangedFiles(session.transcript),
     [session.transcript],
   );
-  const [changesRailOpen, setChangesRailOpen] = React.useState(false);
+  // Surfaces offered by current data: Observed changes always applies to a
+  // transcript; Agents only when the umbrella model actually provides
+  // participants (it lists one per signed execution) — never an empty tab.
+  const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
+    () => [
+      ...(umbrella.executions.length > 0
+        ? [
+            {
+              id: "agents",
+              label: "Agents",
+              count: umbrella.executions.length,
+              content: <CodingSessionExecutionRail umbrella={umbrella} />,
+            },
+          ]
+        : []),
+      {
+        id: "changes",
+        label: "Observed changes",
+        count: changedFiles.length,
+        content: <CodingSessionChangesRail files={changedFiles} />,
+      },
+    ],
+    [changedFiles, umbrella],
+  );
+  const surfaceIds = React.useMemo(
+    () => surfaces.map((surfaceEntry) => surfaceEntry.id),
+    [surfaces],
+  );
+  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
+  const surfaceHostId = React.useId();
   const taskRailPreferenceKey = React.useMemo(
     () => codingSessionTaskRailPreferenceKey(channelId, generationId),
     [channelId, generationId],
@@ -312,21 +352,27 @@ function ReadyCodingSessionWorkspace({
           onExport={exportEnabled ? exportTranscript : undefined}
           onPopout={surface === "main" ? handlePopout : undefined}
           onToggleTaskRail={() => {
-            setChangesRailOpen(false);
+            surfaceHost.close();
             setTaskRailOpen((open) => !open);
           }}
-          onToggleChangesRail={() => {
+          onToggleSurface={(id) => {
             setTaskRailOpen(false);
-            setChangesRailOpen((open) => !open);
+            surfaceHost.toggle(id);
           }}
           providerAuthorityPubkey={session.providerAuthorityPubkey}
           runtimeLabel={runtimeLabel}
           sessionTitle={session.title}
           status={status}
+          surfaceHostId={surfaceHostId}
+          surfaceTabs={surfaces.map((surfaceEntry) => ({
+            id: surfaceEntry.id,
+            label: surfaceEntry.label,
+            icon: surfaceEntry.id === "agents" ? "agents" : "changes",
+            count: surfaceEntry.count ?? 0,
+            active: surfaceHost.activeTab === surfaceEntry.id,
+          }))}
           taskCount={taskModel?.tasks.length ?? 0}
           taskRailOpen={taskRailOpen}
-          changedFileCount={changedFiles.length}
-          changesRailOpen={changesRailOpen}
         />
         <CodingSessionFounderLine
           founderPubkey={founderPubkey}
@@ -417,8 +463,18 @@ function ReadyCodingSessionWorkspace({
         {!isNarrow && taskRailOpen ? (
           <CodingSessionTaskRail model={taskModel} />
         ) : null}
-        {!isNarrow && changesRailOpen ? (
-          <CodingSessionChangesRail files={changedFiles} />
+        {surfaceHost.activeTab !== null ? (
+          <CodingSessionSurfaceHost
+            activeSurfaceId={surfaceHost.activeTab}
+            hostId={surfaceHostId}
+            layout={
+              narrowState === null ? null : narrowState ? "sheet" : "inline"
+            }
+            onClose={surfaceHost.close}
+            onSelectSurface={surfaceHost.select}
+            surfaces={surfaces}
+            widthContainerRef={workspaceRef}
+          />
         ) : null}
       </div>
       {isNarrow ? (
@@ -430,18 +486,6 @@ function ReadyCodingSessionWorkspace({
           >
             <SheetTitle className="sr-only">Session plan</SheetTitle>
             <CodingSessionTaskRail model={taskModel} variant="sheet" />
-          </SheetContent>
-        </Sheet>
-      ) : null}
-      {isNarrow ? (
-        <Sheet onOpenChange={setChangesRailOpen} open={changesRailOpen}>
-          <SheetContent
-            aria-describedby={undefined}
-            className="w-[min(94vw,34rem)] max-w-none p-0"
-            side="right"
-          >
-            <SheetTitle className="sr-only">Session changes</SheetTitle>
-            <CodingSessionChangesRail files={changedFiles} variant="sheet" />
           </SheetContent>
         </Sheet>
       ) : null}
@@ -532,10 +576,15 @@ function writeTaskRailPreference(
 
 const NARROW_CODING_SESSION_WORKSPACE_WIDTH = 960;
 
+/**
+ * `null` until the workspace width is first measured, so responsive chrome
+ * (the surface host in particular) never mounts its desktop inline layout
+ * only to be torn down and replaced by an animated sheet a frame later.
+ */
 function useNarrowCodingSessionWorkspace(
   workspaceRef: React.RefObject<HTMLElement | null>,
-): boolean {
-  const [isNarrow, setIsNarrow] = React.useState(false);
+): boolean | null {
+  const [isNarrow, setIsNarrow] = React.useState<boolean | null>(null);
 
   React.useEffect(() => {
     const workspace = workspaceRef.current;

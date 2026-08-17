@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Bot, PanelRightClose, Users } from "lucide-react";
+import { Bot, Users } from "lucide-react";
 
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
@@ -9,17 +9,17 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
 
-export const CODING_SESSION_EXECUTION_RAIL_ID = "coding-session-execution-rail";
-
 type ExecutionRailTab = "overview" | `execution:${string}`;
 
+/**
+ * The Agents surface: who is participating in this session, per signed
+ * execution records. Content only — panel chrome (host tab strip, close
+ * control, width, sheet behavior) belongs to the surface host. The internal
+ * tabs here navigate *within* the surface (overview vs one execution).
+ */
 export function CodingSessionExecutionRail({
-  onClose,
-  showCloseButton = true,
   umbrella,
 }: {
-  onClose: () => void;
-  showCloseButton?: boolean;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -58,11 +58,9 @@ export function CodingSessionExecutionRail({
         ) ?? null);
 
   return (
-    <aside
-      aria-label="Session executions"
-      className="flex min-h-0 h-full flex-col bg-background"
+    <div
+      className="flex h-full min-h-0 flex-1 flex-col bg-background"
       data-testid="coding-session-execution-rail"
-      id={CODING_SESSION_EXECUTION_RAIL_ID}
     >
       <div className="flex h-12 shrink-0 items-center border-b border-border/60 px-3">
         <div
@@ -99,16 +97,6 @@ export function CodingSessionExecutionRail({
             />
           ))}
         </div>
-        {showCloseButton ? (
-          <button
-            aria-label="Close agents panel"
-            className="ml-2 flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onClose}
-            type="button"
-          >
-            <PanelRightClose className="size-4" />
-          </button>
-        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
@@ -126,7 +114,7 @@ export function CodingSessionExecutionRail({
       </div>
 
       <ExecutionRailFooter executions={umbrella.executions} />
-    </aside>
+    </div>
   );
 }
 

@@ -33,12 +33,15 @@ test("renders signed changed files, known stats, and inline diff detail", () => 
     }),
   );
 
-  assert.match(markup, /Session changes/);
   assert.match(markup, /src\/session\.ts/);
   assert.match(markup, /\+1/);
   assert.match(markup, /-1/);
   assert.match(markup, /const state = &#x27;ready&#x27;;/);
-  assert.match(markup, /From signed session activity/);
+  // The footer names the honest provenance of this surface: transcript
+  // observation, not a complete workspace diff.
+  assert.match(markup, /Observed in transcript activity/);
+  // Content only: the host owns the panel landmark and tab chrome.
+  assert.doesNotMatch(markup, /<aside/);
 });
 
 test("does not invent stats for path-only edits", () => {
@@ -67,6 +70,6 @@ test("renders an honest empty state", () => {
     React.createElement(CodingSessionChangesRail, { files: [] }),
   );
 
-  assert.match(markup, /No signed changes yet/);
-  assert.match(markup, /File edits reported by this execution/);
+  assert.match(markup, /No observed changes yet/);
+  assert.match(markup, /File edits observed in this session/);
 });
