@@ -70,6 +70,9 @@ pub struct Config {
     pub state_dir: PathBuf,
     /// Host-local working-directory map, re-read on every lifecycle command.
     pub projects_file: Option<PathBuf>,
+    /// Optional read-only MCP binary used to expose verified relay context to
+    /// a newly-created provider session. Absent keeps legacy behavior.
+    pub context_mcp_command: Option<PathBuf>,
     /// Stable provider instance id carried in every `cs-target`.
     pub instance_id: String,
     /// Every runtime this provider offers, in the host's order. Never empty:
@@ -111,6 +114,10 @@ impl Config {
 
         let state_dir = PathBuf::from(required(&lookup, "BUZZ_CSP_STATE_DIR")?);
         let projects_file = lookup("BUZZ_CSP_PROJECTS_FILE")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let context_mcp_command = lookup("BUZZ_CSP_CONTEXT_MCP_COMMAND")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
@@ -157,6 +164,7 @@ impl Config {
             auth_tag,
             state_dir,
             projects_file,
+            context_mcp_command,
             instance_id,
             runtimes,
             max_sessions,
@@ -419,7 +427,21 @@ mod tests {
         assert_eq!(config.session_idle_shutdown, Duration::from_secs(1800));
         assert!(config.include_thoughts);
         assert!(config.projects_file.is_none());
+        assert!(config.context_mcp_command.is_none());
         assert!(config.auth_tag.is_none());
+    }
+
+    #[test]
+    fn parses_the_optional_context_mcp_command() {
+        let mut vars = minimal();
+        vars.insert(
+            "BUZZ_CSP_CONTEXT_MCP_COMMAND",
+            " /opt/buzz/bin/buzz-dev-mcp ".into(),
+        );
+        assert_eq!(
+            load(&vars).unwrap().context_mcp_command,
+            Some(PathBuf::from("/opt/buzz/bin/buzz-dev-mcp"))
+        );
     }
 
     /// The instance id has to be stable across restarts without any persisted

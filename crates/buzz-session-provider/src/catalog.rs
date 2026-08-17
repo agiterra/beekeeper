@@ -234,6 +234,7 @@ mod tests {
             auth_tag: None,
             state_dir: PathBuf::from("/tmp/csp"),
             projects_file: None,
+            context_mcp_command: None,
             instance_id: "instance-1".into(),
             runtimes,
             max_sessions: 4,

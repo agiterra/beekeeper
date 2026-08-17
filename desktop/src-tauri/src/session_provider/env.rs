@@ -37,6 +37,9 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// Resolved ACP adapter executable. The managed Node tools directory is not
     /// guaranteed to be on the desktop process's inherited PATH.
     pub agent_command: Option<PathBuf>,
+    /// Resolved private read-only context MCP sidecar. The provider passes it
+    /// only to sessions for which a verified relay package was projected.
+    pub context_mcp_command: Option<PathBuf>,
     /// Resolved Claude Code CLI, exported as `CLAUDE_CODE_EXECUTABLE` so the
     /// ACP adapter the provider spawns per session finds the same binary
     /// managed agents use. `None` leaves the adapter's own PATH lookup in
@@ -95,6 +98,12 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
             agent_command.to_string_lossy().into_owned(),
         );
     }
+    if let Some(context_mcp_command) = &inputs.context_mcp_command {
+        env.insert(
+            "BUZZ_CSP_CONTEXT_MCP_COMMAND".to_string(),
+            context_mcp_command.to_string_lossy().into_owned(),
+        );
+    }
     if let Some(path) = &inputs.augmented_path {
         env.insert("PATH".to_string(), path.clone());
     }
@@ -132,5 +141,6 @@ pub(crate) const INHERITED_KEYS_TO_CLEAR: &[&str] = &[
     "BUZZ_ACP_PRIVATE_KEY",
     "BUZZ_API_TOKEN",
     "BUZZ_CSP_RUNTIMES",
+    "BUZZ_CSP_CONTEXT_MCP_COMMAND",
     "NOSTR_PRIVATE_KEY",
 ];

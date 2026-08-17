@@ -1334,10 +1334,10 @@ impl AcpClient {
             "params": params,
         });
 
-        if matches!(method, "session/resume" | "session/load") {
-            tracing::debug!(target: "acp::wire", id, method, "→ ACP request (session id redacted)");
+        if let Some(payload) = acp_request_log_payload(method, &msg) {
+            tracing::debug!(target: "acp::wire", "→ {payload}");
         } else {
-            tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+            tracing::debug!(target: "acp::wire", id, method, "→ ACP request (session details redacted)");
         }
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
@@ -2332,6 +2332,20 @@ fn steer_prompt_blocks(prompt_blocks: &[&str]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Serialize a request for debug logging unless it opens a session.
+///
+/// Session-open parameters carry host-private cursors, working directories,
+/// and MCP environment such as `BUZZ_SESSION_CONTEXT_PACKAGE`. The wire still
+/// receives the full request; debug logs receive only the method and id at the
+/// call site.
+fn acp_request_log_payload(method: &str, message: &serde_json::Value) -> Option<String> {
+    if matches!(method, "session/new" | "session/resume" | "session/load") {
+        None
+    } else {
+        Some(serde_json::to_string(message).unwrap_or_default())
+    }
+}
+
 /// Build a JSON-RPC permission response with `outcome: "selected"`.
 fn permission_response_selected(id: &serde_json::Value, option_id: &str) -> serde_json::Value {
     serde_json::json!({
@@ -2877,6 +2891,36 @@ mod tests {
             serialized["env"][0]["name"].as_str(),
             Some("BUZZ_RELAY_URL")
         );
+    }
+
+    #[test]
+    fn session_open_debug_logging_never_serializes_private_parameters() {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "session/new",
+            "params": {
+                "cwd": "/private/checkout",
+                "mcpServers": [{
+                    "name": "buzz-session-context",
+                    "command": "/private/buzz-session-context",
+                    "args": [],
+                    "env": [{
+                        "name": "BUZZ_SESSION_CONTEXT_PACKAGE",
+                        "value": "/private/verified-package.json",
+                    }],
+                }],
+            },
+        });
+
+        for method in ["session/new", "session/resume", "session/load"] {
+            assert!(
+                acp_request_log_payload(method, &message).is_none(),
+                "{method} must redact its full parameter object"
+            );
+        }
+        let visible = acp_request_log_payload("initialize", &message).expect("ordinary request");
+        assert!(visible.contains("verified-package.json"));
     }
 
     #[test]

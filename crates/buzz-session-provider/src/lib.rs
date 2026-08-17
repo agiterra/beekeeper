@@ -34,6 +34,8 @@ pub mod authority;
 pub mod catalog;
 pub mod commands;
 pub mod config;
+pub mod context_projector;
+mod context_store;
 mod git_probe;
 mod model_catalog;
 pub mod payload;
@@ -78,6 +80,7 @@ use commands::{
     ResumePlan, StopPlan, TurnDecision,
 };
 use config::Config;
+use context_projector::{ContextProjectionLimits, ContextProjectionRequest};
 use payload::{
     Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope,
     GENESIS_NOT_FOUND, METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
@@ -85,7 +88,8 @@ use payload::{
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{
-    CreateRequest, SessionCommand, SessionContinuity, SessionEvent, SessionManager, TurnOutcome,
+    CreateRequest, RehydrationMcpDescriptor, SessionCommand, SessionContinuity, SessionEvent,
+    SessionManager, TurnOutcome,
 };
 use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
 
@@ -735,6 +739,9 @@ impl Provider {
             session_id: Uuid::new_v4().to_string(),
             generation: 1,
         };
+        let rehydration_mcp = self
+            .prepare_rehydration_context(&plan, &target.session_id, relay)
+            .await;
         let request = CreateRequest {
             target: target.clone(),
             channel_id: plan.channel_id,
@@ -742,6 +749,7 @@ impl Provider {
             title: plan.title.clone(),
             model: plan.model.clone(),
             resume_cursor: None,
+            rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
             agent_env: descriptor
@@ -795,6 +803,16 @@ impl Provider {
             closed: false,
         };
         self.state.insert_session(record)?;
+
+        if startup.continuity == SessionContinuity::Rehydrated {
+            self.enqueue_transcript(
+                plan.channel_id,
+                &target,
+                None,
+                payload::status_item("session_rehydrated"),
+                Priority::High,
+            )?;
+        }
 
         // A genesis may already carry an accepted authority chain — another
         // execution under the same umbrella can be granted operators before
@@ -865,6 +883,77 @@ impl Provider {
         Ok(())
     }
 
+    /// Best-effort verified-history attachment for a fresh execution under an
+    /// existing durable umbrella.
+    ///
+    /// A missing sidecar, a first-ever session with no earlier execution, or a
+    /// relay/projection/storage failure leaves the execution Fresh. Nothing in
+    /// this path may turn unverified history into agent context or prevent the
+    /// operator from starting a usable fresh execution.
+    async fn prepare_rehydration_context(
+        &self,
+        plan: &CreatePlan,
+        execution_id: &str,
+        relay: Option<&HarnessRelay>,
+    ) -> Option<RehydrationMcpDescriptor> {
+        let command = self.config.context_mcp_command.as_ref()?;
+        if !command.is_absolute() {
+            tracing::warn!(
+                target: "csp::context",
+                command_id = %plan.command_id,
+                "context MCP command is not absolute; starting without rehydrated context"
+            );
+            return None;
+        }
+        let session_ref = plan.session_ref.as_ref()?;
+        let genesis_ref = plan.genesis_ref.as_ref()?;
+        let relay_self_pubkey = self.relay_self.as_ref()?;
+        let relay = relay?;
+        let request = ContextProjectionRequest {
+            channel_id: plan.channel_id,
+            session_ref: session_ref.clone(),
+            genesis_ref: genesis_ref.clone(),
+            relay_self_pubkey: relay_self_pubkey.clone(),
+            generated_at: now_ms(),
+            limits: ContextProjectionLimits::default(),
+        };
+        let package = match context_projector::fetch_and_project_session_context(
+            &relay.rest_client(),
+            &request,
+        )
+        .await
+        {
+            Ok(package) => package,
+            Err(error) => {
+                tracing::info!(
+                    target: "csp::context",
+                    command_id = %plan.command_id,
+                    "verified prior context unavailable; starting Fresh: {error}"
+                );
+                return None;
+            }
+        };
+        let package_path = match context_store::write_context_package(
+            &self.config.state_dir,
+            execution_id,
+            &package,
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::context",
+                    command_id = %plan.command_id,
+                    "verified context could not be persisted; starting Fresh: {error}"
+                );
+                return None;
+            }
+        };
+        Some(RehydrationMcpDescriptor {
+            command: command.clone(),
+            package_path,
+        })
+    }
+
     async fn resume_session(&mut self, plan: ResumePlan) -> anyhow::Result<()> {
         if self
             .sessions
@@ -918,6 +1007,7 @@ impl Provider {
             title: record.title.clone(),
             model: record.model.clone(),
             resume_cursor: record.resume_cursor.clone(),
+            rehydration_mcp: None,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
             agent_env: descriptor
@@ -963,6 +1053,10 @@ impl Provider {
             SessionContinuity::Loaded => (
                 LifecycleReceipt::resumed(&plan.command_id, &target),
                 "session_loaded",
+            ),
+            SessionContinuity::Rehydrated => (
+                LifecycleReceipt::resumed(&plan.command_id, &target),
+                "session_rehydrated",
             ),
             SessionContinuity::RestartedWithoutContext { reason } => (
                 LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
@@ -2286,6 +2380,7 @@ mod tests {
             auth_tag: None,
             state_dir: state_dir.to_path_buf(),
             projects_file: projects.map(Path::to_path_buf),
+            context_mcp_command: None,
             instance_id: "instance-1".into(),
             runtimes,
             max_sessions: 2,

@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use tokio::sync::broadcast;
 
-use buzz_acp::acp::{AcpClient, AcpError, ModelSwitchMethod, StopReason};
+use buzz_acp::acp::{AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, StopReason};
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
 use buzz_core::coding_session_command::CodingSessionTarget;
@@ -48,8 +48,20 @@ pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a cancelled agent has to acknowledge before the drain gives up.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(30);
 
+/// Host-private descriptor for the read-only context MCP attached to a session.
+///
+/// Both paths must be absolute. The package path is passed only to the MCP
+/// subprocess, never to the agent's own environment or to signed session data.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RehydrationMcpDescriptor {
+    /// Absolute path to the `buzz-session-context` executable.
+    pub command: PathBuf,
+    /// Absolute path to the strict verified context package.
+    pub package_path: PathBuf,
+}
+
 /// Everything needed to bring one session up.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CreateRequest {
     /// The generation being created.
     pub target: CodingSessionTarget,
@@ -64,6 +76,9 @@ pub struct CreateRequest {
     /// Previously persisted ACP session id to reattach, or `None` for a fresh
     /// provider session. This value is host-private.
     pub resume_cursor: Option<String>,
+    /// Private verified-history MCP for this execution, or `None` for no
+    /// rehydrated context.
+    pub rehydration_mcp: Option<RehydrationMcpDescriptor>,
     /// ACP adapter binary to spawn.
     pub agent_command: String,
     /// Adapter argv after the command (e.g. `["acp"]` for goose).
@@ -78,6 +93,26 @@ pub struct CreateRequest {
     pub idle_shutdown: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` items.
     pub include_thoughts: bool,
+}
+
+// Host-private cursors, working directories, adapter environment, and context
+// package paths must not become log data through an innocent `?request`.
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateRequest")
+            .field("target", &self.target)
+            .field("channel_id", &self.channel_id)
+            .field("title", &self.title)
+            .field("model", &self.model)
+            .field("has_resume_cursor", &self.resume_cursor.is_some())
+            .field("has_rehydration_mcp", &self.rehydration_mcp.is_some())
+            .field("idle_timeout", &self.idle_timeout)
+            .field("max_turn_duration", &self.max_turn_duration)
+            .field("idle_shutdown", &self.idle_shutdown)
+            .field("include_thoughts", &self.include_thoughts)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a session could not be created.
@@ -107,6 +142,9 @@ pub struct SessionStartup {
 pub enum SessionContinuity {
     /// A brand-new Buzz execution opened a brand-new ACP session.
     Fresh,
+    /// A brand-new ACP session opened with verified history available through
+    /// the private context MCP. This is reconstructed context, never Native.
+    Rehydrated,
     /// `session/resume` reattached without replaying history.
     Resumed,
     /// `session/load` reattached; replay frames were intentionally not ingested.
@@ -463,11 +501,18 @@ async fn open_agent_session(
     request: &CreateRequest,
     cwd: &str,
 ) -> Result<(buzz_acp::acp::SessionNewResponse, SessionContinuity), AcpError> {
+    let mcp_servers = rehydration_mcp_servers(request)?;
+    let rehydrated = !mcp_servers.is_empty();
     let Some(cursor) = request.resume_cursor.as_deref() else {
         let response = client
-            .session_new_full(cwd, Vec::new(), None, request.title.as_deref())
+            .session_new_full(cwd, mcp_servers, None, request.title.as_deref())
             .await?;
-        return Ok((response, SessionContinuity::Fresh));
+        let continuity = if rehydrated {
+            SessionContinuity::Rehydrated
+        } else {
+            SessionContinuity::Fresh
+        };
+        return Ok((response, continuity));
     };
 
     let mut fallback_reason = "adapter does not advertise session resume or load";
@@ -498,14 +543,49 @@ async fn open_agent_session(
     }
 
     let response = client
-        .session_new_full(cwd, Vec::new(), None, request.title.as_deref())
+        .session_new_full(cwd, mcp_servers, None, request.title.as_deref())
         .await?;
+    if rehydrated {
+        return Ok((response, SessionContinuity::Rehydrated));
+    }
     Ok((
         response,
         SessionContinuity::RestartedWithoutContext {
             reason: fallback_reason,
         },
     ))
+}
+
+/// Build the sole private context MCP descriptor for an ACP session open.
+///
+/// The MCP receives only the package path. Provider credentials, the opaque
+/// native-session cursor, and the agent's runtime environment are deliberately
+/// absent. Invalid paths fail before any session open and are described without
+/// echoing host-private values.
+fn rehydration_mcp_servers(request: &CreateRequest) -> Result<Vec<McpServer>, AcpError> {
+    let Some(descriptor) = request.rehydration_mcp.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if !descriptor.command.is_absolute() || !descriptor.package_path.is_absolute() {
+        return Err(AcpError::Protocol(
+            "session context MCP command and package paths must be absolute".into(),
+        ));
+    }
+    let command = descriptor.command.to_str().ok_or_else(|| {
+        AcpError::Protocol("session context MCP command path must be valid UTF-8".into())
+    })?;
+    let package_path = descriptor.package_path.to_str().ok_or_else(|| {
+        AcpError::Protocol("session context MCP package path must be valid UTF-8".into())
+    })?;
+    Ok(vec![McpServer {
+        name: "buzz-session-context".into(),
+        command: command.to_owned(),
+        args: Vec::new(),
+        env: vec![EnvVar {
+            name: "BUZZ_SESSION_CONTEXT_PACKAGE".into(),
+            value: package_path.to_owned(),
+        }],
+    }])
 }
 
 /// Ask the adapter to use `desired`, best effort.
@@ -1083,6 +1163,34 @@ mod tests {
     use super::testing::*;
     use super::*;
 
+    const MCP_RECORDING_AGENT: &str = r#"
+while IFS= read -r line; do
+  if [ -n "${BUZZ_SESSION_CONTEXT_PACKAGE+x}" ]; then
+    exit 42
+  fi
+  printf '%s\n' "$line" >> "$MCP_TEST_LOG"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{}}}}}\n' "$id" ;;
+    *'"method":"session/resume"'*)
+      if [ "$MCP_TEST_MODE" = resume ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"resume rejected"}}\n' "$id"
+      fi ;;
+    *'"method":"session/load"'*)
+      if [ "$MCP_TEST_MODE" = load ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      else
+        printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"load rejected"}}\n' "$id"
+      fi ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fresh-context-session"}}\n' "$id" ;;
+  esac
+done
+"#;
+
     fn request(command: String, cwd: &std::path::Path) -> CreateRequest {
         CreateRequest {
             target: CodingSessionTarget {
@@ -1096,6 +1204,7 @@ mod tests {
             title: Some("Ship it".into()),
             model: None,
             resume_cursor: None,
+            rehydration_mcp: None,
             agent_command: command,
             agent_args: Vec::new(),
             agent_env: Vec::new(),
@@ -1111,6 +1220,37 @@ mod tests {
             .await
             .expect("event within timeout")
             .expect("channel open")
+    }
+
+    fn request_by_method(log_path: &std::path::Path, method: &str) -> serde_json::Value {
+        std::fs::read_to_string(log_path)
+            .expect("read ACP request log")
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|request| request["method"] == method)
+            .unwrap_or_else(|| panic!("no {method} request in ACP log"))
+    }
+
+    fn assert_rehydration_mcp(
+        request: &serde_json::Value,
+        command: &std::path::Path,
+        package_path: &std::path::Path,
+    ) {
+        let servers = request["params"]["mcpServers"]
+            .as_array()
+            .expect("mcpServers array");
+        assert_eq!(servers.len(), 1);
+        let server = &servers[0];
+        assert_eq!(server["name"], "buzz-session-context");
+        assert_eq!(server["command"], command.to_string_lossy().as_ref());
+        assert_eq!(server["args"], serde_json::json!([]));
+        assert_eq!(
+            server["env"],
+            serde_json::json!([{
+                "name": "BUZZ_SESSION_CONTEXT_PACKAGE",
+                "value": package_path.to_string_lossy(),
+            }])
+        );
     }
 
     /// The next lifecycle report, skipping the transcript items that stream
@@ -1240,6 +1380,147 @@ mod tests {
         assert_eq!(startup.acp_session_id, "saved-acp-session");
         assert_eq!(startup.continuity, SessionContinuity::Resumed);
         manager.shutdown("s1");
+    }
+
+    #[tokio::test]
+    async fn rehydration_mcp_reaches_every_acp_session_open_path() {
+        struct Case {
+            name: &'static str,
+            mode: &'static str,
+            cursor: bool,
+            rehydration: bool,
+            continuity: SessionContinuity,
+            methods: &'static [&'static str],
+        }
+
+        let cases = [
+            Case {
+                name: "plain-fresh",
+                mode: "fresh",
+                cursor: false,
+                rehydration: false,
+                continuity: SessionContinuity::Fresh,
+                methods: &["session/new"],
+            },
+            Case {
+                name: "rehydrated-fresh",
+                mode: "fresh",
+                cursor: false,
+                rehydration: true,
+                continuity: SessionContinuity::Rehydrated,
+                methods: &["session/new"],
+            },
+            Case {
+                name: "native-resume",
+                mode: "resume",
+                cursor: true,
+                rehydration: true,
+                continuity: SessionContinuity::Resumed,
+                methods: &["session/resume"],
+            },
+            Case {
+                name: "native-load",
+                mode: "load",
+                cursor: true,
+                rehydration: true,
+                continuity: SessionContinuity::Loaded,
+                methods: &["session/resume", "session/load"],
+            },
+            Case {
+                name: "rehydrated-fallback-new",
+                mode: "fallback",
+                cursor: true,
+                rehydration: true,
+                continuity: SessionContinuity::Rehydrated,
+                methods: &["session/resume", "session/load", "session/new"],
+            },
+        ];
+
+        for case in cases {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let log_path = dir.path().join(format!("{}.requests", case.name));
+            let package_path = dir.path().join("verified-context.json");
+            std::fs::write(&package_path, b"{}").expect("write context package");
+            let context_command = dir.path().join("buzz-session-context");
+            let agent = fake_agent(
+                dir.path(),
+                &format!("{}-agent", case.name),
+                MCP_RECORDING_AGENT,
+            );
+            let (tx, _rx) = mpsc::channel(16);
+            let mut manager = SessionManager::new(tx);
+            let mut create = request(agent, dir.path());
+            create.agent_env = vec![
+                (
+                    "MCP_TEST_LOG".into(),
+                    log_path.to_string_lossy().into_owned(),
+                ),
+                ("MCP_TEST_MODE".into(), case.mode.into()),
+            ];
+            if case.cursor {
+                create.resume_cursor = Some("saved-acp-session".into());
+            }
+            if case.rehydration {
+                create.rehydration_mcp = Some(RehydrationMcpDescriptor {
+                    command: context_command.clone(),
+                    package_path: package_path.clone(),
+                });
+            }
+
+            let startup = manager.create(create).await.expect(case.name);
+            assert_eq!(startup.continuity, case.continuity, "{}", case.name);
+            for method in case.methods {
+                let open = request_by_method(&log_path, method);
+                if case.rehydration && *method == "session/new" {
+                    assert_rehydration_mcp(&open, &context_command, &package_path);
+                } else {
+                    assert_eq!(open["params"]["mcpServers"], serde_json::json!([]));
+                }
+            }
+            manager.shutdown("s1");
+        }
+    }
+
+    #[test]
+    fn rehydration_mcp_rejects_relative_paths_without_echoing_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut create = request("unused-agent".into(), dir.path());
+        create.rehydration_mcp = Some(RehydrationMcpDescriptor {
+            command: PathBuf::from("private/command"),
+            package_path: PathBuf::from("private/package.json"),
+        });
+
+        let error = rehydration_mcp_servers(&create).expect_err("relative paths must fail");
+        let message = error.to_string();
+        assert!(message.contains("must be absolute"));
+        assert!(!message.contains("private/command"));
+        assert!(!message.contains("private/package.json"));
+    }
+
+    #[test]
+    fn create_request_debug_redacts_host_private_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut create = request("/private/adapter".into(), dir.path());
+        create.resume_cursor = Some("opaque-native-cursor".into());
+        create.rehydration_mcp = Some(RehydrationMcpDescriptor {
+            command: PathBuf::from("/private/buzz-session-context"),
+            package_path: PathBuf::from("/private/verified-package.json"),
+        });
+        create.agent_env = vec![("PRIVATE_CANARY".into(), "secret-value".into())];
+
+        let debug = format!("{create:?}");
+        for secret in [
+            "opaque-native-cursor",
+            "/private/buzz-session-context",
+            "/private/verified-package.json",
+            "/private/adapter",
+            "PRIVATE_CANARY",
+            "secret-value",
+        ] {
+            assert!(!debug.contains(secret), "debug output leaked {secret}");
+        }
+        assert!(debug.contains("has_resume_cursor: true"));
+        assert!(debug.contains("has_rehydration_mcp: true"));
     }
 
     #[tokio::test]

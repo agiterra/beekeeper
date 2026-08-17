@@ -17,6 +17,8 @@ pub mod coding_session_authority_transition;
 pub mod coding_session_closure;
 /// NIP-CSC: Coding-session command — provider-neutral turn request payload.
 pub mod coding_session_command;
+/// Private, bounded package for verified cross-machine session rehydration.
+pub mod coding_session_context;
 /// NIP-CSG: Coding-session genesis — the operator-signed origin of an umbrella
 /// session, and the founder every later operation resolves back to.
 pub mod coding_session_genesis;

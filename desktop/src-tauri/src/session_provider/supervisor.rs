@@ -498,6 +498,7 @@ fn spawn_provider_child(
         relay_url,
         state_dir,
         agent_command: resolve_command(PROVIDER_AGENT_BINARY),
+        context_mcp_command: resolve_command("buzz-dev-mcp"),
         claude_code_executable: resolve_claude_code_executable(),
         // Computed per spawn: installing an adapter takes effect on the next
         // provider (re)start, matching the rest of the discovery surface.
