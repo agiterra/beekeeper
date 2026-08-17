@@ -135,7 +135,10 @@ pub struct ContextProjectionInput {
     /// Exact canonical genesis event id.
     pub genesis_ref: String,
     /// Relay identity witnessed at connect time for acceptance receipts.
-    pub relay_self_pubkey: String,
+    ///
+    /// A relay that does not advertise a stable identity can still project a
+    /// founder-only session. It cannot prove accepted authority transitions.
+    pub relay_self_pubkey: Option<String>,
     /// Directly resolved genesis event.
     pub genesis: Event,
     /// Contiguous accepted authority chain, if any.
@@ -163,8 +166,8 @@ pub struct ContextProjectionRequest {
     pub session_ref: String,
     /// Exact canonical genesis event id.
     pub genesis_ref: String,
-    /// Relay identity witnessed during connection setup.
-    pub relay_self_pubkey: String,
+    /// Relay identity witnessed during connection setup, when advertised.
+    pub relay_self_pubkey: Option<String>,
     /// Epoch milliseconds stamped on the private package.
     pub generated_at: i64,
     /// Local package bounds.
@@ -438,11 +441,14 @@ fn group_authority_links(
         if !claims_requested_genesis {
             continue;
         }
-        let proof = match verify_acceptance_receipt(
-            receipt,
-            &request.relay_self_pubkey,
-            request.channel_id,
-        ) {
+        let relay_self_pubkey = request.relay_self_pubkey.as_deref().ok_or_else(|| {
+            ContextProjectionError::InvalidFact(
+                "relay has no stable identity needed to verify a candidate authority receipt"
+                    .into(),
+            )
+        })?;
+        let proof = match verify_acceptance_receipt(receipt, relay_self_pubkey, request.channel_id)
+        {
             Ok(proof) if proof.genesis_ref == request.genesis_ref => proof,
             Ok(_) => continue,
             Err(error) => {
@@ -1037,8 +1043,13 @@ fn verify_authority_chain(
     for link in &input.authority_links {
         verify_signed(&link.receipt, "authority acceptance receipt")?;
         verify_signed(&link.transition, "accepted authority transition")?;
+        let relay_self_pubkey = input.relay_self_pubkey.as_deref().ok_or_else(|| {
+            ContextProjectionError::InvalidFact(
+                "relay has no stable identity needed to verify an authority chain".into(),
+            )
+        })?;
         let accepted =
-            verify_acceptance_receipt(&link.receipt, &input.relay_self_pubkey, input.channel_id)
+            verify_acceptance_receipt(&link.receipt, relay_self_pubkey, input.channel_id)
                 .map_err(ContextProjectionError::InvalidFact)?;
         if accepted.genesis_ref != input.genesis_ref {
             return Err(ContextProjectionError::InvalidFact(
@@ -1651,7 +1662,7 @@ mod tests {
                 channel_id,
                 session_ref: SESSION_REF.into(),
                 genesis_ref,
-                relay_self_pubkey: relay.public_key().to_hex(),
+                relay_self_pubkey: Some(relay.public_key().to_hex()),
                 genesis,
                 authority_links: Vec::new(),
                 executions: vec![ContextExecutionFacts {
@@ -1694,6 +1705,17 @@ mod tests {
             package.history[1].role,
             buzz_core::coding_session_context::CodingSessionContextRole::Assistant
         );
+    }
+
+    #[test]
+    fn founder_only_session_projects_without_a_stable_relay_identity() {
+        let mut fixture = fixture(4);
+        fixture.input.relay_self_pubkey = None;
+
+        let package = project_session_context(&fixture.input).unwrap();
+
+        assert_eq!(package.history.len(), 4);
+        assert!(package.provenance.complete);
     }
 
     #[test]

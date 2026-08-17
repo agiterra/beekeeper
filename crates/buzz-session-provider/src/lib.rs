@@ -896,7 +896,14 @@ impl Provider {
         execution_id: &str,
         relay: Option<&HarnessRelay>,
     ) -> Option<RehydrationMcpDescriptor> {
-        let command = self.config.context_mcp_command.as_ref()?;
+        let Some(command) = self.config.context_mcp_command.as_ref() else {
+            tracing::info!(
+                target: "csp::context",
+                command_id = %plan.command_id,
+                "context MCP sidecar is unavailable; starting Fresh"
+            );
+            return None;
+        };
         if !command.is_absolute() {
             tracing::warn!(
                 target: "csp::context",
@@ -905,15 +912,35 @@ impl Provider {
             );
             return None;
         }
-        let session_ref = plan.session_ref.as_ref()?;
-        let genesis_ref = plan.genesis_ref.as_ref()?;
-        let relay_self_pubkey = self.relay_self.as_ref()?;
-        let relay = relay?;
+        let Some(session_ref) = plan.session_ref.as_ref() else {
+            tracing::debug!(
+                target: "csp::context",
+                command_id = %plan.command_id,
+                "create has no umbrella sessionRef; starting Fresh"
+            );
+            return None;
+        };
+        let Some(genesis_ref) = plan.genesis_ref.as_ref() else {
+            tracing::debug!(
+                target: "csp::context",
+                command_id = %plan.command_id,
+                "create has no umbrella genesisRef; starting Fresh"
+            );
+            return None;
+        };
+        let Some(relay) = relay else {
+            tracing::info!(
+                target: "csp::context",
+                command_id = %plan.command_id,
+                "relay query surface is unavailable; starting Fresh"
+            );
+            return None;
+        };
         let request = ContextProjectionRequest {
             channel_id: plan.channel_id,
             session_ref: session_ref.clone(),
             genesis_ref: genesis_ref.clone(),
-            relay_self_pubkey: relay_self_pubkey.clone(),
+            relay_self_pubkey: self.relay_self.clone(),
             generated_at: now_ms(),
             limits: ContextProjectionLimits::default(),
         };
