@@ -12,6 +12,7 @@ import { groupCodingSessionCatalog } from "../lib/codingSessionUmbrellaModel.ts"
 import { resolveNewCodingSessionTargets } from "../lib/newCodingSessionModel.ts";
 import { buildNewCodingSessionCreateInput } from "./useNewCodingSessionCreate.ts";
 import {
+  addCodingSessionProviderGenesisGateMessage,
   addCodingSessionProviderOptionNote,
   buildAddCodingSessionProviderSubmit,
   defaultAddCodingSessionProviderKey,
@@ -171,6 +172,7 @@ test("the join is pinned to the session's channel", () => {
 test("the join create carries the umbrella's existing sessionRef", () => {
   const umbrella = singleClaudeUmbrella();
   umbrella.genesisRef = "d".repeat(64);
+  umbrella.genesisResolution = "governed";
   const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
   const payload = buildAddCodingSessionProviderSubmit({
     umbrella,
@@ -288,6 +290,123 @@ test("a pre-umbrella session has no ref to join and publishes nothing", () => {
   assert.equal(
     buildAddCodingSessionProviderSubmit({
       umbrella: legacy,
+      channelId: CHANNEL_ID,
+      target: codex,
+      model: null,
+      initialTurn: "",
+      workdir: "",
+    }),
+    null,
+  );
+});
+
+/** A receipt-joined create observation binding SESSION_REF to a genesis. */
+function createObservation(overrides = {}) {
+  return {
+    sessionRef: SESSION_REF,
+    signerPubkey: "f".repeat(64),
+    createdAt: 1_800_000_000,
+    eventId: "e".repeat(64),
+    genesisRef: "d".repeat(64),
+    genesisFounderPubkey: "f".repeat(64),
+    target: CLAUDE_TARGET,
+    ...overrides,
+  };
+}
+
+test("a ref-bearing umbrella with no observed create cannot be joined (genesis unresolved)", () => {
+  // Exactly the mid-outage forensic: the umbrella claims a sessionRef, but
+  // the receipt-joined creates that would name its genesis have not been
+  // observed. Building a 9-key create here would attach an ungoverned
+  // execution inside a governed session — refuse visibly instead.
+  const umbrella = singleClaudeUmbrella();
+  assert.equal(umbrella.genesisResolution, "unresolved");
+  assert.notEqual(addCodingSessionProviderGenesisGateMessage(umbrella), null);
+
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  assert.equal(
+    buildAddCodingSessionProviderSubmit({
+      umbrella,
+      channelId: CHANNEL_ID,
+      target: codex,
+      model: null,
+      initialTurn: "",
+      workdir: "",
+    }),
+    null,
+  );
+});
+
+test("a governed umbrella resolved through its create always carries the genesis", () => {
+  const umbrella = groupCodingSessionCatalog(
+    [
+      {
+        generationId: "gen-1",
+        label: "claude-agent-acp · generation 1",
+        title: "Governed session",
+        providerAuthorityPubkey: PROVIDER_PUBKEY,
+        metadataAuthorityPubkey: PROVIDER_PUBKEY,
+        lastEventAt: "2026-08-12T10:10:00.000Z",
+        status: "completed",
+        transcript: [],
+        conflictCount: 0,
+        commandTarget: CLAUDE_TARGET,
+        projectRef: null,
+        repoRef: null,
+        sessionRef: SESSION_REF,
+        provider: null,
+        runtime: "claude",
+        model: null,
+        capabilities: capabilities(),
+      },
+    ],
+    [createObservation()],
+  )[0];
+  assert.equal(umbrella.genesisResolution, "governed");
+  assert.equal(addCodingSessionProviderGenesisGateMessage(umbrella), null);
+
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  });
+  assert.equal(payload.genesisRef, "d".repeat(64));
+  assert.equal(payload.sessionRef, SESSION_REF);
+});
+
+test("a legacy umbrella whose observed creates name no genesis still joins ungoverned", () => {
+  const umbrella = singleClaudeUmbrella();
+  // The creates are known and none names a genesis: this is the historical
+  // 9-key form, and it remains joinable.
+  umbrella.genesisResolution = "legacy";
+  assert.equal(addCodingSessionProviderGenesisGateMessage(umbrella), null);
+
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  });
+  assert.equal(payload.sessionRef, SESSION_REF);
+  assert.equal("genesisRef" in payload, false);
+});
+
+test("conflicting genesis claims block the join", () => {
+  const umbrella = singleClaudeUmbrella();
+  umbrella.genesisResolution = "conflict";
+  assert.notEqual(addCodingSessionProviderGenesisGateMessage(umbrella), null);
+
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  assert.equal(
+    buildAddCodingSessionProviderSubmit({
+      umbrella,
       channelId: CHANNEL_ID,
       target: codex,
       model: null,

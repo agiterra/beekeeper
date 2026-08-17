@@ -313,6 +313,7 @@ function buildUmbrellaRecord(
     ),
     founderPubkey: authority.founderPubkey,
     genesisRef: authority.genesisRef,
+    genesisResolution: authority.genesisResolution,
     status: deriveUmbrellaStatus(ordered, latest),
     lastEventAt: new Date(
       Math.max(...ordered.map((execution) => execution.latestEventMs), 0),
@@ -336,16 +337,26 @@ function buildUmbrellaRecord(
  * Genesis-bearing founder resolution follows explicit event ids only. When no
  * create names a genesis, the legacy projection remains the earliest accepted
  * create signer (or the one execution operator for an implicit umbrella).
+ *
+ * `genesisResolution` records *how* the answer was reached, so a consumer
+ * (the join flow) can tell a genuinely ungoverned session apart from one
+ * whose creates simply have not been observed. See
+ * `CodingSessionUmbrellaRecord.genesisResolution`.
  */
 function resolveFounder(
   sessionRef: string | null,
   executions: readonly ExecutionAccumulator[],
   creates: readonly CodingSessionUmbrellaCreateObservation[],
-): { founderPubkey: string | null; genesisRef: string | null } {
+): {
+  founderPubkey: string | null;
+  genesisRef: string | null;
+  genesisResolution: "governed" | "legacy" | "unresolved" | "conflict";
+} {
   if (sessionRef === null) {
     return {
       founderPubkey: executions[0]?.operatorPubkey ?? null,
       genesisRef: null,
+      genesisResolution: "legacy",
     };
   }
   const matches = creates
@@ -355,6 +366,15 @@ function resolveFounder(
         left.createdAt - right.createdAt ||
         left.eventId.localeCompare(right.eventId),
     );
+  if (matches.length === 0) {
+    // No receipt-joined create observed for a ref-bearing umbrella: a genesis
+    // cannot be ruled out, so nothing may treat this session as ungoverned.
+    return {
+      founderPubkey: null,
+      genesisRef: null,
+      genesisResolution: "unresolved",
+    };
+  }
   const genesisRefs = [
     ...new Set(
       matches
@@ -363,7 +383,11 @@ function resolveFounder(
     ),
   ];
   if (genesisRefs.length > 1) {
-    return { founderPubkey: null, genesisRef: null };
+    return {
+      founderPubkey: null,
+      genesisRef: null,
+      genesisResolution: "conflict",
+    };
   }
   const genesisRef = genesisRefs[0] ?? null;
   if (genesisRef !== null) {
@@ -376,9 +400,14 @@ function resolveFounder(
     return {
       founderPubkey: founders.size === 1 ? [...founders][0] : null,
       genesisRef,
+      genesisResolution: "governed",
     };
   }
-  return { founderPubkey: matches[0]?.signerPubkey ?? null, genesisRef: null };
+  return {
+    founderPubkey: matches[0]?.signerPubkey ?? null,
+    genesisRef: null,
+    genesisResolution: "legacy",
+  };
 }
 
 function deriveUmbrellaStatus(

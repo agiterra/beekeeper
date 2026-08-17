@@ -94,6 +94,8 @@ test("records without a sessionRef form implicit umbrellas of one, rendered as t
     assert.match(umbrella.umbrellaKey, /^implicit:/);
     assert.equal(umbrella.founderPubkey, null);
     assert.equal(umbrella.foreignAttachmentCount, 0);
+    // No sessionRef means nothing can join it: legacy by construction.
+    assert.equal(umbrella.genesisResolution, "legacy");
   }
   const [first] = umbrellas;
   // Umbrella-of-one surfaces are exactly the record's own facts.
@@ -250,6 +252,9 @@ test("without create observations, authority stays unknown rather than guessed",
   const [umbrella] = groupCodingSessionCatalog([claude, codex]);
   assert.equal(umbrella.founderPubkey, null);
   assert.equal(umbrella.foreignAttachmentCount, 0);
+  // A ref-bearing umbrella with no observed create cannot rule a genesis
+  // out — consumers (the join gate) must not treat it as ungoverned.
+  assert.equal(umbrella.genesisResolution, "unresolved");
   for (const execution of umbrella.executions) {
     assert.equal(execution.operatorPubkey, null);
   }

@@ -26,6 +26,7 @@ import {
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import {
+  addCodingSessionProviderGenesisGateMessage,
   addCodingSessionProviderOptionNote,
   buildAddCodingSessionProviderSubmit,
   defaultAddCodingSessionProviderKey,
@@ -209,8 +210,14 @@ function AddCodingSessionProviderForm({
   const turnOverCap =
     new TextEncoder().encode(initialTurn).byteLength >
     MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES;
+  // Never build a join while the umbrella's genesis is unresolved or
+  // conflicted — omitting `genesisRef` would attach an ungoverned execution
+  // inside a governed session. Fail visibly instead.
+  const genesisGateMessage =
+    addCodingSessionProviderGenesisGateMessage(umbrella);
   const canSubmit =
     sessionRef !== null &&
+    genesisGateMessage === null &&
     !isPublishing &&
     transaction === null &&
     selectedTarget !== null &&
@@ -316,6 +323,17 @@ function AddCodingSessionProviderForm({
           onLoginLaunched={({ runtime }) => beginLoginWatch(runtime)}
           runtime={failedRuntime}
         />
+      ) : null}
+
+      {genesisGateMessage ? (
+        <p
+          className="flex items-start gap-2 text-sm text-destructive"
+          data-testid="add-coding-session-provider-genesis-gate"
+          role="alert"
+        >
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          {genesisGateMessage}
+        </p>
       ) : null}
 
       {status ? (

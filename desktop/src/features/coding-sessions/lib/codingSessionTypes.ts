@@ -93,6 +93,22 @@ export type CodingSessionUmbrellaRecord = {
   /** Exact genesis event id reached through a receipt-joined create. */
   genesisRef: string | null;
   /**
+   * How the umbrella's authority anchor resolved. `genesisRef` alone cannot
+   * distinguish "this session has no genesis" from "the creates that would
+   * name one have not been observed (yet)" — and a join that guesses the
+   * former mints an ungoverned execution inside a governed session.
+   *
+   * - `governed`: receipt-joined creates name exactly one genesis (in
+   *   `genesisRef`).
+   * - `legacy`: creates are known and none names a genesis, or the umbrella
+   *   is implicit (no `sessionRef` — nothing can join it anyway).
+   * - `unresolved`: the umbrella claims a `sessionRef` but no receipt-joined
+   *   create has been observed — typically the observations have not loaded,
+   *   so a genesis cannot be ruled out.
+   * - `conflict`: creates name more than one genesis.
+   */
+  genesisResolution: "governed" | "legacy" | "unresolved" | "conflict";
+  /**
    * Derived: `running` if any execution runs, else `waiting_for_input` if any
    * waits, else the most recently active execution's status.
    */
