@@ -50,6 +50,11 @@ export async function fetchProjectContainers(): Promise<ProjectContainer[]> {
 
 export const projectContainersQueryKey = ["project-containers"] as const;
 
+/** Relay-scoped cache key shared by the sidebar query and boot-time callers. */
+export function projectContainersQueryKeyFor(relayUrl: string | undefined) {
+  return [...projectContainersQueryKey, relayUrl ?? "none"] as const;
+}
+
 /**
  * Last-known containers per relay+viewer, so the sidebar renders the real
  * project layout on the very first frame instead of collapsing everything
@@ -112,6 +117,23 @@ function writeContainerSnapshot(
   }
 }
 
+/**
+ * Fetch containers and refresh the first-paint snapshot for this
+ * relay+viewer. Shared by the sidebar query and the boot-time migration so
+ * whichever runs first keeps the snapshot warm.
+ */
+export async function fetchAndSnapshotProjectContainers(
+  relayUrl: string | undefined,
+  viewerPubkey: string | undefined,
+): Promise<ProjectContainer[]> {
+  const projects = await fetchProjectContainers();
+  writeContainerSnapshot(
+    containerSnapshotKey(relayUrl, viewerPubkey),
+    projects,
+  );
+  return projects;
+}
+
 export function useProjectContainersQuery(options?: { enabled?: boolean }) {
   const { activeCommunity } = useCommunities();
   const relayUrl = activeCommunity?.relayUrl;
@@ -122,12 +144,8 @@ export function useProjectContainersQuery(options?: { enabled?: boolean }) {
     enabled: options?.enabled ?? true,
     // Relay-scoped: community switches must not briefly show the previous
     // community's projects out of the shared cache slot.
-    queryKey: [...projectContainersQueryKey, relayUrl ?? "none"],
-    queryFn: async () => {
-      const projects = await fetchProjectContainers();
-      writeContainerSnapshot(snapshotKey, projects);
-      return projects;
-    },
+    queryKey: projectContainersQueryKeyFor(relayUrl),
+    queryFn: () => fetchAndSnapshotProjectContainers(relayUrl, viewerPubkey),
     // No placeholder until the viewer identity is known — showing a snapshot
     // before that would risk leaking a project list across identity switches.
     placeholderData: () => readContainerSnapshot(snapshotKey),

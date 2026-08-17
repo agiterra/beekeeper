@@ -16,6 +16,8 @@ test("relay invalidation includes relay-backed channel and profile queries", () 
     ["user-status", "alice"],
     ["relay-agents"],
     ["relayMembers"],
+    ["project-containers"],
+    ["project-containers", "wss://relay.example"],
     ["archivedIdentities"],
     ["oaOwner", "alice"],
   ]) {

@@ -50,6 +50,10 @@ export const LOCAL_STORAGE_SWEEP_RULES: readonly LocalStorageSweepRule[] = [
   // (features/projects-container/hooks.ts). Repaintable cache: sweeping only
   // costs one initial sidebar layout paint on the next visit.
   { keyPrefix: "buzz.projects.containers.v1:", maxAgeMs: 14 * DAY_MS },
+  // Repository-enumeration first-paint snapshots, keyed per relay+viewer
+  // (features/projects/projectsSnapshot.ts). Repaintable cache: sweeping only
+  // costs one initial Repositories paint on the next visit.
+  { keyPrefix: "buzz.projects.repos.v1:", maxAgeMs: 14 * DAY_MS },
   // Do not add buzz-self-profile.v1: here. It is the load-bearing offline
   // identity fallback when the relay is unreachable, not a repaintable cache.
   // buzz.projects.collapsed.v1 stays unregistered by the bounded-store audit:

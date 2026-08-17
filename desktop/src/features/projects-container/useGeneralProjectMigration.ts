@@ -7,8 +7,10 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import { useRelayConnection } from "@/shared/api/useRelayConnection";
 
 import {
+  fetchAndSnapshotProjectContainers,
   fetchProjectContainers,
   projectContainersQueryKey,
+  projectContainersQueryKeyFor,
   type ProjectContainer,
 } from "./hooks";
 
@@ -146,7 +148,15 @@ export function useGeneralProjectMigration(
       migratedScopes.add(scope);
 
       try {
-        const containers = await fetchProjectContainers();
+        // Share the sidebar's query cache instead of issuing a second
+        // containers REQ at the exact boot moment the rate-limit gate is
+        // already congested; a fresh or in-flight sidebar fetch is reused.
+        const containers = await queryClient.fetchQuery({
+          queryKey: projectContainersQueryKeyFor(relayUrl),
+          queryFn: () =>
+            fetchAndSnapshotProjectContainers(relayUrl, selfPubkey),
+          staleTime: 60_000,
+        });
         if (cancelled) return;
         let general = containers.find(
           (project) => project.dtag === GENERAL_PROJECT_DTAG,
