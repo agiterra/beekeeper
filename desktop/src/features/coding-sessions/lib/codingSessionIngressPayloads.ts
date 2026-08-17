@@ -12,6 +12,7 @@ import {
   boundedNonempty,
   boundedNullable,
   decodeTarget,
+  hasAllOrNoneKeys,
   hasExactKeys,
   hasRequiredAndOptionalKeys,
   isCodingSessionSessionRef,
@@ -86,6 +87,14 @@ export type CodingSessionLifecycleReceipt =
  * It is an *optional* key, never an explicit null: the provider emits it only
  * when the create claimed one, so pre-umbrella metadata stays byte-identical
  * and old clients lose enrichment only for umbrella-claiming sessions.
+ *
+ * The four code-coordinate facts (`observedCommit`, `dirty`, `relayReachable`,
+ * `verifiedAt`) are the B1 amendment (`crates/buzz-core`
+ * `coding_session_payload.rs`, `METADATA_FACT_FIELDS`): a provider that
+ * observes the worktree serializes all four unconditionally (nulls included),
+ * a pre-amendment provider serializes none — a partial subset is malformed,
+ * never a dialect. `verifiedAt` is non-null exactly when `relayReachable` is
+ * non-null: both come from the same verification probe.
  */
 export type BuzzCodingSessionMetadataV1 = {
   schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
@@ -104,6 +113,10 @@ export type BuzzCodingSessionMetadataV1 = {
   diffSummary?: string;
   planSummary?: string;
   sessionRef?: string;
+  observedCommit?: string | null;
+  dirty?: boolean | null;
+  relayReachable?: boolean | null;
+  verifiedAt?: number | null;
 };
 
 /** Collision-free immutable receipt key shared with the provider. */
@@ -253,7 +266,13 @@ export function parseBuzzCodingSessionMetadata(
     "diffSummary",
     "planSummary",
   ] as const;
-  const optional = [...optionalSummaries, "sessionRef"] as const;
+  const factFields = [
+    "observedCommit",
+    "dirty",
+    "relayReachable",
+    "verifiedAt",
+  ] as const;
+  const optional = [...optionalSummaries, "sessionRef", ...factFields] as const;
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, required, optional) ||
@@ -293,6 +312,23 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
+  // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
+  if (!hasAllOrNoneKeys(value, factFields)) return null;
+  const hasFacts = Object.hasOwn(value, "observedCommit");
+  if (
+    hasFacts &&
+    (!boundedNullable(value.observedCommit, MAX_LABEL_BYTES) ||
+      !(value.dirty === null || typeof value.dirty === "boolean") ||
+      !(
+        value.relayReachable === null ||
+        typeof value.relayReachable === "boolean"
+      ) ||
+      !(value.verifiedAt === null || Number.isSafeInteger(value.verifiedAt)) ||
+      (value.relayReachable === null) !== (value.verifiedAt === null))
+  ) {
+    return null;
+  }
   return Object.freeze({
     schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
     session,
@@ -317,6 +353,14 @@ export function parseBuzzCodingSessionMetadata(
       : {}),
     ...(typeof value.sessionRef === "string"
       ? { sessionRef: value.sessionRef }
+      : {}),
+    ...(hasFacts
+      ? {
+          observedCommit: value.observedCommit as string | null,
+          dirty: value.dirty as boolean | null,
+          relayReachable: value.relayReachable as boolean | null,
+          verifiedAt: value.verifiedAt as number | null,
+        }
       : {}),
   });
 }

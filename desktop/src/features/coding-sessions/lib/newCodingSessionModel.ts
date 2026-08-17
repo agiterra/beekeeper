@@ -45,6 +45,10 @@ export type NewCodingSessionTarget = {
   signerPubkey: string;
   provider: CodingSessionProviderCatalogProvider;
   availability?: NewCodingSessionTargetAvailability;
+  /** Signed by this computer's own provider. A published catalog outlives its
+   * signer, so a foreign entry may be a dead provider's last word — the local
+   * provider is the only one whose liveness this host can vouch for. */
+  isLocalProvider?: boolean;
 };
 
 /** Host-local knowledge that seeds and annotates the target list. */
@@ -92,20 +96,23 @@ export function resolveNewCodingSessionTargets({
       );
       if (keys.has(selectionKey)) continue;
       keys.add(selectionKey);
-      const availability =
-        localProvider && entry.signerPubkey === localProvider.providerPubkey
-          ? localRuntimeAvailability(
-              localProvider.runtimes,
-              provider.providerInstanceRef,
-              provider.runtime,
-            )
-          : undefined;
+      const isLocalProvider =
+        localProvider !== null &&
+        entry.signerPubkey === localProvider.providerPubkey;
+      const availability = isLocalProvider
+        ? localRuntimeAvailability(
+            localProvider.runtimes,
+            provider.providerInstanceRef,
+            provider.runtime,
+          )
+        : undefined;
       targets.push({
         selectionKey,
         channelId: entry.channelId,
         signerPubkey: entry.signerPubkey,
         provider,
         ...(availability ? { availability } : {}),
+        ...(isLocalProvider ? { isLocalProvider } : {}),
       });
     }
   }
@@ -152,7 +159,19 @@ export function isNewCodingSessionTargetReady(
 export function selectInitialNewCodingSessionTarget(
   targets: readonly NewCodingSessionTarget[],
 ): NewCodingSessionTarget | null {
-  return targets.find(isNewCodingSessionTargetReady) ?? null;
+  // A foreign catalog entry always reads as ready — its host state is
+  // unknowable — even when its provider died long ago. When this computer's
+  // own provider offers the same runtime, default to the one whose liveness
+  // the host actually supervises; a dead signer's catalog must be an explicit
+  // choice, never the silent default.
+  return (
+    targets.find(
+      (target) =>
+        target.isLocalProvider && isNewCodingSessionTargetReady(target),
+    ) ??
+    targets.find(isNewCodingSessionTargetReady) ??
+    null
+  );
 }
 
 /**
@@ -227,6 +246,7 @@ export function localCodingSessionProviderTarget(input: {
       label: input.runtime.label,
       hint: codingSessionRuntimeAvailabilityHint(input.runtime),
     },
+    isLocalProvider: true,
   };
 }
 
@@ -315,6 +335,54 @@ export type NewCodingSessionHostPhase =
   | "publishing";
 
 /**
+ * How long any post-publish wait may stay quietly optimistic.
+ *
+ * The lifecycle resolution is deliberately clock-free — signed facts either
+ * arrived or they did not — so elapsed time lives up here, in copy: a local
+ * provider answers a create in about a second, and thirty seconds of silence
+ * means a step failed somewhere signed facts cannot reach (dead provider,
+ * dropped membership, lost catalog entry), not a slow one.
+ */
+export const NEW_CODING_SESSION_STALL_MS = 30_000;
+
+/**
+ * Which open-ended wait the create is parked in, if any.
+ *
+ * "opening" is the catalog join: the lifecycle already resolved to a created
+ * session but no catalog entry names its target yet, so the screen cannot
+ * navigate — the third wait that used to be unbounded.
+ */
+export function newCodingSessionWaitKey(input: {
+  lifecycleState: string | null | undefined;
+  resolvedGenerationId: string | null;
+  hasTransaction: boolean;
+}): "pending" | "awaiting-metadata" | "opening" | null {
+  if (!input.hasTransaction) return null;
+  switch (input.lifecycleState) {
+    case "pending":
+      return "pending";
+    case "awaiting-metadata":
+    case "awaiting-metadata-after-failed-initial-turn":
+      return "awaiting-metadata";
+    case "created":
+    case "created-with-failed-initial-turn":
+      return input.resolvedGenerationId === null ? "opening" : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Metadata for the awaited session is arriving but this build cannot decode
+ * it. Waiting longer cannot fix a version mismatch, so the copy names the
+ * actual remedy.
+ */
+export const METADATA_DRIFT_MESSAGE =
+  "Its metadata is arriving in a format this app does not recognize. The " +
+  "app and session-provider versions likely disagree — update both to the " +
+  "same release, then restart the app.";
+
+/**
  * The one line of status the create screen shows.
  *
  * Every branch is derived, never remembered: this is a pure reading of the
@@ -328,10 +396,11 @@ export function newCodingSessionStatusMessage(input: {
   lifecycle:
     | { state: "pending" }
     | { state: "failed"; error: { code?: string; message: string } }
-    | { state: "awaiting-metadata" }
+    | { state: "awaiting-metadata"; malformedMetadataCount?: number }
     | {
         state: "awaiting-metadata-after-failed-initial-turn";
         error: { message: string };
+        malformedMetadataCount?: number;
       }
     | { state: "created" }
     | {
@@ -342,6 +411,9 @@ export function newCodingSessionStatusMessage(input: {
     | null;
   /** The runtime the failed command targeted, for auth-failure copy. */
   authRuntime?: { runtime: string; label?: string } | null;
+  /** True once a wait state has outlived {@link NEW_CODING_SESSION_STALL_MS};
+   * escalates the muted spinner copy to a destructive diagnosis. */
+  stalled?: boolean;
 }): { tone: "muted" | "destructive"; message: string } | null {
   if (input.publishError) {
     return { tone: "destructive", message: input.publishError };
@@ -367,6 +439,15 @@ export function newCodingSessionStatusMessage(input: {
   }
   switch (input.lifecycle?.state) {
     case "pending":
+      if (input.stalled) {
+        return {
+          tone: "destructive",
+          message:
+            "The session provider has not accepted this request after " +
+            "30 seconds. It may be offline or not a member of this " +
+            "channel. Start fresh to try again.",
+        };
+      }
       return {
         tone: "muted",
         message: "Waiting for the session provider to accept this request…",
@@ -380,11 +461,32 @@ export function newCodingSessionStatusMessage(input: {
         ),
       };
     case "awaiting-metadata":
+      if ((input.lifecycle.malformedMetadataCount ?? 0) > 0) {
+        return {
+          tone: "destructive",
+          message: `Session created. ${METADATA_DRIFT_MESSAGE}`,
+        };
+      }
+      if (input.stalled) {
+        return {
+          tone: "destructive",
+          message:
+            "Session created, but its signed metadata has not arrived " +
+            "after 30 seconds. The provider may have restarted. Start " +
+            "fresh to try again.",
+        };
+      }
       return {
         tone: "muted",
         message: "Session created. Waiting for its signed metadata…",
       };
     case "awaiting-metadata-after-failed-initial-turn":
+      if ((input.lifecycle.malformedMetadataCount ?? 0) > 0) {
+        return {
+          tone: "destructive",
+          message: `Session created, but its initial turn failed: ${input.lifecycle.error.message} ${METADATA_DRIFT_MESSAGE}`,
+        };
+      }
       return {
         tone: "destructive",
         message: `Session created, but its initial turn failed: ${input.lifecycle.error.message} Waiting for its signed metadata…`,
@@ -396,6 +498,15 @@ export function newCodingSessionStatusMessage(input: {
           "Conflicting signed lifecycle receipts were received. Start a fresh request.",
       };
     case "created":
+      if (input.stalled) {
+        return {
+          tone: "destructive",
+          message:
+            "The session was created but has not appeared in this " +
+            "channel's catalog after 30 seconds. Start fresh, or reopen " +
+            "this screen.",
+        };
+      }
       return { tone: "muted", message: "Opening the exact signed session…" };
     case "created-with-failed-initial-turn":
       return {

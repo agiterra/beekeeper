@@ -98,6 +98,20 @@ export function hasRequiredAndOptionalKeys(
   );
 }
 
+/**
+ * A key group that must appear as a unit or not at all. This is how a payload
+ * amendment stays unambiguous: a producer either speaks the amended dialect
+ * (every key present, if only as nulls) or the base one — a partial subset is
+ * a corrupted or hand-rolled payload, not a version skew.
+ */
+export function hasAllOrNoneKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const present = keys.filter((key) => Object.hasOwn(value, key)).length;
+  return present === 0 || present === keys.length;
+}
+
 /** Depth- and cycle-bounded structural probe for untrusted nested payloads. */
 export function isWithinDepth(value: unknown, maxDepth: number): boolean {
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];

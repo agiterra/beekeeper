@@ -80,6 +80,7 @@ export function NewCodingSessionScreen({
     providerModelsByInstanceRef,
     publishError,
     retryExact,
+    stalled,
     startFresh,
     submit,
     transaction,
@@ -175,6 +176,7 @@ export function NewCodingSessionScreen({
     publishError: publishError ?? durabilityError,
     lifecycle,
     authRuntime: failedRuntime,
+    stalled,
   });
   const draftBytes = new TextEncoder().encode(draftText).byteLength;
   const draftOverCap =
@@ -359,7 +361,9 @@ export function NewCodingSessionScreen({
                 data-testid="new-coding-session-start-fresh"
                 onClick={startFresh}
                 type="button"
-                variant="ghost"
+                // Once a wait has stalled, "Start fresh" is the only real
+                // escape — promote it from ghost so it reads as the action.
+                variant={stalled ? "outline" : "ghost"}
               >
                 Start fresh
               </Button>
@@ -370,7 +374,11 @@ export function NewCodingSessionScreen({
                   lifecycleIsLoading ||
                   lifecycleErrorMessage !== null ||
                   lifecycle?.state === "created" ||
-                  lifecycle?.state === "created-with-failed-initial-turn"
+                  lifecycle?.state === "created-with-failed-initial-turn" ||
+                  // A stalled wait means the relay already accepted these
+                  // bytes; republishing them lands on the duplicate path and
+                  // changes nothing.
+                  stalled
                 }
                 onClick={retryExact}
                 type="button"
@@ -522,7 +530,12 @@ export function NewCodingSessionProviderPicker({
                   ? " (not installed)"
                   : note
                     ? ` (${note})`
-                    : "";
+                    : // Without this the local provider and a catalog entry
+                      // from another (possibly long-dead) provider render as
+                      // identical options.
+                      target.isLocalProvider
+                      ? " (this computer)"
+                      : "";
             return (
               <option
                 disabled={!isNewCodingSessionTargetReady(target)}

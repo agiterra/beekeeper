@@ -10,8 +10,8 @@ import {
 import {
   createCodingSessionLifecycleCommandId,
   publishCodingSessionResume,
-  publishCodingSessionStop,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import type {
   CodingSessionStatus,
   CodingSessionWorkspaceStatus,
@@ -68,6 +68,8 @@ type CodingSessionComposerProps = {
    */
   prefill?: { id: string; text: string } | null;
   providerAuthorityPubkey?: string | null;
+  /** Display name for the end-session confirm; falls back to "this session". */
+  sessionLabel?: string | null;
   target: CodingSessionCommandTarget;
   variant?: "panel" | "floating";
 };
@@ -90,6 +92,7 @@ export function CodingSessionComposer({
   prepareText,
   prefill = null,
   providerAuthorityPubkey = null,
+  sessionLabel = null,
   target,
   variant = "panel",
 }: CodingSessionComposerProps) {
@@ -218,33 +221,25 @@ export function CodingSessionComposer({
     target,
   ]);
 
-  const handleSessionStop = React.useCallback(async () => {
-    if (!canControl || !isMember || isSending || !providerAuthorityPubkey)
-      return;
-    setPendingAction("stop");
-    setError(null);
-    try {
-      await publishCodingSessionStop({
-        channelId,
-        commandId: createCodingSessionLifecycleCommandId(),
-        target,
-        providerAuthorityPubkey,
-      });
-    } catch (stopError) {
-      setError(
-        stopError instanceof Error
-          ? stopError.message
-          : "Unable to stop the coding session.",
-      );
-    } finally {
-      setPendingAction(null);
-    }
+  // Ending is durable and channel-wide, so both the disconnected banner and
+  // the healthy-session button route through the shared confirm dialog
+  // instead of publishing on the raw click.
+  const endDialog = useEndCodingSessionDialog();
+  const canSessionStop =
+    canControl && isMember && providerAuthorityPubkey !== null && !isEnded;
+  const requestSessionEnd = React.useCallback(() => {
+    if (!canSessionStop || !providerAuthorityPubkey) return;
+    endDialog.requestEnd({
+      label: sessionLabel?.trim() || "this session",
+      channelId,
+      stops: [{ target, providerAuthorityPubkey }],
+    });
   }, [
-    canControl,
+    canSessionStop,
     channelId,
-    isMember,
-    isSending,
+    endDialog,
     providerAuthorityPubkey,
+    sessionLabel,
     target,
   ]);
 
@@ -308,18 +303,13 @@ export function CodingSessionComposer({
             </Button>
             <Button
               data-testid="coding-session-composer-session-stop"
-              disabled={
-                !canControl ||
-                !isMember ||
-                !providerAuthorityPubkey ||
-                isSending
-              }
-              onClick={() => void handleSessionStop()}
+              disabled={!canSessionStop || isSending}
+              onClick={requestSessionEnd}
               size="sm"
               type="button"
               variant="outline"
             >
-              {pendingAction === "stop" ? "Stopping…" : "End session"}
+              End session
             </Button>
           </div>
         </div>
@@ -394,6 +384,18 @@ export function CodingSessionComposer({
                 Stop
               </Button>
             ) : null}
+            {canSessionStop && !isDisconnected ? (
+              <Button
+                data-testid="coding-session-composer-session-stop"
+                disabled={isSending}
+                onClick={requestSessionEnd}
+                title="Durably end this session; it moves to Settled."
+                type="button"
+                variant="outline"
+              >
+                End session
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -401,17 +403,20 @@ export function CodingSessionComposer({
         <ImmersiveCodingSessionControlDeck
           canInterrupt={canInterrupt}
           canControl={canControl}
+          canSessionStop={canSessionStop}
           canSteer={canSteer}
           context={controlContext}
           isMember={isMember}
           isWorking={isWorking}
           isUnavailable={isUnavailable}
           onInterrupt={() => void handleStop()}
+          onSessionStop={requestSessionEnd}
           onSteer={() => void handlePrimaryAction()}
           pendingAction={pendingAction}
           steerDisabled={!canSubmitText || isSending}
         />
       ) : null}
+      {endDialog.dialog}
     </div>
   );
 }
@@ -419,24 +424,28 @@ export function CodingSessionComposer({
 function ImmersiveCodingSessionControlDeck({
   canInterrupt,
   canControl,
+  canSessionStop,
   canSteer,
   context,
   isMember,
   isWorking,
   isUnavailable,
   onInterrupt,
+  onSessionStop,
   onSteer,
   pendingAction,
   steerDisabled,
 }: {
   canInterrupt: boolean;
   canControl: boolean;
+  canSessionStop: boolean;
   canSteer: boolean;
   context: CodingSessionComposerProps["controlContext"];
   isMember: boolean;
   isWorking: boolean;
   isUnavailable: boolean;
   onInterrupt: () => void;
+  onSessionStop: () => void;
   onSteer: () => void;
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   steerDisabled: boolean;
@@ -517,15 +526,30 @@ function ImmersiveCodingSessionControlDeck({
             </Button>
           </>
         ) : (
-          <Button
-            data-testid="coding-session-composer-primary"
-            disabled={steerDisabled}
-            onClick={onSteer}
-            size="sm"
-            type="button"
-          >
-            {pendingAction === "send" ? "Sending…" : "Send"}
-          </Button>
+          <>
+            <Button
+              data-testid="coding-session-composer-primary"
+              disabled={steerDisabled}
+              onClick={onSteer}
+              size="sm"
+              type="button"
+            >
+              {pendingAction === "send" ? "Sending…" : "Send"}
+            </Button>
+            {canSessionStop ? (
+              <Button
+                data-testid="coding-session-composer-session-stop"
+                disabled={pendingAction !== null}
+                onClick={onSessionStop}
+                size="sm"
+                title="Durably end this session; it moves to Settled."
+                type="button"
+                variant="outline"
+              >
+                End session
+              </Button>
+            ) : null}
+          </>
         )}
       </div>
     </div>

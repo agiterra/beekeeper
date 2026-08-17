@@ -453,6 +453,7 @@ function ReadyCodingSessionWorkspace({
                   lifecycleStatus={session.status}
                   layout={isNarrow ? "stacked" : "inline"}
                   providerAuthorityPubkey={session.providerAuthorityPubkey}
+                  sessionLabel={session.title}
                   target={session.commandTarget}
                   variant="floating"
                 />

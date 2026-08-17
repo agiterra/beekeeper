@@ -633,7 +633,12 @@ test("receipt resolves only its exact target metadata and never falls forward", 
   );
   assert.deepEqual(
     store.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
-    { state: "awaiting-metadata", commandId: "create-1", target: TARGET },
+    {
+      state: "awaiting-metadata",
+      commandId: "create-1",
+      target: TARGET,
+      malformedMetadataCount: 0,
+    },
   );
 
   store.ingestRelayEvents([metadataEvent()], [CHANNEL_ID], AUTHORITY);
@@ -685,7 +690,12 @@ test("lifecycle resolution is fenced to the durable transaction provider authori
   );
   assert.deepEqual(
     store.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
-    { state: "awaiting-metadata", commandId: "create-1", target: TARGET },
+    {
+      state: "awaiting-metadata",
+      commandId: "create-1",
+      target: TARGET,
+      malformedMetadataCount: 0,
+    },
   );
 
   store.ingestRelayEvents(
@@ -763,6 +773,7 @@ test("a failed initial turn still opens the session it established", () => {
       commandId: "create-1",
       target: TARGET,
       error: receipt.error,
+      malformedMetadataCount: 0,
     },
   );
 
@@ -999,4 +1010,140 @@ test("open authority admits any verified author; signatures and scoping still ga
   const filter = buildTrustedCodingSessionIngressFilter([CHANNEL_ID], open, 10);
   assert.equal("authors" in filter, false);
   assert.equal(buildCodingSessionIngressAuthorityIdentity(open), "open");
+});
+
+// ── B1 code-coordinate facts (observedCommit/dirty/relayReachable/verifiedAt) ─
+
+const FACTS = {
+  observedCommit: "3b884e3562db861b07f078535f27074d2d44146f",
+  dirty: true,
+  relayReachable: true,
+  verifiedAt: 1_800_000_123,
+};
+const NULL_FACTS = {
+  observedCommit: null,
+  dirty: null,
+  relayReachable: null,
+  verifiedAt: null,
+};
+
+test("metadata accepts exactly the four amendment dialects the provider emits", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  // base, base+sessionRef, base+facts, base+sessionRef+facts — the Rust
+  // producer's METADATA_FACT_FIELDS discipline, mirrored here.
+  for (const shape of [
+    metadata(),
+    metadata({ sessionRef }),
+    metadata({ ...FACTS }),
+    metadata({ sessionRef, ...FACTS }),
+    metadata({ ...NULL_FACTS }),
+  ]) {
+    const parsed = parseBuzzCodingSessionMetadata(JSON.stringify(shape));
+    assert.notEqual(parsed, null, JSON.stringify(shape));
+  }
+  const parsed = parseBuzzCodingSessionMetadata(
+    JSON.stringify(metadata({ ...FACTS })),
+  );
+  assert.equal(parsed.observedCommit, FACTS.observedCommit);
+  assert.equal(parsed.dirty, true);
+  assert.equal(parsed.relayReachable, true);
+  assert.equal(parsed.verifiedAt, FACTS.verifiedAt);
+});
+
+test("a partial fact subset is corruption, not a dialect", () => {
+  const keys = Object.keys(FACTS);
+  for (let drop = 0; drop < keys.length; drop += 1) {
+    const partial = { ...FACTS };
+    delete partial[keys[drop]];
+    assert.equal(
+      parseBuzzCodingSessionMetadata(JSON.stringify(metadata(partial))),
+      null,
+      `dropping ${keys[drop]} must reject`,
+    );
+  }
+  // A single stray fact key is equally partial.
+  assert.equal(
+    parseBuzzCodingSessionMetadata(JSON.stringify(metadata({ dirty: false }))),
+    null,
+  );
+});
+
+test("fact fields are typed and verifiedAt travels with relayReachable", () => {
+  for (const bad of [
+    { ...FACTS, observedCommit: 42 },
+    { ...FACTS, dirty: "yes" },
+    { ...FACTS, relayReachable: 1 },
+    { ...FACTS, verifiedAt: 1.5 },
+    { ...FACTS, verifiedAt: "soon" },
+    // The probe invariant: both null or both set.
+    { ...FACTS, relayReachable: null },
+    { ...FACTS, verifiedAt: null },
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(JSON.stringify(metadata(bad))),
+      null,
+      JSON.stringify(bad),
+    );
+  }
+});
+
+test("a fact-bearing 44223 resolves the create that used to wedge on it", () => {
+  // Regression for the schema-drift wedge: receipt accepted, fact-bearing
+  // metadata rejected, session stuck at awaiting-metadata forever.
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents([receiptEvent()], [CHANNEL_ID], AUTHORITY);
+  store.ingestRelayEvents(
+    [metadataEvent(metadata({ ...FACTS }))],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  const resolved = store.resolveLifecycle(
+    CHANNEL_ID,
+    "create-1",
+    PROVIDER_PUBKEY,
+  );
+  assert.equal(resolved.state, "created");
+  assert.equal(resolved.metadata.observedCommit, FACTS.observedCommit);
+});
+
+test("unreadable metadata for the awaited target trips the drift counter", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents([receiptEvent()], [CHANNEL_ID], AUTHORITY);
+  // A future amendment this build has never heard of: valid tags, valid
+  // signer, undecodable payload.
+  store.ingestRelayEvents(
+    [
+      metadataEvent(metadata(), {
+        content: JSON.stringify(metadata({ futureField: "v2" })),
+      }),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  const resolved = store.resolveLifecycle(
+    CHANNEL_ID,
+    "create-1",
+    PROVIDER_PUBKEY,
+  );
+  assert.equal(resolved.state, "awaiting-metadata");
+  assert.equal(resolved.malformedMetadataCount, 1);
+  // A malformed payload for a DIFFERENT target must not trip this create.
+  const other = new TrustedCodingSessionIngressStore();
+  other.ingestRelayEvents([receiptEvent()], [CHANNEL_ID], AUTHORITY);
+  other.ingestRelayEvents(
+    [
+      metadataEvent(metadata({ session: OTHER_TARGET }), {
+        content: JSON.stringify(
+          metadata({ session: OTHER_TARGET, futureField: "v2" }),
+        ),
+      }),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.equal(
+    other.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY)
+      .malformedMetadataCount,
+    0,
+  );
 });

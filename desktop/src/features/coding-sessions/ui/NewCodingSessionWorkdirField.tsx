@@ -154,24 +154,29 @@ export function NewCodingSessionWorkdirField({
         </p>
       ) : null}
       {recents.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {recents.slice(0, 5).map((entry) => (
-            <Button
-              className="h-6 max-w-full px-2 font-mono text-2xs"
-              data-testid="coding-session-workdir-recent"
-              disabled={disabled}
-              key={entry.path}
-              onClick={() => {
-                touchedRef.current = true;
-                onChange(entry.path);
-              }}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <span className="truncate">{entry.path}</span>
-            </Button>
-          ))}
+        <div className="flex flex-col gap-1">
+          <span className="text-2xs font-medium text-muted-foreground">
+            Recent folders
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {recents.slice(0, 5).map((entry) => (
+              <Button
+                className="h-6 max-w-full px-2 font-mono text-2xs"
+                data-testid="coding-session-workdir-recent"
+                disabled={disabled}
+                key={entry.path}
+                onClick={() => {
+                  touchedRef.current = true;
+                  onChange(entry.path);
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <span className="truncate">{entry.path}</span>
+              </Button>
+            ))}
+          </div>
         </div>
       ) : null}
       <p className="text-2xs text-muted-foreground">

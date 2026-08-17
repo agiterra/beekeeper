@@ -124,7 +124,7 @@ test("a session is discoverable from transcripts alone, with inferred status", (
   assert.equal(session.capabilities, null);
 });
 
-test("metadata enriches only its exact channel, target, signer, and unconflicted key", () => {
+test("metadata enriches only its exact channel, target, and signer", () => {
   const sessions = mergeTrustedCodingSessionIngress(
     CHANNEL_ID,
     [
@@ -134,7 +134,6 @@ test("metadata enriches only its exact channel, target, signer, and unconflicted
         title: "Wrong generation",
       }),
       metadataEntry({ signerPubkey: OTHER_SIGNER, title: "Wrong signer" }),
-      metadataEntry({ conflictCount: 1, title: "Conflicted" }),
     ],
     [transcriptEntry({ eventSeq: 1, item: { kind: "status" } })],
   );
@@ -152,6 +151,26 @@ test("metadata enriches only its exact channel, target, signer, and unconflicted
   assert.ok(
     sessions.some((session) => session.title === "Wrong generation"),
     "a different generation is its own session, not an enrichment",
+  );
+});
+
+test("a same-signer metadata burst still enriches, conflict count and all", () => {
+  // Metadata conflict counts are same-signer by construction (the snapshot
+  // resolves each signer separately), and a provider legitimately restates
+  // its metadata several times within one second right after a create. The
+  // ingress already picked a deterministic winner — discarding it here is
+  // what cost every fresh session its title.
+  const [session] = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [metadataEntry({ conflictCount: 1, title: "Testing 2" })],
+    [],
+  );
+  assert.equal(session.title, "Testing 2");
+  assert.equal(session.metadataAuthorityPubkey, SIGNER);
+  assert.equal(
+    session.conflictCount,
+    1,
+    "the burst stays visible to diagnostics instead of being fatal",
   );
 });
 
@@ -195,11 +214,10 @@ test("lastEventAt folds transcript timestamp maxima over the metadata createdAt 
 test("no metadata and no transcripts seed epoch zero", () => {
   const [session] = mergeTrustedCodingSessionIngress(
     CHANNEL_ID,
-    [metadataEntry({ conflictCount: 1 })],
     [],
+    [transcriptEntry({ eventSeq: 1, item: { kind: "status" }, timestamp: 0 })],
   );
   assert.equal(session.lastEventAt, new Date(0).toISOString());
-  assert.equal(session.conflictCount, 0, "the conflicted entry never enriched");
 });
 
 test("status infers from the highest unconflicted eventSeq", () => {

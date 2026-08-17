@@ -9,7 +9,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { publishCodingSessionGenesis } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
-import { addChannelMembers } from "@/shared/api/tauri";
+import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
 import {
   clearCodingSessionCreateHint,
   recordCodingSessionWorkdirUse,
@@ -37,7 +37,11 @@ import {
   CODING_SESSION_LOGIN_WATCH_INTERVAL_MS,
   codingSessionLoginWatchVerdict,
 } from "../lib/codingSessionLoginWatch";
-import { bootstrapClaudeCodingSessionRuntime } from "../lib/newCodingSessionModel";
+import {
+  bootstrapClaudeCodingSessionRuntime,
+  NEW_CODING_SESSION_STALL_MS,
+  newCodingSessionWaitKey,
+} from "../lib/newCodingSessionModel";
 import type { NewCodingSessionTarget } from "../lib/newCodingSessionModel";
 import type { NewCodingSessionHostPhase } from "../lib/newCodingSessionModel";
 
@@ -283,6 +287,27 @@ export function useNewCodingSessionCreate({
     );
   }, [exactSessionCatalog.entries, lifecycle]);
 
+  // The signed-fact resolution is clock-free by design, so the deadline lives
+  // here: any open-ended wait (provider accept, metadata, catalog join) that
+  // outlives the stall window escalates from spinner to diagnosis. Keyed on
+  // the durable createdAt so a wedge rehydrated after a restart surfaces
+  // immediately instead of buying itself another quiet window.
+  const waitKey = newCodingSessionWaitKey({
+    lifecycleState: lifecycle?.state ?? null,
+    resolvedGenerationId,
+    hasTransaction: scoped !== null,
+  });
+  const [stalled, setStalled] = React.useState(false);
+  const stallAnchor = scoped?.createdAt ?? null;
+  React.useEffect(() => {
+    setStalled(false);
+    if (!waitKey || stallAnchor === null) return;
+    const elapsed = Date.now() - stallAnchor;
+    const remaining = Math.max(0, NEW_CODING_SESSION_STALL_MS - elapsed);
+    const timer = window.setTimeout(() => setStalled(true), remaining);
+    return () => window.clearTimeout(timer);
+  }, [waitKey, stallAnchor]);
+
   const settledCommandRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -374,12 +399,13 @@ export function useNewCodingSessionCreate({
 
         // Strict membership on 442xx means a provider that joins after the
         // command is published never sees it. Joining first is the only order
-        // in which the create can be observed at all.
+        // in which the create can be observed at all — and the join is only
+        // real once the roster shows it, so this verifies rather than trusts
+        // the publish.
         setHostPhase("joining");
-        await addChannelMembers({
+        await ensureProviderChannelMembership({
           channelId: input.target.channelId,
-          pubkeys: [input.target.signerPubkey],
-          role: "bot",
+          providerPubkey: input.target.signerPubkey,
         });
 
         setHostPhase("publishing");
@@ -457,6 +483,7 @@ export function useNewCodingSessionCreate({
     refreshProviderRuntimes,
     resolvedGenerationId,
     retryExact,
+    stalled,
     startFresh,
     submit,
     transaction: scoped,

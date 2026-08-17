@@ -11,6 +11,7 @@ import {
   isNewCodingSessionTargetReady,
   localCodingSessionProviderTarget,
   newCodingSessionStatusMessage,
+  newCodingSessionWaitKey,
   resolveNewCodingSessionTargets,
   resolveSelectedNewCodingSessionModel,
   resolveSelectedNewCodingSessionTarget,
@@ -351,6 +352,52 @@ test("a signed-out runtime stays visible, disabled, honestly hinted, never auto-
   assert.equal(initial.provider.runtime, "claude");
 });
 
+test("this computer's provider is the default over a foreign catalog entry", () => {
+  // A dead provider's catalog outlives it and always reads as ready — its
+  // host state is unknowable. The local provider must win the default so a
+  // create is never silently addressed to a signer nobody supervises.
+  const targets = resolveNewCodingSessionTargets({
+    catalogs: [
+      catalog({
+        signerPubkey: PROVIDER_B,
+        catalog: {
+          schema: "buzz-coding-session-provider-catalog/v1",
+          revision: 1,
+          providers: [
+            provider({
+              providerInstanceRef: "claude-primary",
+              runtime: "claude",
+            }),
+          ],
+        },
+      }),
+    ],
+    channelId: "channel-a",
+    localProvider: { providerPubkey: PROVIDER_A, runtimes: [runtime()] },
+  });
+
+  assert.equal(targets.length, 2);
+  const initial = selectInitialNewCodingSessionTarget(targets);
+  assert.equal(initial.signerPubkey, PROVIDER_A);
+  assert.equal(initial.isLocalProvider, true);
+  // The foreign entry stays selectable — an explicit choice, not the default.
+  assert.ok(targets.some((target) => target.signerPubkey === PROVIDER_B));
+});
+
+test("a local provider that is not ready does not hijack the default", () => {
+  const targets = resolveNewCodingSessionTargets({
+    catalogs: [catalog({ signerPubkey: PROVIDER_B })],
+    channelId: "channel-a",
+    localProvider: {
+      providerPubkey: PROVIDER_A,
+      runtimes: [runtime({ authState: "needs_auth" })],
+    },
+  });
+
+  const initial = selectInitialNewCodingSessionTarget(targets);
+  assert.equal(initial.signerPubkey, PROVIDER_B);
+});
+
 test("no ready runtime means no initial selection at all", () => {
   const targets = resolveNewCodingSessionTargets({
     catalogs: [],
@@ -571,4 +618,191 @@ test("only the claude subscription login counts as headless", () => {
   assert.equal(isHeadlessCodingSessionLogin("claude", "claude-ai-login"), true);
   assert.equal(isHeadlessCodingSessionLogin("claude", "other"), false);
   assert.equal(isHeadlessCodingSessionLogin("codex", "claude-login"), false);
+});
+
+test("unreadable metadata is a version mismatch to report, not a silence to wait out", () => {
+  const base = { hostPhase: "idle", isPublishing: false, publishError: null };
+
+  const drifted = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: { state: "awaiting-metadata", malformedMetadataCount: 2 },
+  });
+  assert.equal(drifted.tone, "destructive");
+  assert.match(drifted.message, /format this app does not recognize/);
+
+  // Zero (or absent) count keeps the ordinary muted wait.
+  for (const lifecycle of [
+    { state: "awaiting-metadata", malformedMetadataCount: 0 },
+    { state: "awaiting-metadata" },
+  ]) {
+    const waiting = newCodingSessionStatusMessage({ ...base, lifecycle });
+    assert.equal(waiting.tone, "muted");
+    assert.match(waiting.message, /Waiting for its signed metadata/);
+  }
+
+  // The failed-initial-turn variant keeps its error and gains the drift copy.
+  const failedDrift = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: {
+      state: "awaiting-metadata-after-failed-initial-turn",
+      error: { message: "turn never reached the agent." },
+      malformedMetadataCount: 1,
+    },
+  });
+  assert.equal(failedDrift.tone, "destructive");
+  assert.match(failedDrift.message, /turn never reached the agent/);
+  assert.match(failedDrift.message, /format this app does not recognize/);
+});
+
+test("the wait key names each open-ended wait and nothing else", () => {
+  const cases = [
+    [
+      {
+        lifecycleState: "pending",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "pending",
+    ],
+    [
+      {
+        lifecycleState: "awaiting-metadata",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "awaiting-metadata",
+    ],
+    [
+      {
+        lifecycleState: "awaiting-metadata-after-failed-initial-turn",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "awaiting-metadata",
+    ],
+    // Created but not yet joined to a catalog entry: the third wedge.
+    [
+      {
+        lifecycleState: "created",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "opening",
+    ],
+    [
+      {
+        lifecycleState: "created-with-failed-initial-turn",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "opening",
+    ],
+    // A resolved catalog join is done waiting.
+    [
+      {
+        lifecycleState: "created",
+        resolvedGenerationId: "gen-1",
+        hasTransaction: true,
+      },
+      null,
+    ],
+    // Terminal or absent states never arm the clock.
+    [
+      {
+        lifecycleState: "failed",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      null,
+    ],
+    [
+      {
+        lifecycleState: "conflict",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      null,
+    ],
+    [
+      {
+        lifecycleState: null,
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      null,
+    ],
+    [
+      {
+        lifecycleState: "pending",
+        resolvedGenerationId: null,
+        hasTransaction: false,
+      },
+      null,
+    ],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(
+      newCodingSessionWaitKey(input),
+      expected,
+      JSON.stringify(input),
+    );
+  }
+});
+
+test("a stalled wait escalates to a diagnosis; progress resets the tone", () => {
+  const base = { hostPhase: "idle", isPublishing: false, publishError: null };
+
+  const pending = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: { state: "pending" },
+    stalled: true,
+  });
+  assert.equal(pending.tone, "destructive");
+  assert.match(
+    pending.message,
+    /has not accepted this request after 30 seconds/,
+  );
+
+  const metadata = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: { state: "awaiting-metadata" },
+    stalled: true,
+  });
+  assert.equal(metadata.tone, "destructive");
+  assert.match(metadata.message, /metadata has not arrived/);
+
+  const opening = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: { state: "created" },
+    stalled: true,
+  });
+  assert.equal(opening.tone, "destructive");
+  assert.match(opening.message, /has not appeared in this channel's catalog/);
+
+  // Un-stalled, the same states keep their muted spinner copy.
+  for (const lifecycle of [
+    { state: "pending" },
+    { state: "awaiting-metadata" },
+    { state: "created" },
+  ]) {
+    assert.equal(
+      newCodingSessionStatusMessage({ ...base, lifecycle, stalled: false })
+        .tone,
+      "muted",
+    );
+  }
+});
+
+test("schema drift outranks the stall clock", () => {
+  // Waiting longer cannot fix a version mismatch, so the drift diagnosis wins
+  // even once the wait has also stalled.
+  const status = newCodingSessionStatusMessage({
+    hostPhase: "idle",
+    isPublishing: false,
+    publishError: null,
+    lifecycle: { state: "awaiting-metadata", malformedMetadataCount: 1 },
+    stalled: true,
+  });
+  assert.equal(status.tone, "destructive");
+  assert.match(status.message, /format this app does not recognize/);
 });

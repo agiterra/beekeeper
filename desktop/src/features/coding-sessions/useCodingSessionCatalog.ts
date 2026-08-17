@@ -268,12 +268,19 @@ export function mergeTrustedCodingSessionIngress(
 
   const sessions = [...identities.values()].map(({ target, signerPubkey }) => {
     const targetKey = buildCodingSessionTargetKey(target);
+    // No `conflictCount === 0` gate here: metadata conflict counts are
+    // same-signer by construction (the snapshot resolves per signer), and a
+    // provider legitimately restates its metadata several times within one
+    // second right after a create. The ingress store already picked a
+    // deterministic winner; discarding it here threw away the session's
+    // title on every fresh create. Receipts and transcripts keep their
+    // fail-closed conflict handling — those are immutable facts, not
+    // last-writer-wins state.
     const metadataEntry = metadataEntries.find(
       (entry) =>
         entry.channelId === channelId &&
         entry.targetKey === targetKey &&
-        entry.signerPubkey === signerPubkey &&
-        entry.conflictCount === 0,
+        entry.signerPubkey === signerPubkey,
     );
     const targetTranscripts = transcriptEntries.filter(
       (entry) =>

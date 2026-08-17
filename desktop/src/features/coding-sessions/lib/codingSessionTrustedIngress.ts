@@ -102,12 +102,16 @@ export type CodingSessionLifecycleResolution =
       state: "awaiting-metadata";
       commandId: string;
       target: CodingSessionCommandTarget;
+      /** Metadata events for this target rejected as unreadable — a nonzero
+       * count means schema drift, not a slow provider. */
+      malformedMetadataCount: number;
     }
   | {
       state: "awaiting-metadata-after-failed-initial-turn";
       commandId: string;
       target: CodingSessionCommandTarget;
       error: { code: "INITIAL_TURN_FAILED"; message: string };
+      malformedMetadataCount: number;
     }
   | {
       state: "created";
@@ -160,7 +164,17 @@ type ParsedTrustedIngressEvent =
 export type TrustedIngressClassification =
   | ParsedTrustedIngressEvent
   | { kind: "irrelevant" }
-  | { kind: "malformed" }
+  | {
+      kind: "malformed";
+      /**
+       * Set only when a metadata payload failed to decode after its tags
+       * already verified: the `cs-target` tag names the session the rejected
+       * bytes were about, so a lifecycle wait on that target can report
+       * "metadata is arriving but this app cannot read it" (schema drift)
+       * instead of an indistinguishable silence.
+       */
+      metadataTarget?: { channelId: string; targetKey: string };
+    }
   | { kind: "rejected-author" }
   | { kind: "invalid-signature" };
 
@@ -331,7 +345,14 @@ export function classifyTrustedCodingSessionIngressEvent(
     return { kind: "malformed" };
   }
   const metadata = parseBuzzCodingSessionMetadata(event.content);
-  if (!metadata) return { kind: "malformed" };
+  if (!metadata) {
+    // Tags verified but the payload did not decode. Attribute the rejection
+    // to its target so the wait state can surface schema drift.
+    return {
+      kind: "malformed",
+      metadataTarget: { channelId: tags[0], targetKey: tags[2] },
+    };
+  }
   const targetKey = buildCodingSessionTargetKey(metadata.session);
   if (
     tags[2] !== targetKey ||
@@ -362,6 +383,16 @@ export class TrustedCodingSessionIngressStore {
   private malformedCount = 0;
   private rejectedAuthorCount = 0;
   private invalidSignatureCount = 0;
+  /**
+   * Malformed metadata payloads attributed to their `cs-target`, keyed by
+   * `compositeKey(channelId, targetKey)`. This is the schema-drift tripwire:
+   * a lifecycle wait that sees a nonzero count here knows metadata for its
+   * session is arriving but unreadable, which is a version mismatch to
+   * report, not a silence to wait out. Note `dispositions` memoizes verdicts
+   * per event id, so a decoder fix only re-examines old events once the
+   * store is rebuilt (app restart or scope change).
+   */
+  private readonly malformedMetadataByTarget = new Map<string, number>();
 
   private readonly maxRetainedRawEventsPerGeneration: number;
 
@@ -462,9 +493,20 @@ export class TrustedCodingSessionIngressStore {
           this.retainRawEvent(event, classified);
           break;
         }
-        case "malformed":
+        case "malformed": {
           this.malformedCount += 1;
+          if (classified.metadataTarget) {
+            const key = compositeKey(
+              classified.metadataTarget.channelId,
+              classified.metadataTarget.targetKey,
+            );
+            this.malformedMetadataByTarget.set(
+              key,
+              (this.malformedMetadataByTarget.get(key) ?? 0) + 1,
+            );
+          }
           break;
+        }
         case "rejected-author":
           this.rejectedAuthorCount += 1;
           break;
@@ -577,21 +619,31 @@ export class TrustedCodingSessionIngressStore {
       receipt.status === "created_with_failed_initial_turn"
         ? receipt.error
         : null;
-    const metadataBucket = this.metadata.get(
-      compositeKey(channelId, buildCodingSessionTargetKey(target)),
+    const targetCompositeKey = compositeKey(
+      channelId,
+      buildCodingSessionTargetKey(target),
     );
+    const metadataBucket = this.metadata.get(targetCompositeKey);
     const selected = metadataBucket
       ? resolveNewestMetadata(metadataBucket.records, providerAuthorityPubkey)
       : null;
     if (!selected || selected.matchedCount === 0 || !selected.value) {
+      const malformedMetadataCount =
+        this.malformedMetadataByTarget.get(targetCompositeKey) ?? 0;
       return failedInitialTurn
         ? {
             state: "awaiting-metadata-after-failed-initial-turn",
             commandId,
             target,
             error: failedInitialTurn,
+            malformedMetadataCount,
           }
-        : { state: "awaiting-metadata", commandId, target };
+        : {
+            state: "awaiting-metadata",
+            commandId,
+            target,
+            malformedMetadataCount,
+          };
     }
     return failedInitialTurn
       ? {
