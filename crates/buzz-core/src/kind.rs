@@ -639,6 +639,15 @@ pub const KIND_CODING_SESSION_GOAL: u32 = 44227;
 /// sessions execution plan.
 pub const KIND_CODING_SESSION_AUTHORITY_TRANSITION: u32 = 44228;
 
+/// NIP-CSN: Coding-session name — one human-authored revision of the umbrella
+/// session's short navigation label.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Content is single-line text.
+/// Ordered tags: `h`, `d`, `csnm-v`. Consumers retain every revision and fold
+/// latest by `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_NAME: u32 = 44229;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -829,6 +838,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CODING_SESSION_GENESIS,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+    KIND_CODING_SESSION_NAME,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1047,6 +1057,12 @@ const _: () = assert!(!is_parameterized_replaceable(
     KIND_CODING_SESSION_AUTHORITY_TRANSITION
 ));
 const _: () = assert!(KIND_CODING_SESSION_AUTHORITY_TRANSITION <= u16::MAX as u32);
+// Name revisions use the same append-only history discipline as goal
+// revisions; the d tag groups revisions without invoking NIP-33 replacement.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_NAME));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_NAME));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_NAME));
+const _: () = assert!(KIND_CODING_SESSION_NAME <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

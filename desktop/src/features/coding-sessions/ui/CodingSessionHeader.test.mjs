@@ -55,6 +55,28 @@ test("header renders the export button only when an export handler is provided",
   );
 });
 
+test("header exposes rename only when the authority-aware workspace provides it", () => {
+  const baseProps = {
+    channelName: "Hive Sessions",
+    generationLabel: "generation 2",
+    onBack() {},
+    sessionTitle: "Durable session name",
+    status: { kind: "idle", label: "Idle" },
+  };
+  assert.doesNotMatch(
+    renderToStaticMarkup(React.createElement(CodingSessionHeader, baseProps)),
+    /data-testid="coding-session-rename"/,
+  );
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      onRename() {},
+    }),
+  );
+  assert.match(markup, /data-testid="coding-session-rename"/);
+  assert.match(markup, /aria-label="Rename session"/);
+});
+
 test("header disables the export button while an export is running", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {

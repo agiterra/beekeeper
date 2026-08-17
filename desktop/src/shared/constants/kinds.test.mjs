@@ -14,6 +14,7 @@ import {
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_PROVIDER_CATALOG,
   KIND_CODING_SESSION_TRANSCRIPT,
   KIND_STREAM_MESSAGE,
@@ -100,6 +101,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       genesis: KIND_CODING_SESSION_GENESIS,
       goal: KIND_CODING_SESSION_GOAL,
       authorityTransition: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+      name: KIND_CODING_SESSION_NAME,
     },
     {
       command: 44220,
@@ -111,9 +113,10 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       genesis: 44226,
       goal: 44227,
       authorityTransition: 44228,
+      name: 44229,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 9);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 10);
 });
 
 test("codingSessionKinds_neverEnterTheChatTimeline", () => {

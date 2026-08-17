@@ -127,6 +127,8 @@ export type GlobalCodingSessionCatalogRecord = {
 
 export type GlobalCodingSessionCatalogSnapshot = {
   entries: GlobalCodingSessionCatalogRecord[];
+  /** Human-signed creates used only to resolve each umbrella's founder. */
+  creates?: readonly CodingSessionUmbrellaCreateObservation[];
   isLoading: boolean;
   errorMessage: string | null;
   authorityErrorMessage: string | null;

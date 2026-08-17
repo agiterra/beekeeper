@@ -23,20 +23,24 @@ use buzz_core::{
         CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
         MAX_LIFECYCLE_CONTENT_BYTES,
     },
+    coding_session_name::{
+        validate_coding_session_name_content, validate_coding_session_name_session_ref,
+        CODING_SESSION_NAME_TAG_VERSION,
+    },
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-        KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
-        KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
-        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
-        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
-        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
-        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
-        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
-        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
-        KIND_WORKFLOW_TRIGGER,
+        KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
+        KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION,
+        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
+        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
+        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
+        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
+        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
+        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
+        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -2422,6 +2426,30 @@ pub fn build_coding_session_goal(
     ];
     Ok(EventBuilder::new(
         Kind::Custom(KIND_CODING_SESSION_GOAL as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one append-only coding-session name revision (kind 44229).
+///
+/// The human operator signs this builder. `d=sessionRef` groups revisions but
+/// does not replace them; consumers fold the regular events by `(created_at,
+/// event id)` so every earlier name remains queryable.
+pub fn build_coding_session_name(
+    channel_id: Uuid,
+    session_ref: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    validate_coding_session_name_session_ref(session_ref).map_err(SdkError::InvalidInput)?;
+    validate_coding_session_name_content(content).map_err(SdkError::InvalidInput)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", session_ref])?,
+        tag(&["csnm-v", CODING_SESSION_NAME_TAG_VERSION])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_NAME as u16),
         content.to_owned(),
     )
     .tags(tags))
@@ -5340,6 +5368,46 @@ mod tests {
             build_coding_session_goal(channel, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10", "  \n")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn coding_session_name_builder_emits_regular_revision_envelope() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = build_coding_session_name(channel, session_ref, "Authority phase")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_NAME);
+        assert_eq!(event.content, "Authority phase");
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("csnm-v".into(), "csnm1-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_name_builder_rejects_invalid_blank_and_multiline_inputs() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_name(channel, "umbrella", "name").is_err());
+        assert!(
+            build_coding_session_name(channel, "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10", "name")
+                .is_err()
+        );
+        assert!(
+            build_coding_session_name(channel, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10", "  \n")
+                .is_err()
+        );
+        assert!(build_coding_session_name(
+            channel,
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "first\nsecond"
+        )
+        .is_err());
     }
 
     /// The adoption form emits the same three-tag envelope as a fresh

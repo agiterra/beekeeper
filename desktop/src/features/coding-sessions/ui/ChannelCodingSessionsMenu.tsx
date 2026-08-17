@@ -12,6 +12,8 @@ import {
   codingSessionGoalKey,
   useCodingSessionGoals,
 } from "@/features/coding-sessions/useCodingSessionGoals";
+import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
+import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
@@ -32,6 +34,7 @@ export function ChannelCodingSessionsMenu({
   });
   const identity = useIdentityQuery();
   const goalSnapshot = useCodingSessionGoals(channelId ? [channelId] : []);
+  const nameSnapshot = useCodingSessionNames(channelId ? [channelId] : []);
   const entries = React.useMemo(
     () =>
       resolveChannelCodingSessionIngress({
@@ -130,6 +133,7 @@ export function ChannelCodingSessionsMenu({
           currentUserPubkey={identity.data?.pubkey ?? null}
           entries={entries}
           goals={goalSnapshot.goals}
+          names={nameSnapshot.names}
           onOpen={handleOpen}
           onPopout={handlePopout}
         />
@@ -200,6 +204,7 @@ export function ChannelCodingSessionList({
   currentUserPubkey = null,
   entries,
   goals = new Map(),
+  names = new Map(),
   onOpen,
   onPopout,
 }: {
@@ -213,6 +218,10 @@ export function ChannelCodingSessionList({
   goals?: ReadonlyMap<
     string,
     import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
+  >;
+  names?: ReadonlyMap<
+    string,
+    import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
   >;
   onOpen: (generationId: string) => void;
   onPopout: (generationId: string) => void;
@@ -246,6 +255,22 @@ export function ChannelCodingSessionList({
                 ),
               ) ?? null)
             : null;
+        const sessionName =
+          authority.sessionRef && authority.founderPubkey
+            ? (names.get(
+                codingSessionNameKey(
+                  channelId,
+                  authority.sessionRef,
+                  authority.founderPubkey,
+                ),
+              )?.content ?? null)
+            : null;
+        const providerTitle = session.title.trim();
+        const displayName =
+          sessionName ??
+          (providerTitle && providerTitle !== "Coding session"
+            ? providerTitle
+            : session.label);
         return (
           <div
             className="rounded-lg border border-border/60 bg-background/60 p-2.5"
@@ -266,7 +291,7 @@ export function ChannelCodingSessionList({
                 )}
               />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {session.label}
+                {displayName}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">
                 {status.label}
@@ -282,7 +307,7 @@ export function ChannelCodingSessionList({
             />
             <div className="mt-2 flex items-center justify-end gap-1.5">
               <Button
-                aria-label={`Open ${session.label}`}
+                aria-label={`Open ${displayName}`}
                 data-testid="channel-coding-session-open"
                 onClick={() => onOpen(session.generationId)}
                 size="sm"
@@ -292,7 +317,7 @@ export function ChannelCodingSessionList({
                 Open
               </Button>
               <Button
-                aria-label={`Pop out ${session.label}`}
+                aria-label={`Pop out ${displayName}`}
                 data-testid="channel-coding-session-popout"
                 onClick={() => onPopout(session.generationId)}
                 size="icon-xs"

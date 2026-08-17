@@ -8,6 +8,7 @@ import {
   createCodingSessionSessionRef,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { publishCodingSessionGenesis } from "@/features/coding-sessions/lib/codingSessionGenesis";
+import { publishCodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
 import { recordPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
@@ -554,6 +555,7 @@ export async function prepareNewCodingSessionCreate(
   input: Parameters<typeof buildNewCodingSessionCreateInput>[0],
   dependencies: {
     publishGenesis?: typeof publishCodingSessionGenesis;
+    publishName?: typeof publishCodingSessionName;
     prepareCreate?: typeof prepareDurableCodingSessionCreate;
   } = {},
 ): ReturnType<typeof prepareDurableCodingSessionCreate> {
@@ -576,6 +578,13 @@ export async function prepareNewCodingSessionCreate(
     channelId: input.channelId,
     sessionRef,
   });
+  if (input.title?.trim()) {
+    await (dependencies.publishName ?? publishCodingSessionName)({
+      channelId: input.channelId,
+      content: input.title,
+      sessionRef,
+    });
+  }
   return prepareCreate(scopeId, {
     ...createInput,
     genesisRef: genesis.eventId,

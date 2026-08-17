@@ -425,6 +425,7 @@ export class CodingSessionCreateObservationStore {
         ? (this.geneses.get(first.genesisRef) ?? null)
         : null;
       observations.push({
+        channelId: first.channelId,
         sessionRef: first.sessionRef,
         signerPubkey: first.signerPubkey,
         createdAt: first.createdAt,

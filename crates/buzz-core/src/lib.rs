@@ -21,6 +21,8 @@ pub mod coding_session_genesis;
 pub mod coding_session_goal;
 /// NIP-CSL: Coding-session lifecycle command — session creation payload.
 pub mod coding_session_lifecycle_command;
+/// NIP-CSN: append-only human-authored session-name revisions (44229).
+pub mod coding_session_name;
 /// Provider-authored coding-session facts: receipts (44224), metadata (44223),
 /// and transcript envelopes (44225).
 pub mod coding_session_payload;

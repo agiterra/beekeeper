@@ -29,6 +29,8 @@ import type {
  * rendering stays observer-grade.
  */
 export type CodingSessionUmbrellaCreateObservation = {
+  /** Channel whose signed 44221 carried this create. */
+  channelId: string;
   /** The sessionRef the signed create claimed, or null (pre-umbrella create). */
   sessionRef: string | null;
   /** The human operator who signed the 44221. */

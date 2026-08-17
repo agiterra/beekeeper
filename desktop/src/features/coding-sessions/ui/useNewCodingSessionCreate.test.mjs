@@ -268,7 +268,7 @@ test("every new create draft mints a fresh canonical umbrella sessionRef", async
   assert.equal(joined.sessionRef, first.sessionRef);
 });
 
-test("founding publishes genesis before preparing the linked 10-key create", async () => {
+test("founding publishes genesis and name before preparing the linked 10-key create", async () => {
   const { prepareNewCodingSessionCreate } = await import(
     "./useNewCodingSessionCreate.ts"
   );
@@ -292,6 +292,12 @@ test("founding publishes genesis before preparing the linked 10-key create", asy
         assert.match(input.sessionRef, /^[0-9a-f-]{36}$/);
         return { eventId: genesisRef, kind: 44226 };
       },
+      publishName: async (input) => {
+        order.push("name");
+        assert.equal(input.content, "Advance Buzz live sessions");
+        assert.equal(input.sessionRef.length, 36);
+        return { id: "f".repeat(64), kind: 44229 };
+      },
       prepareCreate: async (_scopeId, input) => {
         order.push("create");
         preparedInput = input;
@@ -299,7 +305,7 @@ test("founding publishes genesis before preparing the linked 10-key create", asy
       },
     },
   );
-  assert.deepEqual(order, ["genesis", "create"]);
+  assert.deepEqual(order, ["genesis", "name", "create"]);
   assert.equal(preparedInput.genesisRef, genesisRef);
   assert.equal(preparedInput.sessionRef.length, 36);
   assert.deepEqual(result, { ok: false, errorMessage: "test sentinel" });
@@ -330,6 +336,9 @@ test("joining reuses authority without publishing a second genesis", async () =>
       publishGenesis: async () => {
         genesisPublishes += 1;
         return { eventId: "e".repeat(64), kind: 44226 };
+      },
+      publishName: async () => {
+        throw new Error("joining must not publish a session name");
       },
       prepareCreate: async (_scopeId, input) => {
         preparedInput = input;

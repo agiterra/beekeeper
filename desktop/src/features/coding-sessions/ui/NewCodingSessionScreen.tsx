@@ -3,6 +3,7 @@ import { ArrowLeft, CircleAlert, LoaderCircle, Send } from "lucide-react";
 import * as React from "react";
 
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { MAX_CODING_SESSION_NAME_BYTES } from "@/features/coding-sessions/lib/codingSessionName";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -334,12 +335,13 @@ export function NewCodingSessionScreen({
             className="text-xs font-medium text-muted-foreground"
             htmlFor="coding-session-title"
           >
-            Title <span className="font-normal">(optional)</span>
+            Name <span className="font-normal">(optional)</span>
           </label>
           <Input
             data-testid="new-coding-session-title"
             disabled={transaction !== null}
             id="coding-session-title"
+            maxLength={MAX_CODING_SESSION_NAME_BYTES}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="What is this session for?"
             value={title}

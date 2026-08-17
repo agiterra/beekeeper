@@ -16,7 +16,7 @@ use buzz_core::kind::{
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
     KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
     KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
     KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
@@ -356,8 +356,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
-        // Coding sessions: the operator-signed session origin, goal
-        // revisions, and authority-chain transitions (44226/44227/44228),
+        // Coding sessions: the operator-signed session origin, goal/name
+        // revisions, and authority-chain transitions (44226–44229),
         // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
@@ -369,6 +369,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_GENESIS
         | KIND_CODING_SESSION_GOAL
         | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+        | KIND_CODING_SESSION_NAME
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -675,12 +676,13 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_GENESIS
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | KIND_CODING_SESSION_NAME
     )
 }
 
-/// Returns `true` for the nine coding-session kinds (44220–44228).
+/// Returns `true` for the ten coding-session kinds (44220–44229).
 ///
-/// One predicate for the strict-membership gate and the tests, so a ninth
+/// One predicate for the strict-membership gate and the tests, so a new
 /// kind cannot be added to one gate and forgotten by another.
 pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
     matches!(
@@ -694,14 +696,16 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_GENESIS
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | KIND_CODING_SESSION_NAME
     )
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220, 44221, 44226, 44227, and 44228 are bounded by their payload
+/// 44220, 44221, and 44226–44229 are bounded by their payload
 /// contracts in `buzz-core` instead (12 KiB of turn text, 16 KiB of signed
-/// content, 1 KiB of genesis, 512 B of an authority transition), so they are
+/// content, 1 KiB of genesis, 4 KiB of goal prose, 512 B of an authority
+/// transition, and 256 B of session-name text), so they are
 /// absent here — and those bounds are the stricter ones,
 /// since their envelope validators run *before* this table is consulted. The
 /// four provider-authored kinds carry no envelope validator — the
@@ -3003,6 +3007,11 @@ async fn ingest_event_inner(
 
     if kind_u32 == KIND_CODING_SESSION_AUTHORITY_TRANSITION {
         validate_coding_session_authority_transition_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_NAME {
+        buzz_core::coding_session_name::validate_coding_session_name_envelope(&event)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
     }
 
@@ -5797,11 +5806,11 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44228) -------------------------------------
+    // ---- Coding sessions (44220–44229) -------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
-    /// sweep it so a tenth kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 9] = [
+    /// sweep it so an eleventh kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 10] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -5811,14 +5820,15 @@ mod tests {
         KIND_CODING_SESSION_GENESIS,
         KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+        KIND_CODING_SESSION_NAME,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44228() {
+    fn coding_session_predicate_covers_exactly_44220_to_44229() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44228).contains(&kind),
+                (44220..=44229).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -5827,7 +5837,7 @@ mod tests {
         }
     }
 
-    /// All nine are channel-scoped message writes, and none is global-only —
+    /// All ten are channel-scoped message writes, and none is global-only —
     /// their whole containment story is the channel ACL, which only applies to
     /// h-scoped events.
     #[test]
@@ -6397,6 +6407,62 @@ mod tests {
         }
     }
 
+    fn name_event(content: &str, channel: &str, session_ref: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_NAME,
+            content,
+            &[&["h", channel], &["d", session_ref], &["csnm-v", "csnm1-1"]],
+        )
+    }
+
+    #[test]
+    fn coding_session_name_requires_exact_regular_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        assert!(
+            buzz_core::coding_session_name::validate_coding_session_name_envelope(&name_event(
+                "Authority phase",
+                &channel,
+                GENESIS_SESSION_REF
+            ))
+            .is_ok()
+        );
+
+        let smuggled = make_event_with_tags(
+            KIND_CODING_SESSION_NAME,
+            "Authority phase",
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["csnm-v", "csnm1-1"],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_name::validate_coding_session_name_envelope(&smuggled)
+                .is_err()
+        );
+
+        for event in [
+            name_event("", &channel, GENESIS_SESSION_REF),
+            name_event("first\nsecond", &channel, GENESIS_SESSION_REF),
+            name_event("name", &channel, &GENESIS_SESSION_REF.to_uppercase()),
+            make_event_with_tags(
+                KIND_CODING_SESSION_NAME,
+                "name",
+                &[
+                    &["d", GENESIS_SESSION_REF],
+                    &["h", &channel],
+                    &["csnm-v", "csnm1-1"],
+                ],
+            ),
+        ] {
+            assert!(
+                buzz_core::coding_session_name::validate_coding_session_name_envelope(&event)
+                    .is_err()
+            );
+        }
+    }
+
     /// The canonical genesis and grantee ids used by the authority-transition
     /// envelope tests.
     const AUTHORITY_TRANSITION_GENESIS_REF: &str =
@@ -6629,6 +6695,7 @@ mod tests {
             None
         );
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
+        assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_NAME), None);
         assert_eq!(
             coding_session_content_cap(KIND_CODING_SESSION_AUTHORITY_TRANSITION),
             None

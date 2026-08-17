@@ -27,6 +27,7 @@ import type {
   CodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSessionGoal";
+import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
@@ -39,6 +40,7 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
+import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
@@ -70,6 +72,7 @@ export function UmbrellaCodingSessionWorkspace({
   focusedExecution,
   currentUserPubkey,
   goal,
+  sessionName = null,
 }: {
   channelId: string;
   channelName: string | null;
@@ -83,6 +86,7 @@ export function UmbrellaCodingSessionWorkspace({
   focusedExecution: CodingSessionExecution;
   currentUserPubkey: string | null;
   goal: CodingSessionGoal | null;
+  sessionName?: CodingSessionName | null;
 }) {
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
@@ -129,6 +133,12 @@ export function UmbrellaCodingSessionWorkspace({
     initialTab: "agents",
   });
   const surfaceHostId = React.useId();
+  const [renameOpen, setRenameOpen] = React.useState(false);
+  const authoritativeTitle = sessionName?.content ?? umbrella.title;
+  const canRename =
+    umbrella.sessionRef !== null &&
+    umbrella.founderPubkey !== null &&
+    currentUserPubkey?.toLowerCase() === umbrella.founderPubkey.toLowerCase();
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -152,9 +162,10 @@ export function UmbrellaCodingSessionWorkspace({
           onAddProvider={onAddProvider}
           onBack={onBack}
           onPopout={surface === "main" ? handlePopout : undefined}
+          onRename={canRename ? () => setRenameOpen(true) : undefined}
           onToggleSurface={(id) => surfaceHost.toggle(id)}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
-          sessionTitle={umbrella.title}
+          sessionTitle={authoritativeTitle}
           status={umbrellaWorkspaceStatus(umbrella)}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces.map((surfaceEntry) => ({
@@ -179,6 +190,15 @@ export function UmbrellaCodingSessionWorkspace({
           />
         </div>
       </div>
+      {umbrella.sessionRef ? (
+        <CodingSessionNameDialog
+          channelId={channelId}
+          currentName={authoritativeTitle}
+          onOpenChange={setRenameOpen}
+          open={renameOpen}
+          sessionRef={umbrella.sessionRef}
+        />
+      ) : null}
       <div className="flex min-h-0 flex-1" ref={workspaceBodyRef}>
         <section
           aria-label="Umbrella session narrative"

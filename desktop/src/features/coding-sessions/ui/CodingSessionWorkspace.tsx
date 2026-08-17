@@ -19,6 +19,8 @@ import {
   codingSessionGoalKey,
   useCodingSessionGoals,
 } from "@/features/coding-sessions/useCodingSessionGoals";
+import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
+import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
@@ -32,6 +34,7 @@ import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
+import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
 import {
   codingSessionTaskRailPreferenceKey,
@@ -77,6 +80,7 @@ export function CodingSessionWorkspace({
     authorityMode: "open",
   });
   const goalSnapshot = useCodingSessionGoals([channelId]);
+  const nameSnapshot = useCodingSessionNames([channelId]);
   const channelsQuery = useChannelsQuery({ enabled: true });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
@@ -102,6 +106,16 @@ export function CodingSessionWorkspace({
     umbrella.sessionRef && umbrella.founderPubkey
       ? (goalSnapshot.goals.get(
           codingSessionGoalKey(
+            channelId,
+            umbrella.sessionRef,
+            umbrella.founderPubkey,
+          ),
+        ) ?? null)
+      : null;
+  const sessionName =
+    umbrella.sessionRef && umbrella.founderPubkey
+      ? (nameSnapshot.names.get(
+          codingSessionNameKey(
             channelId,
             umbrella.sessionRef,
             umbrella.founderPubkey,
@@ -141,6 +155,7 @@ export function CodingSessionWorkspace({
           surface={surface}
           umbrella={umbrella}
           goal={goal}
+          sessionName={sessionName}
         />
       ) : (
         <ReadyCodingSessionWorkspace
@@ -154,6 +169,7 @@ export function CodingSessionWorkspace({
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
           goal={goal}
+          sessionName={sessionName}
           currentUserPubkey={identity.data?.pubkey ?? null}
           sessionRef={umbrella.sessionRef}
           session={resolution.session}
@@ -171,7 +187,9 @@ export function CodingSessionWorkspace({
           channelName={channel?.name ?? null}
           onOpenChange={setAddProviderOpen}
           open={addProviderOpen}
-          umbrella={umbrella}
+          umbrella={
+            sessionName ? { ...umbrella, title: sessionName.content } : umbrella
+          }
         />
       ) : null}
     </>
@@ -185,6 +203,7 @@ function ReadyCodingSessionWorkspace({
   founderPubkey,
   genesisRef,
   goal,
+  sessionName,
   currentUserPubkey,
   sessionRef,
   isMember,
@@ -201,6 +220,9 @@ function ReadyCodingSessionWorkspace({
   genesisRef: string | null;
   goal:
     | import("@/features/coding-sessions/lib/codingSessionGoal").CodingSessionGoal
+    | null;
+  sessionName:
+    | import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
     | null;
   currentUserPubkey: string | null;
   sessionRef: string | null;
@@ -234,6 +256,12 @@ function ReadyCodingSessionWorkspace({
     umbrella: { founderPubkey, genesisRef },
     currentUserPubkey,
   });
+  const [renameOpen, setRenameOpen] = React.useState(false);
+  const authoritativeTitle = sessionName?.content ?? session.title;
+  const canRename =
+    sessionRef !== null &&
+    founderPubkey !== null &&
+    currentUserPubkey?.toLowerCase() === founderPubkey.toLowerCase();
   const blockIds = React.useMemo(
     () => deriveTranscriptItemBlockIds(session.transcript),
     [session.transcript],
@@ -320,9 +348,13 @@ function ReadyCodingSessionWorkspace({
   );
 
   const exportEnabled = useFeatureEnabled("coding-session-export");
+  const exportSession = React.useMemo(
+    () => (sessionName ? { ...session, title: authoritativeTitle } : session),
+    [authoritativeTitle, session, sessionName],
+  );
   const { exportTranscript, isExporting } = useCodingSessionExport(
     generationId,
-    session,
+    exportSession,
   );
 
   const handlePopout = React.useCallback(() => {
@@ -352,6 +384,7 @@ function ReadyCodingSessionWorkspace({
           onBack={onBack}
           onExport={exportEnabled ? exportTranscript : undefined}
           onPopout={surface === "main" ? handlePopout : undefined}
+          onRename={canRename ? () => setRenameOpen(true) : undefined}
           onToggleTaskRail={() => {
             surfaceHost.close();
             setTaskRailOpen((open) => !open);
@@ -362,7 +395,7 @@ function ReadyCodingSessionWorkspace({
           }}
           providerAuthorityPubkey={session.providerAuthorityPubkey}
           runtimeLabel={runtimeLabel}
-          sessionTitle={session.title}
+          sessionTitle={authoritativeTitle}
           status={status}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces.map((surfaceEntry) => ({
@@ -389,6 +422,15 @@ function ReadyCodingSessionWorkspace({
           />
         </div>
       </div>
+      {sessionRef ? (
+        <CodingSessionNameDialog
+          channelId={channelId}
+          currentName={authoritativeTitle}
+          onOpenChange={setRenameOpen}
+          open={renameOpen}
+          sessionRef={sessionRef}
+        />
+      ) : null}
       <div className="flex min-h-0 flex-1">
         <section
           aria-label="Session transcript"

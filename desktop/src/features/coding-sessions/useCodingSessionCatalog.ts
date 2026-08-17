@@ -217,6 +217,7 @@ export function useGlobalCodingSessionCatalog(
     options.authorityMode ?? "config",
     options.persistenceCacheKey,
   );
+  const createObservations = useCodingSessionCreateObservations(channelIds);
   return React.useMemo(
     () => ({
       entries: channelIds.flatMap((channelId) =>
@@ -226,12 +227,13 @@ export function useGlobalCodingSessionCatalog(
           trustedIngress.transcripts,
         ).map((session) => ({ channelId, session })),
       ),
+      creates: createObservations.observations,
       isLoading: trustedIngress.isLoading,
       errorMessage: trustedIngress.errorMessage,
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
       lifecycleFor: trustedIngress.lifecycleFor,
     }),
-    [channelIds, trustedIngress],
+    [channelIds, createObservations.observations, trustedIngress],
   );
 }
 

@@ -5,6 +5,7 @@ import {
   GitCompare,
   Info,
   ListChecks,
+  Pencil,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -44,6 +45,11 @@ type CodingSessionHeaderProps = {
   onBack: () => void;
   onExport?: () => void;
   onPopout?: () => void;
+  /** Opens the founder-authorized session rename flow. */
+  onRename?: () => void;
+  /** Opens the owning project. Given one, the project reads as a crumb you can
+   * follow rather than a word in a context line. */
+  onOpenProject?: () => void;
   onToggleTaskRail?: () => void;
   /** Toggles the shared surface host open/closed on the given surface tab. */
   onToggleSurface?: (id: string) => void;
@@ -70,6 +76,7 @@ export function CodingSessionHeader({
   onBack,
   onExport,
   onPopout,
+  onRename,
   onToggleTaskRail,
   onToggleSurface,
   projectName = null,
@@ -111,7 +118,23 @@ export function CodingSessionHeader({
         <ArrowLeft />
       </Button>
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-sm font-semibold">{title}</h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <h1 className="truncate text-sm font-semibold">{title}</h1>
+          {onRename ? (
+            <Button
+              aria-label="Rename session"
+              className="shrink-0"
+              data-testid="coding-session-rename"
+              onClick={onRename}
+              size="icon-xs"
+              title="Rename session"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil />
+            </Button>
+          ) : null}
+        </div>
         <p className="truncate text-xs text-muted-foreground">
           {contextLabels.length > 0
             ? contextLabels.join(" · ")

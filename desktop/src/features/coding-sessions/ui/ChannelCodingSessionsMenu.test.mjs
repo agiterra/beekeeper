@@ -100,6 +100,41 @@ test("catalog goal is visible to everyone but edit is founder-gated", () => {
   assert.match(render(founderPubkey), /Edit session goal/);
 });
 
+test("catalog uses the founder-authored session name over execution labels", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const founderPubkey = "a".repeat(64);
+  const authorityByGeneration = new Map([
+    [entries[0].session.generationId, { founderPubkey, sessionRef }],
+  ]);
+  const names = new Map([
+    [
+      `channel-1\u0000${sessionRef}\u0000${founderPubkey}`,
+      {
+        channelId: "channel-1",
+        content: "Durable session name",
+        createdAt: 1,
+        eventId: "b".repeat(64),
+        founderPubkey,
+        sessionRef,
+      },
+    ],
+  ]);
+  const markup = renderToStaticMarkup(
+    React.createElement(ChannelCodingSessionList, {
+      authorityByGeneration,
+      channelId: "channel-1",
+      entries: [entries[0]],
+      names,
+      onOpen() {},
+      onPopout() {},
+    }),
+  );
+
+  assert.match(markup, /Durable session name/);
+  assert.match(markup, /aria-label="Open Durable session name"/);
+  assert.doesNotMatch(markup, /Session worker-a \/ generation 7/);
+});
+
 test("channel session list forwards only the clicked exact generation ids", () => {
   const opened = [];
   const poppedOut = [];
