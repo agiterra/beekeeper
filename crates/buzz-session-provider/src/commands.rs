@@ -236,7 +236,7 @@ pub fn decide_lifecycle(
         if record.generation != session.generation {
             return LifecycleDecision::Ignore(Ignored::StaleGeneration);
         }
-        if !operator_has_authority(record, context.operator_pubkey) {
+        if !operator_owns_session(record, context.operator_pubkey) {
             return LifecycleDecision::Fail {
                 command_id: payload.command_id,
                 code: UNAUTHORIZED_OPERATOR,
@@ -377,10 +377,11 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     if record.generation != command.target.generation {
         return TurnDecision::Ignore(Ignored::StaleGeneration);
     }
-    if !operator_has_authority(record, context.operator_pubkey) {
+    if !operator_may_steer(record, context.operator_pubkey) {
         return TurnDecision::Fail {
             command_id: command.command_id,
-            message: "only the session founder may steer this execution".into(),
+            message: "only the session founder or a granted operator may steer this execution"
+                .into(),
         };
     }
     if record.closed {
@@ -400,14 +401,29 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     }
 }
 
-/// Check only authority facts persisted when this provider witnessed the
-/// create. Old no-genesis records predate that field and remain ungoverned;
-/// genesis-bearing records can never fall open when their founder is absent.
-fn operator_has_authority(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
+/// Owner-only authority: stop/resume/end. Checks only authority facts
+/// persisted when this provider witnessed the create. Old no-genesis records
+/// predate that field and remain ungoverned; genesis-bearing records can
+/// never fall open when their founder is absent. `grant-operator` never moves
+/// ownership, so the granted-operator set is deliberately not consulted here.
+fn operator_owns_session(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
     match record.founder_pubkey.as_deref() {
         Some(founder) => founder == operator_pubkey,
         None => record.genesis_ref.is_none(),
     }
+}
+
+/// Steering authority: turn start/interrupt. The owner always may; beyond
+/// that, only a genesis-bearing session consults its verified
+/// granted-operator cache (each entry applied from a relay-signed acceptance
+/// receipt plus the resolved accepted transition — see [`crate::authority`]).
+/// Legacy no-genesis sessions never gain operators this way (R20): umbrella
+/// authority for them arrives by adoption, not provider inference.
+fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &str) -> bool {
+    if operator_owns_session(record, operator_pubkey) {
+        return true;
+    }
+    record.genesis_ref.is_some() && record.granted_operators.contains(operator_pubkey)
 }
 
 /// A decoded 44220 payload, covering both donor actions.
@@ -583,9 +599,18 @@ mod tests {
         projects: &'a ProjectsFile,
         now_secs: u64,
     ) -> CommandContext<'a> {
+        ctx_as(state, projects, now_secs, AUTHORITY)
+    }
+
+    fn ctx_as<'a>(
+        state: &'a StateStore,
+        projects: &'a ProjectsFile,
+        now_secs: u64,
+        operator_pubkey: &'a str,
+    ) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: AUTHORITY,
-            operator_pubkey: AUTHORITY,
+            operator_pubkey,
             runtimes: runtimes(),
             instance_id: "instance-1",
             now_secs,
@@ -641,6 +666,8 @@ mod tests {
             session_ref: None,
             genesis_ref: None,
             founder_pubkey: Some(AUTHORITY.into()),
+            granted_operators: std::collections::BTreeSet::new(),
+            authority_seq: 0,
             model: None,
             resume_cursor: None,
             title: None,
@@ -959,6 +986,97 @@ mod tests {
                 code: UNAUTHORIZED_OPERATOR,
                 ..
             }
+        ));
+    }
+
+    /// The A5 authority split: a granted operator may steer (turn start and
+    /// interrupt) a genesis-bearing session, but stop/resume stay owner-only —
+    /// `grant-operator` never moves ownership.
+    #[test]
+    fn a_granted_operator_may_steer_but_never_stop_or_resume() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let grantee = "ef".repeat(32);
+        let mut governed = session("s1", dir.path());
+        governed.genesis_ref = Some("12".repeat(32));
+        governed.granted_operators = [grantee.clone()].into_iter().collect();
+        governed.authority_seq = 1;
+        state.insert_session(governed).expect("insert");
+        let projects = ProjectsFile::default();
+        let context = ctx_as(&state, &projects, 1_000, &grantee);
+
+        assert!(matches!(
+            decide_turn(&context, 1_000, &turn_content("turn-grantee", "s1", 1)),
+            TurnDecision::Start { .. }
+        ));
+        assert!(matches!(
+            decide_turn(
+                &context,
+                1_000,
+                &interrupt_content("interrupt-grantee", "s1", 1)
+            ),
+            TurnDecision::Interrupt { .. }
+        ));
+        for (action, command_id) in [
+            ("session.stop", "stop-grantee"),
+            ("session.resume", "resume-grantee"),
+        ] {
+            assert!(
+                matches!(
+                    decide_lifecycle(
+                        &context,
+                        Uuid::nil(),
+                        1_000,
+                        &lifecycle_target_content(action, command_id, "s1", 1),
+                    ),
+                    LifecycleDecision::Fail {
+                        code: UNAUTHORIZED_OPERATOR,
+                        ..
+                    }
+                ),
+                "{action} from a granted operator must stay owner-only"
+            );
+        }
+    }
+
+    /// A channel member who is neither founder nor granted operator is
+    /// refused visibly, and a granted-operator set can never open a legacy
+    /// no-genesis record (R20: legacy authority is the witnessed creator).
+    #[test]
+    fn non_granted_members_are_refused_and_grants_never_apply_without_a_genesis() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let projects = ProjectsFile::default();
+        let stranger = "99".repeat(32);
+        let grantee = "ef".repeat(32);
+
+        let mut governed_state = store(&dir.path().join("governed"));
+        let mut governed = session("s1", dir.path());
+        governed.genesis_ref = Some("12".repeat(32));
+        governed.granted_operators = [grantee.clone()].into_iter().collect();
+        governed.authority_seq = 1;
+        governed_state.insert_session(governed).expect("insert");
+        assert!(matches!(
+            decide_turn(
+                &ctx_as(&governed_state, &projects, 1_000, &stranger),
+                1_000,
+                &turn_content("turn-stranger", "s1", 1)
+            ),
+            TurnDecision::Fail { .. }
+        ));
+
+        // Defensive: a grant entry on a no-genesis record is inert — legacy
+        // sessions acquire umbrella authority by adoption, never inference.
+        let mut legacy_state = store(&dir.path().join("legacy"));
+        let mut legacy = session("s2", dir.path());
+        legacy.granted_operators = [grantee.clone()].into_iter().collect();
+        legacy_state.insert_session(legacy).expect("insert");
+        assert!(matches!(
+            decide_turn(
+                &ctx_as(&legacy_state, &projects, 1_000, &grantee),
+                1_000,
+                &turn_content("turn-inert-grant", "s2", 1)
+            ),
+            TurnDecision::Fail { .. }
         ));
     }
 

@@ -30,6 +30,7 @@
 #![deny(unsafe_code)]
 
 mod agent_fence;
+pub mod authority;
 pub mod catalog;
 pub mod commands;
 pub mod config;
@@ -56,11 +57,11 @@ use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_PROVIDER_CATALOG,
-    KIND_CODING_SESSION_TRANSCRIPT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
@@ -96,6 +97,12 @@ const SESSION_EVENT_CAPACITY: usize = 256;
 /// to become query-visible through the HTTP bridge.
 const GENESIS_QUERY_ATTEMPTS: usize = 4;
 const GENESIS_QUERY_RETRY_DELAY: Duration = Duration::from_millis(150);
+/// Page ceiling for the authority-receipt backfill query. The relay clamps to
+/// its own advertised maximum; asking high keeps acceptance receipts from
+/// paginating out behind unrelated system messages in a chatty channel. If a
+/// receipt still falls off the page, the contiguous fold stalls — grants stay
+/// unapplied (fail closed) until a live receipt or restart retries.
+const AUTHORITY_BACKFILL_QUERY_LIMIT: usize = 1000;
 
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
@@ -134,12 +141,38 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     relay.set_startup_watermark(now_secs()).await?;
     provider.set_rest_client(relay.rest_client());
 
+    // Witness the relay identity (NIP-11 `self`) once, over the same origin
+    // the whole authenticated command stream already trusts. Without it,
+    // authority-acceptance receipts cannot verify and genesis-bearing
+    // sessions stay founder-only — fail closed, never guessed.
+    match relay.rest_client().fetch_relay_self().await {
+        Ok(Some(relay_self)) => {
+            tracing::info!(target: "csp::authority", %relay_self, "witnessed relay identity");
+            provider.set_relay_self(relay_self);
+        }
+        Ok(None) => tracing::warn!(
+            target: "csp::authority",
+            "relay advertises no stable identity (NIP-11 self) — authority chains cannot be \
+             verified; genesis-bearing sessions stay founder-only"
+        ),
+        Err(error) => tracing::warn!(
+            target: "csp::authority",
+            "could not witness the relay identity: {error} — genesis-bearing sessions stay \
+             founder-only until the provider restarts"
+        ),
+    }
+
     let channels = relay.discover_channels().await?;
     for channel_id in channels.keys().copied() {
         provider.subscribe(&mut relay, channel_id, None).await?;
     }
     relay.subscribe_membership_notifications().await?;
     provider.refresh_catalog(true)?;
+
+    // Grants accepted while this provider was down are re-verified and folded
+    // in before the first command is served; live receipts extend from here.
+    let rest = relay.rest_client();
+    provider.backfill_authority_chains(&rest).await;
 
     let publisher = relay.event_publisher();
     let mut ticker = tokio::time::interval(OUTBOX_TICK);
@@ -247,6 +280,13 @@ pub struct Provider {
     /// which is exactly the "not checked" outcome the honesty contract
     /// already models, so no session ever waits on it.
     rest_client: Option<RestClient>,
+    /// The relay's signing pubkey (lowercase hex) as witnessed from its
+    /// NIP-11 `self` field after connecting — the trust root every kind
+    /// 40099 authority-acceptance receipt is verified against (see
+    /// [`authority`]). `None` means no stable relay identity is known, and
+    /// authority-chain consumption fails closed: genesis-bearing sessions
+    /// stay founder-only.
+    relay_self: Option<String>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
 }
@@ -271,6 +311,7 @@ impl Provider {
             git_probe_generation: HashMap::new(),
             git_reachability: HashMap::new(),
             rest_client: None,
+            relay_self: None,
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
         })
@@ -282,6 +323,15 @@ impl Provider {
     /// reachability leg.
     pub fn set_rest_client(&mut self, rest_client: RestClient) {
         self.rest_client = Some(rest_client);
+    }
+
+    /// Record the relay identity witnessed from the NIP-11 `self` field.
+    ///
+    /// Called once from [`run_with`] after connecting. Until it is set, no
+    /// authority-acceptance receipt can verify, so no operator grant is ever
+    /// applied — fail closed, never guessed.
+    pub fn set_relay_self(&mut self, relay_self_hex: String) {
+        self.relay_self = Some(relay_self_hex.to_ascii_lowercase());
     }
 
     /// Repair state left behind by an unclean exit.
@@ -435,7 +485,9 @@ impl Provider {
         Ok(())
     }
 
-    /// Subscribe to the two command kinds in one channel, replaying from the
+    /// Subscribe to the two command kinds — plus kind 40099 system messages,
+    /// which carry the relay-signed authority-acceptance receipts a
+    /// mid-session grant arrives on — in one channel, replaying from the
     /// persisted watermark so a restart cannot silently skip an unseen command.
     async fn subscribe(
         &mut self,
@@ -447,6 +499,7 @@ impl Provider {
             kinds: Some(vec![
                 KIND_CODING_SESSION_COMMAND,
                 KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+                KIND_SYSTEM_MESSAGE,
             ]),
             require_mention: false,
         };
@@ -535,6 +588,9 @@ impl Provider {
                 self.on_turn(channel_id, created_at, &operator_pubkey, &event.content)
                     .await?;
             }
+            KIND_SYSTEM_MESSAGE => {
+                self.on_authority_receipt(channel_id, event, relay).await?;
+            }
             other => {
                 tracing::debug!(target: "csp", kind = other, "ignoring unrelated event");
                 return Ok(());
@@ -618,14 +674,18 @@ impl Provider {
                         }
                     }
                 }
-                self.create_session(plan).await
+                self.create_session(plan, relay).await
             }
             LifecycleDecision::Resume(plan) => self.resume_session(plan).await,
             LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
     }
 
-    async fn create_session(&mut self, plan: CreatePlan) -> anyhow::Result<()> {
+    async fn create_session(
+        &mut self,
+        plan: CreatePlan,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<()> {
         self.state.consume_command(&plan.command_id, now_secs())?;
 
         // Infallible in practice: `decide_lifecycle` only mints a plan whose
@@ -698,6 +758,8 @@ impl Provider {
             session_ref: plan.session_ref.clone(),
             genesis_ref: plan.genesis_ref.clone(),
             founder_pubkey: Some(plan.founder_pubkey.clone()),
+            granted_operators: std::collections::BTreeSet::new(),
+            authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
             resume_cursor: Some(startup.acp_session_id.clone()),
             title: plan.title.clone(),
@@ -707,6 +769,27 @@ impl Provider {
             closed: false,
         };
         self.state.insert_session(record)?;
+
+        // A genesis may already carry an accepted authority chain — another
+        // execution under the same umbrella can be granted operators before
+        // this one exists. Fold those verified grants in now; live receipts
+        // extend from here. Best-effort: a failed backfill leaves the session
+        // founder-only until the next receipt or restart, never open.
+        if plan.genesis_ref.is_some() {
+            if let Some(relay) = relay {
+                let rest = relay.rest_client();
+                if let Err(error) = self
+                    .backfill_session_authority(&target.session_id, &rest)
+                    .await
+                {
+                    tracing::warn!(
+                        target: "csp::authority",
+                        session_id = %target.session_id,
+                        "authority backfill at create failed: {error}"
+                    );
+                }
+            }
+        }
 
         // The initial turn is *dispatched* before the receipt is decided, so
         // `created_with_failed_initial_turn` means exactly what a consumer can
@@ -979,6 +1062,301 @@ impl Provider {
             ),
         }
         Ok(())
+    }
+
+    /// Handle one kind 40099 system message: if it is a verifiable
+    /// authority-transition acceptance receipt, fold its grant into every
+    /// session record rooted at the genesis it names.
+    ///
+    /// This is the live half of chain consumption — the receipt arrives on
+    /// the same channel subscription as commands, so a grant published
+    /// mid-session is honored without a provider restart. Everything that
+    /// fails verification is ignored with a warning and applies nothing:
+    /// authority only ever extends through verified facts.
+    async fn on_authority_receipt(
+        &mut self,
+        channel_id: Uuid,
+        event: &Event,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<()> {
+        if !authority::looks_like_acceptance_receipt(&event.content) {
+            // Joins, leaves, and every other system row.
+            return Ok(());
+        }
+        let Some(relay) = relay else {
+            tracing::debug!(
+                target: "csp::authority",
+                "no relay resolver for an acceptance receipt — deferred to backfill"
+            );
+            return Ok(());
+        };
+        let Some(relay_self) = self.relay_self.clone() else {
+            tracing::warn!(
+                target: "csp::authority",
+                "acceptance receipt seen but no relay identity is witnessed — grant not applied"
+            );
+            return Ok(());
+        };
+        let accepted = match authority::verify_acceptance_receipt(event, &relay_self, channel_id) {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::authority",
+                    "ignoring unverifiable acceptance receipt: {error}"
+                );
+                return Ok(());
+            }
+        };
+
+        let rest = relay.rest_client();
+        // Every execution record rooted at this genesis shares the chain —
+        // selection is by the locally recorded `genesis_ref`, never by tag.
+        let sessions: Vec<(String, u32)> = self
+            .state
+            .sessions()
+            .filter(|record| {
+                record.channel_id == channel_id
+                    && record.genesis_ref.as_deref() == Some(accepted.genesis_ref.as_str())
+            })
+            .map(|record| (record.session_id.clone(), record.authority_seq))
+            .collect();
+        for (session_id, applied_seq) in sessions {
+            if accepted.seq <= applied_seq {
+                continue; // Replay of an already-applied link.
+            }
+            if accepted.seq == applied_seq + 1 {
+                self.resolve_and_apply_grant(&session_id, &accepted, &rest)
+                    .await?;
+            } else {
+                // A gap means receipts were missed; refill from storage, then
+                // retry this link in case it is now the contiguous next one.
+                self.backfill_session_authority(&session_id, &rest).await?;
+                let applied = self
+                    .state
+                    .session(&session_id)
+                    .map(|record| record.authority_seq)
+                    .unwrap_or(0);
+                if accepted.seq == applied + 1 {
+                    self.resolve_and_apply_grant(&session_id, &accepted, &rest)
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve the accepted kind 44228 transition a verified receipt names —
+    /// by its explicit `acceptedEventId`, never by tag query — verify it
+    /// against the receipt, the channel, and the session owner, and only then
+    /// extend the persisted operator set.
+    ///
+    /// Returns whether the grant was applied. Every refusal path applies
+    /// nothing and logs why: a chain that cannot be verified simply never
+    /// grants, it never guesses.
+    async fn resolve_and_apply_grant(
+        &mut self,
+        session_id: &str,
+        accepted: &authority::AcceptedTransition,
+        rest: &RestClient,
+    ) -> anyhow::Result<bool> {
+        let Some(record) = self.state.session(session_id) else {
+            return Ok(false);
+        };
+        let channel_id = record.channel_id;
+        let Some(owner) = record.founder_pubkey.clone() else {
+            tracing::warn!(
+                target: "csp::authority",
+                %session_id,
+                "genesis-bearing record has no recorded owner — grant not applied"
+            );
+            return Ok(false);
+        };
+        let transition = match rest
+            .query_event_by_id(
+                &accepted.accepted_event_id,
+                Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+            )
+            .await
+        {
+            Ok(Some(transition)) => transition,
+            Ok(None) => {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    accepted_event_id = %accepted.accepted_event_id,
+                    "accepted transition is not query-visible — grant not applied"
+                );
+                return Ok(false);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    "accepted transition lookup failed: {error} — grant not applied"
+                );
+                return Ok(false);
+            }
+        };
+        if let Err(error) =
+            authority::verify_accepted_transition(&transition, accepted, channel_id, &owner)
+        {
+            tracing::warn!(
+                target: "csp::authority",
+                %session_id,
+                "rejecting acceptance whose transition fails verification: {error}"
+            );
+            return Ok(false);
+        }
+        self.state.update_session(session_id, |record| {
+            record
+                .granted_operators
+                .insert(accepted.grantee_pubkey.clone());
+            record.authority_seq = accepted.seq;
+        })?;
+        tracing::info!(
+            target: "csp::authority",
+            %session_id,
+            seq = accepted.seq,
+            grantee = %accepted.grantee_pubkey,
+            "applied accepted grant-operator transition"
+        );
+        Ok(true)
+    }
+
+    /// Extend one session's operator set from the channel's stored acceptance
+    /// receipts: the backfill half of chain consumption, run at session load
+    /// and whenever a live receipt reveals a gap.
+    ///
+    /// The channel query is discovery only (R21): it surfaces candidate
+    /// receipts, and every fact actually applied is independently verified —
+    /// receipt signature against the witnessed relay identity, explicit
+    /// `genesisRef` match against the locally recorded genesis, and the
+    /// accepted transition resolved by explicit reference and verified in
+    /// [`Provider::resolve_and_apply_grant`]. Receipts fold strictly by
+    /// contiguous `seq`; a gap or an unverifiable link stops the fold with
+    /// later grants unapplied.
+    pub async fn backfill_session_authority(
+        &mut self,
+        session_id: &str,
+        rest: &RestClient,
+    ) -> anyhow::Result<()> {
+        use nostr::{Alphabet, SingleLetterTag};
+
+        let Some(record) = self.state.session(session_id) else {
+            return Ok(());
+        };
+        let Some(genesis_ref) = record.genesis_ref.clone() else {
+            return Ok(()); // Legacy sessions have no chain (R20).
+        };
+        let channel_id = record.channel_id;
+        let mut applied_seq = record.authority_seq;
+        let Some(relay_self) = self.relay_self.clone() else {
+            tracing::debug!(
+                target: "csp::authority",
+                "no relay identity witnessed — skipping authority backfill"
+            );
+            return Ok(());
+        };
+        let Ok(relay_author) = nostr::PublicKey::from_hex(&relay_self) else {
+            tracing::warn!(
+                target: "csp::authority",
+                "witnessed relay identity is not a valid pubkey — skipping authority backfill"
+            );
+            return Ok(());
+        };
+
+        let filter = nostr::Filter::new()
+            .kind(Kind::Custom(KIND_SYSTEM_MESSAGE as u16))
+            .author(relay_author)
+            .custom_tags(
+                SingleLetterTag::lowercase(Alphabet::H),
+                [channel_id.to_string()],
+            )
+            .limit(AUTHORITY_BACKFILL_QUERY_LIMIT);
+        let rows = match rest.query(&[filter]).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    "authority backfill query failed: {error}"
+                );
+                return Ok(());
+            }
+        };
+        let Some(rows) = rows.as_array() else {
+            tracing::warn!(
+                target: "csp::authority",
+                "authority backfill query returned a non-array response"
+            );
+            return Ok(());
+        };
+
+        let mut accepted: Vec<authority::AcceptedTransition> = rows
+            .iter()
+            .filter_map(|row| serde_json::from_value::<Event>(row.clone()).ok())
+            .filter(|event| authority::looks_like_acceptance_receipt(&event.content))
+            .filter_map(|event| {
+                authority::verify_acceptance_receipt(&event, &relay_self, channel_id)
+                    .map_err(|error| {
+                        tracing::warn!(
+                            target: "csp::authority",
+                            "skipping unverifiable stored acceptance receipt: {error}"
+                        );
+                    })
+                    .ok()
+            })
+            .filter(|accepted| accepted.genesis_ref == genesis_ref)
+            .collect();
+        accepted.sort_by_key(|accepted| accepted.seq);
+
+        for accepted in accepted {
+            if accepted.seq <= applied_seq {
+                continue;
+            }
+            if accepted.seq != applied_seq + 1 {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    applied_seq,
+                    next_seq = accepted.seq,
+                    "authority chain has a receipt gap — later grants stay unapplied"
+                );
+                break;
+            }
+            if self
+                .resolve_and_apply_grant(session_id, &accepted, rest)
+                .await?
+            {
+                applied_seq = accepted.seq;
+            } else {
+                // An unverifiable link is never skipped over: everything past
+                // it waits until it can be verified.
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Backfill every live genesis-bearing session's authority chain.
+    /// Best-effort: called at startup so grants accepted while the provider
+    /// was down are folded in before the first command is served.
+    pub async fn backfill_authority_chains(&mut self, rest: &RestClient) {
+        let session_ids: Vec<String> = self
+            .state
+            .sessions()
+            .filter(|record| !record.closed && record.genesis_ref.is_some())
+            .map(|record| record.session_id.clone())
+            .collect();
+        for session_id in session_ids {
+            if let Err(error) = self.backfill_session_authority(&session_id, rest).await {
+                tracing::warn!(
+                    target: "csp::authority",
+                    %session_id,
+                    "authority backfill failed: {error}"
+                );
+            }
+        }
     }
 
     fn context<'a>(
@@ -1691,8 +2069,48 @@ mod tests {
 
     #[derive(Clone)]
     struct TestRelayState {
-        event: Option<Event>,
+        events: Vec<Event>,
         queries: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    /// Minimal NIP-01 filter matching for the fake relay's `/query` bridge:
+    /// `ids`, `kinds`, `authors`, and `#h` — the fields the provider's
+    /// genesis resolution, transition resolution, and authority backfill use.
+    fn test_filter_matches(filter: &serde_json::Value, event: &Event) -> bool {
+        if let Some(ids) = filter.get("ids").and_then(serde_json::Value::as_array) {
+            if !ids.iter().any(|id| id.as_str() == Some(&event.id.to_hex())) {
+                return false;
+            }
+        }
+        if let Some(kinds) = filter.get("kinds").and_then(serde_json::Value::as_array) {
+            if !kinds
+                .iter()
+                .any(|kind| kind.as_u64() == Some(u64::from(event.kind.as_u16())))
+            {
+                return false;
+            }
+        }
+        if let Some(authors) = filter.get("authors").and_then(serde_json::Value::as_array) {
+            if !authors
+                .iter()
+                .any(|author| author.as_str() == Some(&event.pubkey.to_hex()))
+            {
+                return false;
+            }
+        }
+        if let Some(channels) = filter.get("#h").and_then(serde_json::Value::as_array) {
+            let event_channel = event.tags.iter().find_map(|tag| {
+                let tag = tag.as_slice();
+                (tag.len() == 2 && tag[0] == "h").then(|| tag[1].clone())
+            });
+            if !channels
+                .iter()
+                .any(|channel| channel.as_str() == event_channel.as_deref())
+            {
+                return false;
+            }
+        }
+        true
     }
 
     async fn test_relay_ws(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
@@ -1736,11 +2154,22 @@ mod tests {
         State(state): State<TestRelayState>,
         Json(query): Json<serde_json::Value>,
     ) -> Json<serde_json::Value> {
-        state.queries.lock().expect("queries lock").push(query);
-        Json(match &state.event {
-            Some(event) => serde_json::json!([event]),
-            None => serde_json::json!([]),
-        })
+        state
+            .queries
+            .lock()
+            .expect("queries lock")
+            .push(query.clone());
+        let filters: Vec<serde_json::Value> = query.as_array().cloned().unwrap_or_default();
+        let matched: Vec<&Event> = state
+            .events
+            .iter()
+            .filter(|event| {
+                filters
+                    .iter()
+                    .any(|filter| test_filter_matches(filter, event))
+            })
+            .collect();
+        Json(serde_json::to_value(matched).expect("serialize events"))
     }
 
     async fn spawn_test_relay(
@@ -1751,9 +2180,20 @@ mod tests {
         Arc<Mutex<Vec<serde_json::Value>>>,
         tokio::task::JoinHandle<()>,
     ) {
+        spawn_test_relay_with_events(keys, event.into_iter().collect()).await
+    }
+
+    async fn spawn_test_relay_with_events(
+        keys: &Keys,
+        events: Vec<Event>,
+    ) -> (
+        HarnessRelay,
+        Arc<Mutex<Vec<serde_json::Value>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let queries = Arc::new(Mutex::new(Vec::new()));
         let state = TestRelayState {
-            event,
+            events,
             queries: queries.clone(),
         };
         let app = Router::new()
@@ -2050,6 +2490,86 @@ mod tests {
         .tags(tags)
         .sign_with_keys(test_operator_keys())
         .expect("sign genesis")
+    }
+
+    /// A `grant-operator` transition signed by the founder (the session
+    /// owner), as the desktop would publish it.
+    fn grant_transition_event(
+        channel_id: Uuid,
+        genesis_ref: &str,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_hex: &str,
+    ) -> Event {
+        let payload = buzz_core::coding_session_authority_transition::
+            CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                genesis_ref.to_owned(),
+                prev_accepted,
+                seq,
+                grantee_hex.to_owned(),
+            );
+        buzz_sdk::builders::build_coding_session_authority_transition(channel_id, &payload)
+            .expect("transition builder")
+            .sign_with_keys(test_operator_keys())
+            .expect("sign transition")
+    }
+
+    /// The relay-signed kind 40099 acceptance receipt for one transition,
+    /// with exactly the content shape `buzz-relay` emits.
+    fn acceptance_receipt_event(
+        relay_keys: &Keys,
+        channel_id: Uuid,
+        genesis_ref: &str,
+        transition: &Event,
+        seq: u32,
+        grantee_hex: &str,
+    ) -> Event {
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
+            serde_json::json!({
+                "type": authority::ACCEPTANCE_RECEIPT_TYPE,
+                "genesisRef": genesis_ref,
+                "acceptedEventId": transition.id.to_hex(),
+                "seq": seq,
+                "transitionType": "grant-operator",
+                "granteePubkey": grantee_hex,
+            })
+            .to_string(),
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
+        ])
+        .sign_with_keys(relay_keys)
+        .expect("sign receipt")
+    }
+
+    /// A governed session record inserted directly into provider state, for
+    /// authority tests that need no live agent behind the record.
+    fn governed_record(channel_id: Uuid, cwd: &Path, genesis_ref: &str) -> SessionRecord {
+        SessionRecord {
+            session_id: Uuid::new_v4().to_string(),
+            generation: 1,
+            channel_id,
+            command_id: "create-governed".into(),
+            provider_instance_ref: "claude-primary".into(),
+            runtime: "claude".into(),
+            driver: "claude-agent-acp".into(),
+            cwd: cwd.to_path_buf(),
+            project_ref: None,
+            repo_ref: None,
+            session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into()),
+            genesis_ref: Some(genesis_ref.to_owned()),
+            founder_pubkey: Some(test_operator_keys().public_key().to_hex()),
+            granted_operators: std::collections::BTreeSet::new(),
+            authority_seq: 0,
+            model: None,
+            resume_cursor: None,
+            title: None,
+            created_at_ms: now_ms(),
+            next_seq: 1,
+            open_turn: None,
+            closed: false,
+        }
     }
 
     fn create_event_inner(
@@ -2471,6 +2991,400 @@ mod tests {
             assert_eq!(receipt["status"], "failed");
             assert_eq!(receipt["error"]["code"], UNAUTHORIZED_OPERATOR);
             assert!(provider.state().is_command_consumed(command_id));
+        }
+    }
+
+    /// The freshness proof for A5: a grant accepted *after* the session
+    /// started is honored on the live subscription path — no provider
+    /// restart — while stop/resume stay owner-only for the same grantee.
+    #[tokio::test]
+    async fn a_mid_session_grant_is_honored_live_and_stop_stays_owner_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let relay_keys = Keys::generate();
+        provider.set_relay_self(relay_keys.public_key().to_hex());
+        let grantee_keys = Keys::generate();
+        let grantee_hex = grantee_keys.public_key().to_hex();
+
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis = genesis_event(channel_id, session_ref);
+        let genesis_ref = genesis.id.to_hex();
+        let transition = grant_transition_event(channel_id, &genesis_ref, None, 1, &grantee_hex);
+        let (mut relay, _queries, server) = spawn_test_relay_with_events(
+            &provider.config.keys,
+            vec![genesis.clone(), transition.clone()],
+        )
+        .await;
+
+        let create = create_event_with_genesis_ref(
+            &provider,
+            channel_id,
+            "create-governed",
+            session_ref,
+            &genesis_ref,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &create)
+            .await
+            .expect("create");
+        let record = provider.state().sessions().next().expect("session").clone();
+        assert!(
+            record.granted_operators.is_empty(),
+            "no acceptance receipt exists yet, so the unaccepted 44228 grants nothing"
+        );
+        let target = record.target(&provider.config.instance_id);
+
+        // Before the grant is accepted, the grantee is refused visibly.
+        let early_turn = command_event_by(
+            channel_id,
+            "turn-before-grant",
+            &target,
+            serde_json::json!({ "type": "thread.turn.start", "text": "too early" }),
+            &grantee_keys,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &early_turn)
+            .await
+            .expect("refuse early turn");
+
+        // The acceptance receipt arrives live on the channel subscription.
+        let receipt = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &transition,
+            1,
+            &grantee_hex,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &receipt)
+            .await
+            .expect("apply receipt");
+        let record = provider
+            .state()
+            .session(&target.session_id)
+            .expect("session");
+        assert!(record.granted_operators.contains(&grantee_hex));
+        assert_eq!(record.authority_seq, 1);
+
+        // The same grantee can now steer…
+        let turn = command_event_by(
+            channel_id,
+            "turn-after-grant",
+            &target,
+            serde_json::json!({ "type": "thread.turn.start", "text": "now granted" }),
+            &grantee_keys,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &turn)
+            .await
+            .expect("accept granted turn");
+        assert!(provider.state().is_command_consumed("turn-after-grant"));
+
+        // …but still cannot stop or resume: ownership never moved.
+        let stop_content = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "stop-by-grantee",
+            "session.stop",
+            &target,
+        )
+        .content;
+        let stop = signed_lifecycle_event_by(channel_id, stop_content, &grantee_keys);
+        provider
+            .handle_relay_event(&mut relay, channel_id, &stop)
+            .await
+            .expect("refuse stop");
+        assert!(
+            !provider
+                .state()
+                .session(&target.session_id)
+                .expect("session")
+                .closed
+        );
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        let failed: Vec<&str> = receipts
+            .iter()
+            .filter(|receipt| receipt["status"] == "failed")
+            .filter_map(|receipt| receipt["commandId"].as_str())
+            .collect();
+        assert!(failed.contains(&"turn-before-grant"));
+        assert!(failed.contains(&"stop-by-grantee"));
+        assert!(
+            !failed.contains(&"turn-after-grant"),
+            "the granted turn must not be refused"
+        );
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// Forged and unlinkable acceptances apply nothing: wrong receipt signer,
+    /// a receipt whose transition disagrees with it, and a receipt whose
+    /// transition cannot be resolved all leave the operator set empty.
+    #[tokio::test]
+    async fn unverifiable_acceptances_apply_no_grants() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+
+        let relay_keys = Keys::generate();
+        provider.set_relay_self(relay_keys.public_key().to_hex());
+        let grantee_hex = Keys::generate().public_key().to_hex();
+        let other_hex = Keys::generate().public_key().to_hex();
+        let genesis_ref = "ab".repeat(32);
+
+        let record = governed_record(channel_id, &cwd, &genesis_ref);
+        let session_id = record.session_id.clone();
+        provider.state.insert_session(record).expect("insert");
+
+        // The store holds a transition granting `other`, not `grantee`.
+        let mismatched = grant_transition_event(channel_id, &genesis_ref, None, 1, &other_hex);
+        let (mut relay, _queries, server) =
+            spawn_test_relay_with_events(&provider.config.keys, vec![mismatched.clone()]).await;
+
+        // (a) Receipt signed by an impostor, not the witnessed relay identity.
+        let impostor = Keys::generate();
+        let forged = acceptance_receipt_event(
+            &impostor,
+            channel_id,
+            &genesis_ref,
+            &mismatched,
+            1,
+            &grantee_hex,
+        );
+        // (b) Relay-signed receipt whose resolved transition disagrees on the
+        // grantee.
+        let disagreeing = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &mismatched,
+            1,
+            &grantee_hex,
+        );
+        // (c) Relay-signed receipt naming a transition that is not
+        // query-visible at all.
+        let unresolvable = nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_SYSTEM_MESSAGE as u16),
+            serde_json::json!({
+                "type": authority::ACCEPTANCE_RECEIPT_TYPE,
+                "genesisRef": genesis_ref,
+                "acceptedEventId": "77".repeat(32),
+                "seq": 1,
+                "transitionType": "grant-operator",
+                "granteePubkey": grantee_hex,
+            })
+            .to_string(),
+        )
+        .tags(vec![
+            nostr::Tag::parse(["h", &channel_id.to_string()]).expect("tag")
+        ])
+        .sign_with_keys(&relay_keys)
+        .expect("sign receipt");
+
+        for event in [&forged, &disagreeing, &unresolvable] {
+            provider
+                .handle_relay_event(&mut relay, channel_id, event)
+                .await
+                .expect("handled without applying");
+            let record = provider.state().session(&session_id).expect("session");
+            assert!(record.granted_operators.is_empty());
+            assert_eq!(record.authority_seq, 0);
+        }
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// The backfill halves: a chain accepted *before* the execution exists is
+    /// folded in at create, and a receipt arriving with a gap triggers a
+    /// storage backfill and then applies contiguously.
+    #[tokio::test]
+    async fn stored_receipts_backfill_at_create_and_repair_receipt_gaps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let relay_keys = Keys::generate();
+        provider.set_relay_self(relay_keys.public_key().to_hex());
+        let first_grantee = Keys::generate().public_key().to_hex();
+        let second_grantee = Keys::generate().public_key().to_hex();
+
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis = genesis_event(channel_id, session_ref);
+        let genesis_ref = genesis.id.to_hex();
+        let first = grant_transition_event(channel_id, &genesis_ref, None, 1, &first_grantee);
+        let first_receipt = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &first,
+            1,
+            &first_grantee,
+        );
+        let second = grant_transition_event(
+            channel_id,
+            &genesis_ref,
+            Some(first.id.to_hex()),
+            2,
+            &second_grantee,
+        );
+        let second_receipt = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &second,
+            2,
+            &second_grantee,
+        );
+        // A forged receipt sits in storage alongside the real ones — the
+        // backfill must skip it without stalling the contiguous fold.
+        let forged = acceptance_receipt_event(
+            &Keys::generate(),
+            channel_id,
+            &genesis_ref,
+            &first,
+            1,
+            &"99".repeat(32),
+        );
+        let (mut relay, _queries, server) = spawn_test_relay_with_events(
+            &provider.config.keys,
+            vec![
+                genesis.clone(),
+                first.clone(),
+                forged,
+                first_receipt,
+                second.clone(),
+            ],
+        )
+        .await;
+
+        // Create after seq 1 was already accepted: the grant is folded in at
+        // create — the continuation case for an umbrella with prior grants.
+        let create = create_event_with_genesis_ref(
+            &provider,
+            channel_id,
+            "create-continuation",
+            session_ref,
+            &genesis_ref,
+        );
+        provider
+            .handle_relay_event(&mut relay, channel_id, &create)
+            .await
+            .expect("create");
+        let record = provider.state().sessions().next().expect("session").clone();
+        assert!(record.granted_operators.contains(&first_grantee));
+        assert_eq!(record.authority_seq, 1);
+
+        // The seq 2 receipt now arrives live and extends contiguously.
+        provider
+            .handle_relay_event(&mut relay, channel_id, &second_receipt)
+            .await
+            .expect("extend");
+        let record = provider
+            .state()
+            .session(&record.session_id)
+            .expect("session");
+        assert!(record.granted_operators.contains(&second_grantee));
+        assert_eq!(record.authority_seq, 2);
+
+        relay.shutdown().await;
+        server.abort();
+    }
+
+    /// A live receipt that skips ahead of the applied chain triggers a
+    /// backfill; when storage cannot close the gap, nothing applies — the
+    /// fold never jumps a link it has not verified.
+    #[tokio::test]
+    async fn a_gap_receipt_backfills_from_storage_and_otherwise_applies_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+
+        let relay_keys = Keys::generate();
+        provider.set_relay_self(relay_keys.public_key().to_hex());
+        let first_grantee = Keys::generate().public_key().to_hex();
+        let second_grantee = Keys::generate().public_key().to_hex();
+        let genesis_ref = "ab".repeat(32);
+
+        let record = governed_record(channel_id, &cwd, &genesis_ref);
+        let session_id = record.session_id.clone();
+        provider.state.insert_session(record).expect("insert");
+
+        let first = grant_transition_event(channel_id, &genesis_ref, None, 1, &first_grantee);
+        let first_receipt = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &first,
+            1,
+            &first_grantee,
+        );
+        let second = grant_transition_event(
+            channel_id,
+            &genesis_ref,
+            Some(first.id.to_hex()),
+            2,
+            &second_grantee,
+        );
+        let second_receipt = acceptance_receipt_event(
+            &relay_keys,
+            channel_id,
+            &genesis_ref,
+            &second,
+            2,
+            &second_grantee,
+        );
+
+        // Storage cannot close the gap: no seq 1 receipt anywhere.
+        {
+            let (mut relay, _queries, server) =
+                spawn_test_relay_with_events(&provider.config.keys, vec![second.clone()]).await;
+            provider
+                .handle_relay_event(&mut relay, channel_id, &second_receipt)
+                .await
+                .expect("gap with no repair");
+            let record = provider.state().session(&session_id).expect("session");
+            assert!(record.granted_operators.is_empty());
+            assert_eq!(record.authority_seq, 0);
+            relay.shutdown().await;
+            server.abort();
+        }
+
+        // Storage holds the missing seq 1 receipt: the gap receipt triggers a
+        // backfill and then applies itself contiguously.
+        {
+            let (mut relay, _queries, server) = spawn_test_relay_with_events(
+                &provider.config.keys,
+                vec![first.clone(), first_receipt, second.clone()],
+            )
+            .await;
+            provider
+                .handle_relay_event(&mut relay, channel_id, &second_receipt)
+                .await
+                .expect("gap repaired");
+            let record = provider.state().session(&session_id).expect("session");
+            assert!(record.granted_operators.contains(&first_grantee));
+            assert!(record.granted_operators.contains(&second_grantee));
+            assert_eq!(record.authority_seq, 2);
+            relay.shutdown().await;
+            server.abort();
         }
     }
 
@@ -3437,6 +4351,8 @@ mod tests {
                     session_ref: None,
                     genesis_ref: None,
                     founder_pubkey: Some("ab".repeat(32)),
+                    granted_operators: std::collections::BTreeSet::new(),
+                    authority_seq: 0,
                     model: None,
                     resume_cursor: Some("private-acp-cursor".into()),
                     title: None,

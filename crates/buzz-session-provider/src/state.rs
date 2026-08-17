@@ -19,7 +19,7 @@
 //! items at the same sequence as a conflict it must surface, while a gap is
 //! simply a sequence it never sees.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -81,6 +81,25 @@ pub struct SessionRecord {
     /// signer for legacy sessions. `None` is retained for pre-field records.
     #[serde(default)]
     pub founder_pubkey: Option<String>,
+    /// Operator pubkeys granted steering authority by this session's accepted
+    /// authority chain (kind 44228 `grant-operator` transitions, each applied
+    /// only after its relay-signed kind 40099 acceptance receipt and the
+    /// referenced transition event were verified — see `crate::authority`).
+    ///
+    /// A verified local cache in the R21 sense: every entry was witnessed and
+    /// checked by this provider at the moment it was applied, and the set is
+    /// re-extended by backfill on load. Meaningful only when `genesis_ref` is
+    /// set — enforcement never consults it for legacy sessions. Defaults empty
+    /// for records written before the field existed.
+    #[serde(default)]
+    pub granted_operators: BTreeSet<String>,
+    /// Highest accepted authority-chain `seq` whose grant has been applied to
+    /// `granted_operators`. `0` means no transition has been applied. Grants
+    /// apply strictly contiguously (`seq == authority_seq + 1`); a gap
+    /// triggers a backfill rather than a guess. Defaults to 0 for pre-field
+    /// records.
+    #[serde(default)]
+    pub authority_seq: u32,
     /// Requested model, or `None` to let the adapter decide.
     pub model: Option<String>,
     /// Opaque ACP session id used only to reattach this host's adapter.
@@ -490,6 +509,8 @@ mod tests {
             session_ref: None,
             genesis_ref: None,
             founder_pubkey: Some("ab".repeat(32)),
+            granted_operators: BTreeSet::new(),
+            authority_seq: 0,
             model: None,
             resume_cursor: None,
             title: None,
@@ -658,7 +679,13 @@ mod tests {
     fn pre_authority_records_load_ungoverned_without_inference() {
         let mut value = serde_json::to_value(record("s1")).expect("serialize");
         let object = value.as_object_mut().expect("object");
-        for field in ["sessionRef", "genesisRef", "founderPubkey"] {
+        for field in [
+            "sessionRef",
+            "genesisRef",
+            "founderPubkey",
+            "grantedOperators",
+            "authoritySeq",
+        ] {
             object
                 .remove(field)
                 .expect("field present in current records");
@@ -667,6 +694,8 @@ mod tests {
         assert!(loaded.session_ref.is_none());
         assert!(loaded.genesis_ref.is_none());
         assert!(loaded.founder_pubkey.is_none());
+        assert!(loaded.granted_operators.is_empty());
+        assert_eq!(loaded.authority_seq, 0);
     }
 
     /// Records written before the runtime fields existed must still load, and
