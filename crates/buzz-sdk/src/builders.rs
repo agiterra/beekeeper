@@ -8,6 +8,10 @@ use buzz_core::{
         CodingSessionAuthorityTransitionPayload, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
         MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
     },
+    coding_session_closure::{
+        CodingSessionClosurePayload, CODING_SESSION_CLOSURE_TAG_VERSION,
+        MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES,
+    },
     coding_session_command::{
         coding_session_target_key, CodingSessionCommandPayload, CodingSessionTarget,
         CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
@@ -29,8 +33,8 @@ use buzz_core::{
     },
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
-        KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
-        KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
         KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION,
@@ -2453,6 +2457,30 @@ pub fn build_coding_session_name(
         content.to_owned(),
     )
     .tags(tags))
+}
+
+/// Build one append-only coding-session closure revision (kind 44230).
+///
+/// The caller signs the returned builder. The relay resolves the explicit
+/// `genesisRef` before applying action-specific authority: only the founder may
+/// close; a current project member may reopen a project session, while a
+/// standalone session remains founder-only.
+pub fn build_coding_session_closure(
+    channel_id: Uuid,
+    payload: &CodingSessionClosurePayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session closure serialization: {error}"))
+    })?;
+    check_content(&content, MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", &payload.session_ref])?,
+        tag(&["cscl-v", CODING_SESSION_CLOSURE_TAG_VERSION])?,
+        tag(&["cscl-genesis", &payload.genesis_ref])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_CLOSURE as u16), content).tags(tags))
 }
 
 /// Build a provider-neutral coding-session command (kind 44220).
@@ -5408,6 +5436,74 @@ mod tests {
             "first\nsecond"
         )
         .is_err());
+    }
+
+    #[test]
+    fn coding_session_closure_builder_emits_exact_regular_revision_envelope() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis_ref = "ab".repeat(32);
+        let payload = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            &genesis_ref,
+            session_ref,
+        );
+        let event = build_coding_session_closure(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_CLOSURE);
+        assert_eq!(
+            event.content,
+            format!(
+                r#"{{"action":"closed","genesisRef":"{genesis_ref}","sessionRef":"{session_ref}","v":1}}"#
+            )
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("cscl-v".into(), "cscl1-1".into()),
+                ("cscl-genesis".into(), genesis_ref),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_builder_rejects_invalid_references_and_version() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        assert!(build_coding_session_closure(
+            channel,
+            &CodingSessionClosurePayload::new(
+                CodingSessionClosureAction::Open,
+                "AB".repeat(32),
+                session_ref,
+            )
+        )
+        .is_err());
+        assert!(build_coding_session_closure(
+            channel,
+            &CodingSessionClosurePayload::new(
+                CodingSessionClosureAction::Open,
+                "ab".repeat(32),
+                "umbrella",
+            )
+        )
+        .is_err());
+
+        let mut wrong_version = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Open,
+            "ab".repeat(32),
+            session_ref,
+        );
+        wrong_version.v = 2;
+        assert!(build_coding_session_closure(channel, &wrong_version).is_err());
     }
 
     /// The adoption form emits the same three-tag envelope as a fresh

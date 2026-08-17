@@ -14,13 +14,14 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
-    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
-    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
-    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
-    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER,
+    KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER,
+    KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP,
+    KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
     KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
     KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
@@ -357,7 +358,8 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
         // Coding sessions: the operator-signed session origin, goal/name
-        // revisions, and authority-chain transitions (44226–44229),
+        // revisions, authority-chain transitions, and closure facts
+        // (44226–44230),
         // the operator-authored commands (44220/44221), and the
         // provider-authored facts they produce (44222-44225). All are
         // durable, channel-scoped writes consumed by an out-of-relay
@@ -370,6 +372,7 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         | KIND_CODING_SESSION_GOAL
         | KIND_CODING_SESSION_AUTHORITY_TRANSITION
         | KIND_CODING_SESSION_NAME
+        | KIND_CODING_SESSION_CLOSURE
         | KIND_CODING_SESSION_PROVIDER_CATALOG
         | KIND_CODING_SESSION_METADATA
         | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
@@ -677,10 +680,11 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_CLOSURE
     )
 }
 
-/// Returns `true` for the ten coding-session kinds (44220–44229).
+/// Returns `true` for the eleven coding-session kinds (44220–44230).
 ///
 /// One predicate for the strict-membership gate and the tests, so a new
 /// kind cannot be added to one gate and forgotten by another.
@@ -697,15 +701,16 @@ pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
             | KIND_CODING_SESSION_GOAL
             | KIND_CODING_SESSION_AUTHORITY_TRANSITION
             | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_CLOSURE
     )
 }
 
 /// Maximum signed content size for each coding-session kind, in bytes.
 ///
-/// 44220, 44221, and 44226–44229 are bounded by their payload
+/// 44220, 44221, and 44226–44230 are bounded by their payload
 /// contracts in `buzz-core` instead (12 KiB of turn text, 16 KiB of signed
 /// content, 1 KiB of genesis, 4 KiB of goal prose, 512 B of an authority
-/// transition, and 256 B of session-name text), so they are
+/// transition, 256 B of session-name text, and 512 B of closure JSON), so they are
 /// absent here — and those bounds are the stricter ones,
 /// since their envelope validators run *before* this table is consulted. The
 /// four provider-authored kinds carry no envelope validator — the
@@ -2017,6 +2022,108 @@ fn validate_coding_session_authority_transition_envelope(event: &Event) -> Resul
     Ok(())
 }
 
+/// Apply the action-specific authority rule for one already-resolved closure.
+///
+/// Closing is an owner act regardless of channel type. Reopening may be
+/// broader when a deployment wires in a project-authority source: the caller
+/// precomputes whether that authority admits the signer. `None` means this
+/// channel has no project authority source, so reopening remains
+/// founder-only.
+fn coding_session_closure_authority_verdict(
+    action: buzz_core::coding_session_closure::CodingSessionClosureAction,
+    signer: &[u8],
+    founder: &[u8],
+    project_reopen_admits: Option<bool>,
+) -> Result<(), String> {
+    use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+    match action {
+        CodingSessionClosureAction::Closed if signer == founder => Ok(()),
+        CodingSessionClosureAction::Closed => {
+            Err("restricted: only the session founder may close this session".into())
+        }
+        CodingSessionClosureAction::Open => match project_reopen_admits {
+            Some(true) => Ok(()),
+            Some(false) => {
+                Err("restricted: only a current project member may reopen this session".into())
+            }
+            None if signer == founder => Ok(()),
+            None => {
+                Err("restricted: only the session founder may reopen a standalone session".into())
+            }
+        },
+    }
+}
+
+/// Verify that a directly looked-up event is the exact genesis the closure
+/// claims, and return its founder pubkey.
+fn coding_session_closure_founder(
+    genesis_event: &Event,
+    genesis_channel: Option<Uuid>,
+    closure_channel: Uuid,
+    payload: &buzz_core::coding_session_closure::CodingSessionClosurePayload,
+) -> Result<[u8; 32], String> {
+    if event_kind_u32(genesis_event) != KIND_CODING_SESSION_GENESIS {
+        return Err("genesisRef does not name a coding-session genesis".into());
+    }
+    if genesis_channel != Some(closure_channel) {
+        return Err("the referenced genesis was not published in this closure's channel".into());
+    }
+    validate_coding_session_genesis_envelope(genesis_event)
+        .map_err(|error| format!("referenced genesis is malformed: {error}"))?;
+    let genesis_payload =
+        buzz_core::coding_session_genesis::decode_coding_session_genesis(&genesis_event.content)
+            .map_err(|error| format!("referenced genesis is malformed: {error}"))?;
+    if genesis_payload.session_ref != payload.session_ref {
+        return Err("closure sessionRef does not match the referenced genesis".into());
+    }
+    Ok(genesis_event.pubkey.to_bytes())
+}
+
+/// Resolve a closure's explicit genesis authority root and enforce the action
+/// against current project membership.
+async fn validate_coding_session_closure_authority(
+    tenant: &TenantContext,
+    state: &AppState,
+    event: &Event,
+    channel_id: Uuid,
+    payload: &buzz_core::coding_session_closure::CodingSessionClosurePayload,
+) -> Result<(), IngestError> {
+    let genesis_id = hex::decode(&payload.genesis_ref).map_err(|_| {
+        IngestError::Rejected("invalid: malformed coding-session closure genesisRef".into())
+    })?;
+    let genesis = state
+        .db
+        .get_event_by_id_including_deleted(tenant.community(), &genesis_id)
+        .await
+        .map_err(|error| {
+            IngestError::Internal(format!(
+                "error: looking up coding-session closure genesis: {error}"
+            ))
+        })?
+        .ok_or_else(|| {
+            IngestError::Rejected(
+                "invalid: genesisRef does not name a coding-session genesis this relay has stored"
+                    .into(),
+            )
+        })?;
+
+    let founder =
+        coding_session_closure_founder(&genesis.event, genesis.channel_id, channel_id, payload)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+
+    // This build has no project-authority source for reopen: standalone
+    // semantics (founder-only) apply. A deployment that wires one in
+    // precomputes the membership verdict here.
+    coding_session_closure_authority_verdict(
+        payload.action,
+        event.pubkey.as_bytes(),
+        &founder,
+        None,
+    )
+    .map_err(IngestError::AuthFailed)
+}
+
 /// The wire answer to an authority transition the chain refused.
 ///
 /// Each variant of [`buzz_db::AuthorityTransitionRefusal`] gets a distinct,
@@ -3013,6 +3120,19 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_CODING_SESSION_NAME {
         buzz_core::coding_session_name::validate_coding_session_name_envelope(&event)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_CLOSURE {
+        let payload =
+            buzz_core::coding_session_closure::validate_coding_session_closure_envelope(&event)
+                .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+        let Some(closure_channel) = channel_id else {
+            return Err(IngestError::Rejected(
+                "invalid: coding-session closure requires a channel".into(),
+            ));
+        };
+        validate_coding_session_closure_authority(tenant, state, &event, closure_channel, &payload)
+            .await?;
     }
 
     // The four provider-authored coding-session kinds get no envelope
@@ -5806,11 +5926,11 @@ mod tests {
         );
     }
 
-    // ---- Coding sessions (44220–44229) -------------------------------------
+    // ---- Coding sessions (44220–44230) -------------------------------------
 
     /// Every coding-session kind, in kind order. Kept next to the tests that
-    /// sweep it so an eleventh kind lands in the sweep the moment it exists.
-    const CODING_SESSION_TEST_KINDS: [u32; 10] = [
+    /// sweep it so the next kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 11] = [
         KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_PROVIDER_CATALOG,
@@ -5821,14 +5941,15 @@ mod tests {
         KIND_CODING_SESSION_GOAL,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
         KIND_CODING_SESSION_NAME,
+        KIND_CODING_SESSION_CLOSURE,
     ];
 
     #[test]
-    fn coding_session_predicate_covers_exactly_44220_to_44229() {
+    fn coding_session_predicate_covers_exactly_44220_to_44230() {
         for kind in 0..=u16::MAX as u32 {
             assert_eq!(
                 is_coding_session_kind(kind),
-                (44220..=44229).contains(&kind),
+                (44220..=44230).contains(&kind),
                 "is_coding_session_kind disagrees at kind {kind}"
             );
         }
@@ -5837,7 +5958,7 @@ mod tests {
         }
     }
 
-    /// All ten are channel-scoped message writes, and none is global-only —
+    /// All eleven are channel-scoped message writes, and none is global-only —
     /// their whole containment story is the channel ACL, which only applies to
     /// h-scoped events.
     #[test]
@@ -6463,6 +6584,150 @@ mod tests {
         }
     }
 
+    fn closure_event(action: &str, channel: &str, session_ref: &str, genesis_ref: &str) -> Event {
+        let content = format!(
+            r#"{{"action":"{action}","genesisRef":"{genesis_ref}","sessionRef":"{session_ref}","v":1}}"#
+        );
+        make_event_with_tags(
+            KIND_CODING_SESSION_CLOSURE,
+            &content,
+            &[
+                &["h", channel],
+                &["d", session_ref],
+                &["cscl-v", "cscl1-1"],
+                &["cscl-genesis", genesis_ref],
+            ],
+        )
+    }
+
+    #[test]
+    fn coding_session_closure_requires_exact_rooted_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        let genesis_ref = "ab".repeat(32);
+        for action in ["closed", "open"] {
+            assert!(
+                buzz_core::coding_session_closure::validate_coding_session_closure_envelope(
+                    &closure_event(action, &channel, GENESIS_SESSION_REF, &genesis_ref)
+                )
+                .is_ok()
+            );
+        }
+
+        let mismatched = closure_event("closed", &channel, GENESIS_SESSION_REF, &genesis_ref);
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_CLOSURE,
+            &mismatched.content,
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["cscl-v", "cscl1-1"],
+                &["cscl-genesis", &"cd".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_closure::validate_coding_session_closure_envelope(
+                &mismatched
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_genesis_root_must_match_kind_channel_and_session() {
+        use buzz_core::coding_session_closure::{
+            CodingSessionClosureAction, CodingSessionClosurePayload,
+        };
+
+        let channel = Uuid::new_v4();
+        let genesis = genesis_event(
+            &genesis_content(GENESIS_SESSION_REF),
+            &channel.to_string(),
+            GENESIS_SESSION_REF,
+        );
+        let payload = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            genesis.id.to_hex(),
+            GENESIS_SESSION_REF,
+        );
+        assert_eq!(
+            coding_session_closure_founder(&genesis, Some(channel), channel, &payload).unwrap(),
+            genesis.pubkey.to_bytes()
+        );
+        assert!(
+            coding_session_closure_founder(&genesis, Some(Uuid::new_v4()), channel, &payload,)
+                .is_err()
+        );
+
+        let wrong_session = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            genesis.id.to_hex(),
+            "11111111-1111-4111-8111-111111111111",
+        );
+        assert!(
+            coding_session_closure_founder(&genesis, Some(channel), channel, &wrong_session,)
+                .is_err()
+        );
+
+        let not_genesis = name_event("not a genesis", &channel.to_string(), GENESIS_SESSION_REF);
+        assert!(
+            coding_session_closure_founder(&not_genesis, Some(channel), channel, &payload,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_authority_is_action_and_container_specific() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let founder = vec![1; 32];
+        let project_member = vec![3; 32];
+        let outsider = vec![4; 32];
+
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Closed,
+            &founder,
+            &founder,
+            Some(true),
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Closed,
+            &project_member,
+            &founder,
+            Some(true),
+        )
+        .is_err());
+
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &project_member,
+            &founder,
+            Some(true),
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &outsider,
+            &founder,
+            Some(false),
+        )
+        .is_err());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &founder,
+            &founder,
+            None,
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &project_member,
+            &founder,
+            None,
+        )
+        .is_err());
+    }
+
     /// The canonical genesis and grantee ids used by the authority-transition
     /// envelope tests.
     const AUTHORITY_TRANSITION_GENESIS_REF: &str =
@@ -6696,6 +6961,10 @@ mod tests {
         );
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
         assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_NAME), None);
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_CLOSURE),
+            None
+        );
         assert_eq!(
             coding_session_content_cap(KIND_CODING_SESSION_AUTHORITY_TRANSITION),
             None

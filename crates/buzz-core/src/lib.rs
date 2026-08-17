@@ -12,6 +12,9 @@ pub mod channel;
 /// NIP-CSAT (draft): append-only coding-session authority-chain transitions
 /// (44228) — one `grant-operator` step at a time today.
 pub mod coding_session_authority_transition;
+/// Append-only coding-session closure revisions (44230): provider-independent
+/// shared close/reopen state rooted at the session genesis.
+pub mod coding_session_closure;
 /// NIP-CSC: Coding-session command — provider-neutral turn request payload.
 pub mod coding_session_command;
 /// NIP-CSG: Coding-session genesis — the operator-signed origin of an umbrella

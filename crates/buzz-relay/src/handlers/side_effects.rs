@@ -9,10 +9,11 @@ use uuid::Uuid;
 use buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition;
 use buzz_core::kind::{
     event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE,
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY,
-    KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED,
+    KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS,
+    KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
     KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
@@ -235,7 +236,7 @@ pub async fn handle_side_effects(
     }
 }
 
-/// Refuse deletion of an event kind that is a permanent identity anchor.
+/// Refuse deletion of coding-session facts whose history is permanent.
 ///
 /// A coding-session genesis (44226) *is* the answer to "who founded this
 /// umbrella". Its `sessionRef` is claimed for good: the storage layer's
@@ -245,11 +246,10 @@ pub async fn handle_side_effects(
 /// to hide a row that still binds. Allowing it would advertise "delete your
 /// genesis" as a way to re-found a session and then silently not do that.
 ///
-/// Sessions end through lifecycle facts (a `session.stop` and its receipt),
-/// which is the durable, attributable way to say a session is over. This is
-/// specifically *not* a statement that genesis content can never be redacted:
-/// identity facts are permanent, content redaction is a separate question with
-/// its own answer, and the two must not be conflated into one `kind:5`.
+/// Closure revisions (44230) are likewise append-only facts: deleting the
+/// newest `closed` or `open` revision would silently roll shared state back to
+/// an older action without authoring a counter-revision. Sessions change state
+/// only through another closure revision.
 ///
 /// Applies to both deletion paths — NIP-09 `kind:5` and the NIP-29 moderator
 /// `kind:9005` — because a moderator is no more able to reassign foundership
@@ -258,7 +258,13 @@ fn refuse_permanent_identity_deletion(target_kind: u32) -> anyhow::Result<()> {
     if target_kind == KIND_CODING_SESSION_GENESIS {
         return Err(anyhow::anyhow!(
             "coding-session genesis events cannot be deleted — a session's founder is permanent; \
-             end the session with a lifecycle command instead"
+             close the session with a closure revision instead"
+        ));
+    }
+    if target_kind == KIND_CODING_SESSION_CLOSURE {
+        return Err(anyhow::anyhow!(
+            "coding-session closure events cannot be deleted — reopen or close the session with \
+             another closure revision instead"
         ));
     }
     Ok(())
@@ -3503,15 +3509,29 @@ mod tests {
             "the refusal must say plainly that the deletion did not happen, got {message:?}"
         );
         assert!(
-            message.contains("lifecycle"),
+            message.contains("closure"),
             "the refusal must point at the supported way to end a session, got {message:?}"
         );
     }
 
-    /// The gate is narrow on purpose. Every other coding-session kind — the
-    /// commands, the provider's receipts, metadata, transcript — is ordinary
-    /// content whose deletion rules are unchanged; only the identity anchor is
-    /// permanent.
+    /// Deleting a closure revision would make the fold fall back to older
+    /// state without an attributable counter-revision, so both NIP-09 and
+    /// moderator deletion paths refuse it by kind.
+    #[test]
+    fn coding_session_closure_cannot_be_deleted() {
+        let refusal = refuse_permanent_identity_deletion(KIND_CODING_SESSION_CLOSURE)
+            .expect_err("deleting a closure revision must be refused");
+        let message = refusal.to_string();
+        assert!(message.contains("cannot be deleted"), "got {message:?}");
+        assert!(
+            message.contains("another closure revision"),
+            "got {message:?}"
+        );
+    }
+
+    /// The gate is narrow on purpose. Commands and provider-authored receipts,
+    /// metadata, and transcript remain ordinary content; only the genesis
+    /// identity anchor and append-only closure state are permanent.
     #[test]
     fn ordinary_coding_session_events_stay_deletable() {
         for kind in [

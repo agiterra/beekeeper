@@ -1,10 +1,12 @@
-# NIP-CSG — Coding-session genesis, goal, and name revisions
+# NIP-CSG — Coding-session genesis, goal, name, and closure revisions
 
 This document defines the human-authored umbrella-session facts. Genesis
 (`kind:44226`) establishes the founder; goal revisions (`kind:44227`) describe
 what that umbrella session is doing; name revisions (`kind:44229`) provide its
-short navigation label. All are public, durable, and scoped to a NIP-29 channel
-by an `h` tag. Providers do not author or interpret goal or name events.
+short navigation label; closure revisions (`kind:44230`) record whether the
+umbrella is organizationally closed or open. All are public, durable, and
+scoped to a NIP-29 channel by an `h` tag. Providers do not author or interpret
+goal, name, or closure events.
 
 ## Goal revision (`kind:44227`)
 
@@ -66,3 +68,52 @@ Consumers group valid events by `(h, d)` and choose the greatest tuple
 `(created_at, event id)` as the current name. A missing name falls back to the
 founding execution title for compatibility; provider-authored 44223 titles
 remain per-generation facts and never become authoritative session names.
+
+## Closure revision (`kind:44230`)
+
+A closure revision is a regular append-only event about the shared umbrella,
+not a command to a provider. `closed` moves the umbrella to its settled shelf;
+`open` makes it available for continuation. Neither action starts, stops, or
+resurrects an execution, and reopening by itself consumes no execution slot.
+
+Content is strict public JSON with exactly these fields:
+
+```json
+{
+  "action": "closed",
+  "genesisRef": "<64-character lowercase genesis event id>",
+  "sessionRef": "<lowercase canonical session UUID>",
+  "v": 1
+}
+```
+
+`action` is exactly `closed` or `open`. The event has exactly these four
+ordered, two-field tags:
+
+```json
+[
+  ["h", "<channel UUID>"],
+  ["d", "<sessionRef>"],
+  ["cscl-v", "cscl1-1"],
+  ["cscl-genesis", "<genesisRef>"]
+]
+```
+
+The relay resolves `genesisRef` by event id and verifies that it names a valid
+44226 event in the same channel whose `sessionRef` agrees with the closure.
+The genesis signer is the session owner; authority is action-specific:
+
+- `closed` is accepted only from that owner.
+- `open` in a project session-transport channel is accepted from any member of
+  the project's current ACL (the project owner or a currently invited member).
+- `open` in a standalone channel is accepted only from the session owner.
+
+Project authority comes from the transport channel's current project gate, not
+from a stale channel-membership row. A non-project channel never broadens reopen
+authority merely because another user can write ordinary channel messages.
+
+Consumers group valid revisions by `(h, d, cscl-genesis)` and choose the
+greatest tuple `(created_at, event id)`. With no closure revision, the legacy
+default is `open`. Closure events cannot be deleted through NIP-09 or NIP-29
+moderator deletion: changing the fold requires another signed revision, so an
+older state can never silently reappear when a newer fact is erased.
