@@ -27,6 +27,7 @@ import {
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
   codingSessionMetadataSemanticKey,
   codingSessionTranscriptSemanticKey,
+  establishedCodingSessionTarget,
   lifecycleReceiptSemanticKey,
   MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
   parseBuzzCodingSessionMetadata,
@@ -788,6 +789,107 @@ test("a failed initial turn still opens the session it established", () => {
       error: receipt.error,
     },
   );
+});
+
+test("a resume that recovered no context resolves as its own fact, not a plain create", () => {
+  const receipt = {
+    schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    commandId: "create-1",
+    status: "resumed_without_context",
+    session: TARGET,
+    error: {
+      code: "CONTEXT_NOT_RECOVERED",
+      message: "The previous conversation could not be replayed.",
+    },
+  };
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents([receiptEvent(receipt)], [CHANNEL_ID], AUTHORITY);
+  // Before metadata the session is not yet openable, so the wait is the
+  // ordinary one — the context loss is only reportable alongside a session.
+  assert.deepEqual(
+    store.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
+    {
+      state: "awaiting-metadata",
+      commandId: "create-1",
+      target: TARGET,
+      malformedMetadataCount: 0,
+    },
+  );
+
+  store.ingestRelayEvents([metadataEvent()], [CHANNEL_ID], AUTHORITY);
+  const resolved = store.resolveLifecycle(
+    CHANNEL_ID,
+    "create-1",
+    PROVIDER_PUBKEY,
+  );
+  assert.deepEqual(resolved, {
+    state: "resumed-without-context",
+    commandId: "create-1",
+    target: TARGET,
+    metadata: metadata(),
+    error: receipt.error,
+  });
+  // It established a session all the same: screens open it and must not offer
+  // to retry the command that produced it.
+  assert.deepEqual(establishedCodingSessionTarget(resolved), TARGET);
+});
+
+test("a plain resume keeps behaving exactly like a create", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [
+      receiptEvent({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: "create-1",
+        status: "resumed",
+        session: TARGET,
+        error: null,
+      }),
+      metadataEvent(),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
+    {
+      state: "created",
+      commandId: "create-1",
+      target: TARGET,
+      metadata: metadata(),
+    },
+  );
+});
+
+test("only resolutions that established a session name a target", () => {
+  assert.equal(establishedCodingSessionTarget(null), null);
+  assert.equal(establishedCodingSessionTarget(undefined), null);
+  for (const state of ["pending", "awaiting-metadata", "failed", "conflict"]) {
+    assert.equal(
+      establishedCodingSessionTarget({
+        state,
+        commandId: "create-1",
+        target: TARGET,
+      }),
+      null,
+      state,
+    );
+  }
+  for (const state of [
+    "created",
+    "created-with-failed-initial-turn",
+    "resumed-without-context",
+  ]) {
+    assert.deepEqual(
+      establishedCodingSessionTarget({
+        state,
+        commandId: "create-1",
+        target: TARGET,
+      }),
+      TARGET,
+      state,
+    );
+  }
 });
 
 test("conflicting immutable receipts still fail closed", () => {

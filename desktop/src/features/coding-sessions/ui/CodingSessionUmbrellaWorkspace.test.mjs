@@ -213,6 +213,25 @@ test("N>1 interleaves per-execution turn blocks with per-block provenance", asyn
   );
 });
 
+test("a joining execution gets a named seam row; the founder gets none", async () => {
+  const markup = await renderTimeline({
+    channelId: CHANNEL_ID,
+    laneMessages: [],
+    onHandoff: () => {},
+    umbrella: buildUmbrella(),
+  });
+  const rows = markup.match(/data-testid="coding-session-umbrella-lifecycle"/g);
+  assert.equal(rows?.length, 1, "only the second execution announces itself");
+  assert.match(markup, /data-lifecycle-event="execution-joined"/);
+  assert.match(markup, /Codex · gpt-5\.3-codex joined this session/);
+  assert.doesNotMatch(markup, /Claude · claude-opus-5 joined this session/);
+  // The seam introduces the work it precedes.
+  assert.ok(
+    markup.indexOf("joined this session") <
+      markup.indexOf("Regenerated the fixture"),
+  );
+});
+
 test("conversation-lane messages interleave between blocks by time", async () => {
   const markup = await renderTimeline({
     channelId: CHANNEL_ID,

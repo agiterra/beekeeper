@@ -4,6 +4,7 @@ import test from "node:test";
 import { groupCodingSessionCatalog } from "./codingSessionUmbrellaModel.ts";
 import {
   buildUmbrellaTimeline,
+  codingSessionUmbrellaEntryKey,
   groupTranscriptIntoTurnBlocks,
 } from "./codingSessionUmbrellaTimeline.ts";
 
@@ -149,9 +150,10 @@ test("two executions interleave at turn-block granularity, each block one signer
   });
   const [umbrella] = groupCodingSessionCatalog([claude, codex]);
   const timeline = buildUmbrellaTimeline(umbrella);
+  const blocks = timeline.filter((entry) => entry.kind === "turn-block");
 
   assert.deepEqual(
-    timeline.map((entry) => [entry.signerPubkey, entry.items.map((i) => i.id)]),
+    blocks.map((entry) => [entry.signerPubkey, entry.items.map((i) => i.id)]),
     [
       [CLAUDE_SIGNER, ["c1", "c2"]],
       [CODEX_SIGNER, ["x1", "x2"]],
@@ -161,13 +163,13 @@ test("two executions interleave at turn-block granularity, each block one signer
   // Items are never cross-ordered between executions: within each signer the
   // original stream order survives the interleave.
   for (const signer of [CLAUDE_SIGNER, CODEX_SIGNER]) {
-    const ids = timeline
+    const ids = blocks
       .filter((entry) => entry.signerPubkey === signer)
       .flatMap((entry) => entry.items.map((i) => i.id));
     assert.deepEqual(ids, [...ids].sort());
   }
   // Every block carries provenance for exactly one (signer, target) stream.
-  for (const entry of timeline) {
+  for (const entry of blocks) {
     const signers = new Set(
       entry.items.map((i) =>
         i.id.startsWith("c") ? CLAUDE_SIGNER : CODEX_SIGNER,
@@ -218,7 +220,9 @@ test("a block with an out-of-order timestamp pins behind its predecessor instead
   // Codex's genuinely-earlier block sorts first; Claude's skewed second block
   // still renders after its own predecessor.
   assert.deepEqual(
-    timeline.map((entry) => entry.items[0].id),
+    timeline
+      .filter((entry) => entry.kind === "turn-block")
+      .map((entry) => entry.items[0].id),
     ["x1", "c1", "c2"],
   );
 });
@@ -263,6 +267,88 @@ test("a generation bump surfaces as a lifecycle row before the new generation's 
     ),
     ["g1", "lifecycle:generation-started:2", "g2"],
   );
+});
+
+test("a joining execution announces itself; the founding one never does", () => {
+  const claude = record({
+    transcript: [item("c1", "2026-08-12T10:00:00.000Z", "t1")],
+  });
+  const codex = record({
+    target: CODEX_TARGET,
+    signerPubkey: CODEX_SIGNER,
+    runtime: "codex",
+    transcript: [item("x1", "2026-08-12T10:00:05.000Z", "t2")],
+  });
+  const timeline = buildUmbrellaTimeline(
+    groupCodingSessionCatalog([claude, codex])[0],
+  );
+
+  assert.deepEqual(
+    timeline.map((entry) =>
+      entry.kind === "lifecycle"
+        ? `lifecycle:${entry.event}:${entry.signerPubkey.slice(0, 1)}`
+        : entry.items[0].id,
+    ),
+    ["c1", "lifecycle:execution-joined:b", "x1"],
+  );
+  // The seam belongs to the joining execution, and it is emitted exactly once.
+  const joins = timeline.filter(
+    (entry) => entry.kind === "lifecycle" && entry.event === "execution-joined",
+  );
+  assert.equal(joins.length, 1);
+  assert.equal(joins[0].executionKey, timeline.at(-1).executionKey);
+  assert.equal(new Set(timeline.map(codingSessionUmbrellaEntryKey)).size, 3);
+});
+
+test("a single-execution session gets no join row, however many generations", () => {
+  const generationOne = record({
+    transcript: [item("g1", "2026-08-12T09:00:00.000Z", "t1")],
+    lastEventAt: "2026-08-12T09:00:00.000Z",
+  });
+  const generationTwo = record({
+    target: { ...CLAUDE_TARGET, generation: 2 },
+    transcript: [item("g2", "2026-08-12T10:00:00.000Z", "t2")],
+  });
+  const timeline = buildUmbrellaTimeline(
+    groupCodingSessionCatalog([generationTwo, generationOne])[0],
+  );
+  assert.deepEqual(
+    timeline
+      .filter((entry) => entry.kind === "lifecycle")
+      .map((entry) => entry.event),
+    ["generation-started"],
+  );
+});
+
+test("a joining execution's seam sorts ahead of its own first block either way round", () => {
+  const at = "2026-08-12T10:00:00.000Z";
+  const claude = record({ transcript: [item("c1", at, "t1")] });
+  const codex = record({
+    target: CODEX_TARGET,
+    signerPubkey: CODEX_SIGNER,
+    runtime: "codex",
+    transcript: [item("x1", at, "t2")],
+  });
+  for (const catalog of [
+    [claude, codex],
+    [codex, claude],
+  ]) {
+    const timeline = buildUmbrellaTimeline(
+      groupCodingSessionCatalog(catalog)[0],
+    );
+    const joinIndex = timeline.findIndex((entry) => entry.kind === "lifecycle");
+    assert.notEqual(joinIndex, -1, "the second execution announces itself");
+    const joined = timeline[joinIndex];
+    const firstBlockIndex = timeline.findIndex(
+      (entry) =>
+        entry.kind === "turn-block" &&
+        entry.executionKey === joined.executionKey,
+    );
+    assert.ok(
+      joinIndex < firstBlockIndex,
+      "the seam precedes the work it introduces even on an exact tie",
+    );
+  }
 });
 
 test("hostile timestamps degrade to a pinned position, never a throw", () => {

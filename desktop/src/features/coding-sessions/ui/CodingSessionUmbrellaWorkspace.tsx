@@ -381,15 +381,19 @@ export function CodingSessionUmbrellaTimelineView({
           return <UmbrellaConversationRow key={key} message={entry.message} />;
         }
         if (entry.kind === "lifecycle") {
+          const label =
+            labelsByExecutionKey.get(entry.executionKey) ??
+            truncatePubkey(entry.signerPubkey);
           return (
             <p
               className="text-center text-2xs text-muted-foreground"
+              data-lifecycle-event={entry.event}
               data-testid="coding-session-umbrella-lifecycle"
               key={key}
             >
-              {labelsByExecutionKey.get(entry.executionKey) ??
-                truncatePubkey(entry.signerPubkey)}{" "}
-              started generation {entry.generation}
+              {entry.event === "execution-joined"
+                ? `${label} joined this session`
+                : `${label} started generation ${entry.generation}`}
             </p>
           );
         }

@@ -367,6 +367,7 @@ export function newCodingSessionWaitKey(input: {
       return "awaiting-metadata";
     case "created":
     case "created-with-failed-initial-turn":
+    case "resumed-without-context":
       return input.resolvedGenerationId === null ? "opening" : null;
     default:
       return null;
@@ -418,6 +419,7 @@ export function canRetryNewCodingSessionCreate(input: {
     input.lifecycleErrorMessage !== null ||
     input.lifecycleState === "created" ||
     input.lifecycleState === "created-with-failed-initial-turn" ||
+    input.lifecycleState === "resumed-without-context" ||
     input.stalled
   );
 }
@@ -431,6 +433,31 @@ export const METADATA_DRIFT_MESSAGE =
   "Its metadata is arriving in a format this app does not recognize. The " +
   "app and session-provider versions likely disagree — update both to the " +
   "same release, then restart the app.";
+
+/**
+ * What a `resumed_without_context` receipt actually means, in the two halves a
+ * person needs: what happened, and what it costs them.
+ *
+ * The heading is the fact; the body is the consequence. The provider's own
+ * message is appended when it has one, because only it knows *why* the context
+ * was unrecoverable — this copy must never replace that explanation, only
+ * frame it.
+ */
+export const RESUMED_WITHOUT_CONTEXT_HEADING =
+  "Reconnected without prior context";
+export const RESUMED_WITHOUT_CONTEXT_BODY =
+  "The provider could not restore this execution's previous context. The " +
+  "agent starts fresh; the durable session transcript is unaffected.";
+
+/** The heading, the body, and the provider's own reason when it gave one. */
+export function codingSessionResumedWithoutContextMessage(error?: {
+  message?: string;
+}): string {
+  const reason = error?.message?.trim();
+  return `${RESUMED_WITHOUT_CONTEXT_HEADING}. ${RESUMED_WITHOUT_CONTEXT_BODY}${
+    reason ? ` ${reason}` : ""
+  }`;
+}
 
 /**
  * The one line of status the create screen shows.
@@ -456,6 +483,10 @@ export function newCodingSessionStatusMessage(input: {
     | {
         state: "created-with-failed-initial-turn";
         error: { message: string };
+      }
+    | {
+        state: "resumed-without-context";
+        error: { message?: string };
       }
     | { state: "conflict" }
     | null;
@@ -562,6 +593,15 @@ export function newCodingSessionStatusMessage(input: {
       return {
         tone: "destructive",
         message: `Session created, but its initial turn failed: ${input.lifecycle.error.message}`,
+      };
+    case "resumed-without-context":
+      // Not a spinner: the session is open, and the loss of context is
+      // something the person has to act on (re-brief the agent), not wait out.
+      return {
+        tone: "destructive",
+        message: codingSessionResumedWithoutContextMessage(
+          input.lifecycle.error,
+        ),
       };
     default:
       return null;

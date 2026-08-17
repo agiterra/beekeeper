@@ -126,7 +126,42 @@ export type CodingSessionLifecycleResolution =
       metadata: Readonly<BuzzCodingSessionMetadataV1>;
       error: { code: "INITIAL_TURN_FAILED"; message: string };
     }
+  /**
+   * The provider reattached to this execution but could not restore what it
+   * had before. Its own fact, not a flavour of `created`: the session and its
+   * durable transcript are intact, and the agent behind it starts from nothing
+   * — a difference the person prompting it has to be told about, because only
+   * they can tell it what it has forgotten.
+   */
+  | {
+      state: "resumed-without-context";
+      commandId: string;
+      target: CodingSessionCommandTarget;
+      metadata: Readonly<BuzzCodingSessionMetadataV1>;
+      error: { code: "CONTEXT_NOT_RECOVERED"; message: string };
+    }
   | { state: "conflict"; commandId: string };
+
+/**
+ * The target of a resolution that established a usable session, or `null`.
+ *
+ * Three receipt outcomes establish one: a plain create, a create whose initial
+ * turn failed, and a resume that recovered no prior context. All three name a
+ * real target a screen may open and must not offer to retry; the difference
+ * between them is what the person is told, never whether the session exists.
+ */
+export function establishedCodingSessionTarget(
+  lifecycle: CodingSessionLifecycleResolution | null | undefined,
+): CodingSessionCommandTarget | null {
+  switch (lifecycle?.state) {
+    case "created":
+    case "created-with-failed-initial-turn":
+    case "resumed-without-context":
+      return lifecycle.target;
+    default:
+      return null;
+  }
+}
 
 export type TrustedCodingSessionIngressSnapshot = {
   metadata: TrustedCodingSessionMetadataEntry[];
@@ -656,6 +691,11 @@ export class TrustedCodingSessionIngressStore {
       receipt.status === "created_with_failed_initial_turn"
         ? receipt.error
         : null;
+    // A resume that recovered nothing is still a resume: the session exists,
+    // so the wait for its metadata is the ordinary one. The fact only becomes
+    // reportable once there is a session to report it about.
+    const resumedWithoutContext =
+      receipt.status === "resumed_without_context" ? receipt.error : null;
     const targetCompositeKey = compositeKey(
       channelId,
       buildCodingSessionTargetKey(target),
@@ -682,20 +722,30 @@ export class TrustedCodingSessionIngressStore {
             malformedMetadataCount,
           };
     }
-    return failedInitialTurn
-      ? {
-          state: "created-with-failed-initial-turn",
-          commandId,
-          target,
-          metadata: selected.value.value,
-          error: failedInitialTurn,
-        }
-      : {
-          state: "created",
-          commandId,
-          target,
-          metadata: selected.value.value,
-        };
+    if (failedInitialTurn) {
+      return {
+        state: "created-with-failed-initial-turn",
+        commandId,
+        target,
+        metadata: selected.value.value,
+        error: failedInitialTurn,
+      };
+    }
+    if (resumedWithoutContext) {
+      return {
+        state: "resumed-without-context",
+        commandId,
+        target,
+        metadata: selected.value.value,
+        error: resumedWithoutContext,
+      };
+    }
+    return {
+      state: "created",
+      commandId,
+      target,
+      metadata: selected.value.value,
+    };
   }
 
   private retainRawEvent(

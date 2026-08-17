@@ -10,6 +10,7 @@ import {
 import { publishCodingSessionGenesis } from "@/features/coding-sessions/lib/codingSessionGenesis";
 import { publishCodingSessionName } from "@/features/coding-sessions/lib/codingSessionName";
 import { recordPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
+import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
 import {
@@ -273,13 +274,9 @@ export function useNewCodingSessionCreate({
     scoped?.input.channelId ?? null,
   );
   const resolvedGenerationId = React.useMemo(() => {
-    if (
-      lifecycle?.state !== "created" &&
-      lifecycle?.state !== "created-with-failed-initial-turn"
-    ) {
-      return null;
-    }
-    const targetKey = buildCodingSessionTargetKey(lifecycle.target);
+    const established = establishedCodingSessionTarget(lifecycle);
+    if (!established) return null;
+    const targetKey = buildCodingSessionTargetKey(established);
     return (
       exactSessionCatalog.entries.find(
         (entry) =>
@@ -320,12 +317,7 @@ export function useNewCodingSessionCreate({
     ) {
       return;
     }
-    if (
-      lifecycle?.state !== "created" &&
-      lifecycle?.state !== "created-with-failed-initial-turn"
-    ) {
-      return;
-    }
+    if (establishedCodingSessionTarget(lifecycle) === null) return;
     settledCommandRef.current = scoped.input.commandId;
     // The hint has done its job the moment the provider reports a session; it
     // must not survive to steer some later command that happens to reuse the

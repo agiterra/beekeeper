@@ -2,6 +2,7 @@ import * as React from "react";
 import { CircleAlert, LoaderCircle, UserPlus } from "lucide-react";
 
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import {
   isCodingSessionAuthFailure,
@@ -80,7 +81,10 @@ export function AddCodingSessionProviderDialog({
           <DialogTitle>Add a provider to this session</DialogTitle>
           <DialogDescription>
             The new execution joins this same session and this same channel. It
-            keeps its own signed transcript — nothing is merged.
+            keeps its own signed transcript — nothing is merged. The new agent
+            does not automatically read this transcript — it starts fresh unless
+            Buzz can prepare verified session history for it, and its transcript
+            will say which happened.
           </DialogDescription>
         </DialogHeader>
         {open ? (
@@ -353,8 +357,7 @@ function AddCodingSessionProviderForm({
                 isPublishing ||
                 lifecycleIsLoading ||
                 lifecycleErrorMessage !== null ||
-                lifecycle?.state === "created" ||
-                lifecycle?.state === "created-with-failed-initial-turn"
+                establishedCodingSessionTarget(lifecycle) !== null
               }
               onClick={retryExact}
               type="button"

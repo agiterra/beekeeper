@@ -66,6 +66,11 @@ export type CodingSessionTranscriptModel = {
  * Lifecycle rows that belong in the diagnostics rail rather than the reading
  * order. "Content elided" is deliberately absent: a dropped item is something
  * the reader must see in place, not a telemetry line.
+ *
+ * "Status" covers the provider's generic status slugs. The continuity slugs
+ * are deliberately NOT among them: `buildStatusLifecycleItem` gives those the
+ * `CODING_SESSION_CONTINUITY_TITLE` title instead, precisely so this gate
+ * misses them and they stay in the reading order.
  */
 const DIAGNOSTIC_LIFECYCLE_TITLES = new Set([
   "Account Info",

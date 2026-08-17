@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   bootstrapClaudeCodingSessionRuntime,
   codingSessionAuthRemediation,
+  codingSessionResumedWithoutContextMessage,
   connectableCodingSessionAuthMethods,
   isHeadlessCodingSessionLogin,
   isCodingSessionAuthFailure,
@@ -654,6 +655,34 @@ test("unreadable metadata is a version mismatch to report, not a silence to wait
   assert.match(failedDrift.message, /format this app does not recognize/);
 });
 
+test("a resume that lost its context says so instead of reading as a plain open", () => {
+  const base = { hostPhase: "idle", isPublishing: false, publishError: null };
+  const status = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: {
+      state: "resumed-without-context",
+      error: { message: "The previous conversation could not be replayed." },
+    },
+  });
+  // Never the benign "Opening the exact signed session…" spinner: this is a
+  // fact the person has to act on.
+  assert.equal(status.tone, "destructive");
+  assert.doesNotMatch(status.message, /Opening the exact signed session/);
+  assert.match(status.message, /Reconnected without prior context/);
+  assert.match(status.message, /The agent starts fresh/);
+  assert.match(status.message, /durable session transcript is unaffected/);
+  assert.match(status.message, /previous conversation could not be replayed/);
+
+  // The provider's own reason is optional; the fact and its cost are not.
+  const withoutReason = codingSessionResumedWithoutContextMessage();
+  assert.match(withoutReason, /Reconnected without prior context/);
+  assert.match(withoutReason, /The agent starts fresh/);
+  assert.equal(
+    codingSessionResumedWithoutContextMessage({ message: "   " }),
+    withoutReason,
+  );
+});
+
 test("the wait key names each open-ended wait and nothing else", () => {
   const cases = [
     [
@@ -696,6 +725,24 @@ test("the wait key names each open-ended wait and nothing else", () => {
         hasTransaction: true,
       },
       "opening",
+    ],
+    // A context-less resume established a session too: it still has to join
+    // the catalog before the screen can navigate to it.
+    [
+      {
+        lifecycleState: "resumed-without-context",
+        resolvedGenerationId: null,
+        hasTransaction: true,
+      },
+      "opening",
+    ],
+    [
+      {
+        lifecycleState: "resumed-without-context",
+        resolvedGenerationId: "gen-1",
+        hasTransaction: true,
+      },
+      null,
     ],
     // A resolved catalog join is done waiting.
     [

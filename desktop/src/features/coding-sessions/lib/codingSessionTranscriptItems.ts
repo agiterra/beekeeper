@@ -477,15 +477,55 @@ function buildResultLifecycleItem(
   };
 }
 
+/**
+ * The title continuity rows carry, distinct from the generic "Status" title
+ * precisely so the transcript model's diagnostics gate
+ * (`DIAGNOSTIC_LIFECYCLE_TITLES`) does not sweep them into the collapsed
+ * "Session details" disclosure. Whether an agent kept, replayed, or lost its
+ * prior context is the first thing a reader needs to know about a transcript —
+ * it belongs in the reading order, not behind a click.
+ */
+export const CODING_SESSION_CONTINUITY_TITLE = "Session continuity";
+
+/**
+ * Provider continuity slugs, in the reader's terms.
+ *
+ * Additive by design: the provider may publish slugs this build has never
+ * seen, and an unknown one keeps the generic "Status" title and the
+ * diagnostics routing that goes with it. Only a slug whose meaning is known
+ * here earns a first-class row — guessing prose for an unknown slug would be
+ * inventing a fact about the session's history.
+ */
+export const CODING_SESSION_CONTINUITY_STATUSES: ReadonlyMap<string, string> =
+  new Map([
+    ["session_fresh", "Started fresh — no prior session context"],
+    [
+      "session_rehydrated",
+      "Rehydrated — verified session history is available to this agent",
+    ],
+    [
+      "session_resumed",
+      "Resumed — reconnected to the provider's native session",
+    ],
+    [
+      "session_loaded",
+      "Loaded — the provider replayed its native session history",
+    ],
+    ["session_restarted_without_context", "Restarted without prior context"],
+  ]);
+
 function buildStatusLifecycleItem(
   item: Record<string, unknown>,
   ctx: Identity,
 ): TranscriptItem {
-  return buildSimpleLifecycleItem(
-    ctx,
-    "Status",
-    safeString(typeof item.status === "string" ? item.status : "", 200),
+  const status = safeString(
+    typeof item.status === "string" ? item.status : "",
+    200,
   );
+  const continuity = CODING_SESSION_CONTINUITY_STATUSES.get(status);
+  return continuity
+    ? buildSimpleLifecycleItem(ctx, CODING_SESSION_CONTINUITY_TITLE, continuity)
+    : buildSimpleLifecycleItem(ctx, "Status", status);
 }
 
 function buildSimpleLifecycleItem(

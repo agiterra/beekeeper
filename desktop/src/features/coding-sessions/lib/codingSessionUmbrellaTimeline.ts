@@ -54,12 +54,20 @@ export type CodingSessionUmbrellaConversationEntry = {
   timestampMs: number;
 };
 
-/** A system row: an execution starting a new generation. */
+/**
+ * A system row: an execution starting a new generation, or an execution
+ * joining a session that was already running.
+ *
+ * The join row exists because a second provider's first block would otherwise
+ * simply appear, distinguishable from the founder's work only by a grey
+ * provenance chip. The founding execution never gets one — a session of one
+ * has nothing to announce, and a row there would be pure noise.
+ */
 export type CodingSessionUmbrellaLifecycleEntry = {
   kind: "lifecycle";
   executionKey: string;
   signerPubkey: string;
-  event: "generation-started";
+  event: "generation-started" | "execution-joined";
   generation: number;
   timestampMs: number;
 };
@@ -81,8 +89,10 @@ export function buildUmbrellaTimeline(
   conversationMessages: readonly CodingSessionLaneMessage[] = [],
 ): CodingSessionUmbrellaTimelineEntry[] {
   const entries: CodingSessionUmbrellaTimelineEntry[] = [];
-  for (const execution of umbrella.executions) {
-    entries.push(...executionEntries(execution));
+  // `umbrella.executions` is attach-ordered, so index 0 is the execution the
+  // session began as: it joins nothing.
+  for (const [index, execution] of umbrella.executions.entries()) {
+    entries.push(...executionEntries(execution, index > 0));
   }
   for (const message of conversationMessages) {
     entries.push({
@@ -156,8 +166,8 @@ export function groupTranscriptIntoTurnBlocks(
  * `(generationId, blockSeq)` — `generationId` is unique per catalog record and
  * `blockSeq` is that record's own build-time ordinal, so neither a turn split
  * across two blocks nor a lane message interleaving between them can collide
- * or shift a key. Lifecycle rows key on their execution's generation, and
- * conversation rows on the signed event id.
+ * or shift a key. Lifecycle rows key on their execution's generation and the
+ * event they announce, and conversation rows on the signed event id.
  */
 export function codingSessionUmbrellaEntryKey(
   entry: CodingSessionUmbrellaTimelineEntry,
@@ -166,7 +176,7 @@ export function codingSessionUmbrellaEntryKey(
     case "turn-block":
       return `block:${entry.generationId}:${entry.blockSeq}`;
     case "lifecycle":
-      return `lifecycle:${entry.executionKey}:${entry.generation}`;
+      return `lifecycle:${entry.event}:${entry.executionKey}:${entry.generation}`;
     default:
       return `conversation:${entry.message.eventId}`;
   }
@@ -178,6 +188,7 @@ export function codingSessionUmbrellaEntryKey(
 
 function executionEntries(
   execution: CodingSessionExecution,
+  joined: boolean,
 ): CodingSessionUmbrellaTimelineEntry[] {
   const generations = [
     ...execution.priorGenerations,
@@ -194,12 +205,22 @@ function executionEntries(
       blocks[0]?.timestampMs ?? recordFallbackMs(record),
       clampMs,
     );
-    if (index > 0) {
+    // The join row lands on this execution's earliest generation, at the same
+    // instant as its first block. Both are pushed before that block and share
+    // its stream rank and tie key, so the comparator can only preserve the
+    // insertion order: join, then work.
+    const event =
+      index === 0
+        ? joined
+          ? ("execution-joined" as const)
+          : null
+        : ("generation-started" as const);
+    if (event) {
       entries.push({
         kind: "lifecycle",
         executionKey: execution.executionKey,
         signerPubkey: execution.signerPubkey,
-        event: "generation-started",
+        event,
         generation: record.commandTarget?.generation ?? index + 1,
         timestampMs: generationStartMs,
       });
