@@ -416,6 +416,89 @@ async fn test_send_event_and_receive_via_subscription() {
 
 #[tokio::test]
 #[ignore]
+async fn test_multi_channel_live_subscription_receives_events_from_all_channels() {
+    // Regression: a live REQ whose one filter lists several #h channels used
+    // to be registered as a global subscription, which never receives
+    // channel-scoped events — history worked, live delivery silently didn't
+    // (the desktop sidebar's session-ingress shape).
+    let url = relay_url();
+    let kind: u16 = 9;
+
+    let keys = Keys::generate();
+    let channel_a = create_test_channel(&keys).await;
+    let channel_b = create_test_channel(&keys).await;
+    let channel_c = create_test_channel(&keys).await;
+
+    let mut subscriber = BuzzTestClient::connect(&url, &keys)
+        .await
+        .expect("subscriber connect");
+
+    let sid = sub_id("multi-h-live");
+    let filter = Filter::new().kind(Kind::Custom(kind)).custom_tags(
+        SingleLetterTag::lowercase(Alphabet::H),
+        [channel_a.as_str(), channel_b.as_str()],
+    );
+
+    subscriber
+        .subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe");
+    subscriber
+        .collect_until_eose(&sid, Duration::from_secs(5))
+        .await
+        .expect("EOSE");
+
+    let mut publisher = BuzzTestClient::connect(&url, &keys)
+        .await
+        .expect("publisher connect");
+
+    let content_a = format!("into A {}", uuid::Uuid::new_v4());
+    let content_b = format!("into B {}", uuid::Uuid::new_v4());
+    for (channel, content) in [(&channel_a, &content_a), (&channel_b, &content_b)] {
+        let ok = publisher
+            .send_text_message(&keys, channel, content, kind)
+            .await
+            .expect("publish");
+        assert!(ok.accepted, "relay rejected event: {}", ok.message);
+    }
+
+    let mut received = Vec::new();
+    for _ in 0..2 {
+        match subscriber
+            .recv_event(Duration::from_secs(5))
+            .await
+            .expect("live delivery from a scoped channel")
+        {
+            RelayMessage::Event { event, .. } => received.push(event.content.to_string()),
+            other => panic!("Expected Event, got {other:?}"),
+        }
+    }
+    received.sort();
+    let mut expected = vec![content_a.clone(), content_b.clone()];
+    expected.sort();
+    assert_eq!(received, expected, "both scoped channels must deliver live");
+
+    // A channel outside the subscription's scope must not deliver.
+    let ok = publisher
+        .send_text_message(&keys, &channel_c, "into C", kind)
+        .await
+        .expect("publish to C");
+    assert!(ok.accepted, "relay rejected event: {}", ok.message);
+    match subscriber.recv_event(Duration::from_secs(2)).await {
+        Err(TestClientError::Timeout) => { /* expected — C is out of scope */ }
+        Ok(msg) => panic!("unexpected delivery from unscoped channel: {msg:?}"),
+        Err(e) => panic!("unexpected error: {e:?}"),
+    }
+
+    subscriber
+        .disconnect()
+        .await
+        .expect("disconnect subscriber");
+    publisher.disconnect().await.expect("disconnect publisher");
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_large_event_frame_below_configured_limit_is_accepted() {
     let url = relay_url();
     let kind: u16 = 9;
