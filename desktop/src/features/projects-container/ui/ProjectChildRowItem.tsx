@@ -1,4 +1,12 @@
-import { Bot, Circle, Eye, FolderGit2, Terminal, Zap } from "lucide-react";
+import {
+  Bot,
+  Circle,
+  Eye,
+  FolderGit2,
+  Square,
+  Terminal,
+  Zap,
+} from "lucide-react";
 
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
@@ -7,9 +15,18 @@ import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { cn } from "@/shared/lib/cn";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/shared/ui/context-menu";
 import { SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 
-import type { ExactProjectCodingSessionCoordinates } from "../lib/projectCodingSessionShelf";
+import type {
+  ExactProjectCodingSessionCoordinates,
+  ProjectCodingSessionShelfEntry,
+} from "../lib/projectCodingSessionShelf";
 import type { ProjectChildRow } from "../lib/projectChildren";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
@@ -23,6 +40,7 @@ export function ProjectChildRowItem({
   channelHandlers,
   onOpenAgents,
   onOpenCodingSession,
+  onRequestEndCodingSession,
   onOpenRepo,
   onOpenWorkflow,
   activeShellSessionId,
@@ -37,6 +55,7 @@ export function ProjectChildRowItem({
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
+  onRequestEndCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
   onOpenRepo: (repo: CodeRepo) => void;
   onOpenWorkflow?: (workflow: Workflow) => void;
   activeShellSessionId?: string;
@@ -52,58 +71,83 @@ export function ProjectChildRowItem({
       const details = [entry.sourceChannelLabel, entry.runtimeLabel]
         .filter(Boolean)
         .join(" · ");
-      const settled = entry.status.kind === "idle";
+      // Settled is intent, not activity: only a user-ended session gets the
+      // compact archival styling. Idle sessions keep the full row.
+      const settled = entry.status.kind === "ended";
+      const canEnd =
+        onRequestEndCodingSession !== undefined &&
+        entry.status.kind !== "ended" &&
+        entry.stopTargets.length > 0;
+      const button = (
+        <SidebarMenuButton
+          aria-label={`Open ${entry.label}${details ? `, ${details}` : ""}`}
+          className={cn(
+            settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
+            settled &&
+              "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
+          )}
+          data-testid="project-coding-session-row"
+          onClick={() =>
+            onOpenCodingSession({
+              channelId: entry.channelId,
+              generationId: entry.generationId,
+            })
+          }
+          type="button"
+          title={details || undefined}
+        >
+          <span
+            className={cn(
+              "flex shrink-0 items-center justify-center text-sidebar-foreground/65",
+              settled
+                ? "size-4 opacity-55"
+                : "size-6 rounded-full bg-sidebar-accent",
+            )}
+          >
+            <Bot className="size-3.5" />
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate">{entry.label}</span>
+            {details && !settled ? (
+              <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
+                {details}
+              </span>
+            ) : null}
+          </span>
+          <span
+            className={cn(
+              "ml-1 flex shrink-0 items-center gap-1 text-2xs",
+              entry.status.kind === "working"
+                ? "text-emerald-500"
+                : "text-sidebar-foreground/45",
+            )}
+          >
+            {entry.status.kind === "working" ? (
+              <Circle className="size-1.5 fill-current" aria-hidden />
+            ) : null}
+            {entry.status.label}
+          </span>
+        </SidebarMenuButton>
+      );
       return (
         <SidebarMenuItem data-session-status={entry.status.kind}>
-          <SidebarMenuButton
-            aria-label={`Open ${entry.label}${details ? `, ${details}` : ""}`}
-            className={cn(
-              settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
-              settled &&
-                "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
-            )}
-            data-testid="project-coding-session-row"
-            onClick={() =>
-              onOpenCodingSession({
-                channelId: entry.channelId,
-                generationId: entry.generationId,
-              })
-            }
-            type="button"
-            title={details || undefined}
-          >
-            <span
-              className={cn(
-                "flex shrink-0 items-center justify-center text-sidebar-foreground/65",
-                settled
-                  ? "size-4 opacity-55"
-                  : "size-6 rounded-full bg-sidebar-accent",
-              )}
-            >
-              <Bot className="size-3.5" />
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate">{entry.label}</span>
-              {details && !settled ? (
-                <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
-                  {details}
-                </span>
-              ) : null}
-            </span>
-            <span
-              className={cn(
-                "ml-1 flex shrink-0 items-center gap-1 text-2xs",
-                entry.status.kind === "working"
-                  ? "text-emerald-500"
-                  : "text-sidebar-foreground/45",
-              )}
-            >
-              {entry.status.kind === "working" ? (
-                <Circle className="size-1.5 fill-current" aria-hidden />
-              ) : null}
-              {entry.status.label}
-            </span>
-          </SidebarMenuButton>
+          {canEnd ? (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem
+                  className="text-destructive focus:text-destructive"
+                  data-testid="project-coding-session-end"
+                  onSelect={() => onRequestEndCodingSession(entry)}
+                >
+                  <Square />
+                  End session
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          ) : (
+            button
+          )}
         </SidebarMenuItem>
       );
     }

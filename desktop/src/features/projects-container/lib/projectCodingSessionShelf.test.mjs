@@ -6,7 +6,6 @@ import {
   parseActiveProjectCodingSessionPath,
   resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
-  withoutEndedProjectCodingSessions,
 } from "./projectCodingSessionShelf.ts";
 
 function session(overrides = {}) {
@@ -445,7 +444,7 @@ test("a session stopped via the durable command reads ended, not idle", () => {
   assert.equal(entries[0].status.kind, "ended");
 });
 
-test("ended sessions leave the sidebar rows and live ones stay", () => {
+test("ended sessions keep their sidebar row, sorted last, with nothing to stop", () => {
   const { entries } = resolveProjectCodingSessionShelf(
     catalog([
       {
@@ -462,18 +461,232 @@ test("ended sessions leave the sidebar rows and live ones stay", () => {
         session: session({
           generationId: "live",
           sessionRef: "u-live",
+          providerAuthorityPubkey: "a".repeat(64),
           transcript: [{ type: "lifecycle", title: "Status", text: "running" }],
         }),
       },
     ]),
   );
-  assert.deepEqual(
-    withoutEndedProjectCodingSessions(entries).map((e) => e.generationId),
-    ["live"],
-  );
-  // The unfiltered list keeps the archive: ended sorts last, never vanishes.
+  // Ended rows persist — they file under Settled instead of vanishing — and
+  // sort behind live work so they never crowd it out of the row limit.
   assert.deepEqual(
     entries.map((e) => e.generationId),
     ["live", "done"],
   );
+  const done = entries.find((e) => e.generationId === "done");
+  const live = entries.find((e) => e.generationId === "live");
+  assert.deepEqual(
+    done.stopTargets,
+    [],
+    "an ended session has nothing to stop",
+  );
+  assert.equal(live.stopTargets.length, 1);
+  assert.equal(live.stopTargets[0].target.sessionId, "private-seat");
+});
+
+test("an umbrella unions stop targets across executions and an ended face settles the row", () => {
+  const twoLive = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "claude-execution",
+          sessionRef: "u-pair",
+          providerAuthorityPubkey: "a".repeat(64),
+          transcript: [{ type: "lifecycle", title: "Status", text: "running" }],
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "codex-execution",
+          sessionRef: "u-pair",
+          providerAuthorityPubkey: "b".repeat(64),
+          commandTarget: {
+            driver: "codex-acp",
+            instanceId: "other-instance",
+            sessionId: "other-seat",
+            generation: 1,
+          },
+        }),
+      },
+    ]),
+  );
+  assert.equal(twoLive.entries.length, 1);
+  assert.equal(
+    twoLive.entries[0].stopTargets.length,
+    2,
+    "ending an umbrella row must stop every live execution it stands for",
+  );
+
+  // An explicitly ended representative settles the whole row even when a
+  // stale idle prior generation shares the umbrella…
+  const endedFace = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "stopped-face",
+          sessionRef: "u-ended",
+          status: "stopped",
+          // The stop is the group's latest activity — the user's last word.
+          lastEventAt: "2026-07-30T13:00:00.000Z",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "stale-idle",
+          sessionRef: "u-ended",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+        }),
+      },
+    ]),
+  );
+  assert.equal(endedFace.entries.length, 1);
+  assert.equal(endedFace.entries[0].status.kind, "ended");
+
+  // …but live work always outranks the ended face.
+  const stillWorking = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "stopped-face",
+          sessionRef: "u-work",
+          status: "stopped",
+          lastEventAt: "2026-07-30T13:00:00.000Z",
+          transcript: [{ type: "lifecycle", title: "Turn result", text: "" }],
+        }),
+      },
+      {
+        channelId: "transport",
+        session: session({
+          generationId: "still-working",
+          sessionRef: "u-work",
+          providerAuthorityPubkey: "a".repeat(64),
+          transcript: [{ type: "lifecycle", title: "Status", text: "running" }],
+        }),
+      },
+    ]),
+  );
+  assert.equal(stillWorking.entries.length, 1);
+  assert.equal(stillWorking.entries[0].status.kind, "working");
+});
+
+test("an untitled transcript-bearing representative borrows a titled member's label", () => {
+  // The transcript-bearing execution wins the representative pick (it is the
+  // session's face for routing), but the person named the session on the
+  // metadata-only member — the name must survive the collapse.
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "transcript-generation",
+          sessionRef: "shared-session",
+          title: "",
+          transcript: [
+            {
+              eventSeq: 1,
+              timestamp: 1_753_876_800_000,
+              turnId: "turn-1",
+              item: { kind: "assistant_text", text: "hello" },
+            },
+          ],
+        }),
+      },
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "titled-generation",
+          sessionRef: "shared-session",
+          title: "Testing 2",
+        }),
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(
+    entries[0].generationId,
+    "transcript-generation",
+    "coordinates stay with the transcript-bearing representative",
+  );
+  assert.equal(entries[0].label, "Testing 2");
+});
+
+test("among several titled members the newest label wins, and a titled representative keeps its own", () => {
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "untitled-face",
+          sessionRef: "shared-session",
+          title: "",
+          transcript: [
+            {
+              eventSeq: 1,
+              timestamp: 1_753_876_800_000,
+              turnId: "turn-1",
+              item: { kind: "assistant_text", text: "hello" },
+            },
+          ],
+        }),
+      },
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "older-title",
+          sessionRef: "shared-session",
+          title: "Older name",
+          lastEventAt: "2026-07-30T11:00:00.000Z",
+        }),
+      },
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "newer-title",
+          sessionRef: "shared-session",
+          title: "Newer name",
+          lastEventAt: "2026-07-30T12:30:00.000Z",
+        }),
+      },
+    ]),
+  );
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].label, "Newer name");
+
+  const titledFace = resolveProjectCodingSessionShelf(
+    catalog([
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "titled-face",
+          sessionRef: "shared-session",
+          title: "Representative name",
+          transcript: [
+            {
+              eventSeq: 1,
+              timestamp: 1_753_876_800_000,
+              turnId: "turn-1",
+              item: { kind: "assistant_text", text: "hello" },
+            },
+          ],
+        }),
+      },
+      {
+        channelId: "sessions-channel",
+        session: session({
+          generationId: "other-title",
+          sessionRef: "shared-session",
+          title: "Sibling name",
+          lastEventAt: "2026-07-30T12:30:00.000Z",
+        }),
+      },
+    ]),
+  );
+  assert.equal(titledFace.entries[0].label, "Representative name");
 });

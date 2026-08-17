@@ -1,7 +1,6 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { withoutEndedProjectCodingSessions } from "../lib/projectCodingSessionShelf";
 import { FolderGit2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,6 +17,8 @@ import {
 } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
+import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
+import { buildEndCodingSessionStops } from "@/features/coding-sessions/lib/endCodingSessionModel";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
@@ -153,6 +154,7 @@ export function ProjectSidebarSections({
     [reposByProject, createShellFor],
   );
   const shellDialogs = useShellSessionDialogs();
+  const endCodingSessionDialog = useEndCodingSessionDialog();
 
   // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
   // derived from the channel's project; unclaimed channels' workflows show
@@ -310,10 +312,10 @@ export function ProjectSidebarSections({
               personasById,
               managedAgentsByPubkey,
             )}
-            codingSessions={withoutEndedProjectCodingSessions([
+            codingSessions={[
               ...(sessionBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? sessionBuckets.unclaimed : []),
-            ])}
+            ]}
             streamChannels={[
               ...(channelsByProject.get(project.id) ?? []),
               ...(isGeneral ? globalChannels : []),
@@ -324,6 +326,11 @@ export function ProjectSidebarSections({
             collapsed={collapse.isProjectCollapsed(project.id)}
             onToggleCollapsed={() => collapse.toggleProject(project.id)}
             onOpenAgents={onOpenAgents}
+            onRequestEndCodingSession={(entry) =>
+              endCodingSessionDialog.requestEnd(
+                buildEndCodingSessionStops(entry),
+              )
+            }
             onOpenCodingSession={({ channelId, generationId }) =>
               void goCodingSession(channelId, generationId)
             }
@@ -354,6 +361,7 @@ export function ProjectSidebarSections({
         );
       })}
       {shellDialogs.dialogs}
+      {endCodingSessionDialog.dialog}
 
       <ProjectsScreenCreateDialogs
         kind={createRequest?.kind ?? null}

@@ -98,6 +98,7 @@ export function ProjectSidebarGroup({
   onToggleCollapsed,
   onOpenAgents,
   onOpenCodingSession,
+  onRequestEndCodingSession,
   onOpenProject,
   onOpenRepo,
   onNewCodingSession,
@@ -130,6 +131,7 @@ export function ProjectSidebarGroup({
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
+  onRequestEndCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
   onOpenProject: () => void;
   onOpenRepo: (repo: CodeRepo) => void;
   /** Starts the project-scoped create flow from the group's `+` menu. */
@@ -207,11 +209,14 @@ export function ProjectSidebarGroup({
   );
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
+  // "Settled" is a statement of intent, not of activity: only a session the
+  // user explicitly ended files there. Idle sessions are live work at rest
+  // and stay in the main Sessions shelf.
   const activeSessionRows = sessionRows.filter(
-    (row) => row.entry.status.kind !== "idle",
+    (row) => row.entry.status.kind !== "ended",
   );
   const settledSessionRows = sessionRows.filter(
-    (row) => row.entry.status.kind === "idle",
+    (row) => row.entry.status.kind === "ended",
   );
   const channelRows = children.filter(
     (row) => row.type === "channel" || row.type === "forum",
@@ -229,6 +234,7 @@ export function ProjectSidebarGroup({
       channelHandlers={channelHandlers}
       onOpenAgents={onOpenAgents}
       onOpenCodingSession={onOpenCodingSession}
+      onRequestEndCodingSession={onRequestEndCodingSession}
       onOpenRepo={onOpenRepo}
       onOpenWorkflow={onOpenWorkflow}
       activeShellSessionId={activeShellSessionId}

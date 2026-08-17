@@ -1,3 +1,5 @@
+import type { CodingSessionCommandTarget } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionWorkspaceStatus,
@@ -7,6 +9,12 @@ import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 
 import { normalizeProjectRef } from "./projectContainerModel";
+
+/** Exact coordinates for durably stopping one provider execution. */
+export type ProjectCodingSessionStopTarget = {
+  target: CodingSessionCommandTarget;
+  providerAuthorityPubkey: string;
+};
 
 export type ProjectCodingSessionShelfEntry = {
   /** `project` once a project owns this session; `unassigned` displays under General. */
@@ -25,6 +33,9 @@ export type ProjectCodingSessionShelfEntry = {
   /** Number of provider executions represented by this one session row. */
   executionCount: number;
   status: CodingSessionWorkspaceStatus;
+  /** Stop coordinates for every non-ended execution this row stands for —
+   * what "End session" publishes, one durable stop per execution. */
+  stopTargets: ProjectCodingSessionStopTarget[];
   session: CodingSessionCatalogRecord;
 };
 
@@ -100,6 +111,12 @@ export function resolveProjectCodingSessionShelf(
       index,
     );
     const runtimeLabel = buildRuntimeLabel(session);
+    // Lifecycle metadata is required here: a durable stop can otherwise
+    // look like an ordinary idle transcript forever.
+    const status = deriveCodingSessionWorkspaceStatus(
+      session.transcript,
+      session.status,
+    );
     return {
       placement: placement.projectId
         ? ("project" as const)
@@ -115,12 +132,18 @@ export function resolveProjectCodingSessionShelf(
       runtimeLabel,
       runtimeLabels: runtimeLabel ? [runtimeLabel] : [],
       executionCount: 1,
-      // Lifecycle metadata is required here: a durable stop can otherwise
-      // look like an ordinary idle transcript forever.
-      status: deriveCodingSessionWorkspaceStatus(
-        session.transcript,
-        session.status,
-      ),
+      status,
+      stopTargets:
+        status.kind !== "ended" &&
+        session.commandTarget &&
+        session.providerAuthorityPubkey
+          ? [
+              {
+                target: session.commandTarget,
+                providerAuthorityPubkey: session.providerAuthorityPubkey,
+              },
+            ]
+          : [],
       session,
     };
   });
@@ -250,17 +273,6 @@ function umbrellaStatusPriority(status: CodingSessionWorkspaceStatus): number {
   }
 }
 
-/**
- * The sidebar shows live work: ended sessions drop out of the project group
- * rows. They stay on the project screen's sessions list (sorted last) — that
- * list is the archive a finished session retires to.
- */
-export function withoutEndedProjectCodingSessions(
-  entries: readonly ProjectCodingSessionShelfEntry[],
-): ProjectCodingSessionShelfEntry[] {
-  return entries.filter((entry) => entry.status.kind !== "ended");
-}
-
 /** Split resolved entries into the per-project buckets the sidebar renders. */
 export function bucketProjectCodingSessions(
   entries: readonly ProjectCodingSessionShelfEntry[],
@@ -311,6 +323,35 @@ function buildProjectCodingSessionLabel(
 }
 
 /**
+ * The label an umbrella row shows for its whole group.
+ *
+ * The representative is picked for coordinates (transcript-bearing wins,
+ * see `representsUmbrellaBetter`), but a titled metadata-only member must
+ * not lose its name to an untitled representative — the person named the
+ * session, and the name is how they find it. When the representative has
+ * no title of its own, borrow the label of the newest titled member.
+ */
+function resolveUmbrellaLabel(
+  representative: ProjectCodingSessionShelfEntry,
+  group: ProjectCodingSessionShelfEntry[],
+): string {
+  if (representative.session.title.trim().length > 0) {
+    return representative.label;
+  }
+  const titled = group
+    .filter((entry) => entry.session.title.trim().length > 0)
+    .sort((left, right) => {
+      const byTime = right.session.lastEventAt.localeCompare(
+        left.session.lastEventAt,
+      );
+      return byTime !== 0
+        ? byTime
+        : left.generationId.localeCompare(right.generationId);
+    });
+  return titled[0]?.label ?? representative.label;
+}
+
+/**
  * Collapse provider executions sharing one signed umbrella reference into one
  * project-navigation row. The newest execution supplies the compatibility
  * route; opening it resolves the complete umbrella in the session workspace.
@@ -334,18 +375,45 @@ function groupProjectCodingSessionEntries(
     const runtimeLabels = [
       ...new Set(group.flatMap((entry) => entry.runtimeLabels)),
     ];
+    // Live work always shows; otherwise an ended execution that is the
+    // group's most recent activity settles the whole row — the stop is the
+    // user's last word, and a stale idle prior generation must not
+    // resurrect a session they ended. Only then does the ordinary priority
+    // collapse (idle beats ended beats unknown) apply.
+    const working = group.find((entry) => entry.status.kind === "working");
+    const newest = [...group].sort(
+      (left, right) =>
+        right.session.lastEventAt.localeCompare(left.session.lastEventAt) ||
+        left.generationId.localeCompare(right.generationId),
+    )[0];
     const status =
-      [...group].sort(
-        (left, right) =>
-          umbrellaStatusPriority(left.status) -
-          umbrellaStatusPriority(right.status),
-      )[0]?.status ?? representative.status;
+      working?.status ??
+      (newest?.status.kind === "ended"
+        ? newest.status
+        : ([...group].sort(
+            (left, right) =>
+              umbrellaStatusPriority(left.status) -
+              umbrellaStatusPriority(right.status),
+          )[0]?.status ?? representative.status));
+    const stopTargets = [
+      ...new Map(
+        group
+          .filter((entry) => entry.status.kind !== "ended")
+          .flatMap((entry) => entry.stopTargets)
+          .map((stop): [string, ProjectCodingSessionStopTarget] => [
+            `${buildCodingSessionTargetKey(stop.target)}\u0000${stop.providerAuthorityPubkey}`,
+            stop,
+          ]),
+      ).values(),
+    ];
     return {
       ...representative,
+      label: resolveUmbrellaLabel(representative, group),
       runtimeLabel: runtimeLabels.join(" + ") || null,
       runtimeLabels,
       executionCount: group.length,
       status,
+      stopTargets,
     };
   });
 }
