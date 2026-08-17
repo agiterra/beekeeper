@@ -9,6 +9,7 @@ import {
   isConversationalUnreadKind,
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -93,6 +94,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
   assert.deepEqual(
     {
       command: KIND_CODING_SESSION_COMMAND,
+      closure: KIND_CODING_SESSION_CLOSURE,
       lifecycleCommand: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
       providerCatalog: KIND_CODING_SESSION_PROVIDER_CATALOG,
       metadata: KIND_CODING_SESSION_METADATA,
@@ -105,6 +107,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
     },
     {
       command: 44220,
+      closure: 44230,
       lifecycleCommand: 44221,
       providerCatalog: 44222,
       metadata: 44223,
@@ -116,7 +119,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       name: 44229,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 10);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 11);
 });
 
 test("codingSessionKinds_neverEnterTheChatTimeline", () => {

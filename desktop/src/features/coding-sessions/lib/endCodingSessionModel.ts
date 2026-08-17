@@ -1,7 +1,7 @@
 /**
- * The pure half of "End session": what a row's end request contains and how
- * it fans out into durable stop commands. Kept free of React and relay IO so
- * node:test can cover the mapping.
+ * The pure half of "Stop execution": what a stop request contains and how it
+ * fans out into durable provider commands. Session closure is a separate
+ * human-authored fact. Kept free of React and relay IO for node:test coverage.
  */
 import { createCodingSessionLifecycleCommandId } from "./codingSessionLifecycleCommand";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
@@ -32,7 +32,7 @@ export type EndableCodingSessionRow = {
 };
 
 /**
- * An umbrella row stands for every execution it collapsed; ending it must
+ * An umbrella row stands for every execution it collapsed; a bulk stop must
  * durably stop each non-ended execution, not just the representative.
  * Returns null when the row has nothing left to stop.
  */
@@ -51,9 +51,8 @@ export function buildEndCodingSessionStops(
 
 /**
  * Fan a request out into one stop publish per execution, each with a fresh
- * commandId. Failures don't abort the siblings — a session half-ended by a
- * dead generation still settles once its live executions stop — but the
- * first failure is reported so the person knows the end was not clean.
+ * commandId. Failures don't abort the siblings, but the first failure is
+ * reported so the person knows the bulk execution stop was not clean.
  */
 export async function publishEndCodingSessionRequest(
   request: EndCodingSessionRequest,

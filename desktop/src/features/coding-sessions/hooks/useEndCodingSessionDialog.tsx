@@ -21,13 +21,10 @@ import {
 } from "../lib/endCodingSessionModel";
 
 /**
- * The one confirm that stands between a click and a durable stop.
+ * The one confirm that stands between a click and a durable provider stop.
  *
- * Ending is destructive by nature — the provider retires the execution for
- * everyone and the row files under Recent Sessions — so both entry
- * points (sidebar
- * context menu, workspace composer) route through this dialog rather than
- * publishing on the raw click.
+ * This controls executions only. Session closure is a separate human-signed
+ * fact and must never be inferred from a provider accepting this command.
  */
 export function useEndCodingSessionDialog(): {
   requestEnd: (request: EndCodingSessionRequest | null) => void;
@@ -82,12 +79,12 @@ export function useEndCodingSessionDialog(): {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>End this session?</AlertDialogTitle>
+          <AlertDialogTitle>Stop this execution?</AlertDialogTitle>
           <AlertDialogDescription>
             {target
-              ? `"${target.label}" will be durably stopped for everyone and ` +
-                "moves to Recent Sessions. Its transcript stays readable, " +
-                "but this session can't be restarted from here."
+              ? `The provider execution for "${target.label}" will be stopped ` +
+                "for everyone. The durable session and its transcript stay " +
+                "open; close the session separately when the work is finished."
               : ""}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -103,7 +100,7 @@ export function useEndCodingSessionDialog(): {
             }}
             data-testid="coding-session-end-confirm"
           >
-            End session
+            Stop execution
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -164,3 +164,90 @@ test("the add-provider affordance appears only when this session can take one", 
   assert.match(withJoin, /data-testid="coding-session-add-provider"/);
   assert.match(withJoin, /Add provider/);
 });
+
+test("closure controls describe session state without rewriting execution status", () => {
+  const baseProps = {
+    channelName: "Hive Sessions",
+    generationLabel: "Keystone Session · generation 2",
+    onBack() {},
+    status: { kind: "ended", label: "Ended" },
+  };
+
+  const close = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      onCloseSession() {},
+    }),
+  );
+  assert.match(close, /data-testid="coding-session-close"/);
+  assert.match(close, /aria-label="Session status: Ended"/);
+  assert.doesNotMatch(close, /data-testid="coding-session-reopen"/);
+
+  const reopen = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      onReopenSession() {},
+      sessionClosed: true,
+    }),
+  );
+  assert.match(reopen, /data-testid="coding-session-reopen"/);
+  assert.match(reopen, /aria-label="Session status: Closed"/);
+  assert.match(
+    reopen,
+    /title="Return this session to Sessions without starting a provider"/,
+  );
+  assert.doesNotMatch(reopen, /data-testid="coding-session-close"/);
+});
+
+test("an owning project reads as a followable crumb ahead of the context line", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "buzz glue sessions",
+      generationLabel: "Keystone Session · generation 2",
+      onBack() {},
+      onOpenProject() {},
+      projectName: "Buzz Glue",
+      runtimeLabel: "Claude Code",
+      sessionTitle: "Keystone Session",
+      status: { kind: "idle", label: "Idle" },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-project-crumb"/);
+  assert.match(markup, />Buzz Glue<\/button> · Claude Code · generation 2/);
+  // The crumb is a real control, not text styled to look like one.
+  assert.match(markup, /title="Open Buzz Glue"/);
+});
+
+test("without a way to open it the project is plain context, not a dead link", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "buzz glue sessions",
+      generationLabel: "Keystone Session · generation 2",
+      onBack() {},
+      projectName: "Buzz Glue",
+      runtimeLabel: "Claude Code",
+      sessionTitle: "Keystone Session",
+      status: { kind: "idle", label: "Idle" },
+    }),
+  );
+
+  assert.doesNotMatch(markup, /coding-session-project-crumb/);
+  assert.match(markup, /Buzz Glue · Claude Code · generation 2/);
+});
+
+test("a session no project claims shows no crumb at all", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "engineering",
+      generationLabel: "generation 2",
+      onBack() {},
+      onOpenProject() {},
+      projectName: null,
+      status: { kind: "idle", label: "Idle" },
+    }),
+  );
+
+  assert.doesNotMatch(markup, /coding-session-project-crumb/);
+  assert.match(markup, />generation 2</);
+});

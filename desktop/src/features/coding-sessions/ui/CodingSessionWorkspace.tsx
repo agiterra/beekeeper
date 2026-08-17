@@ -21,6 +21,9 @@ import {
 } from "@/features/coding-sessions/useCodingSessionGoals";
 import { codingSessionNameKey } from "@/features/coding-sessions/lib/codingSessionName";
 import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
+import { codingSessionClosureKey } from "@/features/coding-sessions/lib/codingSessionClosure";
+import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
+import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFeatureEnabled } from "@/shared/features/useFeatureEnabled";
@@ -53,6 +56,7 @@ import {
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { UmbrellaCodingSessionWorkspace } from "./CodingSessionUmbrellaWorkspace";
+import { useCodingSessionClosureDialog } from "../hooks/useCodingSessionClosureDialog";
 
 type CodingSessionWorkspaceProps = {
   bootstrap?: CodingSessionPopoutBootstrap | null;
@@ -81,7 +85,26 @@ export function CodingSessionWorkspace({
   });
   const goalSnapshot = useCodingSessionGoals([channelId]);
   const nameSnapshot = useCodingSessionNames([channelId]);
-  const channelsQuery = useChannelsQuery({ enabled: true });
+  const founderPubkeysByGenesisRef = React.useMemo(() => {
+    const founders = new Map<string, string>();
+    for (const umbrella of groupCodingSessionCatalog(
+      catalog.entries,
+      catalog.creates,
+    )) {
+      if (umbrella.genesisRef && umbrella.founderPubkey) {
+        founders.set(umbrella.genesisRef, umbrella.founderPubkey);
+      }
+    }
+    return founders;
+  }, [catalog.creates, catalog.entries]);
+  const closureSnapshot = useCodingSessionClosures(
+    [channelId],
+    founderPubkeysByGenesisRef,
+  );
+  const closureDialog = useCodingSessionClosureDialog();
+  const channelsQuery = useChannelsQuery({
+    enabled: true,
+  });
   const channel =
     channelsQuery.data?.find((candidate) => candidate.id === channelId) ?? null;
   const resolution = resolveCodingSessionWorkspace({
@@ -122,11 +145,46 @@ export function CodingSessionWorkspace({
           ),
         ) ?? null)
       : null;
+  const closure =
+    umbrella.sessionRef && umbrella.genesisRef
+      ? (closureSnapshot.closures.get(
+          codingSessionClosureKey(
+            channelId,
+            umbrella.sessionRef,
+            umbrella.genesisRef,
+          ),
+        ) ?? null)
+      : null;
+  const sessionClosed = closure?.action === "closed";
+  const canCloseSession =
+    isMember &&
+    !sessionClosed &&
+    umbrella.sessionRef !== null &&
+    umbrella.genesisRef !== null &&
+    umbrella.founderPubkey !== null &&
+    identity.data?.pubkey.toLowerCase() ===
+      umbrella.founderPubkey.toLowerCase();
+  const canReopenSession =
+    isMember &&
+    sessionClosed &&
+    umbrella.sessionRef !== null &&
+    umbrella.genesisRef !== null;
+  const requestClosure = (action: "closed" | "open") => {
+    if (!umbrella.sessionRef || !umbrella.genesisRef) return;
+    closureDialog.requestClosure({
+      action,
+      channelId,
+      genesisRef: umbrella.genesisRef,
+      label: sessionName?.content ?? umbrella.title,
+      sessionRef: umbrella.sessionRef,
+    });
+  };
   // Joining needs a claimed umbrella ref to join *to* (a pre-Step-4 session has
   // none, so it gets no affordance rather than a button that cannot work), and
   // v1 authority is founder-only — when an observed create binds a founder who
   // is not this user, the attach UI is absent exactly as the design specifies.
   const canAddProvider =
+    !sessionClosed &&
     isMember &&
     umbrella.sessionRef !== null &&
     resolveCodingSessionUmbrellaComposerAuthority({
@@ -151,11 +209,18 @@ export function CodingSessionWorkspace({
           currentUserPubkey={identity.data?.pubkey ?? null}
           key={`${channelId}:${umbrella.umbrellaKey}`}
           onAddProvider={onAddProvider}
+          onCloseSession={
+            canCloseSession ? () => requestClosure("closed") : undefined
+          }
+          onReopenSession={
+            canReopenSession ? () => requestClosure("open") : undefined
+          }
           onBack={onBack}
           surface={surface}
           umbrella={umbrella}
           goal={goal}
           sessionName={sessionName}
+          sessionClosed={sessionClosed}
         />
       ) : (
         <ReadyCodingSessionWorkspace
@@ -165,11 +230,18 @@ export function CodingSessionWorkspace({
           isMember={isMember}
           key={`${channelId}:${generationId}`}
           onAddProvider={onAddProvider}
+          onCloseSession={
+            canCloseSession ? () => requestClosure("closed") : undefined
+          }
+          onReopenSession={
+            canReopenSession ? () => requestClosure("open") : undefined
+          }
           onBack={onBack}
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
           goal={goal}
           sessionName={sessionName}
+          sessionClosed={sessionClosed}
           currentUserPubkey={identity.data?.pubkey ?? null}
           sessionRef={umbrella.sessionRef}
           session={resolution.session}
@@ -192,6 +264,7 @@ export function CodingSessionWorkspace({
           }
         />
       ) : null}
+      {closureDialog.dialog}
     </>
   );
 }
@@ -204,10 +277,13 @@ function ReadyCodingSessionWorkspace({
   genesisRef,
   goal,
   sessionName,
+  sessionClosed,
   currentUserPubkey,
   sessionRef,
   isMember,
   onAddProvider,
+  onCloseSession,
+  onReopenSession,
   onBack,
   session,
   surface,
@@ -224,10 +300,13 @@ function ReadyCodingSessionWorkspace({
   sessionName:
     | import("@/features/coding-sessions/lib/codingSessionName").CodingSessionName
     | null;
+  sessionClosed: boolean;
   currentUserPubkey: string | null;
   sessionRef: string | null;
   isMember: boolean;
   onAddProvider?: () => void;
+  onCloseSession?: () => void;
+  onReopenSession?: () => void;
   onBack: () => void;
   session: Extract<
     ReturnType<typeof resolveCodingSessionWorkspace>,
@@ -382,9 +461,11 @@ function ReadyCodingSessionWorkspace({
           model={session.model}
           onAddProvider={onAddProvider}
           onBack={onBack}
+          onCloseSession={onCloseSession}
           onExport={exportEnabled ? exportTranscript : undefined}
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
+          onReopenSession={onReopenSession}
           onToggleTaskRail={() => {
             surfaceHost.close();
             setTaskRailOpen((open) => !open);
@@ -396,6 +477,7 @@ function ReadyCodingSessionWorkspace({
           providerAuthorityPubkey={session.providerAuthorityPubkey}
           runtimeLabel={runtimeLabel}
           sessionTitle={authoritativeTitle}
+          sessionClosed={sessionClosed}
           status={status}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces.map((surfaceEntry) => ({
@@ -469,7 +551,7 @@ function ReadyCodingSessionWorkspace({
               </Button>
             </div>
           ) : null}
-          {session.commandTarget ? (
+          {session.commandTarget && !sessionClosed ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
               <div className="pointer-events-auto mx-auto w-full max-w-3xl">
                 <CodingSessionComposer

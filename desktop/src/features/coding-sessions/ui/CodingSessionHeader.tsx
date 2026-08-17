@@ -6,6 +6,8 @@ import {
   Info,
   ListChecks,
   Pencil,
+  RotateCcw,
+  Square,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -42,11 +44,15 @@ type CodingSessionHeaderProps = {
    * pre-umbrella session with no `sessionRef`, or a non-member view.
    */
   onAddProvider?: () => void;
+  /** Publishes the provider-independent shared closure fact. */
+  onCloseSession?: () => void;
   onBack: () => void;
   onExport?: () => void;
   onPopout?: () => void;
   /** Opens the founder-authorized session rename flow. */
   onRename?: () => void;
+  /** Reopens the durable session without starting a provider execution. */
+  onReopenSession?: () => void;
   /** Opens the owning project. Given one, the project reads as a crumb you can
    * follow rather than a word in a context line. */
   onOpenProject?: () => void;
@@ -58,6 +64,7 @@ type CodingSessionHeaderProps = {
   repoName?: string | null;
   runtimeLabel?: string | null;
   sessionTitle?: string | null;
+  sessionClosed?: boolean;
   status: CodingSessionWorkspaceStatus;
   /** DOM id of the surface host panel, for `aria-controls`. */
   surfaceHostId?: string;
@@ -74,9 +81,11 @@ export function CodingSessionHeader({
   model = null,
   onAddProvider,
   onBack,
+  onCloseSession,
   onExport,
   onPopout,
   onRename,
+  onReopenSession,
   onToggleTaskRail,
   onToggleSurface,
   projectName = null,
@@ -84,6 +93,7 @@ export function CodingSessionHeader({
   repoName = null,
   runtimeLabel = null,
   sessionTitle = null,
+  sessionClosed = false,
   status,
   surfaceHostId,
   surfaceTabs,
@@ -144,16 +154,16 @@ export function CodingSessionHeader({
         </p>
       </div>
       <Badge
-        aria-label={`Session status: ${status.label}`}
+        aria-label={`Session status: ${sessionClosed ? "Closed" : status.label}`}
         className={cn("gap-1.5", compact && "px-2")}
-        title={status.label}
+        title={sessionClosed ? "Closed" : status.label}
         variant="outline"
       >
         <span
           aria-hidden
           className={cn(
             "h-2 w-2 rounded-full",
-            status.kind === "working"
+            !sessionClosed && status.kind === "working"
               ? "bg-emerald-500"
               : status.kind === "idle" || status.kind === "ended"
                 ? "bg-muted-foreground/50"
@@ -161,7 +171,11 @@ export function CodingSessionHeader({
           )}
         />
         {compact ? (
-          <span className="sr-only">{status.label}</span>
+          <span className="sr-only">
+            {sessionClosed ? "Closed" : status.label}
+          </span>
+        ) : sessionClosed ? (
+          "Closed"
         ) : (
           status.label
         )}
@@ -277,6 +291,34 @@ export function CodingSessionHeader({
         >
           <UserPlus />
           <span className={compact ? "sr-only" : undefined}>Add provider</span>
+        </Button>
+      ) : null}
+      {onCloseSession ? (
+        <Button
+          aria-label="Close session"
+          data-testid="coding-session-close"
+          onClick={onCloseSession}
+          size={compact ? "icon" : "sm"}
+          title="Move this session to Settled without stopping its providers"
+          type="button"
+          variant="ghost"
+        >
+          <Square />
+          <span className={compact ? "sr-only" : undefined}>Close</span>
+        </Button>
+      ) : null}
+      {onReopenSession ? (
+        <Button
+          aria-label="Reopen session"
+          data-testid="coding-session-reopen"
+          onClick={onReopenSession}
+          size={compact ? "icon" : "sm"}
+          title="Return this session to Sessions without starting a provider"
+          type="button"
+          variant="outline"
+        >
+          <RotateCcw />
+          <span className={compact ? "sr-only" : undefined}>Reopen</span>
         </Button>
       ) : null}
       {onExport ? (

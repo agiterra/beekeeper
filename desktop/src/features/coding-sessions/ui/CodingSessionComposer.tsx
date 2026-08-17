@@ -68,7 +68,7 @@ type CodingSessionComposerProps = {
    */
   prefill?: { id: string; text: string } | null;
   providerAuthorityPubkey?: string | null;
-  /** Display name for the end-session confirm; falls back to "this session". */
+  /** Display name for the stop-execution confirm; falls back to "this session". */
   sessionLabel?: string | null;
   target: CodingSessionCommandTarget;
   variant?: "panel" | "floating";
@@ -221,9 +221,8 @@ export function CodingSessionComposer({
     target,
   ]);
 
-  // Ending is durable and channel-wide, so both the disconnected banner and
-  // the healthy-session button route through the shared confirm dialog
-  // instead of publishing on the raw click.
+  // A durable execution stop is distinct from closing the umbrella session.
+  // Route it through a confirm instead of publishing on the raw click.
   const endDialog = useEndCodingSessionDialog();
   const canSessionStop =
     canControl && isMember && providerAuthorityPubkey !== null && !isEnded;
@@ -309,7 +308,7 @@ export function CodingSessionComposer({
               type="button"
               variant="outline"
             >
-              End session
+              Stop execution
             </Button>
           </div>
         </div>
@@ -389,11 +388,11 @@ export function CodingSessionComposer({
                 data-testid="coding-session-composer-session-stop"
                 disabled={isSending}
                 onClick={requestSessionEnd}
-                title="Durably end this session; it moves to Recent Sessions."
+                title="Stop this provider execution; the session stays open."
                 type="button"
                 variant="outline"
               >
-                End session
+                Stop execution
               </Button>
             ) : null}
           </div>
@@ -542,11 +541,11 @@ function ImmersiveCodingSessionControlDeck({
                 disabled={pendingAction !== null}
                 onClick={onSessionStop}
                 size="sm"
-                title="Durably end this session; it moves to Recent Sessions."
+                title="Stop this provider execution; the session stays open."
                 type="button"
                 variant="outline"
               >
-                End session
+                Stop execution
               </Button>
             ) : null}
           </>

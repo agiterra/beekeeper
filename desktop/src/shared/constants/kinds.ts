@@ -75,10 +75,10 @@ export const KIND_GIT_STATUS_DRAFT = 1633;
 // h-tags = currently-hidden DM channel ids).
 export const KIND_DM_VISIBILITY = 30622;
 
-// ── Coding sessions (44220–44229) ────────────────────────────────────────────
+// ── Coding sessions (44220–44230) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
-// directory. All ten are channel-scoped (`h` tag) and never enter
+// directory. All eleven are channel-scoped (`h` tag) and never enter
 // CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
 // its own workspace surface, not to the chat timeline. Names mirror
 // crates/buzz-core/src/kind.rs — keep them in sync.
@@ -115,6 +115,9 @@ export const KIND_CODING_SESSION_AUTHORITY_TRANSITION = 44228;
 // NIP-CSN: operator-authored append-only short session-name revision
 // (`csnm1-1`). Regular events preserve every rename.
 export const KIND_CODING_SESSION_NAME = 44229;
+// NIP-CSCL: member-authored append-only session-closure revision (`cscl1-1`).
+// Closing is founder-only; any relay-accepted member may reopen.
+export const KIND_CODING_SESSION_CLOSURE = 44230;
 
 // Every coding-session kind, in one place, so the regression guard keeping them
 // out of the chat timeline cannot silently miss a newly added member.
@@ -129,6 +132,7 @@ export const CODING_SESSION_EVENT_KINDS = [
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_AUTHORITY_TRANSITION,
   KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_CLOSURE,
 ] as const;
 
 // Human-visible "new content" message kinds. Used as the unread trigger set

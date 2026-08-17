@@ -66,6 +66,8 @@ export function UmbrellaCodingSessionWorkspace({
   generationId,
   isMember,
   onAddProvider,
+  onCloseSession,
+  onReopenSession,
   onBack,
   surface,
   umbrella,
@@ -73,6 +75,7 @@ export function UmbrellaCodingSessionWorkspace({
   currentUserPubkey,
   goal,
   sessionName = null,
+  sessionClosed = false,
 }: {
   channelId: string;
   channelName: string | null;
@@ -80,6 +83,8 @@ export function UmbrellaCodingSessionWorkspace({
   isMember: boolean;
   /** Opens the join flow (design §B); absent when this session cannot join. */
   onAddProvider?: () => void;
+  onCloseSession?: () => void;
+  onReopenSession?: () => void;
   onBack: () => void;
   surface: CodingSessionSurface;
   umbrella: CodingSessionUmbrellaRecord;
@@ -87,6 +92,7 @@ export function UmbrellaCodingSessionWorkspace({
   currentUserPubkey: string | null;
   goal: CodingSessionGoal | null;
   sessionName?: CodingSessionName | null;
+  sessionClosed?: boolean;
 }) {
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
@@ -161,11 +167,14 @@ export function UmbrellaCodingSessionWorkspace({
           generationLabel={`${umbrella.executions.length} executions`}
           onAddProvider={onAddProvider}
           onBack={onBack}
+          onCloseSession={onCloseSession}
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
+          onReopenSession={onReopenSession}
           onToggleSurface={(id) => surfaceHost.toggle(id)}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
           sessionTitle={authoritativeTitle}
+          sessionClosed={sessionClosed}
           status={umbrellaWorkspaceStatus(umbrella)}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces.map((surfaceEntry) => ({
@@ -214,17 +223,19 @@ export function UmbrellaCodingSessionWorkspace({
               />
             </div>
           </div>
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
-            <div className="pointer-events-auto mx-auto w-full max-w-3xl">
-              <CodingSessionUmbrellaComposer
-                channelId={channelId}
-                currentUserPubkey={identity.data?.pubkey ?? null}
-                isMember={isMember}
-                prefill={prefill}
-                umbrella={umbrella}
-              />
+          {!sessionClosed ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
+              <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+                <CodingSessionUmbrellaComposer
+                  channelId={channelId}
+                  currentUserPubkey={identity.data?.pubkey ?? null}
+                  isMember={isMember}
+                  prefill={prefill}
+                  umbrella={umbrella}
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
         </section>
         {surfaceHost.activeTab !== null ? (
           <CodingSessionSurfaceHost

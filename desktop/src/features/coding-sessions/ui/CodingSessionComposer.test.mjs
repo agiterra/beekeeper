@@ -152,7 +152,7 @@ test("a disconnected execution offers reconnect or durable end instead of send",
   assert.match(markup, /coding-session-composer-resume/);
   assert.match(markup, />Reconnect</);
   assert.match(markup, /coding-session-composer-session-stop/);
-  assert.match(markup, />End session</);
+  assert.match(markup, />Stop execution</);
   assert.doesNotMatch(markup, /coding-session-composer-primary/);
   assert.match(markup, /Reconnect this execution to continue/);
 });
