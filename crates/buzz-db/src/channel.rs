@@ -2941,7 +2941,7 @@ mod tests {
             &project_owner,
             dtag,
             "private",
-            &[project_member.clone()],
+            std::slice::from_ref(&project_member),
             1_800_000_000,
         )
         .await
