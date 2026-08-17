@@ -418,6 +418,10 @@ export function useTrustedCodingSessionIngress(
           unsubscribeLive = unsubscribe;
           liveError = null;
           publish();
+          // Close the mount/channel-add gap only after the live fence is in
+          // place: history now covers everything before the subscription,
+          // while the subscription covers everything after it.
+          historyController.request();
         })
         .catch((error) => {
           liveSubscribePending = false;
@@ -426,15 +430,16 @@ export function useTrustedCodingSessionIngress(
               ? error.message
               : "Failed to subscribe to coding-session lifecycle events.";
           publish();
+          // History-only discovery is still useful when live setup fails.
+          historyController.request();
         });
     };
 
     publish();
     establishLive();
-    historyController.request();
     const unsubscribeReconnect = client.subscribeToReconnects?.(() => {
-      establishLive();
-      historyController.request();
+      if (unsubscribeLive) historyController.request();
+      else establishLive();
     });
     return () => {
       cancelled = true;

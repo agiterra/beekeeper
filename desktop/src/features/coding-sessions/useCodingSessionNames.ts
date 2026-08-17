@@ -69,7 +69,6 @@ export function useCodingSessionNames(
           }
         });
     };
-    load();
     void client
       .subscribeLive(
         buildCodingSessionNameFilter(stableChannelIds, 0),
@@ -77,7 +76,12 @@ export function useCodingSessionNames(
       )
       .then((unsubscribe) => {
         if (cancelled) unsubscribe();
-        else unsubscribeLive = unsubscribe;
+        else {
+          unsubscribeLive = unsubscribe;
+          // The live fence comes first; this history read then closes the
+          // channel-add window without missing a name published in between.
+          load();
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -86,6 +90,8 @@ export function useCodingSessionNames(
               ? error.message
               : "Failed to watch session names.",
           );
+          // Degrade to history-only discovery when live setup fails.
+          load();
         }
       });
     const unsubscribeReconnect = client.subscribeToReconnects?.(load);

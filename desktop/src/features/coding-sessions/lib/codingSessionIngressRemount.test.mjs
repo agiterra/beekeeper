@@ -331,6 +331,65 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   ipcHandlers.clear();
 });
 
+test("a channel added during create fences live before its first history backfill", async () => {
+  const { createEvent, metadataEvent, receiptEvent } =
+    await buildRelayHistory();
+  const useBothIngressHooks = await loadHooks();
+  const { act, queryClient, renderHook, settle, wrapper } =
+    await reactHarness();
+
+  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+
+  let relayHistory = [];
+  const historyCalls = [];
+  const pendingLive = [];
+  const client = {
+    fetchEvents: async (filter) => {
+      historyCalls.push(filter);
+      return relayHistory;
+    },
+    subscribeLive: (filter, onEvent) =>
+      new Promise((resolve) => {
+        pendingLive.push({
+          filter,
+          onEvent,
+          ready: () => resolve(() => {}),
+        });
+      }),
+    subscribeToReconnects: () => () => {},
+  };
+
+  const { result, unmount } = renderHook(() => useBothIngressHooks(client), {
+    wrapper,
+  });
+  await settle(1);
+
+  assert.equal(pendingLive.length, 2, "both live fences must start");
+  assert.equal(
+    historyCalls.length,
+    0,
+    "history must not run before the live fences are ready",
+  );
+
+  // The provider facts land while React is still wiring the newly-created
+  // transport channel into the global sidebar catalog. They are not delivered
+  // through the not-yet-ready live callbacks, so only a post-fence history
+  // read can close the gap.
+  relayHistory = [createEvent, receiptEvent, metadataEvent];
+  await act(async () => {
+    for (const subscription of pendingLive) subscription.ready();
+  });
+  await settle();
+
+  assert.equal(historyCalls.length, 2, "one post-fence read per ingress");
+  assert.equal(result.current.trusted.metadata.length, 1);
+  assert.equal(result.current.creates.observations.length, 1);
+
+  unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
+});
+
 test("a back-pressure CLOSED on the re-entry history REQ converges instead of latching", async () => {
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();

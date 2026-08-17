@@ -102,3 +102,38 @@ test("an accepted local rename updates every mounted name consumer without a liv
   first.unmount();
   second.unmount();
 });
+
+test("a newly-added channel backfills names only after its live fence is ready", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { codingSessionNameKey } = await import("./lib/codingSessionName.ts");
+  const { useCodingSessionNames } = await import("./useCodingSessionNames.ts");
+  const initial = await nameEvent("First session name", 1_800_000_010);
+  let relayHistory = [];
+  let historyCalls = 0;
+  let markLiveReady = () => {};
+  const client = {
+    fetchEvents: async () => {
+      historyCalls += 1;
+      return relayHistory;
+    },
+    subscribeLive: () =>
+      new Promise((resolve) => {
+        markLiveReady = () => resolve(() => {});
+      }),
+    subscribeToReconnects: () => () => {},
+  };
+  const { result, unmount } = renderHook(() =>
+    useCodingSessionNames([CHANNEL_ID], client),
+  );
+
+  await act(async () => {});
+  assert.equal(historyCalls, 0);
+
+  relayHistory = [initial];
+  await act(async () => markLiveReady());
+  const key = codingSessionNameKey(CHANNEL_ID, SESSION_REF, FOUNDER_PUBKEY);
+  assert.equal(historyCalls, 1);
+  assert.equal(result.current.names.get(key)?.content, "First session name");
+
+  unmount();
+});

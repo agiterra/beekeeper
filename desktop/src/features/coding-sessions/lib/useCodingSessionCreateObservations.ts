@@ -181,6 +181,10 @@ export function useCodingSessionCreateObservations(
           unsubscribeLive = unsubscribe;
           liveError = null;
           publish();
+          // Backfill only after live is fenced so a create/receipt emitted
+          // while this channel is entering the sidebar cannot fall between
+          // an early empty history read and a late subscription.
+          historyController.request();
         })
         .catch((error) => {
           liveSubscribePending = false;
@@ -189,15 +193,15 @@ export function useCodingSessionCreateObservations(
               ? error.message
               : "Failed to subscribe to coding-session creates.";
           publish();
+          historyController.request();
         });
     };
 
     publish();
     establishLive();
-    historyController.request();
     const unsubscribeReconnect = client.subscribeToReconnects?.(() => {
-      establishLive();
-      historyController.request();
+      if (unsubscribeLive) historyController.request();
+      else establishLive();
     });
     return () => {
       cancelled = true;
