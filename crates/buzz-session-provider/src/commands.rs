@@ -24,7 +24,8 @@ use buzz_core::coding_session_lifecycle_command::{
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::payload::{
-    PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_LIMIT, UNAUTHORIZED_OPERATOR,
+    PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION,
+    UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
 };
 use crate::state::StateStore;
 
@@ -228,13 +229,30 @@ pub fn decide_lifecycle(
             return LifecycleDecision::Ignore(Ignored::NotAddressed);
         }
         let Some(record) = context.state.session(&session.session_id) else {
-            return LifecycleDecision::Ignore(Ignored::UnknownTarget);
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: UNKNOWN_TARGET,
+                message: "this provider has no record of the addressed execution".into(),
+            };
         };
         if record.channel_id != channel_id || record.driver != session.driver {
-            return LifecycleDecision::Ignore(Ignored::UnknownTarget);
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: UNKNOWN_TARGET,
+                message:
+                    "the addressed execution does not belong to this channel and provider runtime"
+                        .into(),
+            };
         }
         if record.generation != session.generation {
-            return LifecycleDecision::Ignore(Ignored::StaleGeneration);
+            return LifecycleDecision::Fail {
+                command_id: payload.command_id,
+                code: STALE_GENERATION,
+                message: format!(
+                    "the addressed execution generation {} is stale; the current generation is {}",
+                    session.generation, record.generation
+                ),
+            };
         }
         if !operator_owns_session(record, context.operator_pubkey) {
             return LifecycleDecision::Fail {
@@ -246,7 +264,11 @@ pub fn decide_lifecycle(
 
         return match &payload.action {
             CodingSessionLifecycleAction::SessionResume { .. } if record.closed => {
-                LifecycleDecision::Ignore(Ignored::SessionClosed)
+                LifecycleDecision::Fail {
+                    command_id: payload.command_id,
+                    code: SESSION_CLOSED,
+                    message: "the addressed execution was already durably stopped".into(),
+                }
             }
             CodingSessionLifecycleAction::SessionResume { .. } => {
                 LifecycleDecision::Resume(ResumePlan {
@@ -922,15 +944,137 @@ mod tests {
             ),
             LifecycleDecision::Stop(StopPlan { target, .. }) if target.generation == 1
         ));
+        for (action, command_id) in [
+            ("session.resume", "resume-stale"),
+            ("session.stop", "stop-stale"),
+        ] {
+            match decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content(action, command_id, "s1", 2),
+            ) {
+                LifecycleDecision::Fail {
+                    command_id: actual_command_id,
+                    code,
+                    message,
+                } => {
+                    assert_eq!(actual_command_id, command_id);
+                    assert_eq!(code, STALE_GENERATION);
+                    assert_eq!(
+                        message,
+                        "the addressed execution generation 2 is stale; the current generation is 1"
+                    );
+                }
+                other => panic!("expected a stale-generation receipt, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn addressed_unknown_lifecycle_targets_fail_loudly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let projects = ProjectsFile::default();
+        let context = ctx(&state, &projects, 1_000);
+
+        for (action, command_id) in [
+            ("session.resume", "resume-unknown"),
+            ("session.stop", "stop-unknown"),
+        ] {
+            match decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content(action, command_id, "missing", 1),
+            ) {
+                LifecycleDecision::Fail {
+                    command_id: actual_command_id,
+                    code,
+                    message,
+                } => {
+                    assert_eq!(actual_command_id, command_id);
+                    assert_eq!(code, UNKNOWN_TARGET);
+                    assert_eq!(
+                        message,
+                        "this provider has no record of the addressed execution"
+                    );
+                }
+                other => panic!("expected an unknown-target receipt, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn target_refusals_do_not_override_addressing_dedupe_or_horizon_silence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .consume_command("stop-replayed", 900)
+            .expect("consume command");
+        let projects = ProjectsFile::default();
+        let context = ctx(&state, &projects, 1_000);
+
+        let other_instance =
+            lifecycle_target_content("session.stop", "stop-other-instance", "missing", 1)
+                .replace("\"instance-1\"", "\"instance-2\"");
+        assert_eq!(
+            decide_lifecycle(&context, Uuid::nil(), 1_000, &other_instance),
+            LifecycleDecision::Ignore(Ignored::NotAddressed)
+        );
         assert_eq!(
             decide_lifecycle(
                 &context,
                 Uuid::nil(),
                 1_000,
-                &lifecycle_target_content("session.resume", "resume-stale", "s1", 2),
+                &lifecycle_target_content("session.stop", "stop-replayed", "missing", 1),
             ),
-            LifecycleDecision::Ignore(Ignored::StaleGeneration)
+            LifecycleDecision::Ignore(Ignored::AlreadyConsumed)
         );
+
+        let old_context = ctx(&state, &projects, 100_000);
+        assert_eq!(
+            decide_lifecycle(
+                &old_context,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-old", "missing", 1),
+            ),
+            LifecycleDecision::Ignore(Ignored::PastHorizon)
+        );
+    }
+
+    #[test]
+    fn a_target_with_the_wrong_channel_or_driver_fails_as_unknown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .insert_session(session("s1", dir.path()))
+            .expect("insert");
+        let projects = ProjectsFile::default();
+        let wrong_channel = Uuid::new_v4();
+        match decide_lifecycle(
+            &ctx(&state, &projects, 1_000),
+            wrong_channel,
+            1_000,
+            &lifecycle_target_content("session.stop", "stop-wrong-channel", "s1", 1),
+        ) {
+            LifecycleDecision::Fail { code, .. } => assert_eq!(code, UNKNOWN_TARGET),
+            other => panic!("expected an unknown-target receipt, got {other:?}"),
+        }
+
+        let mut wrong_driver = session("s2", dir.path());
+        wrong_driver.driver = "codex-acp".into();
+        state.insert_session(wrong_driver).expect("insert");
+        match decide_lifecycle(
+            &ctx(&state, &projects, 1_000),
+            Uuid::nil(),
+            1_000,
+            &lifecycle_target_content("session.resume", "resume-wrong-driver", "s2", 1),
+        ) {
+            LifecycleDecision::Fail { code, .. } => assert_eq!(code, UNKNOWN_TARGET),
+            other => panic!("expected an unknown-target receipt, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1088,15 +1232,26 @@ mod tests {
         stopped.closed = true;
         state.insert_session(stopped).expect("insert");
         let projects = ProjectsFile::default();
-        assert_eq!(
-            decide_lifecycle(
-                &ctx(&state, &projects, 1_000),
-                Uuid::nil(),
-                1_000,
-                &lifecycle_target_content("session.resume", "resume-1", "s1", 1),
-            ),
-            LifecycleDecision::Ignore(Ignored::SessionClosed)
-        );
+        match decide_lifecycle(
+            &ctx(&state, &projects, 1_000),
+            Uuid::nil(),
+            1_000,
+            &lifecycle_target_content("session.resume", "resume-1", "s1", 1),
+        ) {
+            LifecycleDecision::Fail {
+                command_id,
+                code,
+                message,
+            } => {
+                assert_eq!(command_id, "resume-1");
+                assert_eq!(code, SESSION_CLOSED);
+                assert_eq!(
+                    message,
+                    "the addressed execution was already durably stopped"
+                );
+            }
+            other => panic!("expected a session-closed receipt, got {other:?}"),
+        }
     }
 
     #[test]

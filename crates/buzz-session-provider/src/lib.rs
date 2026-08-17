@@ -3020,6 +3020,76 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn addressed_lifecycle_target_failures_publish_and_dedupe_receipts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+        let record = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        let session_id = record.session_id.clone();
+        let target = record.target(&provider.config.instance_id);
+        provider.state.insert_session(record).expect("insert");
+
+        let mut unknown_target = target.clone();
+        unknown_target.session_id = Uuid::new_v4().to_string();
+        let unknown = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "stop-unknown",
+            "session.stop",
+            &unknown_target,
+        );
+
+        let mut stale_target = target.clone();
+        stale_target.generation += 1;
+        let stale = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "stop-stale",
+            "session.stop",
+            &stale_target,
+        );
+
+        provider
+            .state
+            .update_session(&session_id, |record| record.closed = true)
+            .expect("close record");
+        let closed = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "resume-closed",
+            "session.resume",
+            &target,
+        );
+
+        for event in [&unknown, &stale, &closed, &unknown] {
+            provider
+                .handle_command_event(channel_id, event)
+                .await
+                .expect("handle refusal");
+        }
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 3, "the replayed refusal must be deduped");
+        for (command_id, code) in [
+            ("stop-unknown", payload::UNKNOWN_TARGET),
+            ("stop-stale", payload::STALE_GENERATION),
+            ("resume-closed", payload::SESSION_CLOSED),
+        ] {
+            let receipt = receipts
+                .iter()
+                .find(|receipt| receipt["commandId"] == command_id)
+                .expect("failure receipt");
+            assert_eq!(receipt["status"], "failed");
+            assert_eq!(receipt["error"]["code"], code);
+            assert!(provider.state().is_command_consumed(command_id));
+        }
+    }
+
     /// The freshness proof for A5: a grant accepted *after* the session
     /// started is honored on the live subscription path — no provider
     /// restart — while stop/resume stay owner-only for the same grantee.

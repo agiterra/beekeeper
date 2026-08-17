@@ -51,6 +51,12 @@ pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 pub const GENESIS_NOT_FOUND: &str = "GENESIS_NOT_FOUND";
 /// The command signer is not authorized to operate the addressed session.
 pub const UNAUTHORIZED_OPERATOR: &str = "UNAUTHORIZED_OPERATOR";
+/// The addressed provider has no execution matching the requested target.
+pub const UNKNOWN_TARGET: &str = "UNKNOWN_TARGET";
+/// The command addressed a superseded generation of an existing execution.
+pub const STALE_GENERATION: &str = "STALE_GENERATION";
+/// The addressed execution was already durably stopped.
+pub const SESSION_CLOSED: &str = "SESSION_CLOSED";
 
 /// Lifecycle outcome for exactly one create, resume, or stop command (kind 44224).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
