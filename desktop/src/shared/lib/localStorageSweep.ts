@@ -53,6 +53,11 @@ export const LOCAL_STORAGE_SWEEP_RULES: readonly LocalStorageSweepRule[] = [
   { keyPrefix: "buzz-sidebar-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-timeline-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-user-labels.v1:", maxAgeMs: 14 * DAY_MS },
+  // Session-shelf signed-event caches, keyed per relay+viewer
+  // (features/coding-sessions/lib/codingSessionShelfCache.ts). Repaintable:
+  // events are re-verified on read, and sweeping only costs one initial
+  // Sessions/Settled paint.
+  { keyPrefix: "buzz.codingSessions.shelf.v1:", maxAgeMs: 14 * DAY_MS },
   // A durable coding-session create transaction exists to stop a *duplicate*
   // session, so it must outlive a crash and a reload. It must not outlive the
   // question it answers: after a week the create either happened or did not,

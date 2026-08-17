@@ -593,6 +593,43 @@ export class TrustedCodingSessionIngressStore {
     );
   }
 
+  /**
+   * The bounded raw-event set a sidebar shelf cache persists: the newest
+   * accepted 44223 metadata event per (channel, target, signer). Transcripts
+   * are deliberately excluded — the shelf needs status/title/projectRef/
+   * sessionRef, all carried by metadata, and transcript retention is
+   * unbounded in a way a localStorage cache cannot afford. Like the pop-out
+   * bootstrap, these are signed bytes: a rehydrating store re-runs the full
+   * classifier (signature, authority, channel scope) rather than trusting a
+   * projection.
+   */
+  retainedShelfEvents(): RelayEvent[] {
+    const out: RelayEvent[] = [];
+    for (const bucket of this.metadata.values()) {
+      const signerPubkeys = new Set(
+        [...bucket.records.values()].map((record) => record.signerPubkey),
+      );
+      for (const signerPubkey of signerPubkeys) {
+        const selected = resolveNewestMetadata(bucket.records, signerPubkey);
+        if (!selected.value) continue;
+        const raw = this.rawEvents
+          .get(
+            generationKey({
+              channelId: bucket.channelId,
+              targetKey: bucket.targetKey,
+              signerPubkey,
+            }),
+          )
+          ?.get(selected.value.eventId);
+        if (raw) out.push(raw);
+      }
+    }
+    return out.sort(
+      (left, right) =>
+        left.created_at - right.created_at || left.id.localeCompare(right.id),
+    );
+  }
+
   resolveLifecycle(
     channelId: string,
     commandId: string,

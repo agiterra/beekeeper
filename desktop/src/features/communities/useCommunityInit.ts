@@ -36,6 +36,7 @@ import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessions/lib/codingSessionBootstrap";
+import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 
 import {
@@ -80,6 +81,10 @@ async function resetCommunityState({
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
   resetCodingSessionPopoutBootstrapCache();
+  // Pending create/stop overlays are relay-scoped commands; carrying them
+  // across a community switch would synthesize rows for sessions the new
+  // relay never saw.
+  resetPendingCodingSessionLifecycle();
   // Which coding-session conversation lanes are openable is per-relay: keeping
   // the old community's refs would hide chat in the new one (channel ids are
   // UUIDs, but a hidden message with no lane to render in is the one outcome

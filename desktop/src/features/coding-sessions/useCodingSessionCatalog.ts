@@ -201,7 +201,12 @@ type TrustedRawEventReader = ReturnType<
 /** The trusted session catalog across every source channel. */
 export function useGlobalCodingSessionCatalog(
   channelIds: readonly string[],
-  options: { authorityMode?: "config" | "open" } = {},
+  options: {
+    authorityMode?: "config" | "open";
+    /** Shelf-cache localStorage key (`codingSessionShelfCacheKey`) — set by
+     * the sidebar so sessions paint before the relay answers. */
+    persistenceCacheKey?: string;
+  } = {},
 ): GlobalCodingSessionCatalogSnapshot {
   const trustedIngress = useTrustedCodingSessionIngress(
     channelIds,
@@ -210,6 +215,7 @@ export function useGlobalCodingSessionCatalog(
     defaultRelayClient,
     null,
     options.authorityMode ?? "config",
+    options.persistenceCacheKey,
   );
   return React.useMemo(
     () => ({
@@ -223,6 +229,7 @@ export function useGlobalCodingSessionCatalog(
       isLoading: trustedIngress.isLoading,
       errorMessage: trustedIngress.errorMessage,
       authorityErrorMessage: trustedIngress.authorityErrorMessage,
+      lifecycleFor: trustedIngress.lifecycleFor,
     }),
     [channelIds, trustedIngress],
   );
@@ -312,6 +319,10 @@ export function mergeTrustedCodingSessionIngress(
       metadataAuthorityPubkey: metadataEntry?.signerPubkey ?? null,
       lastEventAt: new Date(latestTimestamp).toISOString(),
       status: metadata?.status ?? inferTranscriptStatus(targetTranscripts),
+      // When the status itself was observed (44223 created_at, ms). Kept
+      // separate from lastEventAt (a max over both streams) so status
+      // derivation can compare metadata freshness against the transcript.
+      statusAt: metadataEntry ? metadataEntry.createdAt * 1000 : null,
       transcript,
       conflictCount: targetTranscripts.reduce(
         (count, entry) => count + entry.conflictCount,

@@ -9,6 +9,7 @@ import type {
   CodingSessionProviderCatalogProvider,
   TrustedCodingSessionProviderCatalog,
 } from "./codingSessionProviderCatalog";
+import type { CodingSessionWorkspaceStatus } from "./codingSessionTypes";
 
 export {
   formatCodingSessionProviderLabel,
@@ -370,6 +371,55 @@ export function newCodingSessionWaitKey(input: {
     default:
       return null;
   }
+}
+
+/**
+ * The header badge for the optimistic pending session screen.
+ *
+ * Optimism is the default — the signed create is durable and the provider
+ * almost always accepts — so the badge reads Working/Idle exactly as the real
+ * workspace will moments later. Only a definitive problem (publish failure,
+ * failed receipt, conflicting receipts) drops to "Status unknown", whose
+ * amber dot is the attention signal.
+ */
+export function pendingCodingSessionWorkspaceStatus(input: {
+  lifecycleState: string | null | undefined;
+  publishError: string | null;
+  hasInitialTurn: boolean;
+}): CodingSessionWorkspaceStatus {
+  if (
+    input.publishError !== null ||
+    input.lifecycleState === "failed" ||
+    input.lifecycleState === "conflict"
+  ) {
+    return { kind: "unknown", label: "Status unknown" };
+  }
+  return input.hasInitialTurn
+    ? { kind: "working", label: "Working" }
+    : { kind: "idle", label: "Idle" };
+}
+
+/**
+ * Whether "Retry this exact request" is actionable. Extracted so the pending
+ * session screen and the create form's edit view can never drift: retry is
+ * pointless while a publish or lifecycle read is in flight, once the session
+ * resolved, or after a stall (the relay already holds these exact bytes).
+ */
+export function canRetryNewCodingSessionCreate(input: {
+  isPublishing: boolean;
+  lifecycleIsLoading: boolean;
+  lifecycleErrorMessage: string | null;
+  lifecycleState: string | null | undefined;
+  stalled: boolean;
+}): boolean {
+  return !(
+    input.isPublishing ||
+    input.lifecycleIsLoading ||
+    input.lifecycleErrorMessage !== null ||
+    input.lifecycleState === "created" ||
+    input.lifecycleState === "created-with-failed-initial-turn" ||
+    input.stalled
+  );
 }
 
 /**

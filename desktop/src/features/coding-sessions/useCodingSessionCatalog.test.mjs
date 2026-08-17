@@ -98,6 +98,9 @@ test("a session is discoverable from metadata alone", () => {
   assert.deepEqual(session.commandTarget, TARGET);
   assert.deepEqual(session.transcript, []);
   assert.equal(session.lastEventAt, new Date(1_800_000_000_000).toISOString());
+  // The status's own observation time (metadata created_at, ms) — distinct
+  // from lastEventAt so recency-aware status derivation can compare streams.
+  assert.equal(session.statusAt, 1_800_000_000_000);
 });
 
 test("a session is discoverable from transcripts alone, with inferred status", () => {

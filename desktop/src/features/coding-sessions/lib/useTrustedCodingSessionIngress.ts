@@ -11,6 +11,11 @@ import {
 } from "@/shared/constants/kinds";
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
+  filterShelfCacheEventsToChannels,
+  readCodingSessionShelfCache,
+  writeCodingSessionShelfCache,
+} from "./codingSessionShelfCache";
+import {
   buildCodingSessionIngressAuthorityIdentity,
   type CodingSessionIngressAuthority,
   OPEN_CODING_SESSION_INGRESS_AUTHORITY,
@@ -59,6 +64,19 @@ export type TrustedCodingSessionIngressHookSnapshot =
      * a projection it cannot re-check.
      */
     retainedRawEvents: (scope: CodingSessionGenerationScope) => RelayEvent[];
+    /**
+     * Resolve one create command's lifecycle from this store's verified
+     * receipts, addressable by exactly (channel, commandId, authority). The
+     * multi-channel global catalog ingests 44224 receipts but its snapshot
+     * never surfaced them — this closure is how the sidebar's optimistic
+     * pending rows learn their create was accepted (or failed) without a
+     * second store or subscription.
+     */
+    lifecycleFor: (
+      channelId: string,
+      commandId: string,
+      providerAuthorityPubkey: string,
+    ) => CodingSessionLifecycleResolution | null;
   };
 
 /**
@@ -74,6 +92,8 @@ export type TrustedCodingSessionIngressBootstrap = {
 };
 
 const NO_RETAINED_RAW_EVENTS = (): RelayEvent[] => [];
+const NO_LIFECYCLE_RESOLUTION = (): CodingSessionLifecycleResolution | null =>
+  null;
 
 /**
  * One native filter covers every coding-session kind.
@@ -132,6 +152,7 @@ function emptySnapshot(
     authorityErrorMessage: null,
     lifecycle,
     retainedRawEvents: NO_RETAINED_RAW_EVENTS,
+    lifecycleFor: NO_LIFECYCLE_RESOLUTION,
   };
 }
 
@@ -148,6 +169,15 @@ export function useTrustedCodingSessionIngress(
   client: CodingSessionIngressClient = defaultRelayClient,
   bootstrap: TrustedCodingSessionIngressBootstrap | null = null,
   authorityMode: "config" | "open" = "config",
+  /**
+   * localStorage key for the persisted shelf cache
+   * (`codingSessionShelfCacheKey`). When set, a fresh store seeds itself from
+   * the cached signed metadata events (fully re-verified) before the relay
+   * answers, and every published snapshot schedules a debounced rewrite.
+   * Only the sidebar's global catalog passes this — per-channel workspace
+   * catalogs are cheap to refetch and stay uncached.
+   */
+  persistenceCacheKey: string | undefined = undefined,
 ): TrustedCodingSessionIngressHookSnapshot {
   const stableChannelIdentity = [...new Set(channelIds)].sort().join("\u0000");
   const stableChannelIds = React.useMemo(
@@ -212,6 +242,25 @@ export function useTrustedCodingSessionIngress(
         authority,
       );
     }
+    // Persisted shelf cache: the same head-start seam, fed from localStorage.
+    // Signed bytes only — the classifier re-verifies signature, authority,
+    // and channel scope, so a stale or tampered cache cannot inject rows.
+    // Pre-filtering to the current channel set keeps out-of-scope events from
+    // registering as malformed diagnostics. Idempotent across effect re-runs:
+    // the store memoizes verdicts per event id.
+    if (
+      persistenceCacheKey &&
+      authority.state !== "invalid" &&
+      stableChannelIds.length > 0
+    ) {
+      const cached = filterShelfCacheEventsToChannels(
+        readCodingSessionShelfCache(persistenceCacheKey),
+        stableChannelIds,
+      );
+      if (cached.length > 0) {
+        store.ingestRelayEvents(cached, stableChannelIds, authority);
+      }
+    }
     const resolveLifecycle = (): CodingSessionLifecycleResolution | null =>
       commandId && stableChannelIds.length === 1
         ? isExactProviderAuthorityPubkey(providerAuthorityPubkey)
@@ -258,6 +307,21 @@ export function useTrustedCodingSessionIngress(
     let historyLoading = false;
     let historyError: string | null = null;
     let liveError: string | null = null;
+    let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Trailing-debounced cache rewrite: publish() fires per live event, and
+    // the retained-shelf selection walks every metadata bucket, so the write
+    // coalesces bursts rather than serializing on each event.
+    const schedulePersist = () => {
+      if (!persistenceCacheKey || persistTimer !== null) return;
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        writeCodingSessionShelfCache(
+          persistenceCacheKey,
+          store.retainedShelfEvents(),
+        );
+      }, 1_000);
+    };
 
     const publish = () => {
       if (cancelled) return;
@@ -274,7 +338,16 @@ export function useTrustedCodingSessionIngress(
         authorityErrorMessage: null,
         lifecycle: resolveLifecycle(),
         retainedRawEvents: (scope) => store.retainedRawEvents(scope),
+        lifecycleFor: (forChannelId, forCommandId, forAuthorityPubkey) =>
+          isExactProviderAuthorityPubkey(forAuthorityPubkey)
+            ? store.resolveLifecycle(
+                forChannelId,
+                forCommandId,
+                forAuthorityPubkey,
+              )
+            : null,
       });
+      schedulePersist();
     };
 
     const historyController = createCodingSessionDiscoveryController({
@@ -368,6 +441,15 @@ export function useTrustedCodingSessionIngress(
       historyController.cancel();
       unsubscribeLive?.();
       unsubscribeReconnect?.();
+      if (persistTimer !== null) {
+        clearTimeout(persistTimer);
+        // Flush the pending rewrite so a teardown (scope change, unmount)
+        // never loses the last events the store verified.
+        writeCodingSessionShelfCache(
+          persistenceCacheKey,
+          store.retainedShelfEvents(),
+        );
+      }
     };
   }, [
     authority,
@@ -376,6 +458,7 @@ export function useTrustedCodingSessionIngress(
     client,
     commandId,
     isConfigLoading,
+    persistenceCacheKey,
     providerAuthorityPubkey,
     requestIdentity,
     stableChannelIds,

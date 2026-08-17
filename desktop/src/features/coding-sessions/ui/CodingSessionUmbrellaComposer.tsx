@@ -266,6 +266,7 @@ function ExecutionComposer({
   const status = deriveCodingSessionWorkspaceStatus(
     record.transcript,
     record.status,
+    record.statusAt,
   );
   const isWorking = status.kind === "working";
   const runtime = record.runtime ?? record.provider;

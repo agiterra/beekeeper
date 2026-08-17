@@ -125,12 +125,83 @@ const IDLE_STATUSES = new Set([
   "stopped",
 ]);
 
+/**
+ * Map the provider's wire status (44223 metadata) onto the header's honest
+ * states. The single wire→header mapping, shared by the umbrella header and
+ * the transcript-first fallback below.
+ */
+export function codingSessionWireWorkspaceStatus(
+  status: CodingSessionCatalogRecord["status"] | undefined,
+): CodingSessionWorkspaceStatus {
+  if (status === "running" || status === "starting") {
+    return { kind: "working", label: "Working" };
+  }
+  if (status === "stopped") {
+    return { kind: "ended", label: "Ended" };
+  }
+  if (status === undefined || status === "unknown") {
+    return { kind: "unknown", label: "Status unknown" };
+  }
+  return { kind: "idle", label: "Idle" };
+}
+
+/** A lifecycle item that closes a turn. */
+function isTurnTerminator(
+  item: CodingSessionCatalogRecord["transcript"][number],
+): boolean {
+  return (
+    item.type === "lifecycle" &&
+    (item.title === "Turn result" || item.title === "Interrupted")
+  );
+}
+
 export function deriveCodingSessionWorkspaceStatus(
   transcript: CodingSessionCatalogRecord["transcript"],
   lifecycleStatus?: CodingSessionCatalogRecord["status"],
+  statusAt?: CodingSessionCatalogRecord["statusAt"],
 ): CodingSessionWorkspaceStatus {
   if (lifecycleStatus === "stopped") {
     return { kind: "ended", label: "Ended" };
+  }
+  const newest = transcript[transcript.length - 1];
+  // Wire freshness: when the newest 44223 metadata is NEWER than the newest
+  // transcript item, the metadata is the later word. TurnStarted publishes
+  // `running` before any transcript item of that turn exists, and a provider
+  // that died mid-turn reports `disconnected`/`failed` the same way — both
+  // states the transcript alone can never show.
+  if (
+    statusAt !== null &&
+    statusAt !== undefined &&
+    lifecycleStatus !== undefined &&
+    (newest === undefined || statusAt > Date.parse(newest.timestamp))
+  ) {
+    return codingSessionWireWorkspaceStatus(lifecycleStatus);
+  }
+  // Open-turn test: normal turns emit NO lifecycle "Status" items — a turn
+  // is user/assistant/tool items closed by one "Turn result". So while a
+  // turn streams, the newest LIFECYCLE item is still the previous turn's
+  // terminator and a lifecycle-only scan would report Idle forever. A newest
+  // item that is not itself a terminator and belongs to a different turn
+  // than the last terminator (or precedes any terminator at all) means a
+  // turn is in flight.
+  if (newest !== undefined && !isTurnTerminator(newest)) {
+    let lastTerminator:
+      | CodingSessionCatalogRecord["transcript"][number]
+      | null = null;
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+      if (isTurnTerminator(transcript[index])) {
+        lastTerminator = transcript[index];
+        break;
+      }
+    }
+    const newestTurnId = newest.turnId ?? null;
+    if (
+      lastTerminator === null ||
+      (newestTurnId !== null &&
+        newestTurnId !== (lastTerminator.turnId ?? null))
+    ) {
+      return { kind: "working", label: "Working" };
+    }
   }
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const item = transcript[index];
@@ -149,5 +220,7 @@ export function deriveCodingSessionWorkspaceStatus(
       return { kind: "idle", label: "Idle" };
     }
   }
-  return { kind: "unknown", label: "Status unknown" };
+  // The transcript said nothing decisive — fall back to the provider's
+  // signed metadata status (published `idle`/`running` at create time).
+  return codingSessionWireWorkspaceStatus(lifecycleStatus);
 }

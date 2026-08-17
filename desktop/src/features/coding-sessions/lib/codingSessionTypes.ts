@@ -1,5 +1,6 @@
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
+import type { CodingSessionLifecycleResolution } from "./codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaCreateObservation } from "./codingSessionUmbrellaModel";
 
 export type CodingSessionStatus =
@@ -34,6 +35,13 @@ export type CodingSessionCatalogRecord = {
   metadataAuthorityPubkey: string | null;
   lastEventAt: string;
   status: CodingSessionStatus;
+  /**
+   * When `status` was observed — the newest 44223 metadata event's
+   * `created_at` in ms — or null when no metadata has arrived. Distinct from
+   * `lastEventAt`, which is a max over metadata AND transcript streams and
+   * says nothing about which stream is fresher.
+   */
+  statusAt: number | null;
   transcript: TranscriptItem[];
   conflictCount: number;
   commandTarget: CodingSessionCommandTarget | null;
@@ -122,6 +130,17 @@ export type GlobalCodingSessionCatalogSnapshot = {
   isLoading: boolean;
   errorMessage: string | null;
   authorityErrorMessage: string | null;
+  /**
+   * Resolve one create command's lifecycle from the catalog's verified
+   * receipts, by (channel, commandId, provider authority). Optional: only the
+   * live ingress-backed catalog provides it; fixtures and derived snapshots
+   * may omit it.
+   */
+  lifecycleFor?: (
+    channelId: string,
+    commandId: string,
+    providerAuthorityPubkey: string,
+  ) => CodingSessionLifecycleResolution | null;
 };
 
 export type CodingSessionWorkspaceStatus =

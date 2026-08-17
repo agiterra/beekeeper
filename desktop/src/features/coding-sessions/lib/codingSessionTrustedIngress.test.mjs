@@ -1147,3 +1147,62 @@ test("unreadable metadata for the awaited target trips the drift counter", () =>
     0,
   );
 });
+
+test("retainedShelfEvents selects only the newest accepted metadata per session", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  const older = metadataEvent(metadata({ status: "running" }), {
+    createdAt: 1_800_000_001,
+  });
+  const newer = metadataEvent(metadata({ status: "idle" }), {
+    createdAt: 1_800_000_050,
+  });
+  const otherSession = metadataEvent(metadata({ session: OTHER_TARGET }), {
+    createdAt: 1_800_000_002,
+  });
+  store.ingestRelayEvents(
+    [
+      receiptEvent(),
+      older,
+      newer,
+      otherSession,
+      transcriptEvent(transcript(), { createdAt: 1_800_000_003 }),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+
+  const shelf = store.retainedShelfEvents();
+  assert.deepEqual(
+    shelf.map((event) => event.id).sort(),
+    [newer.id, otherSession.id].sort(),
+    "newest metadata per session only — no receipts, no transcripts, no stale metadata",
+  );
+});
+
+test("a shelf cache rehydrates through the classifier and drops rejected authors", () => {
+  const source = new TrustedCodingSessionIngressStore();
+  source.ingestRelayEvents([metadataEvent()], [CHANNEL_ID], AUTHORITY);
+  const cached = source.retainedShelfEvents();
+  assert.equal(cached.length, 1);
+
+  // Same authority: the cached signed bytes rebuild the same metadata view.
+  const rehydrated = new TrustedCodingSessionIngressStore();
+  rehydrated.ingestRelayEvents(cached, [CHANNEL_ID], AUTHORITY);
+  const snapshot = rehydrated.snapshot([CHANNEL_ID]);
+  assert.equal(snapshot.metadata.length, 1);
+  assert.equal(snapshot.metadata[0].metadata.status, "running");
+
+  // An authority that does not allow the signer rejects the cache instead of
+  // trusting it — a stale or cross-identity cache cannot inject rows.
+  const hostile = new TrustedCodingSessionIngressStore();
+  hostile.ingestRelayEvents(
+    cached,
+    [CHANNEL_ID],
+    resolveCodingSessionIngressAuthority([
+      { pubkey: getPublicKey(OTHER_SECRET), label: "someone else" },
+    ]),
+  );
+  const rejected = hostile.snapshot([CHANNEL_ID]);
+  assert.equal(rejected.metadata.length, 0);
+  assert.equal(rejected.rejectedAuthorCount, 1);
+});

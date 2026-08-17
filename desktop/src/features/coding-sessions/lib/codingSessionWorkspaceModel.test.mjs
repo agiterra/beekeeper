@@ -261,3 +261,148 @@ test("workspace status derives from provider-neutral transcript lifecycle", () =
     label: "Ended",
   });
 });
+
+test("empty transcript falls back to the provider's wire status", () => {
+  // The user-visible bug: a brand-new session already has signed 44223
+  // metadata saying `idle`, but the header showed "Status unknown" until the
+  // first turn produced a transcript item.
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "idle"), {
+    kind: "idle",
+    label: "Idle",
+  });
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "running"), {
+    kind: "working",
+    label: "Working",
+  });
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "starting"), {
+    kind: "working",
+    label: "Working",
+  });
+  assert.deepEqual(deriveCodingSessionWorkspaceStatus([], "unknown"), {
+    kind: "unknown",
+    label: "Status unknown",
+  });
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus([], "waiting_for_input"),
+    { kind: "idle", label: "Idle" },
+  );
+});
+
+test("transcript lifecycle wins over stale wire status", () => {
+  // Metadata still claims `running` after the turn's result item landed —
+  // the signed transcript is fresher and the header must settle to Idle.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        {
+          id: "result-1",
+          type: "lifecycle",
+          renderClass: "status",
+          title: "Turn result",
+          text: "Done",
+          timestamp: "2026-07-30T12:00:00.000Z",
+        },
+      ],
+      "running",
+    ),
+    { kind: "idle", label: "Idle" },
+  );
+});
+
+test("a streaming turn after an earlier result reads Working, and settles back", () => {
+  const turnOneResult = {
+    id: "result-1",
+    type: "lifecycle",
+    renderClass: "status",
+    title: "Turn result",
+    text: "Done",
+    timestamp: "2026-07-30T12:00:00.000Z",
+    turnId: "turn-1",
+  };
+  // Turn 2 streams only non-lifecycle items — no "Status" markers exist on
+  // the normal path, which is exactly why the lifecycle-only scan got stuck.
+  const turnTwoStreaming = [
+    turnOneResult,
+    {
+      id: "msg-2",
+      type: "message",
+      renderClass: "message",
+      role: "user",
+      title: "Prompt",
+      text: "next task",
+      timestamp: "2026-07-30T12:05:00.000Z",
+      turnId: "turn-2",
+    },
+  ];
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(turnTwoStreaming, "running"),
+    { kind: "working", label: "Working" },
+  );
+  // Turn 2's terminator closes it again.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        ...turnTwoStreaming,
+        { ...turnOneResult, id: "result-2", turnId: "turn-2" },
+      ],
+      "idle",
+    ),
+    { kind: "idle", label: "Idle" },
+  );
+});
+
+test("an initial turn with no terminator yet reads Working", () => {
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        {
+          id: "msg-1",
+          type: "message",
+          renderClass: "message",
+          role: "user",
+          title: "Prompt",
+          text: "go",
+          timestamp: "2026-07-30T12:00:00.000Z",
+          turnId: "turn-1",
+        },
+      ],
+      "running",
+    ),
+    { kind: "working", label: "Working" },
+  );
+});
+
+test("metadata newer than the whole transcript speaks for the session", () => {
+  const transcript = [
+    {
+      id: "result-1",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Turn result",
+      text: "Done",
+      timestamp: "2026-07-30T12:00:00.000Z",
+      turnId: "turn-1",
+    },
+  ];
+  const afterTranscript = Date.parse("2026-07-30T12:01:00.000Z");
+  // TurnStarted publishes `running` before any turn-2 transcript item exists.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(transcript, "running", afterTranscript),
+    { kind: "working", label: "Working" },
+  );
+  // A provider that died mid-turn reports it the same way.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      transcript,
+      "disconnected",
+      afterTranscript,
+    ),
+    { kind: "idle", label: "Idle" },
+  );
+  // Stale metadata (older than the transcript) never overrides the scan.
+  const beforeTranscript = Date.parse("2026-07-30T11:00:00.000Z");
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(transcript, "running", beforeTranscript),
+    { kind: "idle", label: "Idle" },
+  );
+});

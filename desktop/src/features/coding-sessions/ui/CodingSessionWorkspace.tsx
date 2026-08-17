@@ -254,6 +254,7 @@ function ReadyCodingSessionWorkspace({
   const status = deriveCodingSessionWorkspaceStatus(
     session.transcript,
     session.status,
+    session.statusAt,
   );
   const taskModel = React.useMemo(
     () => deriveCodingSessionTaskModel(session.transcript),

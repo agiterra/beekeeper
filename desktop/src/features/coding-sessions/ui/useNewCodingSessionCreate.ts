@@ -8,6 +8,7 @@ import {
   createCodingSessionSessionRef,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { publishCodingSessionGenesis } from "@/features/coding-sessions/lib/codingSessionGenesis";
+import { recordPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
 import {
@@ -349,6 +350,21 @@ export function useNewCodingSessionCreate({
       setDurabilityError(result.persistenceError);
       setIsPublishing(false);
       setHostPhase("idle");
+      if (result.accepted) {
+        // The relay holds the signed create; show the session in the sidebar
+        // immediately instead of waiting for the provider's 44223 facts.
+        recordPendingCodingSessionLifecycle({
+          kind: "create",
+          channelId: exact.input.channelId,
+          commandId: exact.input.commandId,
+          sessionRef: exact.input.sessionRef ?? null,
+          title: exact.input.title,
+          projectRef: exact.input.projectRef,
+          providerAuthorityPubkey: exact.input.providerAuthorityPubkey,
+          hasInitialTurn: exact.input.initialTurn !== null,
+          recordedAt: Date.now(),
+        });
+      }
     },
     [],
   );

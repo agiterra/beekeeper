@@ -30,6 +30,7 @@ import type { CodingSessionGoal } from "@/features/coding-sessions/lib/codingSes
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { codingSessionWireWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
@@ -664,16 +665,7 @@ export function buildUmbrellaTurnBlockHandoff(input: {
 export function umbrellaWorkspaceStatus(
   umbrella: Pick<CodingSessionUmbrellaRecord, "status">,
 ): CodingSessionWorkspaceStatus {
-  if (umbrella.status === "running" || umbrella.status === "starting") {
-    return { kind: "working", label: "Working" };
-  }
-  if (umbrella.status === "unknown") {
-    return { kind: "unknown", label: "Status unknown" };
-  }
-  if (umbrella.status === "stopped") {
-    return { kind: "ended", label: "Ended" };
-  }
-  return { kind: "idle", label: "Idle" };
+  return codingSessionWireWorkspaceStatus(umbrella.status);
 }
 
 /** The exact `cs-target` key of a block's stream, when the record has one. */

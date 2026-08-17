@@ -35,6 +35,7 @@ export function resolveChannelCodingSessionIngress(input: {
     status: deriveCodingSessionWorkspaceStatus(
       session.transcript,
       session.status,
+      session.statusAt,
     ),
   }));
 }

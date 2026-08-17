@@ -806,3 +806,63 @@ test("schema drift outranks the stall clock", () => {
   assert.equal(status.tone, "destructive");
   assert.match(status.message, /format this app does not recognize/);
 });
+
+test("pending workspace status is optimistic until a definitive failure", async () => {
+  const { pendingCodingSessionWorkspaceStatus } = await import(
+    "./newCodingSessionModel.ts"
+  );
+  assert.deepEqual(
+    pendingCodingSessionWorkspaceStatus({
+      lifecycleState: "pending",
+      publishError: null,
+      hasInitialTurn: true,
+    }),
+    { kind: "working", label: "Working" },
+  );
+  assert.deepEqual(
+    pendingCodingSessionWorkspaceStatus({
+      lifecycleState: null,
+      publishError: null,
+      hasInitialTurn: false,
+    }),
+    { kind: "idle", label: "Idle" },
+  );
+  for (const definitive of [
+    { lifecycleState: "failed", publishError: null },
+    { lifecycleState: "conflict", publishError: null },
+    { lifecycleState: "pending", publishError: "relay rejected" },
+  ]) {
+    assert.deepEqual(
+      pendingCodingSessionWorkspaceStatus({
+        ...definitive,
+        hasInitialTurn: true,
+      }),
+      { kind: "unknown", label: "Status unknown" },
+    );
+  }
+});
+
+test("retry is actionable only while the exact bytes could still help", async () => {
+  const { canRetryNewCodingSessionCreate } = await import(
+    "./newCodingSessionModel.ts"
+  );
+  const ready = {
+    isPublishing: false,
+    lifecycleIsLoading: false,
+    lifecycleErrorMessage: null,
+    lifecycleState: "failed",
+    stalled: false,
+  };
+  assert.equal(canRetryNewCodingSessionCreate(ready), true);
+  for (const blocked of [
+    { ...ready, isPublishing: true },
+    { ...ready, lifecycleIsLoading: true },
+    { ...ready, lifecycleErrorMessage: "boom" },
+    { ...ready, lifecycleState: "created" },
+    { ...ready, lifecycleState: "created-with-failed-initial-turn" },
+    // A stalled wait means the relay already holds these bytes.
+    { ...ready, stalled: true },
+  ]) {
+    assert.equal(canRetryNewCodingSessionCreate(blocked), false);
+  }
+});

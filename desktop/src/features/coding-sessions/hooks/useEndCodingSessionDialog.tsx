@@ -12,6 +12,8 @@ import {
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
 
+import { buildCodingSessionTargetKey } from "../lib/codingSessionCommand";
+import { recordPendingCodingSessionLifecycle } from "../lib/codingSessionPendingLifecycle";
 import { publishCodingSessionStop } from "../lib/codingSessionLifecycleCommand";
 import {
   publishEndCodingSessionRequest,
@@ -49,6 +51,18 @@ export function useEndCodingSessionDialog(): {
       .then((result) => {
         if (!result.ok) {
           toast.error(result.errorMessage ?? "Failed to end the session.");
+          return;
+        }
+        // The signed stops are on the relay; file the row under Settled now
+        // instead of waiting for the provider's `stopped` metadata.
+        for (const stop of target.stops) {
+          recordPendingCodingSessionLifecycle({
+            kind: "stop",
+            channelId: target.channelId,
+            targetKey: buildCodingSessionTargetKey(stop.target),
+            providerAuthorityPubkey: stop.providerAuthorityPubkey,
+            recordedAt: Date.now(),
+          });
         }
       })
       .finally(() => {

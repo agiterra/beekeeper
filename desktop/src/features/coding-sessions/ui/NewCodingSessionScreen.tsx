@@ -11,6 +11,7 @@ import { cn } from "@/shared/lib/cn";
 import { useCodingSessionProviderCatalog } from "../useCodingSessionProviderCatalog";
 import { useNewCodingSessionDraft } from "../lib/newCodingSessionDraft";
 import {
+  canRetryNewCodingSessionCreate,
   codingSessionAuthRemediation,
   formatCodingSessionProviderLabel,
   isCodingSessionAuthFailure,
@@ -25,6 +26,7 @@ import {
 import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
+import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 
 /**
@@ -220,6 +222,58 @@ export function NewCodingSessionScreen({
     void navigate({ to: "/" });
   }, [canGoBack, navigate, router.history]);
 
+  // Once a transaction exists, the create is a session-in-waiting and renders
+  // as one (PendingCodingSessionScreen). The form returns only for the
+  // workdir-failure remediation, which needs its fields editable.
+  const [editRequested, setEditRequested] = React.useState(false);
+  React.useEffect(() => {
+    if (transaction === null) setEditRequested(false);
+  }, [transaction]);
+  const handleStartFresh = React.useCallback(() => {
+    setEditRequested(false);
+    startFresh();
+  }, [startFresh]);
+
+  // Pin the route's search param to the in-flight transaction's channel:
+  // the durable-create scope is the channel id, and a reload of
+  // `/coding-sessions/new` without it would re-derive a default channel and
+  // miss the pending transaction entirely.
+  React.useEffect(() => {
+    if (!transaction) return;
+    if (initialChannelId === transaction.input.channelId) return;
+    void navigate({
+      to: "/coding-sessions/new",
+      search: { channelId: transaction.input.channelId },
+      replace: true,
+    });
+  }, [initialChannelId, navigate, transaction]);
+
+  if (transaction !== null && !editRequested) {
+    const transactionChannelName =
+      memberChannels.find(
+        (channel) => channel.id === transaction.input.channelId,
+      )?.name ?? null;
+    return (
+      <PendingCodingSessionScreen
+        beginLoginWatch={beginLoginWatch}
+        channelName={transactionChannelName}
+        failedRuntime={failedRuntime}
+        hostPhase={hostPhase}
+        isPublishing={isPublishing}
+        lifecycle={lifecycle}
+        lifecycleErrorMessage={lifecycleErrorMessage}
+        lifecycleIsLoading={lifecycleIsLoading}
+        onBack={handleBack}
+        onEditRequest={() => setEditRequested(true)}
+        publishError={publishError ?? durabilityError}
+        retryExact={retryExact}
+        stalled={stalled}
+        startFresh={handleStartFresh}
+        transaction={transaction}
+      />
+    );
+  }
+
   return (
     <main
       className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-background"
@@ -359,7 +413,7 @@ export function NewCodingSessionScreen({
             <>
               <Button
                 data-testid="new-coding-session-start-fresh"
-                onClick={startFresh}
+                onClick={handleStartFresh}
                 type="button"
                 // Once a wait has stalled, "Start fresh" is the only real
                 // escape — promote it from ghost so it reads as the action.
@@ -370,15 +424,13 @@ export function NewCodingSessionScreen({
               <Button
                 data-testid="new-coding-session-retry"
                 disabled={
-                  isPublishing ||
-                  lifecycleIsLoading ||
-                  lifecycleErrorMessage !== null ||
-                  lifecycle?.state === "created" ||
-                  lifecycle?.state === "created-with-failed-initial-turn" ||
-                  // A stalled wait means the relay already accepted these
-                  // bytes; republishing them lands on the duplicate path and
-                  // changes nothing.
-                  stalled
+                  !canRetryNewCodingSessionCreate({
+                    isPublishing,
+                    lifecycleIsLoading,
+                    lifecycleErrorMessage,
+                    lifecycleState: lifecycle?.state ?? null,
+                    stalled,
+                  })
                 }
                 onClick={retryExact}
                 type="button"
