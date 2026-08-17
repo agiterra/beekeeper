@@ -331,19 +331,20 @@ export function NewCodingSessionScreen({
     startFresh();
   }, [startFresh]);
 
-  // Pin the route's search param to the in-flight transaction's channel:
-  // the durable-create scope is the channel id, and a reload of
+  // Pin the standalone route's search param to the in-flight transaction's
+  // channel: the durable-create scope is the channel id, and a reload of
   // `/coding-sessions/new` without it would re-derive a default channel and
-  // miss the pending transaction entirely.
+  // miss the pending transaction entirely. The project flow's scope comes
+  // from the path and needs no pinning.
   React.useEffect(() => {
-    if (!transaction) return;
+    if (!transaction || projectContext) return;
     if (initialChannelId === transaction.input.channelId) return;
     void navigate({
       to: "/coding-sessions/new",
       search: { channelId: transaction.input.channelId },
       replace: true,
     });
-  }, [initialChannelId, navigate, transaction]);
+  }, [initialChannelId, navigate, projectContext, transaction]);
 
   if (transaction !== null && !editRequested) {
     const transactionChannelName =
@@ -353,7 +354,7 @@ export function NewCodingSessionScreen({
     return (
       <PendingCodingSessionScreen
         beginLoginWatch={beginLoginWatch}
-        channelName={transactionChannelName}
+        channelName={projectContext ? null : transactionChannelName}
         failedRuntime={failedRuntime}
         hostPhase={hostPhase}
         isPublishing={isPublishing}
@@ -362,6 +363,7 @@ export function NewCodingSessionScreen({
         lifecycleIsLoading={lifecycleIsLoading}
         onBack={handleBack}
         onEditRequest={() => setEditRequested(true)}
+        projectName={projectContext?.projectName ?? null}
         publishError={publishError ?? durabilityError}
         retryExact={retryExact}
         stalled={stalled}

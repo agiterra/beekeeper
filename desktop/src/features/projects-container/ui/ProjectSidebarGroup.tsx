@@ -181,32 +181,38 @@ export function ProjectSidebarGroup({
     }
   }, [visibleStreamChannels, forumChannels, onMarkChannelRead]);
 
-  const children = React.useMemo(
-    () =>
-      buildProjectChildren({
-        codingSessions: (codingSessions ?? []).slice(
-          0,
-          PROJECT_SIDEBAR_SESSION_LIMIT,
-        ),
-        streamChannels: visibleStreamChannels,
-        forumChannels,
-        repos,
-        workflows: workflows ?? [],
-        agents,
-        shellSessions,
-        remoteTerminals,
-      }),
-    [
-      codingSessions,
-      visibleStreamChannels,
+  const children = React.useMemo(() => {
+    // Partition BEFORE capping: the cap exists to keep the sidebar short,
+    // not to let settled (or phantom) rows starve live work out of the
+    // Sessions shelf. Each section is capped independently; "View all"
+    // below keys off the uncapped total.
+    const allSessions = codingSessions ?? [];
+    const activeSessions = allSessions
+      .filter((entry) => entry.status.kind !== "ended")
+      .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
+    const settledSessions = allSessions
+      .filter((entry) => entry.status.kind === "ended")
+      .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
+    return buildProjectChildren({
+      codingSessions: [...activeSessions, ...settledSessions],
+      streamChannels: visibleStreamChannels,
       forumChannels,
       repos,
-      workflows,
+      workflows: workflows ?? [],
       agents,
       shellSessions,
       remoteTerminals,
-    ],
-  );
+    });
+  }, [
+    codingSessions,
+    visibleStreamChannels,
+    forumChannels,
+    repos,
+    workflows,
+    agents,
+    shellSessions,
+    remoteTerminals,
+  ]);
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
   // "Settled" is a statement of intent, not of activity: only a session the
@@ -389,8 +395,7 @@ export function ProjectSidebarGroup({
                     {settledSessionRows.map(renderRow)}
                   </ProjectChildSection>
                 ) : null}
-                {(codingSessions?.length ?? 0) >
-                PROJECT_SIDEBAR_SESSION_LIMIT ? (
+                {(codingSessions?.length ?? 0) > sessionRows.length ? (
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       className="text-2xs text-sidebar-foreground/55"

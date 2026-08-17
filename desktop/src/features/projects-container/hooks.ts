@@ -19,7 +19,16 @@ import {
   type Repository as CodeRepo,
 } from "@/features/projects/hooks";
 import {
+  applyPendingCodingSessionLifecycle,
+  clearPendingCodingSessionLifecycle,
+  PENDING_CODING_SESSION_LIFECYCLE_TTL_MS,
+  sweepExpiredPendingCodingSessionLifecycle,
+  usePendingCodingSessionLifecycle,
+} from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
+import { codingSessionShelfCacheKey } from "@/features/coding-sessions/lib/codingSessionShelfCache";
+import {
   bucketProjectCodingSessions,
+  compareProjectCodingSessionEntries,
   resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
   type ProjectCodingSessionShelfEntry,
@@ -384,10 +393,18 @@ export function useProjectCodingSessionBuckets(
     [channels],
   );
   const stableChannelIds = useStableArrayShallow(sessionChannelIds);
+  const { activeCommunity } = useCommunities();
+  const identityQuery = useIdentityQuery();
   // Channel membership is the read authority: every project member sees the
   // same session rows, whether or not they provisioned a provider themselves.
+  // The persisted shelf cache (identity-gated, signed events re-verified on
+  // read) lets Sessions/Settled paint before the relay answers.
   const catalog = useGlobalCodingSessionCatalog(stableChannelIds, {
     authorityMode: "open",
+    persistenceCacheKey: codingSessionShelfCacheKey(
+      activeCommunity?.relayUrl,
+      identityQuery.data?.pubkey?.toLowerCase(),
+    ),
   });
 
   const placementIndex = React.useMemo(() => {
@@ -411,17 +428,64 @@ export function useProjectCodingSessionBuckets(
     [channels],
   );
 
-  return React.useMemo(() => {
+  // Optimistic overlay: the user's own just-published 44221 creates/stops,
+  // shown immediately while the provider's signed 44223 facts are in flight.
+  const pendingLifecycle = usePendingCodingSessionLifecycle();
+  const overlay = React.useMemo(() => {
     const shelf = resolveProjectCodingSessionShelf(
       catalog,
       placementIndex,
       channelLabels,
     );
+    const applied = applyPendingCodingSessionLifecycle(
+      shelf.entries,
+      pendingLifecycle,
+      (projectRef, channelId) =>
+        resolveProjectCodingSessionPlacement(
+          projectRef,
+          channelId,
+          placementIndex,
+        ),
+      channelLabels,
+      Date.now(),
+      catalog.lifecycleFor,
+    );
+    const entries = (applied.entries as ProjectCodingSessionShelfEntry[]).sort(
+      compareProjectCodingSessionEntries,
+    );
     return {
-      ...bucketProjectCodingSessions(shelf.entries),
-      state: shelf.state,
+      buckets: {
+        ...bucketProjectCodingSessions(entries),
+        state: shelf.state,
+      },
+      consumedKeys: applied.consumedKeys,
     };
-  }, [catalog, channelLabels, placementIndex]);
+  }, [catalog, channelLabels, pendingLifecycle, placementIndex]);
+
+  // Consumed pendings (fact arrived, or TTL expired) are cleared out-of-render.
+  React.useEffect(() => {
+    clearPendingCodingSessionLifecycle(overlay.consumedKeys);
+  }, [overlay.consumedKeys]);
+
+  // TTL backstop: schedule a sweep for the earliest expiry so a provider that
+  // never answers still gets its ghost row removed without any other render.
+  React.useEffect(() => {
+    if (pendingLifecycle.length === 0) return;
+    const earliest = Math.min(
+      ...pendingLifecycle.map((entry) => entry.recordedAt),
+    );
+    const delay = Math.max(
+      0,
+      earliest + PENDING_CODING_SESSION_LIFECYCLE_TTL_MS - Date.now() + 50,
+    );
+    const timer = setTimeout(
+      () => sweepExpiredPendingCodingSessionLifecycle(Date.now()),
+      delay,
+    );
+    return () => clearTimeout(timer);
+  }, [pendingLifecycle]);
+
+  return overlay.buckets;
 }
 
 /**

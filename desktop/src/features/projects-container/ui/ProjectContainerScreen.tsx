@@ -49,6 +49,7 @@ import {
 } from "../lib/projectContainerModel";
 import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
+import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
@@ -202,10 +203,12 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     ...(reposByProject.get(project.id) ?? []),
     ...(isGeneral ? unclaimedRepos : []),
   ];
+  // Each half is sorted, the concat is not — re-sort so General's unclaimed
+  // sessions interleave by status/recency instead of always trailing.
   const codingSessions = [
     ...(sessionBuckets.byProject.get(project.id) ?? []),
     ...(isGeneral ? sessionBuckets.unclaimed : []),
-  ];
+  ].sort(compareProjectCodingSessionEntries);
   const streamChannels = withoutProjectSessionTransportChannels({
     projectName: project.name,
     channels: [

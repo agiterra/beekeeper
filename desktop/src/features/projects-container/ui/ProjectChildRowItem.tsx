@@ -3,6 +3,7 @@ import {
   Circle,
   Eye,
   FolderGit2,
+  LoaderCircle,
   Square,
   Terminal,
   Zap,
@@ -78,23 +79,40 @@ export function ProjectChildRowItem({
         onRequestEndCodingSession !== undefined &&
         entry.status.kind !== "ended" &&
         entry.stopTargets.length > 0;
+      // A pending row stands for a create the provider has not acknowledged
+      // yet — there is no generation to open, so the row is presence-only.
+      const pending = entry.pending === true;
       const button = (
         <SidebarMenuButton
-          aria-label={`Open ${entry.label}${details ? `, ${details}` : ""}`}
+          aria-label={
+            pending
+              ? `${entry.label}, starting`
+              : `Open ${entry.label}${details ? `, ${details}` : ""}`
+          }
           className={cn(
             settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
             settled &&
               "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
+            pending && "cursor-default",
           )}
-          data-testid="project-coding-session-row"
-          onClick={() =>
-            onOpenCodingSession({
-              channelId: entry.channelId,
-              generationId: entry.generationId,
-            })
+          data-testid={
+            pending
+              ? "project-coding-session-row-pending"
+              : "project-coding-session-row"
+          }
+          onClick={
+            pending
+              ? undefined
+              : () =>
+                  onOpenCodingSession({
+                    channelId: entry.channelId,
+                    generationId: entry.generationId,
+                  })
           }
           type="button"
-          title={details || undefined}
+          title={
+            pending ? "Waiting for the session provider" : details || undefined
+          }
         >
           <span
             className={cn(
@@ -104,7 +122,11 @@ export function ProjectChildRowItem({
                 : "size-6 rounded-full bg-sidebar-accent",
             )}
           >
-            <Bot className="size-3.5" />
+            {pending ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <Bot className="size-3.5" />
+            )}
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate">{entry.label}</span>
@@ -117,15 +139,17 @@ export function ProjectChildRowItem({
           <span
             className={cn(
               "ml-1 flex shrink-0 items-center gap-1 text-2xs",
-              entry.status.kind === "working"
+              !pending && entry.status.kind === "working"
                 ? "text-emerald-500"
                 : "text-sidebar-foreground/45",
             )}
           >
-            {entry.status.kind === "working" ? (
+            {!pending && entry.status.kind === "working" ? (
               <Circle className="size-1.5 fill-current" aria-hidden />
             ) : null}
-            {entry.status.label}
+            {/* A pending row's Working/Idle is only a prediction — say what
+                is actually happening instead. */}
+            {pending ? "Starting…" : entry.status.label}
           </span>
         </SidebarMenuButton>
       );

@@ -37,6 +37,9 @@ export type ProjectCodingSessionShelfEntry = {
    * what "End session" publishes, one durable stop per execution. */
   stopTargets: ProjectCodingSessionStopTarget[];
   session: CodingSessionCatalogRecord;
+  /** True only on optimistic rows synthesized for a published-but-not-yet-
+   * acknowledged create (see codingSessionPendingLifecycle). */
+  pending?: boolean;
 };
 
 export type ProjectCodingSessionShelfState =
@@ -116,6 +119,7 @@ export function resolveProjectCodingSessionShelf(
     const status = deriveCodingSessionWorkspaceStatus(
       session.transcript,
       session.status,
+      session.statusAt,
     );
     return {
       placement: placement.projectId

@@ -19,6 +19,7 @@ import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellS
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import { buildEndCodingSessionStops } from "@/features/coding-sessions/lib/endCodingSessionModel";
+import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
@@ -315,7 +316,10 @@ export function ProjectSidebarSections({
             codingSessions={[
               ...(sessionBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? sessionBuckets.unclaimed : []),
-            ]}
+              // Each half is sorted, the concat is not: without a re-sort,
+              // General's unclaimed sessions always trail claimed ones and a
+              // working unclaimed session can be capped out of the shelf.
+            ].sort(compareProjectCodingSessionEntries)}
             streamChannels={[
               ...(channelsByProject.get(project.id) ?? []),
               ...(isGeneral ? globalChannels : []),

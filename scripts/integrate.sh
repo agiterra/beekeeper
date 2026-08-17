@@ -16,6 +16,7 @@ set -euo pipefail
 # (a branch rebases onto its base; base defaults to main).
 FEATURES=(
   "fix/git-sign-oa-pubkey-validation"
+  "fix/relay-multichannel-subscriptions"
   "feature/project-containers"
   "feature/project-access:feature/project-containers"
   "feature/builtin-shell:feature/project-access"
