@@ -390,6 +390,62 @@ test("a channel added during create fences live before its first history backfil
   ipcHandlers.clear();
 });
 
+test("one mounted catalog observing session facts updates its sibling catalog", async () => {
+  const { createEvent, metadataEvent, receiptEvent } =
+    await buildRelayHistory();
+  const useBothIngressHooks = await loadHooks();
+  const { act, queryClient, renderHook, settle, wrapper } =
+    await reactHarness();
+
+  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+
+  const firstLive = [];
+  const secondLive = [];
+  const client = (subscriptions) => ({
+    fetchEvents: async () => [],
+    subscribeLive: async (filter, onEvent) => {
+      subscriptions.push({ filter, onEvent });
+      return () => {};
+    },
+    subscribeToReconnects: () => () => {},
+  });
+  const firstClient = client(firstLive);
+  const secondClient = client(secondLive);
+  const first = renderHook(() => useBothIngressHooks(firstClient), {
+    wrapper,
+  });
+  const second = renderHook(() => useBothIngressHooks(secondClient), {
+    wrapper,
+  });
+  await settle();
+
+  assert.equal(firstLive.length, 2);
+  assert.equal(secondLive.length, 2);
+  assert.equal(second.result.current.trusted.metadata.length, 0);
+  assert.equal(second.result.current.creates.observations.length, 0);
+
+  // Model the project screen receiving the relay frames while the long-lived
+  // sidebar subscription receives none. The sibling must ingest the same raw
+  // signed bytes through its own authority-scoped classifiers.
+  await act(async () => {
+    for (const subscription of firstLive) {
+      for (const event of [createEvent, receiptEvent, metadataEvent]) {
+        subscription.onEvent(event);
+      }
+    }
+  });
+
+  assert.equal(first.result.current.trusted.metadata.length, 1);
+  assert.equal(first.result.current.creates.observations.length, 1);
+  assert.equal(second.result.current.trusted.metadata.length, 1);
+  assert.equal(second.result.current.creates.observations.length, 1);
+
+  first.unmount();
+  second.unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
+});
+
 test("a back-pressure CLOSED on the re-entry history REQ converges instead of latching", async () => {
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();

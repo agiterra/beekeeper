@@ -3,6 +3,7 @@ import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_CODING_SESSION_GENESIS } from "@/shared/constants/kinds";
 import { isCodingSessionSessionRef } from "./codingSessionWireDecode";
+import { fanOutObservedCodingSessionEvents } from "./codingSessionObservedEvents";
 
 export const CODING_SESSION_GENESIS_TAG_VERSION = "csg1-1" as const;
 export const CODING_SESSION_GENESIS_SCHEMA_VERSION = 1 as const;
@@ -68,5 +69,6 @@ export async function publishCodingSessionGenesis(
     "Timed out while founding the coding session.",
     "Failed to found the coding session.",
   );
+  fanOutObservedCodingSessionEvents([accepted]);
   return { eventId: accepted.id, kind: accepted.kind };
 }

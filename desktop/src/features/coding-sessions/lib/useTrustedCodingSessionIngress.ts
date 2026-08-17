@@ -28,6 +28,10 @@ import {
   TrustedCodingSessionIngressStore,
   type TrustedCodingSessionIngressSnapshot,
 } from "./codingSessionTrustedIngress";
+import {
+  fanOutObservedCodingSessionEvents,
+  subscribeToObservedCodingSessionEvents,
+} from "./codingSessionObservedEvents";
 
 const TRUSTED_INGRESS_HISTORY_LIMIT = 1000;
 
@@ -349,6 +353,14 @@ export function useTrustedCodingSessionIngress(
       });
       schedulePersist();
     };
+    const receiveObservedEvents = (events: readonly RelayEvent[]) => {
+      if (cancelled) return;
+      store.ingestRelayEvents(events, stableChannelIds, authority);
+      publish();
+    };
+    const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
+      receiveObservedEvents,
+    );
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
@@ -362,6 +374,7 @@ export function useTrustedCodingSessionIngress(
             const events = await client.fetchEvents(filter);
             if (cancelled) return;
             store.ingestRelayEvents(events, stableChannelIds, authority);
+            fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
           } catch (error) {
             errors.push(
               error instanceof Error
@@ -407,6 +420,7 @@ export function useTrustedCodingSessionIngress(
           (event) => {
             store.ingestRelayEvents([event], stableChannelIds, authority);
             publish();
+            fanOutObservedCodingSessionEvents([event], receiveObservedEvents);
           },
         )
         .then((unsubscribe) => {
@@ -455,6 +469,7 @@ export function useTrustedCodingSessionIngress(
           store.retainedShelfEvents(),
         );
       }
+      unsubscribeObserved();
     };
   }, [
     authority,

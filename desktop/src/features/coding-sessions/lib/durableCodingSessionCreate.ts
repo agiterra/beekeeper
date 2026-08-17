@@ -6,6 +6,7 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { hasValidSignature } from "@/shared/lib/authors";
+import { fanOutObservedCodingSessionEvents } from "./codingSessionObservedEvents";
 
 /**
  * Creating a coding session is the one place in this feature where a crash
@@ -164,11 +165,12 @@ export async function publishDurableCodingSessionCreate(
   }
 
   try {
-    await publisher.publishEvent(
+    const accepted = await publisher.publishEvent(
       publishing.event,
       "Timed out while creating the coding session.",
       "Failed to create the coding session.",
     );
+    fanOutObservedCodingSessionEvents([accepted]);
   } catch (error) {
     return persistAmbiguousFailure(publishing, error, persistTransition);
   }

@@ -13,6 +13,11 @@ import {
   resolveCodingSessionIngressAuthority,
 } from "./codingSessionIngressAuthority";
 import type { CodingSessionIngressClient } from "./useTrustedCodingSessionIngress";
+import {
+  fanOutObservedCodingSessionEvents,
+  subscribeToObservedCodingSessionEvents,
+} from "./codingSessionObservedEvents";
+import type { RelayEvent } from "@/shared/api/types";
 
 const CREATE_OBSERVATION_HISTORY_LIMIT = 1000;
 
@@ -128,6 +133,14 @@ export function useCodingSessionCreateObservations(
         scopeIdentity,
       });
     };
+    const receiveObservedEvents = (events: readonly RelayEvent[]) => {
+      if (cancelled) return;
+      store.ingestRelayEvents(events, stableChannelIds, authority);
+      publish();
+    };
+    const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
+      receiveObservedEvents,
+    );
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
@@ -139,6 +152,7 @@ export function useCodingSessionCreateObservations(
         );
         if (cancelled) return;
         store.ingestRelayEvents(events, stableChannelIds, authority);
+        fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
       },
       onAttemptStart() {
         historyLoading = true;
@@ -170,6 +184,7 @@ export function useCodingSessionCreateObservations(
           (event) => {
             store.ingestRelayEvents([event], stableChannelIds, authority);
             publish();
+            fanOutObservedCodingSessionEvents([event], receiveObservedEvents);
           },
         )
         .then((unsubscribe) => {
@@ -208,6 +223,7 @@ export function useCodingSessionCreateObservations(
       historyController.cancel();
       unsubscribeLive?.();
       unsubscribeReconnect?.();
+      unsubscribeObserved();
     };
   }, [authority, client, isConfigLoading, scopeIdentity, stableChannelIds]);
 
