@@ -492,6 +492,46 @@ impl RestClient {
         Ok(Some(event))
     }
 
+    /// Fetch the relay's own signing pubkey from its NIP-11 information
+    /// document (`self` field, lowercase 64-hex).
+    ///
+    /// This is the documented trust root for relay-signed events: NIP-11
+    /// defines `self` as the relay's identity key, NIP-29/NIP-43 direct
+    /// clients to verify relay-authored events against it, and Buzz serves
+    /// it from the same origin the caller already trusts for its entire
+    /// authenticated command stream. `Ok(None)` means the relay advertises
+    /// no stable signing key — callers must then treat every relay-signed
+    /// artifact as unverifiable (fail closed), never guess a key another way.
+    pub async fn fetch_relay_self(&self) -> Result<Option<String>, RelayError> {
+        let url = format!("{}/", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .header("Accept", "application/nostr+json")
+            .send()
+            .await
+            .map_err(|e| RelayError::Http(format!("NIP-11 fetch failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "NIP-11 fetch returned HTTP {}",
+                response.status()
+            )));
+        }
+        let document: Value = response
+            .json()
+            .await
+            .map_err(|e| RelayError::Http(format!("NIP-11 document is not JSON: {e}")))?;
+        let Some(self_hex) = document.get("self").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        if self_hex.len() != 64 || !self_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(RelayError::Http(format!(
+                "NIP-11 'self' field is not a 64-hex pubkey: {self_hex:?}"
+            )));
+        }
+        Ok(Some(self_hex.to_ascii_lowercase()))
+    }
+
     /// Count events via the HTTP bridge: `POST /count` with NIP-98 auth.
     ///
     /// Accepts a slice of `nostr::Filter` (serialized as JSON array).
