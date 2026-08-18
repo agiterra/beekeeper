@@ -11,6 +11,7 @@ import {
   createCodingSessionLifecycleCommandId,
   publishCodingSessionResume,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/useCodingSessionResumeSettle";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import type {
   CodingSessionStatus,
@@ -110,7 +111,21 @@ export function CodingSessionComposer({
     "send" | "interrupt" | "resume" | "stop" | null
   >(null);
   const [error, setError] = React.useState<string | null>(null);
-  const isSending = pendingAction !== null;
+  // A reconnect is only finished when the provider's receipt names the
+  // generation it resumed into; until then this composer is as busy as it is
+  // during a turn.
+  const {
+    begin: beginResume,
+    error: resumeError,
+    fail: failResume,
+    isPending: isResuming,
+    watcher: resumeWatcher,
+  } = useCodingSessionResumeSettle({
+    channelId,
+    providerAuthorityPubkey,
+  });
+  const isSending = pendingAction !== null || isResuming;
+  const visibleError = error ?? resumeError;
   React.useEffect(() => {
     onTextChange?.(text);
   }, [onTextChange, text]);
@@ -193,27 +208,32 @@ export function CodingSessionComposer({
     ) {
       return;
     }
-    setPendingAction("resume");
     setError(null);
+    // The commandId is the only handle on the receipt that answers this
+    // resume, so it is kept rather than discarded, and the wait is armed
+    // *before* the publish — the settle watcher owns the pending state from
+    // here on.
+    const commandId = createCodingSessionLifecycleCommandId();
+    beginResume(commandId);
     try {
       await publishCodingSessionResume({
         channelId,
-        commandId: createCodingSessionLifecycleCommandId(),
+        commandId,
         target,
         providerAuthorityPubkey,
       });
-    } catch (resumeError) {
-      setError(
-        resumeError instanceof Error
-          ? resumeError.message
+    } catch (publishError) {
+      failResume(
+        publishError instanceof Error
+          ? publishError.message
           : "Unable to reconnect the coding session.",
       );
-    } finally {
-      setPendingAction(null);
     }
   }, [
+    beginResume,
     channelId,
     canControl,
+    failResume,
     isDisconnected,
     isMember,
     isSending,
@@ -279,7 +299,17 @@ export function CodingSessionComposer({
             "Only the session founder can control this session."}
         </p>
       ) : null}
-      {error ? <p className="mb-2 text-sm text-destructive">{error}</p> : null}
+      {/* A refused reconnect (a stale generation, a provider that never
+          answered) is a signed fact about this composer's own command — it
+          shares the composer's error line rather than disappearing. */}
+      {visibleError ? (
+        <p
+          className="mb-2 text-sm text-destructive"
+          data-testid="coding-session-composer-error"
+        >
+          {visibleError}
+        </p>
+      ) : null}
       {isDisconnected ? (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
           <p className="text-sm text-muted-foreground">
@@ -298,7 +328,7 @@ export function CodingSessionComposer({
               size="sm"
               type="button"
             >
-              {pendingAction === "resume" ? "Reconnecting…" : "Reconnect"}
+              {isResuming ? "Reconnecting…" : "Reconnect"}
             </Button>
             <Button
               data-testid="coding-session-composer-session-stop"
@@ -416,6 +446,7 @@ export function CodingSessionComposer({
         />
       ) : null}
       {endDialog.dialog}
+      {resumeWatcher}
     </div>
   );
 }
@@ -562,10 +593,11 @@ function ControlDeckStatus({
   context: CodingSessionComposerProps["controlContext"];
   isWorking: boolean;
 }) {
-  const status = context?.status ?? {
-    kind: isWorking ? ("working" as const) : ("unknown" as const),
-    label: isWorking ? "Working" : "Status unknown",
-  };
+  const status: CodingSessionWorkspaceStatus =
+    context?.status ??
+    (isWorking
+      ? { kind: "working", label: "Working" }
+      : { kind: "unknown", label: "Status unknown" });
   return (
     <span
       className={cn(
@@ -574,8 +606,16 @@ function ControlDeckStatus({
           "bg-blue-500/10 text-blue-700 dark:text-blue-300",
         status.kind === "idle" &&
           "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-        status.kind === "unknown" && "text-muted-foreground",
+        status.kind === "unknown" &&
+          (status.attention
+            ? // Lifecycle says this execution is not usable; the deck must not
+              // read as calm while the banner above offers Reconnect.
+              "bg-destructive/10 text-destructive"
+            : "text-muted-foreground"),
       )}
+      data-attention={
+        status.kind === "unknown" ? (status.attention ?? undefined) : undefined
+      }
       data-status={status.kind}
       data-testid="coding-session-control-status"
     >

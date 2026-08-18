@@ -149,4 +149,20 @@ export type CodingSessionWorkspaceStatus =
   | { kind: "working"; label: "Working" }
   | { kind: "idle"; label: "Idle" }
   | { kind: "ended"; label: "Ended" }
-  | { kind: "unknown"; label: "Status unknown" };
+  /**
+   * Not a known-good state: either nothing legible has been read yet, or the
+   * signed lifecycle says this execution is not usable right now.
+   *
+   * `attention` separates the two. It is absent when the status is merely
+   * unread — the historical `Status unknown` — and set when a provider-signed
+   * lifecycle status put the execution here, which every surface paints as
+   * attention-worthy rather than idle-calm. Keeping one `kind` is deliberate:
+   * surfaces already treat this bucket as "cannot vouch for it", and the
+   * distinction they need is the label plus this flag, not a new branch each
+   * of them would have to learn separately.
+   */
+  | {
+      kind: "unknown";
+      label: "Status unknown" | "Disconnected" | "Needs attention";
+      attention?: "disconnected" | "failed";
+    };

@@ -390,19 +390,123 @@ test("metadata newer than the whole transcript speaks for the session", () => {
     deriveCodingSessionWorkspaceStatus(transcript, "running", afterTranscript),
     { kind: "working", label: "Working" },
   );
-  // A provider that died mid-turn reports it the same way.
+  // A provider that died mid-turn reports it the same way — and the header
+  // must say so, never a calm Idle over a Reconnect banner.
   assert.deepEqual(
     deriveCodingSessionWorkspaceStatus(
       transcript,
       "disconnected",
       afterTranscript,
     ),
-    { kind: "idle", label: "Idle" },
+    { kind: "unknown", label: "Disconnected", attention: "disconnected" },
   );
   // Stale metadata (older than the transcript) never overrides the scan.
   const beforeTranscript = Date.parse("2026-07-30T11:00:00.000Z");
   assert.deepEqual(
     deriveCodingSessionWorkspaceStatus(transcript, "running", beforeTranscript),
     { kind: "idle", label: "Idle" },
+  );
+});
+
+test("a signed lifecycle status outranks anything the transcript implies", () => {
+  // The provider's crash recovery synthesizes a terminal "Turn result" item,
+  // so transcript inference alone reads a disconnected execution as Idle —
+  // the header saying "Idle" over a composer offering Reconnect.
+  const recoveredTranscript = [
+    {
+      id: "result-1",
+      type: "lifecycle",
+      renderClass: "status",
+      title: "Turn result",
+      text: "Done",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    },
+  ];
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(recoveredTranscript, "disconnected"),
+    { kind: "unknown", label: "Disconnected", attention: "disconnected" },
+  );
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(recoveredTranscript, "failed"),
+    { kind: "unknown", label: "Needs attention", attention: "failed" },
+  );
+  // A durable stop still ends, and an unknown lifecycle still falls back to
+  // reading the transcript.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(recoveredTranscript, "stopped"),
+    { kind: "ended", label: "Ended" },
+  );
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(recoveredTranscript, undefined),
+    { kind: "idle", label: "Idle" },
+  );
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        {
+          id: "status-1",
+          type: "lifecycle",
+          renderClass: "status",
+          title: "Status",
+          text: "running",
+          timestamp: "2026-07-30T12:00:00.000Z",
+        },
+      ],
+      "running",
+    ),
+    { kind: "working", label: "Working" },
+  );
+});
+
+test("a routed disconnected generation self-heals onto the generation its resume minted", () => {
+  // A resume mints the NEXT generation; the routed one keeps its immutable
+  // `disconnected` metadata forever. Without this, a missed receipt (or an app
+  // restart mid-resume) leaves the workspace pinned to a dead generation whose
+  // banner can never clear.
+  const dead = {
+    ...umbrellaMember({
+      generationId: "generation-claude-1",
+      signerPubkey: "a".repeat(64),
+      sessionId: "claude-session",
+      generation: 1,
+      lastEventAt: "2026-07-30T10:00:00.000Z",
+    }),
+    status: "disconnected",
+  };
+  const resumed = {
+    ...umbrellaMember({
+      generationId: "generation-claude-2",
+      signerPubkey: "a".repeat(64),
+      sessionId: "claude-session",
+      generation: 2,
+    }),
+    status: "idle",
+  };
+  const resolution = resolveCodingSessionWorkspace({
+    catalog: catalog({ entries: [dead, resumed] }),
+    generationId: "generation-claude-1",
+  });
+  assert.equal(resolution.kind, "ready");
+  assert.equal(resolution.session, resumed);
+  assert.equal(resolution.focusedExecution.activeGeneration, resumed);
+
+  // Routing to the active generation is untouched, and a prior generation that
+  // was not disconnected still opens as itself — history deep links are a
+  // person reading the past, not a stale route.
+  assert.equal(
+    resolveCodingSessionWorkspace({
+      catalog: catalog({ entries: [dead, resumed] }),
+      generationId: "generation-claude-2",
+    }).session,
+    resumed,
+  );
+  assert.equal(
+    resolveCodingSessionWorkspace({
+      catalog: catalog({
+        entries: [{ ...dead, status: "stopped" }, resumed],
+      }),
+      generationId: "generation-claude-1",
+    }).session.generationId,
+    "generation-claude-1",
   );
 });

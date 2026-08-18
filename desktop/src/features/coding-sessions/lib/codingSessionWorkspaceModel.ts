@@ -57,7 +57,7 @@ export function resolveCodingSessionWorkspace(input: {
     if (grouped) {
       return {
         kind: "ready",
-        session: exact,
+        session: resolveLiveGenerationRecord(exact, grouped.execution),
         umbrella: grouped.umbrella,
         focusedExecution: grouped.execution,
       };
@@ -78,6 +78,31 @@ export function resolveCodingSessionWorkspace(input: {
       input.catalog.errorMessage ??
       "This exact coding-session generation is not available in the relay catalog.",
   };
+}
+
+/**
+ * Follow a resumed execution off its dead generation, and nothing else.
+ *
+ * A resume mints the NEXT generation: the routed one keeps its immutable
+ * `disconnected` metadata forever, so a route left pointing at it shows a
+ * banner that can never clear. Receipt-driven navigation is the primary cure
+ * (see `useCodingSessionResumeSettle`); this is the self-heal for when it is
+ * missed — a dropped receipt, or an app restart mid-resume.
+ *
+ * Only a `disconnected` prior generation heals. Every other collapsed
+ * generation stays exactly where the link pointed, because history deep links
+ * into an ended or interrupted generation are a person reading the past, not
+ * a stale route.
+ */
+function resolveLiveGenerationRecord(
+  routed: CodingSessionCatalogRecord,
+  execution: CodingSessionExecution,
+): CodingSessionCatalogRecord {
+  if (routed.generationId === execution.activeGeneration.generationId) {
+    return routed;
+  }
+  if (routed.status !== "disconnected") return routed;
+  return execution.activeGeneration;
 }
 
 /**
@@ -139,6 +164,16 @@ export function codingSessionWireWorkspaceStatus(
   if (status === "stopped") {
     return { kind: "ended", label: "Ended" };
   }
+  if (status === "disconnected") {
+    return {
+      kind: "unknown",
+      label: "Disconnected",
+      attention: "disconnected",
+    };
+  }
+  if (status === "failed") {
+    return { kind: "unknown", label: "Needs attention", attention: "failed" };
+  }
   if (status === undefined || status === "unknown") {
     return { kind: "unknown", label: "Status unknown" };
   }
@@ -160,8 +195,20 @@ export function deriveCodingSessionWorkspaceStatus(
   lifecycleStatus?: CodingSessionCatalogRecord["status"],
   statusAt?: CodingSessionCatalogRecord["statusAt"],
 ): CodingSessionWorkspaceStatus {
+  // A signed lifecycle status outranks anything the transcript implies. The
+  // provider's crash recovery synthesizes a terminal "Turn result" item, so a
+  // disconnected execution whose transcript ends in one would otherwise read
+  // "Idle" in the header while the composer offers Reconnect underneath it —
+  // three surfaces, three answers, for one signed fact.
   if (lifecycleStatus === "stopped") {
     return { kind: "ended", label: "Ended" };
+  }
+  // A terminal-bad wire status outranks anything the transcript implies,
+  // regardless of timestamps: the provider's crash recovery synthesizes a
+  // "Turn result" item in the same instant it publishes `disconnected`, so a
+  // freshness comparison alone can still read Idle off the synthetic tail.
+  if (lifecycleStatus === "disconnected" || lifecycleStatus === "failed") {
+    return codingSessionWireWorkspaceStatus(lifecycleStatus);
   }
   const newest = transcript[transcript.length - 1];
   // Wire freshness: when the newest 44223 metadata is NEWER than the newest

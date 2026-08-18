@@ -167,7 +167,12 @@ export function CodingSessionHeader({
               ? "bg-emerald-500"
               : status.kind === "idle" || status.kind === "ended"
                 ? "bg-muted-foreground/50"
-                : "bg-amber-500",
+                : // A lifecycle-signed "Disconnected" or "Needs attention"
+                  // reads like the execution rail's own attention state, not
+                  // like an unread status.
+                  status.kind === "unknown" && status.attention
+                  ? "bg-destructive"
+                  : "bg-amber-500",
           )}
         />
         {compact ? (
