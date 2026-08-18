@@ -78,11 +78,20 @@ impl TranscriptTranslator {
     }
 
     /// Open a turn with the operator's prompt.
-    pub fn begin_turn(&mut self, prompt: &str) -> Vec<Value> {
+    ///
+    /// `operator_pubkey` is the verified signer of the command that requested
+    /// the turn, stamped onto the `user_prompt` item so the durable record
+    /// names who drove it. `None` leaves the item unattributed rather than
+    /// guessing a founder.
+    pub fn begin_turn(&mut self, prompt: &str, operator_pubkey: Option<&str>) -> Vec<Value> {
         self.text.clear();
         self.thoughts.clear();
         self.usage = None;
-        vec![crate::payload::user_prompt_item(prompt, false)]
+        vec![crate::payload::user_prompt_item(
+            prompt,
+            false,
+            operator_pubkey,
+        )]
     }
 
     /// Translate one `params.update` object.
@@ -552,7 +561,7 @@ mod tests {
     #[test]
     fn a_whole_turn_translates_to_the_expected_item_sequence() {
         let mut translator = TranscriptTranslator::new(true);
-        let mut items = translator.begin_turn("do the thing");
+        let mut items = translator.begin_turn("do the thing", None);
         items.extend(translator.on_update(&thought("let me look")));
         items.extend(translator.on_update(&chunk("I will ")));
         items.extend(translator.on_update(&chunk("read the file.")));
@@ -822,8 +831,28 @@ mod tests {
     fn a_new_turn_discards_anything_left_from_the_previous_one() {
         let mut translator = TranscriptTranslator::new(true);
         translator.on_update(&chunk("stale"));
-        let items = translator.begin_turn("fresh");
+        let items = translator.begin_turn("fresh", None);
         assert_eq!(kinds(&items), vec!["user_prompt"]);
         assert_eq!(kinds(&translator.end_turn(result())), vec!["result"]);
+    }
+
+    /// Sessions are multi-operator, so the opening item has to name the
+    /// operator the provider verified — not the founder, and not nobody.
+    #[test]
+    fn begin_turn_stamps_the_commanding_operator_on_the_prompt() {
+        let operator = "b".repeat(64);
+        let mut translator = TranscriptTranslator::new(false);
+        let items = translator.begin_turn("go", Some(&operator));
+        assert_eq!(items[0]["kind"], "user_prompt");
+        assert_eq!(items[0]["operatorPubkey"], operator);
+    }
+
+    /// Without a witnessed operator the key is absent rather than `null`: an
+    /// explicit null would claim the provider observed "no operator".
+    #[test]
+    fn begin_turn_omits_attribution_when_no_operator_is_known() {
+        let mut translator = TranscriptTranslator::new(false);
+        let items = translator.begin_turn("go", None);
+        assert!(items[0].get("operatorPubkey").is_none());
     }
 }

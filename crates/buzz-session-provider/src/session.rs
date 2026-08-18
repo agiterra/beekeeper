@@ -215,6 +215,10 @@ pub enum SessionCommand {
         command_id: String,
         /// Prompt text.
         text: String,
+        /// The verified signer of the command, carried so the `user_prompt`
+        /// item can name who drove the turn. `None` only when the caller had
+        /// no witnessed operator to attribute.
+        operator_pubkey: Option<String>,
     },
     /// Cancel the in-flight turn.
     Interrupt {
@@ -794,6 +798,16 @@ struct SessionActor {
     first_turn_preamble: Option<&'static str>,
 }
 
+/// A turn that arrived while another was in flight, held until its turn.
+///
+/// Named rather than a tuple because it carries the operator attribution: a
+/// positional third `String` would be trivially swappable with the prompt text.
+struct QueuedTurn {
+    command_id: String,
+    text: String,
+    operator_pubkey: Option<String>,
+}
+
 /// How the select loop around an in-flight prompt ended.
 enum PromptInterruption {
     Completed(Result<StopReason, AcpError>),
@@ -812,7 +826,7 @@ impl SessionActor {
             session_id = %self.session_id,
             "session actor started"
         );
-        let mut queued: VecDeque<(String, String)> = VecDeque::new();
+        let mut queued: VecDeque<QueuedTurn> = VecDeque::new();
         let mut reason = ExitReason::Requested;
 
         'actor: loop {
@@ -821,8 +835,9 @@ impl SessionActor {
             }
             let next = match queued.pop_front() {
                 Some(turn) => Some(SessionCommand::Turn {
-                    command_id: turn.0,
-                    text: turn.1,
+                    command_id: turn.command_id,
+                    text: turn.text,
+                    operator_pubkey: turn.operator_pubkey,
                 }),
                 None => {
                     let idle = tokio::time::sleep(self.idle_shutdown);
@@ -851,9 +866,20 @@ impl SessionActor {
                         "interrupt with no turn in flight — nothing to cancel"
                     );
                 }
-                Some(SessionCommand::Turn { command_id, text }) => {
+                Some(SessionCommand::Turn {
+                    command_id,
+                    text,
+                    operator_pubkey,
+                }) => {
                     if let Some(exit_reason) = self
-                        .run_turn(&mut rx, &mut shutdown, &mut queued, command_id, text)
+                        .run_turn(
+                            &mut rx,
+                            &mut shutdown,
+                            &mut queued,
+                            command_id,
+                            text,
+                            operator_pubkey,
+                        )
                         .await
                     {
                         reason = exit_reason;
@@ -883,9 +909,10 @@ impl SessionActor {
         &mut self,
         rx: &mut mpsc::Receiver<SessionCommand>,
         shutdown: &mut watch::Receiver<bool>,
-        queued: &mut VecDeque<(String, String)>,
+        queued: &mut VecDeque<QueuedTurn>,
         command_id: String,
         text: String,
+        operator_pubkey: Option<String>,
     ) -> Option<ExitReason> {
         let turn_id = Uuid::new_v4().to_string();
         let started = Instant::now();
@@ -908,7 +935,9 @@ impl SessionActor {
         // what is sent after it exists, so subscribing afterwards would lose the
         // opening chunks of every turn.
         let mut frames = self.observer.subscribe();
-        let opening = self.translator.begin_turn(&text);
+        let opening = self
+            .translator
+            .begin_turn(&text, operator_pubkey.as_deref());
         emit_items(&self.events, &self.session_id, &turn_id, opening).await;
 
         // The prompt future holds `&mut self.client` for the whole turn; it is
@@ -946,7 +975,11 @@ impl SessionActor {
                     Some(SessionCommand::Interrupt { .. }) => {
                         break PromptInterruption::Interrupted
                     }
-                    Some(SessionCommand::Turn { command_id, text }) => {
+                    Some(SessionCommand::Turn {
+                        command_id,
+                        text,
+                        operator_pubkey,
+                    }) => {
                         if queued.len() >= SESSION_QUEUE_DEPTH {
                             let _ = self
                                 .events
@@ -956,7 +989,14 @@ impl SessionActor {
                                 })
                                 .await;
                         } else {
-                            queued.push_back((command_id, text));
+                            // The attribution rides the queue: a turn that
+                            // waits behind another must still name the
+                            // operator who sent it, not whoever ran last.
+                            queued.push_back(QueuedTurn {
+                                command_id,
+                                text,
+                                operator_pubkey,
+                            });
                         }
                     }
                 },
@@ -1471,6 +1511,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
                 text: "go".into(),
+                operator_pubkey: None,
             })
             .expect("deliver");
 
@@ -1657,6 +1698,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
                 text: user_text.to_owned(),
+                operator_pubkey: None,
             })
             .expect("deliver");
 
@@ -1891,6 +1933,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
                 text: "go".into(),
+                operator_pubkey: None,
             })
             .expect("deliver");
 
@@ -1902,6 +1945,36 @@ done
         assert_eq!(kinds, vec!["user_prompt", "assistant_text"]);
         assert_eq!(items[0]["content"], "go");
         assert_eq!(items[1]["text"], "working");
+        manager.shutdown("s1");
+    }
+
+    /// The whole point of the attribution: a granted operator's turn has to
+    /// come back out of the actor naming *that* operator, so a second reader
+    /// of the same shared session is not told the turn was their own.
+    #[tokio::test]
+    async fn a_turn_is_published_with_the_operator_that_drove_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        let operator = "c".repeat(64);
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: Some(operator.clone()),
+            })
+            .expect("deliver");
+
+        let items = collect_items(&mut rx).await;
+        assert_eq!(items[0]["kind"], "user_prompt");
+        assert_eq!(items[0]["operatorPubkey"], operator);
         manager.shutdown("s1");
     }
 
@@ -1921,6 +1994,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
                 text: "go".into(),
+                operator_pubkey: None,
             })
             .expect("deliver");
         assert!(matches!(
@@ -1961,6 +2035,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "turn-1".into(),
                 text: "go".into(),
+                operator_pubkey: None,
             })
             .expect("deliver");
 
@@ -2098,6 +2173,7 @@ done
             .deliver(SessionCommand::Turn {
                 command_id: "queued".into(),
                 text: "work".into(),
+                operator_pubkey: None,
             })
             .expect("mailbox entry");
 

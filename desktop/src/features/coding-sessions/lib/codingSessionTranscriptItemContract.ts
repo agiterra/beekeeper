@@ -24,6 +24,12 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       content?: string;
       steered?: boolean;
       attachmentCount?: number;
+      /**
+       * The operator the provider verified before running the turn, as
+       * 64-character lowercase hex. Additive: items published before the
+       * provider stamped attribution simply omit it.
+       */
+      operatorPubkey?: string;
     }
   | { kind: "assistant_text"; text?: string }
   | {

@@ -849,6 +849,9 @@ impl Provider {
                 .deliver(SessionCommand::Turn {
                     command_id: format!("{}:initial", plan.command_id),
                     text: text.clone(),
+                    // The create's verified signer *is* the operator driving
+                    // this first turn — the same fact that made them founder.
+                    operator_pubkey: Some(plan.founder_pubkey.clone()),
                 })
                 .err()
                 .map(|error| format!("could not deliver the first turn: {error:?}")),
@@ -1181,7 +1184,14 @@ impl Provider {
             } => (
                 command_id.clone(),
                 target.session_id,
-                SessionCommand::Turn { command_id, text },
+                // `decide_turn` returns `Start` only after checking this exact
+                // signer against the session's founder/granted-operator set,
+                // so attributing the turn to them is a witnessed fact.
+                SessionCommand::Turn {
+                    command_id,
+                    text,
+                    operator_pubkey: Some(operator_pubkey.to_owned()),
+                },
             ),
             TurnDecision::Interrupt { command_id, target } => (
                 command_id.clone(),

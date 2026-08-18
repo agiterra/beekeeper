@@ -138,6 +138,39 @@ test("a result item carries structured metrics, never baked into its text", () =
   assert.equal(bare.costUsd, null);
 });
 
+test("a user prompt carries the provider's operator attribution through", () => {
+  const operatorPubkey = "b".repeat(64);
+  const attributed = projectCodingSessionTranscriptItem(
+    envelope({ item: { kind: "user_prompt", content: "go", operatorPubkey } }),
+  );
+  assert.equal(attributed.operatorPubkey, operatorPubkey);
+
+  // Uppercase hex is the same key; the renderer compares normalized forms.
+  const uppercase = projectCodingSessionTranscriptItem(
+    envelope({
+      item: {
+        kind: "user_prompt",
+        content: "go",
+        operatorPubkey: "C".repeat(64),
+      },
+    }),
+  );
+  assert.equal(uppercase.operatorPubkey, "c".repeat(64));
+
+  // Absent or malformed leaves no attribution rather than a partial claim —
+  // the renderer's "no operator" branch has to cover both.
+  for (const item of [
+    { kind: "user_prompt", content: "go" },
+    { kind: "user_prompt", content: "go", operatorPubkey: "nope" },
+    { kind: "user_prompt", content: "go", operatorPubkey: 7 },
+  ]) {
+    assert.equal(
+      projectCodingSessionTranscriptItem(envelope({ item })).operatorPubkey,
+      undefined,
+    );
+  }
+});
+
 test("adapter is TOTAL over a mixed batch: N inputs -> N outputs", () => {
   const envelopes = RECOGNIZED_KIND_FIXTURES.map((item) => envelope({ item }));
   assert.equal(

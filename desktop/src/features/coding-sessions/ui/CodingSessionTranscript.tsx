@@ -14,7 +14,9 @@ import {
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptTurn,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
 import {
@@ -31,7 +33,37 @@ type CodingSessionTranscriptProps = {
   isWorking: boolean;
   items: TranscriptItem[];
   scrollRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * The viewer's own pubkey, used to decide whether a stamped user message is
+   * theirs. Omitted or `null` means the identity is not known yet, in which
+   * case attributed prompts are labelled with the operator rather than `"You"`.
+   */
+  currentUserPubkey?: string | null;
+  /**
+   * Profiles for the operators appearing in `items`, resolved by the caller.
+   *
+   * Resolution is the caller's job because it needs the community-scoped batch
+   * profile query, and this component is rendered once per turn block on the
+   * umbrella surface — hoisting it keeps that to one lookup per surface and
+   * keeps this renderer free of data dependencies. Unresolved operators fall
+   * back to a truncated pubkey, which is always true.
+   */
+  operatorProfiles?: UserProfileLookup;
 };
+
+/**
+ * Everything the deeply nested message row needs to name a prompt's author.
+ *
+ * Carried by context rather than props: the row sits five `React.memo` layers
+ * below the transcript, and threading two more props through all of them would
+ * break the memoisation those layers exist for. The default is the honest
+ * empty state — no local identity, no resolved profiles — which renders every
+ * prompt exactly as it did before attribution existed.
+ */
+const CodingSessionPromptAttributionContext = React.createContext<{
+  currentUserPubkey: string | null;
+  profiles: UserProfileLookup | undefined;
+}>({ currentUserPubkey: null, profiles: undefined });
 
 const GENERIC_AGENT_IDENTITY = {
   agentAvatarUrl: null,
@@ -53,12 +85,21 @@ type CodingSessionTranscriptRow =
     };
 
 export function CodingSessionTranscript({
+  currentUserPubkey,
+  operatorProfiles,
   generationId,
   isWorking,
   items,
   scrollRef,
 }: CodingSessionTranscriptProps) {
   const model = useStableCodingSessionTranscriptModel(items, isWorking);
+  const promptAttribution = React.useMemo(
+    () => ({
+      currentUserPubkey: currentUserPubkey ?? null,
+      profiles: operatorProfiles,
+    }),
+    [currentUserPubkey, operatorProfiles],
+  );
   const rows = React.useMemo(
     () => buildCodingSessionTranscriptRows(model),
     [model],
@@ -128,36 +169,38 @@ export function CodingSessionTranscript({
     rows.length > CODING_SESSION_VIRTUALIZATION_THRESHOLD && scrollRef;
 
   return (
-    <div
-      aria-label="Live coding-session conversation"
-      aria-live="off"
-      data-transcript-renderer={shouldVirtualize ? "virtualized" : "static"}
-      data-testid="coding-session-transcript"
-      role="log"
-    >
-      {shouldVirtualize ? (
-        <VirtualizedList
-          estimateSize={averageEstimatedRowSize}
-          getItemKey={getCodingSessionTranscriptRowKey}
-          innerClassName="w-full"
-          items={rows}
-          overscan={6}
-          renderItem={(row) => <div className="pb-5">{renderRow(row)}</div>}
-          scrollRef={scrollRef}
-        />
-      ) : (
-        <div className="flex flex-col gap-5">{rows.map(renderRow)}</div>
-      )}
-      <span
-        aria-atomic="true"
-        aria-live="polite"
-        className="sr-only"
-        data-testid="coding-session-live-status"
-        role="status"
+    <CodingSessionPromptAttributionContext.Provider value={promptAttribution}>
+      <div
+        aria-label="Live coding-session conversation"
+        aria-live="off"
+        data-transcript-renderer={shouldVirtualize ? "virtualized" : "static"}
+        data-testid="coding-session-transcript"
+        role="log"
       >
-        {isWorking ? "Coding session working" : "Coding session idle"}
-      </span>
-    </div>
+        {shouldVirtualize ? (
+          <VirtualizedList
+            estimateSize={averageEstimatedRowSize}
+            getItemKey={getCodingSessionTranscriptRowKey}
+            innerClassName="w-full"
+            items={rows}
+            overscan={6}
+            renderItem={(row) => <div className="pb-5">{renderRow(row)}</div>}
+            scrollRef={scrollRef}
+          />
+        ) : (
+          <div className="flex flex-col gap-5">{rows.map(renderRow)}</div>
+        )}
+        <span
+          aria-atomic="true"
+          aria-live="polite"
+          className="sr-only"
+          data-testid="coding-session-live-status"
+          role="status"
+        >
+          {isWorking ? "Coding session working" : "Coding session idle"}
+        </span>
+      </div>
+    </CodingSessionPromptAttributionContext.Provider>
   );
 }
 
@@ -449,9 +492,17 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
   openDisclosures: ReadonlySet<string>;
 }) {
   const planModel = deriveCodingSessionTaskModel([item]);
+  const promptAttribution = React.useContext(
+    CodingSessionPromptAttributionContext,
+  );
 
   if (item.type === "message") {
     if (item.role === "user") {
+      const authorLabel = resolveCodingSessionPromptAuthorLabel({
+        currentUserPubkey: promptAttribution.currentUserPubkey,
+        operatorPubkey: item.operatorPubkey,
+        profiles: promptAttribution.profiles,
+      });
       return (
         <div
           className="group flex flex-col items-end gap-1"
@@ -462,7 +513,12 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
             <Markdown content={item.text.trim() || " "} mediaInset />
           </div>
           <p className="pe-1 text-2xs text-muted-foreground">
-            <span className="font-medium text-foreground/75">You</span>
+            <span
+              className="font-medium text-foreground/75"
+              data-testid="coding-session-user-message-author"
+            >
+              {authorLabel}
+            </span>
             {formatCodingSessionMessageTimestamp(item.timestamp)}
           </p>
         </div>

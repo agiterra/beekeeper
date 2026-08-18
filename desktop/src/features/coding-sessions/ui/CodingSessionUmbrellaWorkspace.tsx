@@ -13,7 +13,9 @@ import {
   resolveCodingSessionHandoffSource,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
+import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
@@ -112,6 +114,21 @@ export function UmbrellaCodingSessionWorkspace({
         ),
       ),
     [umbrella.executions],
+  );
+  // Same item set as the timeline renders, so every operator who drove a turn
+  // anywhere in the umbrella is resolvable in one lookup.
+  const umbrellaTranscript = React.useMemo(
+    () =>
+      umbrella.executions.flatMap((execution) =>
+        [...execution.priorGenerations, execution.activeGeneration].flatMap(
+          (record) => record.transcript,
+        ),
+      ),
+    [umbrella.executions],
+  );
+  const operatorProfiles = useCodingSessionOperatorProfiles(
+    umbrellaTranscript,
+    currentUserPubkey,
   );
   const surfaces = React.useMemo<CodingSessionSurfaceDescriptor[]>(
     () => [
@@ -217,8 +234,10 @@ export function UmbrellaCodingSessionWorkspace({
             <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-64 sm:px-8">
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
+                currentUserPubkey={currentUserPubkey}
                 laneMessages={lane.messages}
                 onHandoff={setPrefill}
+                operatorProfiles={operatorProfiles}
                 umbrella={umbrella}
               />
             </div>
@@ -261,13 +280,22 @@ export function UmbrellaCodingSessionWorkspace({
  */
 export function CodingSessionUmbrellaTimelineView({
   channelId,
+  currentUserPubkey = null,
   laneMessages,
   onHandoff,
+  operatorProfiles,
   umbrella,
 }: {
   channelId: string;
+  /**
+   * The viewer's own pubkey, forwarded to each block's transcript so a prompt
+   * sent by another operator is attributed to them instead of to the reader.
+   */
+  currentUserPubkey?: string | null;
   laneMessages: readonly CodingSessionLaneMessage[];
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
+  /** Profiles for the umbrella's operators, resolved once by the workspace. */
+  operatorProfiles?: UserProfileLookup;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
@@ -402,6 +430,7 @@ export function CodingSessionUmbrellaTimelineView({
             block={entry}
             blockKey={key}
             channelId={channelId}
+            currentUserPubkey={currentUserPubkey}
             isHighlighted={revealed?.key === key}
             isWorking={workingBlockKeys.has(key)}
             key={key}
@@ -412,6 +441,7 @@ export function CodingSessionUmbrellaTimelineView({
             labelsByExecutionKey={labelsByExecutionKey}
             onHandoff={onHandoff}
             onRegisterNode={registerBlockNode}
+            operatorProfiles={operatorProfiles}
             onRevealFact={revealFact}
             record={recordsByGenerationId.get(entry.generationId) ?? null}
             resolveFactLocation={resolveFactLocation}
@@ -435,6 +465,7 @@ function UmbrellaTurnBlock({
   block,
   blockKey,
   channelId,
+  currentUserPubkey,
   isHighlighted,
   isWorking,
   label,
@@ -442,6 +473,7 @@ function UmbrellaTurnBlock({
   onHandoff,
   onRegisterNode,
   onRevealFact,
+  operatorProfiles,
   record,
   resolveFactLocation,
   showProvenance,
@@ -450,6 +482,7 @@ function UmbrellaTurnBlock({
   block: CodingSessionUmbrellaTurnBlock;
   blockKey: string;
   channelId: string;
+  currentUserPubkey: string | null;
   isHighlighted: boolean;
   isWorking: boolean;
   label: string;
@@ -457,6 +490,7 @@ function UmbrellaTurnBlock({
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
   onRegisterNode: (key: string, node: HTMLElement | null) => void;
   onRevealFact: (key: string) => void;
+  operatorProfiles: UserProfileLookup | undefined;
   record: CodingSessionCatalogRecord | null;
   resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
   showProvenance: boolean;
@@ -565,9 +599,11 @@ function UmbrellaTurnBlock({
         </p>
       ) : null}
       <CodingSessionTranscript
+        currentUserPubkey={currentUserPubkey}
         generationId={block.generationId}
         isWorking={isWorking}
         items={block.items}
+        operatorProfiles={operatorProfiles}
       />
       {completed && source && handoffTargets.length > 0 ? (
         <footer

@@ -27,6 +27,7 @@ import {
   safeStringArray,
   stringifyToolResultContent,
 } from "./codingSessionDefensive";
+import { normalizeOperatorPubkey } from "./codingSessionPromptAttribution";
 import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
 
 /** Display identity for the signer whose events these are. */
@@ -148,6 +149,10 @@ function buildUserPromptMessage(
     acpSource: ctx.acpSource,
     sessionId: ctx.sessionId,
     channelId: ctx.channelId,
+    // The provider's verified commanding signer. Kept as `undefined` (not
+    // `null`) when absent or malformed so the renderer's "no attribution"
+    // branch covers old items and junk alike.
+    operatorPubkey: normalizeOperatorPubkey(item.operatorPubkey) ?? undefined,
   };
 }
 

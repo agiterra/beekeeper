@@ -1707,6 +1707,47 @@ mod tests {
         );
     }
 
+    /// The projector pins the *envelope*'s key set, never the item's — so an
+    /// additive item field like the operator attribution must not blind
+    /// rehydration. Both forms are asserted because the old one keeps arriving
+    /// from every transcript published before the field existed.
+    #[test]
+    fn transcript_verification_accepts_prompts_with_and_without_attribution() {
+        let provider = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "provider-host-1".into(),
+            session_id: "session-1".into(),
+            generation: 1,
+        };
+
+        for (seq, operator) in [(1u64, None), (2u64, Some("d".repeat(64)))] {
+            let item = crate::payload::user_prompt_item("go", false, operator.as_deref());
+            let envelope =
+                TranscriptEnvelope::new(&target, seq, seq as i64 * 1_000, Some("turn-1"), item);
+            let content = serde_json::to_string(&envelope).unwrap();
+            let event = build_coding_session_transcript_item(channel_id, &target, seq, &content)
+                .unwrap()
+                .sign_with_keys(&provider)
+                .unwrap();
+
+            let candidate =
+                verify_transcript(&event, channel_id, &target, &provider.public_key().to_hex())
+                    .expect("attributed and unattributed prompts must both verify");
+
+            assert_eq!(
+                candidate
+                    .item
+                    .content
+                    .get("operatorPubkey")
+                    .and_then(Value::as_str),
+                operator.as_deref(),
+                "attribution must survive verification exactly as published"
+            );
+        }
+    }
+
     #[test]
     fn founder_only_session_projects_without_a_stable_relay_identity() {
         let mut fixture = fixture(4);

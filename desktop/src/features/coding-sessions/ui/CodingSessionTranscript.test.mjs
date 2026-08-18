@@ -493,3 +493,73 @@ test("virtualizes large turn histories instead of mounting the entire transcript
     "the virtual window must not mount every historical turn",
   );
 });
+
+/**
+ * Operator attribution. Sessions are multi-operator, so a user message is not
+ * necessarily the reader's own — before this, a granted operator's turn showed
+ * as "You" in every member's client at once.
+ */
+const LOCAL_OPERATOR = "a".repeat(64);
+const FOREIGN_OPERATOR = `b${"c".repeat(63)}`;
+
+function prompt(operatorPubkey) {
+  return {
+    ...message("prompt", "user", "Ship it"),
+    ...(operatorPubkey === undefined ? {} : { operatorPubkey }),
+  };
+}
+
+function authorLabel(markup) {
+  return markup.match(
+    /data-testid="coding-session-user-message-author"[^>]*>([^<]*)</,
+  )?.[1];
+}
+
+test("a prompt the viewer sent is still labelled You", async () => {
+  const markup = await renderTranscript({
+    currentUserPubkey: LOCAL_OPERATOR,
+    generationId: "generation-1",
+    isWorking: false,
+    items: [prompt(LOCAL_OPERATOR)],
+  });
+
+  assert.equal(authorLabel(markup), "You");
+});
+
+test("another operator's prompt is labelled with their resolved name", async () => {
+  const markup = await renderTranscript({
+    currentUserPubkey: LOCAL_OPERATOR,
+    generationId: "generation-1",
+    isWorking: false,
+    items: [prompt(FOREIGN_OPERATOR)],
+    operatorProfiles: {
+      [FOREIGN_OPERATOR]: { displayName: "Dana", nip05Handle: null },
+    },
+  });
+
+  assert.equal(authorLabel(markup), "Dana");
+});
+
+test("an unresolved foreign operator falls back to a truncated pubkey", async () => {
+  const markup = await renderTranscript({
+    currentUserPubkey: LOCAL_OPERATOR,
+    generationId: "generation-1",
+    isWorking: false,
+    items: [prompt(FOREIGN_OPERATOR)],
+  });
+
+  // Truncated, never the bare hex: a name we do not have is not invented, and
+  // a full 64-char key is not a label.
+  assert.equal(authorLabel(markup), "bccccccc…cccc");
+});
+
+test("a prompt published before attribution existed is still labelled You", async () => {
+  const markup = await renderTranscript({
+    currentUserPubkey: LOCAL_OPERATOR,
+    generationId: "generation-1",
+    isWorking: false,
+    items: [prompt(undefined)],
+  });
+
+  assert.equal(authorLabel(markup), "You");
+});

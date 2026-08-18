@@ -12,6 +12,7 @@ import {
   resolveCodingSessionWorkspace,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
+import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
@@ -335,6 +336,10 @@ function ReadyCodingSessionWorkspace({
     umbrella: { founderPubkey, genesisRef },
     currentUserPubkey,
   });
+  const operatorProfiles = useCodingSessionOperatorProfiles(
+    session.transcript,
+    currentUserPubkey,
+  );
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? session.title;
   const canRename =
@@ -526,9 +531,11 @@ function ReadyCodingSessionWorkspace({
             <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-44 sm:px-8">
               <div ref={contentRef}>
                 <CodingSessionTranscript
+                  currentUserPubkey={currentUserPubkey}
                   generationId={generationId}
                   isWorking={isWorking}
                   items={session.transcript}
+                  operatorProfiles={operatorProfiles}
                   scrollRef={scrollRef}
                 />
               </div>

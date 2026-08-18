@@ -93,6 +93,17 @@ export type TranscriptItem =
       messageId?: string | null;
       acpSource?: TranscriptAcpSource;
       authorPubkey?: string | null;
+      /**
+       * The operator whose verified command drove this turn, for `role: "user"`
+       * messages that carry the attribution.
+       *
+       * Coding sessions are multi-operator — a founder plus granted operators
+       * can each steer the same execution — so a user message is not
+       * necessarily the viewer's own. Absent on items published before the
+       * provider stamped attribution, which stay unattributed rather than
+       * being assigned to anyone.
+       */
+      operatorPubkey?: string | null;
     } & TranscriptItemIdentity)
   | ({
       id: string;

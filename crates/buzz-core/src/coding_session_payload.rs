@@ -581,8 +581,41 @@ pub fn status_item(status: &str) -> serde_json::Value {
 }
 
 /// Build the `user_prompt` item that opens a turn.
-pub fn user_prompt_item(content: &str, steered: bool) -> serde_json::Value {
-    serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered })
+///
+/// `operator_pubkey` is the signer of the 44220 the provider *verified* before
+/// running the turn — a locally witnessed fact, not a relayed claim. Sessions
+/// are multi-operator (founder plus granted operators), so without it the
+/// transcript cannot say who drove a turn and every reader has to guess it was
+/// itself.
+///
+/// The key is **additive and optional**: it is emitted only for a well-formed
+/// 64-character lowercase-hex pubkey, and omitted entirely otherwise rather
+/// than sent as `null`, which would claim the provider observed "no operator".
+/// Items published before this field existed stay valid everywhere.
+pub fn user_prompt_item(
+    content: &str,
+    steered: bool,
+    operator_pubkey: Option<&str>,
+) -> serde_json::Value {
+    let mut item =
+        serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered });
+    // The literal above is an object, so this always matches; written as a
+    // pattern rather than an `expect` so a future edit degrades into an
+    // unattributed prompt rather than a panic at the head of a turn.
+    if let (Some(object), Some(pubkey)) = (item.as_object_mut(), operator_pubkey) {
+        if is_operator_pubkey(pubkey) {
+            object.insert("operatorPubkey".into(), serde_json::json!(pubkey));
+        }
+    }
+    item
+}
+
+/// Whether `pubkey` is the canonical 64-character lowercase-hex form.
+fn is_operator_pubkey(pubkey: &str) -> bool {
+    pubkey.len() == 64
+        && pubkey
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 /// Normalize an operator-facing string to the consumer's nullable contract.
@@ -1014,6 +1047,43 @@ mod tests {
 
         let untimed = TranscriptEnvelope::new(&target(), 1, 0, None, serde_json::json!({}));
         assert!(serde_json::to_value(&untimed).unwrap()["turnId"].is_null());
+    }
+
+    /// The attribution key is additive: an unattributed prompt keeps exactly
+    /// the three keys every existing consumer already reads.
+    #[test]
+    fn user_prompt_carries_the_operator_only_when_one_was_witnessed() {
+        let unattributed = user_prompt_item("go", false, None);
+        assert_eq!(keys(&unattributed), sorted(&["kind", "content", "steered"]));
+
+        let operator = "a".repeat(64);
+        let attributed = user_prompt_item("go", true, Some(&operator));
+        assert_eq!(
+            keys(&attributed),
+            sorted(&["kind", "content", "steered", "operatorPubkey"])
+        );
+        assert_eq!(attributed["operatorPubkey"], operator);
+        assert_eq!(attributed["steered"], true);
+    }
+
+    /// A malformed pubkey is dropped rather than published: the field exists
+    /// to be an authority-grade fact, so a half-true one is worse than none.
+    #[test]
+    fn user_prompt_drops_an_operator_that_is_not_canonical_hex() {
+        for bad in [
+            "",
+            "not-hex",
+            &"a".repeat(63),
+            &"a".repeat(65),
+            &"A".repeat(64),
+            &format!("{}{}", "z", "a".repeat(63)),
+        ] {
+            let item = user_prompt_item("go", false, Some(bad));
+            assert!(
+                item.get("operatorPubkey").is_none(),
+                "{bad:?} must not be published as an operator"
+            );
+        }
     }
 
     #[test]
