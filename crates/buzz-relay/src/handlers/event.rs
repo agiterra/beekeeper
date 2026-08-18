@@ -563,6 +563,24 @@ pub async fn filter_fanout_by_access(
                 allowed.push((conn_id, sub_id));
                 continue;
             }
+            // NIP-CSAT: an external per-session grantee (operator or
+            // viewer) reads the session's transport channel without being a
+            // project member — the same positive grant the
+            // accessible-channels query applies. Lookup failures skip to
+            // the members-only rule: over-restrictive, never a leak.
+            match state
+                .session_grant_cached(community_id, channel_id, &pubkey)
+                .await
+            {
+                Ok(true) => {
+                    allowed.push((conn_id, sub_id));
+                    continue;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(%channel_id, "fan-out access filter: session grant lookup failed: {e}");
+                }
+            }
         }
         match state
             .is_member_cached(community_id, channel_id, &pubkey)

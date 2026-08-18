@@ -805,7 +805,7 @@ fn coding_session_content_cap(kind: u32) -> Option<usize> {
 ///   execution id the relay cannot map to a genesis; the session provider
 ///   enforces the exact per-session rule on top (verified acceptance
 ///   receipts). Standing alone suffices: an externally-granted operator
-///   steers without being a channel member. Channels with no genesis
+///   steers without being a channel/project member. Channels with no genesis
 ///   (legacy) keep the base rule, matching the provider's own treatment of
 ///   no-genesis records.
 /// - **44227 (goal)**: resolved exactly via its `d` = sessionRef tag — the
@@ -891,15 +891,17 @@ pub(crate) async fn check_coding_session_membership(
         Err(error) => return Err(format!("error: database error: {error}")),
     }
     // Session-transport channels: project membership IS transport access —
-    // the project's owner and invited members may publish coding-session
-    // events without a channel_members row (the same positive ACL grant the
-    // read paths use). `None` (not a transport, or project unknown) keeps
-    // the strict-membership denial; lookup errors fail closed.
+    // the project's owner and write-capable members (owner/collaborator) may
+    // publish coding-session events without a channel_members row (the same
+    // positive ACL grant the read paths use, minus the read-only viewer
+    // tier: reading a session is not authority to steer one). `None` (not a
+    // transport, or project unknown) keeps the strict-membership denial;
+    // lookup errors fail closed.
     match state
         .channel_transport_gate_cached(tenant.community(), channel_id)
         .await
     {
-        Ok(Some(gate)) if gate.admits(pubkey_bytes) => Ok(()),
+        Ok(Some(gate)) if gate.admits_write(pubkey_bytes) => Ok(()),
         Ok(_) => coding_session_membership_verdict(false),
         Err(error) => Err(format!("error: database error: {error}")),
     }
@@ -2012,6 +2014,18 @@ fn parse_project_member_coordinate(coordinate: &str) -> Result<(), ProjectReject
     Ok(())
 }
 
+/// Validate an optional `["project", "<coordinate>"]` tag on a channel-create
+/// (kind:9007) or edit-metadata (kind:9002) event:
+/// `30621:<64-hex-pubkey>:<project-d>`, where kind must be [`KIND_PROJECT`]
+/// and the `d` segment follows the same envelope rules as
+/// [`validate_project_envelope`] (non-empty, bounded, no control characters —
+/// not the stricter client slug grammar, so a channel can reference any
+/// project a relay would accept).
+///
+/// This checks shape only — soft enforcement, per VISION_PROJECTS.md: the
+/// relay never verifies the referenced project event exists. `pub(crate)`
+/// so `handlers::side_effects` can reuse it for the kind:9002 "move to
+/// project" tag.
 /// Cap on `p` targets per membership op — one op names a batch, not the
 /// world; the roster's own cap (`PROJECT_INVITE_CAP` / DB
 /// `PROJECT_ROSTER_CAP`) still bounds the total.
@@ -2143,18 +2157,6 @@ pub(crate) async fn validate_project_member_op(
     Ok(())
 }
 
-/// Validate an optional `["project", "<coordinate>"]` tag on a channel-create
-/// (kind:9007) or edit-metadata (kind:9002) event:
-/// `30621:<64-hex-pubkey>:<project-d>`, where kind must be [`KIND_PROJECT`]
-/// and the `d` segment follows the same envelope rules as
-/// [`validate_project_envelope`] (non-empty, bounded, no control characters —
-/// not the stricter client slug grammar, so a channel can reference any
-/// project a relay would accept).
-///
-/// This checks shape only — soft enforcement, per VISION_PROJECTS.md: the
-/// relay never verifies the referenced project event exists. `pub(crate)`
-/// so `handlers::side_effects` can reuse it for the kind:9002 "move to
-/// project" tag.
 pub(crate) fn validate_project_ref_tag(value: &str) -> Result<(), String> {
     let mut parts = value.splitn(3, ':');
     let (Some(kind_str), Some(pubkey), Some(slug)) = (parts.next(), parts.next(), parts.next())
@@ -2725,7 +2727,9 @@ fn coding_session_closure_authority_verdict(
             Err("restricted: only the session founder may close this session".into())
         }
         CodingSessionClosureAction::Open => match transport_gate {
-            Some(gate) if gate.admits(signer) => Ok(()),
+            // Write tier: reopening changes shared session state, so project
+            // viewers (read-only) don't qualify — owner/collaborator only.
+            Some(gate) if gate.admits_write(signer) => Ok(()),
             Some(_) => {
                 Err("restricted: only a current project member may reopen this session".into())
             }

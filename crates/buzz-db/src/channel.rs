@@ -859,6 +859,18 @@ pub async fn get_accessible_channel_ids(
                     AND pam.pubkey = $2
               )
           )
+        UNION
+        -- NIP-CSAT: a per-session grant (operator or viewer) admits an
+        -- external invitee to the session's transport channel — the read
+        -- scope of a session share. Any-role: viewers read, and steering is
+        -- gated separately at ingest.
+        SELECT c.id AS channel_id
+        FROM channels c
+        JOIN coding_session_authority_acl csa
+          ON csa.community_id = c.community_id
+         AND csa.channel_id = c.id
+        WHERE c.community_id = $1 AND c.channel_type = 'transport' AND c.deleted_at IS NULL
+          AND csa.grantee = $2
         "#,
     )
     .bind(community_id.as_uuid())
