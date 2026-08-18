@@ -116,6 +116,27 @@ Re-check both if the runner topology changes.
   under a fully loaded gate (observed 2026-08-15 during a local ceremony);
   51/51 pass in isolation. Load-sensitivity, not a regression.
 
+The ceremony gate is **narrower than CI**. `integrate.sh` runs
+`cargo test --workspace`, `just desktop-check`, `just desktop-test`, and
+`pnpm typecheck`; `.woodpecker/gate.yml` additionally runs
+`just conformance-check` and `just export-viewer-manifest-test`, starts
+Postgres/Redis/MinIO as services, and migrates a **fresh** database. A
+ceremony can therefore go green locally and still land red on CI. Run the two
+extra steps by hand before a ceremony you intend to deploy, and remember a
+fresh-database `cargo run -p buzz-admin -- migrate` exercises migration
+ordering that an already-migrated local database cannot.
+
+Without a Woodpecker login you can still read pipeline state: the badge and
+CCTray feeds are public — `https://ci.agiterra.org/api/badges/1/status.svg`
+(add `?branch=integrated`) and `.../api/badges/1/cc.xml`, the latter carrying
+the pipeline number and timestamp. Everything under `/api/repos/...` needs
+auth, so logs are login-only. Woodpecker fires on pushes to `integrated`, so
+**re-running a suspected-flaky pipeline without UI access means producing a
+new build** (a fresh ceremony) rather than restarting the old one. Whether a
+deploy actually landed is observable from outside: publish a probe event of a
+kind the new build introduced and read the relay's verdict — an older relay
+answers `restricted: unknown event kind`.
+
 Local-ceremony environment notes (Brian's post-migration machine): run the
 script as `LEFTHOOK=0 CHECK_FILE_SIZES_BASE=$(git rev-parse upstream/main)
 scripts/integrate.sh` — there is no `origin/main` in this clone (origin is
