@@ -398,7 +398,7 @@ export function useProjectCodingSessionBuckets(
   // Channel membership is the read authority: every project member sees the
   // same session rows, whether or not they provisioned a provider themselves.
   // The persisted shelf cache (identity-gated, signed events re-verified on
-  // read) lets Sessions/Settled paint before the relay answers.
+  // read) lets the sessions shelf paint before the relay answers.
   const catalog = useGlobalCodingSessionCatalog(stableChannelIds, {
     authorityMode: "open",
     persistenceCacheKey: codingSessionShelfCacheKey(

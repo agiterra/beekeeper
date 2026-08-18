@@ -72,9 +72,9 @@ export function ProjectChildRowItem({
       const details = [entry.sourceChannelLabel, entry.runtimeLabel]
         .filter(Boolean)
         .join(" · ");
-      // Settled is intent, not activity: only a user-ended session gets the
-      // compact archival styling. Idle sessions keep the full row.
-      const settled = entry.status.kind === "ended";
+      // Recent Sessions is intent, not activity: only a user-ended session gets
+      // the compact archival styling. Idle sessions keep the full row.
+      const recentSession = entry.status.kind === "ended";
       const canEnd =
         onRequestEndCodingSession !== undefined &&
         entry.status.kind !== "ended" &&
@@ -90,8 +90,8 @@ export function ProjectChildRowItem({
               : `Open ${entry.label}${details ? `, ${details}` : ""}`
           }
           className={cn(
-            settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
-            settled &&
+            recentSession ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
+            recentSession &&
               "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
             pending && "cursor-default",
           )}
@@ -117,7 +117,7 @@ export function ProjectChildRowItem({
           <span
             className={cn(
               "flex shrink-0 items-center justify-center text-sidebar-foreground/65",
-              settled
+              recentSession
                 ? "size-4 opacity-55"
                 : "size-6 rounded-full bg-sidebar-accent",
             )}
@@ -130,7 +130,7 @@ export function ProjectChildRowItem({
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate">{entry.label}</span>
-            {details && !settled ? (
+            {details && !recentSession ? (
               <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
                 {details}
               </span>

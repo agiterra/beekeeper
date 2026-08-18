@@ -7,9 +7,7 @@ const SHOTS = "test-results/projects-sidebar";
 // Project children stay directly reachable while their labels make the
 // difference between a durable session, a conversation channel, and project
 // tooling explicit.
-test("project groups separate channels from repositories and tools", async ({
-  page,
-}) => {
+test("project groups separate channels from tools", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "buzz-feature-overrides-v1",
@@ -27,10 +25,12 @@ test("project groups separate channels from repositories and tools", async ({
   const repoRow = group.getByTestId("project-code-row").first();
   await expect(repoRow).toBeVisible();
 
-  await expect(group.getByRole("region", { name: "Sessions" })).toHaveCount(0);
+  await expect(
+    group.getByRole("region", { name: "Active Sessions" }),
+  ).toHaveCount(0);
   await expect(group.getByRole("region", { name: "Channels" })).toBeVisible();
   await expect(
-    group.getByRole("region", { name: "Repositories & tools" }),
+    group.getByRole("region", { name: "Repos & Tools" }),
   ).toBeVisible();
 
   // Group order keeps channels ahead of repositories without presenting them

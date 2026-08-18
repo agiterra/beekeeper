@@ -183,18 +183,18 @@ export function ProjectSidebarGroup({
 
   const children = React.useMemo(() => {
     // Partition BEFORE capping: the cap exists to keep the sidebar short,
-    // not to let settled (or phantom) rows starve live work out of the
-    // Sessions shelf. Each section is capped independently; "View all"
+    // not to let recently-closed (or phantom) rows starve live work out of
+    // the sessions shelf. Each section is capped independently; "View all"
     // below keys off the uncapped total.
     const allSessions = codingSessions ?? [];
     const activeSessions = allSessions
       .filter((entry) => entry.status.kind !== "ended")
       .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
-    const settledSessions = allSessions
+    const recentSessions = allSessions
       .filter((entry) => entry.status.kind === "ended")
       .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
     return buildProjectChildren({
-      codingSessions: [...activeSessions, ...settledSessions],
+      codingSessions: [...activeSessions, ...recentSessions],
       streamChannels: visibleStreamChannels,
       forumChannels,
       repos,
@@ -215,23 +215,30 @@ export function ProjectSidebarGroup({
   ]);
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
-  // "Settled" is a statement of intent, not of activity: only a session the
-  // user explicitly ended files there. Idle sessions are live work at rest
-  // and stay in the main Sessions shelf.
+  // "Recent Sessions" is a statement of intent, not of activity: only a
+  // session the user explicitly ended files there. Idle sessions are live
+  // work at rest and stay in the main sessions shelf.
   const activeSessionRows = sessionRows.filter(
     (row) => row.entry.status.kind !== "ended",
   );
-  const settledSessionRows = sessionRows.filter(
+  const recentSessionRows = sessionRows.filter(
     (row) => row.entry.status.kind === "ended",
   );
   const channelRows = children.filter(
     (row) => row.type === "channel" || row.type === "forum",
   );
-  const otherRows = children.filter(
+  // Terminals live with sessions: both are interactive work surfaces, unlike
+  // the repos/workflows/agents that stay under "Repos & Tools".
+  const terminalRows = children.filter(
+    (row) => row.type === "shell" || row.type === "remote-shell",
+  );
+  const toolRows = children.filter(
     (row) =>
       row.type !== "coding-session" &&
       row.type !== "channel" &&
-      row.type !== "forum",
+      row.type !== "forum" &&
+      row.type !== "shell" &&
+      row.type !== "remote-shell",
   );
   const renderRow = (row: (typeof children)[number]) => (
     <ProjectChildRowItem
@@ -379,20 +386,21 @@ export function ProjectSidebarGroup({
             className="px-2"
             data-testid={`project-children-${project.dtag}`}
           >
-            {sessionRows.length > 0 ? (
+            {sessionRows.length > 0 || terminalRows.length > 0 ? (
               <ProjectChildSection
-                label="Sessions"
+                label="Active Sessions"
                 storageKey={`buzz-project-sidebar:${project.id}:sessions`}
               >
                 {activeSessionRows.map(renderRow)}
-                {settledSessionRows.length > 0 ? (
+                {terminalRows.map(renderRow)}
+                {recentSessionRows.length > 0 ? (
                   <ProjectChildSection
                     compact
                     defaultExpanded={false}
-                    label="Settled"
-                    storageKey={`buzz-project-sidebar:${project.id}:settled`}
+                    label="Recent Sessions"
+                    storageKey={`buzz-project-sidebar:${project.id}:recent-sessions`}
                   >
-                    {settledSessionRows.map(renderRow)}
+                    {recentSessionRows.map(renderRow)}
                   </ProjectChildSection>
                 ) : null}
                 {(codingSessions?.length ?? 0) > sessionRows.length ? (
@@ -418,12 +426,12 @@ export function ProjectSidebarGroup({
                 {channelRows.map(renderRow)}
               </ProjectChildSection>
             ) : null}
-            {otherRows.length > 0 ? (
+            {toolRows.length > 0 ? (
               <ProjectChildSection
-                label="Repositories & tools"
+                label="Repos & Tools"
                 storageKey={`buzz-project-sidebar:${project.id}:tools`}
               >
-                {otherRows.map(renderRow)}
+                {toolRows.map(renderRow)}
               </ProjectChildSection>
             ) : null}
           </div>

@@ -467,7 +467,7 @@ test("ended sessions keep their sidebar row, sorted last, with nothing to stop",
       },
     ]),
   );
-  // Ended rows persist — they file under Settled instead of vanishing — and
+  // Ended rows persist — they file under Recent Sessions instead of vanishing — and
   // sort behind live work so they never crowd it out of the row limit.
   assert.deepEqual(
     entries.map((e) => e.generationId),
