@@ -208,6 +208,58 @@ test("the join create carries the umbrella's existing sessionRef", () => {
   assert.equal(created.providerInstanceRef, "codex-primary");
 });
 
+test("the join inherits the umbrella's project and repo claims", () => {
+  // The live bug this pins: adding Codex to a MyNewTestProject session
+  // published projectRef: null, so whenever Codex's metadata was freshest the
+  // whole session fell into the unclaimed (General) bucket.
+  const projectRef = `30621:${"a".repeat(64)}:mynewtestproject`;
+  const repoRef = `30617:${"a".repeat(64)}:buzz`;
+  const umbrella = groupCodingSessionCatalog([
+    {
+      generationId: "gen-1",
+      label: "claude-agent-acp · generation 1",
+      title: "Advance Buzz live sessions",
+      providerAuthorityPubkey: PROVIDER_PUBKEY,
+      metadataAuthorityPubkey: PROVIDER_PUBKEY,
+      lastEventAt: "2026-08-12T10:10:00.000Z",
+      status: "completed",
+      transcript: [],
+      conflictCount: 0,
+      commandTarget: CLAUDE_TARGET,
+      projectRef,
+      repoRef,
+      sessionRef: SESSION_REF,
+      provider: null,
+      runtime: "claude",
+      model: "claude-opus-5",
+      capabilities: capabilities(),
+    },
+  ])[0];
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  });
+  assert.equal(payload.projectRef, projectRef);
+  assert.equal(payload.repoRef, repoRef);
+
+  // An umbrella that never claimed a project stays standalone.
+  const standalone = buildAddCodingSessionProviderSubmit({
+    umbrella: singleClaudeUmbrella(),
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  });
+  assert.equal(standalone.projectRef, null);
+  assert.equal(standalone.repoRef, null);
+});
+
 test("a pre-umbrella session has no ref to join and publishes nothing", () => {
   const legacy = groupCodingSessionCatalog([
     {
