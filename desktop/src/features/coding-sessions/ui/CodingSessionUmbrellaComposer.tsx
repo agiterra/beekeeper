@@ -34,6 +34,8 @@ export type CodingSessionUmbrellaComposerPrefill = {
 };
 
 type CodingSessionUmbrellaComposerProps = {
+  /** Live operator grants from the session roster; null while unknown. */
+  acceptedOperators?: ReadonlySet<string> | null;
   channelId: string;
   isMember: boolean;
   umbrella: CodingSessionUmbrellaRecord;
@@ -57,6 +59,7 @@ type CodingSessionUmbrellaComposerProps = {
  * target — and at N=1 there are no handles at all.
  */
 export function CodingSessionUmbrellaComposer({
+  acceptedOperators = null,
   channelId,
   currentUserPubkey,
   isMember,
@@ -72,6 +75,7 @@ export function CodingSessionUmbrellaComposer({
   const authority = resolveCodingSessionUmbrellaComposerAuthority({
     umbrella,
     currentUserPubkey,
+    acceptedOperators,
   });
   const [selectedKey, setSelectedKey] = React.useState<string | null>(() =>
     defaultCodingSessionUmbrellaParticipantKey(participants),

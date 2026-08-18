@@ -67,6 +67,7 @@ import {
  * renders today's single-session tree and never sees this component.
  */
 export function UmbrellaCodingSessionWorkspace({
+  acceptedOperators = null,
   channelId,
   channelName,
   generationId,
@@ -75,6 +76,8 @@ export function UmbrellaCodingSessionWorkspace({
   onCloseSession,
   onReopenSession,
   onBack,
+  onOpenPeople,
+  peopleCount = 0,
   surface,
   umbrella,
   focusedExecution,
@@ -83,6 +86,8 @@ export function UmbrellaCodingSessionWorkspace({
   sessionName = null,
   sessionClosed = false,
 }: {
+  /** Live operator grants from the session roster; null while unknown. */
+  acceptedOperators?: ReadonlySet<string> | null;
   channelId: string;
   channelName: string | null;
   generationId: string;
@@ -92,6 +97,9 @@ export function UmbrellaCodingSessionWorkspace({
   onCloseSession?: () => void;
   onReopenSession?: () => void;
   onBack: () => void;
+  /** Opens the session People surface; absent for no-genesis sessions. */
+  onOpenPeople?: () => void;
+  peopleCount?: number;
   surface: CodingSessionSurface;
   umbrella: CodingSessionUmbrellaRecord;
   focusedExecution: CodingSessionExecution;
@@ -189,9 +197,11 @@ export function UmbrellaCodingSessionWorkspace({
           onAddProvider={onAddProvider}
           onBack={onBack}
           onCloseSession={onCloseSession}
+          onOpenPeople={onOpenPeople}
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
           onReopenSession={onReopenSession}
+          peopleCount={peopleCount}
           onToggleSurface={(id) => surfaceHost.toggle(id)}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
           sessionTitle={authoritativeTitle}
@@ -260,6 +270,7 @@ export function UmbrellaCodingSessionWorkspace({
             >
               <CodingSessionColumn className="pointer-events-auto">
                 <CodingSessionUmbrellaComposer
+                  acceptedOperators={acceptedOperators}
                   channelId={channelId}
                   currentUserPubkey={identity.data?.pubkey ?? null}
                   isMember={isMember}

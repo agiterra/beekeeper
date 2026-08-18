@@ -49,8 +49,8 @@ import {
 } from "../lib/projectContainerModel";
 import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
-import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { useProjectRosterQuery } from "../lib/projectMembers";
+import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";

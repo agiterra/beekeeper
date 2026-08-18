@@ -48,6 +48,11 @@ type CodingSessionHeaderProps = {
   onCloseSession?: () => void;
   onBack: () => void;
   onExport?: () => void;
+  /**
+   * Opens the session People surface (roster + invite/share). Absent when
+   * the session has no authority chain to share (no genesis).
+   */
+  onOpenPeople?: () => void;
   onPopout?: () => void;
   /** Opens the founder-authorized session rename flow. */
   onRename?: () => void;
@@ -59,6 +64,8 @@ type CodingSessionHeaderProps = {
   onToggleTaskRail?: () => void;
   /** Toggles the shared surface host open/closed on the given surface tab. */
   onToggleSurface?: (id: string) => void;
+  /** People with access to the session (owner + grants), for the badge. */
+  peopleCount?: number;
   projectName?: string | null;
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
@@ -83,12 +90,14 @@ export function CodingSessionHeader({
   onBack,
   onCloseSession,
   onExport,
+  onOpenPeople,
   onOpenProject,
   onPopout,
   onRename,
   onReopenSession,
   onToggleTaskRail,
   onToggleSurface,
+  peopleCount = 0,
   projectName = null,
   providerAuthorityPubkey = null,
   repoName = null,
@@ -311,6 +320,34 @@ export function CodingSessionHeader({
             </Button>
           ))
         : null}
+      {onOpenPeople ? (
+        <Button
+          aria-label="Show session people"
+          data-testid="coding-session-people-toggle"
+          onClick={onOpenPeople}
+          size={compact ? "icon" : "sm"}
+          title="People with access to this session"
+          type="button"
+          variant="ghost"
+        >
+          <Users />
+          <span className={compact ? "sr-only" : undefined}>People</span>
+          {peopleCount > 0 ? (
+            <>
+              <span
+                aria-hidden
+                className={cn(
+                  "rounded-full bg-background/70 px-1.5 text-xs",
+                  compact && "sr-only",
+                )}
+              >
+                {peopleCount}
+              </span>
+              <span className="sr-only">{peopleCount} people</span>
+            </>
+          ) : null}
+        </Button>
+      ) : null}
       {onAddProvider ? (
         <Button
           aria-label="Add a provider to this session"

@@ -13,6 +13,7 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
+import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
@@ -37,6 +38,7 @@ import { FuzzyLogo } from "@/shared/ui/buzz-logo/FuzzyLogo";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog";
 import { CodingSessionComposer } from "./CodingSessionComposer";
+import { CodingSessionPeoplePopover } from "./CodingSessionPeoplePopover";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { cn } from "@/shared/lib/cn";
@@ -124,6 +126,33 @@ export function CodingSessionWorkspace({
     generationId,
   });
 
+  // Roster hooks run unconditionally (before the not-ready return) per the
+  // Rules of Hooks; the query enables itself only once a genesis is known.
+  const readyUmbrella =
+    resolution.kind === "ready" ? resolution.umbrella : null;
+  const rosterQuery = useCodingSessionRoster(
+    channelId,
+    readyUmbrella?.genesisRef ?? null,
+    readyUmbrella?.founderPubkey ?? null,
+  );
+  const [peopleOpen, setPeopleOpen] = React.useState(false);
+  // Live (non-pending) collaborator grants — the composer's operator set.
+  // `null` while the roster is unknown, so authority keeps its founder-only
+  // fallback rather than treating "not loaded yet" as "nobody is granted".
+  const acceptedOperators = React.useMemo(
+    () =>
+      rosterQuery.data
+        ? new Set(
+            rosterQuery.data
+              .filter(
+                (entry) => entry.role === "collaborator" && !entry.pending,
+              )
+              .map((entry) => entry.pubkey),
+          )
+        : null,
+    [rosterQuery.data],
+  );
+
   if (resolution.kind !== "ready") {
     return (
       <CodingSessionWorkspaceState
@@ -206,6 +235,11 @@ export function CodingSessionWorkspace({
   const onAddProvider = canAddProvider
     ? () => setAddProviderOpen(true)
     : undefined;
+  // The People surface exists exactly when the session has an authority
+  // chain to share — a genesis. Legacy no-genesis sessions have no roster.
+  const onOpenPeople =
+    umbrella.genesisRef !== null ? () => setPeopleOpen(true) : undefined;
+  const peopleCount = rosterQuery.data?.length ?? 0;
 
   return (
     <>
@@ -220,6 +254,7 @@ export function CodingSessionWorkspace({
           isMember={isMember}
           currentUserPubkey={identity.data?.pubkey ?? null}
           key={`${channelId}:${umbrella.umbrellaKey}`}
+          acceptedOperators={acceptedOperators}
           onAddProvider={onAddProvider}
           onCloseSession={
             canCloseSession ? () => requestClosure("closed") : undefined
@@ -228,6 +263,8 @@ export function CodingSessionWorkspace({
             canReopenSession ? () => requestClosure("open") : undefined
           }
           onBack={onBack}
+          onOpenPeople={onOpenPeople}
+          peopleCount={peopleCount}
           surface={surface}
           umbrella={umbrella}
           goal={goal}
@@ -241,6 +278,7 @@ export function CodingSessionWorkspace({
           generationId={generationId}
           isMember={isMember}
           key={`${channelId}:${generationId}`}
+          acceptedOperators={acceptedOperators}
           onAddProvider={onAddProvider}
           onCloseSession={
             canCloseSession ? () => requestClosure("closed") : undefined
@@ -249,6 +287,8 @@ export function CodingSessionWorkspace({
             canReopenSession ? () => requestClosure("open") : undefined
           }
           onBack={onBack}
+          onOpenPeople={onOpenPeople}
+          peopleCount={peopleCount}
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
           goal={goal}
@@ -277,11 +317,23 @@ export function CodingSessionWorkspace({
         />
       ) : null}
       {closureDialog.dialog}
+      {/* Same sibling reasoning as the provider dialog: the People surface
+          must survive the single-session → umbrella branch flip. */}
+      {umbrella.genesisRef !== null ? (
+        <CodingSessionPeoplePopover
+          channelId={channelId}
+          founderPubkey={umbrella.founderPubkey}
+          genesisRef={umbrella.genesisRef}
+          onOpenChange={setPeopleOpen}
+          open={peopleOpen}
+        />
+      ) : null}
     </>
   );
 }
 
 function ReadyCodingSessionWorkspace({
+  acceptedOperators,
   channelId,
   channelName,
   generationId,
@@ -297,10 +349,13 @@ function ReadyCodingSessionWorkspace({
   onCloseSession,
   onReopenSession,
   onBack,
+  onOpenPeople,
+  peopleCount,
   session,
   surface,
   umbrella,
 }: {
+  acceptedOperators: ReadonlySet<string> | null;
   channelId: string;
   channelName: string | null;
   generationId: string;
@@ -320,6 +375,8 @@ function ReadyCodingSessionWorkspace({
   onCloseSession?: () => void;
   onReopenSession?: () => void;
   onBack: () => void;
+  onOpenPeople?: () => void;
+  peopleCount: number;
   session: Extract<
     ReturnType<typeof resolveCodingSessionWorkspace>,
     { kind: "ready" }
@@ -346,6 +403,7 @@ function ReadyCodingSessionWorkspace({
   const composerAuthority = resolveCodingSessionUmbrellaComposerAuthority({
     umbrella: { founderPubkey, genesisRef },
     currentUserPubkey,
+    acceptedOperators,
   });
   const operatorProfiles = useCodingSessionOperatorProfiles(
     session.transcript,
@@ -484,6 +542,8 @@ function ReadyCodingSessionWorkspace({
           onBack={onBack}
           onCloseSession={onCloseSession}
           onExport={exportEnabled ? exportTranscript : undefined}
+          onOpenPeople={onOpenPeople}
+          peopleCount={peopleCount}
           onOpenProject={
             // A pop-out is its own window with no app shell to navigate; the
             // project still shows, it just is not a link there.
