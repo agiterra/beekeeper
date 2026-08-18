@@ -502,7 +502,7 @@ impl RestClient {
     /// authenticated command stream. `Ok(None)` means the relay advertises
     /// no stable signing key — callers must then treat every relay-signed
     /// artifact as unverifiable (fail closed), never guess a key another way.
-    pub async fn fetch_relay_self(&self) -> Result<Option<String>, RelayError> {
+    pub async fn fetch_relay_self_verified(&self) -> Result<Option<String>, RelayError> {
         let url = format!("{}/", self.base_url);
         let response = self
             .http

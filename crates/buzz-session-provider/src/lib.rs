@@ -159,7 +159,7 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     // the whole authenticated command stream already trusts. Without it,
     // authority-acceptance receipts cannot verify and genesis-bearing
     // sessions stay founder-only — fail closed, never guessed.
-    match relay.rest_client().fetch_relay_self().await {
+    match relay.rest_client().fetch_relay_self_verified().await {
         Ok(Some(relay_self)) => {
             tracing::info!(target: "csp::authority", %relay_self, "witnessed relay identity");
             provider.set_relay_self(relay_self);
