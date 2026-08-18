@@ -389,7 +389,7 @@ export function CodingSessionComposer({
                 data-testid="coding-session-composer-session-stop"
                 disabled={isSending}
                 onClick={requestSessionEnd}
-                title="Durably end this session; it moves to Settled."
+                title="Durably end this session; it moves to Recent Sessions."
                 type="button"
                 variant="outline"
               >
@@ -542,7 +542,7 @@ function ImmersiveCodingSessionControlDeck({
                 disabled={pendingAction !== null}
                 onClick={onSessionStop}
                 size="sm"
-                title="Durably end this session; it moves to Settled."
+                title="Durably end this session; it moves to Recent Sessions."
                 type="button"
                 variant="outline"
               >

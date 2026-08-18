@@ -24,7 +24,8 @@ import {
  * The one confirm that stands between a click and a durable stop.
  *
  * Ending is destructive by nature — the provider retires the execution for
- * everyone and the row files under Settled — so both entry points (sidebar
+ * everyone and the row files under Recent Sessions — so both entry
+ * points (sidebar
  * context menu, workspace composer) route through this dialog rather than
  * publishing on the raw click.
  */
@@ -53,8 +54,9 @@ export function useEndCodingSessionDialog(): {
           toast.error(result.errorMessage ?? "Failed to end the session.");
           return;
         }
-        // The signed stops are on the relay; file the row under Settled now
-        // instead of waiting for the provider's `stopped` metadata.
+        // The signed stops are on the relay; file the row under Recent
+        // Sessions now instead of waiting for the provider's `stopped`
+        // metadata.
         for (const stop of target.stops) {
           recordPendingCodingSessionLifecycle({
             kind: "stop",
@@ -84,8 +86,8 @@ export function useEndCodingSessionDialog(): {
           <AlertDialogDescription>
             {target
               ? `"${target.label}" will be durably stopped for everyone and ` +
-                "moves to Settled. Its transcript stays readable, but this " +
-                "session can't be restarted from here."
+                "moves to Recent Sessions. Its transcript stays readable, " +
+                "but this session can't be restarted from here."
               : ""}
           </AlertDialogDescription>
         </AlertDialogHeader>

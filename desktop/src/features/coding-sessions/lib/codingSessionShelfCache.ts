@@ -2,7 +2,7 @@
  * Persisted head start for the sidebar's session shelf.
  *
  * The trusted ingress is fact-driven and in-memory only, so every boot the
- * Sessions/Settled sections waited out relay connect + auth + a history
+ * Active/Recent Sessions sections waited out relay connect + auth + a history
  * REQ before showing anything. This cache stores the bounded raw-event set
  * `TrustedCodingSessionIngressStore.retainedShelfEvents()` selects (newest
  * accepted 44223 metadata per session — no transcripts) so the next boot can
