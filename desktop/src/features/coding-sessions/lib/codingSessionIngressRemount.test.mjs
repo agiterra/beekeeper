@@ -219,21 +219,38 @@ async function reactHarness() {
   });
   const wrapper = ({ children }) =>
     React.createElement(QueryClientProvider, { client: queryClient }, children);
-  const settle = async (rounds = 8) => {
+  const tick = async () => {
+    await act(async () => {
+      await new Promise((resolve) => nodeSetTimeout(resolve, 1));
+    });
+  };
+  // Wait for a condition, not for a round count. A fixed `settle(n)` is a bet
+  // that n one-millisecond ticks cover however many macrotask turns React, the
+  // query client, and the discovery controller need — and the gate runs on a
+  // shared, heavily loaded container that loses that bet (see
+  // docs/INTEGRATION.md). The ceiling is a hang detector, not a timing
+  // assumption: correct code reaches the condition in a handful of rounds, so
+  // raising it costs nothing and only a genuine stall spends it.
+  const settleUntil = async (predicate, description, rounds = 500) => {
     for (let round = 0; round < rounds; round += 1) {
-      await act(async () => {
-        await new Promise((resolve) => nodeSetTimeout(resolve, 1));
-      });
+      if (predicate()) return;
+      await tick();
+    }
+    if (!predicate()) {
+      throw new Error(
+        `timed out after ${rounds} rounds waiting for ${description}`,
+      );
     }
   };
-  return { act, queryClient, renderHook, settle, wrapper };
+  return { act, queryClient, renderHook, settleUntil, tick, wrapper };
 }
 
 test("both ingress subscriptions rebuild when the session view is re-entered", async () => {
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();
   const useBothIngressHooks = await loadHooks();
-  const { queryClient, renderHook, settle, wrapper } = await reactHarness();
+  const { queryClient, renderHook, settleUntil, wrapper } =
+    await reactHarness();
 
   ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
 
@@ -255,7 +272,14 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   };
 
   const first = renderHook(() => useBothIngressHooks(client), { wrapper });
-  await settle();
+  await settleUntil(
+    () =>
+      historyCalls.length === 2 &&
+      liveSubscriptions.length === 2 &&
+      first.result.current.trusted.metadata.length === 1 &&
+      first.result.current.creates.observations.length === 1,
+    "both hooks to fetch history, arm live subscriptions, and ingest",
+  );
 
   assert.equal(historyCalls.length, 2, "one history fetch per hook");
   assert.equal(liveSubscriptions.length, 2, "one live subscription per hook");
@@ -273,7 +297,14 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
 
   // ...and back. Fresh hook instances, fresh stores, nothing carried over.
   const second = renderHook(() => useBothIngressHooks(client), { wrapper });
-  await settle();
+  await settleUntil(
+    () =>
+      historyCalls.length === 4 &&
+      liveSubscriptions.length === 4 &&
+      second.result.current.trusted.metadata.length === 1 &&
+      second.result.current.creates.observations.length === 1,
+    "the remounted hooks to refetch history and re-arm live subscriptions",
+  );
 
   assert.equal(historyCalls.length, 4, "history must be refetched on remount");
   assert.equal(liveSubscriptions.length, 4, "live subs must be re-armed");
@@ -335,7 +366,7 @@ test("a channel added during create fences live before its first history backfil
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();
   const useBothIngressHooks = await loadHooks();
-  const { act, queryClient, renderHook, settle, wrapper } =
+  const { act, queryClient, renderHook, settleUntil, wrapper } =
     await reactHarness();
 
   ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
@@ -362,9 +393,14 @@ test("a channel added during create fences live before its first history backfil
   const { result, unmount } = renderHook(() => useBothIngressHooks(client), {
     wrapper,
   });
-  await settle(1);
+  await settleUntil(
+    () => pendingLive.length === 2,
+    "both live fences to start",
+  );
 
   assert.equal(pendingLive.length, 2, "both live fences must start");
+  // Stronger than it looks: the fence has to hold for however many rounds the
+  // second subscription took to appear, not merely for one tick.
   assert.equal(
     historyCalls.length,
     0,
@@ -379,7 +415,13 @@ test("a channel added during create fences live before its first history backfil
   await act(async () => {
     for (const subscription of pendingLive) subscription.ready();
   });
-  await settle();
+  await settleUntil(
+    () =>
+      historyCalls.length === 2 &&
+      result.current.trusted.metadata.length === 1 &&
+      result.current.creates.observations.length === 1,
+    "the post-fence history read to land in both stores",
+  );
 
   assert.equal(historyCalls.length, 2, "one post-fence read per ingress");
   assert.equal(result.current.trusted.metadata.length, 1);
@@ -394,7 +436,7 @@ test("one mounted catalog observing session facts updates its sibling catalog", 
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();
   const useBothIngressHooks = await loadHooks();
-  const { act, queryClient, renderHook, settle, wrapper } =
+  const { act, queryClient, renderHook, settleUntil, wrapper } =
     await reactHarness();
 
   ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
@@ -417,7 +459,10 @@ test("one mounted catalog observing session facts updates its sibling catalog", 
   const second = renderHook(() => useBothIngressHooks(secondClient), {
     wrapper,
   });
-  await settle();
+  await settleUntil(
+    () => firstLive.length === 2 && secondLive.length === 2,
+    "both mounted catalogs to arm their live subscriptions",
+  );
 
   assert.equal(firstLive.length, 2);
   assert.equal(secondLive.length, 2);
@@ -450,7 +495,8 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
   const { createEvent, metadataEvent, receiptEvent } =
     await buildRelayHistory();
   const useBothIngressHooks = await loadHooks();
-  const { queryClient, renderHook, settle, wrapper } = await reactHarness();
+  const { queryClient, renderHook, settleUntil, wrapper } =
+    await reactHarness();
 
   ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
 
@@ -481,8 +527,11 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
   const { result, unmount } = renderHook(() => useBothIngressHooks(client), {
     wrapper,
   });
-  // One round is enough to land the first rejection.
-  await settle(1);
+  // Observe as soon as the first rejection has landed on both ingresses.
+  await settleUntil(
+    () => attemptsByFilterKind.size === 2,
+    "the first back-pressure rejection on both ingresses",
+  );
 
   // At this observation point the retry may still be backing off, or a busy
   // suite may have already let the compressed retry ladder converge. Either
@@ -500,7 +549,14 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
     true,
   );
 
-  await settle(40);
+  await settleUntil(
+    () =>
+      !result.current.trusted.isLoading &&
+      !result.current.creates.isLoading &&
+      result.current.trusted.metadata.length === 1 &&
+      result.current.creates.observations.length === 1,
+    "the compressed retry ladder to carry both ingresses past back-pressure",
+  );
 
   assert.ok(
     attemptsByFilterKind.get("44223,44224,44225") >= 6,
@@ -523,7 +579,8 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
 test("the umbrella conversation lane rides out the same back-pressure", async () => {
   const { useCodingSessionLane } = await import("../useCodingSessionLane.ts");
   const { KIND_STREAM_MESSAGE } = await import("@/shared/constants/kinds.ts");
-  const { queryClient, renderHook, settle, wrapper } = await reactHarness();
+  const { queryClient, renderHook, settleUntil, wrapper } =
+    await reactHarness();
 
   const laneMessage = finalizeEvent(
     {
@@ -555,7 +612,10 @@ test("the umbrella conversation lane rides out the same back-pressure", async ()
     () => useCodingSessionLane(CHANNEL_ID, SESSION_REF, client),
     { wrapper },
   );
-  await settle(40);
+  await settleUntil(
+    () => !result.current.isLoading && result.current.messages.length === 1,
+    "the lane's retry ladder to deliver the message",
+  );
 
   // Before the fix the lane had no retry at all: one rejected history frame
   // left the umbrella's chat pane permanently empty until the next reconnect.
