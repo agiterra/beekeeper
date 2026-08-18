@@ -237,6 +237,9 @@ test("the join inherits the umbrella's project and repo claims", () => {
       capabilities: capabilities(),
     },
   ])[0];
+  // The join is gated on a resolved genesis, so this fixture must be governed
+  // before the inheritance question is even reachable.
+  umbrella.genesisResolution = "governed";
   const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
   const payload = buildAddCodingSessionProviderSubmit({
     umbrella,
@@ -250,8 +253,10 @@ test("the join inherits the umbrella's project and repo claims", () => {
   assert.equal(payload.repoRef, repoRef);
 
   // An umbrella that never claimed a project stays standalone.
+  const standaloneUmbrella = singleClaudeUmbrella();
+  standaloneUmbrella.genesisResolution = "governed";
   const standalone = buildAddCodingSessionProviderSubmit({
-    umbrella: singleClaudeUmbrella(),
+    umbrella: standaloneUmbrella,
     channelId: CHANNEL_ID,
     target: codex,
     model: null,
