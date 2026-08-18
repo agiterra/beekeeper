@@ -49,6 +49,13 @@ export type CodingSessionCommandEventInput = {
 export type PublishedCodingSessionCommand = {
   eventId: string;
   kind: number;
+  /**
+   * The command id inside the signed payload, handed back rather than left for
+   * the caller to remember. It is the only key a provider receipt for this
+   * command carries, so a surface that wants to hear a refusal needs it — and
+   * echoing it here keeps that need from tempting anyone to re-mint one.
+   */
+  commandId: string;
 };
 
 type CommandPublisher = {
@@ -188,6 +195,7 @@ export async function publishCodingSessionCommand(
 ): Promise<PublishedCodingSessionCommand> {
   return publishCodingSessionEvent(
     buildCodingSessionCommandEvent(input),
+    input.commandId,
     dependencies,
   );
 }
@@ -202,12 +210,14 @@ export async function publishCodingSessionInterrupt(
 ): Promise<PublishedCodingSessionCommand> {
   return publishCodingSessionEvent(
     buildCodingSessionInterruptEvent(input),
+    input.commandId,
     dependencies,
   );
 }
 
 async function publishCodingSessionEvent(
   input: CodingSessionCommandEventInput,
+  commandId: string,
   dependencies: {
     publisher?: CommandPublisher;
     signer?: CommandSigner;
@@ -221,7 +231,7 @@ async function publishCodingSessionEvent(
     "Timed out while sending the coding-session command.",
     "Failed to send the coding-session command.",
   );
-  return { eventId: accepted.id, kind: accepted.kind };
+  return { eventId: accepted.id, kind: accepted.kind, commandId };
 }
 
 /**

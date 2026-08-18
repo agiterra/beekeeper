@@ -143,6 +143,16 @@ export type CodingSessionLifecycleResolution =
   | { state: "conflict"; commandId: string };
 
 /**
+ * The provider's signed refusal of one command — its code and its own words.
+ *
+ * A turn is refused (unauthorized operator, for one) with the same 44224
+ * receipt shape a lifecycle command is refused with, but nothing about a turn
+ * is a lifecycle transition: there is no target to establish and no metadata to
+ * wait for, so the only fact worth reading back is the error.
+ */
+export type CodingSessionCommandRefusal = { code: string; message: string };
+
+/**
  * The target of a resolution that established a usable session, or `null`.
  *
  * Three receipt outcomes establish one: a plain create, a create whose initial
@@ -746,6 +756,37 @@ export class TrustedCodingSessionIngressStore {
       target,
       metadata: selected.value.value,
     };
+  }
+
+  /**
+   * Read one turn command's refusal, or `null` if it was not refused.
+   *
+   * Turn receipts are one-sided by design: a refused turn publishes a `failed`
+   * 44224 keyed to the turn's own command id, a turn that ran publishes none
+   * (its transcript items are the signal), and a turn addressed to some other
+   * provider's session is ignored in silence — several providers watch one
+   * channel and must not answer commands they do not own. So the honest
+   * reading is binary, and every gate the lifecycle path applies applies here:
+   * an exact provider authority, that authority's own signature, and a single
+   * agreeing payload (a disagreement is a conflict, never a refusal).
+   */
+  resolveTurnRefusal(
+    channelId: string,
+    commandId: string,
+    providerAuthorityPubkey: string,
+  ): CodingSessionCommandRefusal | null {
+    if (!isExactProviderAuthorityPubkey(providerAuthorityPubkey)) return null;
+    const receiptBucket = this.receipts.get(compositeKey(channelId, commandId));
+    if (!receiptBucket || receiptBucket.size === 0) return null;
+    const receipt = resolveImmutableReceipt(
+      receiptBucket,
+      providerAuthorityPubkey,
+    );
+    // A missing receipt (nothing from this authority) and a null one (records
+    // from this authority that disagree) are both absences of a refusal this
+    // composer may claim, exactly as they are for a lifecycle command.
+    if (receipt?.status !== "failed") return null;
+    return receipt.error;
   }
 
   private retainRawEvent(

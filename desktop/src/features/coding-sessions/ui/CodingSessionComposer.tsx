@@ -12,7 +12,9 @@ import {
   publishCodingSessionResume,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/useCodingSessionResumeSettle";
+import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
+import { restoreCodingSessionDraft } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
 import type {
   CodingSessionStatus,
   CodingSessionWorkspaceStatus,
@@ -124,8 +126,23 @@ export function CodingSessionComposer({
     channelId,
     providerAuthorityPubkey,
   });
+  const restoreRefusedDraft = React.useCallback((refused: string) => {
+    setText((current) => restoreCodingSessionDraft(current, refused));
+  }, []);
+  // A sent turn the provider refuses (an operator it has not granted) answers
+  // with a receipt and nothing else; without this watch the message the person
+  // typed disappears with no explanation at all.
+  const {
+    error: turnRefusalError,
+    watch: watchTurn,
+    watcher: turnRefusalWatcher,
+  } = useCodingSessionTurnRefusal({
+    channelId,
+    providerAuthorityPubkey,
+    restoreDraft: restoreRefusedDraft,
+  });
   const isSending = pendingAction !== null || isResuming;
-  const visibleError = error ?? resumeError;
+  const visibleError = error ?? resumeError ?? turnRefusalError;
   React.useEffect(() => {
     onTextChange?.(text);
   }, [onTextChange, text]);
@@ -152,16 +169,22 @@ export function CodingSessionComposer({
 
   const submit = React.useCallback(async () => {
     if (!canSubmitText || isSending) return;
+    // Keep the person's own words, not the prepared wire text: a refusal has
+    // to hand back exactly what they typed, routing handle and all.
+    const draft = text;
     setPendingAction("send");
     setError(null);
     try {
-      await publishCodingSessionCommand({
+      const published = await publishCodingSessionCommand({
         channelId,
         commandId: createCodingSessionCommandId(),
         target,
         text: preparedText,
       });
       setText("");
+      // Acceptance by the relay is not consent from the provider. The receipt
+      // that refuses this turn is keyed to this command id and nothing else.
+      watchTurn({ commandId: published.commandId, draft });
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -171,7 +194,15 @@ export function CodingSessionComposer({
     } finally {
       setPendingAction(null);
     }
-  }, [canSubmitText, channelId, isSending, preparedText, target]);
+  }, [
+    canSubmitText,
+    channelId,
+    isSending,
+    preparedText,
+    target,
+    text,
+    watchTurn,
+  ]);
 
   const handlePrimaryAction = React.useCallback(async () => {
     await submit();
@@ -300,7 +331,8 @@ export function CodingSessionComposer({
         </p>
       ) : null}
       {/* A refused reconnect (a stale generation, a provider that never
-          answered) is a signed fact about this composer's own command — it
+          answered) or a refused turn (an operator this provider has not
+          granted) is a signed fact about this composer's own command — it
           shares the composer's error line rather than disappearing. */}
       {visibleError ? (
         <p
@@ -447,6 +479,7 @@ export function CodingSessionComposer({
       ) : null}
       {endDialog.dialog}
       {resumeWatcher}
+      {turnRefusalWatcher}
     </div>
   );
 }

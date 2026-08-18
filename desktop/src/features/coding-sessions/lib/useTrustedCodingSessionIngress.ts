@@ -22,6 +22,7 @@ import {
   resolveCodingSessionIngressAuthority,
 } from "./codingSessionIngressAuthority";
 import {
+  type CodingSessionCommandRefusal,
   type CodingSessionGenerationScope,
   type CodingSessionLifecycleResolution,
   isExactProviderAuthorityPubkey,
@@ -60,6 +61,13 @@ export type TrustedCodingSessionIngressHookSnapshot =
     errorMessage: string | null;
     authorityErrorMessage: string | null;
     lifecycle: CodingSessionLifecycleResolution | null;
+    /**
+     * The signed refusal of the same `commandId`, read as a plain turn rather
+     * than a lifecycle transition. A turn establishes nothing, so it has no
+     * lifecycle resolution worth reading — only "refused, with these words" or
+     * nothing at all.
+     */
+    turnRefusal: CodingSessionCommandRefusal | null;
     /**
      * The verified raw events behind one generation, for pop-out bootstrap.
      *
@@ -142,6 +150,7 @@ function emptySnapshot(
   authorityIdentity: string | null,
   scopeIdentity: string,
   lifecycle: CodingSessionLifecycleResolution | null,
+  turnRefusal: CodingSessionCommandRefusal | null = null,
 ): TrustedCodingSessionIngressHookSnapshot {
   return {
     authorityIdentity,
@@ -155,6 +164,7 @@ function emptySnapshot(
     errorMessage: null,
     authorityErrorMessage: null,
     lifecycle,
+    turnRefusal,
     retainedRawEvents: NO_RETAINED_RAW_EVENTS,
     lifecycleFor: NO_LIFECYCLE_RESOLUTION,
   };
@@ -275,12 +285,25 @@ export function useTrustedCodingSessionIngress(
             )
           : { state: "conflict", commandId }
         : null;
+    // The same command id, read the other way: a turn's only signed outcome is
+    // a refusal, so it needs no lifecycle machinery and no conflict state.
+    const resolveTurnRefusal = (): CodingSessionCommandRefusal | null =>
+      commandId &&
+      stableChannelIds.length === 1 &&
+      isExactProviderAuthorityPubkey(providerAuthorityPubkey)
+        ? store.resolveTurnRefusal(
+            stableChannelIds[0],
+            commandId,
+            providerAuthorityPubkey,
+          )
+        : null;
     if (isConfigLoading) {
       setSnapshot({
         ...emptySnapshot(
           authorityIdentity,
           requestIdentity,
           resolveLifecycle(),
+          resolveTurnRefusal(),
         ),
         isLoading: true,
       });
@@ -292,6 +315,7 @@ export function useTrustedCodingSessionIngress(
           authorityIdentity,
           requestIdentity,
           resolveLifecycle(),
+          resolveTurnRefusal(),
         ),
         errorMessage: authority.errorMessage,
         authorityErrorMessage: authority.errorMessage,
@@ -300,7 +324,12 @@ export function useTrustedCodingSessionIngress(
     }
     if (stableChannelIds.length === 0) {
       setSnapshot(
-        emptySnapshot(authorityIdentity, requestIdentity, resolveLifecycle()),
+        emptySnapshot(
+          authorityIdentity,
+          requestIdentity,
+          resolveLifecycle(),
+          resolveTurnRefusal(),
+        ),
       );
       return;
     }
@@ -341,6 +370,7 @@ export function useTrustedCodingSessionIngress(
             : (historyError ?? liveError),
         authorityErrorMessage: null,
         lifecycle: resolveLifecycle(),
+        turnRefusal: resolveTurnRefusal(),
         retainedRawEvents: (scope) => store.retainedRawEvents(scope),
         lifecycleFor: (forChannelId, forCommandId, forAuthorityPubkey) =>
           isExactProviderAuthorityPubkey(forAuthorityPubkey)

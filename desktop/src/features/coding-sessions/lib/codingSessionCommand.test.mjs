@@ -207,7 +207,13 @@ test("publish signs the native kind exactly once and reports the accepted identi
     [44220],
   );
   assert.equal(accepted.length, 1);
-  assert.deepEqual(result, { eventId: "event-44220", kind: 44220 });
+  // The command id comes back with the accepted identity: it is the only key
+  // a provider refusal for this command will carry.
+  assert.deepEqual(result, {
+    eventId: "event-44220",
+    kind: 44220,
+    commandId: "cmd-1",
+  });
 });
 
 test("interrupt publishes the same signed command contract", async () => {
@@ -238,7 +244,11 @@ test("interrupt publishes the same signed command contract", async () => {
     "thread.turn.interrupt",
   );
   assert.equal("text" in JSON.parse(signed[0].content).action, false);
-  assert.deepEqual(result, { eventId: "interrupt-event", kind: 44220 });
+  assert.deepEqual(result, {
+    eventId: "interrupt-event",
+    kind: 44220,
+    commandId: "interrupt-1",
+  });
 });
 
 test("native-only publish never re-signs under any relay rejection", async () => {

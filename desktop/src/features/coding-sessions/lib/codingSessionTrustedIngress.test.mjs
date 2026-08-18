@@ -892,6 +892,105 @@ test("only resolutions that established a session name a target", () => {
   }
 });
 
+test("a refused turn is readable, and only from the pinned provider authority", () => {
+  const error = {
+    code: "UNAUTHORIZED_OPERATOR",
+    message:
+      "only the session founder or a granted operator may steer this execution",
+  };
+  const refusal = (commandId, overrides = {}) => ({
+    schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    commandId,
+    status: "failed",
+    session: null,
+    error,
+    ...overrides,
+  });
+  const otherPubkey = getPublicKey(OTHER_SECRET);
+  const pluralAuthority = resolveCodingSessionIngressAuthority([
+    { pubkey: PROVIDER_PUBKEY, label: "Selected provider" },
+    { pubkey: otherPubkey, label: "Other trusted provider" },
+  ]);
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [
+      receiptEvent(refusal("turn-refused")),
+      // A refusal signed by a provider this turn never addressed proves
+      // nothing about this turn.
+      receiptEvent(refusal("turn-foreign"), { secret: OTHER_SECRET }),
+      // A turn that ran publishes no receipt; a create's success receipt is
+      // not a refusal wearing a different status.
+      receiptEvent(createdReceipt()),
+    ],
+    [CHANNEL_ID],
+    pluralAuthority,
+  );
+
+  assert.deepEqual(
+    store.resolveTurnRefusal(CHANNEL_ID, "turn-refused", PROVIDER_PUBKEY),
+    error,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, "turn-foreign", PROVIDER_PUBKEY),
+    null,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, "turn-silent", PROVIDER_PUBKEY),
+    null,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
+    null,
+  );
+  // The command id is channel-scoped, and a non-exact authority is no
+  // authority at all.
+  assert.equal(
+    store.resolveTurnRefusal("channel-2", "turn-refused", PROVIDER_PUBKEY),
+    null,
+  );
+  for (const invalid of [
+    PROVIDER_PUBKEY.toUpperCase(),
+    PROVIDER_PUBKEY.slice(2),
+  ]) {
+    assert.equal(
+      store.resolveTurnRefusal(CHANNEL_ID, "turn-refused", invalid),
+      null,
+      invalid,
+    );
+  }
+});
+
+test("two refusals of one turn disagreeing is a conflict, not a refusal", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [
+      receiptEvent({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: "turn-1",
+        status: "failed",
+        session: null,
+        error: { code: "UNAUTHORIZED_OPERATOR", message: "not granted" },
+      }),
+      receiptEvent(
+        {
+          schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+          commandId: "turn-1",
+          status: "failed",
+          session: null,
+          error: { code: "STALE_GENERATION", message: "wrong generation" },
+        },
+        { createdAt: 1_800_000_005 },
+      ),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, "turn-1", PROVIDER_PUBKEY),
+    null,
+  );
+});
+
 test("conflicting immutable receipts still fail closed", () => {
   const store = new TrustedCodingSessionIngressStore();
   store.ingestRelayEvents(
