@@ -31,7 +31,14 @@ pub const DEFAULT_MODEL: &str = "default";
 /// Default ceiling on concurrently live sessions.
 pub const DEFAULT_MAX_SESSIONS: usize = 4;
 /// Default idle window before a live session's subprocess is reclaimed.
-pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 1800;
+///
+/// Thirty minutes reclaimed adapters out from under people mid-workday: a
+/// session left while a meeting ran came back Disconnected, and every return
+/// cost a reconnect. Four hours matches how long a coding session actually
+/// rests between turns; the cap on concurrently live sessions still bounds
+/// how many adapters can be held. Override with
+/// `BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
+pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
 /// Default per-turn silence budget, mirroring the buzz-acp harness.
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 /// Default per-turn wall-clock ceiling, mirroring the buzz-acp harness.
@@ -424,7 +431,7 @@ mod tests {
         assert!(claude.capabilities.is_none());
         assert_eq!(config.max_sessions, DEFAULT_MAX_SESSIONS);
         assert_eq!(config.command_horizon, Duration::from_secs(86_400));
-        assert_eq!(config.session_idle_shutdown, Duration::from_secs(1800));
+        assert_eq!(config.session_idle_shutdown, Duration::from_secs(14_400));
         assert!(config.include_thoughts);
         assert!(config.projects_file.is_none());
         assert!(config.context_mcp_command.is_none());

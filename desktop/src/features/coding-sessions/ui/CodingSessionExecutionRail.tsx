@@ -311,14 +311,21 @@ function disambiguatedExecutionLabel(
   return `${base} ${matches.indexOf(participant) + 1}`;
 }
 
-function executionStatus(status: string): { label: string; tone: string } {
+/** Map a signed execution status to its rail label. Exported for test. */
+export function executionStatus(status: string): {
+  label: string;
+  tone: string;
+} {
   if (status === "running" || status === "starting") {
     return { label: "Working", tone: "text-blue-500" };
   }
   if (status === "waiting_for_input") {
     return { label: "Waiting", tone: "text-amber-500" };
   }
-  if (["completed", "stopped", "interrupted"].includes(status)) {
+  // `idle` is the provider's most common resting status — omitting it here
+  // rendered every waiting execution as "Status unknown" while the header
+  // beside it read Idle.
+  if (["idle", "completed", "stopped", "interrupted"].includes(status)) {
     return { label: "Idle", tone: "text-muted-foreground" };
   }
   if (status === "failed" || status === "disconnected") {
