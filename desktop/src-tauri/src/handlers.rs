@@ -372,16 +372,18 @@ pub(crate) fn invoke_handler(
         #[cfg(unix)]
         set_shell_persistence_enabled,
         #[cfg(unix)]
-        set_session_agent_consent,
-        #[cfg(unix)]
-        list_session_agent_consent,
-        #[cfg(unix)]
         set_shell_session_shared,
+        #[cfg(unix)]
+        set_shell_session_roster,
         #[cfg(unix)]
         shell_broadcast_watch,
         #[cfg(unix)]
         shell_broadcast_watchers,
         #[cfg(unix)]
         build_shell_watch_event,
+        #[cfg(unix)]
+        build_shell_input_event,
+        #[cfg(unix)]
+        shell_remote_input,
     ]
 }

@@ -81,10 +81,12 @@ pub fn init(app: &AppHandle) {
 }
 
 /// The NIP-ST broadcast gate: `Some(coordinate)` only for a session assigned
-/// to a real project coordinate AND marked shared. Everything that announces
-/// or streams passes through here.
-fn may_broadcast(info: &ShellSessionInfo) -> Option<String> {
-    if !info.shared {
+/// to a real project coordinate AND with someone admitted to observe it —
+/// project-wide sharing on, or at least one invited roster member. Everything
+/// that announces or streams passes through here; *who* may watch is decided
+/// per-watcher in [`watch`].
+pub(crate) fn may_broadcast(info: &ShellSessionInfo) -> Option<String> {
+    if !info.shared && info.roster.is_empty() {
         return None;
     }
     let coord = info.project_ref.as_deref()?;
@@ -126,17 +128,30 @@ fn announce_with_coordinate(
     coordinate: &str,
     status: &str,
 ) {
-    let builder = nostr::EventBuilder::new(
-        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_SESSION as u16),
-        "",
-    )
-    .tags([
+    let mut tags = vec![
         nostr::Tag::identifier(info.session_id.clone()),
         tag(&["a", coordinate]),
         tag(&["title", &info.title]),
         tag(&["status", status]),
         tag(&["dims", &format!("{}x{}", info.rows, info.cols)]),
-    ]);
+    ];
+    // The invite roster rides the announce as arity-4 `p` tags
+    // (["p", <hex>, "", <role>]) — the relay enforces shape/cap/no-dupes at
+    // ingest, so skip (never "fix up") anything malformed here to keep a bad
+    // entry from sinking the whole announce.
+    for entry in &info.roster {
+        let pubkey = entry.pubkey.trim().to_ascii_lowercase();
+        let pubkey_ok = pubkey.len() == 64 && pubkey.bytes().all(|b| b.is_ascii_hexdigit());
+        if !pubkey_ok || !buzz_core_pkg::kind::is_valid_shell_role(&entry.role) {
+            continue;
+        }
+        tags.push(tag(&["p", &pubkey, "", &entry.role]));
+    }
+    let builder = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_SESSION as u16),
+        "",
+    )
+    .tags(tags);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<crate::app_state::AppState>();
@@ -228,6 +243,16 @@ pub fn watch(session_id: &str, watcher_pubkey: &str, action: &str) -> Result<Vec
     let Some(coordinate) = may_broadcast(&info) else {
         return Err("session is not shared".to_string());
     };
+    // Per-watcher admission: project members (the relay already vetted their
+    // project membership before delivering the watch event) are admitted only
+    // while project-wide sharing is on; invited roster members (any role) are
+    // always admitted. Everyone else is refused before registration, so
+    // "private + invited only" leaks no frames to the merely project-adjacent.
+    let watcher_norm = watcher_pubkey.trim().to_ascii_lowercase();
+    let on_roster = info.roster.iter().any(|e| e.pubkey == watcher_norm);
+    if !info.shared && !on_roster {
+        return Err("you are not invited to this session".to_string());
+    }
     ensure_sweeper();
 
     let mut map = broadcasts()
@@ -265,6 +290,33 @@ pub fn watch(session_id: &str, watcher_pubkey: &str, action: &str) -> Result<Vec
             }
         }
         other => Err(format!("unknown watch action: {other}")),
+    }
+}
+
+/// Re-check every registered watcher of a session against its *current*
+/// share flag + roster, dropping any no longer admitted (sharing toggled
+/// off, or an invite revoked). The refreshed announce is the observer's
+/// signal to stop; this ends their frame flow immediately rather than at
+/// keepalive expiry.
+pub fn refresh_admission(session_id: &str) {
+    let Some(info) = manager::info(session_id) else {
+        return;
+    };
+    let Ok(mut map) = broadcasts().lock() else {
+        return;
+    };
+    let Some(entry) = map.get_mut(session_id) else {
+        return;
+    };
+    let before = entry.watchers.len();
+    entry.watchers.retain(|pubkey, _| {
+        let normalized = pubkey.trim().to_ascii_lowercase();
+        info.shared || info.roster.iter().any(|e| e.pubkey == normalized)
+    });
+    if entry.watchers.len() != before {
+        let watchers: Vec<String> = entry.watchers.keys().cloned().collect();
+        drop(map);
+        emit_watchers(session_id, &watchers);
     }
 }
 
@@ -490,6 +542,7 @@ mod tests {
             restorable: false,
             project_ref: project_ref.map(str::to_string),
             shared,
+            roster: Vec::new(),
         }
     }
 
@@ -518,6 +571,27 @@ mod tests {
             may_broadcast(&info(Some(&format!("30621:{OWNER}:")), true)),
             None
         );
+    }
+
+    #[test]
+    fn may_broadcast_admits_unshared_session_with_roster() {
+        let coord = format!("30621:{OWNER}:proj");
+        let mut unshared = info(Some(&coord), false);
+        assert_eq!(may_broadcast(&unshared), None);
+        // "Private + invited only": a non-empty roster opens the gate even
+        // with project-wide sharing off …
+        unshared.roster.push(super::super::manager::RosterEntry {
+            pubkey: "ab".repeat(32),
+            role: "viewer".to_string(),
+        });
+        assert_eq!(may_broadcast(&unshared), Some(coord));
+        // … but never without a real project coordinate.
+        let mut no_project = info(None, false);
+        no_project.roster.push(super::super::manager::RosterEntry {
+            pubkey: "ab".repeat(32),
+            role: "collaborator".to_string(),
+        });
+        assert_eq!(may_broadcast(&no_project), None);
     }
 
     #[test]

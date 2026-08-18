@@ -14,10 +14,11 @@ import { useShellAccessRequests } from "../hooks/useShellAccessRequests";
 
 /**
  * App-wide approval prompt for agent access to a built-in shell session. When
- * an agent runs `buzz session request-access` on a session whose "Agents"
- * consent is off, its call blocks and this dialog surfaces the ask. The owner
- * can allow the single command once, enable full control (persisted agent
- * consent for the session), or deny — the decision wakes the agent.
+ * an agent runs `buzz session request-access` on a session it isn't a
+ * collaborator on, its call blocks and this dialog surfaces the ask. The
+ * owner can allow the single command once, enable full control (which adds
+ * the agent's pubkey to the session's invite roster as collaborator), or
+ * deny — the decision wakes the agent.
  *
  * The oldest pending request is shown; answering it reveals the next.
  */

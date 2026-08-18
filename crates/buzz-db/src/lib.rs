@@ -48,6 +48,8 @@ pub mod relay_invite;
 pub mod relay_members;
 /// Replica freshness fence for keyset-cursor read routing.
 pub mod replica_fence;
+/// Shared-terminal roster projection (NIP-ST).
+pub mod shell_session_acl;
 /// Thread metadata persistence.
 pub mod thread;
 /// Per-community usage rollup queries for Prometheus gauges.
@@ -2755,6 +2757,59 @@ impl Db {
         coordinate: &str,
     ) -> Result<Option<project_acl::ProjectRoster>> {
         project_acl::get_project_roster(&self.pool, community, coordinate).await
+    }
+
+    /// Upsert the shared-terminal roster projection from an ingested 30623
+    /// head (store+project side effect; republish-latest, stale replays
+    /// ignored).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_shell_session_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        session_id: &str,
+        coordinate: &str,
+        status: &str,
+        members: &[shell_session_acl::ShellMember],
+        head_created_at: i64,
+    ) -> Result<()> {
+        shell_session_acl::upsert_shell_session_acl(
+            &self.pool,
+            community,
+            owner,
+            session_id,
+            coordinate,
+            status,
+            members,
+            head_created_at,
+        )
+        .await
+    }
+
+    /// Drop the shared-terminal roster projection for a NIP-09-deleted
+    /// 30623 coordinate. Returns whether a row was removed.
+    pub async fn delete_shell_session_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        session_id: &str,
+        deleted_at: i64,
+    ) -> Result<bool> {
+        shell_session_acl::delete_shell_session_acl(
+            &self.pool, community, owner, session_id, deleted_at,
+        )
+        .await
+    }
+
+    /// Resolve one shared terminal's roster (status + members with roles),
+    /// or `None` when no announce head is projected.
+    pub async fn get_shell_roster(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        session_id: &str,
+    ) -> Result<Option<shell_session_acl::ShellRoster>> {
+        shell_session_acl::get_shell_roster(&self.pool, community, owner, session_id).await
     }
 
     /// Returns whether `pubkey` may write contents into the project at

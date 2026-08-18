@@ -17,6 +17,7 @@ pub mod reactions;
 pub mod repos;
 pub mod session;
 pub mod social;
+pub mod terminals;
 pub mod upload;
 pub mod users;
 pub mod workflows;

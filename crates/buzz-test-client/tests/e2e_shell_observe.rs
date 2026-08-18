@@ -49,7 +49,12 @@ fn project_coordinate(owner: &Keys, d_tag: &str) -> String {
     format!("{PROJECT_KIND}:{}:{d_tag}", owner.public_key().to_hex())
 }
 
-fn project_event(keys: &Keys, d_tag: &str, access: Option<&str>, members: &[&Keys]) -> nostr::Event {
+fn project_event(
+    keys: &Keys,
+    d_tag: &str,
+    access: Option<&str>,
+    members: &[&Keys],
+) -> nostr::Event {
     let mut tags = vec![
         Tag::parse(["d", d_tag]).unwrap(),
         Tag::parse(["name", d_tag]).unwrap(),
@@ -94,22 +99,22 @@ fn frame_event(keys: &Keys, session_id: &str, coordinate: &str, seq: u64) -> nos
 }
 
 fn watch_event(keys: &Keys, owner: &Keys, session_id: &str, coordinate: &str) -> nostr::Event {
-    EventBuilder::new(
-        Kind::Custom(SHELL_WATCH_KIND),
-        r#"{"action":"watch"}"#,
-    )
-    .tags(vec![
-        Tag::parse(["p", &owner.public_key().to_hex()]).unwrap(),
-        Tag::parse(["d", session_id]).unwrap(),
-        Tag::parse(["a", coordinate]).unwrap(),
-    ])
-    .sign_with_keys(keys)
-    .unwrap()
+    EventBuilder::new(Kind::Custom(SHELL_WATCH_KIND), r#"{"action":"watch"}"#)
+        .tags(vec![
+            Tag::parse(["p", &owner.public_key().to_hex()]).unwrap(),
+            Tag::parse(["d", session_id]).unwrap(),
+            Tag::parse(["a", coordinate]).unwrap(),
+        ])
+        .sign_with_keys(keys)
+        .unwrap()
 }
 
 async fn query(client: &mut BuzzTestClient, name: &str, filter: Filter) -> Vec<nostr::Event> {
     let sid = sub_id(name);
-    client.subscribe(&sid, vec![filter]).await.expect("subscribe");
+    client
+        .subscribe(&sid, vec![filter])
+        .await
+        .expect("subscribe");
     let events = client
         .collect_until_eose(&sid, Duration::from_secs(10))
         .await
@@ -184,8 +189,17 @@ async fn test_private_project_terminal_gated_end_to_end() {
     let owner_sees = query(&mut owner_client, "own", announce_filter(&session_id)).await;
     assert_eq!(owner_sees.len(), 1, "owner must read their own announce");
     let member_sees = query(&mut member_client, "member", announce_filter(&session_id)).await;
-    assert_eq!(member_sees.len(), 1, "invited member must read the announce");
-    let stranger_sees = query(&mut stranger_client, "stranger", announce_filter(&session_id)).await;
+    assert_eq!(
+        member_sees.len(),
+        1,
+        "invited member must read the announce"
+    );
+    let stranger_sees = query(
+        &mut stranger_client,
+        "stranger",
+        announce_filter(&session_id),
+    )
+    .await;
     assert!(
         stranger_sees.is_empty(),
         "stranger must not read a private project's announce"
@@ -218,11 +232,23 @@ async fn test_private_project_terminal_gated_end_to_end() {
     assert!(ok.accepted, "owner frame rejected: {}", ok.message);
 
     assert!(
-        recv_specific(&mut member_client, &member_sid, frame_id, Duration::from_secs(10)).await,
+        recv_specific(
+            &mut member_client,
+            &member_sid,
+            frame_id,
+            Duration::from_secs(10)
+        )
+        .await,
         "invited member must receive the live frame"
     );
     assert!(
-        !recv_specific(&mut stranger_client, &stranger_sid, frame_id, Duration::from_secs(5)).await,
+        !recv_specific(
+            &mut stranger_client,
+            &stranger_sid,
+            frame_id,
+            Duration::from_secs(5)
+        )
+        .await,
         "stranger must not receive a private project's frame"
     );
 
@@ -354,7 +380,10 @@ async fn test_malformed_shell_events_rejected() {
     // Announce with an unknown status (fail closed, never default).
     let bad_status = announce_event(&owner, &session_id, &coordinate, "sharing");
     let ok = client.send_event(bad_status).await.expect("send");
-    assert!(!ok.accepted, "announce with unknown status must be rejected");
+    assert!(
+        !ok.accepted,
+        "announce with unknown status must be rejected"
+    );
 
     // Oversized watch content.
     let big = "x".repeat(2048);

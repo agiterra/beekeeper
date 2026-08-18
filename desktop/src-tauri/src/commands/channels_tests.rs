@@ -287,6 +287,7 @@ fn make_channel(id: &str, name: &str, last_message_at: Option<String>) -> Channe
         is_member: true,
         ttl_seconds: None,
         ttl_deadline: None,
+        project_ref: None,
     }
 }
 

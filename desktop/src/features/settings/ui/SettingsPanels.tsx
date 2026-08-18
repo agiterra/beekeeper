@@ -1,28 +1,6 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  Archive,
-  BellRing,
-  Bot,
-  ChevronDown,
-  Cpu,
-  Download,
-  FlaskConical,
-  Keyboard,
-  LayoutTemplate,
-  MessagesSquare,
-  MonitorCog,
-  Moon,
-  ShieldAlert,
-  Smartphone,
-  Smile,
-  Sun,
-  SunMoon,
-  Ticket,
-  UserRound,
-  Volume2,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown, Moon, Sun, SunMoon } from "lucide-react";
 import type {
   DesktopNotificationPermissionState,
   NotificationSettings,

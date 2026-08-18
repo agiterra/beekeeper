@@ -316,7 +316,30 @@ pub async fn filter_fanout_by_access(
     // never sees them; the coordinate comes from the event's own validated
     // `a` tag. A missing coordinate or gate-lookup failure delivers to nobody
     // but the author (fail closed).
-    let matches = if buzz_core::kind::is_shell_observe_kind(event_kind_u32(&stored_event.event)) {
+    // NIP-ST input (24312): delivered only to the target owner's own
+    // connections (plus the sender's, for echo/diagnostics). Never widened
+    // by project membership — input is a sender→owner stream, and the owner
+    // host re-verifies the sender against the roster before the PTY.
+    let matches = if event_kind_u32(&stored_event.event) == buzz_core::kind::KIND_SHELL_INPUT {
+        let author = stored_event.event.pubkey.to_bytes();
+        let p = nostr::SingleLetterTag::lowercase(nostr::Alphabet::P);
+        let owner: Option<[u8; 32]> = stored_event
+            .event
+            .tags
+            .filter(nostr::TagKind::SingleLetter(p))
+            .find_map(|t| t.content())
+            .and_then(|hex| nostr::PublicKey::from_hex(hex).ok())
+            .map(|pk| pk.to_bytes());
+        matches
+            .into_iter()
+            .filter(|(conn_id, _)| {
+                let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                    return false;
+                };
+                pk == author || owner.is_some_and(|owner| pk == owner)
+            })
+            .collect()
+    } else if buzz_core::kind::is_shell_observe_kind(event_kind_u32(&stored_event.event)) {
         let author = stored_event.event.pubkey.to_bytes();
         let gate = match buzz_core::kind::shell_observe_project_ref(&stored_event.event) {
             Some(coordinate) => {
@@ -347,15 +370,52 @@ pub async fn filter_fanout_by_access(
         };
         match gate {
             None => matches,
-            Some(gate) => matches
-                .into_iter()
-                .filter(|(conn_id, _)| {
-                    let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
-                        return false;
-                    };
-                    pk == author || gate.admits_read(&pk)
-                })
-                .collect(),
+            Some(gate) => {
+                // Roster union: a 30623 announce carries its roster in its
+                // own `p` tags (stateless); frames resolve the roster from
+                // the projection keyed by (author = owner, `d` session id).
+                // A per-session invite reads the stream without project
+                // membership.
+                let kind = event_kind_u32(&stored_event.event);
+                let mut roster_hex: Vec<String> =
+                    buzz_core::kind::shell_session_roster(&stored_event.event)
+                        .into_iter()
+                        .map(|(pubkey, _)| pubkey)
+                        .collect();
+                if kind == buzz_core::kind::KIND_SHELL_FRAME {
+                    let d = nostr::SingleLetterTag::lowercase(nostr::Alphabet::D);
+                    let session_id = stored_event
+                        .event
+                        .tags
+                        .filter(nostr::TagKind::SingleLetter(d))
+                        .find_map(|t| t.content().map(str::to_string));
+                    if let Some(session_id) = session_id {
+                        match state
+                            .shell_roster_cached(community_id, &author, &session_id)
+                            .await
+                        {
+                            Ok(Some(roster)) => {
+                                roster_hex
+                                    .extend(roster.members.iter().map(|(pk, _)| hex::encode(pk)));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                warn!("fan-out access filter: shell roster lookup failed: {e}");
+                            }
+                        }
+                    }
+                }
+                matches
+                    .into_iter()
+                    .filter(|(conn_id, _)| {
+                        let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                            return false;
+                        };
+                        let pk_hex = hex::encode(&pk);
+                        pk == author || gate.admits_read(&pk) || roster_hex.contains(&pk_hex)
+                    })
+                    .collect()
+            }
         }
     } else {
         matches
@@ -942,6 +1002,7 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
     // gate + per-kind rate limits) instead of the generic ephemeral path.
     if kind_u32 == buzz_core::kind::KIND_SHELL_WATCH
         || kind_u32 == buzz_core::kind::KIND_SHELL_FRAME
+        || kind_u32 == buzz_core::kind::KIND_SHELL_INPUT
     {
         if !scopes.is_empty() && !scopes.contains(&buzz_auth::Scope::MessagesWrite) {
             reject("scope");

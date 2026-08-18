@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { remoteTerminalsFromEvents } from "./useProjectTerminals.ts";
+import {
+  remoteTerminalsFromEvents,
+  rosterFromAnnounce,
+} from "./useProjectTerminals.ts";
 
 const OWNER = "feedface".repeat(8);
 const ME = "deadbeef".repeat(8);
@@ -67,6 +70,26 @@ test("sorts by title and tolerates missing optional tags", () => {
     ["a", "bare"],
   );
   assert.equal(terminals[1].dims, null);
+});
+
+test("parses arity-4 p-tag rosters, skipping malformed entries", () => {
+  const collab = "ab".repeat(32);
+  const viewer = "cd".repeat(32);
+  const event = announce();
+  event.tags.push(
+    ["p", collab, "", "collaborator"],
+    ["p", viewer, "", "viewer"],
+    // Malformed: arity-2 (no role), bad role, non-hex pubkey — all skipped.
+    ["p", "ef".repeat(32)],
+    ["p", "12".repeat(32), "", "admin"],
+    ["p", "not-hex", "", "viewer"],
+  );
+  assert.deepEqual(rosterFromAnnounce(event), [
+    { pubkey: collab, role: "collaborator" },
+    { pubkey: viewer, role: "viewer" },
+  ]);
+  const terminals = remoteTerminalsFromEvents([event], PROJECT, null);
+  assert.equal(terminals[0].roster.length, 2);
 });
 
 test("ignores events of other kinds or malformed shape", () => {

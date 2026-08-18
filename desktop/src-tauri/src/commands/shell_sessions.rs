@@ -1,17 +1,16 @@
 //! Tauri commands for the built-in shell experiment.
 //!
-//! Session lifecycle + PTY I/O for terminals hosted inside the app. The human
-//! "Interact" consent is enforced frontend-side (same contract as cmux writes);
-//! the backend agent consent is enforced by the session broker, which reaches
-//! these sessions through `shell_sessions::manager` with a `shell:`-prefixed
-//! workspace id.
+//! Session lifecycle + PTY I/O for terminals hosted inside the app. The owner
+//! always has interact rights on their own sessions; agents reach these
+//! sessions through the session broker (workspace id `shell:<sessionId>`),
+//! gated on a collaborator entry in the session's invite roster.
 
 use base64::Engine;
 use nostr::JsonUtil;
 use tauri::AppHandle;
 
 use crate::shell_sessions::access::{self, AccessRequest, Decision};
-use crate::shell_sessions::manager::{self, ShellSessionInfo};
+use crate::shell_sessions::manager::{self, RosterEntry, ShellSessionInfo};
 
 /// Spawn a new built-in shell session. Defaults: the user's `$SHELL`, `$HOME`.
 /// `project_ref`, if given, tags the session with the project container
@@ -85,9 +84,10 @@ pub fn set_shell_persistence_enabled(app: AppHandle, enabled: bool) -> Result<()
     crate::shell_sessions::persist::set_enabled(&app, enabled)
 }
 
-/// WRITE keystrokes into the session's PTY. Callers MUST hold the owner's
-/// per-session interaction consent (see sessionConsent.ts) — buzz never types
-/// into a session without it.
+/// WRITE keystrokes into the session's PTY. Reachable only from this app's
+/// own UI — the owner always has interact rights on their own sessions.
+/// Remote collaborators go through `shell_remote_input` (signature-verified);
+/// agents go through the session broker (roster-gated).
 #[tauri::command]
 pub fn write_shell_session(session_id: String, data: String) -> Result<(), String> {
     manager::write(&session_id, data.as_bytes())
@@ -146,6 +146,26 @@ pub fn set_shell_session_shared(
     manager::set_shared(&app, &session_id, shared)
 }
 
+/// Replace a session's invite roster (collaborator | viewer entries). The
+/// refreshed kind:30623 announce carries the roster as arity-4 `p` tags, so
+/// this is both the grant and the revocation signal observers see.
+#[tauri::command]
+pub fn set_shell_session_roster(
+    app: AppHandle,
+    session_id: String,
+    roster: Vec<RosterEntry>,
+) -> Result<(), String> {
+    manager::set_roster(&app, &session_id, roster)
+}
+
+/// A raw kind:24312 remote-input event arrived for this owner (relayed by
+/// the TS pump). The full event JSON is passed through so the Rust side can
+/// verify the signature and authorization itself — the pump is untrusted.
+#[tauri::command]
+pub fn shell_remote_input(app: AppHandle, event_json: String) -> Result<(), String> {
+    crate::shell_sessions::remote_input::handle_event_json(&app, &event_json)
+}
+
 /// A validated NIP-ST watch event arrived for one of this owner's sessions
 /// (relayed by the TS pump). Registers/refreshes/stops the watcher and
 /// returns the signed attach-bundle frame events the pump must publish.
@@ -194,5 +214,40 @@ pub fn build_shell_watch_event(
     ])
     .sign_with_keys(&keys)
     .map_err(|e| format!("sign watch event failed: {e}"))?;
+    Ok(event.as_json())
+}
+
+/// Build + sign a kind:24312 remote-input event for a session this identity
+/// collaborates on (observer side). `content_b64` is the base64 of the raw
+/// input bytes; the caller chunks so each event stays ≤ 8 KiB. The relay
+/// gates delivery on the owner's roster; the owner host re-verifies again.
+#[tauri::command]
+pub fn build_shell_input_event(
+    state: tauri::State<'_, crate::app_state::AppState>,
+    owner_pubkey: String,
+    session_id: String,
+    project_ref: String,
+    content_b64: String,
+) -> Result<String, String> {
+    if content_b64.len() > 8 * 1024 {
+        return Err("input chunk exceeds the 8 KiB event cap".to_string());
+    }
+    let owner = nostr::PublicKey::from_hex(owner_pubkey.trim())
+        .map_err(|e| format!("invalid owner pubkey: {e}"))?;
+    let keys = state.signing_keys()?;
+    let event = nostr::EventBuilder::new(
+        nostr::Kind::Custom(buzz_core_pkg::kind::KIND_SHELL_INPUT as u16),
+        content_b64,
+    )
+    // The owner typing into their own session from another device p-tags
+    // their own key; the builder strips self-references by default.
+    .allow_self_tagging()
+    .tags([
+        nostr::Tag::public_key(owner),
+        nostr::Tag::identifier(session_id),
+        nostr::Tag::parse(["a".to_string(), project_ref]).map_err(|e| e.to_string())?,
+    ])
+    .sign_with_keys(&keys)
+    .map_err(|e| format!("sign input event failed: {e}"))?;
     Ok(event.as_json())
 }

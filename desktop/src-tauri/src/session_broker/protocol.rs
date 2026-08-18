@@ -9,8 +9,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A request envelope. `caller` is the requesting agent's npub, recorded for
-/// audit; it is not the authorization gate (per-session agent-consent is).
+/// A request envelope. `caller` is the requesting agent's pubkey (hex),
+/// self-declared over the owner-only local socket (local-socket-trusted in
+/// v1 — see `server::agent_may_drive`); writes require it to hold a
+/// collaborator entry on the session's invite roster.
 #[derive(Debug, Deserialize)]
 pub struct BrokerEnvelope {
     #[serde(default)]

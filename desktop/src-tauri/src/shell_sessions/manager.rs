@@ -8,7 +8,7 @@
 //! `shell-session-output` frontend event — the exact downstream flow the old
 //! local-PTY reader thread had; only the byte source changed to a socket.
 //!
-//! Module-owned static registry (same pattern as `session_broker::consent`):
+//! Module-owned static registry (same pattern as `shell_sessions::access`):
 //! the broker reaches sessions without a Tauri `State` handle. Session state is
 //! machine-scoped; the *host processes* persist across app restarts, and disk
 //! history (`persist`) is the cold fallback for when a host is gone (reboot).
@@ -25,9 +25,14 @@ use tauri::{AppHandle, Emitter};
 
 use super::session_driver::{self, InputResize, Probed, SessionDriver};
 
+mod roster;
 mod types;
+pub use roster::{add_roster_entry, set_roster};
 use types::{dormant, lock_registry, registry, DormantSession, SharedState, ShellSession};
-pub use types::{ShellRead, ShellSessionInfo};
+pub use types::{RosterEntry, ShellRead, ShellSessionInfo};
+
+/// Roster size cap, matching the relay's ingest limit for kind:30623.
+const MAX_ROSTER: usize = 64;
 
 /// Cap on retained raw scrollback per session. Old output is dropped from the
 /// front; 1 MiB of text is far more than any snapshot read needs.
@@ -108,6 +113,7 @@ pub fn create(
         restorable: false,
         project_ref,
         shared: true,
+        roster: Vec::new(),
     };
     let info = spawn_host_and_attach(app, info, &cwd)?;
     crate::shell_sessions::persist::set_app_meta(
@@ -116,6 +122,7 @@ pub fn create(
         crate::shell_sessions::persist::AppMeta {
             project_ref: info.project_ref.clone(),
             shared: info.shared,
+            roster: info.roster.clone(),
         },
     );
     crate::shell_sessions::broadcast::announce(app, &info, "open");
@@ -374,6 +381,7 @@ pub fn reattach_hosts(app: &AppHandle) {
                         restorable: false,
                         project_ref: app_meta.project_ref,
                         shared: app_meta.shared,
+                        roster: app_meta.roster,
                     };
                     match attach(app, info, &socket) {
                         Ok(reattached_info) => {
@@ -430,7 +438,8 @@ pub fn reattach_hosts(app: &AppHandle) {
                 .as_ref()
                 .and_then(|m| m.project_ref.clone())
                 .or_else(|| meta.project_ref.clone()),
-            shared: session_app_meta.map(|m| m.shared).unwrap_or(true),
+            shared: session_app_meta.as_ref().map(|m| m.shared).unwrap_or(true),
+            roster: session_app_meta.map(|m| m.roster).unwrap_or_default(),
         };
         map.insert(
             meta.session_id.clone(),
@@ -641,6 +650,7 @@ pub fn set_project_ref(
         crate::shell_sessions::persist::AppMeta {
             project_ref: info.project_ref.clone(),
             shared: info.shared,
+            roster: info.roster.clone(),
         },
     );
     // Announce under the (possibly new) coordinate — the addressable replace
@@ -690,11 +700,17 @@ pub fn set_shared(app: &AppHandle, session_id: &str, shared: bool) -> Result<(),
         crate::shell_sessions::persist::AppMeta {
             project_ref: info.project_ref.clone(),
             shared,
+            roster: info.roster.clone(),
         },
     );
-    if shared {
+    if crate::shell_sessions::broadcast::may_broadcast(&info).is_some() {
         crate::shell_sessions::broadcast::announce(app, &info, "open");
+        // Sharing off but invited members remain: drop any project-member
+        // watchers immediately instead of waiting out their keepalive TTL.
+        crate::shell_sessions::broadcast::refresh_admission(session_id);
     } else {
+        // Neither project-wide sharing nor invited members remain — retract
+        // the announce and end any observer stream.
         crate::shell_sessions::broadcast::announce(app, &info, "closed");
         crate::shell_sessions::broadcast::session_ended(session_id);
     }

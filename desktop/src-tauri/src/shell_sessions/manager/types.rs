@@ -10,9 +10,21 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::shell_sessions::host_client::{AttachedClient, HostClient};
+
+/// One invited member on a shared terminal's roster: a pubkey (lowercase
+/// 64-hex) and their role (`"collaborator"` may watch and type via
+/// kind:24312; `"viewer"` may only watch). The owner signs the announce and
+/// is never listed. Mirrored onto the kind:30623 announce as arity-4 `p`
+/// tags, so the roster IS the revocable grant observers see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RosterEntry {
+    pub pubkey: String,
+    pub role: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +55,11 @@ pub struct ShellSessionInfo {
     /// members (NIP-ST). Default on; meaningless without a `project_ref`.
     #[serde(default)]
     pub shared: bool,
+    /// Individually invited members (collaborator | viewer). Admitted to
+    /// watch regardless of `shared`; collaborators may also type remotely.
+    /// Persisted in the app-owned sidecar map (`persist::AppMeta`).
+    #[serde(default)]
+    pub roster: Vec<RosterEntry>,
 }
 
 /// A read of a session's output for an agent: rendered/plain text plus the
@@ -134,6 +151,7 @@ mod tests {
             restorable: false,
             project_ref: project_ref.map(str::to_string),
             shared: true,
+            roster: Vec::new(),
         }
     }
 

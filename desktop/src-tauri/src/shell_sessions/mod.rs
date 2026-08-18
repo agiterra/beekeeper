@@ -17,6 +17,7 @@ pub mod host_client;
 pub mod keys;
 pub mod manager;
 pub mod persist;
+pub mod remote_input;
 pub mod session_driver;
 
 /// Workspace-id prefix distinguishing built-in shell sessions from cmux

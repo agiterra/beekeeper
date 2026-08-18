@@ -14,11 +14,8 @@ import {
   createShellSession,
   setShellPersistenceEnabled,
   shellPersistenceEnabled,
-  shellWorkspaceId,
   type ShellSessionInfo,
 } from "@/shared/api/tauriShell";
-import { useAgentConsent } from "../hooks/useAgentConsent";
-import { useSessionConsent } from "../hooks/useSessionConsent";
 
 import {
   upsertShellSession,
@@ -26,18 +23,13 @@ import {
 } from "../hooks/useShellSessions";
 
 /**
- * Settings → Shell (the "Built-in Shell" experiment). Terminal sessions hosted
- * inside Buzz, with the same per-session control surface as cmux sessions:
- * "Interact" is the owner's consent to type into the terminal (granted
- * automatically for shells the owner creates, revocable here), and "Agents" is
- * the separate default-off consent for buzz agents to drive the session
- * through the session broker (`buzz session` CLI, workspace id
- * `shell:<sessionId>`).
+ * Settings → Terminals (the "Built-in Shell" experiment): the persistence
+ * toggle and a slim session list (status + close). Sharing and access —
+ * project-wide watching and the collaborator/viewer invite roster — are
+ * managed on each session's screen, not here.
  */
 export function BuiltinShellSettingsCard() {
   const { sessions, loading, refresh } = useShellSessions();
-  const { isConsented, grant, revoke } = useSessionConsent();
-  const { isAgentConsented, setAgentConsented } = useAgentConsent();
   const [creating, setCreating] = React.useState(false);
 
   const newShell = React.useCallback(() => {
@@ -45,20 +37,19 @@ export function BuiltinShellSettingsCard() {
     setCreating(true);
     createShellSession()
       .then((info) => {
-        grant(shellWorkspaceId(info.sessionId));
         upsertShellSession(info);
       })
       .catch(() => {
         // Backend unavailable (e.g. browser preview).
       })
       .finally(() => setCreating(false));
-  }, [creating, grant]);
+  }, [creating]);
 
   return (
     <div>
       <SettingsSectionHeader
         title="Built-in shell"
-        description="Terminal sessions hosted inside Buzz. Agents reach these sessions through the local session broker, gated by per-session consent."
+        description="Terminal sessions hosted inside Buzz."
         action={
           <Button
             type="button"
@@ -80,6 +71,9 @@ export function BuiltinShellSettingsCard() {
         <h3 className="mb-3 text-sm font-medium text-muted-foreground">
           Sessions
         </h3>
+        <p className="mb-3 text-2xs text-muted-foreground">
+          Sharing and access are managed on each session&rsquo;s screen.
+        </p>
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading sessions…</p>
         ) : sessions.length === 0 ? (
@@ -92,21 +86,6 @@ export function BuiltinShellSettingsCard() {
               <ShellSessionRow
                 key={session.sessionId}
                 session={session}
-                interactive={isConsented(shellWorkspaceId(session.sessionId))}
-                onToggleInteractive={(allowed) =>
-                  allowed
-                    ? grant(shellWorkspaceId(session.sessionId))
-                    : revoke(shellWorkspaceId(session.sessionId))
-                }
-                agentAllowed={isAgentConsented(
-                  shellWorkspaceId(session.sessionId),
-                )}
-                onToggleAgentAllowed={(allowed) =>
-                  setAgentConsented(
-                    shellWorkspaceId(session.sessionId),
-                    allowed,
-                  )
-                }
                 onClose={() => {
                   void closeShellSession(session.sessionId)
                     .catch(() => {
@@ -175,17 +154,9 @@ function PersistenceToggle() {
 
 function ShellSessionRow({
   session,
-  interactive,
-  onToggleInteractive,
-  agentAllowed,
-  onToggleAgentAllowed,
   onClose,
 }: {
   session: ShellSessionInfo;
-  interactive: boolean;
-  onToggleInteractive: (allowed: boolean) => void;
-  agentAllowed: boolean;
-  onToggleAgentAllowed: (allowed: boolean) => void;
   onClose: () => void;
 }) {
   return (
@@ -211,20 +182,6 @@ function ShellSessionRow({
         >
           {session.running ? "Running" : "Exited"}
         </span>
-        <ToggleWithLabel
-          label="Interact"
-          hint="Allow you to type into this session"
-          checked={interactive}
-          onCheckedChange={onToggleInteractive}
-          testId="builtin-shell-session-interactive"
-        />
-        <ToggleWithLabel
-          label="Agents"
-          hint="Allow buzz agents to drive this session"
-          checked={agentAllowed}
-          onCheckedChange={onToggleAgentAllowed}
-          testId="builtin-shell-session-agent"
-        />
         <Button
           type="button"
           variant="ghost"
@@ -237,33 +194,5 @@ function ShellSessionRow({
         </Button>
       </div>
     </SettingsOptionRow>
-  );
-}
-
-function ToggleWithLabel({
-  label,
-  hint,
-  checked,
-  onCheckedChange,
-  testId,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-  testId: string;
-}) {
-  return (
-    <div className="flex flex-col items-center gap-1" title={hint}>
-      <span className="text-3xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        aria-label={hint ?? label}
-        data-testid={testId}
-      />
-    </div>
   );
 }

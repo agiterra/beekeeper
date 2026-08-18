@@ -2,10 +2,19 @@ import { invokeTauri } from "@/shared/api/tauri";
 
 // Mirrors the Rust commands in `src-tauri/src/commands/shell_sessions.rs` —
 // the "Built-in Shell" experiment. Sessions are PTYs hosted by the desktop
-// process itself. WRITES require the owner's per-session interaction consent
-// (sessionConsent.ts). Agent access goes through the local session broker
-// under the workspace id `shell:<sessionId>`, gated by the backend-held
-// per-session agent consent below.
+// process itself. The owner always has interact rights on their own
+// sessions. Remote collaborators and agents get access by being invited to
+// the session's roster: agents through the local session broker (workspace
+// id `shell:<sessionId>`), remote members via signed kind:24312 input events
+// the Rust side re-verifies.
+
+/** One invited member on a shared terminal's roster. Collaborators may watch
+ * and type; viewers may only watch. The owner is never listed. */
+export type ShellRosterEntry = {
+  /** Lowercase 64-hex pubkey. */
+  pubkey: string;
+  role: "collaborator" | "viewer";
+};
 
 export type ShellSessionInfo = {
   sessionId: string;
@@ -28,6 +37,9 @@ export type ShellSessionInfo = {
   /** Whether project members may observe this session read-only (NIP-ST).
    * Default on; meaningless without a projectRef. */
   shared?: boolean;
+  /** Individually invited members. Admitted to watch regardless of `shared`;
+   * collaborators may also type remotely. */
+  roster?: ShellRosterEntry[];
 };
 
 /** The broker/consent workspace id for a built-in shell session. */
@@ -93,7 +105,7 @@ export function setShellPersistenceEnabled(enabled: boolean): Promise<void> {
   return invokeTauri("set_shell_persistence_enabled", { enabled });
 }
 
-/** WRITE keystrokes into the PTY. Interaction-consent contract applies. */
+/** WRITE keystrokes into the PTY (owner-only UI path). */
 export function writeShellSession(
   sessionId: string,
   data: string,
@@ -168,23 +180,6 @@ export type ShellSessionExitEvent = {
 export const SHELL_SESSION_OUTPUT_EVENT = "shell-session-output";
 export const SHELL_SESSION_EXIT_EVENT = "shell-session-exit";
 
-// ── Agent-interaction consent. Backend-held (not localStorage): the session
-// broker enforces it, so agents can drive only sessions the owner has allowed
-// here. Default off, per session.
-
-/** Allow or disallow agents to drive a session. */
-export function setSessionAgentConsent(
-  workspaceId: string,
-  allowed: boolean,
-): Promise<void> {
-  return invokeTauri("set_session_agent_consent", { workspaceId, allowed });
-}
-
-/** Workspace ids agents are currently allowed to drive. */
-export function listSessionAgentConsent(): Promise<string[]> {
-  return invokeTauri<string[]>("list_session_agent_consent");
-}
-
 // ── NIP-ST shared terminals (project members observe read-only) ──────────
 
 /** Flip a session's share flag. Off retracts the announce + ends streams. */
@@ -193,6 +188,32 @@ export function setShellSessionShared(
   shared: boolean,
 ): Promise<void> {
   return invokeTauri("set_shell_session_shared", { sessionId, shared });
+}
+
+/** Replace a session's invite roster. The refreshed announce carries it as
+ * arity-4 `p` tags — the grant AND the revocation signal observers see. */
+export function setShellSessionRoster(
+  sessionId: string,
+  roster: ShellRosterEntry[],
+): Promise<void> {
+  return invokeTauri("set_shell_session_roster", { sessionId, roster });
+}
+
+/** Forward one raw kind:24312 remote-input event (full event JSON) to the
+ * Rust side, which verifies the signature + roster before any PTY write. */
+export function shellRemoteInput(eventJson: string): Promise<void> {
+  return invokeTauri("shell_remote_input", { eventJson });
+}
+
+/** Build + sign a kind:24312 input event for a session this identity
+ * collaborates on. `contentB64` is base64 of the raw bytes (≤ 8 KiB). */
+export function buildShellInputEvent(input: {
+  ownerPubkey: string;
+  sessionId: string;
+  projectRef: string;
+  contentB64: string;
+}): Promise<string> {
+  return invokeTauri<string>("build_shell_input_event", { ...input });
 }
 
 /** Forward a validated watch event to the broadcaster; returns signed

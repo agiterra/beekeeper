@@ -1,18 +1,18 @@
 //! The local session broker: an owner-only Unix socket the `buzz session` CLI
 //! calls to act on sessions on behalf of an agent. It is the single enforcement
-//! point for agent access — every write is gated on the backend agent-consent
-//! store — so an agent can neither reach a session's PTY directly nor bypass
-//! consent.
+//! point for agent access — every write is gated on the session's invite
+//! roster (a collaborator entry for the calling agent's pubkey) — so an agent
+//! can neither reach a session's PTY directly nor bypass the roster.
 
 use std::path::PathBuf;
 
 use serde_json::json;
+use tauri::Manager;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::shell_sessions::{self, keys, manager as shell_manager};
 
-use super::consent;
 use super::model::{BrokerSession, BrokerTerminal, SessionActivity};
 use super::protocol::{BrokerEnvelope, BrokerRequest, BrokerResponse};
 
@@ -118,17 +118,52 @@ async fn handle_connection(stream: UnixStream, app: tauri::AppHandle) -> Result<
     Ok(())
 }
 
+/// Whether the calling agent may drive (write into) this session: its pubkey
+/// holds a **collaborator** entry on the session's invite roster, or it IS
+/// this app's own identity (every built-in shell session belongs to that
+/// identity, so the owner always has interact rights). Anything else — no
+/// caller, a viewer-role entry, an unparseable pubkey, missing signing keys —
+/// fails closed.
+///
+/// V1 TRUST NOTE: `envelope.caller` is a *self-declared* pubkey on an
+/// owner-only (0600) local Unix socket — the socket permission, not the
+/// pubkey, is the actual security boundary, so any local process running as
+/// the owner can claim any identity. That is the same trust level the old
+/// consent toggle had. A later version can bind the claim cryptographically
+/// (e.g. a signed envelope); the roster check here is about *which* sessions
+/// an honest agent may drive, not about authenticating the socket peer.
+fn agent_may_drive(app: &tauri::AppHandle, workspace_id: &str, caller: Option<&str>) -> bool {
+    let Some(session_id) = shell_sessions::session_id_from_workspace(workspace_id) else {
+        return false;
+    };
+    let Some(info) = shell_manager::info(session_id) else {
+        return false;
+    };
+    let Some(caller) = caller else {
+        return false;
+    };
+    let caller = caller.trim().to_ascii_lowercase();
+    if caller.len() != 64 || !caller.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    if info.roster.iter().any(|entry| {
+        entry.pubkey == caller && entry.role == buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR
+    }) {
+        return true;
+    }
+    match app.state::<crate::app_state::AppState>().signing_keys() {
+        Ok(keys) => keys.public_key().to_hex() == caller,
+        Err(_) => false,
+    }
+}
+
 async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerResponse {
-    let caller = envelope.caller.as_deref().unwrap_or("unknown");
+    let caller_id = envelope.caller.as_deref();
+    let caller = caller_id.unwrap_or("unknown");
     match envelope.request {
         BrokerRequest::List => {
             eprintln!("session-broker: caller={caller} op=list");
-            let mut sessions = shell_sessions_as_broker_sessions();
-            // Tell the caller up front whether each session accepts writes,
-            // rather than making it discover consent by a refused send.
-            for session in &mut sessions {
-                session.agents_enabled = consent::is_agent_consented(&session.workspace_id);
-            }
+            let sessions = shell_sessions_as_broker_sessions();
             match serde_json::to_value(&sessions) {
                 Ok(value) => BrokerResponse::ok(value),
                 Err(e) => BrokerResponse::err(format!("encode sessions: {e}")),
@@ -148,7 +183,7 @@ async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerRes
         }
         BrokerRequest::Send { workspace_id, text } => {
             eprintln!("session-broker: caller={caller} op=send workspace={workspace_id}");
-            if !consent::is_agent_consented(&workspace_id) {
+            if !agent_may_drive(app, &workspace_id, caller_id) {
                 return not_permitted(&workspace_id);
             }
             let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
@@ -160,7 +195,7 @@ async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerRes
             eprintln!(
                 "session-broker: caller={caller} op=send_key workspace={workspace_id} key={key}"
             );
-            if !consent::is_agent_consented(&workspace_id) {
+            if !agent_may_drive(app, &workspace_id, caller_id) {
                 return not_permitted(&workspace_id);
             }
             let Some(session_id) = shell_sessions::session_id_from_workspace(&workspace_id) else {
@@ -180,14 +215,14 @@ async fn dispatch(envelope: BrokerEnvelope, app: &tauri::AppHandle) -> BrokerRes
                     "exec is only supported for built-in shell sessions".to_string(),
                 );
             };
-            if consent::is_agent_consented(&workspace_id) {
+            if agent_may_drive(app, &workspace_id, caller_id) {
                 shell_exec(session_id, &command, quiet_ms, timeout_ms).await
             } else {
-                // No standing consent: prompt the owner for *this* command. They
-                // can allow it once (runs it, consent unchanged, so the next
-                // command prompts again) or enable full control (runs it and
-                // stops prompting). This makes exec self-prompting rather than
-                // failing.
+                // Not on the roster: prompt the owner for *this* command. They
+                // can allow it once (runs it, roster unchanged, so the next
+                // command prompts again) or enable full control (adds the
+                // agent to the session roster as collaborator and runs it).
+                // This makes exec self-prompting rather than failing.
                 request_access(
                     app,
                     &workspace_id,
@@ -216,6 +251,15 @@ fn shell_sessions_as_broker_sessions() -> Vec<BrokerSession> {
         .into_iter()
         .map(|info| {
             let workspace_id = shell_sessions::workspace_id(&info.session_id);
+            // "Agents enabled" now projects the invite roster: any collaborator
+            // entry means some identity has standing write access. Which
+            // *specific* caller may drive is decided per-request in
+            // `agent_may_drive`; this flag is the up-front hint `list` gives
+            // callers so they don't discover access by a refused send.
+            let agents_enabled = info
+                .roster
+                .iter()
+                .any(|entry| entry.role == buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR);
             BrokerSession {
                 workspace_id: workspace_id.clone(),
                 window_id: None,
@@ -235,7 +279,7 @@ fn shell_sessions_as_broker_sessions() -> Vec<BrokerSession> {
                     is_focused: true,
                     is_ready: info.running,
                 }],
-                agents_enabled: false, // set by the List handler
+                agents_enabled,
                 input_line: shell_manager::input_line(&info.session_id),
             }
         })
@@ -337,10 +381,12 @@ async fn shell_exec(
     }
 }
 
-/// Ask the owner, in chat, for access to a session lacking standing consent.
-/// Blocks until the owner answers (or a fixed timeout). On "once" the named
-/// command runs a single time; on "full" agent consent is enabled and the
-/// command, if any, runs; "deny" returns `approved: false`.
+/// Ask the owner, in chat, for access to a session the caller is not a
+/// collaborator on. Blocks until the owner answers (or a fixed timeout). On
+/// "once" the named command runs a single time; on "full" the calling
+/// agent's pubkey is added to the session's invite roster as collaborator
+/// (persisted + announced) and the command, if any, runs; "deny" returns
+/// `approved: false`.
 async fn request_access(
     app: &tauri::AppHandle,
     workspace_id: &str,
@@ -366,6 +412,9 @@ async fn request_access(
     // a clock: workspace + caller + the current output cursor.
     let salt = shell_manager::cursor(session_id).unwrap_or(0);
     let id = format!("{workspace_id}:{}:{salt}", caller.as_deref().unwrap_or("?"));
+    // Keep the caller pubkey around: Decision::Full below grants it a
+    // collaborator roster entry.
+    let request_caller = caller.clone();
     let request = shell_sessions::access::AccessRequest {
         id: id.clone(),
         workspace_id: workspace_id.to_string(),
@@ -394,7 +443,28 @@ async fn request_access(
     match decision {
         Decision::Deny => BrokerResponse::ok(json!({ "approved": false })),
         Decision::Full => {
-            if let Err(e) = consent::set_agent_consented(app, workspace_id, true) {
+            // Full control = a persisted collaborator entry on the session's
+            // invite roster, which requires the agent to have identified
+            // itself with a pubkey (the CLI sends one when BUZZ_PRIVATE_KEY
+            // is set). Without one there is nothing durable to grant.
+            let Some(agent_pubkey) = request_caller
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| c.len() == 64 && c.bytes().all(|b| b.is_ascii_hexdigit()))
+            else {
+                return BrokerResponse::err(
+                    "cannot enable full control: the agent did not identify itself with a \
+                     pubkey (run the CLI with BUZZ_PRIVATE_KEY set), so it cannot be added \
+                     to the session's roster"
+                        .to_string(),
+                );
+            };
+            if let Err(e) = shell_manager::add_roster_entry(
+                app,
+                session_id,
+                agent_pubkey,
+                buzz_core_pkg::kind::SHELL_ROLE_COLLABORATOR,
+            ) {
                 return BrokerResponse::err(e);
             }
             let output = match &command {
@@ -424,10 +494,10 @@ async fn request_access(
 
 fn not_permitted(workspace_id: &str) -> BrokerResponse {
     BrokerResponse::err(format!(
-        "not permitted: agent interaction is not enabled for session {workspace_id}. \
+        "not permitted: you are not a collaborator on session {workspace_id}. \
          Ask the owner with `buzz session request-access {workspace_id}` \
-         (optionally --command to run one command), or have them turn on \"Agents\" \
-         for it in the session's settings."
+         (optionally --command to run one command), or have them invite your \
+         pubkey as a collaborator from the session's screen."
     ))
 }
 
@@ -460,7 +530,7 @@ mod live_tests {
     /// `cargo test --manifest-path desktop/src-tauri/Cargo.toml
     /// session_broker::server::live -- --ignored --nocapture`. Read-only: it
     /// lists sessions and asserts a write is refused by default — it never
-    /// types into a session (agent consent is off).
+    /// types into a session (the test caller is on no session's roster).
     #[tokio::test]
     #[ignore]
     async fn live_broker_lists_and_gates_writes() {

@@ -113,6 +113,7 @@ fn dormant_session_is_listed_readable_and_restorable() {
                 restorable: true,
                 project_ref: None,
                 shared: true,
+                roster: Vec::new(),
             },
             state: Arc::new(Mutex::new(SharedState {
                 scrollback: history.to_vec(),
@@ -268,6 +269,7 @@ fn register_live_session_with_fake_host(
                 restorable: false,
                 project_ref: None,
                 shared: true,
+                roster: Vec::new(),
             },
             client,
             io,

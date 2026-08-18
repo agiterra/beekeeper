@@ -1,16 +1,14 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 
-import { createShellSession, shellWorkspaceId } from "@/shared/api/tauriShell";
-import { useSessionConsent } from "./useSessionConsent";
+import { createShellSession } from "@/shared/api/tauriShell";
 
 import { upsertShellSession } from "./useShellSessions";
 
 /**
- * Spawn a new built-in shell session and navigate to it. Creating one is the
- * owner's explicit act, so the human "Interact" consent for that session is
- * granted at creation (revocable in Settings); the separate agent consent
- * stays default-off.
+ * Spawn a new built-in shell session and navigate to it. The owner always
+ * has interact rights on their own sessions; access for others (people or
+ * agents) is granted by inviting them to the session's roster.
  *
  * `createFor` takes the target project coordinate per call so one hook
  * instance can serve every project group without hooks-in-a-loop.
@@ -19,7 +17,6 @@ export function useCreateShellSession(): {
   createFor: (projectRef?: string, cwd?: string) => void;
   creating: boolean;
 } {
-  const { grant } = useSessionConsent();
   const navigate = useNavigate();
   const [creating, setCreating] = React.useState(false);
 
@@ -33,7 +30,6 @@ export function useCreateShellSession(): {
           : undefined,
       )
         .then((info) => {
-          grant(shellWorkspaceId(info.sessionId));
           // Make the session visible to every consumer (including the screen
           // we're about to navigate to) before the next poll tick.
           upsertShellSession(info);
@@ -47,7 +43,7 @@ export function useCreateShellSession(): {
         })
         .finally(() => setCreating(false));
     },
-    [creating, grant, navigate],
+    [creating, navigate],
   );
 
   return { createFor, creating };

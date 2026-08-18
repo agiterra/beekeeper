@@ -6,6 +6,13 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_SHELL_SESSION } from "@/shared/constants/kinds";
 
+/** One roster member parsed from an announce's arity-4 `p` tag. */
+export type RemoteTerminalRosterEntry = {
+  /** Lowercase 64-hex pubkey. */
+  pubkey: string;
+  role: string;
+};
+
 /** A member's shared terminal, from its kind:30623 announce. */
 export type RemoteTerminal = {
   sessionId: string;
@@ -13,6 +20,9 @@ export type RemoteTerminal = {
   title: string;
   projectRef: string;
   dims: string | null;
+  /** Invited members (`["p", <hex>, "", <role>]` tags). Advisory for UI —
+   * the relay and the owner host enforce the actual grants. */
+  roster: RemoteTerminalRosterEntry[];
   /** Announce freshness (unix seconds) — old `open` heads read as stale. */
   announcedAt: number;
 };
@@ -22,6 +32,24 @@ function tagValue(event: RelayEvent, name: string): string | null {
     .filter((tag) => tag[0] === name && typeof tag[1] === "string")
     .map((tag) => tag[1] as string);
   return values.length === 1 ? values[0] : null;
+}
+
+/** Parse the invite roster from an announce's arity-4 `p` tags. Malformed
+ * entries (wrong arity, non-hex pubkey, unknown role) are skipped — display
+ * code must never invent a grant from a tag the relay would have rejected. */
+export function rosterFromAnnounce(
+  event: RelayEvent,
+): RemoteTerminalRosterEntry[] {
+  const roster: RemoteTerminalRosterEntry[] = [];
+  for (const tag of event.tags) {
+    if (tag[0] !== "p" || tag.length < 4) continue;
+    const pubkey = typeof tag[1] === "string" ? tag[1].toLowerCase() : "";
+    const role = tag[3];
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) continue;
+    if (role !== "collaborator" && role !== "viewer") continue;
+    roster.push({ pubkey, role });
+  }
+  return roster;
 }
 
 export function remoteTerminalsFromEvents(
@@ -48,6 +76,7 @@ export function remoteTerminalsFromEvents(
       title: tagValue(event, "title") ?? "terminal",
       projectRef: projectAddress,
       dims: tagValue(event, "dims"),
+      roster: rosterFromAnnounce(event),
       announcedAt: event.created_at,
     });
   }

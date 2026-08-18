@@ -2029,6 +2029,57 @@ pub(crate) fn validate_shell_session_envelope(event: &Event) -> Result<String, S
         }
     }
 
+    // Roster `p` tags: `["p", <lowercase-64-hex>, <hint>, <role>]`, arity-4
+    // required (a role-less roster entry must not silently pick a tier),
+    // role from the pinned vocabulary, no duplicates, owner never listed
+    // (the signature is their standing), cap 64.
+    let owner_hex = event.pubkey.to_hex();
+    let mut roster_seen = std::collections::HashSet::new();
+    let mut roster_len = 0usize;
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) != Some("p") {
+            continue;
+        }
+        if parts.len() != 4 {
+            return Err(format!(
+                "shell-session roster `p` tag must be [\"p\", pubkey, hint, role] (got {} elements)",
+                parts.len()
+            ));
+        }
+        let pubkey = parts[1].as_str();
+        if pubkey.len() != 64
+            || !pubkey
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(format!(
+                "shell-session roster pubkey must be lowercase 64-hex (got {pubkey:?})"
+            ));
+        }
+        if pubkey.eq_ignore_ascii_case(&owner_hex) {
+            return Err("shell-session roster must not list the owner".into());
+        }
+        if !roster_seen.insert(pubkey.to_string()) {
+            return Err(format!(
+                "shell-session roster has duplicate pubkey {pubkey:?}"
+            ));
+        }
+        let role = parts[3].as_str();
+        if !buzz_core::kind::is_valid_shell_role(role) {
+            return Err(format!(
+                "shell-session roster role must be one of {:?} (got {role:?})",
+                buzz_core::kind::SHELL_ROLES
+            ));
+        }
+        roster_len += 1;
+    }
+    if roster_len > 64 {
+        return Err(format!(
+            "shell-session roster must have at most 64 members (got {roster_len})"
+        ));
+    }
+
     Ok(coordinate.clone())
 }
 

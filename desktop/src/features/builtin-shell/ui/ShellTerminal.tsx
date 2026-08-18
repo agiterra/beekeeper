@@ -24,25 +24,12 @@ function base64ToBytes(b64: string): Uint8Array {
 /**
  * The interactive terminal for a built-in shell session. xterm.js renders the
  * raw PTY stream (replayed from scrollback on mount, then live via the
- * `shell-session-output` event). Keystrokes are forwarded only while
- * `interactive` is true — the owner-consent contract for session writes; the
- * parent renders the consent affordance.
+ * `shell-session-output` event). This screen only ever renders the owner's
+ * own sessions, and the owner always has interact rights on them — keystrokes
+ * are forwarded unconditionally.
  */
-export function ShellTerminal({
-  sessionId,
-  interactive,
-}: {
-  sessionId: string;
-  interactive: boolean;
-}) {
+export function ShellTerminal({ sessionId }: { sessionId: string }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  // The live terminal instance, so effects and handlers outside the setup
-  // effect (focus on consent, focus on click) can reach it without re-creating.
-  const termRef = React.useRef<Terminal | null>(null);
-  // Consent can flip while the terminal lives; the onData handler reads the
-  // latest value through a ref instead of re-creating the terminal.
-  const interactiveRef = React.useRef(interactive);
-  interactiveRef.current = interactive;
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -74,11 +61,10 @@ export function ShellTerminal({
     term.loadAddon(fit);
     term.open(container);
     fit.fit();
-    termRef.current = term;
     // Grab keyboard focus so the session is typeable the moment it mounts —
     // it's freshly navigated to (from the sidebar or a resume), so focus is
     // still on whatever was clicked, not the new terminal.
-    if (interactiveRef.current) term.focus();
+    term.focus();
 
     let disposed = false;
 
@@ -105,7 +91,6 @@ export function ShellTerminal({
       });
 
     const dataDisposable = term.onData((data) => {
-      if (!interactiveRef.current) return;
       void writeShellSession(sessionId, data).catch(() => {
         // Session gone; exit event will refresh the surrounding UI.
       });
@@ -124,7 +109,7 @@ export function ShellTerminal({
     // Clicking anywhere in the padded container (not just the xterm canvas)
     // focuses the terminal, so a click near the edge still lets you type.
     const focusOnPointer = () => {
-      if (interactiveRef.current) term.focus();
+      term.focus();
     };
     container.addEventListener("mousedown", focusOnPointer);
 
@@ -134,16 +119,9 @@ export function ShellTerminal({
       container.removeEventListener("mousedown", focusOnPointer);
       dataDisposable.dispose();
       unlisten?.();
-      termRef.current = null;
       term.dispose();
     };
   }, [sessionId]);
-
-  // When interaction is enabled (e.g. the user clicks "Enable typing"), pull
-  // focus into the terminal so they can type without a second click.
-  React.useEffect(() => {
-    if (interactive) termRef.current?.focus();
-  }, [interactive]);
 
   return (
     <div

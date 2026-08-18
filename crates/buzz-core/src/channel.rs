@@ -245,6 +245,48 @@ impl FromStr for ProjectRole {
     }
 }
 
+/// A roster member's role on a shared terminal (NIP-ST).
+///
+/// Carried as the 4th element of `["p", <hex>, "", <role>]` tags on the
+/// owner-signed kind:30623 announce. The owner signs and is never listed.
+/// String values match [`crate::kind::SHELL_ROLES`] and the DB
+/// `shell_session_acl_members.role` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellRole {
+    /// May watch AND type into the owner's PTY via `kind:24312` input.
+    Collaborator,
+    /// Watch-only, independent of project membership.
+    Viewer,
+}
+
+impl ShellRole {
+    /// Canonical string representation (matches DB values and Nostr tags).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Collaborator => "collaborator",
+            Self::Viewer => "viewer",
+        }
+    }
+}
+
+impl fmt::Display for ShellRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ShellRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "collaborator" => Ok(Self::Collaborator),
+            "viewer" => Ok(Self::Viewer),
+            other => Err(format!("unknown shell role: {other:?}")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::canonical_channel_name;

@@ -9,8 +9,8 @@ import {
 
 const POLL_MS = 5000;
 
-// Module-level external store (same idiom as
-// `builtin-shell/lib/sessionConsent.ts`), shared by every consumer
+// Module-level external store (useSyncExternalStore over module state),
+// shared by every consumer
 // (sidebar, session screen, settings card). A plain per-component
 // useState/useEffect hook would give each caller its own list and its own
 // poll timer — so a session created in the sidebar wouldn't appear on its own

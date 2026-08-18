@@ -5,10 +5,11 @@ import { relayClient } from "@/shared/api/relayClient";
 import {
   SHELL_BROADCAST_PUBLISH_EVENT,
   shellBroadcastWatch,
+  shellRemoteInput,
 } from "@/shared/api/tauriShell";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { RelayEvent } from "@/shared/api/types";
-import { KIND_SHELL_WATCH } from "@/shared/constants/kinds";
+import { KIND_SHELL_INPUT, KIND_SHELL_WATCH } from "@/shared/constants/kinds";
 
 /**
  * The NIP-ST owner-side pump, mounted app-wide (renders nothing).
@@ -19,6 +20,11 @@ import { KIND_SHELL_WATCH } from "@/shared/constants/kinds";
  * identity are validated and forwarded to `shell_broadcast_watch`, whose
  * returned attach-bundle frames are published back out. Dropped frames
  * self-heal — an observer that sees a gap asks for a resync.
+ *
+ * Collaborator keystrokes (kind:24312, addressed to this identity) are
+ * forwarded to `shell_remote_input` as the FULL raw event JSON — the Rust
+ * side verifies the signature, roster, freshness, and rate caps itself and
+ * never trusts anything this pump claims.
  */
 export function ShellBroadcastPump() {
   const identity = useIdentityQuery();
@@ -29,6 +35,7 @@ export function ShellBroadcastPump() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeInput: (() => void) | null = null;
 
     const publish = (json: string) => {
       try {
@@ -93,12 +100,36 @@ export function ShellBroadcastPump() {
         return;
       }
       unsubscribe = handle ?? null;
+
+      const inputHandle = await relayClient.subscribeLive(
+        {
+          kinds: [KIND_SHELL_INPUT],
+          "#p": [myPubkey],
+          since: Math.floor(Date.now() / 1_000) - 60,
+          limit: 500,
+        },
+        (event) => {
+          if (disposed) return;
+          // Forward the ENTIRE raw event — signature verification and all
+          // authorization happen in Rust. Errors (unknown session, stranger,
+          // rate cap) are logged and never crash the pump.
+          void shellRemoteInput(JSON.stringify(event)).catch((error) => {
+            console.warn("shell-broadcast: remote input refused", error);
+          });
+        },
+      );
+      if (disposed) {
+        inputHandle?.();
+        return;
+      }
+      unsubscribeInput = inputHandle ?? null;
     })();
 
     return () => {
       disposed = true;
       unlisten?.();
       unsubscribe?.();
+      unsubscribeInput?.();
     };
   }, [myPubkey]);
 

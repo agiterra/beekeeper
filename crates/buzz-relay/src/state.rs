@@ -740,6 +740,17 @@ pub struct AppState {
     pub coordinate_gate_cache: Arc<
         moka::sync::Cache<(CommunityId, String), Option<Arc<buzz_db::project_acl::ProjectGate>>>,
     >,
+    /// Per-(owner, session id) shared-terminal roster (NIP-ST):
+    /// `None` means no announce head is projected — gates fail closed to
+    /// project-only access. Flushed on every 30623 ingest; same TTL
+    /// discipline as [`Self::project_gate_cache`].
+    #[allow(clippy::type_complexity)]
+    pub shell_roster_cache: Arc<
+        moka::sync::Cache<
+            (CommunityId, Vec<u8>, String),
+            Option<Arc<buzz_db::shell_session_acl::ShellRoster>>,
+        >,
+    >,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
     pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
@@ -785,6 +796,11 @@ pub struct AppState {
     /// Per-observer sliding-window rate limiter for shared-terminal watch
     /// events (kind 24310). See [`Self::shell_frame_rate_limiter`].
     pub shell_watch_rate_limiter: Arc<ScopedRateLimiter>,
+    /// Per-(community, sender) fixed-window limiter for shared-terminal
+    /// input events (kind 24312). Clients batch keystrokes, so 20/sec is
+    /// interactive typing plus headroom without letting a collaborator
+    /// flood the owner's PTY.
+    pub shell_input_rate_limiter: Arc<ScopedRateLimiter>,
     /// Per-uploader sliding-window rate limiter for media upload starts.
     /// Key: (community_id, uploader pubkey bytes). Value: (count, window_start).
     pub media_upload_rate_limiter: Arc<ScopedRateLimiter>,
@@ -992,6 +1008,13 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            shell_roster_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             audit_tx: audit_enabled.then_some(audit_tx),
             media_storage: Arc::new(media_storage),
             storage_sweep: Arc::new(tokio::sync::Mutex::new(
@@ -1007,6 +1030,7 @@ impl AppState {
             observer_rate_limiter: Arc::new(DashMap::new()),
             shell_frame_rate_limiter: Arc::new(DashMap::new()),
             shell_watch_rate_limiter: Arc::new(DashMap::new()),
+            shell_input_rate_limiter: Arc::new(DashMap::new()),
             media_upload_rate_limiter: Arc::new(DashMap::new()),
             invite_claim_rate_limiter: Arc::new(
                 moka::sync::Cache::builder()
@@ -1152,6 +1176,27 @@ impl AppState {
         );
         self.hidden_repos_cache.insert(key, hidden.clone());
         Ok(hidden)
+    }
+
+    /// Resolve a shared terminal's roster with a 10-second cache — see
+    /// [`Self::shell_roster_cache`].
+    pub async fn shell_roster_cached(
+        &self,
+        community_id: CommunityId,
+        owner: &[u8],
+        session_id: &str,
+    ) -> Result<Option<Arc<buzz_db::shell_session_acl::ShellRoster>>, buzz_db::DbError> {
+        let key = (community_id, owner.to_vec(), session_id.to_string());
+        if let Some(cached) = self.shell_roster_cache.get(&key) {
+            return Ok(cached);
+        }
+        let roster = self
+            .db
+            .get_shell_roster(community_id, owner, session_id)
+            .await?
+            .map(Arc::new);
+        self.shell_roster_cache.insert(key, roster.clone());
+        Ok(roster)
     }
 
     /// Resolve a repo's private-project gate with a 10-second cache.

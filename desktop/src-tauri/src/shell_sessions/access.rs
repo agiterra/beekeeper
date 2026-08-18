@@ -1,12 +1,12 @@
 //! Just-in-time access requests for sessions.
 //!
-//! An agent that lacks standing "Agents" consent for a session can ask the
-//! owner, from chat, to either run a single command or enable full control.
-//! The broker registers the request here, the desktop UI shows it, and the
-//! owner's decision wakes the waiting broker call. This is the in-the-loop
-//! counterpart to the pre-granted, default-off agent consent
-//! (`session_broker::consent`): consent answers "may agents drive this?" ahead
-//! of time; an access request answers "may this agent do this, right now?".
+//! An agent that is not a collaborator on a session's invite roster can ask
+//! the owner, from chat, to either run a single command or enable full
+//! control. The broker registers the request here, the desktop UI shows it,
+//! and the owner's decision wakes the waiting broker call. This is the
+//! in-the-loop counterpart to the pre-granted roster (`manager::set_roster`):
+//! the roster answers "who may drive this?" ahead of time; an access request
+//! answers "may this agent do this, right now?".
 //!
 //! Module-owned static store (same rationale as `manager`): the broker reaches
 //! it without a Tauri `State` handle. Requests are ephemeral — a pending one
@@ -28,9 +28,10 @@ const RESOLVED_EVENT: &str = "shell-access-request-resolved";
 /// The owner's answer to an access request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
-    /// Run the requested command this once; do not change standing consent.
+    /// Run the requested command this once; do not change standing access.
     Once,
-    /// Enable agent consent for the session (persisted), then honor the request.
+    /// Add the requesting agent to the session's invite roster as
+    /// collaborator (persisted + announced), then honor the request.
     Full,
     /// Refuse.
     Deny,
@@ -59,7 +60,8 @@ pub struct AccessRequest {
     pub command: Option<String>,
     /// The agent's stated reason, if any.
     pub reason: Option<String>,
-    /// The requesting agent's npub, for display/audit.
+    /// The requesting agent's pubkey (hex), for display/audit — and the
+    /// identity a "full" decision adds to the session roster as collaborator.
     pub caller: Option<String>,
 }
 

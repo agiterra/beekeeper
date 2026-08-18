@@ -73,6 +73,10 @@ pub struct AppMeta {
     /// owner opts out.
     #[serde(default = "default_true")]
     pub shared: bool,
+    /// Individually invited members (collaborator | viewer). Absent on files
+    /// written before rosters existed — `#[serde(default)]` reads as empty.
+    #[serde(default)]
+    pub roster: Vec<crate::shell_sessions::manager::RosterEntry>,
 }
 
 impl Default for AppMeta {
@@ -80,6 +84,7 @@ impl Default for AppMeta {
         AppMeta {
             project_ref: None,
             shared: true,
+            roster: Vec::new(),
         }
     }
 }
@@ -317,6 +322,21 @@ mod tests {
         assert_eq!(back.cwd, meta.cwd);
         assert_eq!(back.title, meta.title);
         assert_eq!(back.project_ref, meta.project_ref);
+    }
+
+    #[test]
+    fn app_meta_without_roster_field_loads_with_empty_roster() {
+        // Sidecar entries written before rosters existed lack the key; they
+        // must parse cleanly with an empty roster (and default-on shared).
+        let legacy = r#"{"projectRef":"30621:deadbeef:p","shared":false}"#;
+        let meta: AppMeta = serde_json::from_str(legacy).expect("legacy app-meta parses");
+        assert!(meta.roster.is_empty());
+        assert!(!meta.shared);
+
+        let with_roster = r#"{"shared":true,"roster":[{"pubkey":"ab","role":"viewer"}]}"#;
+        let meta: AppMeta = serde_json::from_str(with_roster).expect("roster app-meta parses");
+        assert_eq!(meta.roster.len(), 1);
+        assert_eq!(meta.roster[0].role, "viewer");
     }
 
     #[test]

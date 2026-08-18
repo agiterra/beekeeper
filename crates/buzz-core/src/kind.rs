@@ -509,6 +509,15 @@ pub const KIND_SHELL_WATCH: u32 = 24310;
 /// can write verbatim. Never stored; same project gating as
 /// [`KIND_SHELL_WATCH`].
 pub const KIND_SHELL_FRAME: u32 = 24311;
+/// NIP-ST: shared-terminal input stream (ephemeral, roster collaborator →
+/// session owner). Tags: `p` = owner (routing target), `d` = session id,
+/// `a` = project coordinate. Content is base64 raw input bytes the owner
+/// host writes to the PTY after independently re-verifying the sender is a
+/// roster `collaborator` on the session's kind:30623 announce. The relay
+/// accepts input only from the owner or a roster collaborator and delivers
+/// it only to the owner's connections — never mere project members, never
+/// viewers. Never stored. See `docs/nips/NIP-ST.md` §Input.
+pub const KIND_SHELL_INPUT: u32 = 24312;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -732,6 +741,23 @@ pub fn is_valid_project_role(value: &str) -> bool {
     PROJECT_ROLES.contains(&value)
 }
 
+/// Shared-terminal roster role: may watch AND type into the owner's PTY via
+/// [`KIND_SHELL_INPUT`]. Listed as `["p", <hex>, "", "collaborator"]` on the
+/// owner-signed kind:30623 announce (the owner signs and is never listed).
+pub const SHELL_ROLE_COLLABORATOR: &str = "collaborator";
+/// Shared-terminal roster role: watch-only, independent of project
+/// membership (lets an owner share a terminal with someone outside the
+/// project, or share without enabling project-wide observe).
+pub const SHELL_ROLE_VIEWER: &str = "viewer";
+
+/// The pinned shared-terminal roster role vocabulary.
+pub const SHELL_ROLES: &[&str] = &[SHELL_ROLE_COLLABORATOR, SHELL_ROLE_VIEWER];
+
+/// Returns `true` when `value` is a pinned [`SHELL_ROLES`] entry.
+pub fn is_valid_shell_role(value: &str) -> bool {
+    SHELL_ROLES.contains(&value)
+}
+
 /// Returns `true` if the event is a project container marked private.
 ///
 /// Fails closed: any `buzz-access` tag whose value is `"private"` marks the
@@ -859,10 +885,12 @@ pub fn shell_observe_project_ref(event: &nostr::Event) -> Option<String> {
 /// Returns `true` if a stored kind:30623 session announce must be withheld
 /// from this reader: its project coordinate is in the reader's
 /// hidden-private-project set (resolved per reader by
-/// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is not the
-/// announce's author. An empty set (the common case) hides nothing; a 30623
-/// with no `a` tag hides from every non-author (fail closed — ingest rejects
-/// the shape, but a smuggled head must not leak).
+/// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is neither
+/// the announce's author nor on its roster (`p` tags — a per-session invite
+/// grants the announce even to readers outside the project). An empty set
+/// (the common case) hides nothing; a 30623 with no `a` tag hides from
+/// every non-author (fail closed — ingest rejects the shape, but a smuggled
+/// head must not leak).
 pub fn shell_session_hidden_from(
     event: &nostr::Event,
     reader_pubkey_hex: &str,
@@ -878,10 +906,43 @@ pub fn shell_session_hidden_from(
     {
         return false;
     }
+    if shell_session_roster(event)
+        .iter()
+        .any(|(pubkey, _)| pubkey.eq_ignore_ascii_case(reader_pubkey_hex))
+    {
+        return false;
+    }
     match shell_observe_project_ref(event) {
         Some(coord) => hidden_project_coordinates.contains(&coord),
         None => true,
     }
+}
+
+/// The roster of a kind:30623 announce: every `["p", <hex>, <hint>, <role>]`
+/// tag whose role is a pinned [`SHELL_ROLES`] value, as
+/// `(pubkey_hex, role)` pairs. Tags with an unknown or missing role are
+/// skipped (never a silent grant); other kinds return an empty roster.
+pub fn shell_session_roster(event: &nostr::Event) -> Vec<(String, &'static str)> {
+    if event_kind_u32(event) != KIND_SHELL_SESSION {
+        return Vec::new();
+    }
+    event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let parts = tag.as_slice();
+            if parts.first().map(String::as_str) != Some("p") {
+                return None;
+            }
+            let pubkey = parts.get(1)?.as_str();
+            let role = match parts.get(3).map(String::as_str) {
+                Some(r) if r == SHELL_ROLE_COLLABORATOR => SHELL_ROLE_COLLABORATOR,
+                Some(r) if r == SHELL_ROLE_VIEWER => SHELL_ROLE_VIEWER,
+                _ => return None,
+            };
+            Some((pubkey.to_string(), role))
+        })
+        .collect()
 }
 
 /// Kinds whose visibility follows the repo → project link (NIP-MP Buzz
@@ -1193,6 +1254,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_SHELL_SESSION,
     KIND_SHELL_WATCH,
     KIND_SHELL_FRAME,
+    KIND_SHELL_INPUT,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
