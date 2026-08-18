@@ -348,27 +348,23 @@ mod tests {
     /// the caller still gets a value.
     #[tokio::test]
     async fn a_timeout_degrades_to_no_observation() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        repo(dir.path());
-        let mut command = Command::new("git");
-        command
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(dir.path())
-            .args(["status", "--porcelain"])
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        // What must hold is that no observation survives the bound. Asserting
-        // `is_err()` instead claims the timer always wins a race against the
-        // spawn, which is not something the test can guarantee: when `output()`
-        // resolves on its first poll — a spawn that fails fast on a loaded
-        // runner — the deadline never gets to fire and the assertion failed the
-        // gate despite the product behaving correctly. Both non-observations
-        // are the degradation this test is about; only a completed `git` is not.
+        // The child is `sleep`, not `git`, and that is the point: what is under
+        // test is the bound and `kill_on_drop`, neither of which cares which
+        // program is abandoned. Racing a real `git status` against the deadline
+        // is not decidable in either direction — `Timeout` polls the inner
+        // future before it checks the deadline, and the timer wheel is only
+        // serviced when the runtime gets to it, so on a loaded runner `git`
+        // completes first and the bound never fires. The gate failed both ways
+        // on that race before this. A child that cannot finish removes it.
+        let mut command = Command::new("sleep");
+        command.arg("30").stdin(Stdio::null()).kill_on_drop(true);
+        // No observation may survive the bound. An elapsed deadline is the
+        // intended path; a spawn that fails outright is also no observation.
+        // `sleep 30` returning inside the bound is the only real failure.
         match tokio::time::timeout(Duration::from_nanos(1), command.output()).await {
             Err(_elapsed) => {}
             Ok(Err(_spawn_failed)) => {}
-            Ok(Ok(output)) => panic!("git completed inside a 1ns bound: {output:?}"),
+            Ok(Ok(output)) => panic!("the child outran a 1ns bound: {output:?}"),
         }
     }
 }
