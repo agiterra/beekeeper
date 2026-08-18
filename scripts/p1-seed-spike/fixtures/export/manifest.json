@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "channel": "0b7a2f31-9f3c-4e46-8b0a-2f31c19a7e55",
+  "exportedAt": "2026-08-16T00:00:00+00:00",
+  "counts": {
+    "generations": 1,
+    "events": 29
+  },
+  "timeRange": {
+    "firstEventAt": "2026-08-13T00:00:00+00:00",
+    "lastEventAt": "2026-08-13T00:04:00+00:00"
+  },
+  "targets": [
+    {
+      "file": "6c9d4a1e-22b7-4f7d-9e58-0f4b8a6d3c21-g1.jsonl",
+      "target": "claude-agent-acp:claude-primary:6c9d4a1e-22b7-4f7d-9e58-0f4b8a6d3c21:1",
+      "driver": "claude-agent-acp",
+      "instanceId": "claude-primary",
+      "sessionId": "6c9d4a1e-22b7-4f7d-9e58-0f4b8a6d3c21",
+      "generation": 1,
+      "signer": "953dfa1eabababababababababababababababababababababababababababab",
+      "title": "Extract retry policy from relay client",
+      "status": "interrupted",
+      "confirmed": true,
+      "events": 29,
+      "transcriptItems": 26,
+      "firstEventAt": "2026-08-13T00:00:00+00:00",
+      "lastEventAt": "2026-08-13T00:04:00+00:00"
+    }
+  ]
+}
