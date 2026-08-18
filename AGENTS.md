@@ -118,6 +118,33 @@ See CONTRIBUTING.md for full setup details and dependency requirements.
 
 ---
 
+## Working agreements
+
+Brian sets direction; you implement. Optimize for velocity within that.
+
+- **Make the call.** Do not present a menu of options and wait — decide, act,
+  and report the outcome: *"Did X. Result. Next: Y."* Terse is good.
+- **Check in only for genuine irreversibility**: destroying someone else's
+  work, outward-facing communication that notifies a person, money or
+  production deploys, or a change of direction. Anything another commit can
+  undo — just do it.
+- **Honesty in the product is a first-class concern.** A control that lies
+  about what it enforces, a badge pointing at a message you cannot find, a
+  "default" label hiding the real model, a status that reads Idle over a
+  disconnected provider — these are bugs of the same severity as a crash, and
+  several of the best findings in this project came from exactly that kind of
+  poking. Prefer disclosing an unpleasant truth over presenting a comfortable
+  guess.
+- **Multi-agent orchestration is pre-authorized.** The pattern that works:
+  written spec → parallel build lanes with **strict file ownership** → full
+  gate → adversarial review against named constraints → a single finalizer
+  that commits. Lanes never commit; only the finalizer does.
+- **Draft before sending.** Anything addressed to Andy or anyone outside this
+  machine gets written, shown to Brian, and sent only on his word.
+- **A completion report is not evidence.** Cite `file:line`, or the run that
+  produced the output. This applies to your own prior claims and to any
+  handoff document, including the ones in `docs/`.
+
 ## Quality Gates
 
 Run `just ci` before every PR — it runs repository-wide formatting, lint,
