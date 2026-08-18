@@ -4,6 +4,7 @@ import {
   Eye,
   FolderGit2,
   LoaderCircle,
+  RotateCcw,
   Square,
   Terminal,
   Zap,
@@ -41,7 +42,9 @@ export function ProjectChildRowItem({
   channelHandlers,
   onOpenAgents,
   onOpenCodingSession,
-  onRequestEndCodingSession,
+  onRequestCloseCodingSession,
+  onRequestReopenCodingSession,
+  currentPubkey,
   onOpenRepo,
   onOpenWorkflow,
   activeShellSessionId,
@@ -56,7 +59,11 @@ export function ProjectChildRowItem({
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
-  onRequestEndCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  onRequestCloseCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  onRequestReopenCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
+  currentPubkey?: string;
   onOpenRepo: (repo: CodeRepo) => void;
   onOpenWorkflow?: (workflow: Workflow) => void;
   activeShellSessionId?: string;
@@ -72,13 +79,25 @@ export function ProjectChildRowItem({
       const details = [entry.sourceChannelLabel, entry.runtimeLabel]
         .filter(Boolean)
         .join(" · ");
-      // Recent Sessions is intent, not activity: only a user-ended session gets
-      // the compact archival styling. Idle sessions keep the full row.
-      const recentSession = entry.status.kind === "ended";
-      const canEnd =
-        onRequestEndCodingSession !== undefined &&
-        entry.status.kind !== "ended" &&
-        entry.stopTargets.length > 0;
+      // Settled is intent, not activity: only the shared closure fact gets the
+      // compact archival styling. Idle sessions keep the full row.
+      const settled = entry.isClosed;
+      const hasClosureCoordinates = Boolean(
+        entry.sessionRef && entry.genesisRef,
+      );
+      const canClose = Boolean(
+        !settled &&
+          hasClosureCoordinates &&
+          currentPubkey &&
+          entry.founderPubkey?.toLowerCase() === currentPubkey.toLowerCase() &&
+          onRequestCloseCodingSession,
+      );
+      const canReopen = Boolean(
+        settled &&
+          hasClosureCoordinates &&
+          currentPubkey &&
+          onRequestReopenCodingSession,
+      );
       // A pending row stands for a create the provider has not acknowledged
       // yet — there is no generation to open, so the row is presence-only.
       const pending = entry.pending === true;
@@ -90,8 +109,8 @@ export function ProjectChildRowItem({
               : `Open ${entry.label}${details ? `, ${details}` : ""}`
           }
           className={cn(
-            recentSession ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
-            recentSession &&
+            settled ? "h-8 py-0" : "h-auto min-h-8 py-1.5",
+            settled &&
               "text-sidebar-foreground/65 hover:text-sidebar-accent-foreground",
             pending && "cursor-default",
           )}
@@ -117,7 +136,7 @@ export function ProjectChildRowItem({
           <span
             className={cn(
               "flex shrink-0 items-center justify-center text-sidebar-foreground/65",
-              recentSession
+              settled
                 ? "size-4 opacity-55"
                 : "size-6 rounded-full bg-sidebar-accent",
             )}
@@ -130,7 +149,7 @@ export function ProjectChildRowItem({
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate">{entry.label}</span>
-            {details && !recentSession ? (
+            {details && !settled ? (
               <span className="truncate text-2xs font-normal text-sidebar-foreground/50">
                 {details}
               </span>
@@ -149,24 +168,37 @@ export function ProjectChildRowItem({
             ) : null}
             {/* A pending row's Working/Idle is only a prediction — say what
                 is actually happening instead. */}
-            {pending ? "Starting…" : entry.status.label}
+            {pending ? "Starting…" : settled ? "Closed" : entry.status.label}
           </span>
         </SidebarMenuButton>
       );
       return (
-        <SidebarMenuItem data-session-status={entry.status.kind}>
-          {canEnd ? (
+        <SidebarMenuItem
+          data-session-closure={settled ? "closed" : "open"}
+          data-session-status={entry.status.kind}
+        >
+          {canClose || canReopen ? (
             <ContextMenu>
               <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem
-                  className="text-destructive focus:text-destructive"
-                  data-testid="project-coding-session-end"
-                  onSelect={() => onRequestEndCodingSession(entry)}
-                >
-                  <Square />
-                  End session
-                </ContextMenuItem>
+                {canClose ? (
+                  <ContextMenuItem
+                    data-testid="project-coding-session-close"
+                    onSelect={() => onRequestCloseCodingSession?.(entry)}
+                  >
+                    <Square />
+                    Close session
+                  </ContextMenuItem>
+                ) : null}
+                {canReopen ? (
+                  <ContextMenuItem
+                    data-testid="project-coding-session-reopen"
+                    onSelect={() => onRequestReopenCodingSession?.(entry)}
+                  >
+                    <RotateCcw />
+                    Reopen session
+                  </ContextMenuItem>
+                ) : null}
               </ContextMenuContent>
             </ContextMenu>
           ) : (

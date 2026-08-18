@@ -114,6 +114,55 @@ test("provider executions sharing an umbrella render as one durable session row"
   assert.equal(entries[0].generationId, "codex-generation");
 });
 
+test("founder-authored session name overrides provider titles on the shelf", () => {
+  const channelId = "sessions-channel";
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const founderPubkey = "f".repeat(64);
+  const target = {
+    driver: "hive-seat",
+    instanceId: "private-instance",
+    sessionId: "private-seat",
+    generation: 7,
+  };
+  const record = session({
+    commandTarget: target,
+    sessionRef,
+    title: "Provider execution title",
+  });
+  const names = new Map([
+    [
+      `${channelId}\u0000${sessionRef}\u0000${founderPubkey}`,
+      {
+        channelId,
+        content: "Durable session name",
+        createdAt: 1,
+        eventId: "a".repeat(64),
+        founderPubkey,
+        sessionRef,
+      },
+    ],
+  ]);
+  const { entries } = resolveProjectCodingSessionShelf(
+    catalog([{ channelId, session: record }], {
+      creates: [
+        {
+          channelId,
+          sessionRef,
+          signerPubkey: founderPubkey,
+          createdAt: 1,
+          eventId: "create-a",
+          target,
+        },
+      ],
+    }),
+    index(),
+    new Map(),
+    names,
+  );
+
+  assert.equal(entries[0].label, "Durable session name");
+});
+
 test("active sessions sort before compact idle and unknown rows", () => {
   const { entries } = resolveProjectCodingSessionShelf(
     catalog([
@@ -442,9 +491,14 @@ test("a session stopped via the durable command reads ended, not idle", () => {
     ]),
   );
   assert.equal(entries[0].status.kind, "ended");
+  assert.equal(
+    entries[0].isClosed,
+    false,
+    "stopping an execution must not close its durable session",
+  );
 });
 
-test("ended sessions keep their sidebar row, sorted last, with nothing to stop", () => {
+test("ended executions remain in the open-session shelf with nothing to stop", () => {
   const { entries } = resolveProjectCodingSessionShelf(
     catalog([
       {
@@ -467,8 +521,8 @@ test("ended sessions keep their sidebar row, sorted last, with nothing to stop",
       },
     ]),
   );
-  // Ended rows persist — they file under Recent Sessions instead of vanishing — and
-  // sort behind live work so they never crowd it out of the row limit.
+  // Ended executions persist inside their still-open sessions and sort behind
+  // live work so they never crowd it out of the row limit.
   assert.deepEqual(
     entries.map((e) => e.generationId),
     ["live", "done"],
@@ -478,13 +532,14 @@ test("ended sessions keep their sidebar row, sorted last, with nothing to stop",
   assert.deepEqual(
     done.stopTargets,
     [],
-    "an ended session has nothing to stop",
+    "an ended execution has nothing to stop",
   );
+  assert.equal(done.isClosed, false);
   assert.equal(live.stopTargets.length, 1);
   assert.equal(live.stopTargets[0].target.sessionId, "private-seat");
 });
 
-test("an umbrella unions stop targets across executions and an ended face settles the row", () => {
+test("an umbrella unions stop targets while runtime end stays separate from closure", () => {
   const twoLive = resolveProjectCodingSessionShelf(
     catalog([
       {
@@ -516,11 +571,11 @@ test("an umbrella unions stop targets across executions and an ended face settle
   assert.equal(
     twoLive.entries[0].stopTargets.length,
     2,
-    "ending an umbrella row must stop every live execution it stands for",
+    "stopping an umbrella's executions must address every live execution",
   );
 
-  // An explicitly ended representative settles the whole row even when a
-  // stale idle prior generation shares the umbrella…
+  // An ended execution is the runtime face when a stale idle prior generation
+  // shares the umbrella, but it still does not close the durable session.
   const endedFace = resolveProjectCodingSessionShelf(
     catalog([
       {
@@ -546,6 +601,7 @@ test("an umbrella unions stop targets across executions and an ended face settle
   );
   assert.equal(endedFace.entries.length, 1);
   assert.equal(endedFace.entries[0].status.kind, "ended");
+  assert.equal(endedFace.entries[0].isClosed, false);
 
   // …but live work always outranks the ended face.
   const stillWorking = resolveProjectCodingSessionShelf(
@@ -573,6 +629,79 @@ test("an umbrella unions stop targets across executions and an ended face settle
   );
   assert.equal(stillWorking.entries.length, 1);
   assert.equal(stillWorking.entries[0].status.kind, "working");
+  assert.equal(stillWorking.entries[0].isClosed, false);
+});
+
+test("an exact closure fact alone moves an umbrella between Sessions and Settled", () => {
+  const channelId = "sessions-channel";
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const genesisRef = "a".repeat(64);
+  const founderPubkey = "f".repeat(64);
+  const target = {
+    driver: "hive-seat",
+    instanceId: "private-instance",
+    sessionId: "private-seat",
+    generation: 7,
+  };
+  const snapshot = catalog(
+    [
+      {
+        channelId,
+        session: session({
+          commandTarget: target,
+          providerAuthorityPubkey: "b".repeat(64),
+          sessionRef,
+          status: "stopped",
+        }),
+      },
+    ],
+    {
+      creates: [
+        {
+          channelId,
+          sessionRef,
+          signerPubkey: founderPubkey,
+          createdAt: 1,
+          eventId: genesisRef,
+          genesisRef,
+          target,
+        },
+      ],
+    },
+  );
+  const key = `${channelId}\u0000${sessionRef}\u0000${genesisRef}`;
+  const closure = {
+    action: "closed",
+    channelId,
+    createdAt: 2,
+    eventId: "c".repeat(64),
+    founderPubkey,
+    genesisRef,
+    sessionRef,
+    signerPubkey: founderPubkey,
+  };
+
+  const closed = resolveProjectCodingSessionShelf(
+    snapshot,
+    index(),
+    new Map(),
+    new Map(),
+    new Map([[key, closure]]),
+  ).entries[0];
+  assert.equal(closed.status.kind, "ended");
+  assert.equal(closed.isClosed, true);
+  assert.equal(closed.closure?.action, "closed");
+
+  const reopened = resolveProjectCodingSessionShelf(
+    snapshot,
+    index(),
+    new Map(),
+    new Map(),
+    new Map([[key, { ...closure, action: "open", eventId: "d".repeat(64) }]]),
+  ).entries[0];
+  assert.equal(reopened.status.kind, "ended");
+  assert.equal(reopened.isClosed, false);
+  assert.equal(reopened.closure?.action, "open");
 });
 
 test("an untitled transcript-bearing representative borrows a titled member's label", () => {

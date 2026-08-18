@@ -3,6 +3,9 @@ import * as React from "react";
 
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { useGlobalCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
+import { useCodingSessionNames } from "@/features/coding-sessions/useCodingSessionNames";
+import { useCodingSessionClosures } from "@/features/coding-sessions/useCodingSessionClosures";
+import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { allWorkflowsQueryKey } from "@/features/workflows/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
@@ -406,6 +409,28 @@ export function useProjectCodingSessionBuckets(
       identityQuery.data?.pubkey?.toLowerCase(),
     ),
   });
+  const nameSnapshot = useCodingSessionNames(stableChannelIds);
+  const founderPubkeysByGenesisRef = React.useMemo(() => {
+    const founders = new Map<string, string>();
+    for (const channelId of stableChannelIds) {
+      const entries = catalog.entries
+        .filter((entry) => entry.channelId === channelId)
+        .map((entry) => entry.session);
+      const creates = catalog.creates?.filter(
+        (create) => create.channelId === channelId,
+      );
+      for (const umbrella of groupCodingSessionCatalog(entries, creates)) {
+        if (umbrella.genesisRef && umbrella.founderPubkey) {
+          founders.set(umbrella.genesisRef, umbrella.founderPubkey);
+        }
+      }
+    }
+    return founders;
+  }, [catalog.creates, catalog.entries, stableChannelIds]);
+  const closureSnapshot = useCodingSessionClosures(
+    stableChannelIds,
+    founderPubkeysByGenesisRef,
+  );
 
   const placementIndex = React.useMemo(() => {
     const projectIdByRef = new Map<string, string>();
@@ -436,6 +461,8 @@ export function useProjectCodingSessionBuckets(
       catalog,
       placementIndex,
       channelLabels,
+      nameSnapshot.names,
+      closureSnapshot.closures,
     );
     const applied = applyPendingCodingSessionLifecycle(
       shelf.entries,
@@ -460,7 +487,14 @@ export function useProjectCodingSessionBuckets(
       },
       consumedKeys: applied.consumedKeys,
     };
-  }, [catalog, channelLabels, pendingLifecycle, placementIndex]);
+  }, [
+    catalog,
+    channelLabels,
+    closureSnapshot.closures,
+    nameSnapshot.names,
+    pendingLifecycle,
+    placementIndex,
+  ]);
 
   // Consumed pendings (fact arrived, or TTL expired) are cleared out-of-render.
   React.useEffect(() => {

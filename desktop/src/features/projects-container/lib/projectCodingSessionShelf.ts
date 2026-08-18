@@ -7,6 +7,15 @@ import type {
 } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import { groupCodingSessionCatalog } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  codingSessionNameKey,
+  type CodingSessionName,
+} from "@/features/coding-sessions/lib/codingSessionName";
+import {
+  codingSessionClosureKey,
+  type CodingSessionClosure,
+} from "@/features/coding-sessions/lib/codingSessionClosure";
 
 import { normalizeProjectRef } from "./projectContainerModel";
 
@@ -32,9 +41,15 @@ export type ProjectCodingSessionShelfEntry = {
   runtimeLabels: string[];
   /** Number of provider executions represented by this one session row. */
   executionCount: number;
+  /** Shared human-authored session state, independent of provider lifecycle. */
+  closure: CodingSessionClosure | null;
+  isClosed: boolean;
+  sessionRef: string | null;
+  genesisRef: string | null;
+  founderPubkey: string | null;
   status: CodingSessionWorkspaceStatus;
   /** Stop coordinates for every non-ended execution this row stands for —
-   * what "End session" publishes, one durable stop per execution. */
+   * what "Stop execution" publishes, one durable stop per execution. */
   stopTargets: ProjectCodingSessionStopTarget[];
   session: CodingSessionCatalogRecord;
   /** True only on optimistic rows synthesized for a published-but-not-yet-
@@ -95,6 +110,8 @@ export function resolveProjectCodingSessionShelf(
     projectIdByChannel: new Map(),
   },
   sourceChannelLabels: ReadonlyMap<string, string> = new Map(),
+  names: ReadonlyMap<string, CodingSessionName> = new Map(),
+  closures: ReadonlyMap<string, CodingSessionClosure> = new Map(),
 ): ProjectCodingSessionShelfModel {
   if (catalog.authorityErrorMessage) {
     return {
@@ -107,6 +124,74 @@ export function resolveProjectCodingSessionShelf(
     };
   }
 
+  const nameByGeneration = new Map<string, string>();
+  const umbrellaByGeneration = new Map<
+    string,
+    {
+      closure: CodingSessionClosure | null;
+      founderPubkey: string | null;
+      genesisRef: string | null;
+      sessionRef: string | null;
+    }
+  >();
+  for (const channelId of new Set(
+    catalog.entries.map((entry) => entry.channelId),
+  )) {
+    const channelEntries = catalog.entries
+      .filter((entry) => entry.channelId === channelId)
+      .map((entry) => entry.session);
+    const channelCreates = catalog.creates?.filter(
+      (create) => create.channelId === channelId,
+    );
+    for (const umbrella of groupCodingSessionCatalog(
+      channelEntries,
+      channelCreates,
+    )) {
+      const sessionName =
+        umbrella.sessionRef && umbrella.founderPubkey
+          ? names.get(
+              codingSessionNameKey(
+                channelId,
+                umbrella.sessionRef,
+                umbrella.founderPubkey,
+              ),
+            )?.content
+          : undefined;
+      const closure =
+        umbrella.sessionRef && umbrella.genesisRef
+          ? (closures.get(
+              codingSessionClosureKey(
+                channelId,
+                umbrella.sessionRef,
+                umbrella.genesisRef,
+              ),
+            ) ?? null)
+          : null;
+      for (const execution of umbrella.executions) {
+        for (const generation of [
+          ...execution.priorGenerations,
+          execution.activeGeneration,
+        ]) {
+          if (sessionName) {
+            nameByGeneration.set(
+              `${channelId}\u0000${generation.generationId}`,
+              sessionName,
+            );
+          }
+          umbrellaByGeneration.set(
+            `${channelId}\u0000${generation.generationId}`,
+            {
+              closure,
+              founderPubkey: umbrella.founderPubkey,
+              genesisRef: umbrella.genesisRef,
+              sessionRef: umbrella.sessionRef,
+            },
+          );
+        }
+      }
+    }
+  }
+
   const executionEntries = catalog.entries.map(({ channelId, session }) => {
     const placement = resolveProjectCodingSessionPlacement(
       session.projectRef,
@@ -114,6 +199,8 @@ export function resolveProjectCodingSessionShelf(
       index,
     );
     const runtimeLabel = buildRuntimeLabel(session);
+    const generationKey = `${channelId}\u0000${session.generationId}`;
+    const umbrella = umbrellaByGeneration.get(generationKey);
     // Lifecycle metadata is required here: a durable stop can otherwise
     // look like an ordinary idle transcript forever.
     const status = deriveCodingSessionWorkspaceStatus(
@@ -129,13 +216,20 @@ export function resolveProjectCodingSessionShelf(
       placedBy: placement.placedBy,
       channelId,
       generationId: session.generationId,
-      label: buildProjectCodingSessionLabel(session),
+      label:
+        nameByGeneration.get(generationKey) ??
+        buildProjectCodingSessionLabel(session),
       // Presentation provenance only. It is intentionally not passed to any
       // project-placement decision or exact session action.
       sourceChannelLabel: sourceChannelLabels.get(channelId)?.trim() || null,
       runtimeLabel,
       runtimeLabels: runtimeLabel ? [runtimeLabel] : [],
       executionCount: 1,
+      closure: umbrella?.closure ?? null,
+      isClosed: umbrella?.closure?.action === "closed",
+      sessionRef: umbrella?.sessionRef ?? session.sessionRef,
+      genesisRef: umbrella?.genesisRef ?? null,
+      founderPubkey: umbrella?.founderPubkey ?? null,
       status,
       stopTargets:
         status.kind !== "ended" &&
@@ -306,6 +400,7 @@ export function compareProjectCodingSessionEntries(
   left: ProjectCodingSessionShelfEntry,
   right: ProjectCodingSessionShelfEntry,
 ): number {
+  if (left.isClosed !== right.isClosed) return left.isClosed ? 1 : -1;
   const byActivity = statusPriority(left.status) - statusPriority(right.status);
   if (byActivity !== 0) return byActivity;
   const byTime = right.session.lastEventAt.localeCompare(
@@ -379,11 +474,10 @@ function groupProjectCodingSessionEntries(
     const runtimeLabels = [
       ...new Set(group.flatMap((entry) => entry.runtimeLabels)),
     ];
-    // Live work always shows; otherwise an ended execution that is the
-    // group's most recent activity settles the whole row — the stop is the
-    // user's last word, and a stale idle prior generation must not
-    // resurrect a session they ended. Only then does the ordinary priority
-    // collapse (idle beats ended beats unknown) apply.
+    // Execution lifecycle remains separate from the durable session closure.
+    // Live work wins; otherwise the newest ended execution is the most honest
+    // runtime face even when a stale idle prior generation shares the umbrella.
+    // Only then does the ordinary execution-status priority apply.
     const working = group.find((entry) => entry.status.kind === "working");
     const newest = [...group].sort(
       (left, right) =>

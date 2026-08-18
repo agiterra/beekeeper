@@ -17,8 +17,7 @@ import {
 } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useShellSessionDialogs } from "@/features/builtin-shell/hooks/useShellSessionDialogs";
 import { useShellSessions } from "@/features/builtin-shell/hooks/useShellSessions";
-import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
-import { buildEndCodingSessionStops } from "@/features/coding-sessions/lib/endCodingSessionModel";
+import { useCodingSessionClosureDialog } from "@/features/coding-sessions/hooks/useCodingSessionClosureDialog";
 import { compareProjectCodingSessionEntries } from "../lib/projectCodingSessionShelf";
 import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
 import type { Channel } from "@/shared/api/types";
@@ -155,7 +154,7 @@ export function ProjectSidebarSections({
     [reposByProject, createShellFor],
   );
   const shellDialogs = useShellSessionDialogs();
-  const endCodingSessionDialog = useEndCodingSessionDialog();
+  const codingSessionClosureDialog = useCodingSessionClosureDialog();
 
   // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
   // derived from the channel's project; unclaimed channels' workflows show
@@ -328,13 +327,29 @@ export function ProjectSidebarSections({
             repos={repos}
             channelHandlers={groupChannelHandlers}
             collapsed={collapse.isProjectCollapsed(project.id)}
+            currentPubkey={currentPubkey}
             onToggleCollapsed={() => collapse.toggleProject(project.id)}
             onOpenAgents={onOpenAgents}
-            onRequestEndCodingSession={(entry) =>
-              endCodingSessionDialog.requestEnd(
-                buildEndCodingSessionStops(entry),
-              )
-            }
+            onRequestCloseCodingSession={(entry) => {
+              if (!entry.sessionRef || !entry.genesisRef) return;
+              codingSessionClosureDialog.requestClosure({
+                action: "closed",
+                channelId: entry.channelId,
+                genesisRef: entry.genesisRef,
+                label: entry.label,
+                sessionRef: entry.sessionRef,
+              });
+            }}
+            onRequestReopenCodingSession={(entry) => {
+              if (!entry.sessionRef || !entry.genesisRef) return;
+              codingSessionClosureDialog.requestClosure({
+                action: "open",
+                channelId: entry.channelId,
+                genesisRef: entry.genesisRef,
+                label: entry.label,
+                sessionRef: entry.sessionRef,
+              });
+            }}
             onOpenCodingSession={({ channelId, generationId }) =>
               void goCodingSession(channelId, generationId)
             }
@@ -365,7 +380,7 @@ export function ProjectSidebarSections({
         );
       })}
       {shellDialogs.dialogs}
-      {endCodingSessionDialog.dialog}
+      {codingSessionClosureDialog.dialog}
 
       <ProjectsScreenCreateDialogs
         kind={createRequest?.kind ?? null}

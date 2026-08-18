@@ -98,7 +98,9 @@ export function ProjectSidebarGroup({
   onToggleCollapsed,
   onOpenAgents,
   onOpenCodingSession,
-  onRequestEndCodingSession,
+  onRequestCloseCodingSession,
+  onRequestReopenCodingSession,
+  currentPubkey,
   onOpenProject,
   onOpenRepo,
   onNewCodingSession,
@@ -131,7 +133,11 @@ export function ProjectSidebarGroup({
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
-  onRequestEndCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  onRequestCloseCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  onRequestReopenCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
+  currentPubkey?: string;
   onOpenProject: () => void;
   onOpenRepo: (repo: CodeRepo) => void;
   /** Starts the project-scoped create flow from the group's `+` menu. */
@@ -215,15 +221,11 @@ export function ProjectSidebarGroup({
   ]);
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
-  // "Recent Sessions" is a statement of intent, not of activity: only a
-  // session the user explicitly ended files there. Idle sessions are live
-  // work at rest and stay in the main sessions shelf.
-  const activeSessionRows = sessionRows.filter(
-    (row) => row.entry.status.kind !== "ended",
-  );
-  const recentSessionRows = sessionRows.filter(
-    (row) => row.entry.status.kind === "ended",
-  );
+  // "Settled" is the shared closure fact (kind 44230), never inferred from a
+  // provider's execution status. Stopped executions remain open work until
+  // someone with session authority closes the umbrella.
+  const activeSessionRows = sessionRows.filter((row) => !row.entry.isClosed);
+  const recentSessionRows = sessionRows.filter((row) => row.entry.isClosed);
   const channelRows = children.filter(
     (row) => row.type === "channel" || row.type === "forum",
   );
@@ -247,7 +249,9 @@ export function ProjectSidebarGroup({
       channelHandlers={channelHandlers}
       onOpenAgents={onOpenAgents}
       onOpenCodingSession={onOpenCodingSession}
-      onRequestEndCodingSession={onRequestEndCodingSession}
+      onRequestCloseCodingSession={onRequestCloseCodingSession}
+      onRequestReopenCodingSession={onRequestReopenCodingSession}
+      currentPubkey={currentPubkey}
       onOpenRepo={onOpenRepo}
       onOpenWorkflow={onOpenWorkflow}
       activeShellSessionId={activeShellSessionId}

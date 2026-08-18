@@ -2707,16 +2707,15 @@ fn validate_coding_session_authority_transition_envelope(event: &Event) -> Resul
 
 /// Apply the action-specific authority rule for one already-resolved closure.
 ///
-/// Closing is an owner act regardless of channel type. Reopening may be
-/// broader when a deployment wires in a project-authority source: the caller
-/// precomputes whether that authority admits the signer. `None` means this
-/// channel has no project authority source, so reopening remains
-/// founder-only.
+/// Closing is an owner act regardless of channel type. Reopening a project
+/// session is deliberately broader: any member in the transport channel's
+/// *current* project ACL may reopen the shared umbrella. A standalone channel
+/// has no project authority source, so reopening remains founder-only.
 fn coding_session_closure_authority_verdict(
     action: buzz_core::coding_session_closure::CodingSessionClosureAction,
     signer: &[u8],
     founder: &[u8],
-    project_reopen_admits: Option<bool>,
+    transport_gate: Option<&buzz_db::project_acl::ProjectGate>,
 ) -> Result<(), String> {
     use buzz_core::coding_session_closure::CodingSessionClosureAction;
 
@@ -2725,9 +2724,9 @@ fn coding_session_closure_authority_verdict(
         CodingSessionClosureAction::Closed => {
             Err("restricted: only the session founder may close this session".into())
         }
-        CodingSessionClosureAction::Open => match project_reopen_admits {
-            Some(true) => Ok(()),
-            Some(false) => {
+        CodingSessionClosureAction::Open => match transport_gate {
+            Some(gate) if gate.admits(signer) => Ok(()),
+            Some(_) => {
                 Err("restricted: only a current project member may reopen this session".into())
             }
             None if signer == founder => Ok(()),
@@ -2795,14 +2794,19 @@ async fn validate_coding_session_closure_authority(
         coding_session_closure_founder(&genesis.event, genesis.channel_id, channel_id, payload)
             .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
 
-    // This build has no project-authority source for reopen: standalone
-    // semantics (founder-only) apply. A deployment that wires one in
-    // precomputes the membership verdict here.
+    let transport_gate = state
+        .channel_transport_gate_cached(tenant.community(), channel_id)
+        .await
+        .map_err(|error| {
+            IngestError::Internal(format!(
+                "error: database error resolving closure project membership: {error}"
+            ))
+        })?;
     coding_session_closure_authority_verdict(
         payload.action,
         event.pubkey.as_bytes(),
         &founder,
-        None,
+        transport_gate.as_deref(),
     )
     .map_err(IngestError::AuthFailed)
 }
@@ -8109,36 +8113,43 @@ mod tests {
         use buzz_core::coding_session_closure::CodingSessionClosureAction;
 
         let founder = vec![1; 32];
+        let project_owner = vec![2; 32];
         let project_member = vec![3; 32];
         let outsider = vec![4; 32];
+        let gate = buzz_db::project_acl::ProjectGate {
+            owner: project_owner.clone(),
+            members: vec![project_member.clone()],
+        };
 
         assert!(coding_session_closure_authority_verdict(
             CodingSessionClosureAction::Closed,
             &founder,
             &founder,
-            Some(true),
+            Some(&gate),
         )
         .is_ok());
         assert!(coding_session_closure_authority_verdict(
             CodingSessionClosureAction::Closed,
             &project_member,
             &founder,
-            Some(true),
+            Some(&gate),
         )
         .is_err());
 
-        assert!(coding_session_closure_authority_verdict(
-            CodingSessionClosureAction::Open,
-            &project_member,
-            &founder,
-            Some(true),
-        )
-        .is_ok());
+        for project_actor in [&project_owner, &project_member] {
+            assert!(coding_session_closure_authority_verdict(
+                CodingSessionClosureAction::Open,
+                project_actor,
+                &founder,
+                Some(&gate),
+            )
+            .is_ok());
+        }
         assert!(coding_session_closure_authority_verdict(
             CodingSessionClosureAction::Open,
             &outsider,
             &founder,
-            Some(false),
+            Some(&gate),
         )
         .is_err());
         assert!(coding_session_closure_authority_verdict(
