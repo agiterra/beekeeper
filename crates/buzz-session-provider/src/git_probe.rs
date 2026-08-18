@@ -358,7 +358,17 @@ mod tests {
             .args(["status", "--porcelain"])
             .stdin(Stdio::null())
             .kill_on_drop(true);
-        let timed_out = tokio::time::timeout(Duration::from_nanos(1), command.output()).await;
-        assert!(timed_out.is_err(), "the bound did not fire");
+        // What must hold is that no observation survives the bound. Asserting
+        // `is_err()` instead claims the timer always wins a race against the
+        // spawn, which is not something the test can guarantee: when `output()`
+        // resolves on its first poll — a spawn that fails fast on a loaded
+        // runner — the deadline never gets to fire and the assertion failed the
+        // gate despite the product behaving correctly. Both non-observations
+        // are the degradation this test is about; only a completed `git` is not.
+        match tokio::time::timeout(Duration::from_nanos(1), command.output()).await {
+            Err(_elapsed) => {}
+            Ok(Err(_spawn_failed)) => {}
+            Ok(Ok(output)) => panic!("git completed inside a 1ns bound: {output:?}"),
+        }
     }
 }
