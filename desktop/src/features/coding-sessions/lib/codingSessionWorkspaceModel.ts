@@ -231,7 +231,17 @@ export function deriveCodingSessionWorkspaceStatus(
   // item that is not itself a terminator and belongs to a different turn
   // than the last terminator (or precedes any terminator at all) means a
   // turn is in flight.
-  if (newest !== undefined && !isTurnTerminator(newest)) {
+  // Session-scoped lifecycle facts (continuity disclosures, and any other
+  // status the provider publishes with no turn) carry no `turnId`. They are
+  // not turn activity and must never be read as one: `session_fresh` is the
+  // first item a brand-new session ever has, and without this guard its
+  // presence alone — a non-terminator with no terminator before it — reads
+  // as a turn streaming forever.
+  if (
+    newest !== undefined &&
+    !isTurnTerminator(newest) &&
+    (newest.turnId ?? null) !== null
+  ) {
     let lastTerminator:
       | CodingSessionCatalogRecord["transcript"][number]
       | null = null;

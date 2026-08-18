@@ -510,3 +510,45 @@ test("a routed disconnected generation self-heals onto the generation its resume
     "generation-claude-1",
   );
 });
+
+test("a session-scoped continuity fact is not mistaken for a streaming turn", () => {
+  // The live regression: `session_fresh` is the first (and only) transcript
+  // item a brand-new session has. It belongs to no turn, so the open-turn
+  // heuristic must not read it as one — the header said WORKING with an
+  // Interrupt button over an idle provider that had never run a turn.
+  const continuityRow = {
+    id: "status-1",
+    type: "lifecycle",
+    renderClass: "status",
+    title: "Session continuity",
+    text: "Started fresh — no prior session context",
+    timestamp: "2026-08-18T10:00:01.000Z",
+  };
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus([continuityRow], "idle"),
+    {
+      kind: "idle",
+      label: "Idle",
+    },
+  );
+  // …and the same fact must not mask a turn that really is streaming.
+  assert.deepEqual(
+    deriveCodingSessionWorkspaceStatus(
+      [
+        continuityRow,
+        {
+          id: "msg-1",
+          type: "message",
+          renderClass: "message",
+          role: "user",
+          title: "Prompt",
+          text: "go",
+          timestamp: "2026-08-18T10:00:05.000Z",
+          turnId: "turn-1",
+        },
+      ],
+      "running",
+    ),
+    { kind: "working", label: "Working" },
+  );
+});
