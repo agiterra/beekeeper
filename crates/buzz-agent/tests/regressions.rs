@@ -385,7 +385,14 @@ async fn mcp_init_timeout_kills_child() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_metadata_caps_enforced() {
     let llm = spawn_capturing_llm(vec![openai_text("done")]).await;
-    let mut h = Harness::spawn(&llm.url).await;
+    // The harness pins a 2s MCP timeout so `mcp_init_timeout_kills_child` can
+    // assert the timeout fires promptly. This test is about metadata caps, not
+    // timeouts, and it makes the server hand over 200 tools with 100KB
+    // descriptions — ~20MB of JSON. That transfer beats 2s on the Linux gate
+    // but not on every dev machine (it fails 3 of 3 on macOS), so the whole
+    // test dies on a deadline it never meant to exercise. Give it room.
+    let mut h =
+        Harness::spawn_with_env(&llm.url, &[("BUZZ_AGENT_MCP_INIT_TIMEOUT_SECS", "30")]).await;
 
     let fake_mcp = env!("CARGO_BIN_EXE_fake-mcp");
     h.send(
