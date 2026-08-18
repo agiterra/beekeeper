@@ -8119,10 +8119,20 @@ mod tests {
         let founder = vec![1; 32];
         let project_owner = vec![2; 32];
         let project_member = vec![3; 32];
+        let project_viewer = vec![5; 32];
         let outsider = vec![4; 32];
         let gate = buzz_db::project_acl::ProjectGate {
             owner: project_owner.clone(),
-            members: vec![project_member.clone()],
+            members: vec![
+                (
+                    project_member.clone(),
+                    buzz_db::project_acl::ProjectRole::Collaborator,
+                ),
+                (
+                    project_viewer.clone(),
+                    buzz_db::project_acl::ProjectRole::Viewer,
+                ),
+            ],
         };
 
         assert!(coding_session_closure_authority_verdict(
@@ -8149,13 +8159,17 @@ mod tests {
             )
             .is_ok());
         }
-        assert!(coding_session_closure_authority_verdict(
-            CodingSessionClosureAction::Open,
-            &outsider,
-            &founder,
-            Some(&gate),
-        )
-        .is_err());
+        // Reopening changes shared session state — the write tier: a
+        // read-only project viewer does not qualify, nor does an outsider.
+        for refused in [&project_viewer, &outsider] {
+            assert!(coding_session_closure_authority_verdict(
+                CodingSessionClosureAction::Open,
+                refused,
+                &founder,
+                Some(&gate),
+            )
+            .is_err());
+        }
         assert!(coding_session_closure_authority_verdict(
             CodingSessionClosureAction::Open,
             &founder,
