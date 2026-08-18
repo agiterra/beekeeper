@@ -2,20 +2,36 @@
 # Service credentials mirror the repo's dev docker-compose.yml (buzz/buzz_dev),
 # reached by service hostname instead of localhost. Heavy DB-only (`--ignored`)
 # suites and browser e2e live in nightly.yml.
+#
+# Steps run on the prebaked `buzz-ci` image (apt deps only — see
+# scripts/ci-image/Dockerfile) with host cache mounts under /srv/ci-cache,
+# so warm runs skip apt, toolchain installs, registry downloads, and dependency
+# compilation. Cache layout + image rebuild runbook: docs/INTEGRATION.md.
 when:
   - event: push
     branch: integrated
   - event: pull_request
 
-# Full clone: the default partial/blobless clone lazily fetches objects on
-# demand, which fails in command steps (no credentials there). The ratchet
-# needs real history back to the stamped base commit.
+# Pin the workspace path so host cache mounts can target workspace-relative
+# hermit paths: hermit's rustup package hard-pins CARGO_HOME to
+# ${HERMIT_ENV}/.hermit/rust at shim-exec time (ambient env overrides do not
+# stick), so the registry cache must be mounted exactly there.
+workspace:
+  base: /woodpecker
+  path: repo
+
+# The default partial/blobless clone lazily fetches objects on demand, which
+# fails in command steps (no credentials there) — keep partial off. depth: 1
+# because the gate uses no git history: the file-size ratchet does not run
+# here (desktop `pnpm check` is biome + px-text + pubkey-truncation only), and
+# .ci/base-ref is a stamped file, not a git lookup. If the ratchet is ever
+# added to the gate, depth must be raised to reach the stamped base commit.
 clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
       partial: false
-      depth: 0
+      depth: 1
 
 services:
   postgres:
@@ -36,12 +52,29 @@ services:
 
 steps:
   rust:
-    image: ubuntu:24.04
+    image: buzz-ci:1
+    # Explicit empty depends_on puts the pipeline in DAG mode: rust and
+    # desktop start together; rust-agent waits for both (see below).
+    depends_on: []
     # Cache mounts require the repo's Trusted→Volumes flag in Woodpecker.
     volumes:
-      - /srv/ci-cache/cargo-registry:/root/.cargo/registry
+      # CARGO_HOME (registry, git checkouts, cargo/rustup bins) — hermit pins
+      # it inside the workspace, hence the workspace-relative mount point.
+      - /srv/ci-cache/hermit-rust:/woodpecker/repo/.hermit/rust
+      # RUSTUP_HOME default — installed toolchains persist here.
+      - /srv/ci-cache/rustup:/root/.rustup
+      # Hermit package downloads + unpacked packages.
       - /srv/ci-cache/hermit:/root/.cache/hermit
+      - /srv/ci-cache/hermit-state:/root/.local/state/hermit
+      # Persistent target dir shared across runs (and with nightly). Cargo's
+      # build lock serializes the rare concurrent pipeline safely.
+      - /srv/ci-cache/cargo-target:/ci-target
     environment:
+      # Hermit only pins CARGO_HOME; these pass through to cargo untouched.
+      CARGO_TARGET_DIR: /ci-target
+      # Fresh-clone mtimes defeat incremental compilation anyway, and it
+      # roughly triples target-dir disk — off in CI.
+      CARGO_INCREMENTAL: "0"
       BUZZ_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
       BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
       DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
@@ -50,14 +83,11 @@ steps:
       BUZZ_S3_ACCESS_KEY: buzz_dev
       BUZZ_S3_SECRET_KEY: buzz_dev_secret
     commands:
-      - apt-get update -qq && apt-get install -y -qq curl git build-essential cmake perl clang pkg-config libssl-dev >/dev/null
       # The repo pins its toolchain via hermit shims in bin/
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # The DB-backed relay/db unit tests need the migrated schema, not just a
       # reachable postgres (upstream CI has the same apply-schema step).
       - cargo run -p buzz-admin -- migrate
-      # buzz-agent's regressions harness is CPU-load sensitive (5s canned-LLM
-      # timeouts): run it after the parallel bulk, when the cores are free.
       # mesh_demo runs for real here (redis present; it self-skips without) but
       # its loopback-QUIC echo cannot complete inside this docker-in-incus
       # runner (10s ECHO_TIMEOUT expires consistently, isolated or not).
@@ -65,25 +95,23 @@ steps:
       # is excluded; the rest of mesh_demo still runs isolated below.
       - cargo test --workspace --exclude buzz-agent -- --skip api::mesh_demo
       - cargo test -p buzz-relay --lib api::mesh_demo -- --skip demo_join_forwarded_arm_round_trips_echo
-      # buzz-agent's suites carry upstream timing races that surface on slow
-      # shared cores (all pass repeatedly on dev machines). The fake_llm
-      # cancellation-ordering test races cancel delivery against the gated
-      # LLM round and loses consistently here — excluded, see INTEGRATION.md.
-      # Retry once for the rest — a real regression still fails twice.
-      - cargo test -p buzz-agent -- --skip cancelled_turn_with_usage_emits_notification_before_response || cargo test -p buzz-agent -- --skip cancelled_turn_with_usage_emits_notification_before_response
 
   desktop:
-    image: ubuntu:24.04
+    image: buzz-ci:1
+    depends_on: []
     volumes:
       - /srv/ci-cache/hermit:/root/.cache/hermit
-      - /srv/ci-cache/pnpm-store:/root/.local/share/pnpm/store
+      - /srv/ci-cache/hermit-state:/root/.local/state/hermit
+      # pnpm keeps its store on the project's filesystem (the workspace
+      # volume), NOT under $HOME — the old /root/.local/share/pnpm/store
+      # mount stayed empty forever. /woodpecker is the workspace disk root.
+      - /srv/ci-cache/pnpm-store:/woodpecker/.pnpm-store
     commands:
-      - apt-get update -qq && apt-get install -y -qq curl git unzip libatomic1 >/dev/null
       # The clone step runs as a different uid than this container's root.
       - git config --global --add safe.directory "$CI_WORKSPACE"
-      # The file-size ratchet needs a base commit; the CI clone is single-ref
-      # and command steps get no git credentials, so integrate.sh stamps the
-      # mirror tip into .ci/base-ref (an ancestor already present in the clone).
+      # Historical: the file-size ratchet would need this base commit, but the
+      # gate does not currently run it (see the clone comment above). Kept
+      # because it is one `cat` and documents where the base comes from.
       - export CHECK_FILE_SIZES_BASE=$(cat .ci/base-ref)
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # pnpm's store→node_modules copyfile occasionally hits a transient EAGAIN
@@ -101,3 +129,36 @@ steps:
       - just export-viewer-manifest-test
       # Keep last: this `cd` persists for the rest of the step.
       - cd desktop && pnpm typecheck
+
+  rust-agent:
+    image: buzz-ci:1
+    # buzz-agent's regressions harness is CPU-load sensitive (5s canned-LLM
+    # timeouts): running strictly after everything else guarantees free cores
+    # (previously "last command in the rust step" — now enforced by the DAG).
+    depends_on: [rust, desktop]
+    volumes:
+      - /srv/ci-cache/hermit-rust:/woodpecker/repo/.hermit/rust
+      - /srv/ci-cache/rustup:/root/.rustup
+      - /srv/ci-cache/hermit:/root/.cache/hermit
+      - /srv/ci-cache/hermit-state:/root/.local/state/hermit
+      - /srv/ci-cache/cargo-target:/ci-target
+    environment:
+      # Same env as the rust step — buzz-agent previously ran inside it.
+      CARGO_TARGET_DIR: /ci-target
+      CARGO_INCREMENTAL: "0"
+      BUZZ_TEST_DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
+      BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
+      DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
+      REDIS_URL: redis://redis:6379
+      BUZZ_S3_ENDPOINT: http://minio:9000
+      BUZZ_S3_ACCESS_KEY: buzz_dev
+      BUZZ_S3_SECRET_KEY: buzz_dev_secret
+    commands:
+      - export PATH="$CI_WORKSPACE/bin:$PATH"
+      # Runs the whole suite: the fake_llm steer/cancel timing races were
+      # test-design, not runner-environment, and are fixed (the fake provider
+      # now holds the round under test until the client has acted — see
+      # LlmGate in crates/buzz-agent/tests/fake_llm.rs). Retry once anyway —
+      # a real regression still fails twice. The build phase is a freshness
+      # no-op against the warm shared target dir.
+      - cargo test -p buzz-agent || cargo test -p buzz-agent

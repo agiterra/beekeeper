@@ -1,19 +1,27 @@
 # Nightly heavy suite on `integrated`: DB-bound Rust tests + browser e2e.
 # Requires a Woodpecker cron named "nightly" targeting branch `integrated`.
 # Best-effort on shared 8-core host — expect iteration on timeouts/deps.
+#
+# Caching mirrors gate.yml: prebaked `buzz-ci` image + /srv/ci-cache mounts.
+# See gate.yml and docs/INTEGRATION.md for the rationale.
 when:
   - event: cron
     cron: nightly
 
-# Full clone: the default partial/blobless clone lazily fetches objects on
-# demand, which fails in command steps (no credentials there). The ratchet
-# needs real history back to the stamped base commit.
+# Pinned workspace path — required so the hermit-rust cache mount below can
+# target the workspace-relative CARGO_HOME hermit hard-pins (see gate.yml).
+workspace:
+  base: /woodpecker
+  path: repo
+
+# Partial clone lazy-fetches without credentials — keep off. depth: 1 because
+# nothing here uses git history (see gate.yml).
 clone:
   git:
     image: woodpeckerci/plugin-git
     settings:
       partial: false
-      depth: 0
+      depth: 1
 
 services:
   postgres:
@@ -28,16 +36,20 @@ services:
 
 steps:
   rust-db:
-    image: ubuntu:24.04
+    image: buzz-ci:1
     volumes:
-      - /srv/ci-cache/cargo-registry:/root/.cargo/registry
+      - /srv/ci-cache/hermit-rust:/woodpecker/repo/.hermit/rust
+      - /srv/ci-cache/rustup:/root/.rustup
       - /srv/ci-cache/hermit:/root/.cache/hermit
+      - /srv/ci-cache/hermit-state:/root/.local/state/hermit
+      - /srv/ci-cache/cargo-target:/ci-target
     environment:
+      CARGO_TARGET_DIR: /ci-target
+      CARGO_INCREMENTAL: "0"
       DATABASE_URL: postgres://buzz:buzz_dev@postgres:5432/buzz
       BUZZ_TEST_POSTGRES_PASSWORD: buzz_dev
       REDIS_URL: redis://:buzz_dev@redis:6379
     commands:
-      - apt-get update -qq && apt-get install -y -qq curl git build-essential cmake perl clang pkg-config libssl-dev >/dev/null
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # DB-backed suites deadlock in parallel (DROP SCHEMA) — single-threaded.
       - cargo test -p buzz-db -- --ignored --test-threads=1
@@ -46,7 +58,9 @@ steps:
     image: mcr.microsoft.com/playwright:v1.49.0-noble
     volumes:
       - /srv/ci-cache/hermit:/root/.cache/hermit
-      - /srv/ci-cache/pnpm-store:/root/.local/share/pnpm/store
+      - /srv/ci-cache/hermit-state:/root/.local/state/hermit
+      # See gate.yml: pnpm's store lives at the workspace disk root.
+      - /srv/ci-cache/pnpm-store:/woodpecker/.pnpm-store
     commands:
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       - cd desktop
