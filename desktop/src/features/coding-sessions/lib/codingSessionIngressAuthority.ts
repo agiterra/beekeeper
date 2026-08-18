@@ -38,6 +38,41 @@ export const OPEN_CODING_SESSION_INGRESS_AUTHORITY: CodingSessionIngressAuthorit
   { state: "open" };
 
 /**
+ * The authority for one command already addressed to one provider.
+ *
+ * A command names the exact provider it is for: the 44221 carries
+ * `providerAuthorityPubkey`, and only that provider's signed 44224 answers it.
+ * Reading that answer through the machine-local `allowed-bridge-pubkeys` list
+ * asks the wrong question — the list governs which providers *this machine* may
+ * run, so on a session founded by someone else it is empty of the provider that
+ * will reply, the relay filter never asks for its receipt, and a signed refusal
+ * is dropped as `rejected-author` instead of being shown. Pinning the command's
+ * own provider keeps ingress exactly as narrow as it was (one pubkey, its own
+ * signature, the same classifier) while making it the *right* one pubkey.
+ */
+export function buildPinnedCodingSessionIngressAuthority(
+  pubkey: string,
+): CodingSessionIngressAuthority {
+  const normalized = normalizeConfigPubkey(pubkey);
+  if (normalized === null) {
+    return {
+      state: "invalid",
+      errorMessage:
+        "Coding sessions disabled: this command names no provider authority.",
+    };
+  }
+  const source: CodingSessionIngressSource = {
+    pubkey: normalized,
+    label: "Pinned provider",
+  };
+  return {
+    state: "valid",
+    allowed: [source],
+    byPubkey: new Map([[normalized, source]]),
+  };
+}
+
+/**
  * Resolve the trusted signer set.
  *
  * The whole list is rejected on the first bad entry rather than filtered down

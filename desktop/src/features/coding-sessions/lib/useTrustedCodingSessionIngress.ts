@@ -17,6 +17,7 @@ import {
 } from "./codingSessionShelfCache";
 import {
   buildCodingSessionIngressAuthorityIdentity,
+  buildPinnedCodingSessionIngressAuthority,
   type CodingSessionIngressAuthority,
   OPEN_CODING_SESSION_INGRESS_AUTHORITY,
   resolveCodingSessionIngressAuthority,
@@ -171,6 +172,20 @@ function emptySnapshot(
 }
 
 /**
+ * Which signers this consumer will read.
+ *
+ * - `config` — the machine-local `allowed-bridge-pubkeys` list: what this
+ *   machine may *run*. Correct for the local create flow, which provisions and
+ *   then addresses its own provider.
+ * - `open` — channel membership: what the relay already accepted into a
+ *   readable channel. Correct for display surfaces.
+ * - `pinned` — the exact provider this command names. Correct for
+ *   command-scoped resolution, where the answer can only come from one signer
+ *   and that signer is stated in the command itself.
+ */
+export type CodingSessionIngressAuthorityMode = "config" | "open" | "pinned";
+
+/**
  * Subscribe to provider-signed lifecycle receipts, metadata, and transcripts
  * for the visible channel set. Supplying `commandId` exposes a
  * generation-fenced resolution: receipt target first, then metadata for that
@@ -182,7 +197,7 @@ export function useTrustedCodingSessionIngress(
   providerAuthorityPubkey: string | null = null,
   client: CodingSessionIngressClient = defaultRelayClient,
   bootstrap: TrustedCodingSessionIngressBootstrap | null = null,
-  authorityMode: "config" | "open" = "config",
+  authorityMode: CodingSessionIngressAuthorityMode = "config",
   /**
    * localStorage key for the persisted shelf cache
    * (`codingSessionShelfCacheKey`). When set, a fresh store seeds itself from
@@ -202,18 +217,36 @@ export function useTrustedCodingSessionIngress(
     [stableChannelIdentity],
   );
   const { globalConfig, isLoading: rawConfigLoading } = useGlobalAgentConfig();
-  // Open mode reads by channel membership, not the local allowlist — the
-  // config neither gates nor delays it.
-  const isConfigLoading = authorityMode === "open" ? false : rawConfigLoading;
-  const authority = React.useMemo(
+  // Only config mode reads the local allowlist, so only config mode waits for
+  // it: open reads by channel membership and pinned reads the command's own
+  // named provider.
+  const isConfigLoading = authorityMode === "config" ? rawConfigLoading : false;
+  const configAuthority = React.useMemo(
     () =>
-      authorityMode === "open"
-        ? OPEN_CODING_SESSION_INGRESS_AUTHORITY
-        : resolveCodingSessionIngressAuthority(
-            globalConfig["allowed-bridge-pubkeys"],
-          ),
-    [authorityMode, globalConfig],
+      resolveCodingSessionIngressAuthority(
+        globalConfig["allowed-bridge-pubkeys"],
+      ),
+    [globalConfig],
   );
+  // A command with no exact provider pin addresses nobody; there is no signer
+  // whose answer would count, so it resolves to nothing readable rather than
+  // falling back to a broader set. Memoized apart from the config so a config
+  // load that changes nothing here cannot re-arm the subscription.
+  const pinnedAuthority = React.useMemo(
+    () =>
+      buildPinnedCodingSessionIngressAuthority(
+        isExactProviderAuthorityPubkey(providerAuthorityPubkey)
+          ? providerAuthorityPubkey
+          : "",
+      ),
+    [providerAuthorityPubkey],
+  );
+  const authority =
+    authorityMode === "open"
+      ? OPEN_CODING_SESSION_INGRESS_AUTHORITY
+      : authorityMode === "pinned"
+        ? pinnedAuthority
+        : configAuthority;
   const authorityIdentity = React.useMemo(
     () => buildCodingSessionIngressAuthorityIdentity(authority),
     [authority],
@@ -521,12 +554,21 @@ export function useTrustedCodingSessionIngress(
     : emptySnapshot(authorityIdentity, requestIdentity, initialLifecycle);
 }
 
-/** Draft-facing shorthand for one exact create command. */
+/**
+ * Draft-facing shorthand for one exact command.
+ *
+ * `authorityMode` defaults to `config` so the local create flow — which
+ * provisions this machine's provider and then addresses it — is unchanged. A
+ * command addressed to a provider this machine does not run (any session
+ * founded by another member) must pass `pinned`, or its answer is neither
+ * subscribed for nor admitted.
+ */
 export function useCodingSessionLifecycleResolution(
   channelId: string | null,
   commandId: string | null,
   providerAuthorityPubkey: string | null,
   client: CodingSessionIngressClient = defaultRelayClient,
+  authorityMode: CodingSessionIngressAuthorityMode = "config",
 ): TrustedCodingSessionIngressHookSnapshot {
   const channelIds = React.useMemo(
     () => (channelId ? [channelId] : []),
@@ -537,5 +579,7 @@ export function useCodingSessionLifecycleResolution(
     commandId,
     providerAuthorityPubkey,
     client,
+    null,
+    authorityMode,
   );
 }

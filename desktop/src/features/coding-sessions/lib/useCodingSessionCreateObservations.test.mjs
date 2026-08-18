@@ -197,14 +197,74 @@ test("creates ride their own subscription and only bind once the receipt lands",
   ipcHandlers.clear();
 });
 
-test("no configured provider authority means no observations and no traffic", async () => {
+test("a member who runs no providers still sees who founded the session", async () => {
+  // The regression this replaces: the hook used to resolve the machine-local
+  // `allowed-bridge-pubkeys` list and refuse to read anything while it was
+  // empty. That list says what this computer may *run*, so on every session
+  // founded by somebody else it is empty of the answering provider — and the
+  // consequence was not a missing detail but a wrong claim: no create/receipt
+  // join, `founderPubkey: null`, and a composer that called a governed session
+  // "ungoverned" and enabled controls the provider then refused.
   const { act, renderHook } = await import("@testing-library/react");
   const React = (await import("react")).default;
   const { QueryClient, QueryClientProvider } = await import(
     "@tanstack/react-query"
   );
+  const { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } = await import(
+    "@/shared/constants/kinds.ts"
+  );
+  const { buildCodingSessionCreateEvent } = await import(
+    "./codingSessionLifecycleCommand.ts"
+  );
+  const {
+    CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    lifecycleReceiptSemanticKey,
+  } = await import("./codingSessionTrustedIngress.ts");
   const { useCodingSessionCreateObservations } = await import(
     "./useCodingSessionCreateObservations.ts"
+  );
+
+  const built = buildCodingSessionCreateEvent({
+    channelId: CHANNEL_ID,
+    commandId: COMMAND_ID,
+    projectRef: null,
+    repoRef: null,
+    sessionRef: SESSION_REF,
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: PROVIDER_PUBKEY,
+    model: null,
+    title: "Founded on another machine",
+    initialTurn: null,
+  });
+  const createEvent = finalizeEvent(
+    {
+      kind: built.kind,
+      created_at: 1_800_000_000,
+      tags: built.tags,
+      content: built.content,
+    },
+    OPERATOR_SECRET,
+  );
+  const receiptEvent = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: 1_800_000_005,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", COMMAND_ID],
+        ["csl-key", lifecycleReceiptSemanticKey(COMMAND_ID)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: COMMAND_ID,
+        status: "created",
+        session: TARGET,
+        error: null,
+      }),
+    },
+    PROVIDER_SECRET,
   );
 
   ipcHandlers.set("get_global_agent_config", async () => ({
@@ -219,7 +279,7 @@ test("no configured provider authority means no observations and no traffic", as
   const client = {
     fetchEvents: async (filter) => {
       historyCalls.push(filter);
-      return [];
+      return [createEvent, receiptEvent];
     },
     subscribeLive: async () => () => {},
     subscribeToReconnects: () => () => {},
@@ -240,10 +300,10 @@ test("no configured provider authority means no observations and no traffic", as
     });
   }
 
-  // Without a trusted provider no receipt is joinable, so reading creates
-  // would only produce claims this client cannot bind to any execution.
-  assert.equal(historyCalls.length, 0);
-  assert.deepEqual(result.current.observations, []);
+  assert.equal(historyCalls.length, 1);
+  assert.equal(result.current.observations.length, 1);
+  assert.equal(result.current.observations[0].signerPubkey, OPERATOR_PUBKEY);
+  assert.deepEqual(result.current.observations[0].target, TARGET);
 
   unmount();
   queryClient.clear();

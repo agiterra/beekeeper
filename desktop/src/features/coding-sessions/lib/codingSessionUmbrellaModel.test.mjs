@@ -2,12 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from "nostr-tools/pure";
+
+import { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } from "@/shared/constants/kinds.ts";
+import { CodingSessionCreateObservationStore } from "./codingSessionCreateObservations.ts";
+import { buildCodingSessionGenesisEvent } from "./codingSessionGenesis.ts";
+import { OPEN_CODING_SESSION_INGRESS_AUTHORITY } from "./codingSessionIngressAuthority.ts";
+import { buildCodingSessionCreateEvent } from "./codingSessionLifecycleCommand.ts";
+import {
+  CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+  CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+  lifecycleReceiptSemanticKey,
+} from "./codingSessionTrustedIngress.ts";
+import {
   buildCodingSessionExecutionKey,
   groupCodingSessionCatalog,
   listCodingSessionUmbrellaParticipants,
 } from "./codingSessionUmbrellaModel.ts";
 
 const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const CHANNEL_ID = "channel-1";
 const CLAUDE_SIGNER = "a".repeat(64);
 const CODEX_SIGNER = "b".repeat(64);
 const FOUNDER = "f".repeat(64);
@@ -324,4 +341,91 @@ test("the execution key is the target minus generation, per signer", () => {
   );
   assert.equal(keyGen1, keyGen2);
   assert.notEqual(keyGen1, otherSigner);
+});
+
+test("a viewer who runs no providers resolves the same founder as the founder does", () => {
+  // Governance is a property of the session, not of the machine reading it.
+  // Everything here is signed by strangers to this viewer: another member
+  // founded the umbrella and another member's provider minted the execution,
+  // so nothing involved appears in this machine's `allowed-bridge-pubkeys`.
+  // The genesis reference must still resolve — a null founder here is what
+  // produced the "ungoverned — adopt to govern." banner on a governed session,
+  // and with it a composer that fell open and offered controls the provider
+  // was always going to refuse.
+  const founderSecret = generateSecretKey();
+  const founderPubkey = getPublicKey(founderSecret);
+  const providerSecret = generateSecretKey();
+  const providerPubkey = getPublicKey(providerSecret);
+
+  const genesisBuilt = buildCodingSessionGenesisEvent({
+    channelId: CHANNEL_ID,
+    sessionRef: SESSION_REF,
+  });
+  const genesis = finalizeEvent(
+    {
+      kind: genesisBuilt.kind,
+      created_at: 1_799_999_999,
+      tags: genesisBuilt.tags,
+      content: genesisBuilt.content,
+    },
+    founderSecret,
+  );
+  const createBuilt = buildCodingSessionCreateEvent({
+    channelId: CHANNEL_ID,
+    commandId: "csl-foreign-1",
+    projectRef: null,
+    repoRef: null,
+    sessionRef: SESSION_REF,
+    genesisRef: genesis.id,
+    providerInstanceRef: "claude-primary",
+    providerAuthorityPubkey: providerPubkey,
+    model: null,
+    title: "Advance Buzz live sessions",
+    initialTurn: null,
+  });
+  const create = finalizeEvent(
+    {
+      kind: createBuilt.kind,
+      created_at: 1_800_000_000,
+      tags: createBuilt.tags,
+      content: createBuilt.content,
+    },
+    founderSecret,
+  );
+  const receipt = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: 1_800_000_005,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", "csl-foreign-1"],
+        ["csl-key", lifecycleReceiptSemanticKey("csl-foreign-1")],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId: "csl-foreign-1",
+        status: "created",
+        session: CLAUDE_TARGET,
+        error: null,
+      }),
+    },
+    providerSecret,
+  );
+
+  const store = new CodingSessionCreateObservationStore();
+  store.ingestRelayEvents(
+    [genesis, create, receipt],
+    [CHANNEL_ID],
+    OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+  );
+  const observations = store.snapshot([CHANNEL_ID]);
+  assert.equal(observations.length, 1);
+
+  const [umbrella] = groupCodingSessionCatalog(
+    [record({ signerPubkey: providerPubkey, sessionRef: SESSION_REF })],
+    observations,
+  );
+  assert.equal(umbrella.genesisRef, genesis.id);
+  assert.equal(umbrella.founderPubkey, founderPubkey);
 });

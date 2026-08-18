@@ -89,7 +89,17 @@ const TRUSTED_CONFIG = {
   ],
 };
 
-async function harness() {
+/**
+ * The member most likely to be refused: someone who joined a session founded
+ * by another person. Their machine's run-permission list knows nothing about
+ * the provider that will answer them.
+ */
+const FOREIGN_MEMBER_CONFIG = {
+  ...TRUSTED_CONFIG,
+  "allowed-bridge-pubkeys": [],
+};
+
+async function harness({ config = TRUSTED_CONFIG } = {}) {
   const { act, render } = await import("@testing-library/react");
   const React = (await import("react")).default;
   const { QueryClient, QueryClientProvider } = await import(
@@ -102,7 +112,7 @@ async function harness() {
     "./useCodingSessionTurnRefusal.tsx"
   );
 
-  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+  ipcHandlers.set("get_global_agent_config", async () => config);
 
   const liveSubscriptions = [];
   const client = {
@@ -191,6 +201,7 @@ async function harness() {
       for (const [, callback] of pending) callback();
     },
     liveSubscriptions,
+    pendingDeadlines: () => deadlineTimers.size,
     settle,
     state,
     teardown: () => {
@@ -261,6 +272,43 @@ test("a refused turn says so and gives the person their words back", async () =>
 
   assert.equal(scope.error(), `Turn refused: ${REFUSAL_MESSAGE}`);
   assert.equal(scope.draft(), "ship the release notes");
+  assert.equal(scope.state.isWatching, false);
+
+  scope.teardown();
+});
+
+test("a member whose machine runs no such provider still hears the refusal", async () => {
+  // This is the case the refusal exists for. The person is neither founder nor
+  // granted operator, so the provider says no — and that provider belongs to
+  // the founder's machine, not theirs. Resolving the receipt through their own
+  // `allowed-bridge-pubkeys` (empty here) asked whether they may *run* that
+  // provider, subscribed for nobody, and let a signed "you were not allowed to
+  // say that" expire in silence with the person's words gone.
+  const scope = await harness({ config: FOREIGN_MEMBER_CONFIG });
+  const receipt = await refusalEvent();
+
+  await scope.act(async () => {
+    scope.state.typeInto("take over this session");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  assert.equal(scope.draft(), "");
+  assert.equal(scope.liveSubscriptions.length, 1);
+  assert.deepEqual(scope.liveSubscriptions[0].filter.authors, [
+    PROVIDER_PUBKEY,
+  ]);
+  assert.equal(scope.pendingDeadlines(), 1);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(receipt);
+  });
+  await scope.settle();
+
+  // Before the deadline could expire the watch in silence.
+  assert.equal(scope.error(), `Turn refused: ${REFUSAL_MESSAGE}`);
+  assert.equal(scope.draft(), "take over this session");
   assert.equal(scope.state.isWatching, false);
 
   scope.teardown();

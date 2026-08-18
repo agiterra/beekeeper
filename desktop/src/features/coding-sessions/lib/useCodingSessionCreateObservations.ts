@@ -1,6 +1,5 @@
 import * as React from "react";
 
-import { useGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
@@ -10,7 +9,7 @@ import {
 } from "./codingSessionCreateObservations";
 import {
   buildCodingSessionIngressAuthorityIdentity,
-  resolveCodingSessionIngressAuthority,
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
 } from "./codingSessionIngressAuthority";
 import type { CodingSessionIngressClient } from "./useTrustedCodingSessionIngress";
 import {
@@ -50,16 +49,20 @@ function emptySnapshot(
  * executions they minted.
  *
  * A separate subscription from the trusted ingress on purpose: that hook reads
- * provider-authority-signed facts and narrows its filter to the allowlist,
- * while creates are signed by whichever member founded the session and must be
- * read from everyone. Keeping them apart is what stops a human create from
- * ever being mistaken for a provider fact.
+ * provider-authority-signed facts, while creates are signed by whichever member
+ * founded the session and must be read from everyone. Keeping them apart is
+ * what stops a human create from ever being mistaken for a provider fact.
  *
- * Fail-safe by construction: while the config or history is still loading, and
- * whenever the provider authority is unusable (no trusted receipts means no
- * join), this reports no observations — and no observations is precisely the
- * permissive fallback in {@link groupCodingSessionCatalog}, where founder and
- * operator stay null and nothing is gated.
+ * Trust lives in the join, not in the subscription. Every create names the
+ * provider it addressed, and only that provider's own signed receipt joins it
+ * to an execution — so reading widely costs nothing, while reading narrowly
+ * (through this machine's run-permission list) used to cost every member the
+ * founder of every session they did not start themselves.
+ *
+ * Fail-safe by construction: while history is still loading, and whenever the
+ * join is ambiguous, this reports no observations — and no observations is
+ * precisely the permissive fallback in {@link groupCodingSessionCatalog}, where
+ * founder and operator stay null and nothing is gated.
  */
 export function useCodingSessionCreateObservations(
   channelIds: readonly string[],
@@ -73,17 +76,14 @@ export function useCodingSessionCreateObservations(
         : [],
     [stableChannelIdentity],
   );
-  const { globalConfig, isLoading: isConfigLoading } = useGlobalAgentConfig();
-  const authority = React.useMemo(
-    () =>
-      resolveCodingSessionIngressAuthority(
-        globalConfig["allowed-bridge-pubkeys"],
-      ),
-    [globalConfig],
-  );
-  const authorityIdentity = React.useMemo(
-    () => buildCodingSessionIngressAuthorityIdentity(authority),
-    [authority],
+  // Channel membership is the read authority here, exactly as it is for the
+  // display surfaces: the relay already refused these events from non-members,
+  // and *which* provider may answer a given create is fenced per-create by the
+  // pin that create signed. The local `allowed-bridge-pubkeys` list governs
+  // what this machine runs, so consulting it here only ever blinded a member
+  // to sessions founded by someone else.
+  const authorityIdentity = buildCodingSessionIngressAuthorityIdentity(
+    OPEN_CODING_SESSION_INGRESS_AUTHORITY,
   );
   const scopeIdentity = `${authorityIdentity}|${stableChannelIdentity}`;
   const [snapshot, setSnapshot] = React.useState(() =>
@@ -102,14 +102,7 @@ export function useCodingSessionCreateObservations(
       };
     }
     const store = storeRef.current.store;
-    if (isConfigLoading) {
-      setSnapshot(emptySnapshot(scopeIdentity, true));
-      return;
-    }
-    // Without a usable provider authority no receipt is trustworthy, so no
-    // create can be joined to an execution. Reading creates anyway would only
-    // produce claims this client cannot bind to anything.
-    if (authority.state !== "valid" || stableChannelIds.length === 0) {
+    if (stableChannelIds.length === 0) {
       setSnapshot(emptySnapshot(scopeIdentity));
       return;
     }
@@ -135,7 +128,11 @@ export function useCodingSessionCreateObservations(
     };
     const receiveObservedEvents = (events: readonly RelayEvent[]) => {
       if (cancelled) return;
-      store.ingestRelayEvents(events, stableChannelIds, authority);
+      store.ingestRelayEvents(
+        events,
+        stableChannelIds,
+        OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+      );
       publish();
     };
     const unsubscribeObserved = subscribeToObservedCodingSessionEvents(
@@ -151,7 +148,11 @@ export function useCodingSessionCreateObservations(
           ),
         );
         if (cancelled) return;
-        store.ingestRelayEvents(events, stableChannelIds, authority);
+        store.ingestRelayEvents(
+          events,
+          stableChannelIds,
+          OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+        );
         fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
       },
       onAttemptStart() {
@@ -182,7 +183,11 @@ export function useCodingSessionCreateObservations(
         .subscribeLive(
           buildCodingSessionCreateObservationFilter(stableChannelIds, 0),
           (event) => {
-            store.ingestRelayEvents([event], stableChannelIds, authority);
+            store.ingestRelayEvents(
+              [event],
+              stableChannelIds,
+              OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+            );
             publish();
             fanOutObservedCodingSessionEvents([event], receiveObservedEvents);
           },
@@ -225,7 +230,7 @@ export function useCodingSessionCreateObservations(
       unsubscribeReconnect?.();
       unsubscribeObserved();
     };
-  }, [authority, client, isConfigLoading, scopeIdentity, stableChannelIds]);
+  }, [client, scopeIdentity, stableChannelIds]);
 
   // A snapshot minted for a different authority or channel set is stale scope,
   // not weaker scope: it is dropped rather than shown against the new one.

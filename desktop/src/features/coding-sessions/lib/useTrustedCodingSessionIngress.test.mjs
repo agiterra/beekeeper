@@ -274,3 +274,168 @@ test("ingress re-arms when the trust set gains its first entry, and the pending 
   queryClient.clear();
   ipcHandlers.clear();
 });
+
+/**
+ * Pinned mode: the command names its own provider.
+ *
+ * A command-scoped resolution has exactly one possible answerer — the pubkey
+ * written into the command — and on any session founded by another member that
+ * pubkey is absent from this machine's `allowed-bridge-pubkeys`, which lists
+ * what this computer may *run*. Resolving through the config therefore asked
+ * the wrong question and answered "nobody": no `authors` for the receipt on
+ * the wire, and `rejected-author` for the copy that arrived anyway.
+ */
+test("pinned mode reads the provider the command names, not this machine's allowlist", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const React = (await import("react")).default;
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } = await import(
+    "@/shared/constants/kinds.ts"
+  );
+  const {
+    CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    lifecycleReceiptSemanticKey,
+  } = await import("./codingSessionTrustedIngress.ts");
+  const { useTrustedCodingSessionIngress } = await import(
+    "./useTrustedCodingSessionIngress.ts"
+  );
+
+  const foreignSecret = generateSecretKey();
+  const foreignPubkey = getPublicKey(foreignSecret);
+  const strangerSecret = generateSecretKey();
+  const otherPinnedSecret = generateSecretKey();
+  const otherPinnedPubkey = getPublicKey(otherPinnedSecret);
+  const receipt = (secret, target, createdAt = 1_800_000_000) =>
+    finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        created_at: createdAt,
+        tags: [
+          ["h", CHANNEL_ID],
+          ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+          ["csl-command", COMMAND_ID],
+          ["csl-key", lifecycleReceiptSemanticKey(COMMAND_ID)],
+        ],
+        content: JSON.stringify({
+          schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+          commandId: COMMAND_ID,
+          status: "created",
+          session: target,
+          error: null,
+        }),
+      },
+      secret,
+    );
+
+  // This machine runs its own provider and has never heard of the foreign one.
+  ipcHandlers.set("get_global_agent_config", async () => ({
+    ...EMPTY_CONFIG,
+    "allowed-bridge-pubkeys": [
+      {
+        pubkey: getPublicKey(generateSecretKey()),
+        label: "This computer (coding sessions)",
+      },
+    ],
+  }));
+
+  const historyCalls = [];
+  const liveSubscriptions = [];
+  const client = {
+    fetchEvents: async (filter) => {
+      historyCalls.push(filter);
+      return [];
+    },
+    subscribeLive: async (filter, onEvent) => {
+      liveSubscriptions.push({ filter, onEvent });
+      return () => {};
+    },
+    subscribeToReconnects: () => () => {},
+  };
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const wrapper = ({ children }) =>
+    React.createElement(QueryClientProvider, { client: queryClient }, children);
+  const settle = async () => {
+    for (let round = 0; round < 8; round += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  };
+
+  const { result, rerender, unmount } = renderHook(
+    ({ pin }) =>
+      useTrustedCodingSessionIngress(
+        [CHANNEL_ID],
+        COMMAND_ID,
+        pin,
+        client,
+        null,
+        "pinned",
+      ),
+    { initialProps: { pin: foreignPubkey }, wrapper },
+  );
+  await settle();
+
+  // Subscribed for the command's own provider, and not delayed by a config it
+  // does not read.
+  assert.equal(result.current.authorityErrorMessage, null);
+  assert.equal(historyCalls.length, 1);
+  assert.deepEqual(historyCalls[0].authors, [foreignPubkey]);
+  assert.equal(liveSubscriptions.length, 1);
+  assert.deepEqual(liveSubscriptions[0].filter.authors, [foreignPubkey]);
+
+  // A third party's receipt for this command is not this command's answer...
+  await act(async () => {
+    liveSubscriptions[0].onEvent(receipt(strangerSecret, TARGET));
+  });
+  assert.deepEqual(result.current.lifecycle, {
+    state: "pending",
+    commandId: COMMAND_ID,
+  });
+  assert.equal(result.current.rejectedAuthorCount, 1);
+
+  // ...and the pinned provider's is.
+  await act(async () => {
+    liveSubscriptions[0].onEvent(receipt(foreignSecret, TARGET));
+  });
+  assert.equal(result.current.lifecycle?.state, "awaiting-metadata");
+  assert.deepEqual(result.current.lifecycle?.target, TARGET);
+
+  // Two disagreeing payloads from the pinned provider itself are a conflict,
+  // not a pick: pinning narrows who may answer, it never softens the
+  // single-agreeing-answer rule.
+  await act(async () => {
+    liveSubscriptions[0].onEvent(
+      receipt(foreignSecret, { ...TARGET, generation: 2 }, 1_800_000_001),
+    );
+  });
+  assert.deepEqual(result.current.lifecycle, {
+    state: "conflict",
+    commandId: COMMAND_ID,
+  });
+
+  // Re-pinning is a different question, so it gets a different store: nothing
+  // admitted under the old pin survives into the new one.
+  await act(async () => {
+    rerender({ pin: otherPinnedPubkey });
+  });
+  await settle();
+  assert.deepEqual(result.current.lifecycle, {
+    state: "pending",
+    commandId: COMMAND_ID,
+  });
+  assert.deepEqual(historyCalls.at(-1).authors, [otherPinnedPubkey]);
+  assert.deepEqual(liveSubscriptions.at(-1).filter.authors, [
+    otherPinnedPubkey,
+  ]);
+
+  unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
+});

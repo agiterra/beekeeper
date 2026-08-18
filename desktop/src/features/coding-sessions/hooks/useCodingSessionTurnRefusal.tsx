@@ -130,11 +130,16 @@ function CodingSessionTurnRefusalWatcher({
   providerAuthorityPubkey: string;
   turn: WatchedCodingSessionTurn;
 }) {
+  // Pinned to the provider this turn was addressed to. The refusal a member
+  // most needs to hear — "you are not this session's founder" — is signed by a
+  // provider that member's machine does not run, so the local allowlist is
+  // exactly the wrong question to ask about it.
   const snapshot = useCodingSessionLifecycleResolution(
     channelId,
     turn.commandId,
     providerAuthorityPubkey,
     client,
+    "pinned",
   );
   const refusal = snapshot.turnRefusal;
   // A replayed receipt (relay refetch, reconnect backfill) is the same

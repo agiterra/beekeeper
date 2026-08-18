@@ -27,7 +27,10 @@ import {
   lifecycleReceiptSemanticKey,
 } from "./codingSessionTrustedIngress.ts";
 import { groupCodingSessionCatalog } from "./codingSessionUmbrellaModel.ts";
-import { resolveCodingSessionIngressAuthority } from "./codingSessionIngressAuthority.ts";
+import {
+  OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+  resolveCodingSessionIngressAuthority,
+} from "./codingSessionIngressAuthority.ts";
 import { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } from "@/shared/constants/kinds.ts";
 
 const CHANNEL_ID = "channel-1";
@@ -36,14 +39,23 @@ const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const PROVIDER_SECRET = generateSecretKey();
 const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
 const ROGUE_PROVIDER_SECRET = generateSecretKey();
+const ROGUE_PROVIDER_PUBKEY = getPublicKey(ROGUE_PROVIDER_SECRET);
 const FOUNDER_SECRET = generateSecretKey();
 const FOUNDER_PUBKEY = getPublicKey(FOUNDER_SECRET);
 const TEAMMATE_SECRET = generateSecretKey();
 const TEAMMATE_PUBKEY = getPublicKey(TEAMMATE_SECRET);
 
-const AUTHORITY = resolveCodingSessionIngressAuthority([
-  { pubkey: PROVIDER_PUBKEY, label: "This computer" },
-]);
+/**
+ * What the hook now hands the store: channel membership, exactly as the
+ * display surfaces read. Which provider may answer a create is not a property
+ * of this machine's run-permission list — it is written into the create — so
+ * the fence lives in the join, and the store is deliberately given the widest
+ * read authority to prove the join is doing the work.
+ */
+const AUTHORITY = OPEN_CODING_SESSION_INGRESS_AUTHORITY;
+
+/** A viewer who runs no providers at all: the ordinary non-founder member. */
+const EMPTY_LOCAL_ALLOWLIST = resolveCodingSessionIngressAuthority([]);
 
 const CLAUDE_TARGET = {
   driver: "claude-agent-acp",
@@ -68,6 +80,7 @@ function createEvent({
   overrideContent = null,
   overrideTags = null,
   genesisRef,
+  providerAuthorityPubkey = PROVIDER_PUBKEY,
 } = {}) {
   const built = buildCodingSessionCreateEvent({
     channelId,
@@ -77,7 +90,7 @@ function createEvent({
     ...(omitSessionRef ? {} : { sessionRef }),
     ...(genesisRef ? { genesisRef } : {}),
     providerInstanceRef: "claude-primary",
-    providerAuthorityPubkey: PROVIDER_PUBKEY,
+    providerAuthorityPubkey,
     model: null,
     title: "Advance Buzz live sessions",
     initialTurn: null,
@@ -142,9 +155,9 @@ function receiptEvent({
   );
 }
 
-function ingest(events) {
+function ingest(events, authority = AUTHORITY) {
   const store = new CodingSessionCreateObservationStore();
-  store.ingestRelayEvents(events, [CHANNEL_ID], AUTHORITY);
+  store.ingestRelayEvents(events, [CHANNEL_ID], authority);
   return store;
 }
 
@@ -243,10 +256,90 @@ test("a create nobody's provider acted on binds nothing", () => {
   assert.deepEqual(ingest([receiptEvent()]).snapshot([CHANNEL_ID]), []);
 });
 
-test("only receipts from the configured provider authority can join", () => {
+test("only receipts from the provider the create itself named can join", () => {
+  // The self-fence, and the reason it is stronger than an allowlist: the
+  // rogue's receipt is refused because *this create* did not address it, not
+  // because this machine happens not to run it.
   const store = ingest([
     createEvent(),
     receiptEvent({ secret: ROGUE_PROVIDER_SECRET }),
+  ]);
+  assert.deepEqual(store.snapshot([CHANNEL_ID]), []);
+
+  // Same rogue signer, now the provider the create actually names: it joins.
+  const addressed = ingest([
+    createEvent({ providerAuthorityPubkey: ROGUE_PROVIDER_PUBKEY }),
+    receiptEvent({ secret: ROGUE_PROVIDER_SECRET }),
+  ]);
+  assert.equal(addressed.snapshot([CHANNEL_ID]).length, 1);
+});
+
+test("a member who runs no providers still resolves the join", () => {
+  // The foreign-member case. `allowed-bridge-pubkeys` is empty on this
+  // machine — it governs what may run here, and this person founded nothing —
+  // so consulting it used to erase the founder of every session they joined:
+  // no join, `founderPubkey: null`, and a session the composer then called
+  // "ungoverned" while the provider refused every control it had enabled.
+  assert.equal(EMPTY_LOCAL_ALLOWLIST.state, "invalid");
+  const genesis = genesisEvent();
+  const create = createEvent({ genesisRef: genesis.id });
+  const [observation] = ingest([create, receiptEvent(), genesis]).snapshot([
+    CHANNEL_ID,
+  ]);
+  assert.equal(observation.signerPubkey, FOUNDER_PUBKEY);
+  assert.equal(observation.genesisRef, genesis.id);
+  assert.equal(observation.genesisFounderPubkey, FOUNDER_PUBKEY);
+});
+
+test("a create naming no readable provider is malformed, never joinable", () => {
+  const allowed = new Set([CHANNEL_ID]);
+  const withPin = JSON.parse(createEvent().content);
+  const pinless = createEvent({
+    overrideContent: JSON.stringify({
+      ...withPin,
+      action: (() => {
+        const { providerAuthorityPubkey: _dropped, ...rest } = withPin.action;
+        return rest;
+      })(),
+    }),
+  });
+  assert.equal(
+    classifyCodingSessionCreateEvent(pinless, allowed).kind,
+    "malformed",
+  );
+  const nonHexPin = createEvent({
+    overrideContent: JSON.stringify({
+      ...withPin,
+      action: { ...withPin.action, providerAuthorityPubkey: "not-a-pubkey" },
+    }),
+  });
+  assert.equal(
+    classifyCodingSessionCreateEvent(nonHexPin, allowed).kind,
+    "malformed",
+  );
+  // ...and neither one binds anything, however trusted the receipt's signer.
+  assert.deepEqual(
+    ingest([pinless, receiptEvent()]).snapshot([CHANNEL_ID]),
+    [],
+  );
+  assert.deepEqual(
+    ingest([nonHexPin, receiptEvent()]).snapshot([CHANNEL_ID]),
+    [],
+  );
+});
+
+test("creates disagreeing about which provider they addressed are disputed", () => {
+  // Two signed creates for one commandId naming different providers is a
+  // disagreement about who may answer. Resolving it first-wins would let the
+  // earlier create silently choose the joining provider for the later one.
+  const store = ingest([
+    createEvent(),
+    createEvent({
+      createdAt: 1_800_000_001,
+      providerAuthorityPubkey: ROGUE_PROVIDER_PUBKEY,
+    }),
+    receiptEvent(),
+    receiptEvent({ secret: ROGUE_PROVIDER_SECRET, createdAt: 1_800_000_006 }),
   ]);
   assert.deepEqual(store.snapshot([CHANNEL_ID]), []);
 });

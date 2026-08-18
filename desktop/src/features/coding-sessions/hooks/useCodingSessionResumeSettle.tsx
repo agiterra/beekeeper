@@ -134,11 +134,17 @@ function CodingSessionResumeSettleWatcher({
   // Every surface that renders a composer is inside the router; reading it
   // warn-free keeps this mountable in a bare unit render too.
   const router = useRouter({ warn: false });
+  // Pinned, not config: a reconnect is addressed to the provider running this
+  // session, which on a session someone else founded is not a provider this
+  // machine is allowed to run. Reading the answer through the local allowlist
+  // would neither subscribe for the refusal nor admit it, leaving the person
+  // with a thirty-second silence in place of the provider's stated reason.
   const snapshot = useCodingSessionLifecycleResolution(
     channelId,
     commandId,
     providerAuthorityPubkey,
     client,
+    "pinned",
   );
   const lifecycle = snapshot.lifecycle;
   const settlement = React.useMemo(

@@ -47,6 +47,43 @@ test("the founder may prompt executions; everyone else gets an honest disabled r
   assert.equal(gated.canPromptExecutions, false);
   assert.match(gated.reason, /founder/);
   assert.match(gated.reason, /lane stays open/);
+  // Gated *and* governed: the honest disabled reason, never the "ungoverned —
+  // adopt to govern." hint. Those two states are opposites, and a member whose
+  // client failed to resolve the founder used to be shown the second one while
+  // the provider enforced the first.
+  assert.equal(gated.isUngovernedSession, false);
+});
+
+test("a non-founder member of a genesis-bearing session is gated, not told it is ungoverned", () => {
+  // The composer state a foreign member should now land in: the session's
+  // genesis resolved, so the founder is known, so controls are honestly
+  // disabled with the provider's own rule as the reason — as opposed to the
+  // pre-fix state, where an unresolvable founder read as "no genesis" and the
+  // composer both invited the person to adopt the session and enabled controls
+  // that were always going to be refused.
+  const founded = catalogRecord("claude-session", "a".repeat(64));
+  const observations = [
+    {
+      sessionRef: SESSION_REF,
+      signerPubkey: FOUNDER,
+      createdAt: 1_800_000_000,
+      eventId: "event-a",
+      target: founded.commandTarget,
+      genesisRef: GENESIS_REF,
+      genesisFounderPubkey: FOUNDER,
+    },
+  ];
+  const [umbrella] = groupCodingSessionCatalog([founded], observations);
+  assert.equal(umbrella.genesisRef, GENESIS_REF);
+  assert.equal(umbrella.founderPubkey, FOUNDER);
+
+  const authority = resolveCodingSessionUmbrellaComposerAuthority({
+    umbrella,
+    currentUserPubkey: TEAMMATE,
+  });
+  assert.equal(authority.canPromptExecutions, false);
+  assert.equal(authority.isUngovernedSession, false);
+  assert.match(authority.reason, /founder/);
 });
 
 test("legacy null-founder sessions stay usable and are marked ungoverned", () => {

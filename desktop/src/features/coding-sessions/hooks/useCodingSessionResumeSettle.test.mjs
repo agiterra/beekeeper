@@ -22,6 +22,8 @@ import {
   getPublicKey,
 } from "nostr-tools/pure";
 
+import { NEW_CODING_SESSION_STALL_MS } from "../lib/newCodingSessionModel.ts";
+
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost",
 });
@@ -36,7 +38,27 @@ const tauriInternals = {
   transformCallback: () => Math.random(),
 };
 
+// The stall deadline is the one clock in this flow. Owning it lets a test
+// prove a receipt was read *before* thirty seconds of silence would have
+// spoken for it — the exact substitution the foreign-member bug made.
+const stallTimers = new Map();
+let nextStallTimerId = 2_000_000;
+
 before(() => {
+  const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
+  const nativeClearTimeout = dom.window.clearTimeout.bind(dom.window);
+  dom.window.setTimeout = (callback, delay, ...args) => {
+    if (delay === NEW_CODING_SESSION_STALL_MS) {
+      nextStallTimerId += 1;
+      stallTimers.set(nextStallTimerId, callback);
+      return nextStallTimerId;
+    }
+    return nativeSetTimeout(callback, delay, ...args);
+  };
+  dom.window.clearTimeout = (id) => {
+    if (stallTimers.delete(id)) return;
+    nativeClearTimeout(id);
+  };
   dom.window.__TAURI_INTERNALS__ = tauriInternals;
   Object.assign(globalThis, {
     document: dom.window.document,
@@ -75,7 +97,27 @@ const TRUSTED_CONFIG = {
   ],
 };
 
-async function harness({ initialSurface = "main" } = {}) {
+/**
+ * A member who did not found this session.
+ *
+ * Their machine runs its own provider and has never been told about the one
+ * hosting this session, so `allowed-bridge-pubkeys` — a list of what this
+ * computer may *run* — contains only a stranger to this command.
+ */
+const FOREIGN_MEMBER_CONFIG = {
+  ...TRUSTED_CONFIG,
+  "allowed-bridge-pubkeys": [
+    {
+      pubkey: getPublicKey(generateSecretKey()),
+      label: "This computer (coding sessions)",
+    },
+  ],
+};
+
+async function harness({
+  config = TRUSTED_CONFIG,
+  initialSurface = "main",
+} = {}) {
   const { act, render } = await import("@testing-library/react");
   const React = (await import("react")).default;
   const { QueryClient, QueryClientProvider } = await import(
@@ -99,7 +141,7 @@ async function harness({ initialSurface = "main" } = {}) {
     "./useCodingSessionResumeSettle.tsx"
   );
 
-  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+  ipcHandlers.set("get_global_agent_config", async () => config);
 
   const liveSubscriptions = [];
   const client = {
@@ -199,7 +241,13 @@ async function harness({ initialSurface = "main" } = {}) {
   return {
     act,
     deadGenerationId,
+    expireStallDeadlines: () => {
+      const pending = [...stallTimers.entries()];
+      stallTimers.clear();
+      for (const [, callback] of pending) callback();
+    },
     liveSubscriptions,
+    pendingStallDeadlines: () => stallTimers.size,
     navigationCount: () => navigations,
     notices,
     resumedGenerationId,
@@ -212,6 +260,7 @@ async function harness({ initialSurface = "main" } = {}) {
       view.unmount();
       queryClient.clear();
       ipcHandlers.clear();
+      stallTimers.clear();
     },
   };
 }
@@ -365,6 +414,92 @@ test("a refused resume surfaces the refusal and stays put", async () => {
   assert.equal(scope.state.isPending, false);
   assert.equal(scope.navigationCount(), 0);
   assert.equal(scope.routedGenerationId(), scope.deadGenerationId);
+
+  scope.teardown();
+});
+
+test("a member who did not found the session hears the refusal, not thirty seconds of silence", async () => {
+  // The whole bug, in one harness: the person pressing Reconnect is a channel
+  // member whose machine runs some other provider. Resolving this command
+  // through `allowed-bridge-pubkeys` asked whether *this computer* may run the
+  // session's provider — an unrelated question — so the subscription never
+  // requested the answering pubkey's receipt and the classifier dropped the
+  // copy that arrived anyway as `rejected-author`. The refusal was published,
+  // verified, and thrown away; the stall message spoke in its place.
+  const scope = await harness({ config: FOREIGN_MEMBER_CONFIG });
+  const receipt = await receiptEvent({
+    status: "failed",
+    session: null,
+    error: {
+      code: "UNAUTHORIZED_OPERATOR",
+      message: "only the session founder may reconnect this execution",
+    },
+  });
+
+  await scope.act(async () => {
+    scope.state.begin(COMMAND_ID);
+  });
+  await scope.settle();
+
+  // Pinned to the provider the command itself names, never to the local
+  // run-permission list that has never heard of it.
+  assert.equal(scope.liveSubscriptions.length, 1);
+  assert.deepEqual(scope.liveSubscriptions[0].filter.authors, [
+    PROVIDER_PUBKEY,
+  ]);
+  assert.equal(scope.pendingStallDeadlines(), 1);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(receipt);
+  });
+  await scope.settle();
+
+  assert.equal(
+    scope.state.error,
+    "only the session founder may reconnect this execution",
+  );
+  assert.equal(scope.state.isPending, false);
+  assert.equal(scope.navigationCount(), 0);
+
+  // ...and the deadline that used to be the only thing that ever spoke here
+  // now arrives to an already-settled command and stays quiet.
+  await scope.act(async () => {
+    scope.expireStallDeadlines();
+  });
+  await scope.settle();
+  assert.equal(
+    scope.state.error,
+    "only the session founder may reconnect this execution",
+  );
+
+  scope.teardown();
+});
+
+test("a foreign provider's own resumed receipt still moves the window", async () => {
+  // Pinning narrows to one pubkey; it must be the right one. A member who did
+  // not found the session and is nevertheless allowed to reconnect follows
+  // generation N+1 exactly as the founder does.
+  const scope = await harness({ config: FOREIGN_MEMBER_CONFIG });
+  const receipt = await receiptEvent({
+    status: "created",
+    session: RESUMED_GENERATION,
+    error: null,
+  });
+  const metadata = await metadataEvent(RESUMED_GENERATION);
+
+  await scope.act(async () => {
+    scope.state.begin(COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(receipt);
+    scope.liveSubscriptions[0].onEvent(metadata);
+  });
+  await scope.settle();
+
+  assert.equal(scope.routedGenerationId(), scope.resumedGenerationId);
+  assert.equal(scope.navigationCount(), 1);
+  assert.equal(scope.state.error, null);
 
   scope.teardown();
 });
