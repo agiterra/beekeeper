@@ -2205,6 +2205,10 @@ pub enum AuthorityTransitionRefusal {
         /// The actual owner's pubkey, for the rejection message.
         owner_pubkey: Vec<u8>,
     },
+    /// A `revoke` named a pubkey holding no live grant at that point in the
+    /// chain — a no-op link would burn a `seq` for nothing, so it is refused
+    /// rather than accepted-and-ignored.
+    NoSuchGrant,
 }
 
 /// Outcome of an attempted coding-session authority-transition (kind 44228)
@@ -2288,11 +2292,40 @@ async fn fetch_and_verify_authority_genesis_tx(
 }
 
 /// One transition already stored for `genesis_ref`, decoded — used to derive
-/// the chain's current head. Kept minimal: only what the head computation and
-/// idempotency check need.
+/// the chain's current head and to fold the live grant set (which a `revoke`
+/// must be validated against).
 struct StoredAuthorityTransition {
     event_id: Vec<u8>,
     seq: u32,
+    transition_type: CodingSessionAuthorityTransitionType,
+    grantee_pubkey: String,
+}
+
+/// Fold accepted transitions (already sorted or not — sorted here) up to but
+/// excluding `before_seq` into the live grant map: grantee hex → role string
+/// (`"operator"` / `"viewer"`). `grant-*` sets, `revoke` removes.
+fn fold_authority_grants(
+    transitions: &[StoredAuthorityTransition],
+    before_seq: u32,
+) -> std::collections::HashMap<String, &'static str> {
+    let mut ordered: Vec<&StoredAuthorityTransition> =
+        transitions.iter().filter(|t| t.seq < before_seq).collect();
+    ordered.sort_by_key(|t| t.seq);
+    let mut grants = std::collections::HashMap::new();
+    for t in ordered {
+        match t.transition_type {
+            CodingSessionAuthorityTransitionType::GrantOperator => {
+                grants.insert(t.grantee_pubkey.clone(), "operator");
+            }
+            CodingSessionAuthorityTransitionType::GrantViewer => {
+                grants.insert(t.grantee_pubkey.clone(), "viewer");
+            }
+            CodingSessionAuthorityTransitionType::Revoke => {
+                grants.remove(&t.grantee_pubkey);
+            }
+        }
+    }
+    grants
 }
 
 /// Every already-stored authority transition for `genesis_ref` in this
@@ -2338,6 +2371,8 @@ async fn stored_authority_transitions_tx(
             Some(StoredAuthorityTransition {
                 event_id,
                 seq: payload.seq,
+                transition_type: payload.transition_type,
+                grantee_pubkey: payload.grantee_pubkey,
             })
         })
         .collect())
@@ -2377,11 +2412,9 @@ pub async fn insert_coding_session_authority_transition_event(
     let genesis_ref = coding_session_authority_transition_genesis_ref(event)?.to_owned();
     let payload =
         decode_coding_session_authority_transition(&event.content).map_err(DbError::InvalidData)?;
-    // The `CodingSessionAuthorityTransitionType::GrantOperator` match below is
-    // exhaustive on purpose: adding a variant without teaching this function
-    // how to authorize it must be a compile error, not a silently-accepted
-    // transition.
-    let CodingSessionAuthorityTransitionType::GrantOperator = payload.transition_type;
+    // All three pinned transition types are chain links with identical
+    // envelope/authorization rules; their per-type meaning is applied to the
+    // grant ACL below, after the chain checks pass.
 
     let lock_key = coding_session_authority_lock_key(community_id, channel_id, &genesis_ref);
     let id_bytes = event.id.as_bytes();
@@ -2448,6 +2481,21 @@ pub async fn insert_coding_session_authority_transition_event(
         });
     }
 
+    // A `revoke` must name a pubkey with a live grant at its point in the
+    // chain. Folding transitions with seq < payload.seq (rather than "all")
+    // keeps resubmission idempotent: a replayed revoke recomputes the same
+    // pre-state it was originally validated against, even though its own
+    // application already emptied the grant.
+    if payload.transition_type == CodingSessionAuthorityTransitionType::Revoke {
+        let grants_before = fold_authority_grants(&others, payload.seq);
+        if !grants_before.contains_key(&payload.grantee_pubkey) {
+            tx.rollback().await?;
+            return Ok(CodingSessionAuthorityTransitionInsertOutcome::Refused {
+                refusal: AuthorityTransitionRefusal::NoSuchGrant,
+            });
+        }
+    }
+
     let (stored_event, was_inserted) = insert_event_with_thread_metadata_tx(
         &mut tx,
         community_id,
@@ -2456,6 +2504,61 @@ pub async fn insert_coding_session_authority_transition_event(
         thread_meta,
     )
     .await?;
+
+    // Maintain the grant ACL projection inside the same advisory-locked
+    // transaction, and only for a genuinely new link — a replay
+    // (`was_inserted == false`) already applied its mutation once.
+    if was_inserted {
+        let genesis_payload = decode_coding_session_genesis(&genesis_event.event.content)
+            .map_err(DbError::InvalidData)?;
+        let founder = current_coding_session_authority_owner(&genesis_event);
+        let grantee = hex::decode(&payload.grantee_pubkey).map_err(|_| {
+            DbError::InvalidData("granteePubkey failed hex decode after validation".into())
+        })?;
+        let genesis_id_bytes = genesis_event.event.id.as_bytes().to_vec();
+        match payload.transition_type {
+            CodingSessionAuthorityTransitionType::GrantOperator
+            | CodingSessionAuthorityTransitionType::GrantViewer => {
+                let role = if payload.transition_type
+                    == CodingSessionAuthorityTransitionType::GrantOperator
+                {
+                    "operator"
+                } else {
+                    "viewer"
+                };
+                sqlx::query(
+                    r#"
+                    INSERT INTO coding_session_authority_acl
+                        (community_id, channel_id, genesis_ref, session_ref, founder, grantee, role, granted_seq)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ON CONFLICT (community_id, genesis_ref, grantee)
+                        DO UPDATE SET role = EXCLUDED.role, granted_seq = EXCLUDED.granted_seq
+                    "#,
+                )
+                .bind(community_id.as_uuid())
+                .bind(channel_id)
+                .bind(&genesis_id_bytes)
+                .bind(&genesis_payload.session_ref)
+                .bind(&founder)
+                .bind(&grantee)
+                .bind(role)
+                .bind(payload.seq as i32)
+                .execute(&mut *tx)
+                .await?;
+            }
+            CodingSessionAuthorityTransitionType::Revoke => {
+                sqlx::query(
+                    "DELETE FROM coding_session_authority_acl \
+                     WHERE community_id = $1 AND genesis_ref = $2 AND grantee = $3",
+                )
+                .bind(community_id.as_uuid())
+                .bind(&genesis_id_bytes)
+                .bind(&grantee)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
 
     tx.commit().await?;
 

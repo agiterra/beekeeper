@@ -1,8 +1,10 @@
 /**
  * Pure model behind the umbrella composer's participant selector.
  *
- * v1 authority (design, "Operator authority"): only the umbrella founder
- * prompts executions; everyone else is an observer for actuation. The
+ * v1 authority (design, "Operator authority"): the umbrella founder prompts
+ * executions, along with any accepted operator from the session's authority
+ * chain when the caller supplies the roster's live operator set; everyone
+ * else is an observer for actuation. The
  * conversation lane is ordinary channel chat and stays open to any member.
  * Enforcement is client preflight — the relay stays a validating store — so
  * gating only ever *disables honestly*. A genesis-bearing session fails closed
@@ -28,10 +30,23 @@ export type CodingSessionUmbrellaComposerAuthority = {
   isUngovernedSession: boolean;
 };
 
-/** Resolve the current user's v1 authority over an umbrella's executions. */
+/** Advisory hint shown to non-operator members of a governed session. */
+export const CODING_SESSION_VIEW_ONLY_REASON =
+  "View only — ask the session owner for collaborator access";
+
+/**
+ * Resolve the current user's authority over an umbrella's executions.
+ *
+ * `acceptedOperators` is the roster fold's live operator set (see
+ * `codingSessionRoster`). When it is provided (non-nullish), an accepted
+ * operator may steer alongside the founder, and everyone else reads the
+ * view-only hint. When absent — roster not yet loaded, or a caller that
+ * never wires it — the historical founder-only rule applies unchanged.
+ */
 export function resolveCodingSessionUmbrellaComposerAuthority(input: {
   umbrella: Pick<CodingSessionUmbrellaRecord, "founderPubkey" | "genesisRef">;
   currentUserPubkey: string | null;
+  acceptedOperators?: ReadonlySet<string> | null;
 }): CodingSessionUmbrellaComposerAuthority {
   const founder = input.umbrella.founderPubkey;
   const isUngovernedSession = input.umbrella.genesisRef === null;
@@ -57,6 +72,18 @@ export function resolveCodingSessionUmbrellaComposerAuthority(input: {
   }
   if (founder === input.currentUserPubkey) {
     return { canPromptExecutions: true, reason: null, isUngovernedSession };
+  }
+  if (input.acceptedOperators != null) {
+    if (input.acceptedOperators.has(input.currentUserPubkey)) {
+      return { canPromptExecutions: true, reason: null, isUngovernedSession };
+    }
+    // The roster is known and this user holds no operator grant: viewer (or
+    // no grant at all) — the composer disables with the invite-shaped hint.
+    return {
+      canPromptExecutions: false,
+      reason: CODING_SESSION_VIEW_ONLY_REASON,
+      isUngovernedSession,
+    };
   }
   return {
     canPromptExecutions: false,

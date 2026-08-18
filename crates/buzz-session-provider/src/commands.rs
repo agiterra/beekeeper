@@ -689,6 +689,7 @@ mod tests {
             genesis_ref: None,
             founder_pubkey: Some(AUTHORITY.into()),
             granted_operators: std::collections::BTreeSet::new(),
+            granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
             resume_cursor: None,

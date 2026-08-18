@@ -48,7 +48,10 @@ pub struct AcceptedTransition {
     pub accepted_event_id: String,
     /// Chain sequence number of the accepted transition (starts at 1).
     pub seq: u32,
-    /// Pubkey the transition grants operator standing to.
+    /// Which transition was accepted — decides how the fold applies it.
+    pub transition_type: CodingSessionAuthorityTransitionType,
+    /// Pubkey the transition targets: the grantee for `grant-*`, the pubkey
+    /// losing its grant for `revoke`.
     pub grantee_pubkey: String,
 }
 
@@ -85,11 +88,11 @@ pub fn looks_like_acceptance_receipt(content: &str) -> bool {
 /// Verify one kind 40099 event as an authority-transition acceptance receipt.
 ///
 /// Checks, in order: kind, author is exactly the witnessed relay identity,
-/// signature, channel scope (`h` tag), and content shape. Only
-/// `grant-operator` acceptances pass — an acceptance for a transition type
-/// this build does not understand fails verification, which stalls the
-/// contiguous fold and thereby blocks *later* grants too: fail closed, never
-/// skip a link whose meaning is unknown.
+/// signature, channel scope (`h` tag), and content shape. Only the pinned
+/// transition types pass — an acceptance for a type this build does not
+/// understand fails to decode, which stalls the contiguous fold and thereby
+/// blocks *later* grants too: fail closed, never skip a link whose meaning
+/// is unknown.
 pub fn verify_acceptance_receipt(
     event: &Event,
     relay_self_hex: &str,
@@ -125,9 +128,6 @@ pub fn verify_acceptance_receipt(
             content.receipt_type
         ));
     }
-    // Only GrantOperator exists; matching (not just deserializing) keeps this
-    // arm honest when the enum grows a variant this fold cannot apply.
-    let CodingSessionAuthorityTransitionType::GrantOperator = content.transition_type;
     for (field, value) in [
         ("genesisRef", &content.genesis_ref),
         ("acceptedEventId", &content.accepted_event_id),
@@ -150,6 +150,7 @@ pub fn verify_acceptance_receipt(
         genesis_ref: content.genesis_ref,
         accepted_event_id: content.accepted_event_id,
         seq: content.seq,
+        transition_type: content.transition_type,
         grantee_pubkey: content.grantee_pubkey,
     })
 }
@@ -195,6 +196,9 @@ pub fn verify_accepted_transition(
     }
     if payload.grantee_pubkey != accepted.grantee_pubkey {
         return Err("accepted transition grantee does not match its receipt".into());
+    }
+    if payload.transition_type != accepted.transition_type {
+        return Err("accepted transition type does not match its receipt".into());
     }
     let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
     if tags.len() != 3 || tags.iter().any(|tag| tag.len() != 2) {
@@ -316,6 +320,7 @@ mod tests {
         assert!(verify_acceptance_receipt(&other_type, &relay_hex, channel_id).is_err());
 
         // An unknown transition type must fail verification, not be skipped.
+        // (`takeover` is reserved but not pinned; `revoke` decodes now.)
         let unknown_transition = receipt_event(
             &relay,
             channel_id,
@@ -324,7 +329,7 @@ mod tests {
                 "genesisRef": "ab".repeat(32),
                 "acceptedEventId": "cd".repeat(32),
                 "seq": 1,
-                "transitionType": "revoke",
+                "transitionType": "takeover",
                 "granteePubkey": "ef".repeat(32),
             })
             .to_string(),
@@ -353,6 +358,7 @@ mod tests {
             genesis_ref: genesis_ref.clone(),
             accepted_event_id: transition.id.to_hex(),
             seq: 1,
+            transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             grantee_pubkey: grantee.clone(),
         };
         verify_accepted_transition(
@@ -376,6 +382,7 @@ mod tests {
             genesis_ref: genesis_ref.clone(),
             accepted_event_id: transition.id.to_hex(),
             seq: 1,
+            transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
             grantee_pubkey: grantee.clone(),
         };
 

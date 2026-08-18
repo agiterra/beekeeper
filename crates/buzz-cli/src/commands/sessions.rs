@@ -30,8 +30,13 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
+use buzz_core::coding_session_authority_transition::{
+    CodingSessionAuthorityTransitionPayload, CodingSessionAuthorityTransitionType,
+    CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+};
 use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use buzz_core::coding_session_payload::{LifecycleReceipt, SessionMetadata, TranscriptEnvelope};
+use buzz_core::kind::{KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_SYSTEM_MESSAGE};
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_TRANSCRIPT,
@@ -1141,6 +1146,317 @@ fn prepare_export_dir(directory: &Path) -> Result<(), CliError> {
     })
 }
 
+// ── NIP-CSAT authority chain (kind 44228 + kind 40099 receipts) ──────────────
+
+/// The receipt `content.type` the relay stamps on an accepted transition.
+const AUTHORITY_RECEIPT_TYPE: &str = "coding_session_authority_transition_accepted";
+
+/// One relay-emitted kind:40099 acceptance receipt for a 44228 transition,
+/// decoded from its system-message content.
+///
+/// CLI-grade trust: receipts are matched by `acceptedEventId` and
+/// `content.type` from the relay the caller authenticated to. Full
+/// relay-signature verification of each receipt is the session providers'
+/// job, not this read surface's.
+#[derive(Debug, Clone)]
+pub struct AuthorityReceipt {
+    /// Event id of the accepted 44228 transition.
+    pub accepted_event_id: String,
+    /// The chain's sequence number this receipt confirms.
+    pub seq: u32,
+    /// Transition type (`grant-operator` | `grant-viewer` | `revoke`).
+    pub transition_type: String,
+    /// The pubkey the transition targeted.
+    pub grantee_pubkey: String,
+}
+
+/// Decode the acceptance receipts for one genesis out of a batch of raw
+/// kind:40099 events. Non-receipt system messages and receipts for other
+/// chains are skipped.
+pub fn decode_authority_receipts(events: &[Value], genesis: &str) -> Vec<AuthorityReceipt> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let content: Value = serde_json::from_str(content_of(event)?).ok()?;
+            if content.get("type")?.as_str()? != AUTHORITY_RECEIPT_TYPE {
+                return None;
+            }
+            if content.get("genesisRef")?.as_str()? != genesis {
+                return None;
+            }
+            Some(AuthorityReceipt {
+                accepted_event_id: content.get("acceptedEventId")?.as_str()?.to_owned(),
+                seq: u32::try_from(content.get("seq")?.as_u64()?).ok()?,
+                transition_type: content.get("transitionType")?.as_str()?.to_owned(),
+                grantee_pubkey: content.get("granteePubkey")?.as_str()?.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// The accepted state of one session's authority chain, folded from its
+/// receipts in sequence order.
+#[derive(Debug, Clone, Default)]
+pub struct AuthorityChainState {
+    /// Event id of the accepted head transition, `None` for an empty chain.
+    pub head_event_id: Option<String>,
+    /// Sequence number of the accepted head (0 for an empty chain).
+    pub head_seq: u32,
+    /// Live grants: pubkey → CLI role (`collaborator` for `grant-operator`
+    /// grants, `viewer` for `grant-viewer`). A `revoke` removes the entry.
+    pub grants: BTreeMap<String, String>,
+}
+
+/// Fold acceptance receipts into the chain's live grant map and head.
+pub fn fold_authority_receipts(mut receipts: Vec<AuthorityReceipt>) -> AuthorityChainState {
+    receipts.sort_by(|a, b| {
+        a.seq
+            .cmp(&b.seq)
+            .then_with(|| a.accepted_event_id.cmp(&b.accepted_event_id))
+    });
+    let mut state = AuthorityChainState::default();
+    for receipt in receipts {
+        match receipt.transition_type.as_str() {
+            "grant-operator" => {
+                state
+                    .grants
+                    .insert(receipt.grantee_pubkey.clone(), "collaborator".to_owned());
+            }
+            "grant-viewer" => {
+                state
+                    .grants
+                    .insert(receipt.grantee_pubkey.clone(), "viewer".to_owned());
+            }
+            "revoke" => {
+                state.grants.remove(&receipt.grantee_pubkey);
+            }
+            // Future transition types change the chain in ways this build
+            // cannot interpret; they still advance the head below.
+            _ => {}
+        }
+        state.head_seq = receipt.seq;
+        state.head_event_id = Some(receipt.accepted_event_id);
+    }
+    state
+}
+
+/// Validate a 64-character lowercase-hex id (genesis event id or pubkey).
+fn validate_lower_hex64(label: &str, value: &str) -> Result<(), CliError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(CliError::Usage(format!(
+            "{label} must be a 64-character lowercase hex string: {value}"
+        )));
+    }
+    Ok(())
+}
+
+/// Fetch the raw kind:40099 receipts for a channel and fold the chain state
+/// for one genesis.
+async fn fetch_authority_state(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+) -> Result<AuthorityChainState, CliError> {
+    let receipts = fetch_channel_events(client, channel_id, &[KIND_SYSTEM_MESSAGE]).await?;
+    Ok(fold_authority_receipts(decode_authority_receipts(
+        &receipts, genesis,
+    )))
+}
+
+/// Whether a submit failure looks like a lost chain-head race (the relay
+/// names the `prevAccepted`/`seq` linkage it expected) — the one failure
+/// worth a refetch-and-retry.
+fn is_chain_head_conflict(error: &CliError) -> bool {
+    let message = error.to_string();
+    message.contains("prevAccepted") || message.contains("seq")
+}
+
+/// Build, sign, and submit one 44228 transition extending the chain's
+/// current accepted head; on a head race, refetch and retry once.
+///
+/// The envelope is pinned to exactly three two-field tags (`h`, `csat-v`,
+/// `csat-genesis`), so the event is signed without NIP-OA auth-tag
+/// injection — the chain's authority model is the signature itself (the
+/// relay checks the signer against the session owner).
+async fn submit_authority_transition(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+    transition_type: CodingSessionAuthorityTransitionType,
+    grantee: &str,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_lower_hex64("--genesis", genesis)?;
+    validate_lower_hex64("--pubkey", grantee)?;
+
+    for attempt in 0..2 {
+        let state = fetch_authority_state(client, channel_id, genesis).await?;
+        if matches!(
+            transition_type,
+            CodingSessionAuthorityTransitionType::Revoke
+        ) && !state.grants.contains_key(grantee)
+        {
+            return Err(CliError::NotFound(format!(
+                "pubkey {grantee} holds no live grant on this session — nothing to revoke"
+            )));
+        }
+
+        let payload = CodingSessionAuthorityTransitionPayload::new(
+            transition_type,
+            genesis,
+            state.head_event_id.clone(),
+            state
+                .head_seq
+                .checked_add(1)
+                .ok_or_else(|| CliError::Other("authority chain seq overflow".into()))?,
+            grantee,
+        );
+        payload.validate().map_err(CliError::Other)?;
+        let content = serde_json::to_string(&payload)
+            .map_err(|e| CliError::Other(format!("transition serialization failed: {e}")))?;
+
+        let tags = [
+            ["h", channel_id],
+            ["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION],
+            ["csat-genesis", genesis],
+        ]
+        .iter()
+        .map(|parts| {
+            nostr::Tag::parse(parts.iter().copied())
+                .map_err(|e| CliError::Other(format!("tag construction failed: {e}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let builder = nostr::EventBuilder::new(
+            nostr::Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+            &content,
+        )
+        .tags(tags);
+        let event = client.sign_event_unchecked(builder)?;
+
+        let outcome = match client.submit_event(event).await {
+            Ok(raw) => {
+                crate::commands::parse_write_response(&raw, "authority transition already accepted")
+            }
+            Err(error) => Err(error),
+        };
+        match outcome {
+            Ok(response) => {
+                println!("{response}");
+                return Ok(());
+            }
+            Err(error) if attempt == 0 && is_chain_head_conflict(&error) => {
+                // Lost a head race: another transition landed between our
+                // read and our write. Refetch the head and try once more.
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("loop returns on the second attempt")
+}
+
+/// `buzz sessions grant` — role→type mapping: collaborator ⇒ grant-operator,
+/// viewer ⇒ grant-viewer.
+async fn cmd_grant(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+    pubkey: &str,
+    role: crate::GrantRoleArg,
+) -> Result<(), CliError> {
+    let transition_type = match role {
+        crate::GrantRoleArg::Collaborator => CodingSessionAuthorityTransitionType::GrantOperator,
+        crate::GrantRoleArg::Viewer => CodingSessionAuthorityTransitionType::GrantViewer,
+    };
+    submit_authority_transition(client, channel_id, genesis, transition_type, pubkey).await
+}
+
+/// `buzz sessions revoke`
+async fn cmd_revoke(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+    pubkey: &str,
+) -> Result<(), CliError> {
+    submit_authority_transition(
+        client,
+        channel_id,
+        genesis,
+        CodingSessionAuthorityTransitionType::Revoke,
+        pubkey,
+    )
+    .await
+}
+
+/// `buzz sessions roster` — the folded grant map plus pending (un-receipted)
+/// transitions.
+async fn cmd_authority_roster(
+    client: &BuzzClient,
+    channel_id: &str,
+    genesis: &str,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    validate_lower_hex64("--genesis", genesis)?;
+
+    let transitions = fetch_channel_events(
+        client,
+        channel_id,
+        &[KIND_CODING_SESSION_AUTHORITY_TRANSITION],
+    )
+    .await?;
+    let receipts_raw = fetch_channel_events(client, channel_id, &[KIND_SYSTEM_MESSAGE]).await?;
+    let receipts = decode_authority_receipts(&receipts_raw, genesis);
+    let accepted_ids: HashSet<&str> = receipts
+        .iter()
+        .map(|receipt| receipt.accepted_event_id.as_str())
+        .collect();
+    let state = fold_authority_receipts(receipts.clone());
+
+    // A transition with no matching receipt is pending: submitted but not
+    // (or not yet) accepted as a chain link.
+    let pending: Vec<Value> = transitions
+        .iter()
+        .filter_map(|event| {
+            let id = event_str(event, "id")?;
+            if accepted_ids.contains(id.as_str()) {
+                return None;
+            }
+            let content: Value = serde_json::from_str(content_of(event)?).ok()?;
+            if content.get("genesisRef")?.as_str()? != genesis {
+                return None;
+            }
+            Some(json!({
+                "eventId": id,
+                "seq": content.get("seq"),
+                "type": content.get("type"),
+                "granteePubkey": content.get("granteePubkey"),
+            }))
+        })
+        .collect();
+
+    let grants: Vec<Value> = state
+        .grants
+        .iter()
+        .map(|(pubkey, role)| json!({ "pubkey": pubkey, "role": role }))
+        .collect();
+
+    println!(
+        "{}",
+        json!({
+            "genesisRef": genesis,
+            "headEventId": state.head_event_id,
+            "headSeq": state.head_seq,
+            "grants": grants,
+            "pending": pending,
+        })
+    );
+    Ok(())
+}
+
 /// Route one `sessions` subcommand.
 pub async fn dispatch(
     cmd: crate::SessionsCmd,
@@ -1169,6 +1485,20 @@ pub async fn dispatch(
             cmd_tools(client, &channel, target.as_deref(), format).await
         }
         SessionsCmd::Export { channel, out } => cmd_export(client, &channel, &out).await,
+        SessionsCmd::Grant {
+            channel,
+            genesis,
+            pubkey,
+            role,
+        } => cmd_grant(client, &channel, &genesis, &pubkey, role).await,
+        SessionsCmd::Revoke {
+            channel,
+            genesis,
+            pubkey,
+        } => cmd_revoke(client, &channel, &genesis, &pubkey).await,
+        SessionsCmd::Roster { channel, genesis } => {
+            cmd_authority_roster(client, &channel, &genesis).await
+        }
     }
 }
 
@@ -1818,5 +2148,100 @@ mod tests {
         // A raw tool_result never renders on its own — it is already folded
         // into the call line above it.
         assert!(!markdown.contains("tool_result"), "{markdown}");
+    }
+
+    // ── NIP-CSAT receipt decode + fold ───────────────────────────────────────
+
+    fn receipt_event_40099(
+        genesis: &str,
+        accepted: &str,
+        seq: u32,
+        ttype: &str,
+        pk: &str,
+    ) -> Value {
+        json!({
+            "id": format!("receipt-{seq}"),
+            "kind": 40099,
+            "content": json!({
+                "type": "coding_session_authority_transition_accepted",
+                "genesisRef": genesis,
+                "acceptedEventId": accepted,
+                "seq": seq,
+                "transitionType": ttype,
+                "granteePubkey": pk,
+            }).to_string(),
+        })
+    }
+
+    #[test]
+    fn authority_receipts_filter_by_genesis_and_type() {
+        let genesis = "a".repeat(64);
+        let other = "b".repeat(64);
+        let events = vec![
+            receipt_event_40099(
+                &genesis,
+                &"1".repeat(64),
+                1,
+                "grant-operator",
+                &"c".repeat(64),
+            ),
+            // A receipt for another chain must not be folded into this one.
+            receipt_event_40099(&other, &"2".repeat(64), 1, "grant-viewer", &"d".repeat(64)),
+            // A non-receipt system message is skipped.
+            json!({ "id": "sys-1", "kind": 40099, "content": "{\"type\":\"member_added\"}" }),
+            // Undecodable content is skipped, not fatal.
+            json!({ "id": "sys-2", "kind": 40099, "content": "not json" }),
+        ];
+        let receipts = decode_authority_receipts(&events, &genesis);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].seq, 1);
+        assert_eq!(receipts[0].transition_type, "grant-operator");
+    }
+
+    #[test]
+    fn authority_fold_grants_regrades_and_revokes_in_seq_order() {
+        let genesis = "a".repeat(64);
+        let alice = "c".repeat(64);
+        let bob = "d".repeat(64);
+        // Deliberately out of order: the fold must sort by seq.
+        let events = vec![
+            receipt_event_40099(&genesis, &"3".repeat(64), 3, "revoke", &alice),
+            receipt_event_40099(&genesis, &"1".repeat(64), 1, "grant-operator", &alice),
+            receipt_event_40099(&genesis, &"2".repeat(64), 2, "grant-viewer", &bob),
+            receipt_event_40099(&genesis, &"4".repeat(64), 4, "grant-operator", &bob),
+        ];
+        let state = fold_authority_receipts(decode_authority_receipts(&events, &genesis));
+        assert_eq!(state.head_seq, 4);
+        assert_eq!(
+            state.head_event_id.as_deref(),
+            Some("4".repeat(64).as_str())
+        );
+        // Alice was revoked; Bob was re-graded viewer -> collaborator.
+        assert_eq!(state.grants.len(), 1);
+        assert_eq!(
+            state.grants.get(&bob).map(String::as_str),
+            Some("collaborator")
+        );
+    }
+
+    #[test]
+    fn authority_fold_of_no_receipts_is_the_empty_chain() {
+        let state = fold_authority_receipts(Vec::new());
+        assert_eq!(state.head_seq, 0);
+        assert!(state.head_event_id.is_none());
+        assert!(state.grants.is_empty());
+    }
+
+    #[test]
+    fn chain_head_conflict_matches_relay_linkage_refusals() {
+        for msg in [
+            "relay rejected event: invalid: prevAccepted does not match the chain's current head (expected aa)",
+            "relay rejected event: invalid: seq does not extend the chain (expected 3)",
+        ] {
+            assert!(is_chain_head_conflict(&CliError::Other(msg.into())), "{msg}");
+        }
+        assert!(!is_chain_head_conflict(&CliError::Other(
+            "relay rejected event: invalid: only the session owner may extend the chain".into()
+        )));
     }
 }

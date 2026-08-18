@@ -13,8 +13,7 @@ use buzz_core::kind::{
     KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED,
     KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS,
-    KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
-    KIND_THREAD_SUMMARY,
+    KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -871,6 +870,12 @@ async fn handle_coding_session_authority_transition_accepted(
         .ok_or_else(|| anyhow::anyhow!("coding-session authority transition missing h tag"))?;
     let payload = decode_coding_session_authority_transition(&event.content)
         .map_err(|e| anyhow::anyhow!("undecodable accepted authority transition: {e}"))?;
+
+    // A grant/revoke changes who may steer and who may read the transport
+    // channel: flush the authority caches and every reader's
+    // accessible-channel set so the change lands now, not after the TTL.
+    state.invalidate_session_authority_caches();
+    state.invalidate_all_accessible_channels(tenant);
 
     emit_system_message(
         tenant,

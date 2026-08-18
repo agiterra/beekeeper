@@ -5,15 +5,15 @@
 //! authority chain — the sequence of decisions about who may steer a session
 //! after its [`crate::coding_session_genesis`] founded it.
 //!
-//! # Exactly one transition type today
+//! # Three transition types today
 //!
-//! Only `grant-operator` is implemented — see
+//! `grant-operator`, `grant-viewer`, and `revoke` are implemented — see
 //! [`CodingSessionAuthorityTransitionType`]. The type is carried as a string
-//! enum precisely so `revoke`, `transfer`, and `takeover` are additive
+//! enum precisely so further types (`transfer`, `takeover`) are additive
 //! later: adding a variant does not change the shape of an existing,
-//! already-signed transition, and a relay that only understands
-//! `grant-operator` correctly rejects any other value as unknown rather than
-//! guessing at its meaning.
+//! already-signed transition, and a relay that only understands the current
+//! set correctly rejects any other value as unknown rather than guessing at
+//! its meaning.
 //!
 //! # The chain, not just the link
 //!
@@ -56,15 +56,23 @@ pub const CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION: &str = "csat1-1";
 /// reasoning as genesis's content ceiling.
 pub const MAX_AUTHORITY_TRANSITION_CONTENT_BYTES: usize = 512;
 
-/// One transition type. Only [`Self::GrantOperator`] is implemented; the enum
-/// exists so `revoke`, `transfer`, and `takeover` are additive variants in a
-/// future revision rather than a breaking change to this one.
+/// One transition type. The enum exists so further types (`transfer`,
+/// `takeover`) are additive variants in a future revision rather than a
+/// breaking change to this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CodingSessionAuthorityTransitionType {
     /// Grants a pubkey standing to steer the session as an operator, without
-    /// moving ownership. The only transition type this build accepts.
+    /// moving ownership.
     GrantOperator,
+    /// Grants a pubkey read access to the session's events (its transport
+    /// channel) without any steering authority. Lets a session owner share a
+    /// session with someone outside the project.
+    GrantViewer,
+    /// Removes whatever grant (operator or viewer) `granteePubkey` currently
+    /// holds. The relay refuses a revoke naming a pubkey with no live grant —
+    /// a no-op link would burn a `seq` for nothing.
+    Revoke,
 }
 
 /// Durable coding-session authority-transition JSON payload.
@@ -84,18 +92,18 @@ pub struct CodingSessionAuthorityTransitionPayload {
     /// Sequence number: 1 for the first transition, incrementing by exactly 1
     /// per accepted transition thereafter.
     pub seq: u32,
-    /// Which transition this is. Only [`CodingSessionAuthorityTransitionType::GrantOperator`]
-    /// is accepted today.
+    /// Which transition this is.
     #[serde(rename = "type")]
     pub transition_type: CodingSessionAuthorityTransitionType,
-    /// Pubkey (64-character lowercase hex) this transition grants operator
-    /// standing to.
+    /// Pubkey (64-character lowercase hex) this transition targets: the
+    /// grantee for `grant-*`, the pubkey losing its grant for `revoke`.
     pub grantee_pubkey: String,
 }
 
 impl CodingSessionAuthorityTransitionPayload {
-    /// Build a `grant-operator` transition payload.
-    pub fn new_grant_operator(
+    /// Build a transition payload of the given type.
+    pub fn new(
+        transition_type: CodingSessionAuthorityTransitionType,
         genesis_ref: impl Into<String>,
         prev_accepted: Option<String>,
         seq: u32,
@@ -105,9 +113,25 @@ impl CodingSessionAuthorityTransitionPayload {
             genesis_ref: genesis_ref.into(),
             prev_accepted,
             seq,
-            transition_type: CodingSessionAuthorityTransitionType::GrantOperator,
+            transition_type,
             grantee_pubkey: grantee_pubkey.into(),
         }
+    }
+
+    /// Build a `grant-operator` transition payload.
+    pub fn new_grant_operator(
+        genesis_ref: impl Into<String>,
+        prev_accepted: Option<String>,
+        seq: u32,
+        grantee_pubkey: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            CodingSessionAuthorityTransitionType::GrantOperator,
+            genesis_ref,
+            prev_accepted,
+            seq,
+            grantee_pubkey,
+        )
     }
 
     /// Validate this payload's self-consistency before signing an event.
@@ -155,9 +179,8 @@ fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
 /// Exactly one shape is accepted: `{genesisRef, prevAccepted, seq, type,
 /// granteePubkey}` — nothing between, nothing beyond, and `prevAccepted`'s
 /// key must be present even though its value may be `null`. A `type` value
-/// other than `"grant-operator"` fails to decode into
-/// [`CodingSessionAuthorityTransitionType`] and is rejected the same as any
-/// other malformed field.
+/// outside the pinned [`CodingSessionAuthorityTransitionType`] vocabulary
+/// fails to decode and is rejected the same as any other malformed field.
 pub fn decode_coding_session_authority_transition(
     content: &str,
 ) -> Result<CodingSessionAuthorityTransitionPayload, String> {
@@ -354,16 +377,41 @@ mod tests {
         .is_err());
     }
 
-    /// Only `"grant-operator"` decodes; every other string, and every
-    /// non-string, is rejected the same way an unrecognized enum value
-    /// should be.
+    /// Every pinned transition type decodes; the target pubkey field is
+    /// shared across them.
+    #[test]
+    fn decodes_all_pinned_transition_types() {
+        let genesis_ref = event_id_hex("ab");
+        let grantee = event_id_hex("cd");
+        for (name, expected) in [
+            (
+                "grant-operator",
+                CodingSessionAuthorityTransitionType::GrantOperator,
+            ),
+            (
+                "grant-viewer",
+                CodingSessionAuthorityTransitionType::GrantViewer,
+            ),
+            ("revoke", CodingSessionAuthorityTransitionType::Revoke),
+        ] {
+            let content = format!(
+                r#"{{"genesisRef":"{genesis_ref}","prevAccepted":null,"seq":1,"type":"{name}","granteePubkey":"{grantee}"}}"#
+            );
+            let payload = decode_coding_session_authority_transition(&content)
+                .unwrap_or_else(|e| panic!("type {name} should decode: {e}"));
+            assert_eq!(payload.transition_type, expected);
+        }
+    }
+
+    /// Types outside the pinned vocabulary, and every non-string, are
+    /// rejected the same way an unrecognized enum value should be.
     #[test]
     fn rejects_unknown_transition_types() {
         let genesis_ref = event_id_hex("ab");
         let grantee = event_id_hex("cd");
         for bad_type in [
-            "\"revoke\"",
             "\"transfer\"",
+            "\"takeover\"",
             "\"GRANT-OPERATOR\"",
             "\"grant_operator\"",
             "1",

@@ -108,9 +108,10 @@ export const KIND_CODING_SESSION_GENESIS = 44226;
 // events preserve every revision; consumers fold the latest per (h, d).
 export const KIND_CODING_SESSION_GOAL = 44227;
 // NIP-CSAT (draft): one append-only authority-chain transition (`csat1-1`).
-// Only `grant-operator` exists today; the relay validates chain linkage
-// (prevAccepted/seq against the current accepted head) and owner standing at
-// ingest and publishes a relay-signed acceptance receipt (kind 40099).
+// Types: `grant-operator` (steer), `grant-viewer` (read-only), `revoke`; the
+// relay validates chain linkage (prevAccepted/seq against the current
+// accepted head) and owner standing at ingest and publishes a relay-signed
+// acceptance receipt (kind 40099).
 export const KIND_CODING_SESSION_AUTHORITY_TRANSITION = 44228;
 // NIP-CSN: operator-authored append-only short session-name revision
 // (`csnm1-1`). Regular events preserve every rename.

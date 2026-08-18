@@ -54,6 +54,7 @@ use uuid::Uuid;
 
 use buzz_acp::relay::{HarnessRelay, RestClient};
 use buzz_acp::{ChannelFilter, TurnUsage};
+use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::CodingSessionTarget;
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
@@ -793,6 +794,7 @@ impl Provider {
             genesis_ref: plan.genesis_ref.clone(),
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
+            granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: startup.model.clone().or_else(|| plan.model.clone()),
             resume_cursor: Some(startup.acp_session_id.clone()),
@@ -1366,17 +1368,33 @@ impl Provider {
             return Ok(false);
         }
         self.state.update_session(session_id, |record| {
-            record
-                .granted_operators
-                .insert(accepted.grantee_pubkey.clone());
+            match accepted.transition_type {
+                CodingSessionAuthorityTransitionType::GrantOperator => {
+                    record
+                        .granted_operators
+                        .insert(accepted.grantee_pubkey.clone());
+                    record.granted_viewers.remove(&accepted.grantee_pubkey);
+                }
+                CodingSessionAuthorityTransitionType::GrantViewer => {
+                    record
+                        .granted_viewers
+                        .insert(accepted.grantee_pubkey.clone());
+                    record.granted_operators.remove(&accepted.grantee_pubkey);
+                }
+                CodingSessionAuthorityTransitionType::Revoke => {
+                    record.granted_operators.remove(&accepted.grantee_pubkey);
+                    record.granted_viewers.remove(&accepted.grantee_pubkey);
+                }
+            }
             record.authority_seq = accepted.seq;
         })?;
         tracing::info!(
             target: "csp::authority",
             %session_id,
             seq = accepted.seq,
+            transition_type = ?accepted.transition_type,
             grantee = %accepted.grantee_pubkey,
-            "applied accepted grant-operator transition"
+            "applied accepted authority transition"
         );
         Ok(true)
     }
@@ -2737,6 +2755,7 @@ mod tests {
             genesis_ref: Some(genesis_ref.to_owned()),
             founder_pubkey: Some(test_operator_keys().public_key().to_hex()),
             granted_operators: std::collections::BTreeSet::new(),
+            granted_viewers: std::collections::BTreeSet::new(),
             authority_seq: 0,
             model: None,
             resume_cursor: None,
@@ -4655,6 +4674,7 @@ mod tests {
                     genesis_ref: None,
                     founder_pubkey: Some("ab".repeat(32)),
                     granted_operators: std::collections::BTreeSet::new(),
+                    granted_viewers: std::collections::BTreeSet::new(),
                     authority_seq: 0,
                     model: None,
                     resume_cursor: Some("private-acp-cursor".into()),

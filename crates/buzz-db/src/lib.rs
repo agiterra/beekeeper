@@ -17,6 +17,8 @@ pub mod api_token;
 pub mod archived_identities;
 /// Channel and membership persistence.
 pub mod channel;
+/// Coding-session authority-grant queries (NIP-CSAT ACL projection).
+pub mod coding_session_acl;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.
@@ -2360,6 +2362,54 @@ impl Db {
             thread_meta,
         )
         .await
+    }
+
+    /// Returns whether the channel holds at least one coding-session
+    /// genesis (kind 44226).
+    pub async fn channel_has_genesis_sessions(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<bool> {
+        coding_session_acl::channel_has_genesis_sessions(&self.pool, community, channel_id).await
+    }
+
+    /// Returns whether `pubkey` founded a genesis-rooted session in the
+    /// channel or holds a live operator grant on one (the relay-grain
+    /// steering requirement).
+    pub async fn has_steer_standing_in_channel(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        coding_session_acl::has_steer_standing_in_channel(&self.pool, community, channel_id, pubkey)
+            .await
+    }
+
+    /// Returns whether `pubkey` holds any live session grant (operator or
+    /// viewer) in the channel.
+    pub async fn has_session_grant_in_channel(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        coding_session_acl::has_session_grant_in_channel(&self.pool, community, channel_id, pubkey)
+            .await
+    }
+
+    /// Resolve the exact authority (founder + live grants) of the session
+    /// labelled `session_ref` in `channel_id`, or `None` when no genesis
+    /// claims the label.
+    pub async fn session_authority_by_ref(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        session_ref: &str,
+    ) -> Result<Option<coding_session_acl::SessionAuthority>> {
+        coding_session_acl::session_authority_by_ref(&self.pool, community, channel_id, session_ref)
+            .await
     }
 
     /// Creates a new channel, bootstraps the creator as owner, and returns the record.

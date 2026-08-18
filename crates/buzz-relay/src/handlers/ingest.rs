@@ -729,7 +729,7 @@ fn coding_session_content_cap(kind: u32) -> Option<usize> {
 }
 
 /// Require active membership without the open-channel fallback used for normal
-/// conversational writes.
+/// conversational writes, plus — for the steer kinds — NIP-CSAT authority.
 ///
 /// [`check_channel_membership`] admits any authenticated pubkey in an *open*
 /// channel. That is the right rule for talking, and the wrong rule here in both
@@ -737,12 +737,91 @@ fn coding_session_content_cap(kind: u32) -> Option<usize> {
 /// to steer an agent that runs shell commands against someone's checkout; on
 /// the provider side, it is not authority to write transcripts and receipts
 /// that consumers treat as the session's record of what happened.
+///
+/// Per-kind rules on top of the base membership gate:
+///
+/// - **44220 (turn command)**: when the channel holds genesis-rooted
+///   sessions, the signer must be a founder or hold a live operator grant on
+///   one — channel grain, because a command addresses a provider-minted
+///   execution id the relay cannot map to a genesis; the session provider
+///   enforces the exact per-session rule on top (verified acceptance
+///   receipts). Standing alone suffices: an externally-granted operator
+///   steers without being a channel member. Channels with no genesis
+///   (legacy) keep the base rule, matching the provider's own treatment of
+///   no-genesis records.
+/// - **44227 (goal)**: resolved exactly via its `d` = sessionRef tag — the
+///   named session's founder or operators only; an unclaimed label keeps the
+///   base rule.
+/// - **Everything else** (lifecycle, genesis, provider kinds, 44228): the
+///   base rule. Lifecycle stop/resume founder-onlyness is enforced by the
+///   provider (`operator_owns_session`), and 44228 owner-signing by the
+///   storage transaction.
 async fn check_coding_session_membership(
     tenant: &TenantContext,
     state: &AppState,
     channel_id: Uuid,
     pubkey_bytes: &[u8],
+    kind: u32,
+    event: &nostr::Event,
 ) -> Result<(), String> {
+    match kind {
+        KIND_CODING_SESSION_COMMAND => {
+            match state
+                .db
+                .channel_has_genesis_sessions(tenant.community(), channel_id)
+                .await
+            {
+                Ok(true) => {
+                    return match state
+                        .session_steer_standing_cached(tenant.community(), channel_id, pubkey_bytes)
+                        .await
+                    {
+                        Ok(true) => Ok(()),
+                        Ok(false) => Err(
+                            "restricted: only a session founder or a granted operator may steer"
+                                .into(),
+                        ),
+                        Err(error) => Err(format!("error: database error: {error}")),
+                    };
+                }
+                Ok(false) => {}
+                Err(error) => return Err(format!("error: database error: {error}")),
+            }
+        }
+        KIND_CODING_SESSION_GOAL => {
+            let session_ref = event.tags.iter().find_map(|t| {
+                let parts = t.as_slice();
+                if parts.first().map(|s| s.as_str()) == Some("d") {
+                    parts.get(1).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            });
+            if let Some(session_ref) = session_ref {
+                match state
+                    .db
+                    .session_authority_by_ref(tenant.community(), channel_id, &session_ref)
+                    .await
+                {
+                    Ok(Some(authority)) => {
+                        return if authority.may_steer(pubkey_bytes) {
+                            Ok(())
+                        } else {
+                            Err(
+                                "restricted: only the session founder or a granted operator may \
+                                 edit its goal"
+                                    .into(),
+                            )
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(error) => return Err(format!("error: database error: {error}")),
+                }
+            }
+        }
+        _ => {}
+    }
+
     match state
         .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
         .await
@@ -2162,6 +2241,9 @@ fn coding_session_authority_transition_refusal_result(
             "invalid: signer is not the session's current owner ({})",
             hex::encode(owner_pubkey)
         ),
+        buzz_db::AuthorityTransitionRefusal::NoSuchGrant => {
+            "invalid: revoke names a pubkey with no live grant on this session".to_string()
+        }
     };
     IngestResult {
         event_id: event_id_hex,
@@ -2872,7 +2954,7 @@ async fn ingest_event_inner(
         // active membership, with no open-channel fallback. Visibility is not
         // authority to steer a session, nor to author its record.
         if is_coding_session_kind(kind_u32) {
-            check_coding_session_membership(tenant, state, ch_id, &pubkey_bytes)
+            check_coding_session_membership(tenant, state, ch_id, &pubkey_bytes, kind_u32, &event)
                 .await
                 .map_err(IngestError::Rejected)?;
         }

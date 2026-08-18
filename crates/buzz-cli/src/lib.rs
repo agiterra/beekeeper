@@ -1276,6 +1276,26 @@ pub enum RepoPushRole {
     Member,
 }
 
+/// Grant tier for coding-session authority grants: collaborator (may steer)
+/// or viewer (read-only).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum GrantRoleArg {
+    /// May steer the session.
+    Collaborator,
+    /// Read-only access.
+    Viewer,
+}
+
+impl GrantRoleArg {
+    /// The roster role string this variant serializes to.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GrantRoleArg::Collaborator => "collaborator",
+            GrantRoleArg::Viewer => "viewer",
+        }
+    }
+}
+
 /// Visibility of a multi-repo project listing.
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum ProjectVisibility {
@@ -2032,6 +2052,52 @@ pub enum SessionsCmd {
         #[arg(long)]
         out: String,
     },
+    /// Grant a pubkey authority over a coding session (NIP-CSAT kind 44228).
+    ///
+    /// `collaborator` maps to a `grant-operator` transition (may steer);
+    /// `viewer` maps to `grant-viewer` (read-only). Only the session owner
+    /// (the genesis signer) may extend the chain.
+    Grant {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Grantee pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Grant tier
+        #[arg(long, value_enum)]
+        role: GrantRoleArg,
+    },
+    /// Revoke a pubkey's live coding-session grant (NIP-CSAT kind 44228).
+    ///
+    /// The relay refuses a revoke naming a pubkey with no live grant.
+    Revoke {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Pubkey losing its grant (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+    },
+    /// Print a session's folded grant map plus pending transitions.
+    ///
+    /// Grants are folded from relay acceptance receipts (kind 40099) in
+    /// sequence order; transitions with no matching receipt are listed as
+    /// pending.
+    Roster {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+    },
 }
 
 /// Normalize hand-authored `BUZZ_AUTH_TAG` input to strict JSON.
@@ -2417,7 +2483,15 @@ mod tests {
         );
         assert_eq!(
             names(&cmd, "sessions"),
-            vec!["export", "list", "tools", "transcript"]
+            vec![
+                "export",
+                "grant",
+                "list",
+                "revoke",
+                "roster",
+                "tools",
+                "transcript"
+            ]
         );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
@@ -2455,7 +2529,7 @@ mod tests {
             ("projects", 7),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 4),
+            ("sessions", 7),
             ("social", 7),
             ("upload", 1),
             ("users", 5),

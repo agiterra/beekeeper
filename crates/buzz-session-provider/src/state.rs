@@ -95,6 +95,12 @@ pub struct SessionRecord {
     /// for records written before the field existed.
     #[serde(default)]
     pub granted_operators: BTreeSet<String>,
+    /// Pubkeys holding a live `grant-viewer` — read-only session shares.
+    /// Never consulted for steering; tracked for diagnostics and so a later
+    /// `revoke` of a viewer folds cleanly. Defaults empty for pre-field
+    /// records.
+    #[serde(default)]
+    pub granted_viewers: BTreeSet<String>,
     /// Highest accepted authority-chain `seq` whose grant has been applied to
     /// `granted_operators`. `0` means no transition has been applied. Grants
     /// apply strictly contiguously (`seq == authority_seq + 1`); a gap
@@ -518,6 +524,7 @@ mod tests {
             genesis_ref: None,
             founder_pubkey: Some("ab".repeat(32)),
             granted_operators: BTreeSet::new(),
+            granted_viewers: BTreeSet::new(),
             authority_seq: 0,
             model: None,
             resume_cursor: None,
