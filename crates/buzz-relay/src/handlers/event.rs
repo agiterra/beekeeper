@@ -195,6 +195,50 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // Project-membership gate (fan-out): a kind 9010/9011 op or a
+    // relay-signed kind:39010 roster projection scoped to a *private*
+    // project is delivered past the author only to the project's admitted
+    // connections, matching REQ semantics
+    // (`project_membership_event_hidden_from`). Public/unknown coordinates
+    // carry no gate; a missing coordinate or a lookup failure fails closed.
+    let matches = if buzz_core::kind::is_project_membership_kind(event_kind_u32(
+        &stored_event.event,
+    )) {
+        let author = stored_event.event.pubkey.to_bytes();
+        match buzz_core::kind::project_membership_event_coordinate(&stored_event.event) {
+            None => matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    state
+                        .conn_manager
+                        .pubkey_for_conn(*conn_id)
+                        .is_some_and(|pk| pk == author)
+                })
+                .collect(),
+            Some(coordinate) => match state
+                .project_coordinate_gate_cached(community_id, &coordinate)
+                .await
+            {
+                Ok(None) => matches,
+                Ok(Some(gate)) => matches
+                    .into_iter()
+                    .filter(|(conn_id, _)| {
+                        let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                            return false;
+                        };
+                        pk == author || gate.admits_read(&pk)
+                    })
+                    .collect(),
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: membership gate lookup failed: {e}");
+                    Vec::new()
+                }
+            },
+        }
+    } else {
+        matches
+    };
+
     // Private-project repo gate (fan-out): NIP-34 repo-surface events
     // (announcement/ref-state/patches/PRs/issues/status) are delivered past
     // the author only to connections admitted by every referenced repo's
@@ -257,7 +301,7 @@ pub async fn filter_fanout_by_access(
                         return false;
                     };
                     // Authors always receive their own events.
-                    pk == author || gates.iter().all(|gate| gate.admits(&pk))
+                    pk == author || gates.iter().all(|gate| gate.admits_read(&pk))
                 })
                 .collect()
         }
@@ -306,7 +350,7 @@ pub async fn filter_fanout_by_access(
                 let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
                     continue;
                 };
-                if gate.admits(&pubkey) {
+                if gate.admits_read(&pubkey) {
                     allowed.push((conn_id, sub_id));
                     continue;
                 }
@@ -353,7 +397,7 @@ pub async fn filter_fanout_by_access(
             continue;
         };
         if let Some(gate) = &transport_gate {
-            if gate.admits(&pubkey) {
+            if gate.admits_read(&pubkey) {
                 allowed.push((conn_id, sub_id));
                 continue;
             }

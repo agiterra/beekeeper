@@ -1361,10 +1361,15 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
 /// fallback — the fast SQL `count_events()` has no per-event access check,
 /// so it would count a private project's repo activity, leaking its
 /// existence even without returning content.
+/// The NIP-MP membership kinds (9010/9011/39010) ride the same rule for the
+/// same reason ([`buzz_core::kind::project_membership_event_hidden_from`]).
 pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_none_or(|ks| {
-        ks.iter()
-            .any(|k| buzz_core::kind::is_git_project_gated_kind(k.as_u16() as u32))
+        ks.iter().any(|k| {
+            let kind = k.as_u16() as u32;
+            buzz_core::kind::is_git_project_gated_kind(kind)
+                || buzz_core::kind::is_project_membership_kind(kind)
+        })
     })
 }
 
@@ -1459,6 +1464,17 @@ pub(crate) fn event_visible_to_reader(
         event,
         &requester_pubkey_hex,
         &hidden_repos.names,
+        &hidden_repos.project_coordinates,
+    ) {
+        return false;
+    }
+    // NIP-MP: membership ops (9010/9011) and the relay-signed roster
+    // projection (39010) of a private project the reader is not admitted to
+    // are withheld — a roster is exactly the membership a private project
+    // hides.
+    if buzz_core::kind::project_membership_event_hidden_from(
+        event,
+        &requester_pubkey_hex,
         &hidden_repos.project_coordinates,
     ) {
         return false;

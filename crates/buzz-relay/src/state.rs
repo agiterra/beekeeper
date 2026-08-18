@@ -728,6 +728,16 @@ pub struct AppState {
     pub repo_gate_cache: Arc<
         moka::sync::Cache<(CommunityId, String), Option<Arc<buzz_db::git_repo::RepoProjectGate>>>,
     >,
+    /// Per-coordinate private-project gate (NIP-MP membership fan-out):
+    /// (community_id, `30621:<owner>:<dtag>`) maps to the project's owner +
+    /// invited members when that project is private, else `None` ("no gate").
+    /// Lets live fan-out filter membership events (9010/9011/39010) by
+    /// project membership in memory. Same TTL/flush discipline as
+    /// [`Self::project_gate_cache`].
+    #[allow(clippy::type_complexity)]
+    pub coordinate_gate_cache: Arc<
+        moka::sync::Cache<(CommunityId, String), Option<Arc<buzz_db::project_acl::ProjectGate>>>,
+    >,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
     pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
@@ -965,6 +975,13 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            coordinate_gate_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             audit_tx: audit_enabled.then_some(audit_tx),
             media_storage: Arc::new(media_storage),
             storage_sweep: Arc::new(tokio::sync::Mutex::new(
@@ -1148,6 +1165,30 @@ impl AppState {
         Ok(gate)
     }
 
+    /// Resolve the private-project gate at a `30621:<owner>:<dtag>` coordinate
+    /// with a 10-second cache (NIP-MP membership fan-out).
+    ///
+    /// `None` means "no gate" (unknown coordinate or public project). Same
+    /// flush discipline as [`Self::channel_project_gate_cached`] — every 30621
+    /// ACL change drops the community's entries.
+    pub async fn project_coordinate_gate_cached(
+        &self,
+        community_id: CommunityId,
+        coordinate: &str,
+    ) -> Result<Option<Arc<buzz_db::project_acl::ProjectGate>>, buzz_db::DbError> {
+        let key = (community_id, coordinate.to_owned());
+        if let Some(cached) = self.coordinate_gate_cache.get(&key) {
+            return Ok(cached);
+        }
+        let gate = self
+            .db
+            .get_project_gate_by_coordinate(community_id, coordinate)
+            .await?
+            .map(Arc::new);
+        self.coordinate_gate_cache.insert(key, gate.clone());
+        Ok(gate)
+    }
+
     /// Invalidate caches after a membership change (add/remove member).
     ///
     /// Drops the local moka entries AND fire-and-forget publishes the same drop
@@ -1250,6 +1291,16 @@ impl AppState {
                 "community-scoped repo-gate invalidation unavailable; falling back to full invalidation"
             );
             self.repo_gate_cache.invalidate_all();
+        }
+        if let Err(error) = self
+            .coordinate_gate_cache
+            .invalidate_entries_if(move |(entry_community, _), _| *entry_community == community_id)
+        {
+            tracing::error!(
+                ?error,
+                "community-scoped coordinate-gate invalidation unavailable; falling back to full invalidation"
+            );
+            self.coordinate_gate_cache.invalidate_all();
         }
     }
 

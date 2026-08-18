@@ -1,4 +1,5 @@
 import type { RelayEvent } from "@/shared/api/types";
+import { parseEntityRole } from "@/shared/lib/entityRoles";
 import {
   KIND_PROJECT_ANNOUNCEMENT,
   KIND_REPO_ANNOUNCEMENT,
@@ -226,10 +227,17 @@ export function validateProjectEventEnvelope(
       `NIP-MP: unknown 'buzz-access' value '${accessValue}' — expected 'public' or 'private'.`,
     );
   }
+  // Relay rule `access-general-forced-public`: the community's shared default
+  // project (d = "general") can never be private.
+  if (accessValue === "private" && dtag === "general") {
+    throw new Error(
+      'NIP-MP: the "general" project is the community\'s shared default and cannot be private.',
+    );
+  }
 
   // Buzz extension: invited-member `p` tags gate private-project read access.
-  // Mirrors the relay's `invite-cap`/`invite-tag-arity`/`invite-malformed`/
-  // `invite-duplicate` rules (buzz-relay ingest.rs).
+  // Mirrors the relay's `invite-cap`/`invite-tag-arity`/`invite-role`/
+  // `invite-malformed`/`invite-duplicate` rules (buzz-relay ingest.rs).
   const inviteTags = tags.filter((tag) => tag[0] === "p");
   if (inviteTags.length > MAX_PROJECT_INVITES) {
     throw new Error(
@@ -238,9 +246,16 @@ export function validateProjectEventEnvelope(
   }
   const seenInvites = new Set<string>();
   for (const tag of inviteTags) {
-    if (tag.length !== 2 && tag.length !== 3) {
+    // Arity 2..=4: `["p", pubkey]` plus NIP-01's optional relay hint, plus an
+    // optional role element (owner/collaborator/viewer).
+    if (tag.length < 2 || tag.length > 4) {
       throw new Error(
-        "NIP-MP: invited-member 'p' tag must have 2 or 3 elements.",
+        "NIP-MP: invited-member 'p' tag must have 2 to 4 elements.",
+      );
+    }
+    if (tag.length === 4 && parseEntityRole(tag[3]) === undefined) {
+      throw new Error(
+        `NIP-MP: invited-member role must be one of owner/collaborator/viewer (got '${tag[3]}').`,
       );
     }
     const pubkey = tag[1] ?? "";

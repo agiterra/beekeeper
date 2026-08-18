@@ -56,24 +56,52 @@ function tagValues(event, name) {
   return event.tags.filter((tag) => tag[0] === name).map((tag) => tag[1]);
 }
 
-test("publishProjectContainer emits buzz-access + p tags when private", async () => {
+function pTags(event) {
+  return event.tags.filter((tag) => tag[0] === "p");
+}
+
+test("publishProjectContainer emits buzz-access + role-carrying p tags when private", async () => {
   const stubs = setupStubs();
   try {
     await publishProjectContainer({
       name: "Skunkworks",
       dtag: "skunkworks",
       visibility: "private",
-      memberPubkeys: [MEMBER_A, MEMBER_B],
+      members: [
+        { pubkey: MEMBER_A, role: "collaborator" },
+        { pubkey: MEMBER_B, role: "viewer" },
+      ],
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), ["private"]);
-    assert.deepEqual(tagValues(event, "p").sort(), [MEMBER_A, MEMBER_B].sort());
+    assert.deepEqual(pTags(event), [
+      ["p", MEMBER_A, "", "collaborator"],
+      ["p", MEMBER_B, "", "viewer"],
+    ]);
   } finally {
     stubs.teardown();
   }
 });
 
-test("publishProjectContainer omits buzz-access/p tags when public", async () => {
+test("publishProjectContainer keeps member p tags on public projects", async () => {
+  const stubs = setupStubs();
+  try {
+    // Members carry roles, not just a private ACL — going public keeps them.
+    await publishProjectContainer({
+      name: "Skunkworks",
+      dtag: "skunkworks",
+      visibility: "public",
+      members: [{ pubkey: MEMBER_A, role: "owner" }],
+    });
+    const event = stubs.signedEvents.at(-1);
+    assert.deepEqual(tagValues(event, "buzz-access"), []);
+    assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "owner"]]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("publishProjectContainer omits p tags when no members are passed", async () => {
   const stubs = setupStubs();
   try {
     await publishProjectContainer({
@@ -83,7 +111,7 @@ test("publishProjectContainer omits buzz-access/p tags when public", async () =>
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), []);
-    assert.deepEqual(tagValues(event, "p"), []);
+    assert.deepEqual(pTags(event), []);
   } finally {
     stubs.teardown();
   }
@@ -96,7 +124,11 @@ test("publishProjectContainer excludes the owner from p tags even if passed", as
       name: "Skunkworks",
       dtag: "skunkworks",
       visibility: "private",
-      memberPubkeys: [MEMBER_A, OWNER, OWNER.toUpperCase()],
+      members: [
+        { pubkey: MEMBER_A, role: "collaborator" },
+        { pubkey: OWNER, role: "owner" },
+        { pubkey: OWNER.toUpperCase(), role: "owner" },
+      ],
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "p"), [MEMBER_A]);
@@ -112,11 +144,13 @@ test("publishProjectContainer forces the general project public regardless of in
       name: "General",
       dtag: "general",
       visibility: "private",
-      memberPubkeys: [MEMBER_A],
+      members: [{ pubkey: MEMBER_A, role: "collaborator" }],
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), []);
-    assert.deepEqual(tagValues(event, "p"), []);
+    // Members ride along (roles are visibility-independent) — only the
+    // privatization is refused.
+    assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "collaborator"]]);
   } finally {
     stubs.teardown();
   }
@@ -140,12 +174,12 @@ test("addProjectMembers preserves visibility and members through a republish", a
       agentAddrs: [],
       channelIds: [],
       visibility: "private",
-      members: [MEMBER_A],
+      members: [{ pubkey: MEMBER_A, role: "owner" }],
     };
     await addProjectMembers(project, { channelIds: ["chan-1"] });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), ["private"]);
-    assert.deepEqual(tagValues(event, "p"), [MEMBER_A]);
+    assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "owner"]]);
     assert.deepEqual(tagValues(event, "channel"), ["chan-1"]);
   } finally {
     stubs.teardown();
@@ -167,14 +201,20 @@ test("removeProjectMembers preserves visibility and members through a republish"
       agentAddrs: [],
       channelIds: ["chan-1"],
       visibility: "private",
-      members: [MEMBER_A, MEMBER_B],
+      members: [
+        { pubkey: MEMBER_A, role: "collaborator" },
+        { pubkey: MEMBER_B, role: "viewer" },
+      ],
     };
     await removeProjectMembers(project, {
       repoAddrs: [`30617:${OWNER}:repo-1`],
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), ["private"]);
-    assert.deepEqual(tagValues(event, "p").sort(), [MEMBER_A, MEMBER_B].sort());
+    assert.deepEqual(pTags(event), [
+      ["p", MEMBER_A, "", "collaborator"],
+      ["p", MEMBER_B, "", "viewer"],
+    ]);
     assert.deepEqual(tagValues(event, "a"), []);
     assert.deepEqual(tagValues(event, "channel"), ["chan-1"]);
   } finally {

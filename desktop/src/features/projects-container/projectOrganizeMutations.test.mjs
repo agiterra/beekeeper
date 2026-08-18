@@ -48,6 +48,10 @@ function tagValues(event, name) {
   return event.tags.filter((tag) => tag[0] === name).map((tag) => tag[1]);
 }
 
+function pTags(event) {
+  return event.tags.filter((tag) => tag[0] === "p");
+}
+
 function makeProject(overrides = {}) {
   return {
     id: `${OWNER}:skunkworks`,
@@ -61,7 +65,7 @@ function makeProject(overrides = {}) {
     agentAddrs: [],
     channelIds: [],
     visibility: "private",
-    members: [MEMBER_A],
+    members: [{ pubkey: MEMBER_A, role: "viewer" }],
     ...overrides,
   };
 }
@@ -75,25 +79,25 @@ test("updateProjectContainer keeps the project's current visibility/members when
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), ["private"]);
-    assert.deepEqual(tagValues(event, "p"), [MEMBER_A]);
+    assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "viewer"]]);
   } finally {
     stubs.teardown();
   }
 });
 
-test("updateProjectContainer clears members when switching to public", async () => {
+test("updateProjectContainer keeps members when switching to public", async () => {
   const stubs = setupStubs();
   try {
     await updateProjectContainer({
       project: makeProject(),
       name: "Skunkworks",
       visibility: "public",
-      // A stale member list must not survive a public switch.
-      memberPubkeys: [MEMBER_A],
     });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), []);
-    assert.deepEqual(tagValues(event, "p"), []);
+    // Members are roles now, not just a private ACL — a public flip must not
+    // drop them from the head event.
+    assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "viewer"]]);
   } finally {
     stubs.teardown();
   }

@@ -23,6 +23,7 @@ import {
   displayProjectsWithGeneral,
   eventToProjectContainer,
   isProjectContainerDeleted,
+  normalizeProjectMemberEntries,
   parseMemberRef,
   partitionByChannelProject,
   partitionByProject,
@@ -79,6 +80,15 @@ function containerSnapshotKey(
   return `${CONTAINER_SNAPSHOT_PREFIX}${relayUrl}:${viewerPubkey}`;
 }
 
+/** Snapshots written before the roles migration hold `members: string[]`;
+ * normalize each entry to the `{pubkey, role}` shape before use. */
+function normalizeSnapshotProjects(projects: unknown[]): ProjectContainer[] {
+  return (projects as ProjectContainer[]).map((project) => ({
+    ...project,
+    members: normalizeProjectMemberEntries(project.members),
+  }));
+}
+
 function readContainerSnapshot(
   key: string | undefined,
 ): ProjectContainer[] | undefined {
@@ -89,11 +99,11 @@ function readContainerSnapshot(
     const parsed: unknown = JSON.parse(raw);
     // Legacy shape: a bare array (pre-sweep-registration). Still readable;
     // the next successful fetch rewrites it in the swept shape.
-    if (Array.isArray(parsed)) return parsed as ProjectContainer[];
+    if (Array.isArray(parsed)) return normalizeSnapshotProjects(parsed);
     if (typeof parsed !== "object" || parsed === null) return undefined;
     const projects = (parsed as { projects?: unknown }).projects;
     return Array.isArray(projects)
-      ? (projects as ProjectContainer[])
+      ? normalizeSnapshotProjects(projects)
       : undefined;
   } catch {
     return undefined;

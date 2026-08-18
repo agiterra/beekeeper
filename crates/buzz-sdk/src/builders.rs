@@ -2102,10 +2102,16 @@ impl ProjectMemberCoord {
 ///    `buzz-channel` ≤256, `buzz-visibility` ≤256, `buzz-access` ≤256.
 /// 9. Access value: if present, `buzz-access` must be `"private"` or
 ///    `"public"` — an unrecognized value is rejected rather than silently
-///    falling open to public (fail closed).
+///    falling open to public (fail closed). The community's shared default
+///    project (`d` = `"general"`) can never be private
+///    (rule `access-general-forced-public`).
 /// 10. Invite cap: raw count of every `p` tag ≤256 (checked before per-tag
 ///     parsing, matching relay rule order).
-/// 11. Invite tag arity: every `p` tag has 2 or 3 elements.
+/// 11. Invite tag arity: every `p` tag has 2 to 4 elements — pubkey, optional
+///     relay hint, optional role (Buzz roles extension, mirroring the NIP-29
+///     39002 grammar). A present 4th element must be a pinned
+///     [`buzz_core::kind::PROJECT_ROLES`] value (rule `invite-role`); a
+///     role-less invite is a legacy collaborator.
 /// 12. Invite grammar + deduplication: each `p` value is a lowercase 64-hex
 ///     pubkey; any pubkey that appears more than once is a duplicate.
 pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), SdkError> {
@@ -2236,6 +2242,17 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
                 "project 'buzz-access' tag must be \"private\" or \"public\" (got {access:?}) (rule: access-value)"
             )));
         }
+        // The community's shared default project can never be private,
+        // mirroring relay ingest (`access-general-forced-public`).
+        if access == buzz_core::kind::PROJECT_ACCESS_PRIVATE
+            && d_val == buzz_core::kind::GENERAL_PROJECT_DTAG
+        {
+            return Err(SdkError::InvalidInput(
+                "the \"general\" project is the community's shared default and cannot be private \
+                 (rule: access-general-forced-public)"
+                    .into(),
+            ));
+        }
     }
 
     // --- Rules 10, 11, 12: invited-member `p` tags (Buzz access extension) ---
@@ -2249,13 +2266,25 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
         )));
     }
 
-    // Rule 11: invite tag arity — `["p", pubkey]` plus NIP-01's optional relay hint.
+    // Rule 11: invite tag arity — `["p", pubkey]` plus NIP-01's optional relay
+    // hint, plus an optional 4th role element (Buzz roles extension). A
+    // present role must be from the pinned vocabulary — a role typo must not
+    // silently grant or deny (mirrors relay ingest `invite-role`).
     for p in &p_tags {
-        let len = p.as_slice().len();
-        if !(2..=3).contains(&len) {
+        let parts = p.as_slice();
+        let len = parts.len();
+        if !(2..=4).contains(&len) {
             return Err(SdkError::InvalidInput(format!(
-                "invited-member 'p' tag must have 2 or 3 elements (got {len}) (rule: invite-tag-arity)"
+                "invited-member 'p' tag must have 2 to 4 elements (got {len}) (rule: invite-tag-arity)"
             )));
+        }
+        if let Some(role) = parts.get(3) {
+            if !buzz_core::kind::is_valid_project_role(role.as_str()) {
+                return Err(SdkError::InvalidInput(format!(
+                    "invited-member role must be one of {:?} (got {role:?}) (rule: invite-role)",
+                    buzz_core::kind::PROJECT_ROLES
+                )));
+            }
         }
     }
 
@@ -4901,8 +4930,8 @@ mod tests {
         // accept/reject loop below. Keep this an exact-count assert.
         assert_eq!(
             cases.len(),
-            42,
-            "expected 42 fixture cases, got {} — was NIP-MP.fixtures.json edited?",
+            45,
+            "expected 45 fixture cases, got {} — was NIP-MP.fixtures.json edited?",
             cases.len()
         );
 
@@ -4946,7 +4975,7 @@ mod tests {
             }
         }
 
-        assert_eq!(accept_count, 15, "expected 15 accept cases");
-        assert_eq!(reject_count, 27, "expected 27 reject cases");
+        assert_eq!(accept_count, 16, "expected 16 accept cases");
+        assert_eq!(reject_count, 29, "expected 29 reject cases");
     }
 }

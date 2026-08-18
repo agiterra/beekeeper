@@ -340,11 +340,22 @@ pub struct RepoProjectGate {
 }
 
 impl RepoProjectGate {
-    /// Returns `true` if `pubkey` may see/write this repo's events: the repo
-    /// owner, the project owner, or an invited project member.
+    /// Returns `true` if `pubkey` may see this repo's events: the repo
+    /// owner, the project owner, or an invited project member of any role
+    /// (viewing a project includes reading its repos). Push authority is
+    /// never derived from a project — this gate is visibility only.
     #[must_use]
-    pub fn admits(&self, pubkey: &[u8]) -> bool {
-        hex::encode(pubkey) == self.repo_owner_hex || self.project.admits(pubkey)
+    pub fn admits_read(&self, pubkey: &[u8]) -> bool {
+        hex::encode(pubkey) == self.repo_owner_hex || self.project.admits_read(pubkey)
+    }
+
+    /// Returns `true` if `pubkey` may write NIP-34 child events (patches,
+    /// PRs, issues, status) targeting this repo: the repo owner, the project
+    /// owner, or a write-capable (owner/collaborator) project member. A
+    /// project viewer reads the repo surface but never writes into it.
+    #[must_use]
+    pub fn admits_write(&self, pubkey: &[u8]) -> bool {
+        hex::encode(pubkey) == self.repo_owner_hex || self.project.admits_write(pubkey)
     }
 }
 
@@ -359,14 +370,19 @@ pub async fn get_repo_project_gate(
     community: CommunityId,
     repo_id: &str,
 ) -> Result<Option<RepoProjectGate>> {
-    let row: Option<(String, Vec<u8>, Vec<Vec<u8>>)> = sqlx::query_as(
+    type RepoGateRow = (String, Vec<u8>, Vec<Vec<u8>>, Vec<String>);
+    let row: Option<RepoGateRow> = sqlx::query_as(
         r#"
         SELECT grn.owner_pubkey,
                pa.owner,
                COALESCE(
-                   array_agg(pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
+                   array_agg(pam.pubkey ORDER BY pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
                    '{}'
-               ) AS members
+               ) AS member_pubkeys,
+               COALESCE(
+                   array_agg(pam.role ORDER BY pam.pubkey) FILTER (WHERE pam.pubkey IS NOT NULL),
+                   '{}'
+               ) AS member_roles
         FROM git_repo_names grn
         JOIN project_acl pa
           ON pa.community_id = grn.community_id
@@ -384,10 +400,15 @@ pub async fn get_repo_project_gate(
     .bind(repo_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(repo_owner_hex, owner, members)| RepoProjectGate {
-        repo_owner_hex,
-        project: crate::project_acl::ProjectGate { owner, members },
-    }))
+    Ok(
+        row.map(|(repo_owner_hex, owner, pubkeys, roles)| RepoProjectGate {
+            repo_owner_hex,
+            project: crate::project_acl::ProjectGate {
+                owner,
+                members: crate::project_acl::zip_members(pubkeys, roles),
+            },
+        }),
+    )
 }
 
 /// Release a reservation held by `owner_pubkey` (rollback path).

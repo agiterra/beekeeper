@@ -50,6 +50,9 @@ This document uses MUST, MUST NOT, SHOULD, SHOULD NOT, MAY, and RECOMMENDED as d
 | Kind | Name | Signer | Class | Purpose |
 |------|------|--------|-------|---------|
 | `30621` | Project | user | addressable | A named grouping of `kind:30617` repository announcements |
+| `9010` | Put member | user | regular | Buzz roles extension: add project members or change their roles — see [Relay-managed membership](#relay-managed-membership-buzz-extension) |
+| `9011` | Remove member | user | regular | Buzz roles extension: remove project members |
+| `39010` | Roster projection | relay | addressable | Buzz roles extension: relay-signed authoritative roster, `d` = the project coordinate |
 
 `kind:30621` is an addressable event per NIP-01 (`30000 <= n < 40000`), addressed by `(pubkey, 30621, d)`. Two signers may use the same `d` value; those are two distinct projects. Addressable events were formerly specified as "parameterized replaceable events" in NIP-33, which upstream has since folded into NIP-01; this document cites NIP-01 throughout.
 
@@ -93,7 +96,7 @@ Both external registries are advisory, not authoritative allocators: neither res
 | `buzz-channel` | 0 or 1 | UUID of the channel this project's discussion lives in. Metadata only — see [Authority](#authority). At most 256 bytes. |
 | `buzz-visibility` | 0 or 1 | `listed` (default) or `unlisted`. Feeds [listing eligibility](#listing-eligibility). At most 256 bytes. |
 | `buzz-access` | 0 or 1 | `public` (default) or `private`. Buzz access extension — see [Access levels](#access-levels-buzz-extension). |
-| `p` | 0 to 256 | One invited-member pubkey each (lowercase 64-hex, optional NIP-01 relay hint). Meaningful only with `buzz-access` `private`. |
+| `p` | 0 to 256 | One invited-member pubkey each (lowercase 64-hex, optional NIP-01 relay hint, optional role in element 4 — see [Member roles](#member-roles)). Meaningful only with `buzz-access` `private`. |
 
 `content` carries no meaning. Writers SHOULD emit the empty string. Readers and relays MUST ignore whatever it holds: a non-empty `content` is not a rejection cause, and no consumer may parse semantics from it. Reserving it costs nothing and keeps a future writer that fills it from invalidating its events for today's readers.
 
@@ -121,7 +124,70 @@ Two deliberate asymmetries with the rest of this NIP:
 - **Unknown values are rejected at ingest** (`access-value`), unlike `buzz-visibility`'s fall-back-to-default rule. A display-hint typo is harmless; an access typo that silently fell open to public would be a privacy leak.
 - **A project's member list never gates repositories.** Consistent with [Authority](#authority), forward-referencing another owner's repository via an `a` tag grants and removes nothing on it. Repository gating exists (below), but it is opted into exclusively by the **repository owner's own** `project` back-reference on their `kind:30617`.
 
-Because only the owner can replace the event, invitations are owner-curated republishes. A relay hint in element 3 of a `p` tag is permitted and ignored, mirroring member `a` tags. Vanilla relays that do not implement this extension deliver private containers like any addressable event — writers targeting such relays must not rely on `buzz-access`.
+Because only the owner can replace the event, head-carried invitations are owner-curated republishes ([Relay-managed membership](#relay-managed-membership-buzz-extension) supersedes them once the first membership op is accepted). A relay hint in element 3 of a `p` tag is permitted and ignored, mirroring member `a` tags. Vanilla relays that do not implement this extension deliver private containers like any addressable event — writers targeting such relays must not rely on `buzz-access`.
+
+Two additional rules complete the access grammar:
+
+- **The `general` project is always public** (`access-general-forced-public`). The community's shared default project — `d` = `general` — can never carry `["buzz-access", "private"]`: it is the container everything falls back into, so a hand-built head must not be able to hide it. Ingest rejects the combination outright.
+- **Clients SHOULD default new projects to private.** An access decision is easy to loosen and painful to walk back: content published into a public project has already been delivered. Buzz's own clients (and `buzz projects create`) default to `private` and require an explicit choice to create a public project.
+
+Invites target **agents exactly like users**: an invited member is a pubkey, and whether that pubkey belongs to a person or an agent is invisible to this grammar. An agent invited into a project reads and writes under the same role rules as any member. Agent-side consent — an agent acknowledging or declining an invitation before acting inside a project — is future work; today an invite is effective the moment the roster carries it.
+
+#### Member roles
+
+Element 4 of an invited-member `p` tag carries the member's **role**, mirroring the NIP-29 `39002` tag grammar:
+
+```jsonc
+["p", "<pubkey-hex>", "<optional-relay-hint>", "<role>"]
+```
+
+The tag's arity is 2 to 4 (`invite-tag-arity`). The pinned role vocabulary is `owner`, `collaborator`, `viewer` — an unknown role is rejected at ingest (`invite-role`) rather than defaulted, because a role typo must not silently grant or deny. A **role-less invite** (arity 2 or 3) is a legacy **collaborator**: pre-role members could already write, so the compatibility reading preserves what they had.
+
+| Capability | Owner | Collaborator | Viewer |
+|------------|-------|--------------|--------|
+| Read the container and its contents | ✓ | ✓ | ✓ |
+| Write into project contents (channels, forums, own sessions, repos) | ✓ | ✓ | — |
+| Manage the roster (kinds `9010`/`9011`) | ✓ | — | — |
+| Edit head metadata (name, description, channel, access) | — | — | — |
+
+Head metadata stays **creator-only in v1** — a documented limitation, not an oversight. The head is an addressable event keyed on the creator's pubkey, so NIP-01 replacement admits no other writer; extending metadata editing to roster owners would require a relay-managed metadata surface like the roster ops below, and is deferred.
+
+The creator (the pubkey in the project's address) is always an **implicit owner** and never appears in `p` tags or the roster.
+
+### Relay-managed membership (Buzz extension)
+
+Head-carried `p` tags require an owner republish per roster change and cannot express delegation. Two relay-processed op kinds move the roster out of the head, modeled on the NIP-29 `9000`-series: user-signed, validated, applied to the project ACL, then projected into a relay-signed roster event.
+
+**Roster source.** A project's roster is **head-sourced** until the first membership op is accepted, and **ops-sourced** thereafter. The flip is one-way: once any op has been accepted, the head's `p` tags are ignored for access decisions — a creator republishing their head with a different `p` set changes nothing, so a stale republish (or a compromised creator device replaying an old head) cannot evict members the ops added. The head's `p` tags remain valid envelope grammar either way.
+
+**`kind:9010` put-member** — add members or change their roles:
+
+```jsonc
+{
+  "kind": 9010,
+  "tags": [
+    ["a", "30621:<owner-hex>:<dtag>"],
+    ["p", "<member-pubkey-hex>", "", "<role>"]
+  ],
+  "content": ""
+}
+```
+
+- Exactly one `a` tag holding the **canonical** project coordinate (lowercase-hex owner — the ACL projection joins on string equality).
+- 1 to 64 `p` targets per op, each **exactly** arity 4 with a pinned-vocabulary role. The role is **required**, not defaulted: an op is a deliberate grant, and a missing role must not silently pick a tier. Duplicate targets are rejected.
+- Re-putting an existing member changes their role.
+
+**`kind:9011` remove-member** — same `a` tag rule; 1 to 64 `p` targets of arity 2 or 3 (no role — removal has no tier).
+
+**Authorization.** The signer must be the project **creator** or a roster **owner**. The creator can never be a target of either op — they are the project's address, so adding, re-roling, or removing them is meaningless and is refused outright. Ops against an unknown project are refused (an op cannot create a project). The roster is capped at **256 members**; each op carries at most **64 targets**.
+
+**`kind:39010` roster projection** — the authoritative roster read. After every accepted op (and after head-sourced roster changes), the relay emits a relay-signed addressable event whose `d` tag is the project coordinate, with one `["p", <hex>, "", <role>]` tag per member:
+
+```jsonc
+{ "kinds": [39010], "#d": ["30621:<owner-hex>:<dtag>"] }
+```
+
+Clients MUST read the roster from the latest `39010`, falling back to the head's `p` tags only when no projection exists (the roster is still head-sourced). `39010` is never client-submitted — the relay rejects a submitted one. Both op kinds and the projection are withheld from readers outside a private project by the same coordinate predicate that hides the container's other content.
 
 #### Repository access (phase 2)
 
@@ -209,17 +275,19 @@ A relay accepting `kind:30621` MUST validate the envelope at ingest. The rule na
 7. **`metadata-cardinality`** — at most one each of `name`, `description`, `buzz-channel`, `buzz-visibility`. Duplicates would make the effective value reader-dependent.
 8. **`metadata-length`** — `name` at most 256 bytes; `description` at most 2048 bytes; `buzz-channel` at most 256 bytes; `buzz-visibility` at most 256 bytes. The two `buzz-` bounds are generous by design: neither value has a semantic length, and the bound exists only so an unbounded string cannot ride into storage on a tag ingest does not interpret.
 
-The Buzz access extension adds five rules over `buzz-access` and invited-member `p` tags:
+The Buzz access and roles extensions add seven rules over `buzz-access` and invited-member `p` tags:
 
 9. **`access-value`** — a `buzz-access` tag holds exactly `private` or `public`. Unknown values are rejected rather than defaulted; see [Access levels](#access-levels-buzz-extension). Duplicate `buzz-access` tags fall under `metadata-cardinality` (rule 7).
-10. **`invite-cap`** — at most 256 invited-member `p` tags, counting every raw tag, same rationale as `member-cap`. Inclusive: 256 accepted, 257 not.
-11. **`invite-tag-arity`** — every `p` tag has two or three elements (pubkey plus optional relay hint).
-12. **`invite-malformed`** — every `p` value is 64 lowercase hex characters. The read gate compares byte-exact against the authenticated reader's pubkey, so an uppercase invite would never match.
-13. **`invite-duplicate`** — no two `p` tags hold the same pubkey.
+10. **`access-general-forced-public`** — the community's shared default project (`d` = `general`) can never carry `buzz-access` `private`; see [Access levels](#access-levels-buzz-extension).
+11. **`invite-cap`** — at most 256 invited-member `p` tags, counting every raw tag, same rationale as `member-cap`. Inclusive: 256 accepted, 257 not.
+12. **`invite-tag-arity`** — every `p` tag has two to four elements (pubkey, optional relay hint, optional role). A fifth element has no defined meaning and is rejected rather than ignored.
+13. **`invite-role`** — a present fourth element is a pinned [role](#member-roles) (`owner`, `collaborator`, `viewer`). A role typo must not silently grant or deny.
+14. **`invite-malformed`** — every `p` value is 64 lowercase hex characters. The read gate compares byte-exact against the authenticated reader's pubkey, so an uppercase invite would never match.
+15. **`invite-duplicate`** — no two `p` tags hold the same pubkey.
 
-Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built; rules 10 through 13 follow the same count-before-parse discipline.
+Rules 3 through 6 are evaluated in that order, so an oversized tag list is refused on count before any per-tag parse or set proportional to it is built; rules 11 through 15 follow the same count-before-parse discipline.
 
-The Buzz validator enforces all thirteen rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
+The Buzz validator enforces all fifteen rules. The shared fixtures in [`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) are wired as its test oracle: the relay's unit test suite runs every case against `validate_project_envelope` and asserts each `expect` outcome.
 
 **Duplicates are rejected, never normalized.** A relay cannot dedupe tags inside a signed event: rewriting the tag array changes the event id and invalidates the signature. The choices are reject, or accept and require every present and future consumer to apply a first-wins interpretation rule. Rejecting keeps every stored head canonical and spares all consumers a defensive parse.
 
@@ -339,7 +407,7 @@ Two fixture files carry the machine-checkable contract. `NIP-MP.fixtures.json` i
 
 ### Ingest
 
-[`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) holds the shared valid/invalid case set: 11 accepted and 20 rejected events covering minimal and full projects, zero members, the 64-member boundary from both sides, cross-owner and same-`d`-different-owner members, colon-bearing repository `d` values, relay hints, non-empty `content`, and each rejection rule above.
+[`NIP-MP.fixtures.json`](NIP-MP.fixtures.json) holds the shared valid/invalid case set: 16 accepted and 29 rejected events covering minimal and full projects, zero members, the 64-member boundary from both sides, cross-owner and same-`d`-different-owner members, colon-bearing repository `d` values, relay hints, non-empty `content`, access levels and role-bearing invites, and each rejection rule above.
 
 The relay validator, the Rust builder, and the TypeScript builder are required to test against this one file, so a divergence between them is a test failure rather than a production surprise.
 

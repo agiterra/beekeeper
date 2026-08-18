@@ -186,6 +186,65 @@ impl FromStr for MemberRole {
     }
 }
 
+/// A member's role within a project (NIP-MP Buzz access extension).
+///
+/// The hierarchy is Owner > Collaborator > Viewer. The project creator (the
+/// kind:30621 address pubkey) is always an implicit Owner and never appears
+/// on the roster. String values match [`crate::kind::PROJECT_ROLES`], the DB
+/// `project_acl_members.role` column, and the role element of roster tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectRole {
+    /// Full rights inside the project plus roster management.
+    Owner,
+    /// Read everything, write into project contents (channels, own sessions,
+    /// repos); no roster management. The default for legacy role-less
+    /// invites — pre-role members could already write.
+    Collaborator,
+    /// Read-only across the project and its contents.
+    Viewer,
+}
+
+impl ProjectRole {
+    /// Canonical string representation (matches DB values and Nostr tags).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Collaborator => "collaborator",
+            Self::Viewer => "viewer",
+        }
+    }
+
+    /// Whether this role may write into the project's contents (post in its
+    /// channels, create sessions/repos, publish into its transports).
+    pub fn can_write(self) -> bool {
+        matches!(self, Self::Owner | Self::Collaborator)
+    }
+
+    /// Whether this role may manage the project roster (put/remove members).
+    pub fn can_manage_roster(self) -> bool {
+        matches!(self, Self::Owner)
+    }
+}
+
+impl fmt::Display for ProjectRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProjectRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "owner" => Ok(Self::Owner),
+            "collaborator" => Ok(Self::Collaborator),
+            "viewer" => Ok(Self::Viewer),
+            other => Err(format!("unknown project role: {other:?}")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::canonical_channel_name;

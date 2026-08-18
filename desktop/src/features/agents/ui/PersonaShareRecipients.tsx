@@ -34,6 +34,7 @@ export function PersonaShareRecipients({
   allowDirectPubkeyEntry = false,
   disabled,
   excludedPubkeys = [],
+  limit = RECIPIENT_LIMIT,
   onSelectionChange,
   open,
   selectedUsers,
@@ -45,6 +46,8 @@ export function PersonaShareRecipients({
   allowDirectPubkeyEntry?: boolean;
   disabled: boolean;
   excludedPubkeys?: readonly string[];
+  /** Maximum number of selectable recipients. */
+  limit?: number;
   onSelectionChange: (users: UserSearchResult[]) => void;
   open: boolean;
   selectedUsers: UserSearchResult[];
@@ -67,7 +70,7 @@ export function PersonaShareRecipients({
   );
   const userSearchQuery = useInfiniteUserSearchQuery(deferredSearchQuery, {
     allowEmpty: true,
-    enabled: open && selectedUsers.length < RECIPIENT_LIMIT,
+    enabled: open && selectedUsers.length < limit,
     limit: 50,
   });
   const userSearchResults = useFlattenedUserSearchResults(userSearchQuery.data);
@@ -145,7 +148,7 @@ export function PersonaShareRecipients({
       : searchResults;
   const handleDirectoryScroll = useUserSearchFetchMoreOnScroll(
     userSearchQuery,
-    selectedUsers.length < RECIPIENT_LIMIT,
+    selectedUsers.length < limit,
   );
 
   React.useEffect(() => {
@@ -156,7 +159,7 @@ export function PersonaShareRecipients({
   }, [open]);
 
   function selectUser(user: UserSearchResult) {
-    if (selectedUsers.length >= RECIPIENT_LIMIT) return;
+    if (selectedUsers.length >= limit) return;
     onSelectionChange([...selectedUsers, user]);
     setSearchQuery("");
     setIsPickerOpen(true);
@@ -223,7 +226,7 @@ export function PersonaShareRecipients({
                 autoCorrect="off"
                 className="h-7 min-w-16 flex-1 border-0 bg-transparent p-0 text-sm outline-hidden placeholder:text-muted-foreground/55"
                 data-testid={`${testIdPrefix}-recipient-search`}
-                disabled={disabled || selectedUsers.length >= RECIPIENT_LIMIT}
+                disabled={disabled || selectedUsers.length >= limit}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
                   setIsPickerOpen(true);
@@ -258,7 +261,7 @@ export function PersonaShareRecipients({
                   selectUser(selection);
                 }}
                 placeholder={
-                  selectedUsers.length >= RECIPIENT_LIMIT
+                  selectedUsers.length >= limit
                     ? "Recipient limit reached"
                     : selectedUsers.length === 0
                       ? "Search people"

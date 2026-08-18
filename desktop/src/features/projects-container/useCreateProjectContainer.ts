@@ -14,13 +14,14 @@ import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
   PROJECT_ACCESS_TAG,
+  type ProjectMember,
 } from "./lib/projectContainerModel";
 
 export type CreateProjectContainerInput = {
   name: string;
   description?: string;
   visibility?: ProjectContainer["visibility"];
-  memberPubkeys?: string[];
+  members?: ProjectMember[];
 };
 
 function slugFromName(name: string): string {
@@ -36,18 +37,22 @@ function slugFromName(name: string): string {
  * refs (`a`/`channel`) — used by the General migration sweep; the plain
  * create dialog publishes with none.
  *
- * ⚠️ Rebuilds the visibility/`p`-member tags from `visibility`/`memberPubkeys`
+ * ⚠️ Rebuilds the visibility/`p`-member tags from `visibility`/`members`
  * on every call — every caller that republishes an existing project (add/
  * remove-member, organize mutations, the legacy-kind migration) MUST pass the
  * project's current `visibility`/`members` through, or the republish silently
- * drops them and a private project goes public.
+ * drops them and a private project goes public / loses its roster seed.
+ *
+ * Note the head's `p` tags are only the roster until the first kind:9010/9011
+ * membership op — after that the relay sources the roster from ops and
+ * ignores head `p` tags, so a republish can't clobber op-managed rosters.
  */
 export async function publishProjectContainer(input: {
   name: string;
   dtag: string;
   description?: string;
   visibility?: ProjectContainer["visibility"];
-  memberPubkeys?: string[];
+  members?: ProjectMember[];
   extraTags?: string[][];
   createdAt?: number;
 }): Promise<ProjectContainer> {
@@ -71,16 +76,16 @@ export async function publishProjectContainer(input: {
   }
   if (visibility === "private") {
     tags.push([PROJECT_ACCESS_TAG, "private"]);
-    const members = [
-      ...new Set(
-        (input.memberPubkeys ?? [])
-          .map((pubkey) => pubkey.toLowerCase())
-          .filter(
-            (pubkey) => /^[0-9a-f]{64}$/.test(pubkey) && pubkey !== ownerPubkey,
-          ),
-      ),
-    ];
-    tags.push(...members.map((pubkey) => ["p", pubkey]));
+  }
+  // Members are emitted regardless of visibility — they carry roles now, not
+  // just a private-project ACL, so flipping a project public keeps them.
+  const seenMembers = new Set<string>();
+  for (const member of input.members ?? []) {
+    const pubkey = member.pubkey.toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(pubkey) || pubkey === ownerPubkey) continue;
+    if (seenMembers.has(pubkey)) continue;
+    seenMembers.add(pubkey);
+    tags.push(["p", pubkey, "", member.role]);
   }
   tags.push(...(input.extraTags ?? []));
 
@@ -131,7 +136,7 @@ async function createProjectContainer(
     dtag,
     description: input.description,
     visibility: input.visibility,
-    memberPubkeys: input.memberPubkeys,
+    members: input.members,
   });
 }
 
@@ -156,7 +161,7 @@ export async function addProjectMembers(
     dtag: project.dtag,
     description: project.description,
     visibility: project.visibility,
-    memberPubkeys: project.members,
+    members: project.members,
     extraTags: [
       ...repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),
@@ -180,7 +185,7 @@ export async function removeProjectMembers(
     dtag: project.dtag,
     description: project.description,
     visibility: project.visibility,
-    memberPubkeys: project.members,
+    members: project.members,
     extraTags: [
       ...project.repoAddrs
         .filter((addr) => !dropRepos.has(addr))

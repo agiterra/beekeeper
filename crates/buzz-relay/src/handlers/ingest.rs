@@ -438,6 +438,12 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // NIP-MP: a project is repository metadata — grouping repositories needs
         // the same scope as announcing them.
         KIND_PROJECT => Ok(Scope::ReposWrite),
+        // NIP-MP membership ops ride the project's own scope; per-project
+        // authorization (creator or roster owner) is enforced at ingest and
+        // re-checked transactionally when the op is applied.
+        buzz_core::kind::KIND_PROJECT_PUT_MEMBER | buzz_core::kind::KIND_PROJECT_REMOVE_MEMBER => {
+            Ok(Scope::ReposWrite)
+        }
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -673,17 +679,19 @@ pub(crate) async fn check_channel_membership(
             .unwrap_or(false),
     };
     if !is_open {
-        // Session-transport channels: the project's owner and invited
-        // members are admitted without a channel_members row — project
-        // membership IS transport access, resolved through the cached ACL
-        // projection. `None` (not a transport channel, or project unknown)
-        // falls through to the members-only denial; lookup errors fail
-        // closed the same way as the membership lookup above.
+        // Session-transport channels: the project's owner and write-capable
+        // members (owner/collaborator) are admitted without a
+        // channel_members row — project membership IS transport access,
+        // resolved through the cached ACL projection; viewers read the
+        // transport but never write into it. `None` (not a transport
+        // channel, or project unknown) falls through to the members-only
+        // denial; lookup errors fail closed the same way as the membership
+        // lookup above.
         match state
             .channel_transport_gate_cached(tenant.community(), ch_id)
             .await
         {
-            Ok(Some(gate)) if gate.admits(pubkey_bytes) => return Ok(()),
+            Ok(Some(gate)) if gate.admits_write(pubkey_bytes) => return Ok(()),
             Ok(_) => {}
             Err(e) => return Err(format!("error: database error: {e}")),
         }
@@ -692,13 +700,14 @@ pub(crate) async fn check_channel_membership(
     // Open channel — but an open channel inside a private project must not
     // fall open to non-members of the project (NIP-MP Buzz access extension).
     // Explicit channel members were admitted above; here only the project's
-    // owner and invited members may write. Fail closed on lookup errors.
+    // owner and write-capable members may write — a project viewer reads the
+    // channel but never posts. Fail closed on lookup errors.
     match state
         .channel_project_gate_cached(tenant.community(), ch_id)
         .await
     {
         Ok(None) => Ok(()),
-        Ok(Some(gate)) if gate.admits(pubkey_bytes) => Ok(()),
+        Ok(Some(gate)) if gate.admits_write(pubkey_bytes) => Ok(()),
         Ok(Some(_)) => Err("restricted: channel belongs to a private project".to_string()),
         Err(e) => Err(format!("error: database error: {e}")),
     }
@@ -1615,6 +1624,18 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
                 ),
             ));
         }
+        // `access-general-forced-public`: the community's shared default
+        // project can never be private — mirrors the client-side guard in
+        // `publishProjectContainer`, so a hand-built head cannot hide the
+        // one project everything falls back into.
+        if buzz_access == buzz_core::kind::PROJECT_ACCESS_PRIVATE
+            && d_tags[0] == buzz_core::kind::GENERAL_PROJECT_DTAG
+        {
+            return Err(ProjectRejection::new(
+                "access-general-forced-public",
+                "the \"general\" project is the community's shared default and cannot be private",
+            ));
+        }
     }
     // `invite-cap` before per-tag work, same rationale as `member-cap`.
     if invites.len() > PROJECT_INVITE_CAP {
@@ -1626,17 +1647,35 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
             ),
         ));
     }
-    // `invite-tag-arity`: `["p", pubkey]` plus NIP-01's optional relay hint.
+    // `invite-tag-arity`: `["p", pubkey]` plus NIP-01's optional relay hint,
+    // plus an optional 4th role element (`["p", pubkey, hint, role]`,
+    // matching the NIP-29 39002 grammar). `invite-role`: a present role must
+    // be from the pinned vocabulary — a role typo must not silently grant or
+    // deny; a role-less invite is a legacy collaborator.
     for tag in event.tags.iter() {
         let parts = tag.as_slice();
-        if parts.first().map(|s| s.as_str()) == Some("p") && !(2..=3).contains(&parts.len()) {
+        if parts.first().map(|s| s.as_str()) != Some("p") {
+            continue;
+        }
+        if !(2..=4).contains(&parts.len()) {
             return Err(ProjectRejection::new(
                 "invite-tag-arity",
                 format!(
-                    "project event invited-member `p` tag must have 2 or 3 elements (got {})",
+                    "project event invited-member `p` tag must have 2 to 4 elements (got {})",
                     parts.len()
                 ),
             ));
+        }
+        if let Some(role) = parts.get(3) {
+            if !buzz_core::kind::is_valid_project_role(role.as_str()) {
+                return Err(ProjectRejection::new(
+                    "invite-role",
+                    format!(
+                        "project event invited-member role must be one of {:?} (got {role:?})",
+                        buzz_core::kind::PROJECT_ROLES
+                    ),
+                ));
+            }
         }
     }
     // `invite-malformed` / `invite-duplicate`: lowercase-only for the same
@@ -1702,6 +1741,137 @@ fn parse_project_member_coordinate(coordinate: &str) -> Result<(), ProjectReject
     }
     if repo_d.is_empty() {
         return Err(malformed());
+    }
+    Ok(())
+}
+
+/// Cap on `p` targets per membership op — one op names a batch, not the
+/// world; the roster's own cap (`PROJECT_INVITE_CAP` / DB
+/// `PROJECT_ROSTER_CAP`) still bounds the total.
+const PROJECT_MEMBER_OP_TARGET_CAP: usize = 64;
+
+/// Validate a NIP-MP membership op (kind 9010 put-member / 9011
+/// remove-member) BEFORE storage: envelope shape plus authorization (signer
+/// is the project creator or a roster owner; the creator is never a target).
+///
+/// The authorization here gives the publisher a real rejection instead of an
+/// OK over an op that then silently no-ops;
+/// `buzz_db::project_acl::put_project_members` /
+/// `remove_project_members` re-check inside their row-locked transaction,
+/// which remains the authority under races.
+pub(crate) async fn validate_project_member_op(
+    tenant: &TenantContext,
+    event: &nostr::Event,
+    state: &AppState,
+) -> Result<(), String> {
+    let kind = event_kind_u32(event);
+    let a_values: Vec<&str> = event
+        .tags
+        .iter()
+        .filter_map(|t| {
+            let parts = t.as_slice();
+            if parts.first().map(|s| s.as_str()) == Some("a") {
+                parts.get(1).map(|s| s.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let [coordinate] = a_values.as_slice() else {
+        return Err(format!(
+            "membership op must have exactly one project `a` tag (got {})",
+            a_values.len()
+        ));
+    };
+    // Canonical coordinate only (lowercase hex owner): the ACL projection
+    // joins on string equality, so a case-variant coordinate would dodge it.
+    if buzz_core::kind::normalize_project_coordinate(coordinate).as_deref() != Some(*coordinate) {
+        return Err(format!(
+            "membership op `a` tag must be a canonical `30621:<lowercase-hex>:<dtag>` coordinate (got {coordinate:?})"
+        ));
+    }
+
+    let p_tags: Vec<&[String]> = event
+        .tags
+        .iter()
+        .map(|t| t.as_slice())
+        .filter(|parts| parts.first().map(|s| s.as_str()) == Some("p"))
+        .collect();
+    if p_tags.is_empty() {
+        return Err("membership op must name at least one `p` target".to_string());
+    }
+    if p_tags.len() > PROJECT_MEMBER_OP_TARGET_CAP {
+        return Err(format!(
+            "membership op must have at most {PROJECT_MEMBER_OP_TARGET_CAP} `p` targets (got {})",
+            p_tags.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::with_capacity(p_tags.len());
+    for parts in &p_tags {
+        let Some(target) = parts.get(1) else {
+            return Err("membership op `p` tag is missing its pubkey".to_string());
+        };
+        if target.len() != 64
+            || !target
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(format!(
+                "membership op `p` target must be a lowercase 64-hex pubkey (got {target:?})"
+            ));
+        }
+        if !seen.insert(target.as_str()) {
+            return Err(format!("membership op has duplicate `p` target {target:?}"));
+        }
+        if kind == buzz_core::kind::KIND_PROJECT_PUT_MEMBER {
+            // Put targets carry an explicit role in element 4 (`["p", hex,
+            // relay-hint, role]`). Required, not defaulted: an op is a
+            // deliberate grant, and a missing role must not silently pick a
+            // tier.
+            if parts.len() != 4 {
+                return Err(format!(
+                    "put-member `p` tag must be [\"p\", pubkey, relay-hint, role] (got {} elements)",
+                    parts.len()
+                ));
+            }
+            let role = &parts[3];
+            if !buzz_core::kind::is_valid_project_role(role.as_str()) {
+                return Err(format!(
+                    "put-member role must be one of {:?} (got {role:?})",
+                    buzz_core::kind::PROJECT_ROLES
+                ));
+            }
+        } else if !(2..=3).contains(&parts.len()) {
+            return Err(format!(
+                "remove-member `p` tag must have 2 or 3 elements (got {})",
+                parts.len()
+            ));
+        }
+    }
+
+    // Authorization against the live roster. Fail closed on an unknown
+    // project — an op cannot create one.
+    let roster = state
+        .db
+        .get_project_roster(tenant.community(), coordinate)
+        .await
+        .map_err(|e| format!("database error: {e}"))?
+        .ok_or_else(|| format!("membership op targets unknown project {coordinate:?}"))?;
+    let actor = event.pubkey.to_bytes();
+    let actor_is_owner = roster.owner == actor
+        || roster
+            .members
+            .iter()
+            .any(|(pk, role)| pk.as_slice() == actor && role.can_manage_roster());
+    if !actor_is_owner {
+        return Err("only a project owner may manage its members".to_string());
+    }
+    let creator_hex = hex::encode(&roster.owner);
+    if seen.contains(creator_hex.as_str()) {
+        return Err(
+            "the project creator is the project's address and cannot be added, re-roled, or removed"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -2653,6 +2823,24 @@ async fn ingest_event_inner(
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
     }
 
+    // NIP-MP membership ops: envelope + owner authorization before storage;
+    // the DB op re-checks transactionally when the side effect applies.
+    if buzz_core::kind::is_project_membership_kind(kind_u32) {
+        // The relay-signed 39010 roster projection is never client-submitted.
+        if kind_u32 == buzz_core::kind::KIND_PROJECT_MEMBERS
+            && event.pubkey != state.relay_keypair.public_key()
+        {
+            return Err(IngestError::Rejected(
+                "invalid: kind 39010 is a relay-signed projection and cannot be submitted".into(),
+            ));
+        }
+        if kind_u32 != buzz_core::kind::KIND_PROJECT_MEMBERS {
+            validate_project_member_op(tenant, &event, state)
+                .await
+                .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        }
+    }
+
     // Processed here (verify consent, mutate archived_identities, emit the
     // relay-signed 8002/8003 delta + 13535 snapshot), then — unlike the
     // NIP-43 admin commands above — the request itself falls through to normal
@@ -2831,7 +3019,7 @@ async fn ingest_event_inner(
             {
                 Ok(None) => {}
                 Ok(Some(gate)) => {
-                    if !gate.admits(&author_bytes) {
+                    if !gate.admits_write(&author_bytes) {
                         return Err(IngestError::Rejected(
                             "restricted: repository belongs to a private project".into(),
                         ));

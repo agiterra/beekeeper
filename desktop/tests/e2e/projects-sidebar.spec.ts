@@ -315,8 +315,12 @@ test("private projects publish access tags and show a lock badge", async ({
       (tag) => tag[0] === "buzz-access" && tag[1] === "private",
     ),
   ).toBe(true);
+  // Initial invitees join as role-carrying collaborators (arity-4 p tag).
   expect(
-    published?.tags.some((tag) => tag[0] === "p" && tag[1] === alicePubkey),
+    published?.tags.some(
+      (tag) =>
+        tag[0] === "p" && tag[1] === alicePubkey && tag[3] === "collaborator",
+    ),
   ).toBe(true);
 
   // Lock badge on the manage-panel card.
@@ -329,7 +333,8 @@ test("private projects publish access tags and show a lock badge", async ({
     timeout: 10_000,
   });
 
-  // Edit dialog pre-fills visibility and the invited member chip.
+  // Edit dialog pre-fills visibility. Members are no longer edited here —
+  // the project page's Members card is the single management surface.
   await page.getByTestId("manage-project-actions-skunkworks").click();
   await page.getByRole("menuitem", { name: "Edit project" }).click();
   await expect(page.getByTestId("edit-project-container-name")).toHaveValue(
@@ -339,8 +344,6 @@ test("private projects publish access tags and show a lock badge", async ({
     page.getByTestId("edit-project-container-visibility"),
   ).toHaveText(/Private/);
   await expect(
-    page.getByTestId(
-      `edit-project-container-members-recipient-chip-${alicePubkey}`,
-    ),
-  ).toBeVisible();
+    page.getByTestId("edit-project-container-members-recipient-field"),
+  ).toHaveCount(0);
 });

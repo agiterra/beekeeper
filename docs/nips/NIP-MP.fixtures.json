@@ -3666,11 +3666,36 @@
       }
     },
     {
-      "name": "invalid_invite_tag_arity_four_elements",
+      "name": "valid_invite_role_four_elements",
+      "expect": "accept",
+      "note": "Buzz roles extension: a fourth `p` element carries the member's role (owner|collaborator|viewer), matching the NIP-29 39002 grammar.",
+      "template": {
+        "kind": 30621,
+        "content": "",
+        "tags": [
+          [
+            "d",
+            "secret"
+          ],
+          [
+            "buzz-access",
+            "private"
+          ],
+          [
+            "p",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "",
+            "viewer"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "invalid_invite_role_unknown",
       "expect": "reject",
-      "note": "A fourth `p` tag element has no defined meaning; accepting it would park unvalidated data in a position no consumer reads.",
+      "note": "A fourth `p` element must be a pinned role; a role typo must not silently grant or deny.",
       "reject_rules": [
-        "invite-tag-arity"
+        "invite-role"
       ],
       "template": {
         "kind": 30621,
@@ -3689,6 +3714,57 @@
             "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "wss://relay.example",
             "extra"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "invalid_invite_tag_arity_five_elements",
+      "expect": "reject",
+      "note": "A fifth `p` tag element has no defined meaning; accepting it would park unvalidated data in a position no consumer reads.",
+      "reject_rules": [
+        "invite-tag-arity"
+      ],
+      "template": {
+        "kind": 30621,
+        "content": "",
+        "tags": [
+          [
+            "d",
+            "secret"
+          ],
+          [
+            "buzz-access",
+            "private"
+          ],
+          [
+            "p",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "",
+            "viewer",
+            "extra"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "invalid_access_general_forced_public",
+      "expect": "reject",
+      "note": "The community's shared default project (d = \"general\") can never be private.",
+      "reject_rules": [
+        "access-general-forced-public"
+      ],
+      "template": {
+        "kind": 30621,
+        "content": "",
+        "tags": [
+          [
+            "d",
+            "general"
+          ],
+          [
+            "buzz-access",
+            "private"
           ]
         ]
       }

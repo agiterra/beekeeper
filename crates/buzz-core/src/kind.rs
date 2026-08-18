@@ -350,6 +350,24 @@ pub const KIND_NIP29_JOIN_REQUEST: u32 = 9021;
 /// NIP-29: Request to leave a group.
 pub const KIND_NIP29_LEAVE_REQUEST: u32 = 9022;
 
+// NIP-MP project membership ops (user-signed, stored; processed like the
+// NIP-29 9000-series: validated, applied to the project ACL, then projected
+// into a relay-signed kind:39010 roster). See docs/nips/NIP-MP.md.
+/// NIP-MP: Add project members or change their roles.
+///
+/// Tags: `["a", "30621:<owner-hex>:<dtag>"]` (required singleton) plus one or
+/// more `["p", <lowercase-64-hex>, "", <role>]` where `role` is a
+/// [`PROJECT_ROLES`] value. Signer must be the project creator or a roster
+/// `owner`. Re-putting an existing member changes their role.
+pub const KIND_PROJECT_PUT_MEMBER: u32 = 9010;
+/// NIP-MP: Remove project members.
+///
+/// Tags: `["a", coordinate]` (required singleton) plus one or more
+/// `["p", <lowercase-64-hex>]`. Signer must be the project creator or a
+/// roster `owner`. The creator can never be removed (they are the project's
+/// address) — such an op is refused outright.
+pub const KIND_PROJECT_REMOVE_MEMBER: u32 = 9011;
+
 // Buzz community moderation commands (mod-signed, processed like 9030-series:
 // validated + executed directly, never stored as regular events; every
 // accepted command writes a `moderation_actions` audit row).
@@ -426,6 +444,17 @@ pub const KIND_NIP29_GROUP_ADMINS: u32 = 39001;
 pub const KIND_NIP29_GROUP_MEMBERS: u32 = 39002;
 /// NIP-29: Addressable group roles definition.
 pub const KIND_NIP29_GROUP_ROLES: u32 = 39003;
+
+/// NIP-MP: Relay-signed addressable project roster projection
+/// (`d` = the project coordinate `30621:<owner-hex>:<dtag>`).
+///
+/// One `["p", <hex>, "", <role>]` per member, mirroring the NIP-29 39002 tag
+/// grammar. Re-emitted by the relay after every accepted membership op
+/// ([`KIND_PROJECT_PUT_MEMBER`]/[`KIND_PROJECT_REMOVE_MEMBER`]) and after
+/// head-sourced roster changes. Never client-submitted; withheld from readers
+/// outside a private project by the coordinate predicate
+/// [`project_membership_event_hidden_from`].
+pub const KIND_PROJECT_MEMBERS: u32 = 39010;
 
 // Channel-window overlays (relay-signed, synthesized at query time, never
 // stored). Appended to bridge `/query` responses for `top_level` window
@@ -648,6 +677,37 @@ pub const PROJECT_ACCESS_PRIVATE: &str = "private";
 /// `buzz-access` value (also the absent-tag default): community-readable.
 pub const PROJECT_ACCESS_PUBLIC: &str = "public";
 
+/// The community's shared default project dtag. Always public: ingest rejects
+/// a kind:30621 head carrying `["buzz-access","private"]` with this `d` tag,
+/// mirroring the client-side guard in `publishProjectContainer`.
+pub const GENERAL_PROJECT_DTAG: &str = "general";
+
+/// Project member role: full rights inside the project plus roster
+/// management via [`KIND_PROJECT_PUT_MEMBER`]/[`KIND_PROJECT_REMOVE_MEMBER`].
+/// The creator (the 30621 address pubkey) is always an implicit owner.
+pub const PROJECT_ROLE_OWNER: &str = "owner";
+/// Project member role: read everything, write into project contents
+/// (channels, own sessions, repos), no roster management. The default for
+/// legacy role-less `p` tags — pre-role members could already write.
+pub const PROJECT_ROLE_COLLABORATOR: &str = "collaborator";
+/// Project member role: read-only across the project and its contents.
+pub const PROJECT_ROLE_VIEWER: &str = "viewer";
+
+/// The pinned project role vocabulary, in descending capability order.
+///
+/// Ingest validates every role-carrying tag element against this list and
+/// rejects unknown values — a role typo must not silently grant or deny.
+pub const PROJECT_ROLES: &[&str] = &[
+    PROJECT_ROLE_OWNER,
+    PROJECT_ROLE_COLLABORATOR,
+    PROJECT_ROLE_VIEWER,
+];
+
+/// Returns `true` when `value` is a pinned [`PROJECT_ROLES`] entry.
+pub fn is_valid_project_role(value: &str) -> bool {
+    PROJECT_ROLES.contains(&value)
+}
+
 /// Returns `true` if the event is a project container marked private.
 ///
 /// Fails closed: any `buzz-access` tag whose value is `"private"` marks the
@@ -692,6 +752,60 @@ pub fn project_container_hidden_from(event: &nostr::Event, reader_pubkey_hex: &s
         t.content()
             .is_some_and(|c| c.eq_ignore_ascii_case(reader_pubkey_hex))
     })
+}
+
+/// Returns `true` if a project-membership event must be withheld from this
+/// reader: a kind 9010/9011 op (project coordinate in its `a` tag) or a
+/// kind:39010 roster projection (coordinate in its `d` tag) whose project is
+/// in the reader's hidden-private-project set. Op authors always read their
+/// own ops; a membership event with no resolvable coordinate hides from
+/// every non-author (fail closed — ingest rejects the shape, but a smuggled
+/// event must not leak). An empty hidden set (the common case) hides
+/// nothing.
+pub fn project_membership_event_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    hidden_project_coordinates: &std::collections::HashSet<String>,
+) -> bool {
+    if !is_project_membership_kind(event_kind_u32(event)) {
+        return false;
+    }
+    if event
+        .pubkey
+        .to_hex()
+        .eq_ignore_ascii_case(reader_pubkey_hex)
+    {
+        return false;
+    }
+    match project_membership_event_coordinate(event) {
+        Some(coord) => hidden_project_coordinates.contains(&coord),
+        None => true,
+    }
+}
+
+/// The project coordinate a membership event is scoped to: the `a` tag of a
+/// kind 9010/9011 op, or the `d` tag of a kind:39010 roster projection.
+/// `None` for other kinds or when the tag is absent (gate closed, not open).
+pub fn project_membership_event_coordinate(event: &nostr::Event) -> Option<String> {
+    let letter = match event_kind_u32(event) {
+        KIND_PROJECT_PUT_MEMBER | KIND_PROJECT_REMOVE_MEMBER => nostr::Alphabet::A,
+        KIND_PROJECT_MEMBERS => nostr::Alphabet::D,
+        _ => return None,
+    };
+    let tag = nostr::SingleLetterTag::lowercase(letter);
+    event
+        .tags
+        .filter(nostr::TagKind::SingleLetter(tag))
+        .find_map(|t| t.content().map(str::to_string))
+}
+
+/// Returns `true` for the project-membership kinds (ops + roster
+/// projection) gated by [`project_membership_event_hidden_from`].
+pub const fn is_project_membership_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_PROJECT_PUT_MEMBER | KIND_PROJECT_REMOVE_MEMBER | KIND_PROJECT_MEMBERS
+    )
 }
 
 /// Kinds whose visibility follows the repo → project link (NIP-MP Buzz
@@ -902,6 +1016,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_NIP29_CREATE_INVITE,
     KIND_NIP29_JOIN_REQUEST,
     KIND_NIP29_LEAVE_REQUEST,
+    KIND_PROJECT_PUT_MEMBER,
+    KIND_PROJECT_REMOVE_MEMBER,
     KIND_MODERATION_BAN,
     KIND_MODERATION_UNBAN,
     KIND_MODERATION_TIMEOUT,
@@ -924,6 +1040,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_NIP29_GROUP_ADMINS,
     KIND_NIP29_GROUP_MEMBERS,
     KIND_NIP29_GROUP_ROLES,
+    KIND_PROJECT_MEMBERS,
     KIND_THREAD_SUMMARY,
     KIND_WINDOW_BOUNDS,
     KIND_PRESENCE_UPDATE,

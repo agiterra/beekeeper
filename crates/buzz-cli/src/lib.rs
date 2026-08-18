@@ -1256,6 +1256,48 @@ pub enum RepoPushRole {
     Member,
 }
 
+/// Access level of a multi-repo project container (`buzz-access`,
+/// NIP-MP Buzz access extension).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ProjectAccess {
+    /// Community-readable (the pre-extension default).
+    Public,
+    /// Withheld from everyone except the author and invited members.
+    Private,
+}
+
+impl ProjectAccess {
+    /// The `buzz-access` tag value this variant serializes to.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectAccess::Public => "public",
+            ProjectAccess::Private => "private",
+        }
+    }
+}
+
+/// Project member role (NIP-MP roles extension: owner/collaborator/viewer).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ProjectRoleArg {
+    /// Full rights plus roster management.
+    Owner,
+    /// Read everything, write into project contents; no roster management.
+    Collaborator,
+    /// Read-only across the project and its contents.
+    Viewer,
+}
+
+impl ProjectRoleArg {
+    /// The role vocabulary string this variant serializes to.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectRoleArg::Owner => "owner",
+            ProjectRoleArg::Collaborator => "collaborator",
+            ProjectRoleArg::Viewer => "viewer",
+        }
+    }
+}
+
 /// Visibility of a multi-repo project listing.
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum ProjectVisibility {
@@ -1299,6 +1341,16 @@ pub enum ProjectsCmd {
         /// Visibility: `listed` (default) or `unlisted`
         #[arg(long)]
         visibility: Option<ProjectVisibility>,
+        /// Access level: `private` (default) or `public`. Private restricts
+        /// the container and its contents to you plus invited members.
+        #[arg(long, value_enum, default_value = "private")]
+        access: ProjectAccess,
+        /// Invited member as `<pubkey>[:role]` where role is owner,
+        /// collaborator (default), or viewer. Repeatable. Members are
+        /// meaningful with `--access private`; agents are invited exactly
+        /// like users — by pubkey.
+        #[arg(long = "member")]
+        member: Vec<String>,
     },
     /// Get a project by slug
     Get {
@@ -1364,11 +1416,74 @@ pub enum ProjectsCmd {
         /// Remove the visibility tag (absence defaults to `listed`)
         #[arg(long, group = "mutation", conflicts_with = "visibility")]
         clear_visibility: bool,
+        /// Set the access level: `public` or `private`. There is no clear
+        /// variant — an absent tag means public, so flipping is explicit.
+        #[arg(long, group = "mutation", value_enum)]
+        access: Option<ProjectAccess>,
     },
     /// Delete a project (head-based tombstone; verified after submit)
     Delete {
         /// Project slug
         slug: String,
+    },
+    /// Add a project member or change their role (kind 9010 membership op).
+    ///
+    /// Requires the signer to be the project creator or a roster owner. The
+    /// first accepted op flips the roster to relay-managed: head `p` tags
+    /// are thereafter ignored.
+    #[command(name = "add-member")]
+    AddMember {
+        /// Project slug
+        slug: String,
+        /// Member pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Member role
+        #[arg(long, value_enum)]
+        role: ProjectRoleArg,
+        /// Project owner pubkey (64-char hex) for a co-owned project you
+        /// manage. Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Remove a project member (kind 9011 membership op)
+    #[command(name = "remove-member")]
+    RemoveMember {
+        /// Project slug
+        slug: String,
+        /// Member pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Project owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Change an existing member's role (kind 9010 re-put)
+    #[command(name = "set-role")]
+    SetRole {
+        /// Project slug
+        slug: String,
+        /// Member pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// New member role
+        #[arg(long, value_enum)]
+        role: ProjectRoleArg,
+        /// Project owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Print a project's member roster as `[{pubkey, role}]`.
+    ///
+    /// Reads the relay-signed kind:39010 roster projection; falls back to
+    /// the head's `p` tags when no projection exists yet (head-sourced
+    /// roster).
+    Members {
+        /// Project slug
+        slug: String,
+        /// Project owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
     },
 }
 
@@ -2320,12 +2435,16 @@ mod tests {
         assert_eq!(
             names(&cmd, "projects"),
             vec![
+                "add-member",
                 "add-repo",
                 "create",
                 "delete",
                 "get",
                 "list",
+                "members",
+                "remove-member",
                 "remove-repo",
+                "set-role",
                 "update"
             ]
         );
@@ -2366,7 +2485,7 @@ mod tests {
             ("pack", 2),
             ("patches", 4),
             ("pr", 5),
-            ("projects", 7),
+            ("projects", 11),
             ("reactions", 3),
             ("repos", 5),
             ("social", 7),

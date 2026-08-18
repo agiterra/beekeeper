@@ -2690,26 +2690,83 @@ impl Db {
 
     /// Upsert the project ACL projection row + invited-member set from an
     /// ingested 30621 head (store+project side effect; republish-latest,
-    /// stale replays ignored).
+    /// stale replays ignored; head `p` tags ignored once the roster is
+    /// ops-sourced). Returns whether the head's members were applied.
     pub async fn upsert_project_acl(
         &self,
         community: CommunityId,
         owner: &[u8],
         dtag: &str,
         visibility: &str,
-        member_pubkeys: &[Vec<u8>],
+        members: &[project_acl::ProjectMember],
         head_created_at: i64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         project_acl::upsert_project_acl(
             &self.pool,
             community,
             owner,
             dtag,
             visibility,
-            member_pubkeys,
+            members,
             head_created_at,
         )
         .await
+    }
+
+    /// Apply a kind:9010 put-member op (add members / change roles),
+    /// authorized for the project creator or a roster owner.
+    pub async fn put_project_members(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        actor: &[u8],
+        members: &[project_acl::ProjectMember],
+    ) -> Result<project_acl::ProjectMemberOpOutcome> {
+        project_acl::put_project_members(&self.pool, community, owner, dtag, actor, members).await
+    }
+
+    /// Apply a kind:9011 remove-member op, authorized for the project
+    /// creator or a roster owner.
+    pub async fn remove_project_members(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        actor: &[u8],
+        member_pubkeys: &[Vec<u8>],
+    ) -> Result<project_acl::ProjectMemberOpOutcome> {
+        project_acl::remove_project_members(
+            &self.pool,
+            community,
+            owner,
+            dtag,
+            actor,
+            member_pubkeys,
+        )
+        .await
+    }
+
+    /// Resolve a project's roster (creator, visibility, members with roles)
+    /// by coordinate, for the relay-signed kind:39010 projection.
+    pub async fn get_project_roster(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+    ) -> Result<Option<project_acl::ProjectRoster>> {
+        project_acl::get_project_roster(&self.pool, community, coordinate).await
+    }
+
+    /// Returns whether `pubkey` may write contents into the project at
+    /// `coordinate` (unknown/public project, creator, or owner/collaborator
+    /// member — viewers are read-only).
+    pub async fn can_write_project_contents(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::can_write_project_contents(&self.pool, community, coordinate, pubkey).await
     }
 
     /// Drop the project ACL row for a NIP-09-deleted 30621 coordinate

@@ -9,6 +9,7 @@ import {
   isProjectContainerDeleted,
   isProjectMember,
   makeLocalGeneral,
+  normalizeProjectMemberEntries,
   parseMemberRef,
   partitionByChannelProject,
   partitionByProject,
@@ -103,7 +104,24 @@ test("eventToProjectContainer reads private visibility and p-tag members", () =>
   });
   const project = eventToProjectContainer(event);
   assert.equal(project.visibility, "private");
-  assert.deepEqual(project.members, [OTHER]);
+  // Role-less legacy tags read as collaborator.
+  assert.deepEqual(project.members, [{ pubkey: OTHER, role: "collaborator" }]);
+});
+
+test("eventToProjectContainer reads roles from arity-4 p tags", () => {
+  const THIRD = "c".repeat(64);
+  const project = eventToProjectContainer(
+    makeProjectEvent({
+      tags: [
+        ["p", OTHER, "", "owner"],
+        ["p", THIRD, "", "not-a-role"], // unknown roles fall back
+      ],
+    }),
+  );
+  assert.deepEqual(project.members, [
+    { pubkey: OTHER, role: "owner" },
+    { pubkey: THIRD, role: "collaborator" },
+  ]);
 });
 
 test("eventToProjectContainer treats any non-private buzz-access value as public", () => {
@@ -130,6 +148,27 @@ test("isProjectMember treats the owner as an implicit member", () => {
   assert.equal(isProjectMember(project, OWNER.toUpperCase()), true);
   assert.equal(isProjectMember(project, OTHER), true);
   assert.equal(isProjectMember(project, "c".repeat(64)), false);
+});
+
+test("normalizeProjectMemberEntries upgrades legacy snapshot shapes", () => {
+  // Pre-roles snapshots stored bare pubkey strings.
+  assert.deepEqual(normalizeProjectMemberEntries([OTHER.toUpperCase()]), [
+    { pubkey: OTHER, role: "collaborator" },
+  ]);
+  // Current shape passes through; unknown roles fall back to collaborator.
+  assert.deepEqual(
+    normalizeProjectMemberEntries([
+      { pubkey: OTHER, role: "viewer" },
+      { pubkey: OWNER, role: "bogus" },
+    ]),
+    [
+      { pubkey: OTHER, role: "viewer" },
+      { pubkey: OWNER, role: "collaborator" },
+    ],
+  );
+  // Garbage entries are dropped, not fatal.
+  assert.deepEqual(normalizeProjectMemberEntries([null, 42, {}]), []);
+  assert.deepEqual(normalizeProjectMemberEntries("nope"), []);
 });
 
 test("makeLocalGeneral is public with no members", () => {

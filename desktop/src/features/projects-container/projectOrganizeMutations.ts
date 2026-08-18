@@ -199,9 +199,10 @@ export type UpdateProjectContainerInput = {
   description?: string;
   /** Defaults to the project's current visibility when omitted. */
   visibility?: ProjectContainer["visibility"];
-  /** Defaults to the project's current members when omitted. Ignored (and
-   * cleared) when the effective visibility is public. */
-  memberPubkeys?: string[];
+  /** Defaults to the project's current members when omitted. Members are
+   * kept across visibility changes — they carry roles, not just a
+   * private-project ACL. */
+  members?: ProjectContainer["members"];
 };
 
 /** Rename/edit a project the current identity owns (same-dtag republish).
@@ -212,7 +213,7 @@ export async function updateProjectContainer({
   name,
   description,
   visibility,
-  memberPubkeys,
+  members,
 }: UpdateProjectContainerInput): Promise<ProjectContainer> {
   const self = await selfPubkey();
   if (project.owner !== self) {
@@ -228,9 +229,7 @@ export async function updateProjectContainer({
     dtag: project.dtag,
     description: description?.trim() ?? "",
     visibility: nextVisibility,
-    // Private→public clears the member list even if a stale one is passed.
-    memberPubkeys:
-      nextVisibility === "private" ? (memberPubkeys ?? project.members) : [],
+    members: members ?? project.members,
     extraTags: [
       ...project.repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),

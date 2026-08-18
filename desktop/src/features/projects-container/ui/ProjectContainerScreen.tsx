@@ -46,6 +46,7 @@ import {
 } from "../lib/projectContainerModel";
 import { attachableProjectRepos } from "../lib/attachableRepos";
 import { projectAgentRows } from "../lib/projectChildren";
+import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
@@ -57,43 +58,14 @@ import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
 import { LinkProjectRepoDialog } from "./LinkProjectRepoDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
+import { ProjectMembersCard } from "./ProjectMembersCard";
+import { SectionCard, EmptyHint } from "./SectionCard";
 import { ProjectSectionRepoAddMenu } from "./ProjectSectionRepoAddMenu";
 import {
   ProjectsScreenCreateDialogs,
   type ProjectsScreenCreateKind,
 } from "./ProjectsScreenCreateDialogs";
 import { useProjectItemMoves } from "./useProjectItemMoves";
-
-function SectionCard({
-  icon,
-  title,
-  count,
-  action,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  count: number;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-        {icon}
-        <span>{title}</span>
-        <span className="text-2xs text-muted-foreground">{count}</span>
-        <span className="flex-1" />
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-muted-foreground">{children}</p>;
-}
 
 /**
  * Project container home: the project-scoped management surface. Everything
@@ -188,6 +160,9 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
 
   const updateMutation = useUpdateProjectContainerMutation();
   const linkMutation = useLinkProjectRepoMutation();
+  // The header count and Members card share this cached roster read; it
+  // falls back to the head event's members until a 39010 projection exists.
+  const rosterQuery = useProjectRosterQuery(project);
   const relayOrigin = useRelayOrigin();
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -296,14 +271,24 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
                 {project.description}
               </p>
             ) : null}
-            {project.visibility === "private" ? (
-              <p
-                className="mt-1 text-xs text-muted-foreground"
-                data-testid="project-container-member-count"
-              >
-                Private · {project.members.length + 1} members
-              </p>
-            ) : null}
+            {(() => {
+              // Roster (authoritative when loaded) + the implicit creator.
+              const rosterSize = (rosterQuery.data ?? project.members).length;
+              const memberCount = rosterSize + 1;
+              if (project.visibility !== "private" && rosterSize === 0) {
+                return null;
+              }
+              return (
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="project-container-member-count"
+                >
+                  {project.visibility === "private"
+                    ? `Private · ${memberCount} members`
+                    : `${memberCount} members`}
+                </p>
+              );
+            })()}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {canManage ? (
@@ -343,6 +328,10 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
         </header>
 
         <div className="flex flex-col gap-4">
+          {/* The local General placeholder has no coordinate to manage a
+              roster against — the card appears once the real head exists. */}
+          {!isFallback ? <ProjectMembersCard project={project} /> : null}
+
           <SectionCard
             count={agents.length}
             icon={<Bot className="size-4" />}

@@ -1,8 +1,5 @@
 import * as React from "react";
 
-import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
-import { useUsersBatchQuery } from "@/features/profile/hooks";
-import type { UserSearchResult } from "@/shared/api/types";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,8 +26,9 @@ import type { ProjectContainer } from "../hooks";
 import { GENERAL_PROJECT_DTAG } from "../lib/projectContainerModel";
 import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
 
-/** Modal for renaming a project container / editing its description,
- * visibility, and invited members. */
+/** Modal for renaming a project container / editing its description and
+ * visibility. Members are managed on the project page's Members card — the
+ * single source of truth — not here. */
 export function EditProjectContainerDialog({
   project,
   isSaving,
@@ -43,7 +41,6 @@ export function EditProjectContainerDialog({
     name: string;
     description?: string;
     visibility?: ProjectContainer["visibility"];
-    memberPubkeys?: string[];
   }) => Promise<void>;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -51,7 +48,6 @@ export function EditProjectContainerDialog({
   const [description, setDescription] = React.useState("");
   const [visibility, setVisibility] =
     React.useState<ProjectContainer["visibility"]>("public");
-  const [members, setMembers] = React.useState<UserSearchResult[]>([]);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [pendingVisibility, setPendingVisibility] = React.useState<
     ProjectContainer["visibility"] | null
@@ -64,45 +60,9 @@ export function EditProjectContainerDialog({
     setName(project.name);
     setDescription(project.description);
     setVisibility(project.visibility);
-    setMembers(
-      project.members.map((pubkey) => ({
-        pubkey,
-        displayName: null,
-        avatarUrl: null,
-        nip05Handle: null,
-        ownerPubkey: null,
-        isAgent: false,
-      })),
-    );
     setErrorMessage(null);
     setPendingVisibility(null);
   }, [project]);
-
-  // Enrich the pre-filled member chips with resolved profile info once it
-  // arrives, without touching which pubkeys are selected.
-  const memberPubkeys = React.useMemo(
-    () => members.map((member) => member.pubkey),
-    [members],
-  );
-  const memberProfilesQuery = useUsersBatchQuery(memberPubkeys);
-  React.useEffect(() => {
-    const profiles = memberProfilesQuery.data?.profiles;
-    if (!profiles) return;
-    setMembers((current) =>
-      current.map((member) => {
-        const summary = profiles[member.pubkey.toLowerCase()];
-        if (!summary) return member;
-        return {
-          ...member,
-          displayName: summary.displayName ?? member.displayName,
-          avatarUrl: summary.avatarUrl ?? member.avatarUrl,
-          nip05Handle: summary.nip05Handle ?? member.nip05Handle,
-          ownerPubkey: summary.ownerPubkey ?? member.ownerPubkey,
-          isAgent: summary.isAgent ?? member.isAgent,
-        };
-      }),
-    );
-  }, [memberProfilesQuery.data]);
 
   async function doSave() {
     setErrorMessage(null);
@@ -111,10 +71,6 @@ export function EditProjectContainerDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         visibility,
-        memberPubkeys:
-          visibility === "private"
-            ? members.map((member) => member.pubkey)
-            : [],
       });
       onOpenChange(false);
     } catch (error) {
@@ -183,16 +139,6 @@ export function EditProjectContainerDialog({
                 The General project is always public.
               </p>
             ) : null}
-            {!isGeneral && visibility === "private" ? (
-              <PersonaShareRecipients
-                allowDirectPubkeyEntry
-                disabled={false}
-                onSelectionChange={setMembers}
-                open={project !== null}
-                selectedUsers={members}
-                testIdPrefix="edit-project-container-members"
-              />
-            ) : null}
             {errorMessage ? (
               <p className="text-sm text-destructive">{errorMessage}</p>
             ) : null}
@@ -232,7 +178,7 @@ export function EditProjectContainerDialog({
             <AlertDialogDescription>
               {pendingVisibility === "private"
                 ? "Only you and the people you invite will be able to see this project — its channels, forums, and code repositories."
-                : "Everyone in the community will be able to see this project. Its invited member list will be cleared."}
+                : "Everyone in the community will be able to see this project. Members keep their roles."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -443,14 +443,16 @@ pub async fn add_member(
                     // validator accepts the 9000, the event is stored, and the
                     // membership silently never applies — the client is told
                     // "accepted" over a roster that never changes. Member-level
-                    // only; a gate that fails to resolve fails closed.
+                    // only; a gate that fails to resolve fails closed. Write
+                    // tier: a project Viewer reads the transport but must not
+                    // extend its membership.
                     let admitted = crate::project_acl::get_channel_transport_gate(
                         pool,
                         community_id,
                         channel_id,
                     )
                     .await?
-                    .is_some_and(|gate| gate.admits(inviter));
+                    .is_some_and(|gate| gate.admits_write(inviter));
                     if !admitted {
                         return Err(DbError::AccessDenied(
                             "inviter is not an active member".to_string(),
@@ -2941,7 +2943,10 @@ mod tests {
             &project_owner,
             dtag,
             "private",
-            std::slice::from_ref(&project_member),
+            &[(
+                project_member.clone(),
+                crate::project_acl::ProjectRole::Collaborator,
+            )],
             1_800_000_000,
         )
         .await

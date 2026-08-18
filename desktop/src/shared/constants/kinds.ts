@@ -76,6 +76,15 @@ export const KIND_GIT_STATUS_DRAFT = 1633;
 // h-tags = currently-hidden DM channel ids).
 export const KIND_DM_VISIBILITY = 30622;
 
+// NIP-MP membership ops: 9010 puts members (add or change role) on a project
+// roster, 9011 removes them; both carry the project coordinate in an `a` tag
+// and are accepted only from the project creator or a roster owner. 39010 is
+// the relay-signed addressable roster projection (d=project coordinate, one
+// ["p", hex, "", role] per member).
+export const KIND_PROJECT_PUT_MEMBER = 9010;
+export const KIND_PROJECT_REMOVE_MEMBER = 9011;
+export const KIND_PROJECT_MEMBERS = 39010;
+
 // Human-visible "new content" message kinds. Used as the unread trigger set
 // (sidebar badges, catch-up queries) and as the Home-feed mention query.
 // Reactions, edits, diffs, deletions, and system messages are deliberately

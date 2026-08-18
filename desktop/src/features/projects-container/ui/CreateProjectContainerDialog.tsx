@@ -20,7 +20,7 @@ import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
 const VISIBILITY_COPY = {
   public: "Everyone in the community can see it.",
   private:
-    "Only you and the people you invite can see this project — its channels, forums, and code repositories.",
+    "Only you and the people you invite can see this project — its channels, forums, and code repositories. New projects are private by default.",
 } as const;
 
 /** Modal for creating a project container (kind:30621). */
@@ -38,7 +38,7 @@ export function CreateProjectContainerDialog({
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [visibility, setVisibility] = React.useState<"public" | "private">(
-    "public",
+    "private",
   );
   const [members, setMembers] = React.useState<UserSearchResult[]>([]);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -47,7 +47,7 @@ export function CreateProjectContainerDialog({
     if (!open) return;
     setName("");
     setDescription("");
-    setVisibility("public");
+    setVisibility("private");
     setMembers([]);
     setErrorMessage(null);
   }, [open]);
@@ -58,14 +58,16 @@ export function CreateProjectContainerDialog({
     if (!trimmedName) return;
     setErrorMessage(null);
     try {
+      // Initial invitees join as Collaborator; roles are managed afterward
+      // on the project page's Members card.
       await onCreate({
         name: trimmedName,
         description: description.trim() || undefined,
         visibility,
-        memberPubkeys:
-          visibility === "private"
-            ? members.map((member) => member.pubkey)
-            : undefined,
+        members: members.map((member) => ({
+          pubkey: member.pubkey,
+          role: "collaborator" as const,
+        })),
       });
       onOpenChange(false);
     } catch (error) {
@@ -108,16 +110,14 @@ export function CreateProjectContainerDialog({
               testIdPrefix="create-project-container"
               visibility={visibility}
             />
-            {visibility === "private" ? (
-              <PersonaShareRecipients
-                allowDirectPubkeyEntry
-                disabled={false}
-                onSelectionChange={setMembers}
-                open={open}
-                selectedUsers={members}
-                testIdPrefix="create-project-container-members"
-              />
-            ) : null}
+            <PersonaShareRecipients
+              allowDirectPubkeyEntry
+              disabled={false}
+              onSelectionChange={setMembers}
+              open={open}
+              selectedUsers={members}
+              testIdPrefix="create-project-container-members"
+            />
             {errorMessage ? (
               <p className="text-sm text-destructive">{errorMessage}</p>
             ) : null}
