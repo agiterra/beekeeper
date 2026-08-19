@@ -2412,7 +2412,20 @@ mod tests {
         KEYS.get_or_init(Keys::generate)
     }
 
-    fn claude_runtime(agent_command: String) -> RuntimeDescriptor {
+    /// A claude runtime that runs `script` under `bash` rather than exec'ing
+    /// it — see `session::tests::request` for why (ETXTBSY against other test
+    /// threads' forks).
+    fn claude_runtime(script: String) -> RuntimeDescriptor {
+        RuntimeDescriptor {
+            agent_command: "bash".into(),
+            agent_args: vec![script],
+            ..claude_runtime_command(String::new())
+        }
+    }
+
+    /// `claude_runtime` for a command spawned as-is — notably a path that is
+    /// meant *not* to exist, where the spawn itself has to fail.
+    fn claude_runtime_command(agent_command: String) -> RuntimeDescriptor {
         RuntimeDescriptor {
             instance_ref: "claude-primary".into(),
             driver: "claude-agent-acp".into(),
@@ -4248,13 +4261,13 @@ mod tests {
         // the "codex" one exists — spawning the claude one would fail.
         let codex_agent = fake_agent(dir.path(), "codex-agent", GOOD_AGENT);
         let runtimes = vec![
-            claude_runtime(dir.path().join("missing-claude").to_string_lossy().into()),
+            claude_runtime_command(dir.path().join("missing-claude").to_string_lossy().into()),
             RuntimeDescriptor {
                 instance_ref: "codex-primary".into(),
                 driver: "codex-acp".into(),
                 runtime: "codex".into(),
-                agent_command: codex_agent,
-                agent_args: Vec::new(),
+                agent_command: "bash".into(),
+                agent_args: vec![codex_agent],
                 cli_env: None,
                 default_model: "default".into(),
                 allowed_models: vec!["default".into()],

@@ -1355,7 +1355,26 @@ while IFS= read -r line; do
 done
 "#;
 
-    fn request(command: String, cwd: &std::path::Path) -> CreateRequest {
+    /// Build a create request that runs `script` under `bash` instead of
+    /// exec'ing it.
+    ///
+    /// `fake_agent` writes a script and the provider used to spawn that path
+    /// directly, which races every other test thread: while one thread holds a
+    /// write fd on its freshly written script, another thread's fork inherits
+    /// it, and an `execve` of that file before the child reaches its own exec
+    /// fails with ETXTBSY ("Text file busy"). It took down the gate on
+    /// 2026-08-18. Handing the script to an interpreter sidesteps the class
+    /// entirely — `bash` only ever *reads* the file, and the kernel's busy
+    /// check applies to `execve`, not to `open`.
+    fn request(script: String, cwd: &std::path::Path) -> CreateRequest {
+        let mut request = request_command("bash".into(), cwd);
+        request.agent_args = vec![script];
+        request
+    }
+
+    /// `request` for a command that is spawned as-is — a real binary, or a
+    /// placeholder that no test ever spawns.
+    fn request_command(command: String, cwd: &std::path::Path) -> CreateRequest {
         CreateRequest {
             target: CodingSessionTarget {
                 driver: "claude-agent-acp".into(),
@@ -1855,7 +1874,7 @@ done
     #[test]
     fn rehydration_mcp_rejects_relative_paths_without_echoing_them() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut create = request("unused-agent".into(), dir.path());
+        let mut create = request_command("unused-agent".into(), dir.path());
         create.rehydration_mcp = Some(RehydrationMcpDescriptor {
             command: PathBuf::from("private/command"),
             package_path: PathBuf::from("private/package.json"),
@@ -1871,7 +1890,7 @@ done
     #[test]
     fn create_request_debug_redacts_host_private_state() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut create = request("/private/adapter".into(), dir.path());
+        let mut create = request_command("/private/adapter".into(), dir.path());
         create.resume_cursor = Some("opaque-native-cursor".into());
         create.rehydration_mcp = Some(RehydrationMcpDescriptor {
             command: PathBuf::from("/private/buzz-session-context"),
