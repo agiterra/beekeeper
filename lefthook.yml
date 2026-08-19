@@ -51,6 +51,11 @@ commit-msg:
 
 pre-push:
   parallel: true
+  scripts:
+    # Not a command: commands are file-filtered, and a guard that only runs
+    # when lefthook sees changed files is not a guard.
+    "push-destination.sh":
+      runner: bash
   commands:
     branch-skew:
       run: ./scripts/check-branch-skew.sh
