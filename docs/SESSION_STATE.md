@@ -5,8 +5,8 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-18, after the session-management ship + live
-two-machine testing._
+_Last updated: 2026-08-19, correcting §2 item 3 (rehydration reattach fix
+`b9de9a6d` verified in code) at the start of the Project Pulse build._
 
 ---
 
@@ -51,11 +51,14 @@ across two machines simultaneously.
    thing already failed", which is why failed attempts repeat. `toolName` also
    carries host paths into signed events.
 
-3. **Rehydration is create-only.** A reattached execution gets no context
-   MCP (`session.rs` resume/load pass empty server lists; `lib.rs` reattach
-   passes `rehydration_mcp: None`). Confirmed twice on 2026-08-18: a resumed
-   Codex lost its package, and a later agent read Claude generation 2 saying
-   it "did not see that tool available". Transport already supports it.
+3. **Rehydration is create-only.** ~~A reattached execution gets no context
+   MCP.~~ **Fixed in code 2026-08-18 by `b9de9a6d`** — verified 2026-08-19:
+   `session.rs:646/:667` now pass `mcp_servers.clone()` into
+   resume/load, and `lib.rs:1081-1098` builds a real `rehydration_mcp` on
+   `resume_session`. The 2026-08-18 live observations (resumed Codex lost
+   its package; Claude gen 2 "did not see that tool available") predate the
+   fix. Still owed: a live re-test of resume-with-context, and confirmation
+   the fix is in the deployed build (it postdates `build/2026-08-18.7`).
 4. **The package is a start-time snapshot.** Provenance says
    `complete: true` meaning "complete when projected", which reads as
    "current". A joined execution never learns what a sibling did afterward
@@ -165,9 +168,10 @@ than replace them, and it is not started.
    single-provider-instance lock shipped in `build/2026-08-18.12`; nobody has
    yet created a session on it and confirmed one click makes one execution.
    Until that is done, item 1 is suspected-fixed, not fixed.
-2. **Rehydration hardening** — §2 items 3–6 as a single bite. Every one came
-   from live use, and together they make the multi-execution story honest
-   instead of subtly misleading.
+2. **Rehydration hardening** — §2 items 4–6 as a single bite (item 3's code
+   half shipped in `b9de9a6d`; re-verify live rather than striking it).
+   Every one came from live use, and together they make the multi-execution
+   story honest instead of subtly misleading.
 3. **Verify Andy's People/roles flow** with a second identity
    (viewer → operator → revoke). It plausibly closes §2 items 7–8; do not
    strike them on commit messages alone.
