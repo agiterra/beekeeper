@@ -1,5 +1,13 @@
 # AGENTS.md — AI Agent Contributor Guide
 
+> **Read [docs/SESSION_STATE.md](docs/SESSION_STATE.md) first.** It is the
+> living ledger: what is deployed right now, what is open (each item with the
+> code or transcript that proves it), what to do next, and the environment
+> facts that have already cost this project hours. It is updated at every
+> ceremony and whenever live use produces a finding; where it disagrees with
+> an older document about *current state*, it wins. Findings go **into** it,
+> never into a new handoff document.
+
 > **This repo is a fork of [block/buzz](https://github.com/block/buzz).** Before
 > landing new features or fixes, read [docs/INTEGRATION.md](docs/INTEGRATION.md)
 > to understand the branch model (`main` mirror, `feature/*` branches,
