@@ -38,6 +38,28 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 export PATH="$ROOT/bin:$PATH"
 
+# The gate below runs cargo directly rather than through `just`, so nothing
+# else hands it the repo's DATABASE_URL, and buzz-relay's built-in default
+# points at `localhost` — which on macOS resolves to the IPv6 listener that
+# shadows the dev Postgres. Ten relay tests then fail with `28P01 password
+# authentication failed` on a tree that is perfectly fine.
+#
+# Mirror `just`'s `set dotenv-load` (justfile:3), precedence included: a value
+# already exported wins over .env, so `DATABASE_URL=... scripts/integrate.sh`
+# still does what it looks like. Assumes the plain KEY=value shape .env.example
+# ships — quoting, interpolation, and `export` prefixes are not handled.
+if [[ -f .env ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    key="${key//[[:space:]]/}"
+    [[ -z "$key" ]] && continue
+    [[ -n "${!key:-}" ]] && continue
+    export "$key=${line#*=}"
+  done < .env
+fi
+
 [[ -z "$(git status --porcelain)" ]] || { echo "working tree not clean" >&2; exit 1; }
 git config rerere.enabled true
 git config rerere.autoUpdate true
@@ -138,6 +160,11 @@ git checkout -B integrated-build "$GLUE" --
 
 # ── 4. gate ──────────────────────────────────────────────────────────────────
 if ! $SKIP_GATE; then
+  # The relay image builds with `--locked`; `cargo test` does not, so a lock
+  # that has drifted from the assembly's manifests sails through the gate and
+  # dies in the deploy build instead (it did, 2026-08-18: buzz-shell-host and
+  # its closure were missing and the relay could not ship).
+  cargo metadata --locked --format-version 1 > /dev/null
   cargo test --workspace
   just desktop-check
   just desktop-test

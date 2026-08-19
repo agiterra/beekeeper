@@ -85,6 +85,12 @@ steps:
     commands:
       # The repo pins its toolchain via hermit shims in bin/
       - export PATH="$CI_WORKSPACE/bin:$PATH"
+      # The relay's release image builds with `--locked`, but `cargo test` does
+      # not, so a Cargo.lock that has drifted from the manifests passes this
+      # gate and then fails the deploy build. That is exactly how the stale
+      # buzz-shell-host closure reached `integrated` on 2026-08-18 and blocked
+      # the relay from shipping. Seconds, and it fails before anything costly.
+      - cargo metadata --locked --format-version 1 > /dev/null
       # The DB-backed relay/db unit tests need the migrated schema, not just a
       # reachable postgres (upstream CI has the same apply-schema step).
       - cargo run -p buzz-admin -- migrate
