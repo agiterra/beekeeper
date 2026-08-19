@@ -126,7 +126,7 @@ export function addCodingSessionProviderGenesisGateMessage(
 export function buildAddCodingSessionProviderSubmit(input: {
   umbrella: Pick<
     CodingSessionUmbrellaRecord,
-    "sessionRef" | "genesisRef" | "genesisResolution" | "title"
+    "sessionRef" | "genesisRef" | "genesisResolution" | "title" | "executions"
   >;
   channelId: string;
   target: NewCodingSessionTarget | null;

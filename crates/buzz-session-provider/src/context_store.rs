@@ -151,6 +151,7 @@ mod tests {
             },
             provenance: CodingSessionContextProvenance {
                 generated_at: 1,
+                complete_as_of: Some(1),
                 complete: true,
                 truncated: false,
                 source_event_count: 1,

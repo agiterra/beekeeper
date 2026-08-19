@@ -56,6 +56,7 @@ use buzz_acp::relay::{HarnessRelay, RestClient};
 use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
 use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_context::coding_session_first_turn_brief;
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
@@ -723,7 +724,7 @@ impl Provider {
                 }
                 self.create_session(plan, relay).await
             }
-            LifecycleDecision::Resume(plan) => self.resume_session(plan).await,
+            LifecycleDecision::Resume(plan) => self.resume_session(plan, relay).await,
             LifecycleDecision::Stop(plan) => self.stop_session(plan),
         }
     }
@@ -757,7 +758,14 @@ impl Provider {
             generation: 1,
         };
         let rehydration_mcp = self
-            .prepare_rehydration_context(&plan, &target.session_id, relay)
+            .prepare_rehydration_context(
+                &plan.command_id,
+                plan.channel_id,
+                plan.session_ref.as_deref(),
+                plan.genesis_ref.as_deref(),
+                &target.session_id,
+                relay,
+            )
             .await;
         let request = CreateRequest {
             target: target.clone(),
@@ -914,14 +922,17 @@ impl Provider {
     /// operator from starting a usable fresh execution.
     async fn prepare_rehydration_context(
         &self,
-        plan: &CreatePlan,
+        command_id: &str,
+        channel_id: Uuid,
+        session_ref: Option<&str>,
+        genesis_ref: Option<&str>,
         execution_id: &str,
         relay: Option<&HarnessRelay>,
     ) -> Option<RehydrationMcpDescriptor> {
         let Some(command) = self.config.context_mcp_command.as_ref() else {
             tracing::info!(
                 target: "csp::context",
-                command_id = %plan.command_id,
+                %command_id,
                 "context MCP sidecar is unavailable; starting Fresh"
             );
             return None;
@@ -929,23 +940,23 @@ impl Provider {
         if !command.is_absolute() {
             tracing::warn!(
                 target: "csp::context",
-                command_id = %plan.command_id,
+                %command_id,
                 "context MCP command is not absolute; starting without rehydrated context"
             );
             return None;
         }
-        let Some(session_ref) = plan.session_ref.as_ref() else {
+        let Some(session_ref) = session_ref else {
             tracing::debug!(
                 target: "csp::context",
-                command_id = %plan.command_id,
+                %command_id,
                 "create has no umbrella sessionRef; starting Fresh"
             );
             return None;
         };
-        let Some(genesis_ref) = plan.genesis_ref.as_ref() else {
+        let Some(genesis_ref) = genesis_ref else {
             tracing::debug!(
                 target: "csp::context",
-                command_id = %plan.command_id,
+                %command_id,
                 "create has no umbrella genesisRef; starting Fresh"
             );
             return None;
@@ -953,15 +964,15 @@ impl Provider {
         let Some(relay) = relay else {
             tracing::info!(
                 target: "csp::context",
-                command_id = %plan.command_id,
+                %command_id,
                 "relay query surface is unavailable; starting Fresh"
             );
             return None;
         };
         let request = ContextProjectionRequest {
-            channel_id: plan.channel_id,
-            session_ref: session_ref.clone(),
-            genesis_ref: genesis_ref.clone(),
+            channel_id,
+            session_ref: session_ref.to_owned(),
+            genesis_ref: genesis_ref.to_owned(),
             relay_self_pubkey: self.relay_self.clone(),
             generated_at: now_ms(),
             limits: ContextProjectionLimits::default(),
@@ -976,12 +987,24 @@ impl Provider {
             Err(error) => {
                 tracing::info!(
                     target: "csp::context",
-                    command_id = %plan.command_id,
+                    %command_id,
                     "verified prior context unavailable; starting Fresh: {error}"
                 );
                 return None;
             }
         };
+        let first_turn_brief =
+            match serde_json::to_string(&coding_session_first_turn_brief(&package)) {
+                Ok(brief) => brief,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::context",
+                        %command_id,
+                        "verified first-turn brief could not be encoded; starting Fresh: {error}"
+                    );
+                    return None;
+                }
+            };
         let package_path = match context_store::write_context_package(
             &self.config.state_dir,
             execution_id,
@@ -991,7 +1014,7 @@ impl Provider {
             Err(error) => {
                 tracing::warn!(
                     target: "csp::context",
-                    command_id = %plan.command_id,
+                    %command_id,
                     "verified context could not be persisted; starting Fresh: {error}"
                 );
                 return None;
@@ -1000,10 +1023,15 @@ impl Provider {
         Some(RehydrationMcpDescriptor {
             command: command.clone(),
             package_path,
+            first_turn_brief,
         })
     }
 
-    async fn resume_session(&mut self, plan: ResumePlan) -> anyhow::Result<()> {
+    async fn resume_session(
+        &mut self,
+        plan: ResumePlan,
+        relay: Option<&HarnessRelay>,
+    ) -> anyhow::Result<()> {
         if self
             .sessions
             .handle(&plan.target.session_id)
@@ -1049,6 +1077,17 @@ impl Provider {
             session_id: record.session_id.clone(),
             generation,
         };
+        let package_id = Uuid::new_v4().to_string();
+        let rehydration_mcp = self
+            .prepare_rehydration_context(
+                &plan.command_id,
+                record.channel_id,
+                record.session_ref.as_deref(),
+                record.genesis_ref.as_deref(),
+                &package_id,
+                relay,
+            )
+            .await;
         let request = CreateRequest {
             target: target.clone(),
             channel_id: record.channel_id,
@@ -1056,7 +1095,7 @@ impl Provider {
             title: record.title.clone(),
             model: record.model.clone(),
             resume_cursor: record.resume_cursor.clone(),
-            rehydration_mcp: None,
+            rehydration_mcp,
             agent_command: descriptor.agent_command.clone(),
             agent_args: descriptor.agent_args.clone(),
             agent_env: descriptor

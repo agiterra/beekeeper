@@ -91,6 +91,32 @@ ACP session may still attach as the next generation, but its receipt and
 transcript must say `CONTEXT_NOT_RECOVERED` /
 `session_restarted_without_context` rather than claiming continuity.
 
+Every ACP session-open method (`session/new`, `session/resume`, and
+`session/load`) receives the same launcher-selected private, read-only context
+MCP when a verified package is available. Native resume/load does not receive a
+reconstructed-context system prompt because it already supplies
+provider-native context for that execution; the MCP remains available as an
+evidence surface for sibling work observed in the snapshot.
+
+For a reconstructed `session/new`, the launcher MUST push a bounded
+`coding-session-first-turn-brief/v1` before the model's first token, using the
+adapter's system-prompt transport where supported and a first-turn preamble
+only as fallback. The brief is deterministic, not model-authored: session
+identity and safe goal/name, snapshot provenance, recent turn transport
+outcomes, plan counts, tool attempt outcomes, and signed evidence ids. It MUST
+NOT carry tool arguments/results, reasoning, host paths, credentials, or the
+opaque ACP cursor. `ended_normally` means only that ACP ended the turn normally;
+it MUST NOT be presented as semantic task completion.
+
+Depth stays pull-based through `session_overview`, `session_history`, and
+`search_session`. `session_overview` repeats the exact first-turn brief. A
+complete package is complete only through its additive `completeAsOf`
+watermark; later concurrent work may exist. Historical packages without that
+field remain readable but MUST be described as having an unknown legacy
+watermark. `sourceEventCount` counts the complete verification proof graph
+(identity, authority, lifecycle, metadata, and transcript), while
+`totalHistoryItems` counts transcript items only.
+
 `session.stop` addresses the exact current generation. Once consumed, the
 provider records the execution as closed before releasing its process. Restart
 recovery must not attach or make resumable a closed record. This is different

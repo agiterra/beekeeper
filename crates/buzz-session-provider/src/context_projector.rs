@@ -22,7 +22,8 @@ use buzz_acp::relay::RestClient;
 
 use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use buzz_core::coding_session_context::{
-    coding_session_context_role_for_item_kind, CodingSessionContextHistoryItem,
+    coding_session_context_role_for_item_kind, sanitize_coding_session_context_content,
+    sanitize_coding_session_context_text, CodingSessionContextHistoryItem,
     CodingSessionContextIdentity, CodingSessionContextPackage, CodingSessionContextProvenance,
     CODING_SESSION_CONTEXT_PACKAGE_VERSION, MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
     MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
@@ -151,7 +152,7 @@ pub struct ContextProjectionInput {
     pub goal_revisions: Vec<Event>,
     /// Source-query coverage and explanation.
     pub coverage: ContextSourceCoverage,
-    /// Epoch milliseconds stamped on the private package.
+    /// Epoch milliseconds when the source-query attempt began.
     pub generated_at: i64,
     /// Local package bounds.
     pub limits: ContextProjectionLimits,
@@ -168,7 +169,10 @@ pub struct ContextProjectionRequest {
     pub genesis_ref: String,
     /// Relay identity witnessed during connection setup, when advertised.
     pub relay_self_pubkey: Option<String>,
-    /// Epoch milliseconds stamped on the private package.
+    /// Epoch milliseconds when this source-query attempt began.
+    ///
+    /// When every partition proves complete, this becomes `completeAsOf`.
+    /// It never claims that later or concurrently delivered facts do not exist.
     pub generated_at: i64,
     /// Local package bounds.
     pub limits: ContextProjectionLimits,
@@ -204,6 +208,7 @@ struct VerifiedGeneration {
 struct CandidateHistory {
     timestamp_ms: i64,
     item: CodingSessionContextHistoryItem,
+    sanitized: bool,
 }
 
 #[derive(Debug)]
@@ -818,6 +823,10 @@ pub fn project_session_context(
     });
 
     let verified_total = candidates.len() as u64;
+    let sanitized_items = candidates
+        .iter()
+        .filter(|candidate| candidate.sanitized)
+        .count();
     if input.coverage.complete && input.coverage.total_history_items != Some(verified_total) {
         return Err(ContextProjectionError::Conflict(format!(
             "complete source claimed {:?} history items but {} verified",
@@ -834,7 +843,20 @@ pub fn project_session_context(
         .map(|candidate| candidate.item)
         .collect();
     let mut omitted = retain_from as u64;
-    let mut notes = input.coverage.notes.clone();
+    let mut notes = input
+        .coverage
+        .notes
+        .iter()
+        .map(|note| sanitize_coding_session_context_text(note))
+        .collect();
+    if sanitized_items > 0 {
+        record_omission_note(
+            &mut notes,
+            format!(
+                "Redacted sensitive material from {sanitized_items} verified history items; source event ids remain available"
+            ),
+        )?;
+    }
     if omitted > 0 {
         record_omission_note(
             &mut notes,
@@ -846,8 +868,10 @@ pub fn project_session_context(
         session_ref: input.session_ref.clone(),
         genesis_ref: input.genesis_ref.clone(),
         channel_id: input.channel_id,
-        name: name.or(fallback_title),
-        goal,
+        name: name
+            .or(fallback_title)
+            .map(|value| sanitize_coding_session_context_text(&value)),
+        goal: goal.map(|value| sanitize_coding_session_context_text(&value)),
         project_ref: project_ref.flatten(),
     };
 
@@ -857,6 +881,7 @@ pub fn project_session_context(
             session: identity.clone(),
             provenance: CodingSessionContextProvenance {
                 generated_at: input.generated_at,
+                complete_as_of: input.coverage.complete.then_some(input.generated_at),
                 complete: input.coverage.complete,
                 truncated: omitted > 0,
                 source_event_count: source_event_count(input) as u64,
@@ -1450,6 +1475,8 @@ fn verify_transcript(
         ],
         "transcript item",
     )?;
+    let sanitized_content = sanitize_coding_session_context_content(&envelope.item);
+    let sanitized = sanitized_content != envelope.item;
     Ok(CandidateHistory {
         timestamp_ms: envelope.timestamp,
         item: CodingSessionContextHistoryItem {
@@ -1462,8 +1489,9 @@ fn verify_transcript(
             turn_id: envelope.turn_id,
             role,
             item_kind,
-            content: envelope.item,
+            content: sanitized_content,
         },
+        sanitized,
     })
 }
 
@@ -1746,6 +1774,44 @@ mod tests {
                 "attribution must survive verification exactly as published"
             );
         }
+    }
+
+    #[test]
+    fn private_projection_elides_host_paths_and_credentials_with_source_evidence() {
+        let mut fixture = fixture(1);
+        let source = fixture.input.executions[0].generations[0].transcript[0].clone();
+        let mut envelope: TranscriptEnvelope =
+            serde_json::from_str(&source.content).expect("source envelope");
+        envelope.item = serde_json::json!({
+            "kind": "user_prompt",
+            "content": "Read /Users/alice/private/repo with password hunter2",
+            "steered": false
+        });
+        let content = serde_json::to_string(&envelope).expect("encode envelope");
+        fixture.input.executions[0].generations[0].transcript[0] =
+            build_coding_session_transcript_item(
+                fixture.input.channel_id,
+                &envelope.session,
+                envelope.event_seq,
+                &content,
+            )
+            .unwrap()
+            .sign_with_keys(&fixture.provider)
+            .unwrap();
+
+        let package = project_session_context(&fixture.input).expect("sanitized projection");
+        let encoded = serde_json::to_string(&package).expect("encode package");
+
+        assert!(!encoded.contains("/Users/alice"));
+        assert!(!encoded.contains("hunter2"));
+        assert!(encoded.contains("elided private context"));
+        assert!(package
+            .provenance
+            .notes
+            .iter()
+            .any(|note| note.contains("Redacted sensitive material from 1")));
+        assert_eq!(package.history[0].event_id.len(), 64);
+        package.validate().expect("sanitized package validates");
     }
 
     #[test]

@@ -78,7 +78,7 @@ pub struct Config {
     /// Host-local working-directory map, re-read on every lifecycle command.
     pub projects_file: Option<PathBuf>,
     /// Optional read-only MCP binary used to expose verified relay context to
-    /// a newly-created provider session. Absent keeps legacy behavior.
+    /// every ACP session-open path. Absent keeps legacy behavior.
     pub context_mcp_command: Option<PathBuf>,
     /// Stable provider instance id carried in every `cs-target`.
     pub instance_id: String,

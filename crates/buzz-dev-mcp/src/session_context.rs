@@ -10,8 +10,8 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use buzz_core::coding_session_context::{
-    CodingSessionContextHistoryItem, CodingSessionContextPackage, CodingSessionContextRole,
-    MAX_CONTEXT_HISTORY_CONTENT_BYTES, MAX_CONTEXT_PACKAGE_BYTES,
+    coding_session_first_turn_brief, CodingSessionContextHistoryItem, CodingSessionContextPackage,
+    CodingSessionContextRole, MAX_CONTEXT_HISTORY_CONTENT_BYTES, MAX_CONTEXT_PACKAGE_BYTES,
 };
 use rmcp::ErrorData;
 use schemars::JsonSchema;
@@ -21,8 +21,8 @@ use serde_json::{json, Value};
 /// Launcher-only path to one private, immutable context package.
 pub const SESSION_CONTEXT_PACKAGE_ENV: &str = "BUZZ_SESSION_CONTEXT_PACKAGE";
 
-const DEFAULT_HISTORY_LIMIT: usize = 10;
-const MAX_HISTORY_LIMIT: usize = 20;
+const DEFAULT_HISTORY_LIMIT: usize = 100;
+const MAX_HISTORY_LIMIT: usize = 200;
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_QUERY_BYTES: usize = 256;
@@ -41,7 +41,7 @@ pub struct SessionHistoryParams {
     /// Zero-based history-item offset. Defaults to zero.
     #[serde(default)]
     pub offset: Option<usize>,
-    /// Number of history items to return. Defaults to 10; maximum 20.
+    /// Number of history items to return. Defaults to 100; maximum 200.
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -167,6 +167,8 @@ impl SessionContextState {
             "packageVersion": self.package.v,
             "session": self.package.session,
             "provenance": self.package.provenance,
+            "provenanceSemantics": provenance_semantics(),
+            "firstTurnBrief": coding_session_first_turn_brief(&self.package),
             "availableHistoryItems": self.package.history.len(),
             "historyByRole": history_by_role,
         }))
@@ -190,6 +192,7 @@ impl SessionContextState {
         render(json!({
             "sessionRef": self.package.session.session_ref,
             "provenance": self.package.provenance,
+            "provenanceSemantics": provenance_semantics(),
             "offset": start,
             "limit": limit,
             "returned": items.len(),
@@ -253,6 +256,7 @@ impl SessionContextState {
         render(json!({
             "sessionRef": self.package.session.session_ref,
             "provenance": self.package.provenance,
+            "provenanceSemantics": provenance_semantics(),
             "query": query,
             "offset": start,
             "limit": limit,
@@ -262,6 +266,14 @@ impl SessionContextState {
             "results": results,
         }))
     }
+}
+
+fn provenance_semantics() -> Value {
+    json!({
+        "complete": "Complete only for the source snapshot begun at provenance.completeAsOf; later concurrent activity may exist. A null completeAsOf is a legacy package with an unknown watermark",
+        "sourceEventCount": "All signed facts retained in the verified proof graph, including identity, authority, lifecycle, metadata, and transcript events",
+        "totalHistoryItems": "Verified transcript items only"
+    })
 }
 
 fn history_item_view(item: &CodingSessionContextHistoryItem) -> Result<Value, ErrorData> {
@@ -450,6 +462,7 @@ mod tests {
             },
             "provenance": {
                 "generatedAt": 1,
+                "completeAsOf": null,
                 "complete": false,
                 "truncated": true,
                 "sourceEventCount": 4,
@@ -552,12 +565,53 @@ mod tests {
         assert_eq!(first["items"][0]["itemKind"], "user_prompt");
         assert_eq!(first["provenance"]["complete"], false);
         assert_eq!(first["provenance"]["truncated"], true);
+        assert!(first["provenanceSemantics"]["sourceEventCount"]
+            .as_str()
+            .is_some_and(|text| text.contains("proof graph")));
         assert!(state
             .history(SessionHistoryParams {
                 offset: None,
                 limit: Some(MAX_HISTORY_LIMIT + 1),
             })
             .is_err());
+    }
+
+    #[test]
+    fn one_history_call_can_retrieve_the_observed_101_item_session() {
+        let mut package = package();
+        let template = package.history[0].clone();
+        package.history = (1..=101)
+            .map(|seq| CodingSessionContextHistoryItem {
+                event_id: format!("{seq:064x}"),
+                created_at: seq,
+                event_seq: seq,
+                content: json!({
+                    "kind": "user_prompt",
+                    "content": format!("safe prompt {seq}"),
+                    "steered": false
+                }),
+                ..template.clone()
+            })
+            .collect();
+        package.provenance.included_history_items = 101;
+        package.provenance.truncated = false;
+        package.provenance.omitted_history_items = 0;
+        package.provenance.total_history_items = None;
+        package.validate().expect("101-item package");
+        let state = SessionContextState::from_package(package);
+
+        let page: Value = serde_json::from_str(
+            &state
+                .history(SessionHistoryParams {
+                    offset: Some(0),
+                    limit: Some(101),
+                })
+                .expect("101-item page"),
+        )
+        .expect("history JSON");
+
+        assert_eq!(page["returned"], 101);
+        assert!(page["nextOffset"].is_null());
     }
 
     #[test]
@@ -641,12 +695,18 @@ mod tests {
         nsec["history"][0]["content"]["text"] = json!("nsec1forbidden");
         write_package(&path, &nsec);
         assert!(SessionContextState::load(&path).is_err());
+
+        let mut host_path = package_json();
+        host_path["history"][0]["content"]["content"] = json!("read /Users/alice/private/repo");
+        write_package(&path, &host_path);
+        assert!(SessionContextState::load(&path).is_err());
     }
 
     #[test]
     fn a_large_valid_item_is_returned_in_full() {
         let mut raw = package_json();
         raw["provenance"]["complete"] = json!(true);
+        raw["provenance"]["completeAsOf"] = json!(1);
         raw["provenance"]["truncated"] = json!(false);
         raw["provenance"]["omittedHistoryItems"] = json!(0);
         raw["provenance"]["totalHistoryItems"] = json!(2);

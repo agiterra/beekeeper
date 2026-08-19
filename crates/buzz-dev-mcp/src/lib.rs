@@ -164,7 +164,7 @@ impl SessionContextMcp {
 
     #[tool(
         name = "session_history",
-        description = "Read a bounded page of verified durable coding-session history from the immutable private package selected by the launcher. offset is 0-based; limit defaults to 10 and is capped at 20. Every response repeats source completeness/truncation provenance; oversized individual content is explicitly previewed, never silently clipped."
+        description = "Read a bounded page of verified durable coding-session history from the immutable private package selected by the launcher. offset is 0-based; limit defaults to 100 and is capped at 200. Every response repeats source completeness/truncation provenance; oversized individual content is explicitly previewed, never silently clipped."
     )]
     async fn session_history(
         &self,

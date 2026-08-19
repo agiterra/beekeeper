@@ -124,6 +124,18 @@ decimal string on the wire, so a lexicographic sort puts item 10 before item 9 â
 and carry explicit `kinds` on every `/query` filter, or the relay's p-gate
 answers 403.
 
+## Private continuity projection
+
+The signed transcript is the attributable source corpus, not an instruction
+stream for a later model. A provider that projects it into a private continuity
+package MUST verify the full genesis/authority/lifecycle/provider chain first.
+Before the package crosses into a new execution it MUST redact any credential,
+opaque provider cursor, or absolute host path; repo-relative paths may remain.
+Each redaction replaces the unsafe value in full with its byte count and SHA-256
+digest, while the surrounding history item retains the signed source event id.
+This lets a reader distinguish deliberate handoff elision from missing source
+data without copying machine-private material into another model's context.
+
 ## Implementation
 
 | Concern | Location |
