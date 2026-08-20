@@ -7,6 +7,7 @@ mod filter;
 mod observer;
 mod pool;
 mod pool_lifecycle;
+mod pulse_fetch;
 mod queue;
 mod relay;
 mod setup_mode;
