@@ -17,6 +17,7 @@ _Last updated: 2026-08-19, correcting §2 item 3 (rehydration reattach fix
 | Deployed | `build/2026-08-18.7` on lightyear; relay verified by probe to know `grant-operator`, `grant-viewer`, and `revoke` |
 | Assembly | Andy rebuilt on top of our work; CI gate is now ~7 min (was ~40) and two of three documented flakes have real fixes |
 | Unshipped locally | the `just dev` nokeyring fix, this ledger's newest entries, and three verified-missing session-stability fixes (§3) |
+| Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
 verified rehydration + systemPrompt-first bootstrap, continuity disclosure
@@ -102,6 +103,20 @@ across two machines simultaneously.
 11. Smaller: stale-Reconnect echo port (`a92fd728` absent from this line);
    `rejectedAuthorCount` surfaced nowhere; `Loaded` vs `Resumed` conflated at
    the receipt layer.
+### Found 2026-08-19 during the Project Pulse Slice 1 build
+
+18. **Rust and Desktop disagree on malformed-44223 admissibility** (found by
+   the Pulse fold-parity review). The CLI fold decodes with strict
+   `decode_coding_session_metadata` (exact key set); Desktop uses the
+   permissive `parseBuzzCodingSessionMetadata`, so a 44223 carrying an
+   unknown key is dropped by one and kept by the other. Documented in
+   `pulseFold.ts`'s module doc with an instruction not to bank a conformance
+   vector on it. Needs a product call: pick one decoder as the contract.
+19. **The ACP-injected Pulse digest carries entries only, no session facts**
+   (deliberate Slice 1 deviation, disclosed in the injection via
+   `SESSIONS_OMITTED_LINE`, `pulse_fetch.rs:66`). An overlap visible only in
+   session facts will not reach the agent until the session fold is built
+   into `buzz-acp`. Not lying, but not done.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
@@ -191,7 +206,7 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   the git branch** (`scripts/instance-env.sh`). Switching the worktree's
   branch gives the app a different app-data dir, a different provider
   identity, and a different session set. Sessions created under one branch
-  cannot be resumed or stopped from another (§2 item 5).
+  cannot be resumed or stopped from another (§2 item 7).
 - **Provider private keys live in the OS keychain**; the provider record
   (`<app-data>/session-provider/coding-session-provider.json`) holds only
   `providerPubkey`. So `BUZZ_DESKTOP_NOKEYRING=1` on an instance whose
@@ -241,8 +256,9 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 | `SESSION_PHASE_HANDOFF_2026-08-18.md` | Ship record + Andy's runbook |
 
 `coding-session-analysis.md` is **not** history — it is the evergreen how-to
-for querying stored session data (CLI + SQL). Its kind table stops at 44225
-and needs updating for genesis/goal/authority/name/closure kinds.
+for querying stored session data (CLI + SQL). Updated 2026-08-19: its kind
+table now covers 44220–44230 plus 44240 (Pulse), with per-kind fold rules and
+query examples.
 
 History lives in `docs/archive/` (eight documents, moved 2026-08-18). Their
 load-bearing content is extracted into §2 items 9–14 above; the rest is
