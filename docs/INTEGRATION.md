@@ -20,6 +20,7 @@ Current stack:
 - `feature/project-containers` — projects as containers (channels/forums/repos/workflows under projects; sidebar + management UI)
 - `feature/project-access` (stacked on containers) — visibility levels (`buzz-access`), project ACL, private-repo gating
 - `feature/builtin-shell` (stacked on access) — built-in shell terminals (`buzz-shell-host` sidecar, session broker + agent consent, `buzz session` CLI) and NIP-ST shared terminals (kinds 30623/24310/24311: project members observe sessions read-only)
+- `feature/project-pulse` (stacked on builtin-shell) — Project Pulse: kind 44240 entries, the project-membership read/write gate, `buzz pulse`, ACP context injection, and the desktop Pulse screen; the project-child wiring (sidebar row, home card, route registration) lives in glue. Known impurity: `crates/buzz-core/src/pulse.rs`, `crates/buzz-cli/src/commands/pulse.rs`, `desktop/src/features/project-pulse/lib/{pulseFormat,pulseQueries}.ts` reference `feature/coding-sessions` symbols, so the branch does not build standalone — Pulse's whole thesis is explicit claims *beside* observed coding-session state
 - `feature/coding-sessions` — coding sessions with a Claude Code provider (NIP-CSC/CSL/CST kinds 44220–44225, `buzz-session-provider` crate, workspace UI, transcript export, `buzz sessions` CLI); project-shelf coupling lives in glue
 
 ## The sync loop

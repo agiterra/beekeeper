@@ -20,6 +20,7 @@ FEATURES=(
   "feature/project-containers"
   "feature/project-access:feature/project-containers"
   "feature/builtin-shell:feature/project-access"
+  "feature/project-pulse:feature/builtin-shell"
   "feature/coding-sessions"
 )
 GLUE="integration/glue"
