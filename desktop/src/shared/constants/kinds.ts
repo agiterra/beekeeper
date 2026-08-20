@@ -98,16 +98,6 @@ export const KIND_PROJECT_PUT_MEMBER = 9010;
 export const KIND_PROJECT_REMOVE_MEMBER = 9011;
 export const KIND_PROJECT_MEMBERS = 39010;
 
-// ── Project Pulse (44240) ────────────────────────────────────────────────────
-//
-// NIP-PU: an author's explicit claim about a project — a plan, milestone,
-// note, handoff, or blocker (`pu1-1`). Project-scoped by an `a` tag holding
-// the canonical 30621 coordinate, never by `h`, and append-only: a revision
-// supersedes its predecessor by event id, and the fold honors that only for
-// the same author (features/project-pulse/lib/pulseFold.ts). It carries no
-// observed fact — worktree state stays in the coding-session kinds.
-export const KIND_PULSE_ENTRY = 44240;
-
 // ── Coding sessions (44220–44230) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
@@ -156,6 +146,16 @@ export const KIND_CODING_SESSION_NAME = 44229;
 // NIP-CSCL: member-authored append-only session-closure revision (`cscl1-1`).
 // Closing is founder-only; any relay-accepted member may reopen.
 export const KIND_CODING_SESSION_CLOSURE = 44230;
+
+// ── Project Pulse (44240) ────────────────────────────────────────────────────
+//
+// NIP-PU: an author's explicit claim about a project — a plan, milestone,
+// note, handoff, or blocker (`pu1-1`). Project-scoped by an `a` tag holding
+// the canonical 30621 coordinate, never by `h`, and append-only: a revision
+// supersedes its predecessor by event id, and the fold honors that only for
+// the same author (features/project-pulse/lib/pulseFold.ts). It carries no
+// observed fact — worktree state stays in the coding-session kinds.
+export const KIND_PULSE_ENTRY = 44240;
 
 // Every coding-session kind, in one place, so the regression guard keeping them
 // out of the chat timeline cannot silently miss a newly added member.
