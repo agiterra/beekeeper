@@ -1861,7 +1861,7 @@ mod tests {
         let pool = setup_pool().await;
         // Global claim assertions below require a queue free of other tests'
         // leftovers.
-        sqlx::query("DELETE FROM push_match_queue")
+        sqlx::query("DELETE FROM push_match_queue WHERE community_write_allowed(community_id)")
             .execute(&pool)
             .await
             .expect("drain matcher queue");
@@ -1919,6 +1919,14 @@ mod tests {
     #[ignore = "requires Postgres"]
     async fn matcher_load_error_preserves_claimed_job_for_recovery() {
         let pool = setup_pool().await;
+        // The claim below takes the globally oldest due job, but the
+        // assertions read back THIS community's row. Without a drain, a
+        // leftover job from another test is claimed instead and this
+        // community's row is still ("pending", 0).
+        sqlx::query("DELETE FROM push_match_queue WHERE community_write_allowed(community_id)")
+            .execute(&pool)
+            .await
+            .expect("drain matcher queue");
         let community = make_community(&pool).await;
         // Eligible lease required for the T1b-gated trigger to enqueue.
         activate(&pool, community, &[79; 32], "install", &[80; 32], 1).await;
@@ -1964,7 +1972,7 @@ mod tests {
         // Drain leftovers from other tests sharing this database: a racing
         // worker claiming an unrelated community's stale batch would count as
         // a second success.
-        sqlx::query("DELETE FROM push_match_queue")
+        sqlx::query("DELETE FROM push_match_queue WHERE community_write_allowed(community_id)")
             .execute(&pool)
             .await
             .expect("drain matcher queue");
@@ -2038,7 +2046,7 @@ mod tests {
         let pool = setup_pool().await;
         // Global claim assertions below require a queue free of other tests'
         // leftovers.
-        sqlx::query("DELETE FROM push_match_queue")
+        sqlx::query("DELETE FROM push_match_queue WHERE community_write_allowed(community_id)")
             .execute(&pool)
             .await
             .expect("drain matcher queue");
@@ -2175,6 +2183,46 @@ mod tests {
         lifecycle.commit().await.expect("commit target lifecycle");
     }
 
+    /// Inverse of [`quiesce_test_community`].
+    ///
+    /// A quiesced tenant is global state: it survives the test that created it
+    /// and it cannot be cleaned up afterwards by an ordinary statement, because
+    /// `enforce_community_tombstone` rejects any lifecycle transition that does
+    /// not carry the executor GUCs. Left behind, its rows stay in
+    /// `push_match_queue` where no fleet-wide writer may touch them, so a later
+    /// test's unscoped drain aborts with 55000 against a tenant it has never
+    /// heard of. Every test that quiesces therefore restores.
+    async fn restore_test_community(pool: &PgPool, community: CommunityId) {
+        let mut lifecycle = pool.begin().await.expect("begin lifecycle restore");
+        sqlx::query(
+            "SELECT set_config('buzz.deletion_executor_community', $1, true), \
+                    set_config('buzz.deletion_fence_generation', '0', true)",
+        )
+        .bind(community.to_string())
+        .execute(&mut *lifecycle)
+        .await
+        .expect("authorize target lifecycle restore");
+        sqlx::query("UPDATE communities SET deletion_state = 'active' WHERE id = $1")
+            .bind(community.as_uuid())
+            .execute(&mut *lifecycle)
+            .await
+            .expect("restore target");
+        lifecycle.commit().await.expect("commit target restore");
+    }
+
+    /// Read the database clock.
+    ///
+    /// Scheduling values compared against SQL `now()` must come from the same
+    /// clock. The server may be a container whose clock differs from this
+    /// process's by tens of milliseconds, which is enough to invert the
+    /// ordering of two rows enqueued milliseconds apart.
+    async fn db_now(pool: &PgPool) -> DateTime<Utc> {
+        sqlx::query_scalar("SELECT now()")
+            .fetch_one(pool)
+            .await
+            .expect("read database clock")
+    }
+
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn matcher_claim_skips_quiescing_tenant_while_active_bystanders_progress() {
@@ -2203,6 +2251,7 @@ mod tests {
                 .await
                 .expect("target row remains attributed");
         assert_eq!(target_state, "pending");
+        restore_test_community(&pool, target).await;
     }
 
     #[tokio::test]
@@ -2243,6 +2292,7 @@ mod tests {
                     .expect("active bystander is drained");
             assert_eq!(active_remaining, 0);
         }
+        restore_test_community(&pool, target).await;
     }
 
     /// T2b batch contract: one claim returns jobs from exactly ONE community
@@ -2256,7 +2306,7 @@ mod tests {
         // The batch claim targets the globally oldest due job, so leftover
         // queue rows from other tests sharing this database would hijack the
         // target community. Start from a drained queue.
-        sqlx::query("DELETE FROM push_match_queue")
+        sqlx::query("DELETE FROM push_match_queue WHERE community_write_allowed(community_id)")
             .execute(&pool)
             .await
             .expect("drain matcher queue");
@@ -2330,7 +2380,7 @@ mod tests {
                 batch.community,
                 batch.claim_id,
                 &claimed_ids[2..],
-                Utc::now()
+                db_now(&pool).await
             )
             .await
             .expect("retry one"),
@@ -2338,7 +2388,11 @@ mod tests {
         );
 
         // The retried job is claimable again, but its retry time is later
-        // than community B's untouched row, so B's batch comes first.
+        // than community B's untouched row, so B's batch comes first. The
+        // retry time must be read from the DATABASE clock: community B's row
+        // was stamped by SQL `now()` inside the enqueue trigger, and these two
+        // rows are only milliseconds apart, so a server clock even slightly
+        // ahead of this process would order the retry FIRST and claim B second.
         let second = claim_due_match_batch(&pool, 16, Utc::now() + chrono::Duration::minutes(1))
             .await
             .expect("claim community-b batch")
