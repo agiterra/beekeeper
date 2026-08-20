@@ -36,6 +36,12 @@
       "name": "Built-in Shell",
       "description": "Terminal sessions hosted inside Buzz with consent-gated agent access",
       "platforms": ["desktop"]
+    },
+    {
+      "id": "project-pulse",
+      "name": "Project Pulse",
+      "description": "Per-project coordination view: explicit member claims beside observed coding-session state",
+      "platforms": ["desktop"]
     }
   ]
 }

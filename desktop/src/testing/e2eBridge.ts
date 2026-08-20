@@ -46,6 +46,7 @@ import {
   KIND_PERSONA,
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_STREAM_MESSAGE_EDIT,
@@ -5440,6 +5441,10 @@ const MOCK_PROJECT_SUBJECTS = [
 const MOCK_PROJECT_KINDS = new Set<number>([
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  // Project Pulse entries are project-scoped by an `a` tag holding the 30621
+  // coordinate — the same shape the NIP-34 kinds below use, so they route
+  // through this store rather than the channel path.
+  KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_GIT_PATCH,
@@ -5645,11 +5650,20 @@ function isMockProjectScopedEvent(event: RelayEvent): boolean {
   ) {
     return true;
   }
-  const hasRepoAddressTag = event.tags.some(
-    (tag) => tag[0] === "a" && (tag[1] ?? "").startsWith("30617:"),
-  );
+  // Two project-address prefixes, not one: NIP-34 events name a repository
+  // (30617) while Pulse entries name a project container (30621). Without the
+  // 30621 arm a live-published 44240 falls through to the channel branch and
+  // is rejected with "Missing channel tag." — a fixture gap that reads exactly
+  // like a product bug.
+  const hasProjectAddressTag = event.tags.some((tag) => {
+    const address = tag[1] ?? "";
+    return (
+      tag[0] === "a" &&
+      (address.startsWith("30617:") || address.startsWith(`${KIND_PROJECT}:`))
+    );
+  });
   return (
-    (event.kind === KIND_REPO_ANNOUNCEMENT || hasRepoAddressTag) &&
+    (event.kind === KIND_REPO_ANNOUNCEMENT || hasProjectAddressTag) &&
     (event.kind === 1 || MOCK_PROJECT_KINDS.has(event.kind))
   );
 }
