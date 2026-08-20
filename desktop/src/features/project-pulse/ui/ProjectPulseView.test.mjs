@@ -170,7 +170,12 @@ test("each state leads with its own verdict, and only the incomplete ones warn",
       {
         kind: "ready",
         digest: digest({
-          errors: [{ scope: "invalid-event", message: "event abc excluded" }],
+          errors: [
+            {
+              scope: "invalid-event",
+              message: `event ${id("c3")} (kind 44223) failed signature validation and was excluded`,
+            },
+          ],
         }),
       },
       "pulse-excluded",
@@ -269,7 +274,7 @@ test("a complete read that excluded events never says the project is quiet", asy
       errors: [
         {
           scope: "invalid-event",
-          message: "event abc (kind 44223) failed client validation",
+          message: `event ${id("c3")} (kind 44223) carried undecodable coding-session metadata and was excluded`,
         },
       ],
     }),
@@ -277,7 +282,65 @@ test("a complete read that excluded events never says the project is quiet", asy
   assert.equal(queryByTestId("pulse-empty"), null);
   const excluded = getByTestId("pulse-excluded");
   assert.match(excluded.textContent, /Some events were excluded/);
-  assert.match(excluded.textContent, /failed client validation/);
+  // What was lost, in the reader's vocabulary — not `invalid-event: event
+  // 0000…c3 (kind 44223) …`, which names an internal scope and an id the
+  // reader cannot look up anywhere on this screen.
+  assert.match(
+    excluded.textContent,
+    /A coding-session update was left out — its session details could not be read\./,
+  );
+  assert.equal(excluded.textContent.includes(id("c3")), false);
+  assert.equal(excluded.textContent.includes("invalid-event"), false);
+  assert.match(
+    getByTestId("pulse-error-note").getAttribute("title"),
+    new RegExp(`^invalid-event: event ${id("c3")} `),
+  );
+});
+
+/**
+ * Three events lost the same way is one fact, and the card says it once with a
+ * count. Repeating an identical sentence per wire record would read as three
+ * different problems and bury the one that is different.
+ */
+test("repeats of one loss collapse into a single counted sentence", async () => {
+  const { getByTestId, getAllByTestId } = await renderView({
+    kind: "ready",
+    digest: digest({
+      errors: [
+        {
+          scope: "invalid-entry",
+          message: `entry ${id("71")} failed validation and was excluded`,
+        },
+        {
+          scope: "invalid-entry",
+          message: `entry ${id("72")} failed validation and was excluded`,
+        },
+        {
+          scope: "invalid-event",
+          message: `event ${id("c3")} (kind 44227) failed signature validation and was excluded`,
+        },
+      ],
+    }),
+  });
+  const notes = getAllByTestId("pulse-error-note");
+  assert.equal(notes.length, 2);
+  assert.match(
+    notes[0].textContent,
+    /^2 entries were left out — they did not pass validation\.$/,
+  );
+  assert.match(
+    notes[1].textContent,
+    /^A coding-session update was left out — its signature did not check out\.$/,
+  );
+  // Nothing is dropped on the way to the shorter sentence: both wire records
+  // are still readable behind the note that stands for them.
+  const title = notes[0].getAttribute("title");
+  assert.ok(title.includes(id("71")));
+  assert.ok(title.includes(id("72")));
+  assert.equal(
+    getByTestId("pulse-excluded").textContent.includes(id("71")),
+    false,
+  );
 });
 
 test("a partial read says so and still shows what it read", async () => {
@@ -468,9 +531,18 @@ test("an unresolved claim is echoed, not resolved away, and prints no hash", asy
   assert.match(claim.textContent, /nothing was replaced/);
   assert.equal(claim.textContent.includes(id("ff")), false);
   assert.match(claim.getAttribute("title"), new RegExp(id("ff")));
-  // The digest's own `errors[]` still carries the raw ids — that card is the
-  // audit trail, and it is a different surface from the row's sentence.
-  assert.ok(container.textContent.includes(id("ff")));
+  // Not on the row and not on the error card either: the digest's `errors[]`
+  // is a wire record, and the card that stands for it says the same sentence
+  // in the same words, naming the entry by its text. The verbatim record —
+  // ids and all — survives in the note's `title`, one hover away.
+  const note = getByTestId("pulse-error-note");
+  assert.match(note.textContent, /“Refactoring session creation\.”/);
+  assert.match(note.textContent, /not visible in this read/);
+  assert.match(note.textContent, /nothing was replaced/);
+  assert.equal(container.textContent.includes(id("ff")), false);
+  assert.equal(container.textContent.includes(id("e1")), false);
+  assert.match(note.getAttribute("title"), new RegExp(id("ff")));
+  assert.match(note.getAttribute("title"), /^unresolved-supersedes: /);
 });
 
 test("superseded entries stay reachable, and say they are retired and by whom", async () => {

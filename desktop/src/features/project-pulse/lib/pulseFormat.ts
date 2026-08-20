@@ -161,6 +161,23 @@ export function formatPulseReadAge(secondsSinceRead: number): string {
   return age === "just now" ? "read just now" : `read ${age} ago`;
 }
 
+/**
+ * `“First pass at the wire contract.” (Plan · 1h ago)` — an entry named by
+ * what it says rather than by its event id.
+ *
+ * Shared, not duplicated: the entry rows and the error cards both have to
+ * refer to an entry the reader can find on this screen, and two spellings of
+ * the same reference would let one surface drift into printing a hash.
+ */
+export function pulseEntryReference(
+  entry: PulseDigestEntry,
+  nowSeconds: number,
+): string {
+  return `“${quotePulseEntryText(entry.text)}” (${formatPulseEntryType(
+    entry.type,
+  )} · ${formatPulseAge(nowSeconds - entry.createdAt)} ago)`;
+}
+
 /** Shorten a quoted entry for a one-line reference; the full text stays in a `title`. */
 export function quotePulseEntryText(text: string, maxLength = 56): string {
   const collapsed = text.replace(/\s+/g, " ").trim();

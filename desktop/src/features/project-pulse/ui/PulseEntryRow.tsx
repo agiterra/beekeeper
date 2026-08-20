@@ -20,7 +20,7 @@ import {
   branchChipLabel,
   formatPulseAge,
   formatPulseEntryType,
-  quotePulseEntryText,
+  pulseEntryReference,
 } from "../lib/pulseFormat";
 import type { PulseEntryType } from "../lib/pulseEntry.ts";
 import type { PulseDigestEntry, PulseDigestSession } from "../lib/pulseFold.ts";
@@ -80,13 +80,6 @@ function QualifierLine({
       <span>{children}</span>
     </p>
   );
-}
-
-/** `“First pass at the wire contract.” (Plan · 1h ago)` — an entry by content. */
-function entryReference(entry: PulseDigestEntry, nowSeconds: number): string {
-  return `“${quotePulseEntryText(entry.text)}” (${formatPulseEntryType(
-    entry.type,
-  )} · ${formatPulseAge(nowSeconds - entry.createdAt)} ago)`;
 }
 
 /**
@@ -233,7 +226,9 @@ export function PulseEntryRow({
             {replacement
               ? `, ${formatPulseAge(nowSeconds - replacement.createdAt)} ago`
               : ""}
-            {replacement ? `: ${entryReference(replacement, nowSeconds)}` : "."}
+            {replacement
+              ? `: ${pulseEntryReference(replacement, nowSeconds)}`
+              : "."}
           </QualifierLine>
         );
       })}
@@ -261,7 +256,7 @@ export function PulseEntryRow({
           ? pulseAuthorLabel(claim.pubkey, authorNames)
           : null;
         const named = target
-          ? entryReference(target, nowSeconds)
+          ? pulseEntryReference(target, nowSeconds)
           : targetAuthor
             ? `${targetAuthor}'s entry`
             : "an entry that is not visible here";

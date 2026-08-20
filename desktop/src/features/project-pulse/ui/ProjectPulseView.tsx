@@ -13,6 +13,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 
 import type { PulseAuthorNames } from "../lib/pulseAuthors";
+import { summarizePulseErrors } from "../lib/pulseErrorCopy";
 import {
   branchChipLabel,
   countPulseBranchRows,
@@ -26,6 +27,7 @@ import {
   pulseDigestBranches,
   type ProjectPulseDigest,
   type PulseDigestEntry,
+  type PulseDigestError,
   type PulseDigestSession,
 } from "../lib/pulseFold.ts";
 import { PulseEntryRow } from "./PulseEntryRow";
@@ -117,6 +119,42 @@ function StateCard({
 function GroupHeading({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="mb-2 text-sm font-medium text-foreground">{children}</h2>
+  );
+}
+
+/**
+ * What a read lost, as sentences.
+ *
+ * The digest's `errors[]` are wire records — `{scope, message}` with raw
+ * 64-hex ids, pinned by the fold conformance corpus and shared with the CLI.
+ * They are translated here rather than printed, so the one card on this screen
+ * whose whole job is to tell a reader what they are missing does not do it in
+ * a vocabulary only the fold speaks. The verbatim record stays in the `title`.
+ */
+function PulseErrorNotes({
+  errors,
+  entriesById,
+  authorNames,
+  nowSeconds,
+}: {
+  errors: readonly PulseDigestError[];
+  entriesById: ReadonlyMap<string, PulseDigestEntry>;
+  authorNames?: PulseAuthorNames;
+  nowSeconds: number;
+}) {
+  const notes = summarizePulseErrors(errors, {
+    entriesById,
+    authorNames,
+    nowSeconds,
+  });
+  return (
+    <ul className="mt-1 list-disc pl-4" data-testid="pulse-error-notes">
+      {notes.map((note) => (
+        <li data-testid="pulse-error-note" key={note.key} title={note.title}>
+          {note.sentence}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -354,13 +392,12 @@ export function ProjectPulseView({
         >
           Some sources did not answer, so what follows is incomplete — not the
           whole project.
-          <ul className="mt-1 list-disc pl-4">
-            {state.digest.errors.map((error) => (
-              <li key={`${error.scope}:${error.message}`}>
-                {error.scope}: {error.message}
-              </li>
-            ))}
-          </ul>
+          <PulseErrorNotes
+            authorNames={authorNames}
+            entriesById={entriesById}
+            errors={state.digest.errors}
+            nowSeconds={nowSeconds}
+          />
         </StateCard>
       ) : null}
 
@@ -390,13 +427,12 @@ export function ProjectPulseView({
           verdict="Some events were excluded."
         >
           This read completed, but what follows omits them.
-          <ul className="mt-1 list-disc pl-4">
-            {state.digest.errors.map((error) => (
-              <li key={`${error.scope}:${error.message}`}>
-                {error.scope}: {error.message}
-              </li>
-            ))}
-          </ul>
+          <PulseErrorNotes
+            authorNames={authorNames}
+            entriesById={entriesById}
+            errors={state.digest.errors}
+            nowSeconds={nowSeconds}
+          />
         </StateCard>
       ) : null}
 
