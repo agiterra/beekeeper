@@ -5,8 +5,9 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-19, correcting §2 item 3 (rehydration reattach fix
-`b9de9a6d` verified in code) at the start of the Project Pulse build._
+_Last updated: 2026-08-20, correcting §1 (the deployed build is
+`build/2026-08-19.4`, not `build/2026-08-18.7`) after probing lightyear from
+outside._
 
 ---
 
@@ -14,7 +15,7 @@ _Last updated: 2026-08-19, correcting §2 item 3 (rehydration reattach fix
 
 | | |
 | --- | --- |
-| Deployed | `build/2026-08-18.7` on lightyear; relay verified by probe to know `grant-operator`, `grant-viewer`, and `revoke` |
+| Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
 | Assembly | Andy rebuilt on top of our work; CI gate is now ~7 min (was ~40) and two of three documented flakes have real fixes |
 | Unshipped locally | the `just dev` nokeyring fix, this ledger's newest entries, and three verified-missing session-stability fixes (§3) |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
@@ -220,6 +221,12 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 - Ceremony: `LEFTHOOK=0 CHECK_FILE_SIZES_BASE=$(git rev-parse upstream/main)
   scripts/integrate.sh`. Park other worktrees on detached HEAD first. Push
   **both** remotes (`origin` = relay, `upstream` = GitHub).
+- **`git-credential-nostr` intermittently 401s on the second push request.**
+  The first request of a push authenticates, the next one comes back HTTP 401
+  and the push aborts; an immediate plain retry succeeds with no other change.
+  Suspected NIP-98 replay protection or clock-window handling on the relay's
+  git endpoint. Observed twice on 2026-08-19, during the `build/2026-08-19.3`
+  and `build/2026-08-19.4` pushes. Retry once before investigating anything.
 - **Cross-feature merge conflicts are already solved on the assembly.** When
   a rebuild re-raises them, take `upstream/integrated`'s version of the
   conflicted file rather than reconstructing the union by hand.
@@ -242,6 +249,12 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 - Relay capability probes live in `/tmp/grant-proof` (`kindprobe`,
   `typeprobe`, `turn`, `stopcmd`): non-mutating checks for whether a
   deployed relay knows a kind or transition type.
+- **Which build a relay is running can be read off a rejection message.**
+  Run a member-key `buzz pulse update` against a deliberately bogus project
+  coordinate: a relay carrying the Pulse code rejects it `restricted: unknown
+  project coordinate`, while an older build rejects it `unknown event kind`.
+  The write never lands, so nothing is stored — this is the cheapest way to
+  confirm a deploy from outside, without a cluster login.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 
