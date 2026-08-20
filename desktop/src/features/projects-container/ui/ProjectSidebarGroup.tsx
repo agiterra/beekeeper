@@ -97,6 +97,7 @@ export function ProjectSidebarGroup({
   collapsed,
   onToggleCollapsed,
   onOpenAgents,
+  onOpenPulse,
   onOpenCodingSession,
   onRequestCloseCodingSession,
   onRequestReopenCodingSession,
@@ -130,6 +131,9 @@ export function ProjectSidebarGroup({
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onOpenAgents: () => void;
+  /** Opens this project's Pulse screen. Absent leaves the row unrendered
+   * rather than shipping a control that does nothing. */
+  onOpenPulse?: () => void;
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
@@ -163,6 +167,11 @@ export function ProjectSidebarGroup({
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
+  // Same two gates the project home card uses: the preview flag, and a real
+  // project head — the local General placeholder has no coordinate, so its
+  // Pulse row could only open a screen that never loads.
+  const pulseEnabled =
+    useFeatureEnabled("project-pulse") && !isFallback && Boolean(onOpenPulse);
   const visibleStreamChannels = React.useMemo(
     () =>
       withoutProjectSessionTransportChannels({
@@ -201,6 +210,7 @@ export function ProjectSidebarGroup({
       .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
     return buildProjectChildren({
       codingSessions: [...activeSessions, ...recentSessions],
+      includePulse: pulseEnabled,
       streamChannels: visibleStreamChannels,
       forumChannels,
       repos,
@@ -211,6 +221,7 @@ export function ProjectSidebarGroup({
     });
   }, [
     codingSessions,
+    pulseEnabled,
     visibleStreamChannels,
     forumChannels,
     repos,
@@ -248,6 +259,7 @@ export function ProjectSidebarGroup({
       row={row}
       channelHandlers={channelHandlers}
       onOpenAgents={onOpenAgents}
+      onOpenPulse={onOpenPulse}
       onOpenCodingSession={onOpenCodingSession}
       onRequestCloseCodingSession={onRequestCloseCodingSession}
       onRequestReopenCodingSession={onRequestReopenCodingSession}

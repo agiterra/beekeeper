@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   Circle,
   Eye,
@@ -42,6 +43,7 @@ export function ProjectChildRowItem({
   channelHandlers,
   onOpenAgents,
   onOpenCodingSession,
+  onOpenPulse,
   onRequestCloseCodingSession,
   onRequestReopenCodingSession,
   currentPubkey,
@@ -56,6 +58,9 @@ export function ProjectChildRowItem({
   row: ProjectChildRow;
   channelHandlers: ProjectChannelHandlers;
   onOpenAgents: () => void;
+  /** Opens this project's Pulse. Absent while the caller has not wired it —
+   * the row then renders nothing rather than a control that does nothing. */
+  onOpenPulse?: () => void;
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
@@ -204,6 +209,26 @@ export function ProjectChildRowItem({
           ) : (
             button
           )}
+        </SidebarMenuItem>
+      );
+    }
+    case "pulse": {
+      // Presence is not conditional on content: the row stays whether or not
+      // Pulse data exists, and the screen renders the confirmed-empty state.
+      // A row that vanished when a project went quiet would make "no Pulse"
+      // and "no project" look identical in the sidebar.
+      if (!onOpenPulse) return null;
+      return (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid="project-pulse-row"
+            onClick={onOpenPulse}
+            title="Explicit updates and observed session state"
+            type="button"
+          >
+            <Activity className="size-4 shrink-0" />
+            <span className="truncate">Pulse</span>
+          </SidebarMenuButton>
         </SidebarMenuItem>
       );
     }

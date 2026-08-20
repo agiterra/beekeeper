@@ -45,6 +45,10 @@ export function projectAgentRows(
 /** One row in a project's flat child list; the type picks the icon. */
 export type ProjectChildRow =
   | { type: "coding-session"; entry: ProjectCodingSessionShelfEntry }
+  // A singleton row, not a collection: one Pulse per project, always present
+  // when the caller opts in — its screen renders the confirmed-empty state
+  // rather than the row disappearing when a project is quiet.
+  | { type: "pulse" }
   | { type: "channel"; channel: Channel }
   | { type: "forum"; channel: Channel }
   | { type: "repo"; repo: CodeRepo }
@@ -59,13 +63,16 @@ export type ProjectChildRow =
 export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
   {
     "coding-session": 0,
-    channel: 1,
-    forum: 2,
-    repo: 3,
-    workflow: 4,
-    agent: 5,
-    shell: 6,
-    "remote-shell": 7,
+    // Pulse sits directly below the sessions it describes: it is the
+    // coordination answer for the same live work, not another collection.
+    pulse: 1,
+    channel: 2,
+    forum: 3,
+    repo: 4,
+    workflow: 5,
+    agent: 6,
+    shell: 7,
+    "remote-shell": 8,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
@@ -73,6 +80,8 @@ export function projectChildKey(row: ProjectChildRow): string {
   switch (row.type) {
     case "coding-session":
       return `session:${row.entry.channelId}:${row.entry.generationId}`;
+    case "pulse":
+      return "pulse";
     case "channel":
       return `channel:${row.channel.id}`;
     case "forum":
@@ -94,6 +103,8 @@ export function projectChildLabel(row: ProjectChildRow): string {
   switch (row.type) {
     case "coding-session":
       return row.entry.label;
+    case "pulse":
+      return "Pulse";
     case "channel":
     case "forum":
       return row.channel.name;
@@ -140,6 +151,10 @@ export function compareProjectChildren(
  */
 export function buildProjectChildren(input: {
   codingSessions?: ProjectCodingSessionShelfEntry[];
+  /** Emit the singleton Pulse row. Callers pass the `project-pulse` preview
+   * flag AND `!isFallback`: the local General placeholder has no project
+   * coordinate, so its Pulse row would open a screen that can never load. */
+  includePulse?: boolean;
   streamChannels: Channel[];
   forumChannels: Channel[];
   repos: CodeRepo[];
@@ -152,6 +167,7 @@ export function buildProjectChildren(input: {
     ...(input.codingSessions ?? []).map(
       (entry): ProjectChildRow => ({ type: "coding-session", entry }),
     ),
+    ...(input.includePulse ? [{ type: "pulse" } as ProjectChildRow] : []),
     ...input.streamChannels.map(
       (channel): ProjectChildRow => ({ type: "channel", channel }),
     ),

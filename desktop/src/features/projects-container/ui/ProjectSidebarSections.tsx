@@ -353,6 +353,12 @@ export function ProjectSidebarSections({
             onOpenCodingSession={({ channelId, generationId }) =>
               void goCodingSession(channelId, generationId)
             }
+            onOpenPulse={() =>
+              void navigate({
+                to: "/projects/$projectId/pulse",
+                params: { projectId: project.id },
+              })
+            }
             onOpenProject={() => handleOpenProject(project)}
             onOpenRepo={(repo) => void goProjectRepo(project.id, repo.id)}
             onNewCodingSession={() =>

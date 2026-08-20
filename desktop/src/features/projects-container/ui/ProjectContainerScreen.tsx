@@ -15,8 +15,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useNavigate } from "@tanstack/react-router";
+
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { ProjectTerminalsCard } from "@/features/builtin-shell/ui/ProjectTerminalsCard";
+import { ProjectPulseCard } from "@/features/project-pulse/ui/ProjectPulseCard";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import {
@@ -87,6 +90,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
     goProjects,
     goWorkflow,
   } = useAppNavigation();
+  const navigate = useNavigate();
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
   // Transports included: the session buckets subscribe to them; the stream
   // list below filters them out via withoutProjectSessionTransportChannels.
@@ -403,6 +407,24 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
               </ul>
             )}
           </SectionCard>
+
+          {/* Pulse sits between the sessions it describes and the agents that
+              run them. Gated twice: the preview flag, and a real project head —
+              the local General placeholder has no coordinate, so its Pulse
+              could only ever be a screen that never loads. */}
+          {!isFallback ? (
+            <FeatureGate feature="project-pulse">
+              <ProjectPulseCard
+                onOpenPulse={() =>
+                  void navigate({
+                    to: "/projects/$projectId/pulse",
+                    params: { projectId: project.id },
+                  })
+                }
+                project={project}
+              />
+            </FeatureGate>
+          ) : null}
 
           <SectionCard
             count={agents.length}
