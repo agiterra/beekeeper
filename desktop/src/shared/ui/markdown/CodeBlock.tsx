@@ -70,7 +70,7 @@ function getCodeBlockText(children: React.ReactNode) {
 
 export function StaticCodeBlock({ children }: { children?: React.ReactNode }) {
   return (
-    <pre className="overflow-x-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5">
+    <pre className="buzz-code-scrollbar max-w-full overflow-x-auto rounded-2xl border border-border/70 bg-muted/60 px-3 py-1.5">
       {children}
     </pre>
   );
