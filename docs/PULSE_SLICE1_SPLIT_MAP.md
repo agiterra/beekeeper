@@ -9,6 +9,17 @@
 > apply`), hand-placing hunks whose context is absent on the base branch, and
 > verify each file's changed-line multiset against the wip diff. Use that for
 > any future delta (e.g. the UX-fix commit).
+>
+> **RE-EXECUTED for the UX delta 2026-08-19 → tag `build/2026-08-19.4`**
+> (`integrated-build` = `51437796`, pushed to both remotes). The per-file diff
+> recipe above was used verbatim and needed no hand-placement: of the 18 files
+> in `1ac2ac51..0d45e74c`, the 15 Pulse-owned ones went to
+> `feature/project-pulse` (`ebf5085c` the 15 critique findings, `877723fc` the
+> error-card fix) and the 3 `projects-container` ones to `integration/glue`
+> (`db8614cc`), exactly as §1a/§1b assign them. Only
+> `desktop/src/testing/e2eBridge.ts` applied with an offset (−31 lines, the
+> 79-line gap where other features' content is absent from the feature
+> branch); its 13 added lines and the gap both verified unchanged.
 
 Computed 2026-08-19 against `wip/project-pulse`, then re-verified after the
 Slice 1 commit series landed. The branch head is now **`d235189a`** (=
