@@ -19,6 +19,7 @@ FEATURES=(
   "fix/relay-multichannel-subscriptions"
   "fix/desktop-thread-activity-ghosts"
   "fix/moderator-delete"
+  "fix/buzz-db-test-harness"
   "feature/project-containers"
   "feature/project-access:feature/project-containers"
   "feature/builtin-shell:feature/project-access"
