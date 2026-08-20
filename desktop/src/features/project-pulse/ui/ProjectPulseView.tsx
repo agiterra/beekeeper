@@ -17,11 +17,14 @@ import { summarizePulseErrors } from "../lib/pulseErrorCopy";
 import {
   branchChipLabel,
   countPulseBranchRows,
+  formatPulseEntryCount,
   formatPulseReadAge,
+  formatPulseSessionCount,
   groupPulseEntries,
   groupPulseSessions,
   matchesBranchFilter,
   sortPulseEntriesByConsequence,
+  type PulseSessionExecutions,
 } from "../lib/pulseFormat";
 import {
   pulseDigestBranches,
@@ -333,16 +336,15 @@ export function ProjectPulseView({
   }
 
   const readable = digest as ProjectPulseDigest;
-  const sessions = groupPulseSessions(readable);
   const entries = groupPulseEntries(readable);
-  const visibleSessions = {
-    activeWork: sessions.activeWork.filter((session) =>
+  // Filter executions first, then collapse: a branch chip that hid an umbrella
+  // because its *newest* execution ran elsewhere would hide the execution the
+  // reader asked for.
+  const visibleSessions = groupPulseSessions(
+    readable.sessions.filter((session) =>
       matchesBranchFilter(session.branch, branch),
     ),
-    lastSeen: sessions.lastSeen.filter((session) =>
-      matchesBranchFilter(session.branch, branch),
-    ),
-  };
+  );
   const visibleEntries = (rows: PulseDigestEntry[]) =>
     rows.filter((entry) => matchesBranchFilter(entry.branch, branch));
   // The disclosure count and the rows behind it read the same filtered list:
@@ -361,11 +363,53 @@ export function ProjectPulseView({
   // fold could not validate, or an event this client could not decode, is an
   // observation the surface does not have — saying "the project is quiet"
   // over it would render a null as a completed negative.
+  /**
+   * A partial or excluded read has already told the reader it lost events, so
+   * the summary must not restate its own row count as a total — "no entries"
+   * over a failed read is the exact quiet-project lie this screen exists to
+   * refuse. Counts become explicit floors instead.
+   */
+  const countsAreLowerBounds =
+    state.kind === "partial" ||
+    digest?.complete === false ||
+    (digest?.errors?.length ?? 0) > 0;
+  /**
+   * A floor over zero cannot be spoken as "at least no entries", and a bare
+   * "no entries" is the absence claim this line must never make over a read
+   * that lost events. Zero rows from an incomplete read is a fact about the
+   * read, so say that: none *in what came back*, not none in the project.
+   */
+  const asFloor = (count: number, formatted: string, noun: string): string =>
+    count === 0
+      ? `no ${noun} in what this read returned`
+      : `at least ${formatted}`;
+
   const isConfirmedEmpty =
     state.kind === "ready" &&
     state.digest.entries.length === 0 &&
     state.digest.sessions.length === 0 &&
     state.digest.errors.length === 0;
+
+  // Entries can be hidden by the branch chip rather than absent — the same
+  // distinction the sessions block already makes.
+  const entriesHidden =
+    readable.entries.some((entry) => entry.active) &&
+    visibleActiveEntries.length === 0;
+  const sessionCount =
+    visibleSessions.activeWork.length + visibleSessions.lastSeen.length;
+
+  const sessionCard = (group: PulseSessionExecutions) => (
+    <PulseSessionCard
+      key={group.key}
+      nowSeconds={nowSeconds}
+      olderExecutions={group.older}
+      onOpen={
+        onOpenSession ? () => onOpenSession(group.latest.targetKey) : undefined
+      }
+      onOpenExecution={onOpenSession}
+      session={group.latest}
+    />
+  );
 
   const entryRow = (entry: PulseDigestEntry) => (
     <PulseEntryRow
@@ -382,6 +426,45 @@ export function ProjectPulseView({
   return (
     <div className="flex flex-col gap-4 p-4" data-testid="project-pulse-screen">
       {header}
+
+      {/* What is on this screen, before any of it is scrolled. Entries lead the
+          page, but a project with a dozen sessions still pushes the session
+          groups below the fold, and a reader deserves to know they are there
+          without hunting. Counted from the rows actually rendered, so the
+          branch chip cannot make this line promise more than it shows. */}
+      {isConfirmedEmpty ? null : (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+          data-testid="pulse-counts"
+        >
+          <span data-testid="pulse-count-entries">
+            {countsAreLowerBounds
+              ? asFloor(
+                  visibleActiveEntries.length,
+                  formatPulseEntryCount(visibleActiveEntries.length),
+                  "entries",
+                )
+              : formatPulseEntryCount(visibleActiveEntries.length)}
+          </span>
+          <span data-testid="pulse-count-sessions">
+            {countsAreLowerBounds
+              ? asFloor(
+                  sessionCount,
+                  formatPulseSessionCount(sessionCount),
+                  "sessions",
+                )
+              : formatPulseSessionCount(sessionCount)}
+            {visibleSessions.activeWork.length > 0
+              ? ` · ${visibleSessions.activeWork.length} active`
+              : ""}
+          </span>
+          {countsAreLowerBounds ? (
+            <span data-testid="pulse-counts-incomplete">
+              — this read lost events, so these are floors, not totals
+            </span>
+          ) : null}
+        </div>
+      )}
 
       {state.kind === "partial" ? (
         <StateCard
@@ -474,6 +557,59 @@ export function ProjectPulseView({
         </div>
       ) : null}
 
+      {/* Entries lead.
+          They are the only thing on this screen a person chose to say, and the
+          header promises them first. Behind a dozen session cards, the one
+          posted plan — the human claim the whole surface exists to carry — was
+          below the fold on a live project's first read. */}
+      {isConfirmedEmpty ? null : (
+        <section data-testid="pulse-entries">
+          <GroupHeading>Entries</GroupHeading>
+          {visibleActiveEntries.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {visibleActiveEntries.map(entryRow)}
+            </ul>
+          ) : (
+            <div data-testid="pulse-entries-empty">
+              <p className="text-sm text-muted-foreground">
+                {entriesHidden
+                  ? "No entries on this branch. Other branches have entries — clear the filter to see them."
+                  : readable.errors.length > 0
+                    ? // A read that lost something cannot report an absence as
+                      // a finding, here for the same reason as below.
+                      "No entries posted for this project — but this read lost events, so that is not a confirmed answer."
+                    : "No entries posted for this project yet."}
+              </p>
+              {entriesHidden ? null : <PulseWriteHint />}
+            </div>
+          )}
+        </section>
+      )}
+
+      {visibleSupersededEntries.length > 0 ? (
+        <section data-testid="pulse-superseded">
+          <button
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            data-testid="pulse-superseded-toggle"
+            onClick={() => setShowSuperseded((open) => !open)}
+            type="button"
+          >
+            {showSuperseded ? (
+              <ChevronDown className="size-3" aria-hidden />
+            ) : (
+              <ChevronRight className="size-3" aria-hidden />
+            )}
+            {visibleSupersededEntries.length} superseded{" "}
+            {visibleSupersededEntries.length === 1 ? "entry" : "entries"}
+          </button>
+          {showSuperseded ? (
+            <ul className="mt-2 flex flex-col gap-2">
+              {visibleSupersededEntries.map(entryRow)}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
       {/* The sessions block renders whenever the digest is readable — including
           when it is empty. This is the one place the surface admits its own
           non-exhaustiveness, and it must not disappear in exactly the state
@@ -484,18 +620,7 @@ export function ProjectPulseView({
           <div className="mb-3" data-testid="pulse-active-work">
             <GroupHeading>Active work</GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.activeWork.map((session) => (
-                <PulseSessionCard
-                  key={session.targetKey}
-                  nowSeconds={nowSeconds}
-                  onOpen={
-                    onOpenSession
-                      ? () => onOpenSession(session.targetKey)
-                      : undefined
-                  }
-                  session={session}
-                />
-              ))}
+              {visibleSessions.activeWork.map(sessionCard)}
             </ul>
           </div>
         ) : null}
@@ -504,18 +629,7 @@ export function ProjectPulseView({
           <div className="mb-3" data-testid="pulse-last-seen">
             <GroupHeading>Last seen</GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.lastSeen.map((session) => (
-                <PulseSessionCard
-                  key={session.targetKey}
-                  nowSeconds={nowSeconds}
-                  onOpen={
-                    onOpenSession
-                      ? () => onOpenSession(session.targetKey)
-                      : undefined
-                  }
-                  session={session}
-                />
-              ))}
+              {visibleSessions.lastSeen.map(sessionCard)}
             </ul>
           </div>
         ) : (
@@ -544,39 +658,6 @@ export function ProjectPulseView({
           in a channel outside the project is not listed here.
         </p>
       </section>
-
-      {visibleActiveEntries.length > 0 ? (
-        <section data-testid="pulse-entries">
-          <GroupHeading>Entries</GroupHeading>
-          <ul className="flex flex-col gap-2">
-            {visibleActiveEntries.map(entryRow)}
-          </ul>
-        </section>
-      ) : null}
-
-      {visibleSupersededEntries.length > 0 ? (
-        <section data-testid="pulse-superseded">
-          <button
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            data-testid="pulse-superseded-toggle"
-            onClick={() => setShowSuperseded((open) => !open)}
-            type="button"
-          >
-            {showSuperseded ? (
-              <ChevronDown className="size-3" aria-hidden />
-            ) : (
-              <ChevronRight className="size-3" aria-hidden />
-            )}
-            {visibleSupersededEntries.length} superseded{" "}
-            {visibleSupersededEntries.length === 1 ? "entry" : "entries"}
-          </button>
-          {showSuperseded ? (
-            <ul className="mt-2 flex flex-col gap-2">
-              {visibleSupersededEntries.map(entryRow)}
-            </ul>
-          ) : null}
-        </section>
-      ) : null}
     </div>
   );
 }

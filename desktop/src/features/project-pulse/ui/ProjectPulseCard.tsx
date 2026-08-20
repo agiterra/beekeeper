@@ -51,7 +51,9 @@ export function ProjectPulseCard({
   // ten minutes older, not frozen at the second it was read.
   const nowSeconds = Math.floor(Date.now() / 1_000);
 
-  const sessions = digest ? groupPulseSessions(digest) : null;
+  // Umbrella sessions, not executions: a session restarted three times is one
+  // session working, and the count on this card must not read as three.
+  const sessions = digest ? groupPulseSessions(digest.sessions) : null;
   const entries = digest ? groupPulseEntries(digest) : null;
   const count =
     (sessions?.activeWork.length ?? 0) + (entries?.active.length ?? 0);

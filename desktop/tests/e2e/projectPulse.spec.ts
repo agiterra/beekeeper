@@ -60,6 +60,8 @@ const THEME_STORAGE_KEY = "buzz-theme";
 const ACTIVE_SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const UNOBSERVED_SESSION_REF = "8c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
 const LAST_SEEN_SESSION_REF = "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6";
+/** One umbrella the provider restarted three times — F22's live shape. */
+const RESTARTED_SESSION_REF = "2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b";
 
 const SCREENSHOT_DIR = "test-results/project-pulse";
 const hashes = new Map<string, string>();
@@ -174,6 +176,8 @@ function sessionMetadataEvent(input: {
   status: string;
   branch: string | null;
   createdAtOffset: number;
+  /** Provider restart counter — a new generation is a new execution. */
+  generation?: number;
   facts?: {
     observedCommit: string | null;
     dirty: boolean | null;
@@ -185,7 +189,7 @@ function sessionMetadataEvent(input: {
     driver: "claude-agent-acp",
     instanceId: "pulse-instance",
     sessionId: input.sessionId,
-    generation: 1,
+    generation: input.generation ?? 1,
   };
   return finalizeEvent(
     {
@@ -732,8 +736,23 @@ test("a source that did not answer renders as a partial read, not a quiet projec
   const partial = page.getByTestId("pulse-partial");
   await expect(partial).toBeVisible({ timeout: 10_000 });
   await expect(partial).toContainText("Partial read.");
-  await expect(partial).toContainText("entries:");
+  // The card names the loss in the reader's vocabulary, not the fold's: the
+  // wire scope (`entries:`) lives in the note's `title`, never in its sentence.
+  await expect(partial).toContainText(
+    "This project's entries could not be read",
+  );
+  await expect(partial).not.toContainText("entries:");
   await expect(page.getByTestId("pulse-empty")).toHaveCount(0);
+  // The one-line summary above the cards is the line a hurried reader
+  // actually reads. Over a read that lost events it may not report a total,
+  // and it may not report a bare absence — floors, said to be floors.
+  const entryCount = page.getByTestId("pulse-count-entries");
+  await expect(entryCount).toBeVisible();
+  await expect(entryCount).not.toHaveText("no entries");
+  await expect(entryCount).toContainText(/at least|in what this read returned/);
+  await expect(page.getByTestId("pulse-counts-incomplete")).toContainText(
+    "floors, not totals",
+  );
   await captureLocator(
     page,
     page.getByTestId("project-pulse-screen"),
@@ -758,7 +777,15 @@ test("a complete read that lost an event says so instead of looking exhaustive",
   const excluded = page.getByTestId("pulse-excluded");
   await expect(excluded).toBeVisible({ timeout: 10_000 });
   await expect(excluded).toContainText("Some events were excluded.");
-  await expect(excluded).toContainText("unresolved-supersedes");
+  // Named by author and by what the entry says — `unresolved-supersedes` and
+  // the 64-hex id it points at are wire records, and stay in the `title`.
+  await expect(excluded).toContainText(
+    "says an entry that is not visible in this read is resolved",
+  );
+  await expect(excluded).toContainText(
+    "Superseding an entry this read cannot see.",
+  );
+  await expect(excluded).not.toContainText("unresolved-supersedes");
   await expect(page.getByTestId("pulse-empty")).toHaveCount(0);
   // The row keeps the claim visible in words, without printing the hash.
   await expect(
@@ -854,4 +881,156 @@ test("the Pulse screen, its retired entries and its session cards survive dark m
     retired.getByTestId("pulse-entry-superseded-badge"),
   ).toBeVisible();
   await captureLocator(page, retired, "15-dark-superseded-entry");
+});
+
+/**
+ * Three executions of one umbrella session, as a live provider emits them: the
+ * same `sessionRef` (and therefore the same name a person gave it) under a new
+ * generation each restart.
+ */
+function restartedSessionFacts(): RelayEvent[] {
+  return [
+    sessionMetadataEvent({
+      sessionRef: RESTARTED_SESSION_REF,
+      sessionId: "44444444-5555-6666-7777-888888888888",
+      title: "dedupe_test",
+      status: "running",
+      branch: "wip/dual-stream-thesis",
+      createdAtOffset: 90,
+      generation: 3,
+      facts: {
+        observedCommit: "50dee7a75a99abcd",
+        dirty: false,
+        relayReachable: true,
+        verifiedAt: nowSeconds() - 100,
+      },
+    }),
+    sessionMetadataEvent({
+      sessionRef: RESTARTED_SESSION_REF,
+      sessionId: "44444444-5555-6666-7777-888888888888",
+      title: "dedupe_test",
+      status: "stopped",
+      branch: "wip/dual-stream-thesis",
+      createdAtOffset: 7_200,
+      generation: 2,
+      facts: {
+        observedCommit: "50dee7a75a99abcd",
+        dirty: false,
+        relayReachable: true,
+        verifiedAt: nowSeconds() - 7_300,
+      },
+    }),
+    sessionMetadataEvent({
+      sessionRef: RESTARTED_SESSION_REF,
+      sessionId: "44444444-5555-6666-7777-888888888888",
+      title: "dedupe_test",
+      status: "stopped",
+      branch: "wip/dual-stream-thesis",
+      createdAtOffset: 10_800,
+      generation: 1,
+      facts: {
+        observedCommit: "50dee7a75a99abcd",
+        dirty: false,
+        relayReachable: true,
+        verifiedAt: nowSeconds() - 10_900,
+      },
+    }),
+    sessionNameEvent(RESTARTED_SESSION_REF, "dedupe_test"),
+  ];
+}
+
+/**
+ * F21 + F22, in the shape that produced them: one posted entry under a pile of
+ * session rows, most of which were repeats of the same session.
+ *
+ * Entries lead the screen, the umbrella collapses to one card, and the history
+ * it collapsed is one click away.
+ */
+test("entries lead the screen, and repeated executions collapse into one card", async ({
+  page,
+}) => {
+  await boot(page, [
+    projectHeadEvent({
+      dtag: SESSIONS_DTAG,
+      name: "Sessions Demo",
+      channelIds: [GENERAL_CHANNEL_ID],
+    }),
+    pulseEntry({
+      secret: AUTHOR_SECRET,
+      createdAtOffset: 600,
+      type: "plan",
+      text: "Splitting the dual-stream thesis into landable slices.",
+      branch: "wip/dual-stream-thesis",
+      coordinate: SESSIONS_COORDINATE,
+    }),
+  ]);
+  await seedSessionFacts(page, [
+    ...seededSessionFacts(),
+    ...restartedSessionFacts(),
+  ]);
+  await openPulseFromSidebar(page, SESSIONS_DTAG);
+
+  const screen = page.getByTestId("project-pulse-screen");
+  await expect(screen).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("pulse-entry-row")).toHaveCount(1, {
+    timeout: 10_000,
+  });
+
+  // The human claim is above the machine observations, as the header promises.
+  const entriesTop = await page
+    .getByTestId("pulse-entries")
+    .evaluate((node) => node.getBoundingClientRect().top);
+  const sessionsTop = await page
+    .getByTestId("pulse-sessions")
+    .evaluate((node) => node.getBoundingClientRect().top);
+  expect(entriesTop).toBeLessThan(sessionsTop);
+
+  // Four umbrellas from six observations — and the summary counts umbrellas.
+  await expect(page.getByTestId("pulse-session-card")).toHaveCount(4);
+  await expect(page.getByTestId("pulse-count-entries")).toHaveText("1 entry");
+  await expect(page.getByTestId("pulse-count-sessions")).toHaveText(
+    "4 sessions · 3 active",
+  );
+
+  const restarted = page
+    .getByTestId("pulse-session-card")
+    .filter({ hasText: "dedupe_test" });
+  await expect(restarted).toHaveCount(1);
+  await expect(restarted).toHaveAttribute("data-execution-count", "3");
+  const toggle = restarted.getByTestId("pulse-session-executions-toggle");
+  await expect(toggle).toHaveText("3 executions");
+  await expect(restarted.getByTestId("pulse-session-execution")).toHaveCount(0);
+  await captureLocator(page, screen, "16-entries-lead");
+  await captureLocator(page, restarted, "17-executions-collapsed");
+
+  // Collapsed, never dropped: the older runs are one click away, each said in
+  // its own words rather than as a repeated full-height card.
+  await toggle.click();
+  await expect(restarted.getByTestId("pulse-session-execution")).toHaveCount(2);
+  await expect(
+    restarted.getByTestId("pulse-session-execution").first(),
+  ).toContainText("Ended · last observed 2h ago");
+  await captureLocator(page, restarted, "18-executions-disclosed");
+
+  // F23: the honest tri-state still renders — inline with the observations it
+  // qualifies rather than on a line of its own. (Not captured separately: the
+  // `Relay ingest` card is pixel-identical to `07-session-card-not-observed`,
+  // and a duplicate shot would trip the distinctness gate.)
+  const notChecked = page
+    .getByTestId("pulse-session-card")
+    .filter({ hasText: "Relay ingest" });
+  const confirmation = notChecked.getByTestId(
+    "pulse-session-commit-confirmation",
+  );
+  await expect(confirmation).toHaveText("Commit not checked");
+  expect(
+    await confirmation.evaluate(
+      (node) =>
+        node.parentElement ===
+        node
+          .closest("[data-testid='pulse-session-card']")
+          ?.querySelector("[data-testid='pulse-session-commit']")
+          ?.parentElement,
+    ),
+  ).toBe(true);
 });

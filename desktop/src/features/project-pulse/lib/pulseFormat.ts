@@ -85,18 +85,83 @@ export function formatLastSeenLabel(session: PulseDigestSession): string {
   return `${pulseSessionStatusLabel(session)} · last observed ${age} ago`;
 }
 
-/** Sessions split into Active work and Last seen, per the §5.4 definition. */
-export function groupPulseSessions(digest: ProjectPulseDigest): {
-  activeWork: PulseDigestSession[];
-  lastSeen: PulseDigestSession[];
+/**
+ * One umbrella session and every execution of it this read observed.
+ *
+ * A provider restarts a session as a new *generation* — a new `targetKey` — but
+ * the umbrella `sessionRef` (and therefore the name a person gave it) stays the
+ * same. The fold keeps one row per execution, which is right for a digest and
+ * wrong for a screen: three restarts of `dedupe_test` on one branch at one
+ * commit render as three full-height cards, and the sessions that are actually
+ * distinct get pushed off the fold.
+ *
+ * So the grouping is presentation-only: the digest still carries every
+ * execution, and this type just says which of them a card leads with and which
+ * sit behind its disclosure. Nothing is dropped.
+ */
+export type PulseSessionExecutions = {
+  /** The umbrella: the session's `sessionRef`, or its own key when it has none. */
+  key: string;
+  /** The newest execution — the observation the card shows. */
+  latest: PulseDigestSession;
+  /** Older executions of the same umbrella, newest first. */
+  older: PulseDigestSession[];
+  /** Executions of this umbrella, including {@link latest}. */
+  count: number;
+};
+
+/**
+ * Collapse executions onto their umbrella session, preserving digest order.
+ *
+ * The fold sorts sessions by `(statusAt desc, targetKey)`, so the first
+ * execution of a key in that order is its newest one and becomes `latest`.
+ * Groups appear in the order their newest execution does, which keeps the
+ * screen's session order the digest's order.
+ *
+ * A session with no `sessionRef` is its own umbrella: two unrelated sessions
+ * must never be merged because both lack the field that would tell them apart.
+ */
+export function groupPulseSessionExecutions(
+  sessions: readonly PulseDigestSession[],
+): PulseSessionExecutions[] {
+  const groups: PulseSessionExecutions[] = [];
+  const byKey = new Map<string, PulseSessionExecutions>();
+  for (const session of sessions) {
+    const key = session.sessionRef ?? session.targetKey;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.older.push(session);
+      existing.count += 1;
+      continue;
+    }
+    const group: PulseSessionExecutions = {
+      key,
+      latest: session,
+      older: [],
+      count: 1,
+    };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
+}
+
+/**
+ * Umbrella sessions split into Active work and Last seen, per the §5.4
+ * definition applied to each umbrella's newest execution.
+ *
+ * The newest execution decides, so an umbrella whose current run is live is
+ * Active work even when its earlier runs aged out — the older runs travel with
+ * it rather than seeding a duplicate row under Last seen.
+ */
+export function groupPulseSessions(sessions: readonly PulseDigestSession[]): {
+  activeWork: PulseSessionExecutions[];
+  lastSeen: PulseSessionExecutions[];
 } {
+  const groups = groupPulseSessionExecutions(sessions);
   return {
-    activeWork: digest.sessions.filter(
-      (session) => session.activity === "active",
-    ),
-    lastSeen: digest.sessions.filter(
-      (session) => session.activity !== "active",
-    ),
+    activeWork: groups.filter((group) => group.latest.activity === "active"),
+    lastSeen: groups.filter((group) => group.latest.activity !== "active"),
   };
 }
 
@@ -201,7 +266,11 @@ export function matchesBranchFilter(
 }
 
 /**
- * How many rows a branch chip would show: sessions plus **active** entries.
+ * How many rows a branch chip would show: session cards plus **active** entries.
+ *
+ * Sessions are counted as *umbrella* rows, not as executions, because that is
+ * what the screen renders — a chip promising 19 rows over 12 cards is a count
+ * that outran the thing it counts.
  *
  * Superseded entries are deliberately excluded — they sit behind a disclosure
  * whose own count is computed from the same filtered list, and a chip count
@@ -211,11 +280,60 @@ export function countPulseBranchRows(
   digest: ProjectPulseDigest,
   selected: string | null | undefined,
 ): number {
-  const sessions = digest.sessions.filter((session) =>
-    matchesBranchFilter(session.branch, selected),
+  const sessions = groupPulseSessionExecutions(
+    digest.sessions.filter((session) =>
+      matchesBranchFilter(session.branch, selected),
+    ),
   ).length;
   const entries = digest.entries.filter(
     (entry) => entry.active && matchesBranchFilter(entry.branch, selected),
   ).length;
   return sessions + entries;
+}
+
+/**
+ * `1 entry` / `3 entries` / `no entries` — a count that reads as a sentence.
+ *
+ * Used by the at-a-glance summary under the header, whose whole job is to let
+ * a reader see that there *is* an entry (and how many sessions sit under it)
+ * without scrolling a long session list.
+ */
+export function formatPulseEntryCount(count: number): string {
+  if (count === 0) return "no entries";
+  return `${count} ${count === 1 ? "entry" : "entries"}`;
+}
+
+/** `1 session` / `12 sessions` / `no sessions` — umbrellas, not executions. */
+export function formatPulseSessionCount(count: number): string {
+  if (count === 0) return "no sessions";
+  return `${count} ${count === 1 ? "session" : "sessions"}`;
+}
+
+/**
+ * `3 executions` — the umbrella's disclosure label.
+ *
+ * Counts the whole umbrella, including the execution the card already shows,
+ * so the number answers "how many times has this session run?" rather than
+ * "how many rows are hidden?".
+ */
+export function formatPulseExecutionCount(count: number): string {
+  return `${count} ${count === 1 ? "execution" : "executions"}`;
+}
+
+/**
+ * Does the `Closed` chip repeat what the status label already said?
+ *
+ * A session whose wire status is `stopped` renders `Ended · last observed 30m
+ * ago`; putting a `Closed` chip next to it is two words for one fact. Every
+ * other status — `disconnected`, `failed`, an unknown one — carries information
+ * the closure does not, so the chip stays.
+ */
+export function pulseSessionClosedIsRestated(
+  session: PulseDigestSession,
+): boolean {
+  return (
+    session.closed &&
+    codingSessionWireWorkspaceStatus(session.status as CodingSessionStatus)
+      .kind === "ended"
+  );
 }
