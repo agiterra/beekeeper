@@ -595,6 +595,22 @@ pub const KIND_MEMBER_REMOVED_NOTIFICATION: u32 = 44101;
 /// See `docs/nips/NIP-AM.md`.
 pub const KIND_AGENT_TURN_METRIC: u32 = 44200;
 
+/// Project Pulse entry — one explicit coordination claim scoped to a project.
+///
+/// Regular stored event (append-only), scoped to exactly one NIP-MP project by
+/// a canonical `a` coordinate, optionally to a channel by `h` and to an
+/// umbrella coding session by `pu-session`. Content is strict public JSON
+/// ([`crate::pulse::PulseEntry`]) naming the claim type, its prose, the code
+/// areas the author claims, the branch, and the entry it supersedes. Tags are
+/// position-independent with a closed key set: `a`, `pu-v`, `pu-type`, and the
+/// optional `h`, `branch`, `pu-session`.
+///
+/// Deliberately **not** parameterized-replaceable: a revision is a new entry
+/// naming its predecessor in `supersedes`, and the fold decides whether that
+/// claim is honored (same author only). A replaceable Pulse would let one
+/// author's write erase the record another author's advisory was built on.
+pub const KIND_PULSE_ENTRY: u32 = 44240;
+
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
 /// A forum post (thread root).
@@ -918,6 +934,38 @@ pub fn shell_session_hidden_from(
     }
 }
 
+/// Returns `true` if a stored kind:44240 Pulse entry must be withheld from
+/// this reader: its project coordinate is in the reader's
+/// hidden-private-project set (resolved per reader by
+/// `buzz_db::git_repo::hidden_repos_for_reader`) and the reader is not its
+/// author. An empty set (the common case) hides nothing; an entry with no
+/// resolvable coordinate hides from every non-author (fail closed — ingest
+/// rejects that shape, but a smuggled entry must not leak).
+///
+/// A Pulse entry carries no roster: unlike a 30623 announce, there is no
+/// per-entry invite that grants a reader outside the project. Project
+/// membership is the only key.
+pub fn pulse_entry_hidden_from(
+    event: &nostr::Event,
+    reader_pubkey_hex: &str,
+    hidden_project_coordinates: &std::collections::HashSet<String>,
+) -> bool {
+    if event_kind_u32(event) != KIND_PULSE_ENTRY {
+        return false;
+    }
+    if event
+        .pubkey
+        .to_hex()
+        .eq_ignore_ascii_case(reader_pubkey_hex)
+    {
+        return false;
+    }
+    match crate::pulse::pulse_entry_project_coordinate(event) {
+        Some(coord) => hidden_project_coordinates.contains(&coord),
+        None => true,
+    }
+}
+
 /// The roster of a kind:30623 announce: every `["p", <hex>, <hint>, <role>]`
 /// tag whose role is a pinned [`SHELL_ROLES`] value, as
 /// `(pubkey_hex, role)` pairs. Tags with an unknown or missing role are
@@ -1213,6 +1261,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
+    KIND_PULSE_ENTRY,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1381,6 +1430,13 @@ const _: () = assert!(!is_ephemeral(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_parameterized_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(KIND_AGENT_TURN_METRIC <= u16::MAX as u32);
+// Pulse entries are append-only coordination history: a revision is a new
+// entry naming its predecessor, never a replacement, so no author can quietly
+// remove the claim a peer's advisory was built on.
+const _: () = assert!(!is_ephemeral(KIND_PULSE_ENTRY));
+const _: () = assert!(!is_replaceable(KIND_PULSE_ENTRY));
+const _: () = assert!(!is_parameterized_replaceable(KIND_PULSE_ENTRY));
+const _: () = assert!(KIND_PULSE_ENTRY <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).
@@ -1573,6 +1629,71 @@ mod tests {
         // Other kinds never trip this predicate.
         let other = make_event_of_kind(KIND_PROJECT, &[&["d", "s1"]]);
         assert!(!shell_session_hidden_from(&other, FOREIGN_HEX, &hidden));
+    }
+
+    // ── Project Pulse entries: hidden-from ───────────────────────────────
+
+    #[test]
+    fn pulse_entry_hidden_from_reader_outside_private_project() {
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let ev = make_event_of_kind(
+            KIND_PULSE_ENTRY,
+            &[
+                &["a", &coord],
+                &["pu-v", crate::pulse::PULSE_ENTRY_TAG_VERSION],
+                &["pu-type", "plan"],
+            ],
+        );
+        let mut hidden = std::collections::HashSet::new();
+
+        // Empty hidden set (public/admitted): visible.
+        assert!(!pulse_entry_hidden_from(&ev, FOREIGN_HEX, &hidden));
+
+        hidden.insert(coord);
+        assert!(pulse_entry_hidden_from(&ev, FOREIGN_HEX, &hidden));
+        // The author always reads their own entry.
+        assert!(!pulse_entry_hidden_from(&ev, &ev.pubkey.to_hex(), &hidden));
+    }
+
+    #[test]
+    fn pulse_entry_without_single_coordinate_fails_closed() {
+        let mut hidden = std::collections::HashSet::new();
+        hidden.insert("anything".to_string());
+
+        let no_a = make_event_of_kind(KIND_PULSE_ENTRY, &[&["pu-type", "plan"]]);
+        assert!(pulse_entry_hidden_from(&no_a, FOREIGN_HEX, &hidden));
+        assert!(!pulse_entry_hidden_from(
+            &no_a,
+            &no_a.pubkey.to_hex(),
+            &hidden
+        ));
+
+        // Two `a` tags are not a wider grant — they are an unresolvable scope.
+        let coord = format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform");
+        let two = make_event_of_kind(
+            KIND_PULSE_ENTRY,
+            &[
+                &["a", &coord],
+                &["a", &format!("{KIND_PROJECT}:{FOREIGN_HEX}:other")],
+            ],
+        );
+        assert!(pulse_entry_hidden_from(&two, FOREIGN_HEX, &hidden));
+
+        // Other kinds never trip this predicate.
+        let other = make_event_of_kind(KIND_PROJECT, &[&["d", "proj"]]);
+        assert!(!pulse_entry_hidden_from(&other, FOREIGN_HEX, &hidden));
+    }
+
+    #[test]
+    fn pulse_entry_case_variant_coordinate_still_hides() {
+        let upper = format!(
+            "{KIND_PROJECT}:{}:platform",
+            FOREIGN_HEX.to_ascii_uppercase()
+        );
+        let ev = make_event_of_kind(KIND_PULSE_ENTRY, &[&["a", &upper]]);
+        let mut hidden = std::collections::HashSet::new();
+        hidden.insert(format!("{KIND_PROJECT}:{FOREIGN_HEX}:platform"));
+        assert!(pulse_entry_hidden_from(&ev, FOREIGN_HEX, &hidden));
     }
 
     #[test]

@@ -1,0 +1,1365 @@
+{
+  "schema": "buzz-project-pulse-fold-vectors/v1",
+  "contract": "conformance/project-pulse-fold/CONTRACT.md",
+  "activeWindowSeconds": 1800,
+  "digestSchema": "buzz-project-pulse-digest/v1",
+  "entrySchema": "buzz-pulse-entry/v1",
+  "vectors": [
+    {
+      "name": "empty-project",
+      "description": "A project with no Pulse entries and no sessions is a complete, confirmed-empty digest - never a partial read.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": []
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "same-author-supersession-chain",
+      "description": "Single-pass marking, never a traversal: each link marks exactly its own target, so only the newest entry stays active and every predecessor is returned with active:false and its honored claim recorded.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000011",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785510037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Draft the wire contract.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000012",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Wire contract landed; starting ingest.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000011\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000013",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Ingest landed; starting the CLI.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000012\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000013",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Ingest landed; starting the CLI.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000012",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000012",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "plan",
+            "text": "Wire contract landed; starting ingest.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000011",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000013",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000011",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785510037,
+            "type": "plan",
+            "text": "Draft the wire contract.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000012",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "cross-author-supersession-not-honored",
+      "description": "A supersedes across authors never removes its target: Alice's blocker stays active and Bob's entry carries the unhonored claim. Without this, any project writer could push a peer's blocker out of the set that drives wait|consult|proceed.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000021",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "blocker"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"blocker\",\"text\":\"Do not touch pool.rs; the creation path is half-migrated.\",\"codeAreas\":[\"crates/buzz-acp/src/pool.rs\"],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000022",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Picking pool.rs back up.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000021\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000022",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Picking pool.rs back up.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000021",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000021",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": false,
+                "reason": "cross-author"
+              }
+            ],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000021",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "blocker",
+            "text": "Do not touch pool.rs; the creation path is half-migrated.",
+            "claimedAreas": ["crates/buzz-acp/src/pool.rs"],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "unresolved-supersedes",
+      "description": "A reference to an id outside the fetched result set leaves the target unknown and the entry active; the claim is echoed verbatim as unresolved and recorded in errors[]. An unresolved reference is not a failed read, so complete stays true.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000031",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512137,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Continuing from an entry outside this window.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"00000000000000000000000000000000000000000000000000000000000000ff\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000031",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512137,
+            "type": "plan",
+            "text": "Continuing from an entry outside this window.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "00000000000000000000000000000000000000000000000000000000000000ff",
+            "supersededBy": [
+              {
+                "eventId": "00000000000000000000000000000000000000000000000000000000000000ff",
+                "pubkey": null,
+                "honored": false,
+                "reason": "unresolved"
+              }
+            ],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "unresolved-supersedes",
+            "message": "entry 0000000000000000000000000000000000000000000000000000000000000031 supersedes 00000000000000000000000000000000000000000000000000000000000000ff, which is not in the visible result set"
+          }
+        ]
+      }
+    },
+    {
+      "name": "created-at-tie-greater-id-honored",
+      "description": "Nostr timestamps have one-second precision, so a tie is broken by the greater event id - the same (created_at, event id) fold the coding-session closure uses.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000041",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"First of two entries at the same second.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000042",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, greater event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000041\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000042",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, greater event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000041",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000041",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "First of two entries at the same second.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000042",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "created-at-tie-lesser-id-not-honored",
+      "description": "The mirror of the tie rule: a claimant that loses the tie does not supersede, so the ordering is total and no two entries can supersede each other.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000052",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, greater event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000051",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, lesser event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000052\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000052",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, greater event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000051",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, lesser event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000052",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000052",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": false,
+                "reason": "out-of-order"
+              }
+            ],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "two-entries-supersede-one-target",
+      "description": "Marking is per-claim, not per-target: both revisions are honored and both are recorded on the target, which is returned once with active:false.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000061",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785510037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"The original plan.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000062",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"First revision.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000061\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000063",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Second revision, also naming the original.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000061\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000063",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Second revision, also naming the original.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000061",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000062",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "plan",
+            "text": "First revision.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000061",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000061",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785510037,
+            "type": "plan",
+            "text": "The original plan.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000062",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              },
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000063",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "self-referencing-entry-excluded",
+      "description": "An entry whose supersedes is its own id fails validation (buzz-core rejects it at ingest, so only a smuggled event reaches a reader). It is excluded from entries[] and recorded in errors[] - never dropped silently, and never counted as a valid claim.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000071",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512237,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Smuggled self-reference.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000071\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000072",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"A well-formed entry beside it.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000072",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "note",
+            "text": "A well-formed entry beside it.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "invalid-entry",
+            "message": "entry 0000000000000000000000000000000000000000000000000000000000000071 failed validation and was excluded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "session-null-observations-preserved",
+      "description": "Unknown is not false: a probe that did not run leaves observedCommit/dirty/relayReachable/verifiedAt null, and every null survives the fold. observedAgeSeconds comes from the 44223 created_at, never from verifiedAt.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000081",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512437,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-11:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-16:sess-11:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"running\",\"branch\":\"wip/project-pulse\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000082",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785509437,
+            "kind": 44227,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+              ["csgl-v", "csgl1-1"]
+            ],
+            "content": "Ship explicit Pulse end to end."
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000083",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785509437,
+            "kind": 44229,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+              ["csnm-v", "csnm1-1"]
+            ],
+            "content": "Pulse plumbing"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-16:sess-11:1",
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "name": "Pulse plumbing",
+            "goal": "Ship explicit Pulse end to end.",
+            "status": "running",
+            "statusAt": 1785512437,
+            "closed": false,
+            "activity": "active",
+            "branch": "wip/project-pulse",
+            "observedCommit": null,
+            "dirty": null,
+            "relayReachable": null,
+            "verifiedAt": null,
+            "commitConfirmation": "Commit not checked",
+            "observedAgeSeconds": 600,
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000081",
+              "0000000000000000000000000000000000000000000000000000000000000082",
+              "0000000000000000000000000000000000000000000000000000000000000083"
+            ]
+          }
+        ],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "closed-session-is-not-active-work",
+      "description": "A closed umbrella fails clause (a) of the Active-work rule even with a fresh running status. It stays in sessions[] with closed:true and activity 'stale' - closed history is disclosed, never deleted, and never presented as somebody currently working.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000091",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512737,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-21:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-16:sess-21:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-2\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"running\",\"branch\":\"wip/project-pulse\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"observedCommit\":\"c0ffee0000000000000000000000000000000000\",\"dirty\":false,\"relayReachable\":true,\"verifiedAt\":1785512717}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000092",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512937,
+            "kind": 44230,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+              ["cscl-v", "cscl1-1"],
+              [
+                "cscl-genesis",
+                "0000000000000000000000000000000000000000000000000000000000000090"
+              ]
+            ],
+            "content": "{\"action\":\"closed\",\"genesisRef\":\"0000000000000000000000000000000000000000000000000000000000000090\",\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"v\":1}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-16:sess-21:1",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "status": "running",
+            "statusAt": 1785512737,
+            "closed": true,
+            "activity": "stale",
+            "branch": "wip/project-pulse",
+            "observedCommit": "c0ffee0000000000000000000000000000000000",
+            "dirty": false,
+            "relayReachable": true,
+            "verifiedAt": 1785512717,
+            "commitConfirmation": "Commit confirmed on relay",
+            "observedAgeSeconds": 300,
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000091",
+              "0000000000000000000000000000000000000000000000000000000000000092"
+            ]
+          }
+        ],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "freshness-window-and-commit-confirmation",
+      "description": "Active work needs a positive freshness signal. An observation exactly PULSE_ACTIVE_WINDOW old is still active; one second older is stale; and a fresh 'disconnected' status is stale regardless of age - the orphaned execution renders under Last seen and must never contribute a wait. The three commitConfirmation strings are pinned here.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511237,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-31:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-16:sess-31:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-3\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"running\",\"branch\":\"wip/project-pulse\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"observedCommit\":\"abababababababababababababababababababab\",\"dirty\":false,\"relayReachable\":true,\"verifiedAt\":1785511227}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a2",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511236,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-26:sess-41:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-26:sess-41:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-2\",\"sessionId\":\"sess-4\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":\"wip/other\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"observedCommit\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"dirty\":true,\"relayReachable\":false,\"verifiedAt\":1785511236}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a3",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512977,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-36:sess-51:2"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-36:sess-51:2"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-3\",\"sessionId\":\"sess-5\",\"generation\":2},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"disconnected\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"c47a0e19-5b62-4d38-8a71-0e5f2c9b6431\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-36:sess-51:2",
+            "sessionRef": "c47a0e19-5b62-4d38-8a71-0e5f2c9b6431",
+            "name": null,
+            "goal": null,
+            "status": "disconnected",
+            "statusAt": 1785512977,
+            "closed": false,
+            "activity": "stale",
+            "branch": null,
+            "observedCommit": null,
+            "dirty": null,
+            "relayReachable": null,
+            "verifiedAt": null,
+            "commitConfirmation": "Commit not checked",
+            "observedAgeSeconds": 60,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000a3"
+            ]
+          },
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-16:sess-31:1",
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "name": null,
+            "goal": null,
+            "status": "running",
+            "statusAt": 1785511237,
+            "closed": false,
+            "activity": "active",
+            "branch": "wip/project-pulse",
+            "observedCommit": "abababababababababababababababababababab",
+            "dirty": false,
+            "relayReachable": true,
+            "verifiedAt": 1785511227,
+            "commitConfirmation": "Commit confirmed on relay",
+            "observedAgeSeconds": 1800,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000a1"
+            ]
+          },
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-26:sess-41:1",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "status": "idle",
+            "statusAt": 1785511236,
+            "closed": false,
+            "activity": "stale",
+            "branch": "wip/other",
+            "observedCommit": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+            "dirty": true,
+            "relayReachable": false,
+            "verifiedAt": 1785511236,
+            "commitConfirmation": "Commit not found on relay",
+            "observedAgeSeconds": 1801,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000a2"
+            ]
+          }
+        ],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "no-branch-rows-preserved",
+      "description": "A null branch is its own group, never merged into a named branch and never rendered as one. The fold preserves null; the --branch - filter and Desktop's 'no branch' chip select on it.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"],
+              ["branch", "wip/project-pulse"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Branch-scoped claim.\",\"codeAreas\":[],\"branch\":\"wip/project-pulse\",\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512637,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Claim with no branch.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b3",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512837,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-46:sess-61:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-46:sess-61:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-4\",\"sessionId\":\"sess-6\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"c47a0e19-5b62-4d38-8a71-0e5f2c9b6431\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-46:sess-61:1",
+            "sessionRef": "c47a0e19-5b62-4d38-8a71-0e5f2c9b6431",
+            "name": null,
+            "goal": null,
+            "status": "idle",
+            "statusAt": 1785512837,
+            "closed": false,
+            "activity": "active",
+            "branch": null,
+            "observedCommit": null,
+            "dirty": null,
+            "relayReachable": null,
+            "verifiedAt": null,
+            "commitConfirmation": "Commit not checked",
+            "observedAgeSeconds": 200,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000b3"
+            ]
+          }
+        ],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000b2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512637,
+            "type": "note",
+            "text": "Claim with no branch.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000b1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512537,
+            "type": "plan",
+            "text": "Branch-scoped claim.",
+            "claimedAreas": [],
+            "branch": "wip/project-pulse",
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "branch-tag-without-content-branch",
+      "description": "The envelope validator accepts a `branch` tag alongside a null content branch (it only rejects a mismatch), so this shape is valid on the wire. Both folds must derive the entry's branch the same way: content field first, then the `branch` tag. Without this vector the two folds can disagree - one filing the entry under `wip/x`, the other under 'no branch' - while every other vector stays green.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"],
+              ["branch", "wip/x"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Tag-only branch claim.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512437,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Genuinely branchless claim.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512537,
+            "type": "plan",
+            "text": "Tag-only branch claim.",
+            "claimedAreas": [],
+            "branch": "wip/x",
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512437,
+            "type": "note",
+            "text": "Genuinely branchless claim.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "partial-read-is-never-an-empty-digest",
+      "description": "complete:false plus a non-empty errors[] is the only representation of a partial read. A source query that failed must never render as a quiet project - the caller exits 2 on this digest.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [
+          {
+            "scope": "sessions:05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+            "message": "relay unavailable"
+          }
+        ],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"The one entry the reader could see.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": false,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "plan",
+            "text": "The one entry the reader could see.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "sessions:05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+            "message": "relay unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "foreign-project-entry-is-never-an-error",
+      "description": "Project scope is decided before envelope validation. A 44240 tagged with a DIFFERENT project is not this digest's business - a mixed result set is a caller's shape, not a defect - so it is skipped silently even when its own envelope is malformed, and it never appears in errors[]. Only an entry whose coordinate cannot be resolved at all is recorded as invalid.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512237,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:2222222222222222222222222222222222222222222222222222222222222222:other-project"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v2\",\"type\":\"note\",\"text\":\"Another project's malformed entry.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a2",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512238,
+            "kind": 44240,
+            "tags": [
+              ["a", "not-a-coordinate"],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"No project at all.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a3",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"This project's entry.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000a3",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "note",
+            "text": "This project's entry.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "invalid-entry",
+            "message": "entry 00000000000000000000000000000000000000000000000000000000000000a2 failed validation and was excluded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "session-identity-comes-from-content-not-the-cs-target-tag",
+      "description": "The session's targetKey is derived from the 44223 content `session` object, byte-identical to coding_session_target_key. The cs-target tag is a filter affordance that nothing validates for a 44223, so a tag disagreeing with the content does not move the identity, and an event with no cs-target tag at all is still folded.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512437,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp7:inst-997:sess-991:9"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-16:sess-11:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"running\",\"branch\":\"wip/project-pulse\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b2",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512437,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-2\",\"sessionId\":\"sess-2\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"running\",\"branch\":\"wip/project-pulse\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v1",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-16:sess-11:1",
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "name": null,
+            "goal": null,
+            "status": "running",
+            "statusAt": 1785512437,
+            "closed": false,
+            "activity": "active",
+            "branch": "wip/project-pulse",
+            "observedCommit": null,
+            "dirty": null,
+            "relayReachable": null,
+            "verifiedAt": null,
+            "commitConfirmation": "Commit not checked",
+            "observedAgeSeconds": 600,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000b1"
+            ]
+          },
+          {
+            "targetKey": "coding-session/v1|3:acp6:inst-26:sess-21:1",
+            "sessionRef": null,
+            "name": null,
+            "goal": null,
+            "status": "running",
+            "statusAt": 1785512437,
+            "closed": false,
+            "activity": "active",
+            "branch": "wip/project-pulse",
+            "observedCommit": null,
+            "dirty": null,
+            "relayReachable": null,
+            "verifiedAt": null,
+            "commitConfirmation": "Commit not checked",
+            "observedAgeSeconds": 600,
+            "sourceEventIds": [
+              "00000000000000000000000000000000000000000000000000000000000000b2"
+            ]
+          }
+        ],
+        "entries": [],
+        "errors": []
+      }
+    }
+  ]
+}
