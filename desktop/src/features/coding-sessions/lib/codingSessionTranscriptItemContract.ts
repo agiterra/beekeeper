@@ -34,12 +34,25 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
   | { kind: "assistant_text"; text?: string }
   | {
       kind: "tool_call";
-      tool?: { toolName?: string; toolId?: string; input?: unknown };
+      /**
+       * `toolKind` is ACP's optional tool *discriminant* ("read", "execute",
+       * "think"), kept distinct from the display `toolName`. Additive and
+       * genuinely optional: the provider omits it when the adapter sent none,
+       * and items published before it existed simply lack it.
+       */
+      tool?: {
+        toolName?: string;
+        toolKind?: string;
+        toolId?: string;
+        input?: unknown;
+      };
     }
   | {
       kind: "tool_result";
       toolId?: string;
       toolName?: string;
+      /** The opening call's ACP discriminant, carried onto its result. */
+      toolKind?: string;
       content?: unknown;
       isError?: boolean;
     }

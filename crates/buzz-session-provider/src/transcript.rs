@@ -18,6 +18,16 @@
 //!   the agent reached for a tool belongs before it in the record;
 //! - **turn end** — nothing is left buffered when the turn's `result` lands.
 //!
+//! # Redaction
+//!
+//! NIP-CST requires the published `item` to be *deeply redacted*: no host
+//! paths, no credentials, no raw provider objects. That is not something the
+//! per-kind constructors can be trusted to remember — ACP's `title` is prose
+//! the agent wrote and `rawInput` is the literal arguments, so host-private
+//! strings arrive through ordinary fields. [`fit_item`] therefore redacts every
+//! item on its way to the envelope, using the same redactor as the private
+//! rehydration package.
+//!
 //! # Truncation
 //!
 //! Two independent caps. Tool inputs and outputs are bounded on the way in
@@ -31,6 +41,7 @@
 
 use std::collections::HashMap;
 
+use buzz_core::coding_session_context::sanitize_coding_session_context_content;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -63,6 +74,7 @@ pub struct TranscriptTranslator {
     thoughts: String,
     usage: Option<Value>,
     tool_names: HashMap<String, String>,
+    tool_kinds: HashMap<String, String>,
 }
 
 impl TranscriptTranslator {
@@ -74,6 +86,7 @@ impl TranscriptTranslator {
             thoughts: String::new(),
             usage: None,
             tool_names: HashMap::new(),
+            tool_kinds: HashMap::new(),
         }
     }
 
@@ -154,6 +167,7 @@ impl TranscriptTranslator {
             items.push(json!({ "kind": "context_window_updated", "usage": usage }));
         }
         self.tool_names.clear();
+        self.tool_kinds.clear();
         items
     }
 
@@ -192,17 +206,26 @@ impl TranscriptTranslator {
     fn tool_call_item(&mut self, update: &Value) -> Value {
         let tool_id = string_field(update, "toolCallId").unwrap_or_default();
         let tool_name = tool_name(update);
+        let tool_kind = string_field(update, "kind");
         if !tool_id.is_empty() {
             self.tool_names.insert(tool_id.clone(), tool_name.clone());
+            if let Some(kind) = tool_kind.clone() {
+                self.tool_kinds.insert(tool_id.clone(), kind);
+            }
         }
-        json!({
-            "kind": "tool_call",
-            "tool": {
-                "toolName": tool_name,
-                "toolId": tool_id,
-                "input": bounded_input(tool_input(update)),
-            },
-        })
+        let mut tool = Map::new();
+        tool.insert("toolName".into(), json!(tool_name));
+        tool.insert("toolId".into(), json!(tool_id));
+        tool.insert("input".into(), bounded_input(tool_input(update)));
+        // ACP's `kind` is a *discriminant* ("read", "execute", "think"), not a
+        // name, and it is optional in the spec. It gets its own key so a tool
+        // that also sent a `title` cannot suppress it — and it is written only
+        // when the adapter actually sent one, because an invented discriminant
+        // is worse than an absent one.
+        if let Some(kind) = tool_kind {
+            tool.insert("toolKind".into(), Value::String(kind));
+        }
+        json!({ "kind": "tool_call", "tool": Value::Object(tool) })
     }
 
     fn tool_result_item(&mut self, update: &Value, status: &str) -> Value {
@@ -211,29 +234,67 @@ impl TranscriptTranslator {
             .tool_names
             .remove(&tool_id)
             .unwrap_or_else(|| tool_name(update));
+        // The pairing is what carries the discriminant onto the result: a
+        // `tool_call_update` rarely repeats `kind`, so it is recalled from the
+        // opening call and only read off the update as a fallback.
+        let tool_kind = self
+            .tool_kinds
+            .remove(&tool_id)
+            .or_else(|| string_field(update, "kind"));
         let content = content_text(update.get("content"));
         let content = if content.is_empty() {
             raw_output_text(update)
         } else {
             content
         };
-        json!({
-            "kind": "tool_result",
-            "toolId": tool_id,
-            "toolName": tool_name,
-            "content": bound_text(&content, MAX_TOOL_CONTENT_BYTES),
-            "isError": status == "failed",
-        })
+        let mut item = Map::new();
+        item.insert("kind".into(), json!("tool_result"));
+        item.insert("toolId".into(), json!(tool_id));
+        item.insert("toolName".into(), json!(tool_name));
+        if let Some(kind) = tool_kind {
+            item.insert("toolKind".into(), Value::String(kind));
+        }
+        item.insert(
+            "content".into(),
+            json!(bound_text(&content, MAX_TOOL_CONTENT_BYTES)),
+        );
+        item.insert("isError".into(), json!(status == "failed"));
+        Value::Object(item)
     }
 }
 
-/// Shrink `item` until the whole envelope fits `max_envelope_bytes`.
+/// Redact `item`, then shrink it until the whole envelope fits
+/// `max_envelope_bytes`.
+///
+/// This is the last transformation an item receives before it is wrapped in a
+/// CST envelope and signed, which is why redaction lives here rather than in
+/// the individual item constructors. NIP-CST requires *every* published item to
+/// be deeply redacted, and items reach the envelope from several producers —
+/// this translator, the payload builders, and the provider's own lifecycle rows
+/// — so one seam at the end covers all of them and cannot be forgotten by a
+/// future producer. The redactor is
+/// [`buzz_core::coding_session_context::sanitize_coding_session_context_content`],
+/// the same one the private rehydration package uses: one implementation, so
+/// the public transcript and the private handoff cannot drift apart on what
+/// counts as host-private.
+///
+/// Redaction runs **first** because it can *grow* a value — an elided host path
+/// is replaced by a longer marker — so fitting afterwards is what keeps the
+/// 32 KiB cap honest.
 ///
 /// `overhead` is the envelope's own serialized size around the item. The
 /// dominant string is truncated first; when even an empty item would not fit —
 /// or the item is pathological, all structure and no text — the item is replaced
 /// by an `elided` marker that still records how much was dropped and its digest.
 pub fn fit_item(item: Value, overhead: usize, max_envelope_bytes: usize) -> Value {
+    shrink_item(
+        sanitize_coding_session_context_content(&item),
+        overhead,
+        max_envelope_bytes,
+    )
+}
+
+fn shrink_item(item: Value, overhead: usize, max_envelope_bytes: usize) -> Value {
     /// Slack per shrink attempt, absorbing the elision marker's own bytes and
     /// the JSON escaping of whatever replaced them.
     const SHRINK_MARGIN: usize = 64;
@@ -379,6 +440,12 @@ fn bounded_input(input: Value) -> Value {
     })
 }
 
+/// The tool's *display* name.
+///
+/// `kind` stays last in the chain purely as a last-resort label for an adapter
+/// that sent neither a name nor a title — it is no longer load-bearing, because
+/// the discriminant is now published separately as `toolKind`, where a present
+/// `title` cannot suppress it.
 fn tool_name(update: &Value) -> String {
     for key in ["toolName", "title", "kind"] {
         if let Some(value) = string_field(update, key) {
@@ -854,5 +921,77 @@ mod tests {
         let mut translator = TranscriptTranslator::new(false);
         let items = translator.begin_turn("go", None);
         assert!(items[0].get("operatorPubkey").is_none());
+    }
+
+    /// NIP-CST :43 — the signed `item` is "deeply redacted"; host paths are
+    /// forbidden. The tool-call path is where they actually arrive: ACP's
+    /// `title` is prose the agent wrote, and `rawInput` carries the literal
+    /// arguments, so an absolute checkout path reaches the envelope verbatim
+    /// unless the item is redacted before it is signed.
+    #[test]
+    fn an_absolute_host_path_in_a_tool_call_never_reaches_the_signed_item() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Read /Users/brian/Projects/buzz/secret.rs",
+            "kind": "read",
+            "status": "in_progress",
+            "rawInput": { "file_path": "/Users/brian/Projects/buzz/secret.rs" },
+        })));
+        let done = translator.on_update(&tool_done(
+            "t1",
+            "completed",
+            "opened /Users/brian/Projects/buzz/secret.rs",
+        ));
+
+        for item in call.iter().chain(done.iter()) {
+            let signed = fit_item(item.clone(), 512, 32 * 1024);
+            let serialized = serde_json::to_string(&signed).expect("json");
+            assert!(
+                !serialized.contains("/Users/brian"),
+                "a host path survived into a signed transcript item: {serialized}"
+            );
+            assert!(
+                serialized.contains("[elided private context: "),
+                "the path was dropped without a visible elision: {serialized}"
+            );
+        }
+    }
+
+    /// ACP's `kind` is a discriminant, not a name. Folding it into the name
+    /// chain meant any agent that also sent a `title` silently erased it.
+    #[test]
+    fn a_present_acp_kind_survives_beside_a_present_title() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&update(json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Run the test suite",
+            "kind": "execute",
+            "status": "in_progress",
+            "rawInput": {},
+        })));
+        assert_eq!(call[0]["tool"]["toolName"], "Run the test suite");
+        assert_eq!(call[0]["tool"]["toolKind"], "execute");
+        let signed = fit_item(call[0].clone(), 512, 32 * 1024);
+        assert_eq!(signed["tool"]["toolKind"], "execute");
+
+        // The pairing carries the discriminant onto the result too.
+        let done = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert_eq!(done[0]["toolName"], "Run the test suite");
+        assert_eq!(done[0]["toolKind"], "execute");
+    }
+
+    /// ACP marks `kind` optional, so an absent one stays absent — the provider
+    /// never guesses a discriminant it was not given.
+    #[test]
+    fn an_absent_acp_kind_is_never_invented() {
+        let mut translator = TranscriptTranslator::new(true);
+        let call = translator.on_update(&tool_call("t1", "read_file", json!({})));
+        assert_eq!(call[0]["tool"]["toolName"], "read_file");
+        assert!(call[0]["tool"].get("toolKind").is_none());
+        let done = translator.on_update(&tool_done("t1", "completed", "ok"));
+        assert!(done[0].get("toolKind").is_none());
     }
 }
