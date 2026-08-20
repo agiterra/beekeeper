@@ -58,6 +58,11 @@ type AppShellContextValue = {
   isNotifiedForThread: (rootId: string) => boolean;
   recordThreadInteraction: (rootId: string) => void;
   isThreadMuted: (rootId: string) => boolean;
+  // Raw, UNRECONCILED thread-activity buffer straight out of localStorage +
+  // live traffic. It can still contain rows whose events no longer exist on the
+  // relay. Do not render from this — render `threadActivityFeedItems`, which is
+  // the same list after the relay-existence reconcile in
+  // app/useChannelActivityProjection.ts has dropped confirmed-absent rows.
   threadActivityItems: ThreadActivityItem[];
   threadActivityFeedItems: FeedItem[];
   // Home-feed items explicitly reopened from Inbox. Kept separate from live

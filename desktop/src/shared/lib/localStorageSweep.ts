@@ -46,6 +46,25 @@ export const LOCAL_STORAGE_SWEEP_RULES: readonly LocalStorageSweepRule[] = [
   { keyPrefix: "buzz-sidebar-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-timeline-skeleton-shape.v1:", maxAgeMs: 14 * DAY_MS },
   { keyPrefix: "buzz-user-labels.v1:", maxAgeMs: 14 * DAY_MS },
+  // Thread-activity Inbox rows, keyed per relay+viewer
+  // (features/channels/threadActivityStorage.ts). Disposable by the same test
+  // as its six neighbours: the rows are a local echo of relay events, are
+  // re-observed from live traffic, and losing one costs an Inbox row that the
+  // relay-backed feed still carries. Unlike buzz-self-profile.v1: nothing falls
+  // back to this store when the relay is unreachable — an unverifiable row is
+  // exactly what must NOT be presented, so "gone" is the safe failure here.
+  // 14 days matches the sibling caches; a longer TTL only lengthens the window
+  // in which an unreachable event stays on screen.
+  // NOTE: this rule only collects a *scope* that stopped receiving thread
+  // activity entirely — any write refreshes updatedAt. Bounding an individual
+  // dead row inside a live scope is the reconcile pass's job
+  // (app/useChannelActivityProjection.ts), not this rule's.
+  { keyPrefix: "buzz-thread-activity.v1:", maxAgeMs: 14 * DAY_MS },
+  // Tombstones for thread-activity ids the relay positively confirmed absent.
+  // Deliberately outlives the rows it censors (30 d vs 14 d): if the tombstone
+  // expired first, a long-lived session still holding those ids in memory could
+  // write them back and resurrect the ghost rows.
+  { keyPrefix: "buzz-thread-activity-absent.v1:", maxAgeMs: 30 * DAY_MS },
   // Do not add buzz-self-profile.v1: here. It is the load-bearing offline
   // identity fallback when the relay is unreachable, not a repaintable cache.
 ];
@@ -320,7 +339,7 @@ function sweepChunked(now: number, isAlive: () => boolean): () => void {
  * - Subsequent sweeps run hourly via setInterval.
  * - The hidden→visible trigger has been removed. It stacked the sweep onto
  *   the exact moment focus-refetch storms fire. Hourly + boot-delayed covers
- *   the TTL contract — all rule TTLs are 14 days.
+ *   the TTL contract — the shortest rule TTL is 14 days.
  *
  * Returns a cleanup function for tests or future teardown.
  */
