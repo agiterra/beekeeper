@@ -519,6 +519,90 @@ export const CODING_SESSION_CONTINUITY_STATUSES: ReadonlyMap<string, string> =
     ["session_restarted_without_context", "Restarted without prior context"],
   ]);
 
+/**
+ * Reader-facing clauses for the closed set of slugs a create or resume may
+ * publish when continuity was lost (`CONTEXT_UNAVAILABLE_REASONS` in
+ * `crates/buzz-core/src/coding_session_payload.rs`).
+ *
+ * Only `session_fresh` and `session_restarted_without_context` ever carry a
+ * `reason` — see `REASON_CARRYING_CONTINUITY_STATUSES`. A clause is appended
+ * to the base continuity prose as ` — ${clause}`.
+ */
+export const CODING_SESSION_CONTINUITY_REASONS: ReadonlyMap<string, string> =
+  new Map([
+    [
+      "no_prior_execution",
+      "this is the session's first execution, so there was no prior work to carry",
+    ],
+    [
+      // Only a resume publishes this one. A resumed execution has prior work by
+      // definition, so it can never claim a first execution — what it lacks is
+      // the umbrella the projector is keyed on.
+      "no_umbrella_context",
+      "this execution was not created under an umbrella session, so there was no verified history to rebuild",
+    ],
+    [
+      "context_fact_conflict",
+      "conflicting signed facts were found for this session — for example two executions under one create — so verified history was withheld rather than guessed",
+    ],
+    [
+      "relay_unavailable",
+      "the relay could not be reached to rebuild verified history",
+    ],
+    ["relay_query_failed", "the relay query for verified history failed"],
+    [
+      "unverifiable_source_fact",
+      "a source fact failed verification, so verified history was withheld",
+    ],
+    [
+      "source_exceeds_projection_bound",
+      "this session's history is larger than the projector's bounds",
+    ],
+    [
+      "context_sidecar_unavailable",
+      "no context sidecar is installed on this computer",
+    ],
+    [
+      "context_sidecar_path_invalid",
+      "the configured context sidecar path is not absolute",
+    ],
+    ["brief_encode_failed", "the verified brief could not be encoded"],
+    [
+      "package_write_failed",
+      "the verified package could not be written to local storage",
+    ],
+  ]);
+
+/**
+ * The only two continuity statuses a lost verified package can attach a
+ * `reason` to (`crates/buzz-session-provider/src/lib.rs`'s create and resume
+ * disclosure sites). A `reason` on any other status is ignored rather than
+ * rendered, since none of those statuses represent a continuity loss.
+ */
+const REASON_CARRYING_CONTINUITY_STATUSES: ReadonlySet<string> = new Set([
+  "session_fresh",
+  "session_restarted_without_context",
+]);
+
+/**
+ * Append a reason clause to base continuity prose, when one is present.
+ *
+ * A recognized reason renders its reader-facing clause
+ * (`CODING_SESSION_CONTINUITY_REASONS`). An unrecognized reason still
+ * renders — as its raw slug in parentheses — because guessing prose for it
+ * would be inventing a fact, but dropping it silently would hide a real
+ * disclosure (H6). An absent or non-string reason renders the base prose
+ * unchanged.
+ */
+function withReasonClause(continuity: string, reason: unknown): string {
+  if (typeof reason !== "string" || reason.length === 0) {
+    return continuity;
+  }
+  const bounded = safeString(reason, 200);
+  const clause = CODING_SESSION_CONTINUITY_REASONS.get(bounded);
+  return clause ? `${continuity} — ${clause}` : `${continuity} (${bounded})`;
+}
+
 function buildStatusLifecycleItem(
   item: Record<string, unknown>,
   ctx: Identity,
@@ -528,9 +612,13 @@ function buildStatusLifecycleItem(
     200,
   );
   const continuity = CODING_SESSION_CONTINUITY_STATUSES.get(status);
-  return continuity
-    ? buildSimpleLifecycleItem(ctx, CODING_SESSION_CONTINUITY_TITLE, continuity)
-    : buildSimpleLifecycleItem(ctx, "Status", status);
+  if (!continuity) {
+    return buildSimpleLifecycleItem(ctx, "Status", status);
+  }
+  const text = REASON_CARRYING_CONTINUITY_STATUSES.has(status)
+    ? withReasonClause(continuity, item.reason)
+    : continuity;
+  return buildSimpleLifecycleItem(ctx, CODING_SESSION_CONTINUITY_TITLE, text);
 }
 
 function buildSimpleLifecycleItem(
