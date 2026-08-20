@@ -25,8 +25,9 @@ use buzz_core::coding_session_context::{
     coding_session_context_role_for_item_kind, sanitize_coding_session_context_content,
     sanitize_coding_session_context_text, CodingSessionContextHistoryItem,
     CodingSessionContextIdentity, CodingSessionContextPackage, CodingSessionContextProvenance,
-    CODING_SESSION_CONTEXT_PACKAGE_VERSION, MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
-    MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
+    CodingSessionContextSourceBreakdown, CODING_SESSION_CONTEXT_PACKAGE_VERSION,
+    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_PACKAGE_BYTES, MAX_CONTEXT_PROVENANCE_NOTES,
+    MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
 };
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
@@ -193,6 +194,26 @@ pub enum ContextProjectionError {
     /// Input or output exceeded a hard processing bound.
     #[error("context projection bound exceeded: {0}")]
     Bound(String),
+}
+
+/// Map a projection failure to its stable, leak-free disclosure slug.
+///
+/// The slug is the *class* of failure, never the underlying message. Every
+/// variant's `Display` interpolates host-private material — event ids, command
+/// ids, relay error text — so publishing the message into a signed durable
+/// event would leak it. The detail stays in the provider's log; this is what
+/// crosses onto the wire, and it is what lets an operator tell a duplicated
+/// create apart from an unreachable relay.
+///
+/// Every returned value is a member of
+/// [`buzz_core::coding_session_payload::CONTEXT_UNAVAILABLE_REASONS`].
+pub fn context_unavailable_reason(error: &ContextProjectionError) -> &'static str {
+    match error {
+        ContextProjectionError::Relay(_) => "relay_query_failed",
+        ContextProjectionError::InvalidFact(_) => "unverifiable_source_fact",
+        ContextProjectionError::Conflict(_) => "context_fact_conflict",
+        ContextProjectionError::Bound(_) => "source_exceeds_projection_bound",
+    }
 }
 
 #[derive(Debug)]
@@ -875,7 +896,18 @@ pub fn project_session_context(
         project_ref: project_ref.flatten(),
     };
 
+    let breakdown = source_event_breakdown(input);
+
     loop {
+        // Built per iteration, not once before the loop: every pass drops one
+        // more history item, so a note computed up front would state a history
+        // count the shipped package does not have. Pushed onto this
+        // iteration's clone so a discarded pass never mutates `notes`.
+        let mut iteration_notes = notes.clone();
+        let included = history.len() as u64;
+        if let Some(note) = source_delta_note(&breakdown, included, omitted) {
+            record_note(&mut iteration_notes, note);
+        }
         let package = CodingSessionContextPackage {
             v: CODING_SESSION_CONTEXT_PACKAGE_VERSION,
             session: identity.clone(),
@@ -884,11 +916,12 @@ pub fn project_session_context(
                 complete_as_of: input.coverage.complete.then_some(input.generated_at),
                 complete: input.coverage.complete,
                 truncated: omitted > 0,
-                source_event_count: source_event_count(input) as u64,
-                included_history_items: history.len() as u64,
+                source_event_count: breakdown.total(),
+                source_event_breakdown: Some(breakdown.clone()),
+                included_history_items: included,
                 omitted_history_items: omitted,
                 total_history_items: input.coverage.complete.then_some(verified_total),
-                notes: notes.clone(),
+                notes: iteration_notes,
             },
             history,
         };
@@ -931,6 +964,22 @@ fn record_omission_note(
     Ok(())
 }
 
+/// Append a note that is not a truncation restatement.
+///
+/// Unlike [`record_omission_note`], this does not evict prior `Omitted …`
+/// notes; it only enforces the note budget. Returns `false` — rather than an
+/// error — when no capacity remains, because the only caller's disclosure is
+/// backed by the structured `sourceEventBreakdown` field that `validate()`
+/// enforces. A truncation note has no such backup, which is why
+/// [`record_omission_note`] still fails hard on overflow.
+fn record_note(notes: &mut Vec<String>, note: String) -> bool {
+    if notes.len() >= MAX_CONTEXT_PROVENANCE_NOTES {
+        return false;
+    }
+    notes.push(note);
+    true
+}
+
 fn validate_limits(limits: ContextProjectionLimits) -> Result<(), ContextProjectionError> {
     if limits.max_history_items == 0 || limits.max_history_items > MAX_CONTEXT_HISTORY_ITEMS {
         return Err(ContextProjectionError::Bound(format!(
@@ -967,16 +1016,60 @@ fn validate_coverage(coverage: &ContextSourceCoverage) -> Result<(), ContextProj
     Ok(())
 }
 
-fn source_event_count(input: &ContextProjectionInput) -> usize {
-    1 + input.authority_links.len() * 2
-        + input.name_revisions.len()
-        + input.goal_revisions.len()
-        + input
+/// Per-category accounting of the signed proof events this projection read.
+///
+/// Every term is a `len()` over facts already in hand — nothing is fetched and
+/// nothing is estimated. The sum is exactly what `source_event_count` reported
+/// before this breakdown existed, which is why the wrapper below can be
+/// expressed in terms of it.
+fn source_event_breakdown(input: &ContextProjectionInput) -> CodingSessionContextSourceBreakdown {
+    let generations = || {
+        input
             .executions
             .iter()
             .flat_map(|execution| &execution.generations)
-            .map(|generation| 3 + generation.transcript.len())
-            .sum::<usize>()
+    };
+    CodingSessionContextSourceBreakdown {
+        genesis_events: 1,
+        authority_link_events: input.authority_links.len() as u64 * 2,
+        name_revision_events: input.name_revisions.len() as u64,
+        goal_revision_events: input.goal_revisions.len() as u64,
+        generation_bookkeeping_events: generations().count() as u64 * 3,
+        transcript_events: generations()
+            .map(|generation| generation.transcript.len() as u64)
+            .sum(),
+    }
+}
+
+fn source_event_count(input: &ContextProjectionInput) -> usize {
+    usize::try_from(source_event_breakdown(input).total()).unwrap_or(usize::MAX)
+}
+
+/// The one note that reconciles `sourceEventCount` against the history counts,
+/// or `None` when the two already agree and there is nothing to explain.
+///
+/// Stated in real numbers only, per category — no prose about the session.
+fn source_delta_note(
+    breakdown: &CodingSessionContextSourceBreakdown,
+    included: u64,
+    omitted: u64,
+) -> Option<String> {
+    if breakdown.total() == included.saturating_add(omitted) {
+        return None;
+    }
+    let non_content = breakdown
+        .total()
+        .saturating_sub(breakdown.transcript_events);
+    Some(format!(
+        "sourceEventCount {} includes {non_content} non-content proof events ({} genesis, {} authority, {} name, {} goal, {} per-generation bookkeeping) in addition to {} transcript events; {included} became history items.",
+        breakdown.total(),
+        breakdown.genesis_events,
+        breakdown.authority_link_events,
+        breakdown.name_revision_events,
+        breakdown.goal_revision_events,
+        breakdown.generation_bookkeeping_events,
+        breakdown.transcript_events,
+    ))
 }
 
 fn validate_source_bound(input: &ContextProjectionInput) -> Result<(), ContextProjectionError> {
@@ -1946,6 +2039,209 @@ mod tests {
         assert!(package.provenance.complete);
         assert_eq!(package.history.len(), 1);
         assert_eq!(package.history[0].event_seq, 2);
+    }
+
+    /// The note that reconciles `sourceEventCount`, wherever it landed.
+    fn delta_note_of(package: &CodingSessionContextPackage) -> &str {
+        package
+            .provenance
+            .notes
+            .iter()
+            .find(|note| note.starts_with("sourceEventCount "))
+            .map(String::as_str)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn every_projection_error_maps_to_a_stable_disclosure_slug() {
+        // Exhaustive by construction: a new variant fails to compile here.
+        for (error, slug) in [
+            (
+                ContextProjectionError::Relay("query timed out".into()),
+                "relay_query_failed",
+            ),
+            (
+                ContextProjectionError::InvalidFact("event abcd failed signature".into()),
+                "unverifiable_source_fact",
+            ),
+            (
+                ContextProjectionError::Conflict(
+                    "command create-1 has more than one provider receipt".into(),
+                ),
+                "context_fact_conflict",
+            ),
+            (
+                ContextProjectionError::Bound("source has 9001 events".into()),
+                "source_exceeds_projection_bound",
+            ),
+        ] {
+            match &error {
+                ContextProjectionError::Relay(_)
+                | ContextProjectionError::InvalidFact(_)
+                | ContextProjectionError::Conflict(_)
+                | ContextProjectionError::Bound(_) => {}
+            }
+            assert_eq!(context_unavailable_reason(&error), slug);
+        }
+    }
+
+    #[test]
+    fn no_disclosure_slug_contains_an_event_id_a_command_id_or_a_path_separator() {
+        let event_id = "ab".repeat(32);
+        for error in [
+            ContextProjectionError::Relay(format!("GET /events/{event_id} failed")),
+            ContextProjectionError::InvalidFact(format!("event {event_id} is unsigned")),
+            ContextProjectionError::Conflict(
+                "command create-1 has more than one provider receipt".into(),
+            ),
+            ContextProjectionError::Bound("/Users/someone/state overflowed".into()),
+        ] {
+            let slug = context_unavailable_reason(&error);
+            assert!(buzz_core::coding_session_payload::CONTEXT_UNAVAILABLE_REASONS.contains(&slug));
+            assert!(!slug.contains(&event_id));
+            assert!(!slug.contains("create-1"));
+            assert!(!slug.contains('/'));
+            assert!(slug
+                .chars()
+                .all(|character| character.is_ascii_lowercase() || character == '_'));
+        }
+    }
+
+    #[test]
+    fn the_breakdown_names_every_category_the_formula_counts() {
+        let mut fixture = fixture(4);
+        let filler = fixture.input.genesis.clone();
+        fixture.input.authority_links = vec![
+            ContextAuthorityLink {
+                receipt: filler.clone(),
+                transition: filler.clone(),
+            },
+            ContextAuthorityLink {
+                receipt: filler.clone(),
+                transition: filler.clone(),
+            },
+        ];
+        fixture.input.name_revisions = vec![filler.clone()];
+        fixture.input.goal_revisions = vec![filler.clone()];
+        let first = fixture.input.executions[0].generations[0].clone();
+        let mut second = first.clone();
+        second.transcript.truncate(2);
+        let mut third = first.clone();
+        third.transcript.clear();
+        fixture.input.executions[0].generations = vec![first, second, third];
+
+        let breakdown = source_event_breakdown(&fixture.input);
+        assert_eq!(breakdown.genesis_events, 1);
+        assert_eq!(breakdown.authority_link_events, 4, "two events per link");
+        assert_eq!(breakdown.name_revision_events, 1);
+        assert_eq!(breakdown.goal_revision_events, 1);
+        assert_eq!(
+            breakdown.generation_bookkeeping_events, 9,
+            "three events per generation"
+        );
+        assert_eq!(breakdown.transcript_events, 6);
+        assert_eq!(breakdown.total(), 22);
+        assert_eq!(
+            source_event_count(&fixture.input),
+            22,
+            "the wrapper still reports what validate_source_bound checks"
+        );
+    }
+
+    #[test]
+    fn the_delta_note_states_the_real_numbers_and_is_emitted_only_on_a_delta() {
+        let fixture = fixture(4);
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        let breakdown = package
+            .provenance
+            .source_event_breakdown
+            .clone()
+            .expect("a v2 package carries its breakdown");
+        assert_eq!(breakdown.total(), package.provenance.source_event_count);
+        assert_eq!(
+            delta_note_of(&package),
+            "sourceEventCount 8 includes 4 non-content proof events (1 genesis, 0 authority, 0 name, 0 goal, 3 per-generation bookkeeping) in addition to 4 transcript events; 4 became history items."
+        );
+
+        // A source whose count already equals the history counts has nothing to
+        // reconcile, and says nothing.
+        let reconciled = CodingSessionContextSourceBreakdown {
+            genesis_events: 0,
+            authority_link_events: 0,
+            name_revision_events: 0,
+            goal_revision_events: 0,
+            generation_bookkeeping_events: 0,
+            transcript_events: 4,
+        };
+        assert_eq!(source_delta_note(&reconciled, 3, 1), None);
+    }
+
+    #[test]
+    fn the_delta_note_does_not_evict_the_truncation_note() {
+        let mut fixture = fixture(5);
+        fixture.input.limits.max_history_items = 2;
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert!(
+            package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.starts_with("Omitted 3 oldest verified history items")),
+            "the truncation disclosure survives: {:?}",
+            package.provenance.notes
+        );
+        assert!(
+            delta_note_of(&package).contains("2 became history items"),
+            "and the delta note reports the shipped history count: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    #[test]
+    fn a_package_trimmed_by_the_byte_loop_reports_the_trimmed_history_count_in_its_delta_note() {
+        let mut fixture = fixture(6);
+        // Small enough that the byte loop must drop items the item bound kept.
+        fixture.input.limits.max_package_bytes = 1_800;
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert!(
+            package.provenance.omitted_history_items > 0,
+            "the fixture must actually trip the byte loop"
+        );
+        assert!(
+            delta_note_of(&package).contains(&format!(
+                "{} became history items",
+                package.provenance.included_history_items
+            )),
+            "the note must state the history count that actually shipped, not the pre-trim one: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    #[test]
+    fn a_source_that_arrives_with_a_full_note_budget_still_projects_and_still_reconciles() {
+        let mut fixture = fixture(2);
+        fixture.input.coverage.notes = (0..MAX_CONTEXT_PROVENANCE_NOTES)
+            .map(|index| format!("Source coverage note {index}"))
+            .collect();
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        assert_eq!(package.provenance.notes.len(), MAX_CONTEXT_PROVENANCE_NOTES);
+        assert_eq!(
+            delta_note_of(&package),
+            "",
+            "the prose note fails soft when no budget remains"
+        );
+        let breakdown = package
+            .provenance
+            .source_event_breakdown
+            .expect("the structured reconciliation is the disclosure, and never fails soft");
+        assert_eq!(breakdown.total(), package.provenance.source_event_count);
     }
 
     #[test]

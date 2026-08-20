@@ -46,6 +46,7 @@ pub mod state;
 pub mod transcript;
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use nostr::{Event, Kind};
@@ -97,6 +98,12 @@ use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore}
 
 /// How often the outbox is drained when nothing else is happening.
 const OUTBOX_TICK: Duration = Duration::from_secs(2);
+/// Floor between two verified-context refreshes for one execution.
+///
+/// A turn costs seconds to minutes, so one bounded relay fetch plus
+/// proof-graph verification per minute per active rehydrated execution sits
+/// well inside a turn's own cost.
+const CONTEXT_REFRESH_MIN_INTERVAL_MS: i64 = 60_000;
 /// Backlog of actor reports the provider loop will buffer.
 const SESSION_EVENT_CAPACITY: usize = 256;
 /// A genesis published immediately before its create may take a brief moment
@@ -324,8 +331,45 @@ pub struct Provider {
     /// authority-chain consumption fails closed: genesis-bearing sessions
     /// stay founder-only.
     relay_self: Option<String>,
+    /// Per-session bookkeeping for the bounded verified-context refresh, keyed
+    /// by session id exactly like `git_probe_generation`.
+    ///
+    /// In-memory only, and deliberately so: [`SessionRecord`] persists no
+    /// package id, so a restart loses every session→package binding. That is
+    /// correct rather than a gap — a restart has already destroyed the only
+    /// reader of those directories, which is why [`Provider::recover`] sweeps
+    /// them instead of trying to reconstruct a mapping that no longer means
+    /// anything.
+    context_refresh: HashMap<String, ContextRefreshState>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
+}
+
+/// What the provider must remember to write the *next* generation of one
+/// execution's verified context package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContextRefreshState {
+    /// The UUID naming this execution's generation directory. Not derivable
+    /// from the session id: a resume mints its own (see
+    /// [`RehydrationMcpDescriptor::package_id`]).
+    package_id: String,
+    /// The sequence the next successful refresh will claim.
+    next_seq: u64,
+    /// Epoch milliseconds of the last refresh *attempt*, or `0` when none has
+    /// been launched. Attempts rather than successes: a failing relay must not
+    /// turn every turn start into a fetch.
+    last_refresh_ms: i64,
+}
+
+impl ContextRefreshState {
+    /// Bookkeeping for an execution that just opened with generation 0 on disk.
+    fn opened(package_id: String) -> Self {
+        Self {
+            package_id,
+            next_seq: context_store::OPEN_TIME_CONTEXT_PACKAGE_GENERATION + 1,
+            last_refresh_ms: 0,
+        }
+    }
 }
 
 impl Provider {
@@ -349,6 +393,7 @@ impl Provider {
             git_reachability: HashMap::new(),
             rest_client: None,
             relay_self: None,
+            context_refresh: HashMap::new(),
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
         })
@@ -385,7 +430,21 @@ impl Provider {
     ///    it the turn renders as running forever — and every open generation
     ///    gets `disconnected` metadata. The durable record remains resumable;
     ///    only an explicit `session.stop` retires it.
+    /// 3. Every leftover verified-context package directory is swept. No ACP
+    ///    subprocess survives a provider restart, so at this moment no sidecar
+    ///    is reading any of them, and the in-memory session→package binding
+    ///    that named them died with the previous process. A resume mints a
+    ///    fresh package id and a fresh directory.
     pub fn recover(&mut self) -> anyhow::Result<()> {
+        // Best-effort: a state directory that refuses the sweep must not stop
+        // the provider from coming back up. The consequence is disk, not
+        // correctness — the reader of those files is already gone.
+        if let Err(error) = context_store::remove_all_context_packages(&self.config.state_dir) {
+            tracing::warn!(
+                target: "csp::context",
+                "leftover verified-context packages could not be swept: {error}"
+            );
+        }
         let orphans: Vec<(String, String)> = self
             .state
             .sessions()
@@ -757,7 +816,7 @@ impl Provider {
             session_id: Uuid::new_v4().to_string(),
             generation: 1,
         };
-        let rehydration_mcp = self
+        let rehydration = self
             .prepare_rehydration_context(
                 &plan.command_id,
                 plan.channel_id,
@@ -767,6 +826,12 @@ impl Provider {
                 relay,
             )
             .await;
+        let context_package_id = rehydration
+            .descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.package_id.clone());
+        let unavailable_reason = rehydration.unavailable_reason;
+        let rehydration_mcp = rehydration.descriptor;
         let request = CreateRequest {
             target: target.clone(),
             channel_id: plan.channel_id,
@@ -797,6 +862,9 @@ impl Provider {
                     code = failure.code,
                     "session creation failed: {}", failure.message
                 );
+                // No session record and no refresh entry will ever name this
+                // package, so it has to go now or not at all.
+                self.discard_orphaned_context_package(context_package_id.as_deref());
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
@@ -831,12 +899,19 @@ impl Provider {
         };
         self.state.insert_session(record)?;
 
-        if let Some(status) = create_disclosure_status(&startup.continuity) {
+        if let Some(package_id) = context_package_id {
+            self.context_refresh.insert(
+                target.session_id.clone(),
+                ContextRefreshState::opened(package_id),
+            );
+        }
+
+        if let Some((status, reason)) = create_disclosure(&startup.continuity, unavailable_reason) {
             self.enqueue_transcript(
                 plan.channel_id,
                 &target,
                 None,
-                payload::status_item(status),
+                payload::status_item_with_reason(status, reason),
                 Priority::High,
             )?;
         }
@@ -920,22 +995,28 @@ impl Provider {
     /// relay/projection/storage failure leaves the execution Fresh. Nothing in
     /// this path may turn unverified history into agent context or prevent the
     /// operator from starting a usable fresh execution.
+    ///
+    /// Every path out of here names itself: the returned
+    /// [`RehydrationOutcome`] carries either a descriptor or the enumerated
+    /// reason continuity was lost, so a duplicate-create conflict, an
+    /// unreachable relay and a missing sidecar do not render identically to
+    /// the operator.
     async fn prepare_rehydration_context(
         &self,
         command_id: &str,
         channel_id: Uuid,
         session_ref: Option<&str>,
         genesis_ref: Option<&str>,
-        execution_id: &str,
+        package_id: &str,
         relay: Option<&HarnessRelay>,
-    ) -> Option<RehydrationMcpDescriptor> {
+    ) -> RehydrationOutcome {
         let Some(command) = self.config.context_mcp_command.as_ref() else {
             tracing::info!(
                 target: "csp::context",
                 %command_id,
                 "context MCP sidecar is unavailable; starting Fresh"
             );
-            return None;
+            return RehydrationOutcome::unavailable("context_sidecar_unavailable");
         };
         if !command.is_absolute() {
             tracing::warn!(
@@ -943,7 +1024,7 @@ impl Provider {
                 %command_id,
                 "context MCP command is not absolute; starting without rehydrated context"
             );
-            return None;
+            return RehydrationOutcome::unavailable("context_sidecar_path_invalid");
         }
         let Some(session_ref) = session_ref else {
             tracing::debug!(
@@ -951,7 +1032,7 @@ impl Provider {
                 %command_id,
                 "create has no umbrella sessionRef; starting Fresh"
             );
-            return None;
+            return RehydrationOutcome::unavailable("no_prior_execution");
         };
         let Some(genesis_ref) = genesis_ref else {
             tracing::debug!(
@@ -959,7 +1040,7 @@ impl Provider {
                 %command_id,
                 "create has no umbrella genesisRef; starting Fresh"
             );
-            return None;
+            return RehydrationOutcome::unavailable("no_prior_execution");
         };
         let Some(relay) = relay else {
             tracing::info!(
@@ -967,7 +1048,7 @@ impl Provider {
                 %command_id,
                 "relay query surface is unavailable; starting Fresh"
             );
-            return None;
+            return RehydrationOutcome::unavailable("relay_unavailable");
         };
         let request = ContextProjectionRequest {
             channel_id,
@@ -985,12 +1066,16 @@ impl Provider {
         {
             Ok(package) => package,
             Err(error) => {
+                // The class goes on the wire; the detail — which command id had
+                // two receipts, which event failed verification — stays here.
+                let reason = context_projector::context_unavailable_reason(&error);
                 tracing::info!(
                     target: "csp::context",
                     %command_id,
+                    %reason,
                     "verified prior context unavailable; starting Fresh: {error}"
                 );
-                return None;
+                return RehydrationOutcome::unavailable(reason);
             }
         };
         let first_turn_brief =
@@ -1002,12 +1087,12 @@ impl Provider {
                         %command_id,
                         "verified first-turn brief could not be encoded; starting Fresh: {error}"
                     );
-                    return None;
+                    return RehydrationOutcome::unavailable("brief_encode_failed");
                 }
             };
         let package_path = match context_store::write_context_package(
             &self.config.state_dir,
-            execution_id,
+            package_id,
             &package,
         ) {
             Ok(path) => path,
@@ -1017,12 +1102,26 @@ impl Provider {
                     %command_id,
                     "verified context could not be persisted; starting Fresh: {error}"
                 );
-                return None;
+                return RehydrationOutcome::unavailable("package_write_failed");
             }
         };
-        Some(RehydrationMcpDescriptor {
+        let Some(package_dir) = package_path.parent().map(Path::to_path_buf) else {
+            // Unreachable in practice — `write_context_package` returns a file
+            // inside the generation directory it just created — but a
+            // descriptor without a directory would silently disable refresh,
+            // so it is refused rather than degraded.
+            tracing::warn!(
+                target: "csp::context",
+                %command_id,
+                "verified context path has no generation directory; starting Fresh"
+            );
+            return RehydrationOutcome::unavailable("package_write_failed");
+        };
+        RehydrationOutcome::attached(RehydrationMcpDescriptor {
             command: command.clone(),
             package_path,
+            package_dir,
+            package_id: package_id.to_owned(),
             first_turn_brief,
         })
     }
@@ -1078,7 +1177,7 @@ impl Provider {
             generation,
         };
         let package_id = Uuid::new_v4().to_string();
-        let rehydration_mcp = self
+        let rehydration = self
             .prepare_rehydration_context(
                 &plan.command_id,
                 record.channel_id,
@@ -1088,6 +1187,23 @@ impl Provider {
                 relay,
             )
             .await;
+        let context_package_id = rehydration
+            .descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.package_id.clone());
+        // `prepare_rehydration_context` speaks the create path's language: a
+        // missing umbrella `sessionRef`/`genesisRef` there means this is the
+        // session's first execution. On a resume an earlier generation of this
+        // very execution already ran — its turns are in the transcript this row
+        // lands in — so the same missing pair means only that the execution was
+        // never created under an umbrella. Publishing `no_prior_execution` here
+        // would render "this is the session's first execution, so there was no
+        // prior work to carry" directly above that prior work.
+        let unavailable_reason = match rehydration.unavailable_reason {
+            Some("no_prior_execution") => Some("no_umbrella_context"),
+            other => other,
+        };
+        let rehydration_mcp = rehydration.descriptor;
         let request = CreateRequest {
             target: target.clone(),
             channel_id: record.channel_id,
@@ -1112,6 +1228,11 @@ impl Provider {
             Ok(startup) => startup,
             Err(failure) => {
                 self.state.consume_command(&plan.command_id, now_secs())?;
+                // The resume minted a fresh package id, and the refresh entry
+                // that would name it is only inserted after a successful open;
+                // the previous generation's entry still points elsewhere. Drop
+                // this one here or nothing will.
+                self.discard_orphaned_context_package(context_package_id.as_deref());
                 let receipt =
                     LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
@@ -1133,22 +1254,44 @@ impl Provider {
         }
         self.state.consume_command(&plan.command_id, now_secs())?;
 
-        let (receipt, status) = match startup.continuity {
+        // The previous generation's package is unreferenced from here: a
+        // resume only proceeds against an execution that is not live, so its
+        // sidecar is gone, and this open minted a fresh package id and a fresh
+        // directory. Dropping it now is what keeps a long-lived session from
+        // leaking one package directory per resume.
+        self.discard_context_packages(&target.session_id);
+        if let Some(package_id) = context_package_id {
+            self.context_refresh.insert(
+                target.session_id.clone(),
+                ContextRefreshState::opened(package_id),
+            );
+        }
+
+        // Only the two restarted arms can carry a package reason. On a native
+        // resume or load the adapter re-attached its own conversation, so
+        // whether a verified package could also be built is irrelevant to what
+        // the agent can see, and naming a failure there would imply a loss that
+        // did not happen. `session_rehydrated` lost nothing either.
+        let (receipt, status, reason) = match startup.continuity {
             SessionContinuity::Resumed => (
                 LifecycleReceipt::resumed(&plan.command_id, &target),
                 "session_resumed",
+                None,
             ),
             SessionContinuity::Loaded => (
                 LifecycleReceipt::resumed(&plan.command_id, &target),
                 "session_loaded",
+                None,
             ),
             SessionContinuity::Rehydrated => (
                 LifecycleReceipt::resumed(&plan.command_id, &target),
                 "session_rehydrated",
+                None,
             ),
             SessionContinuity::RestartedWithoutContext { reason } => (
                 LifecycleReceipt::resumed_without_context(&plan.command_id, &target, reason),
                 "session_restarted_without_context",
+                unavailable_reason,
             ),
             SessionContinuity::Fresh => (
                 LifecycleReceipt::resumed_without_context(
@@ -1157,6 +1300,7 @@ impl Provider {
                     "the provider had no saved session cursor",
                 ),
                 "session_restarted_without_context",
+                unavailable_reason,
             ),
         };
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
@@ -1164,7 +1308,7 @@ impl Provider {
             plan.channel_id,
             &target,
             None,
-            payload::status_item(status),
+            payload::status_item_with_reason(status, reason),
             Priority::High,
         )?;
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
@@ -1189,6 +1333,7 @@ impl Provider {
             })?;
         self.state.consume_command(&plan.command_id, now_secs())?;
         self.sessions.shutdown(&plan.target.session_id);
+        self.discard_context_packages(&plan.target.session_id);
         let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
         self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
         self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Stopped)?;
@@ -1256,6 +1401,15 @@ impl Provider {
                 SessionCommand::Interrupt { command_id },
             ),
         };
+
+        // A starting turn is the trigger for a bounded verified-context
+        // refresh. Started, not awaited: the turn must not wait on a relay
+        // fetch, and the sidecar picks the new generation up off disk on a
+        // later tool call, so a refresh still in flight costs this turn
+        // nothing. An interrupt is not a turn and refreshes nothing.
+        if matches!(message, SessionCommand::Turn { .. }) {
+            self.spawn_context_refresh(&session_id);
+        }
 
         self.state.consume_command(&command_id, now_secs())?;
         match self.sessions.handle(&session_id) {
@@ -1736,6 +1890,189 @@ impl Provider {
     /// a faster newer one — and because the reachability check travels with
     /// its probe under that same stamp, a commit that has since changed can
     /// never be left wearing a stale reachability claim either.
+    /// Drop this execution's verified-context packages from disk and from the
+    /// refresh map.
+    ///
+    /// Keyed on the *package* id carried by the refresh entry, never on the
+    /// session id: a resume-created directory is named by a freshly minted
+    /// UUID, so a cleanup keyed on the session id would silently leak it.
+    fn discard_context_packages(&mut self, session_id: &str) {
+        let Some(state) = self.context_refresh.remove(session_id) else {
+            return;
+        };
+        if let Err(error) =
+            context_store::remove_context_packages(&self.config.state_dir, &state.package_id)
+        {
+            tracing::warn!(
+                target: "csp::context",
+                %session_id,
+                "verified-context packages could not be removed: {error}"
+            );
+        }
+    }
+
+    /// Drop a package whose ACP open never happened.
+    ///
+    /// The package is written *before* `sessions.create`, but the refresh-map
+    /// entry that makes it reachable for cleanup is inserted only after that
+    /// open succeeds. A failed open therefore leaves a directory no
+    /// session→package binding names: neither `stop_session` nor a later
+    /// resume can find it, and only the next `Provider::recover` sweep would
+    /// reclaim it — days away on a long-lived desktop provider, one full
+    /// package per retry against a broken agent binary. The sidecar for this
+    /// open never started, so nothing is reading it.
+    fn discard_orphaned_context_package(&self, package_id: Option<&str>) {
+        let Some(package_id) = package_id else {
+            return;
+        };
+        if let Err(error) =
+            context_store::remove_context_packages(&self.config.state_dir, package_id)
+        {
+            tracing::warn!(
+                target: "csp::context",
+                %package_id,
+                "verified-context package orphaned by a failed open could not be removed: {error}"
+            );
+        }
+    }
+
+    /// Write the next verified-context generation for `session_id`, off the
+    /// provider loop.
+    ///
+    /// Modelled on [`Provider::spawn_git_probe`], which exists precisely
+    /// because a synchronous relay fetch on this loop delays every other
+    /// session. Nothing is sent back through `session_events_tx`: the sidecar
+    /// picks the new generation up off disk on its next tool call.
+    ///
+    /// A refresh that fails changes nothing on disk. The previous generation
+    /// keeps serving and its age keeps climbing in every response, which is the
+    /// honest signal — never silence, and never a fresher-looking watermark.
+    fn spawn_context_refresh(&mut self, session_id: &str) {
+        let Some(record) = self.state.session(session_id) else {
+            return;
+        };
+        // Both refs are required to project: they are what the fetch is keyed
+        // on. An execution without them never had a package to refresh.
+        let (Some(session_ref), Some(genesis_ref)) =
+            (record.session_ref.clone(), record.genesis_ref.clone())
+        else {
+            return;
+        };
+        let channel_id = record.channel_id;
+        let Some(rest_client) = self.rest_client.clone() else {
+            return;
+        };
+        let relay_self = self.relay_self.clone();
+        let state_dir = self.config.state_dir.clone();
+        let now = now_ms();
+
+        let Some(state) = self.context_refresh.get_mut(session_id) else {
+            return;
+        };
+        if state.last_refresh_ms > 0
+            && now.saturating_sub(state.last_refresh_ms) < CONTEXT_REFRESH_MIN_INTERVAL_MS
+        {
+            return;
+        }
+        // Claimed before the fetch starts, so two turn starts inside one
+        // fetch's lifetime can never race for the same sequence.
+        state.last_refresh_ms = now;
+        let seq = state.next_seq;
+        state.next_seq = seq.saturating_add(1);
+        let package_id = state.package_id.clone();
+        let session_id = session_id.to_owned();
+
+        tokio::spawn(async move {
+            let request = ContextProjectionRequest {
+                channel_id,
+                session_ref,
+                genesis_ref,
+                relay_self_pubkey: relay_self,
+                generated_at: now_ms(),
+                limits: ContextProjectionLimits::default(),
+            };
+            let package = match context_projector::fetch_and_project_session_context(
+                &rest_client,
+                &request,
+            )
+            .await
+            {
+                Ok(package) => package,
+                Err(error) => {
+                    tracing::info!(
+                        target: "csp::context",
+                        %session_id,
+                        reason = %context_projector::context_unavailable_reason(&error),
+                        "verified-context refresh failed; the previous generation keeps serving: {error}"
+                    );
+                    return;
+                }
+            };
+            // The claimed sequence is a floor, not the answer: a generation
+            // left behind by a process death mid-write still occupies its path,
+            // so the next write must land above whatever is actually on disk.
+            let seq =
+                match context_store::latest_context_package_generation(&state_dir, &package_id) {
+                    Ok(latest) => latest.map_or(seq, |latest| seq.max(latest.saturating_add(1))),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "csp::context",
+                            %session_id,
+                            "verified-context generations could not be listed: {error}"
+                        );
+                        seq
+                    }
+                };
+            match context_store::write_context_package_generation(
+                &state_dir,
+                &package_id,
+                seq,
+                &package,
+            ) {
+                Ok(_) => {}
+                // The execution was stopped, or resumed onto a fresh package,
+                // while this fetch was in flight. The write refuses to
+                // re-create the directory that cleanup removed, so the refresh
+                // is dropped rather than leaking verified context past the
+                // operator's stop.
+                Err(context_store::ContextStoreError::PackageGone) => {
+                    tracing::debug!(
+                        target: "csp::context",
+                        %session_id,
+                        seq,
+                        "verified-context refresh landed after the package was discarded; dropping it"
+                    );
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "csp::context",
+                        %session_id,
+                        "refreshed verified context could not be persisted: {error}"
+                    );
+                    return;
+                }
+            }
+            if let Err(error) = context_store::prune_context_package_generations(
+                &state_dir,
+                &package_id,
+                context_store::CONTEXT_PACKAGE_GENERATIONS_RETAINED,
+            ) {
+                tracing::warn!(
+                    target: "csp::context",
+                    %session_id,
+                    "superseded verified-context generations could not be pruned: {error}"
+                );
+            }
+            tracing::debug!(
+                target: "csp::context",
+                %session_id,
+                seq,
+                "wrote a refreshed verified-context generation"
+            );
+        });
+    }
+
     fn spawn_git_probe(&mut self, session_id: &str) {
         let Some(record) = self.state.session(session_id) else {
             return;
@@ -2220,17 +2557,59 @@ fn turn_result(
     }
 }
 
+/// What one attempt to attach verified prior context produced.
+///
+/// Exactly one side is populated: a descriptor when the package was built and
+/// persisted, or the enumerated reason it was not. The reason is a *class* from
+/// [`buzz_core::coding_session_payload::CONTEXT_UNAVAILABLE_REASONS`], never
+/// free text — projector messages interpolate event and command ids and the
+/// storage arm formats a host path, and this value ends up inside a signed
+/// durable event.
+// No `Debug`: the descriptor holds host paths and the first-turn brief, which
+// `CreateRequest`'s own hand-written `Debug` deliberately refuses to print.
+#[derive(Clone, PartialEq, Eq)]
+struct RehydrationOutcome {
+    descriptor: Option<RehydrationMcpDescriptor>,
+    unavailable_reason: Option<&'static str>,
+}
+
+impl RehydrationOutcome {
+    /// Verified context is attached; there is nothing to disclose.
+    fn attached(descriptor: RehydrationMcpDescriptor) -> Self {
+        Self {
+            descriptor: Some(descriptor),
+            unavailable_reason: None,
+        }
+    }
+
+    /// No verified context, and the named reason why.
+    fn unavailable(reason: &'static str) -> Self {
+        Self {
+            descriptor: None,
+            unavailable_reason: Some(reason),
+        }
+    }
+}
+
 /// The status slug a *create* publishes to disclose what context its execution
-/// actually starts from, or `None` when the open was a reattachment (those are
-/// disclosed by the attach path, which has its own richer slug set).
+/// actually starts from — with the reason continuity was lost, when one is
+/// known — or `None` when the open was a reattachment (those are disclosed by
+/// the attach path, which has its own richer slug set).
 ///
 /// Both answers are stated out loud: a fresh execution says so rather than
 /// staying silent, because silence is exactly what an operator misreads as
 /// continuity.
-fn create_disclosure_status(continuity: &SessionContinuity) -> Option<&'static str> {
+///
+/// Only the `Fresh` arm ever carries a reason. `Rehydrated` never does: nothing
+/// was lost, so naming a package failure there would imply a loss that did not
+/// happen.
+fn create_disclosure(
+    continuity: &SessionContinuity,
+    unavailable_reason: Option<&'static str>,
+) -> Option<(&'static str, Option<&'static str>)> {
     match continuity {
-        SessionContinuity::Rehydrated => Some("session_rehydrated"),
-        SessionContinuity::Fresh => Some("session_fresh"),
+        SessionContinuity::Rehydrated => Some(("session_rehydrated", None)),
+        SessionContinuity::Fresh => Some(("session_fresh", unavailable_reason)),
         SessionContinuity::Resumed
         | SessionContinuity::Loaded
         | SessionContinuity::RestartedWithoutContext { .. } => None,
@@ -3022,24 +3401,774 @@ mod tests {
         );
     }
 
-    /// The disclosure slug per continuity mode. Rehydrated keeps the slug it
-    /// already had; reattachments are disclosed by the attach path instead.
+    /// A relay whose REST `/query` never answers, so a caller that waits on it
+    /// is visibly blocked rather than merely slow.
+    async fn spawn_hanging_query_relay(keys: &Keys) -> (HarnessRelay, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route("/", get(test_relay_ws)).route(
+            "/query",
+            post(|| async {
+                tokio::time::sleep(Duration::from_secs(120)).await;
+                axum::Json(serde_json::json!({ "events": [] }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test relay");
+        let address = listener.local_addr().expect("test relay address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test relay");
+        });
+        let relay = HarnessRelay::connect(
+            &format!("ws://{address}"),
+            keys,
+            &keys.public_key().to_hex(),
+            None,
+        )
+        .await
+        .expect("connect test relay");
+        (relay, server)
+    }
+
+    /// A provider holding one rehydrated execution: a durable record with both
+    /// umbrella refs, generation 0 of its package on disk, and the in-memory
+    /// refresh binding an open would have installed.
+    fn armed_refresh_provider(
+        state_dir: &Path,
+        projects: Option<&Path>,
+        channel_id: Uuid,
+        cwd: &Path,
+    ) -> (Provider, String, String) {
+        let mut provider = provider_with_sidecar(state_dir, projects);
+        let record = governed_record(channel_id, cwd, &"ab".repeat(32));
+        let session_id = record.session_id.clone();
+        provider
+            .state
+            .insert_session(record)
+            .expect("insert session record");
+        let package_id = Uuid::new_v4().to_string();
+        context_store::write_context_package(
+            &provider.config.state_dir,
+            &package_id,
+            &empty_context_package(),
+        )
+        .expect("write generation 0");
+        provider.context_refresh.insert(
+            session_id.clone(),
+            ContextRefreshState::opened(package_id.clone()),
+        );
+        (provider, session_id, package_id)
+    }
+
+    fn empty_context_package() -> buzz_core::coding_session_context::CodingSessionContextPackage {
+        use buzz_core::coding_session_context::{
+            CodingSessionContextIdentity, CodingSessionContextPackage,
+            CodingSessionContextProvenance, CODING_SESSION_CONTEXT_PACKAGE_VERSION,
+        };
+        CodingSessionContextPackage {
+            v: CODING_SESSION_CONTEXT_PACKAGE_VERSION,
+            session: CodingSessionContextIdentity {
+                session_ref: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into(),
+                genesis_ref: "ab".repeat(32),
+                channel_id: Uuid::nil(),
+                name: None,
+                goal: None,
+                project_ref: None,
+            },
+            provenance: CodingSessionContextProvenance {
+                generated_at: 1,
+                complete_as_of: Some(1),
+                complete: true,
+                truncated: false,
+                source_event_count: 1,
+                source_event_breakdown: None,
+                included_history_items: 0,
+                omitted_history_items: 0,
+                total_history_items: Some(0),
+                notes: vec!["Complete empty fixture".into()],
+            },
+            history: Vec::new(),
+        }
+    }
+
+    fn generation_sequences(state_dir: &Path, package_id: &str) -> Vec<u64> {
+        let directory = state_dir.join("context-packages").join(package_id);
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut sequences: Vec<u64> = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .and_then(|stem| stem.parse().ok())
+            })
+            .collect();
+        sequences.sort_unstable();
+        sequences
+    }
+
+    /// H3: a refresh that cannot rebuild the package changes nothing on disk.
+    /// The previous generation keeps serving and its age keeps climbing —
+    /// never silence, and never a fresher-looking watermark.
+    #[tokio::test]
+    async fn a_refresh_that_fails_leaves_the_previous_generation_serving() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let (mut provider, session_id, package_id) =
+            armed_refresh_provider(&state_dir, None, channel_id, &cwd);
+        // An empty relay holds no genesis, so every projection fails.
+        let (relay, _queries, server) = spawn_test_relay(&provider.config.keys, None).await;
+        provider.set_rest_client(relay.rest_client());
+
+        provider.spawn_context_refresh(&session_id);
+        assert_eq!(
+            provider.context_refresh[&session_id].next_seq, 2,
+            "the sequence is claimed before the fetch, so a retry never collides"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert_eq!(
+            generation_sequences(&state_dir, &package_id),
+            vec![0],
+            "a failed refresh writes nothing"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_refresh_is_skipped_inside_the_minimum_interval() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let (mut provider, session_id, _package_id) =
+            armed_refresh_provider(&state_dir, None, channel_id, &cwd);
+        let (relay, _queries, server) = spawn_test_relay(&provider.config.keys, None).await;
+        provider.set_rest_client(relay.rest_client());
+
+        provider.spawn_context_refresh(&session_id);
+        provider.spawn_context_refresh(&session_id);
+        assert_eq!(
+            provider.context_refresh[&session_id].next_seq, 2,
+            "the second attempt inside the interval floor claims nothing"
+        );
+
+        // Age the last attempt past the floor and the next turn refreshes again.
+        provider
+            .context_refresh
+            .get_mut(&session_id)
+            .expect("refresh state")
+            .last_refresh_ms = now_ms() - CONTEXT_REFRESH_MIN_INTERVAL_MS - 1;
+        provider.spawn_context_refresh(&session_id);
+        assert_eq!(provider.context_refresh[&session_id].next_seq, 3);
+        server.abort();
+    }
+
+    /// The refresh runs off the provider loop. A relay that never answers must
+    /// not hold a turn — the sidecar picks the new generation up off disk on a
+    /// later tool call, so an outstanding fetch costs this turn nothing.
+    #[tokio::test]
+    async fn a_turn_start_does_not_block_on_the_refresh() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let (mut provider, session_id, _package_id) =
+            armed_refresh_provider(&state_dir, None, channel_id, &cwd);
+        let (relay, server) = spawn_hanging_query_relay(&provider.config.keys).await;
+        provider.set_rest_client(relay.rest_client());
+
+        let started = std::time::Instant::now();
+        provider.spawn_context_refresh(&session_id);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "the provider loop waited {elapsed:?} on a relay that never answered"
+        );
+        assert_eq!(
+            provider.context_refresh[&session_id].next_seq, 2,
+            "the refresh really was launched"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_execution_with_no_session_ref_never_schedules_a_refresh() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider_with_sidecar(&state_dir, Some(&projects));
+
+        let create = create_event(&provider, channel_id, "create-no-umbrella");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let session_id = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+
+        assert!(
+            provider.context_refresh.is_empty(),
+            "an execution that never had a package has nothing to refresh"
+        );
+        provider.spawn_context_refresh(&session_id);
+        assert!(provider.context_refresh.is_empty());
+    }
+
+    /// The C5 regression: a resume names its package directory by a freshly
+    /// minted UUID, not by the session id, so a cleanup keyed on the session id
+    /// would leak that directory forever.
+    #[tokio::test]
+    async fn a_resume_created_package_directory_is_removed_on_stop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider_with_sidecar(&state_dir, Some(&projects));
+
+        let create = create_event(&provider, channel_id, "create-for-stop");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        let package_id = Uuid::new_v4().to_string();
+        assert_ne!(package_id, target.session_id);
+        context_store::write_context_package(&state_dir, &package_id, &empty_context_package())
+            .expect("write generation 0");
+        provider.context_refresh.insert(
+            target.session_id.clone(),
+            ContextRefreshState::opened(package_id.clone()),
+        );
+
+        let stop = lifecycle_target_event(&provider, channel_id, "stop-1", "session.stop", &target);
+        provider
+            .handle_command_event(channel_id, &stop)
+            .await
+            .expect("stop");
+
+        assert!(
+            generation_sequences(&state_dir, &package_id).is_empty(),
+            "the resume-minted package directory is removed on stop"
+        );
+        assert!(!provider.context_refresh.contains_key(&target.session_id));
+    }
+
+    /// A package is written *before* the ACP open, but the refresh entry that
+    /// makes it reachable for cleanup is inserted only after that open
+    /// succeeds. A failed open — a broken agent binary, a rejected adapter
+    /// handshake — therefore leaves a directory no session names, which
+    /// nothing but the next startup sweep would ever reclaim; an operator
+    /// retrying leaks one package per attempt. This is the cleanup both failed
+    /// open arms run.
+    #[tokio::test]
+    async fn a_package_orphaned_by_a_failed_open_is_removed_immediately() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let provider = provider_with_sidecar(&state_dir, None);
+        let package_id = Uuid::new_v4().to_string();
+        let kept = Uuid::new_v4().to_string();
+        context_store::write_context_package(&state_dir, &package_id, &empty_context_package())
+            .expect("write generation 0");
+        context_store::write_context_package(&state_dir, &kept, &empty_context_package())
+            .expect("write generation 0");
+
+        provider.discard_orphaned_context_package(Some(&package_id));
+
+        assert!(
+            generation_sequences(&state_dir, &package_id).is_empty(),
+            "the package the failed open orphaned is gone"
+        );
+        assert_eq!(
+            generation_sequences(&state_dir, &kept),
+            vec![0],
+            "another execution's package is untouched"
+        );
+        // An open that never produced a package has nothing to drop.
+        provider.discard_orphaned_context_package(None);
+        assert_eq!(generation_sequences(&state_dir, &kept), vec![0]);
+    }
+
+    /// A resume mints a fresh package id and a fresh directory, so the
+    /// previous execution's directory is unreferenced from that moment — and a
+    /// long-lived session must not leak one directory per resume.
+    #[tokio::test]
+    async fn a_resume_drops_the_previous_executions_package_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider_with_sidecar(&state_dir, Some(&projects));
+
+        let create = create_event(&provider, channel_id, "create-before-resume");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        let previous_package = Uuid::new_v4().to_string();
+        context_store::write_context_package(
+            &state_dir,
+            &previous_package,
+            &empty_context_package(),
+        )
+        .expect("write generation 0");
+        provider.context_refresh.insert(
+            target.session_id.clone(),
+            ContextRefreshState::opened(previous_package.clone()),
+        );
+        provider.sessions.shutdown(&target.session_id);
+
+        let resume =
+            lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        assert!(
+            generation_sequences(&state_dir, &previous_package).is_empty(),
+            "the superseded package directory is gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_startup_sweeps_every_leftover_package_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let first = Uuid::new_v4().to_string();
+        let second = Uuid::new_v4().to_string();
+        {
+            let mut provider = provider_with_sidecar(&state_dir, None);
+            provider.recover().expect("first recover");
+            context_store::write_context_package(&state_dir, &first, &empty_context_package())
+                .expect("write first");
+            context_store::write_context_package(&state_dir, &second, &empty_context_package())
+                .expect("write second");
+        }
+
+        let mut restarted = provider_with_sidecar(&state_dir, None);
+        restarted.recover().expect("recover");
+        assert!(
+            !state_dir.join("context-packages").exists(),
+            "no reader survives a restart, so every leftover package is swept"
+        );
+    }
+
+    /// A provider whose config names an absolute context sidecar, so the
+    /// rehydration path gets past its first guard without any sidecar being
+    /// installed — the path is only checked for absoluteness there.
+    fn provider_with_sidecar(state_dir: &Path, projects: Option<&Path>) -> Provider {
+        provider_with_sidecar_path(
+            state_dir,
+            projects,
+            Some("/nonexistent/buzz-session-context"),
+        )
+    }
+
+    fn provider_with_sidecar_path(
+        state_dir: &Path,
+        projects: Option<&Path>,
+        sidecar: Option<&str>,
+    ) -> Provider {
+        let agent = fake_agent(state_dir_parent(state_dir), "good-agent", GOOD_AGENT);
+        let mut config = config_of(Keys::generate(), state_dir, projects, agent);
+        config.context_mcp_command = sidecar.map(std::path::PathBuf::from);
+        Provider::new(config).expect("provider")
+    }
+
+    fn status_items(sink: &CollectingSink) -> Vec<serde_json::Value> {
+        transcript_items_in_sequence(sink)
+            .into_iter()
+            .filter(|item| item["item"]["kind"] == "status")
+            .map(|item| item["item"].clone())
+            .collect()
+    }
+
+    /// Every way out of `prepare_rehydration_context` names itself. Ten
+    /// bail-outs may not collapse to one slug — a missing sidecar, an
+    /// unreachable relay and a duplicate-create conflict rendered identically
+    /// to the operator is the defect this whole slice exists to remove.
+    ///
+    /// Six of the eight sites are driven end to end here. The remaining two —
+    /// the brief-encode and package-write arms — sit behind a *successful*
+    /// projection, which needs a complete signed fact set on the relay; they
+    /// are covered by construction (each returns its enumerated slug) plus the
+    /// vocabulary assertion below.
+    #[tokio::test]
+    async fn every_bail_out_in_prepare_rehydration_context_names_a_reason() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let package_id = Uuid::new_v4().to_string();
+
+        let no_sidecar = provider_with_sidecar_path(&dir.path().join("none"), None, None);
+        assert_eq!(
+            no_sidecar
+                .prepare_rehydration_context(
+                    "cmd-1",
+                    channel_id,
+                    Some(session_ref),
+                    Some(&genesis_ref),
+                    &package_id,
+                    None,
+                )
+                .await
+                .unavailable_reason,
+            Some("context_sidecar_unavailable")
+        );
+
+        let relative = provider_with_sidecar_path(
+            &dir.path().join("relative"),
+            None,
+            Some("relative/buzz-session-context"),
+        );
+        assert_eq!(
+            relative
+                .prepare_rehydration_context(
+                    "cmd-2",
+                    channel_id,
+                    Some(session_ref),
+                    Some(&genesis_ref),
+                    &package_id,
+                    None,
+                )
+                .await
+                .unavailable_reason,
+            Some("context_sidecar_path_invalid")
+        );
+
+        let provider = provider_with_sidecar(&dir.path().join("state"), None);
+        assert_eq!(
+            provider
+                .prepare_rehydration_context(
+                    "cmd-3",
+                    channel_id,
+                    None,
+                    Some(&genesis_ref),
+                    &package_id,
+                    None,
+                )
+                .await
+                .unavailable_reason,
+            Some("no_prior_execution"),
+            "a session with no prior execution is not a failure"
+        );
+        assert_eq!(
+            provider
+                .prepare_rehydration_context(
+                    "cmd-4",
+                    channel_id,
+                    Some(session_ref),
+                    None,
+                    &package_id,
+                    None,
+                )
+                .await
+                .unavailable_reason,
+            Some("no_prior_execution")
+        );
+        assert_eq!(
+            provider
+                .prepare_rehydration_context(
+                    "cmd-5",
+                    channel_id,
+                    Some(session_ref),
+                    Some(&genesis_ref),
+                    &package_id,
+                    None,
+                )
+                .await
+                .unavailable_reason,
+            Some("relay_unavailable")
+        );
+
+        // A relay that holds no genesis fails the projection rather than the
+        // transport, so the reason is the projector's own class.
+        let (relay, _queries, server) = spawn_test_relay(&provider.config.keys, None).await;
+        let outcome = provider
+            .prepare_rehydration_context(
+                "cmd-6",
+                channel_id,
+                Some(session_ref),
+                Some(&genesis_ref),
+                &package_id,
+                Some(&relay),
+            )
+            .await;
+        assert_eq!(outcome.unavailable_reason, Some("unverifiable_source_fact"));
+        assert!(outcome.descriptor.is_none());
+        server.abort();
+
+        for slug in ["brief_encode_failed", "package_write_failed"] {
+            assert!(
+                buzz_core::coding_session_payload::CONTEXT_UNAVAILABLE_REASONS.contains(&slug),
+                "{slug} must be publishable"
+            );
+        }
+    }
+
+    /// The exact regression this slice exists to prevent: on 2026-08-18 a
+    /// duplicated create and an unreachable relay produced the same bare
+    /// "Started fresh" row.
+    #[test]
+    fn a_conflict_bail_out_and_a_relay_outage_publish_different_slugs() {
+        let conflict = context_projector::context_unavailable_reason(
+            &context_projector::ContextProjectionError::Conflict(
+                "command create-1 has more than one provider receipt".into(),
+            ),
+        );
+        let published = |reason: &'static str| {
+            let (status, reason) = create_disclosure(&SessionContinuity::Fresh, Some(reason))
+                .expect("a fresh create discloses itself");
+            payload::status_item_with_reason(status, reason)
+        };
+
+        assert_ne!(conflict, "relay_unavailable");
+        assert_ne!(published(conflict), published("relay_unavailable"));
+        assert_eq!(published(conflict)["reason"], "context_fact_conflict");
+        assert_eq!(
+            published("relay_unavailable")["reason"],
+            "relay_unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_first_ever_execution_discloses_no_prior_execution_not_a_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider_with_sidecar(&dir.path().join("state"), Some(&projects));
+
+        let event = create_event(&provider, channel_id, "create-first-ever");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            status_items(&sink),
+            vec![serde_json::json!({
+                "kind": "status",
+                "status": "session_fresh",
+                "reason": "no_prior_execution",
+            })]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resume_that_loses_context_names_its_reason_on_session_restarted_without_context() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // No sidecar at all, so the resume's rehydration attempt names that.
+        let mut provider = provider_with_sidecar_path(&state_dir, Some(&projects), None);
+
+        let create = create_event(&provider, channel_id, "create-for-resume");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        provider.sessions.shutdown(&target.session_id);
+
+        let resume =
+            lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let items = status_items(&sink);
+        let restarted = items
+            .iter()
+            .find(|item| item["status"] == "session_restarted_without_context")
+            .expect("the resume disclosed itself");
+        assert_eq!(
+            restarted["reason"], "context_sidecar_unavailable",
+            "the resume path carries the reason too — it is a different code path from create"
+        );
+    }
+
+    /// A resumed execution has prior work by construction — its earlier
+    /// generation's turns are in the same transcript this row lands in — so it
+    /// may never publish the slug that reads "this is the session's first
+    /// execution". The missing umbrella refs get their own slug there.
+    #[tokio::test]
+    async fn a_resume_without_umbrella_refs_never_claims_a_first_execution() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        // Absolute sidecar path, so the resume gets past the sidecar guards and
+        // bails out on the umbrella refs instead.
+        let mut provider = provider_with_sidecar(&state_dir, Some(&projects));
+
+        // Claims an umbrella `sessionRef` with no `genesisRef`: the record the
+        // resume reads back has `session_ref: Some(..), genesis_ref: None`.
+        const UMBRELLA: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let create = create_event_with_session_ref(
+            &provider,
+            channel_id,
+            "create-umbrella-no-genesis",
+            UMBRELLA,
+        );
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let record = provider.state().sessions().next().expect("session").clone();
+        assert_eq!(record.session_ref.as_deref(), Some(UMBRELLA));
+        assert_eq!(record.genesis_ref, None);
+        let target = record.target(&provider.config.instance_id);
+        provider.sessions.shutdown(&target.session_id);
+
+        let resume =
+            lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let restarted = status_items(&sink)
+            .into_iter()
+            .find(|item| item["status"] == "session_restarted_without_context")
+            .expect("the resume disclosed itself");
+        assert_eq!(restarted["reason"], "no_umbrella_context");
+        assert_ne!(
+            restarted["reason"], "no_prior_execution",
+            "generation 2 of an execution cannot be its first"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_native_resume_or_load_never_carries_a_package_reason() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let agent = fake_agent(dir.path(), "resumable-agent", RESUMABLE_AGENT);
+        let mut config = config_of(Keys::generate(), &state_dir, Some(&projects), agent);
+        // Absolute but absent: every rehydration attempt fails, and a native
+        // resume must still say nothing about it.
+        config.context_mcp_command = Some(std::path::PathBuf::from("/nonexistent/sidecar"));
+        let mut provider = Provider::new(config).expect("provider");
+
+        let create = create_event(&provider, channel_id, "create-native");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        provider.sessions.shutdown(&target.session_id);
+
+        let resume =
+            lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let native = status_items(&sink)
+            .into_iter()
+            .find(|item| item["status"] == "session_resumed" || item["status"] == "session_loaded")
+            .expect("the adapter re-attached its own conversation");
+        assert!(
+            native.get("reason").is_none(),
+            "nothing was lost, so nothing is disclosed: {native}"
+        );
+    }
+
+    /// The disclosure slug and reason per continuity mode. Rehydrated keeps the
+    /// slug it already had and never carries a reason — nothing was lost —
+    /// while reattachments are disclosed by the attach path instead.
     #[test]
     fn every_create_continuity_maps_to_its_disclosure() {
+        let reason = Some("context_fact_conflict");
         assert_eq!(
-            create_disclosure_status(&SessionContinuity::Rehydrated),
-            Some("session_rehydrated")
+            create_disclosure(&SessionContinuity::Rehydrated, None),
+            Some(("session_rehydrated", None))
         );
         assert_eq!(
-            create_disclosure_status(&SessionContinuity::Fresh),
-            Some("session_fresh")
+            create_disclosure(&SessionContinuity::Rehydrated, reason),
+            Some(("session_rehydrated", None)),
+            "a rehydrated execution lost nothing, so it names no reason"
         );
-        assert_eq!(create_disclosure_status(&SessionContinuity::Resumed), None);
-        assert_eq!(create_disclosure_status(&SessionContinuity::Loaded), None);
         assert_eq!(
-            create_disclosure_status(&SessionContinuity::RestartedWithoutContext {
-                reason: "adapter rejected session resume"
-            }),
+            create_disclosure(&SessionContinuity::Fresh, None),
+            Some(("session_fresh", None))
+        );
+        assert_eq!(
+            create_disclosure(&SessionContinuity::Fresh, reason),
+            Some(("session_fresh", reason))
+        );
+        assert_eq!(create_disclosure(&SessionContinuity::Resumed, reason), None);
+        assert_eq!(create_disclosure(&SessionContinuity::Loaded, reason), None);
+        assert_eq!(
+            create_disclosure(
+                &SessionContinuity::RestartedWithoutContext {
+                    reason: "adapter rejected session resume"
+                },
+                reason
+            ),
             None
         );
     }
