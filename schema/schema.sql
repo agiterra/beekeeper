@@ -562,12 +562,12 @@ CREATE UNIQUE INDEX idx_reactions_source_event ON reactions (community_id, react
 -- ── Project ACL (NIP-MP Buzz access extension) ───────────────────────────────
 -- Conformance: project access rows filter by community before coordinate/pubkey
 -- matching. Store+project projection of kind:30621 heads (buzz-access level +
--- invited-member p tags); see migrations/0030_project_acl.sql for the full
+-- invited-member p tags); see migrations/0033_project_acl.sql for the full
 -- rationale. One row per (community_id, owner, dtag); republish-latest by
 -- head_created_at. The accessible-channels query and the ingest write path
 -- join here to gate channels inside private projects.
 --
--- Phase 2 (migration 0031): git_repo_names (migration 0002) gains
+-- Phase 2 (migration 0034): git_repo_names (migration 0002) gains
 -- `project_ref TEXT` + `head_created_at BIGINT` — the projected 30617
 -- `["project", …]` back-reference. The per-reader hidden-repo query joins
 -- git_repo_names.project_ref = project_acl.coordinate to gate the NIP-34
@@ -582,6 +582,12 @@ CREATE TABLE project_acl (
     visibility      TEXT   NOT NULL DEFAULT 'public'
                       CHECK (visibility IN ('public', 'private')),
     head_created_at BIGINT NOT NULL,
+    -- Phase 3 (migration 0037): which authority maintains the roster.
+    -- 'head' = the creator-signed 30621's p tags; 'ops' = relay-managed
+    -- membership ops (9010/9011). Flipped by the first accepted op and never
+    -- flipped back, so a stale head replay cannot evict co-owner additions.
+    roster_source   TEXT   NOT NULL DEFAULT 'head'
+                      CHECK (roster_source IN ('head', 'ops')),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (community_id, owner, dtag)
 );
@@ -594,6 +600,11 @@ CREATE TABLE project_acl_members (
     owner        BYTEA NOT NULL,
     dtag         TEXT  NOT NULL,
     pubkey       BYTEA NOT NULL,
+    -- Phase 3 (migration 0037). Pre-role members backfill to 'collaborator':
+    -- they could already write into project contents, which is exactly the
+    -- Collaborator capability set.
+    role         TEXT  NOT NULL DEFAULT 'collaborator'
+                   CHECK (role IN ('owner', 'collaborator', 'viewer')),
     PRIMARY KEY (community_id, owner, dtag, pubkey),
     FOREIGN KEY (community_id, owner, dtag)
         REFERENCES project_acl (community_id, owner, dtag)
@@ -602,6 +613,68 @@ CREATE TABLE project_acl_members (
 
 CREATE INDEX idx_project_acl_members_pubkey
     ON project_acl_members (community_id, pubkey);
+
+-- ── Shared-terminal roster (NIP-ST) ──────────────────────────────────────────
+-- Conformance: terminal roster rows filter by community before owner/session
+-- matching. Store+project projection of kind:30623 announce heads, keyed by
+-- (community, owner, session id) with the same LWW `head_created_at` guard as
+-- project_acl; see migrations/0039_shell_session_roster.sql. The owner-signed
+-- announce stays authoritative — these rows let the ephemeral input/watch
+-- gates resolve "is this sender an invited collaborator/viewer of this
+-- terminal" without parsing the stored head per event.
+
+CREATE TABLE shell_session_acl (
+    community_id    UUID   NOT NULL REFERENCES communities(id),
+    owner           BYTEA  NOT NULL,
+    session_id      TEXT   NOT NULL,
+    coordinate      TEXT   NOT NULL,
+    status          TEXT   NOT NULL,
+    head_created_at BIGINT NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (community_id, owner, session_id)
+);
+
+CREATE TABLE shell_session_acl_members (
+    community_id UUID  NOT NULL,
+    owner        BYTEA NOT NULL,
+    session_id   TEXT  NOT NULL,
+    pubkey       BYTEA NOT NULL,
+    role         TEXT  NOT NULL CHECK (role IN ('collaborator', 'viewer')),
+    PRIMARY KEY (community_id, owner, session_id, pubkey),
+    FOREIGN KEY (community_id, owner, session_id)
+        REFERENCES shell_session_acl (community_id, owner, session_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_shell_session_acl_members_pubkey
+    ON shell_session_acl_members (community_id, pubkey);
+
+-- ── Coding-session authority grants (NIP-CSAT) ───────────────────────────────
+-- Conformance: grant rows filter by community before genesis/grantee matching.
+-- Projected from the accepted kind:44228 transition chain; see
+-- migrations/0038_coding_session_authority_acl.sql. One row per live grant —
+-- 'operator' (may steer) or 'viewer' (read-only share, which confers
+-- transport-channel read through the accessible-channels query). Maintained
+-- inside the same advisory-locked transaction that serializes the chain, so
+-- grant rows can never race the chain head. The founder never has a row:
+-- foundership is the genesis signature itself.
+
+CREATE TABLE coding_session_authority_acl (
+    community_id UUID  NOT NULL REFERENCES communities(id),
+    channel_id   UUID  NOT NULL,
+    genesis_ref  BYTEA NOT NULL,
+    session_ref  TEXT  NOT NULL,
+    founder      BYTEA NOT NULL,
+    grantee      BYTEA NOT NULL,
+    role         TEXT  NOT NULL CHECK (role IN ('operator', 'viewer')),
+    granted_seq  INT   NOT NULL,
+    PRIMARY KEY (community_id, genesis_ref, grantee)
+);
+
+CREATE INDEX idx_cs_authority_acl_grantee
+    ON coding_session_authority_acl (community_id, grantee);
+CREATE INDEX idx_cs_authority_acl_channel
+    ON coding_session_authority_acl (community_id, channel_id, session_ref);
 
 -- ── Pubkey allowlist ──────────────────────────────────────────────────────────
 -- Conformance: "Relay membership, pubkey allowlist, archived identities".
@@ -850,9 +923,18 @@ CREATE TABLE git_repo_names (
     repo_id       TEXT NOT NULL,
     owner_pubkey  TEXT NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Phase 2 (migration 0034): the projected 30617 `["project", …]`
+    -- back-reference, joined against project_acl.coordinate to gate the
+    -- NIP-34 repo surface behind private projects. `head_created_at` is the
+    -- replaceable-event LWW guard, mirroring project_acl.
+    project_ref     TEXT,
+    head_created_at BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (community_id, repo_id)
 );
 CREATE INDEX idx_git_repo_names_owner ON git_repo_names (community_id, owner_pubkey);
+CREATE INDEX idx_git_repo_names_project_ref
+    ON git_repo_names (community_id, project_ref)
+    WHERE project_ref IS NOT NULL;
 
 CREATE TABLE parameterized_event_watermarks (
     community_id  UUID NOT NULL REFERENCES communities(id),
