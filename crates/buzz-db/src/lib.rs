@@ -42,6 +42,8 @@ pub mod partition;
 /// Buzz product-feedback sidecar persistence.
 pub mod product_feedback;
 pub mod project_acl;
+/// Operator-only project-scoped PostgreSQL purge.
+pub mod project_purge;
 /// Community-scoped push lease and durable wake-outbox persistence.
 pub mod push;
 /// Reaction persistence.
@@ -1275,6 +1277,14 @@ impl Db {
     /// Return the shared durable whole-community deletion adapter.
     pub fn deletion_store(&self) -> deletion::DeletionStore {
         deletion::DeletionStore::new(self.pool.clone())
+    }
+
+    /// Return the operator-only project-scoped purge adapter.
+    ///
+    /// CLI-only by contract — see [`project_purge`] for why this never gets an
+    /// HTTP surface.
+    pub fn project_purge_store(&self) -> project_purge::ProjectPurgeStore {
+        project_purge::ProjectPurgeStore::new(self.pool.clone())
     }
 
     /// Begin a database transaction for atomic multi-statement operations.

@@ -21,6 +21,7 @@
 //! the guard against parallel adds (e.g. `xargs -P`).
 
 mod deletions;
+mod project_purge;
 
 use std::sync::Arc;
 
@@ -87,6 +88,16 @@ enum Command {
     Deletions {
         #[command(subcommand)]
         command: deletions::DeletionsCommand,
+    },
+    /// CLI-only project-scoped purge: reclaim the PostgreSQL storage a
+    /// **soft-deleted** project still occupies.
+    ///
+    /// Never a shortcut around authorization — it refuses while anything in
+    /// the project is still live, and it never frees a repository name. Run
+    /// `project-purge inventory` first; its digest is what `run` requires.
+    ProjectPurge {
+        #[command(subcommand)]
+        command: project_purge::ProjectPurgeCommand,
     },
     /// Emit missing kind:39000/39001/39002 channel discovery events, or
     /// republish only a targeted channel's kind:39002 roster.
@@ -161,6 +172,7 @@ async fn run(cli: Cli) -> Result<i32> {
             command: ProductFeedbackCommand::List { limit },
         } => cmd_list_product_feedback(limit).await,
         Command::Deletions { command } => deletions::run(command).await,
+        Command::ProjectPurge { command } => project_purge::run(command).await,
         Command::ReconcileChannels { channel, relay_key } => {
             reconcile_channels(channel, relay_key).await?;
             Ok(0)

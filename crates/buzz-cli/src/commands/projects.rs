@@ -27,6 +27,7 @@ use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
 
 use crate::client::BuzzClient;
 use crate::commands::parse_write_response;
+use crate::commands::projects_cascade;
 use crate::error::CliError;
 
 // ── Buzz repo-ID grammar (bare --repo shorthand) ─────────────────────────────
@@ -542,20 +543,21 @@ pub async fn cmd_update(
     submit_project(client, builder).await
 }
 
-/// `buzz projects delete`
+/// Publish the kind:30621 tombstone for `slug` against an observed `head`.
 ///
 /// Head-based and verified:
-///   1. Fetch own live head — `NotFound` if absent.
-///   2. Build tombstone at `max(client_now, head.created_at + 1)`.
-///   3. Submit.
-///   4. Re-query the coordinate; if a newer head survived → `Conflict`.
-pub async fn cmd_delete(client: &BuzzClient, slug: &str) -> Result<(), CliError> {
-    validate_project_slug(slug)?;
-
-    let head = fetch_own_project(client, slug)
-        .await?
-        .ok_or_else(|| CliError::NotFound(format!("project {slug:?} not found")))?;
-    let next_ts = next_timestamp(&head, Timestamp::now())?;
+///   1. Build tombstone at `max(client_now, head.created_at + 1)`.
+///   2. Submit.
+///   3. Re-query the coordinate; if a newer head survived → `Conflict`.
+///
+/// Shared by the default delete and the `--cascade` path so the two can never
+/// drift; the cascade runs this **last**.
+async fn publish_project_tombstone(
+    client: &BuzzClient,
+    slug: &str,
+    head: &Event,
+) -> Result<(), CliError> {
+    let next_ts = next_timestamp(head, Timestamp::now())?;
 
     let pubkey_hex = client.keys().public_key().to_hex();
     let tombstone = build_delete_addressable(KIND_PROJECT, &pubkey_hex, slug)
@@ -575,8 +577,98 @@ pub async fn cmd_delete(client: &BuzzClient, slug: &str) -> Result<(), CliError>
         )));
     }
 
-    println!("{}", serde_json::json!({ "deleted": slug, "status": "ok" }));
     Ok(())
+}
+
+/// `buzz projects delete`
+///
+/// **Default (no `--cascade`): unchanged.** Per `docs/nips/NIP-MP.md`, deleting
+/// a project deletes the kind:30621 event only — member repositories, channels,
+/// workflows, and messages are untouched. There is no cascade in either
+/// direction unless the caller explicitly asks for one.
+///
+/// With `--cascade` the CLI additionally orchestrates, client-side and in this
+/// order, the deletion of the project's channels (kind:9008) and the caller's
+/// own workflow definitions in them (kind:5 `a`-tag), and only then publishes
+/// the project tombstone — see [`crate::commands::projects_cascade`].
+///
+/// `--dry-run` prints the enumerated plan and publishes nothing. Without
+/// `--dry-run`, a cascade **always** requires explicit `--yes` confirmation:
+/// the plan is printed and the command exits with a usage error until the
+/// caller re-runs with `--yes`. That holds even when the plan enumerated no
+/// children — an empty plan is indistinguishable from a failed enumeration,
+/// and a destructive command must not skip its own gate on the strength of a
+/// guess.
+pub async fn cmd_delete(
+    client: &BuzzClient,
+    slug: &str,
+    cascade: bool,
+    dry_run: bool,
+    yes: bool,
+) -> Result<(), CliError> {
+    validate_project_slug(slug)?;
+
+    let head = fetch_own_project(client, slug)
+        .await?
+        .ok_or_else(|| CliError::NotFound(format!("project {slug:?} not found")))?;
+
+    if !cascade {
+        // Default path — byte-identical to the pre-cascade behavior.
+        publish_project_tombstone(client, slug, &head).await?;
+        println!("{}", serde_json::json!({ "deleted": slug, "status": "ok" }));
+        return Ok(());
+    }
+
+    let owner_hex = client.keys().public_key().to_hex();
+    let coordinate = projects_cascade::project_coordinate(&owner_hex, slug);
+    // The head's `a` tags mix repository and agent coordinates; the cascade
+    // filters to kind:30617 itself. Its `["channel", <uuid>]` tags are the
+    // project's forward refs to member channels — one of the two independent
+    // bindings a channel can have, so the cascade needs both.
+    let member_coords: Vec<String> = head
+        .tags
+        .iter()
+        .filter(|t| tag_name(t) == Some("a"))
+        .filter_map(|t| tag_value(t).map(String::from))
+        .collect();
+    let head_channel_ids: Vec<String> = head
+        .tags
+        .iter()
+        .filter(|t| tag_name(t) == Some("channel"))
+        .filter_map(|t| tag_value(t).map(String::from))
+        .filter(|id| !id.is_empty())
+        .collect();
+
+    let plan = projects_cascade::enumerate_cascade(
+        client,
+        slug,
+        &coordinate,
+        &member_coords,
+        &head_channel_ids,
+    )
+    .await?;
+
+    if dry_run {
+        println!("{}", projects_cascade::plan_json(&plan, true));
+        return Ok(());
+    }
+
+    // The confirmation gate is unconditional for `--cascade`. An empty plan is
+    // NOT self-evidently "nothing to do" — it is equally the signature of an
+    // enumeration that came back short (a relay page missed, a binding this
+    // client does not know about), and letting that publish a tombstone
+    // silently is exactly the failure mode this gate exists to stop. So print
+    // the plan and refuse until `--yes`, saying plainly which case it is.
+    if let Some(message) = projects_cascade::cascade_confirmation_required(&plan, yes) {
+        // Print the same plan, then refuse. Nothing has been published.
+        println!("{}", projects_cascade::plan_json(&plan, false));
+        return Err(CliError::Usage(message));
+    }
+
+    projects_cascade::execute_cascade(client, &plan, || {
+        publish_project_tombstone(client, slug, &head)
+    })
+    .await
 }
 
 // ── Membership ops (kinds 9010/9011 + kind 39010 roster reads) ────────────────
@@ -869,7 +961,12 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
             )
             .await
         }
-        ProjectsCmd::Delete { slug } => cmd_delete(client, &slug).await,
+        ProjectsCmd::Delete {
+            slug,
+            cascade,
+            dry_run,
+            yes,
+        } => cmd_delete(client, &slug, cascade, dry_run, yes).await,
         ProjectsCmd::AddMember {
             slug,
             pubkey,
@@ -1628,4 +1725,447 @@ mod tests {
     // The add-repo no-op Conflict path is pinned by the live transcript
     // (step 7: buzz already present → exit=5). No relay mock is available
     // for a unit test; the async no-network tests above cover all pre-await paths.
+}
+
+// ── `projects delete --cascade` against a mock relay ──────────────────────────
+//
+// A tiny axum relay (same shape as `client.rs`'s retry-policy harness) that
+// answers `/query` from a canned per-kind fixture and records every `/events`
+// submission. That is enough to pin the two properties that matter: `--dry-run`
+// publishes nothing, and a confirmed cascade publishes the kind:30621 tombstone
+// last.
+#[cfg(test)]
+mod cascade_relay_tests {
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::State;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use nostr::Keys;
+    use serde_json::{json, Value};
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    const CHANNEL_STREAM: &str = "11111111-1111-4111-8111-111111111111";
+    const CHANNEL_TRANSPORT: &str = "22222222-2222-4222-8222-222222222222";
+    const WORKFLOW: &str = "33333333-3333-4333-8333-333333333333";
+    /// A channel bound to the project **only** by the head's forward
+    /// `["channel", …]` ref — the relay never wrote a `project` back-reference
+    /// onto its kind:39000 metadata.
+    const CHANNEL_FORWARD_ONLY: &str = "44444444-4444-4444-8444-444444444444";
+
+    /// Every event the mock relay accepted, in submission order.
+    type Submitted = Arc<Mutex<Vec<Value>>>;
+
+    fn head_event(keys: &Keys, slug: &str, extra_tags: Vec<Tag>) -> Event {
+        let mut tags = vec![
+            Tag::parse(["d", slug]).expect("d tag"),
+            Tag::parse(["a", &format!("30617:{}:buzz", keys.public_key().to_hex())])
+                .expect("a tag"),
+        ];
+        tags.extend(extra_tags);
+        build_project_with_tags("", tags)
+            .expect("valid project envelope")
+            .custom_created_at(Timestamp::from(1_700_000_000u64))
+            .sign_with_keys(keys)
+            .expect("sign head")
+    }
+
+    fn channel_metadata(channel_id: &str, name: &str, ty: &str, coordinate: Option<&str>) -> Value {
+        let mut tags = vec![
+            json!(["d", channel_id]),
+            json!(["name", name]),
+            json!(["t", ty]),
+        ];
+        if let Some(coordinate) = coordinate {
+            tags.push(json!(["project", coordinate]));
+        }
+        json!({
+            "id": "0".repeat(64),
+            "pubkey": "0".repeat(64),
+            "created_at": 1_700_000_000u64,
+            "kind": 39000,
+            "content": "",
+            "tags": tags,
+        })
+    }
+
+    /// kind:39001 group-admins projection granting `owner` on `channel_id`.
+    fn channel_admins(channel_id: &str, owner_hex: &str) -> Value {
+        json!({
+            "id": "2".repeat(64),
+            "pubkey": "0".repeat(64),
+            "created_at": 1_700_000_000u64,
+            "kind": 39001,
+            "content": "",
+            "tags": [["d", channel_id], ["p", owner_hex, "owner"]],
+        })
+    }
+
+    fn workflow_def(workflow_id: &str, channel_id: &str, author: &str) -> Value {
+        json!({
+            "id": "1".repeat(64),
+            "pubkey": author,
+            "created_at": 1_700_000_000u64,
+            "kind": 30620,
+            "content": "name: demo",
+            "tags": [["d", workflow_id], ["h", channel_id]],
+        })
+    }
+
+    /// The relay-side world one test runs against.
+    struct Fixture {
+        /// Extra tags on the kind:30621 head (forward `channel` refs, agent
+        /// `a` members, …).
+        head_tags: Vec<Tag>,
+        /// kind:39000 channel metadata the relay serves.
+        channels: Vec<Value>,
+        /// kind:30620 workflow definitions the relay serves.
+        workflows: Vec<Value>,
+    }
+
+    /// The default world: two back-referenced channels (one transport) and one
+    /// caller-authored workflow.
+    fn default_fixture(keys: &Keys, coordinate: &str) -> Fixture {
+        Fixture {
+            head_tags: Vec::new(),
+            channels: vec![
+                channel_metadata(CHANNEL_STREAM, "general", "stream", Some(coordinate)),
+                channel_metadata(
+                    CHANNEL_TRANSPORT,
+                    "sessions",
+                    projects_cascade::TRANSPORT_CHANNEL_TYPE,
+                    Some(coordinate),
+                ),
+            ],
+            workflows: vec![workflow_def(
+                WORKFLOW,
+                CHANNEL_STREAM,
+                &keys.public_key().to_hex(),
+            )],
+        }
+    }
+
+    /// Spawn a mock relay. `/query` dispatches on the first requested kind;
+    /// `/events` records the submission. Once a kind:5 tombstone naming the
+    /// project coordinate arrives, kind:30621 queries return empty so the
+    /// real post-submit verification in `publish_project_tombstone` passes.
+    async fn mock_relay(keys: &Keys, slug: &str, fixture: Fixture) -> (String, Submitted) {
+        let head =
+            serde_json::to_value(head_event(keys, slug, fixture.head_tags)).expect("head json");
+        let coordinate = projects_cascade::project_coordinate(&keys.public_key().to_hex(), slug);
+        let owner_hex = keys.public_key().to_hex();
+        // Every served channel grants the caller `owner`, so the ownership
+        // pre-flight stays quiet unless a test says otherwise.
+        let admins: Vec<Value> = fixture
+            .channels
+            .iter()
+            .filter_map(|c| {
+                c.get("tags")
+                    .and_then(Value::as_array)
+                    .and_then(|tags| tags.first())
+                    .and_then(|t| t.get(1))
+                    .and_then(Value::as_str)
+            })
+            .map(|id| channel_admins(id, &owner_hex))
+            .collect();
+        let channels = fixture.channels;
+        let workflows = fixture.workflows;
+        let submitted: Submitted = Arc::new(Mutex::new(Vec::new()));
+
+        #[derive(Clone)]
+        struct S {
+            head: Value,
+            coordinate: String,
+            channels: Vec<Value>,
+            admins: Vec<Value>,
+            workflows: Vec<Value>,
+            submitted: Submitted,
+        }
+
+        let state = S {
+            head,
+            coordinate,
+            channels,
+            admins,
+            workflows,
+            submitted: submitted.clone(),
+        };
+
+        let app = Router::new()
+            .route(
+                "/query",
+                post(
+                    |State(s): State<S>, Json(filters): Json<Vec<Value>>| async move {
+                        let kind = filters
+                            .first()
+                            .and_then(|f| f.get("kinds"))
+                            .and_then(Value::as_array)
+                            .and_then(|k| k.first())
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        let tombstoned = s.submitted.lock().is_ok_and(|events| {
+                            events.iter().any(|e| {
+                                e.get("kind").and_then(Value::as_u64) == Some(5)
+                                    && e.get("tags").and_then(Value::as_array).is_some_and(|tags| {
+                                        tags.iter().any(|t| {
+                                            t.get(0).and_then(Value::as_str) == Some("a")
+                                                && t.get(1).and_then(Value::as_str)
+                                                    == Some(s.coordinate.as_str())
+                                        })
+                                    })
+                            })
+                        });
+                        let body = match kind {
+                            30621 if tombstoned => vec![],
+                            30621 => vec![s.head.clone()],
+                            39000 => s.channels.clone(),
+                            39001 => s.admins.clone(),
+                            30620 => s.workflows.clone(),
+                            _ => vec![],
+                        };
+                        Json(Value::Array(body))
+                    },
+                ),
+            )
+            .route(
+                "/events",
+                post(|State(s): State<S>, Json(event): Json<Value>| async move {
+                    let id = event
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if let Ok(mut events) = s.submitted.lock() {
+                        events.push(event);
+                    }
+                    Json(json!({ "event_id": id, "accepted": true, "message": "ok" }))
+                }),
+            )
+            .with_state(state);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr: SocketAddr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        (format!("http://{addr}"), submitted)
+    }
+
+    async fn client_against(keys: &Keys, slug: &str) -> (crate::client::BuzzClient, Submitted) {
+        let coordinate = projects_cascade::project_coordinate(&keys.public_key().to_hex(), slug);
+        client_against_fixture(keys, slug, default_fixture(keys, &coordinate)).await
+    }
+
+    async fn client_against_fixture(
+        keys: &Keys,
+        slug: &str,
+        fixture: Fixture,
+    ) -> (crate::client::BuzzClient, Submitted) {
+        let (url, submitted) = mock_relay(keys, slug, fixture).await;
+        let client = crate::client::BuzzClient::new(url, keys.clone(), None, None)
+            .expect("client construction");
+        (client, submitted)
+    }
+
+    fn submitted_kinds(submitted: &Submitted) -> Vec<u64> {
+        submitted
+            .lock()
+            .map(|events| {
+                events
+                    .iter()
+                    .filter_map(|e| e.get("kind").and_then(Value::as_u64))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `--dry-run` enumerates and prints, and publishes absolutely nothing.
+    #[tokio::test]
+    async fn cascade_dry_run_publishes_nothing() {
+        let keys = Keys::generate();
+        let (client, submitted) = client_against(&keys, "platform").await;
+
+        cmd_delete(&client, "platform", true, true, false)
+            .await
+            .expect("dry run must succeed");
+
+        assert!(
+            submitted_kinds(&submitted).is_empty(),
+            "--dry-run must publish nothing, got {:?}",
+            submitted_kinds(&submitted)
+        );
+    }
+
+    /// `--cascade` without `--yes` refuses and publishes nothing.
+    #[tokio::test]
+    async fn cascade_without_yes_refuses_and_publishes_nothing() {
+        let keys = Keys::generate();
+        let (client, submitted) = client_against(&keys, "platform").await;
+
+        let err = cmd_delete(&client, "platform", true, false, false)
+            .await
+            .expect_err("unconfirmed cascade must fail");
+
+        assert!(
+            matches!(err, CliError::Usage(_)),
+            "expected CliError::Usage, got {err:?}"
+        );
+        assert!(
+            submitted_kinds(&submitted).is_empty(),
+            "an unconfirmed cascade must publish nothing"
+        );
+    }
+
+    /// A confirmed cascade deletes both channels (transport included) and the
+    /// workflow, and publishes the kind:30621 tombstone LAST.
+    #[tokio::test]
+    async fn confirmed_cascade_publishes_the_project_tombstone_last() {
+        let keys = Keys::generate();
+        let (client, submitted) = client_against(&keys, "platform").await;
+
+        cmd_delete(&client, "platform", true, false, true)
+            .await
+            .expect("confirmed cascade must succeed");
+
+        // 9008 × 2 channels (stream + transport), kind:5 × 1 workflow, then
+        // kind:5 for the project.
+        assert_eq!(submitted_kinds(&submitted), vec![9008, 9008, 5, 5]);
+
+        let events = submitted.lock().expect("submitted lock").clone();
+        let last = events.last().expect("at least one submission");
+        let coordinate =
+            projects_cascade::project_coordinate(&keys.public_key().to_hex(), "platform");
+        let a_tag = last
+            .get("tags")
+            .and_then(Value::as_array)
+            .and_then(|tags| tags.first().cloned())
+            .expect("tombstone a tag");
+        assert_eq!(
+            a_tag,
+            json!(["a", coordinate]),
+            "the final submission must be the kind:30621 project tombstone"
+        );
+        // The transport channel was one of the deleted channels.
+        let deleted_channels: Vec<String> = events
+            .iter()
+            .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(9008))
+            .filter_map(|e| {
+                e.get("tags")
+                    .and_then(Value::as_array)
+                    .and_then(|tags| tags.first())
+                    .and_then(|t| t.get(1))
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .collect();
+        assert!(
+            deleted_channels.iter().any(|id| id == CHANNEL_TRANSPORT),
+            "the transport channel must be deleted by the cascade, got {deleted_channels:?}"
+        );
+    }
+
+    /// A cascade whose enumeration found no children must STILL stop at the
+    /// confirmation gate. Regression: `has_no_children()` used to short-circuit
+    /// the `!yes` branch, so a failed enumeration published the tombstone and
+    /// printed `"status":"ok"` with an empty `deleted` list.
+    #[tokio::test]
+    async fn empty_cascade_plan_does_not_bypass_confirmation() {
+        let keys = Keys::generate();
+        let (client, submitted) = client_against_fixture(
+            &keys,
+            "platform",
+            Fixture {
+                head_tags: Vec::new(),
+                channels: Vec::new(),
+                workflows: Vec::new(),
+            },
+        )
+        .await;
+
+        let err = cmd_delete(&client, "platform", true, false, false)
+            .await
+            .expect_err("a childless cascade must still require --yes");
+
+        match err {
+            CliError::Usage(message) => assert!(
+                message.contains("enumerated NO channels"),
+                "the refusal must name the empty enumeration, got {message:?}"
+            ),
+            other => panic!("expected CliError::Usage, got {other:?}"),
+        }
+        assert!(
+            submitted_kinds(&submitted).is_empty(),
+            "an unconfirmed cascade must publish nothing — not even the tombstone"
+        );
+    }
+
+    /// A channel bound to the project only by the head's forward
+    /// `["channel", …]` ref is enumerated and deleted. Regression: the cascade
+    /// matched the relay's back-reference alone, so forward-ref-only channels
+    /// were invisible and the project was tombstoned over live children.
+    #[tokio::test]
+    async fn cascade_enumerates_head_forward_ref_channels() {
+        let keys = Keys::generate();
+        let coordinate =
+            projects_cascade::project_coordinate(&keys.public_key().to_hex(), "platform");
+        let (client, submitted) =
+            client_against_fixture(
+                &keys,
+                "platform",
+                Fixture {
+                    head_tags: vec![
+                        Tag::parse(["channel", CHANNEL_FORWARD_ONLY]).expect("channel tag")
+                    ],
+                    channels: vec![
+                        channel_metadata(CHANNEL_STREAM, "general", "stream", Some(&coordinate)),
+                        // No `project` back-reference — bound by the head only.
+                        channel_metadata(CHANNEL_FORWARD_ONLY, "design", "forum", None),
+                    ],
+                    workflows: Vec::new(),
+                },
+            )
+            .await;
+
+        cmd_delete(&client, "platform", true, false, true)
+            .await
+            .expect("confirmed cascade must succeed");
+
+        let events = submitted.lock().expect("submitted lock").clone();
+        let deleted_channels: Vec<String> = events
+            .iter()
+            .filter(|e| e.get("kind").and_then(Value::as_u64) == Some(9008))
+            .filter_map(|e| {
+                e.get("tags")
+                    .and_then(Value::as_array)
+                    .and_then(|tags| tags.first())
+                    .and_then(|t| t.get(1))
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            })
+            .collect();
+        assert_eq!(
+            deleted_channels,
+            vec![CHANNEL_STREAM.to_string(), CHANNEL_FORWARD_ONLY.to_string()],
+            "both bindings must enumerate; the forward-ref-only channel must not be skipped"
+        );
+    }
+
+    /// The default (no `--cascade`) path publishes exactly one event: the
+    /// project tombstone. No channel or workflow is touched.
+    #[tokio::test]
+    async fn default_delete_publishes_only_the_project_tombstone() {
+        let keys = Keys::generate();
+        let (client, submitted) = client_against(&keys, "platform").await;
+
+        cmd_delete(&client, "platform", false, false, false)
+            .await
+            .expect("default delete must succeed");
+
+        assert_eq!(
+            submitted_kinds(&submitted),
+            vec![5],
+            "the default delete must remain a single kind:5 tombstone"
+        );
+    }
 }

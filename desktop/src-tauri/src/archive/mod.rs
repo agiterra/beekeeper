@@ -775,6 +775,74 @@ pub async fn get_agent_usage_series(
         .await
 }
 
+// ── Relay-identity purge ─────────────────────────────────────────────────────
+
+/// What [`purge_relay_scoped_local_stores`] removed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayScopePurgeReport {
+    /// Rows deleted from `archive.db` across all relay-scoped tables.
+    pub archive_rows: usize,
+    /// Rows deleted from the `(owner, relay)` retention database.
+    pub retention_rows: usize,
+}
+
+/// Drop every locally persisted row keyed to the active relay's **URL**.
+///
+/// Both native stores — `archive.db` and the per-`(owner, relay)` retention
+/// database — are keyed by relay URL, never by relay identity. When the relay
+/// at that URL comes back advertising a different NIP-11 `self` signing key it
+/// is a new community reusing an address, and every row filed under the old
+/// instance is stale: archived events reference ids that no longer exist, save
+/// subscriptions name channels that no longer exist, and retention rows still
+/// flagged `pending_sync` would be *published to the new relay*.
+///
+/// `relay_url` is the caller's assertion about which community it is purging.
+/// It must agree with the relay the backend currently has applied; a mismatch
+/// (a community switch raced the frontend's decision) is an error and purges
+/// nothing, so the wrong community's history can never be destroyed.
+#[tauri::command]
+pub async fn purge_relay_scoped_local_stores(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    relay_url: String,
+) -> Result<RelayScopePurgeReport, String> {
+    use crate::managed_agents::retention::{
+        normalized_relay_scope, purge_retention_scope, scoped_retention_db_path,
+    };
+
+    let identity_pk = identity_pubkey(&state)?;
+    let active_relay_url = relay_ws_url_with_override(&state);
+    if normalized_relay_scope(&relay_url) != normalized_relay_scope(&active_relay_url) {
+        return Err(format!(
+            "refusing to purge {relay_url}: the active relay is {active_relay_url}"
+        ));
+    }
+
+    let retention_db_path = scoped_retention_db_path(
+        &crate::managed_agents::managed_agents_base_dir(&app)?,
+        &active_relay_url,
+        &identity_pk,
+    );
+
+    let archive_identity_pk = identity_pk.clone();
+    let archive_relay_url = active_relay_url.clone();
+    let archive_rows = run_archive_db_task(move |conn| {
+        store::purge_relay_scope(conn, &archive_identity_pk, &archive_relay_url)
+    })
+    .await?;
+
+    let retention_rows =
+        tokio::task::spawn_blocking(move || purge_retention_scope(&retention_db_path))
+            .await
+            .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+
+    Ok(RelayScopePurgeReport {
+        archive_rows,
+        retention_rows,
+    })
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

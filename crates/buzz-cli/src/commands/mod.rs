@@ -13,6 +13,7 @@ pub mod pack;
 pub mod patches;
 pub mod pr;
 pub mod projects;
+pub mod projects_cascade;
 pub mod pulse;
 pub mod reactions;
 pub mod repos;

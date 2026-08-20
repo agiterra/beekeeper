@@ -342,6 +342,7 @@ pub(crate) fn invoke_handler(
         archive::index_observer_channel_id,
         archive::read_unindexed_observer_rows,
         archive::get_agent_usage_series,
+        archive::purge_relay_scoped_local_stores,
         is_auto_update_supported,
         set_window_vibrancy,
         #[cfg(target_os = "macos")]

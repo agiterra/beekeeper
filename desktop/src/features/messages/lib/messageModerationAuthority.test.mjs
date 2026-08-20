@@ -178,8 +178,8 @@ test("an unresolved channel id or channel type grants nothing", () => {
   );
 });
 
-test("forum channels honour channel roles too", () => {
-  for (const channelType of ["forum"]) {
+test("forum and transport channels honour channel roles too", () => {
+  for (const channelType of ["forum", "transport"]) {
     assert.equal(
       decideMessageModeration(
         input({ channelType, channelMembers: [member(VIEWER, "admin")] }),

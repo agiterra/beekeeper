@@ -854,3 +854,71 @@ fn test_read_unindexed_observer_rows_excludes_processed_rows() {
         "ev-old must be excluded from unindexed rows after null-channel_id indexing"
     );
 }
+
+// ── purge_relay_scope ────────────────────────────────────────────────────
+
+#[test]
+fn test_purge_relay_scope_removes_only_the_named_relay() {
+    let conn = in_memory();
+    let pk = "identity-a";
+    let stale = "wss://relay.example";
+    let other = "wss://other.example";
+
+    // Two relays' worth of rows across every relay-scoped table, plus a second
+    // identity on the SAME relay that must survive.
+    for (identity, relay, id) in [
+        (pk, stale, "ev-stale"),
+        (pk, other, "ev-other"),
+        ("identity-b", stale, "ev-b"),
+    ] {
+        upsert_archived_event(&conn, identity, relay, id, 24200, "agent", 10, "{}", 0).unwrap();
+        upsert_event_scope(&conn, identity, relay, id, "owner_p", identity, 0).unwrap();
+        upsert_observer_channel_index(&conn, identity, relay, id, Some("chan"), 10).unwrap();
+        upsert_save_subscription(&conn, identity, relay, "channel_h", "chan", "[1]", 0).unwrap();
+    }
+    conn.execute(
+        "INSERT INTO agent_metric_index
+            (identity_pubkey, relay_url, id, agent_pubkey, event_created_at,
+             archived_at, parse_status)
+         VALUES (?1, ?2, 'ev-stale', 'agent', 10, 0, 'valid')",
+        params![pk, stale],
+    )
+    .unwrap();
+
+    let deleted = purge_relay_scope(&conn, pk, stale).unwrap();
+    // 1 event + 1 scope + 1 observer index + 1 subscription + 1 metric row.
+    assert_eq!(deleted, 5);
+
+    let remaining = |table: &str, identity: &str, relay: &str| -> i64 {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE identity_pubkey = ?1 AND relay_url = ?2"),
+            params![identity, relay],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+
+    for table in [
+        "archived_events",
+        "archived_event_scopes",
+        "observer_channel_index",
+        "save_subscriptions",
+        "agent_metric_index",
+    ] {
+        assert_eq!(remaining(table, pk, stale), 0, "{table} not purged");
+    }
+    // A different relay for the same identity, and a different identity on the
+    // purged relay, are both untouched.
+    assert_eq!(remaining("archived_events", pk, other), 1);
+    assert_eq!(remaining("archived_events", "identity-b", stale), 1);
+    assert_eq!(remaining("save_subscriptions", pk, other), 1);
+}
+
+#[test]
+fn test_purge_relay_scope_on_empty_scope_is_a_noop() {
+    let conn = in_memory();
+    assert_eq!(
+        purge_relay_scope(&conn, "pk", "wss://nothing.here").unwrap(),
+        0
+    );
+}

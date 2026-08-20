@@ -7,8 +7,9 @@ import {
 } from "@/features/projects/hooks";
 import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
-import { updateChannel } from "@/shared/api/tauriChannels";
+import { deleteChannel, updateChannel } from "@/shared/api/tauriChannels";
 import { getIdentity } from "@/shared/api/tauriIdentity";
+import { deleteWorkflow } from "@/shared/api/tauriWorkflows";
 import type { Channel } from "@/shared/api/types";
 import {
   KIND_DELETION,
@@ -16,6 +17,7 @@ import {
 } from "@/shared/constants/kinds";
 
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
+import type { ProjectCascadeTargets } from "./lib/projectCascade";
 import {
   addProjectMembers,
   publishProjectContainer,
@@ -278,6 +280,90 @@ export function useDeleteProjectContainerMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteProjectContainer,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: projectContainersQueryKey,
+      });
+      void queryClient.invalidateQueries({ queryKey: channelsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
+    },
+  });
+}
+
+export type DeleteProjectContainerCascadeInput = {
+  project: ProjectContainer;
+  /** Everything to delete alongside the project, from
+   * `useProjectCascadeTargets`. */
+  targets: ProjectCascadeTargets;
+};
+
+/**
+ * Delete a project **and its channels and workflows** (opt-in only).
+ *
+ * NIP-MP says a project delete removes the kind:30621 event and nothing else,
+ * and that stays the default everywhere — this path runs only when the user
+ * ticks "delete everything" in the confirmation dialog.
+ *
+ * Order matters and mirrors the CLI's `buzz projects delete --cascade`:
+ * channels first, then workflows, and the project tombstone **last**. A
+ * failure part-way through therefore leaves the project itself in place, so
+ * the user can retry instead of being left with an unreachable orphan set.
+ * Any child failure aborts before the tombstone and reports which children
+ * survived — a partially-completed cascade is never reported as success.
+ *
+ * Repositories are never deleted, only detached: the relay keeps a repo's name
+ * reservation so a deletion cannot free the name for another owner to claim.
+ *
+ * Only workflows the caller authored are deleted. `targets.workflows` is
+ * already author-filtered by `useProjectCascadeTargets`, and this function
+ * re-checks rather than trusting it: a workflow delete is a kind:5 `a`-tag
+ * tombstone for `30620:<caller>:<id>`, so issuing one for a teammate's
+ * workflow addresses a coordinate that does not exist. The relay accepts it,
+ * matches no live row, and returns success — a delete that reports done and
+ * changes nothing. Those are skipped here, and named to the user by the
+ * dialog.
+ */
+export async function deleteProjectContainerCascade({
+  project,
+  targets,
+}: DeleteProjectContainerCascadeInput): Promise<void> {
+  const self = await selfPubkey();
+  if (project.owner !== self) {
+    throw new Error("Only the project owner can delete it.");
+  }
+
+  const failures: string[] = [];
+  for (const channel of targets.channels) {
+    try {
+      await deleteChannel(channel.id);
+    } catch {
+      failures.push(`channel "${channel.name}"`);
+    }
+  }
+  for (const workflow of targets.workflows) {
+    // Belt and braces: never sign a tombstone that cannot delete anything.
+    if (workflow.ownerPubkey.toLowerCase() !== self.toLowerCase()) continue;
+    try {
+      await deleteWorkflow(workflow.id);
+    } catch {
+      failures.push(`workflow "${workflow.name}"`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `The project was NOT deleted: ${failures.join(", ")} could not be ` +
+        `deleted. Fix those and try again.`,
+    );
+  }
+
+  await deleteProjectContainer(project);
+}
+
+export function useDeleteProjectContainerCascadeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteProjectContainerCascade,
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: projectContainersQueryKey,

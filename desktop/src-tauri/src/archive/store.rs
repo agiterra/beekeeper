@@ -881,6 +881,53 @@ pub fn gc_orphaned_events(
     Ok(affected)
 }
 
+/// Delete every row this identity holds for `relay_url`, across all five
+/// relay-scoped tables, in one transaction.
+///
+/// Called when the relay at `relay_url` comes back advertising a different
+/// NIP-11 `self` key. Every table here is keyed by `(identity_pubkey,
+/// relay_url, …)` and the remaining columns — event ids, channel ids, scope
+/// values, agent pubkeys — are identifiers minted by the *previous* relay
+/// instance. Keeping them would let one community's saved history and save
+/// subscriptions surface inside a different community that merely reuses the
+/// address.
+///
+/// One transaction, so the derived indexes (`observer_channel_index`,
+/// `agent_metric_index`) can never be observed as outliving the
+/// `archived_events` rows they were parsed from — the same invariant
+/// [`gc_orphaned_events`] maintains.
+///
+/// Returns the total number of rows deleted.
+pub fn purge_relay_scope(
+    conn: &Connection,
+    identity_pubkey: &str,
+    relay_url: &str,
+) -> Result<usize, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("failed to begin purge_relay_scope transaction: {e}"))?;
+
+    let mut deleted = 0usize;
+    for table in [
+        "archived_event_scopes",
+        "observer_channel_index",
+        "agent_metric_index",
+        "save_subscriptions",
+        "archived_events",
+    ] {
+        deleted += tx
+            .execute(
+                &format!("DELETE FROM {table} WHERE identity_pubkey = ?1 AND relay_url = ?2"),
+                params![identity_pubkey, relay_url],
+            )
+            .map_err(|e| format!("failed to purge {table}: {e}"))?;
+    }
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit purge_relay_scope transaction: {e}"))?;
+    Ok(deleted)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+pub mod project;
+
 /// Fleet-wide object cap for one observational taxonomy sweep.
 const DEFAULT_SWEEP_OBJECT_CAP: u64 = 10_000_000;
 /// Keys per frozen side-table chunk (one `DeleteObjects`-sized unit × 10).
@@ -500,7 +502,7 @@ async fn run_with_services(command: Command, services: Services) -> Result<i32> 
     }
 }
 
-fn resolve_submit_host(host: Option<&str>, relay_url: Option<&str>) -> Result<String> {
+pub(crate) fn resolve_submit_host(host: Option<&str>, relay_url: Option<&str>) -> Result<String> {
     if let Some(host) = host {
         let host = host.trim();
         if host.is_empty() {
@@ -525,14 +527,18 @@ fn resolve_submit_host(host: Option<&str>, relay_url: Option<&str>) -> Result<St
 }
 
 async fn connect_store() -> Result<DeletionStore> {
+    Ok(store(&connect_db().await?))
+}
+
+/// Open the operator database connection shared by every deletion command.
+pub(crate) async fn connect_db() -> Result<Db> {
     let database_url = required_env("DATABASE_URL")?;
-    let db = Db::new(&DbConfig {
+    Ok(Db::new(&DbConfig {
         database_url,
         max_connections: env_parse("BUZZ_DB_POOL_SIZE", 20),
         ..DbConfig::default()
     })
-    .await?;
-    Ok(store(&db))
+    .await?)
 }
 
 fn resolve_s3_region(buzz_region: Option<String>, aws_region: Option<String>) -> String {
@@ -1420,7 +1426,7 @@ fn run_output(request: DeletionRequest) -> RunOutput {
     }
 }
 
-fn print_json(value: &impl Serialize) -> Result<()> {
+pub(crate) fn print_json(value: &impl Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }

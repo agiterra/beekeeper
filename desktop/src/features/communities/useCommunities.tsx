@@ -16,15 +16,8 @@ import {
   saveActiveCommunityId,
   saveCommunities,
 } from "./communityStorage";
-import { removeSelfProfileCachesForRelay } from "@/features/profile/lib/selfProfileStorage";
-import { removeUserLabelCacheForRelay } from "@/features/profile/lib/userLabelStorage";
-import { removeChannelSnapshotForRelay } from "@/features/channels/channelSnapshot";
-import { removeMessageSnapshotsForRelay } from "@/features/messages/lib/messageSnapshot";
-import { clearSavedCommunitySnapshot } from "@/features/agents/activeAgentTurnsStore";
-import {
-  clearCommunityDestinations,
-  removeCommunityDestination,
-} from "./communityNavigationStorage";
+import { evictRelayScopedCommunityCaches } from "./relayScopedCacheEviction";
+import { clearCommunityDestinations } from "./communityNavigationStorage";
 
 export type UpdateCommunityResult =
   | { kind: "updated"; requiresReinit: boolean }
@@ -42,7 +35,10 @@ export function resolveCommunityUpdateResult(
   activeId: string | null,
   id: string,
   updates: Partial<
-    Pick<Community, "name" | "relayUrl" | "token" | "pubkey" | "reposDir">
+    Pick<
+      Community,
+      "name" | "relayUrl" | "token" | "pubkey" | "reposDir" | "relayPubkey"
+    >
   >,
 ): UpdateCommunityResult {
   const current = communities.find((w) => w.id === id);
@@ -61,7 +57,12 @@ export function resolveCommunityUpdateResult(
     (updates.relayUrl !== undefined && updates.relayUrl !== current.relayUrl) ||
     (updates.token !== undefined && updates.token !== current.token) ||
     (updates.pubkey !== undefined && updates.pubkey !== current.pubkey) ||
-    (updates.reposDir !== undefined && updates.reposDir !== current.reposDir);
+    (updates.reposDir !== undefined && updates.reposDir !== current.reposDir) ||
+    // Adopting/re-keying the relay's own identity persists, but never triggers
+    // a backend reapply — the backend is configured by URL/token/reposDir and
+    // knows nothing about the relay's signing key.
+    (updates.relayPubkey !== undefined &&
+      updates.relayPubkey !== current.relayPubkey);
 
   if (!hasChange) return { kind: "unchanged" };
 
@@ -145,7 +146,10 @@ export type UseCommunitiesReturn = {
   updateCommunity: (
     id: string,
     updates: Partial<
-      Pick<Community, "name" | "relayUrl" | "token" | "pubkey" | "reposDir">
+      Pick<
+        Community,
+        "name" | "relayUrl" | "token" | "pubkey" | "reposDir" | "relayPubkey"
+      >
     >,
   ) => UpdateCommunityResult;
   /** Persist a new display order for the rail. IDs not in orderedIds keep their relative position at the end. */
@@ -230,13 +234,12 @@ function useCommunitiesInternal(): UseCommunitiesReturn {
 
       // Relay membership is revoked by the caller before this local cleanup.
       // Keep side effects outside the updater — updaters can execute twice under
-      // React StrictMode.
-      removeSelfProfileCachesForRelay(removed.relayUrl);
-      removeUserLabelCacheForRelay(removed.relayUrl);
-      removeChannelSnapshotForRelay(removed.relayUrl);
-      removeMessageSnapshotsForRelay(removed.relayUrl);
-      clearSavedCommunitySnapshot(id);
-      removeCommunityDestination(id);
+      // React StrictMode. The same inventory is reused when a relay comes back
+      // with a different NIP-11 `self` identity (see relayIdentityGuard.ts).
+      evictRelayScopedCommunityCaches({
+        communityId: id,
+        relayUrl: removed.relayUrl,
+      });
 
       setCommunitiesState((prev) => {
         const result = resolveCommunityRemoval(prev, activeId, id);
@@ -275,7 +278,10 @@ function useCommunitiesInternal(): UseCommunitiesReturn {
     (
       id: string,
       updates: Partial<
-        Pick<Community, "name" | "relayUrl" | "token" | "pubkey" | "reposDir">
+        Pick<
+          Community,
+          "name" | "relayUrl" | "token" | "pubkey" | "reposDir" | "relayPubkey"
+        >
       >,
     ): UpdateCommunityResult => {
       const result = resolveCommunityUpdateResult(

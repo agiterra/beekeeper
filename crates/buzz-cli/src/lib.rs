@@ -1492,10 +1492,28 @@ pub enum ProjectsCmd {
         #[arg(long, group = "mutation", value_enum)]
         access: Option<ProjectAccess>,
     },
-    /// Delete a project (head-based tombstone; verified after submit)
+    /// Delete a project (head-based tombstone; verified after submit).
+    ///
+    /// By default this deletes the kind:30621 event ONLY — repositories,
+    /// channels, workflows, and messages are untouched (NIP-MP: "there is no
+    /// cascade, in either direction"). `--cascade` opts in to also deleting
+    /// the project's channels and your own workflows in them.
     Delete {
         /// Project slug
         slug: String,
+        /// Also delete the project's channels (kind:9008, transport channels
+        /// included) and your own workflow definitions in them, then the
+        /// project itself. Repositories are detached, never deleted.
+        #[arg(long)]
+        cascade: bool,
+        /// Print the cascade plan (counts per child type plus warnings) and
+        /// exit without publishing anything.
+        #[arg(long, requires = "cascade")]
+        dry_run: bool,
+        /// Confirm a cascade delete. Without it, `--cascade` prints the plan
+        /// and exits with a usage error rather than deleting anything.
+        #[arg(long, requires = "cascade")]
+        yes: bool,
     },
     /// Add a project member or change their role (kind 9010 membership op).
     ///

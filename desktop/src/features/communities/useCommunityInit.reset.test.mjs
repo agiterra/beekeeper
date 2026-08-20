@@ -37,6 +37,17 @@ function resetCommunityStateSource() {
   return source.slice(start, end);
 }
 
+test("resetCommunityState drops the relay-self identity query cache", () => {
+  // `relaySelfQueryKey` is a GLOBAL React Query key (call sites read it with an
+  // exact-key getQueryData, so it cannot be relay-scoped) and the QueryClient
+  // outlives the community remount. Without an explicit removal here, community
+  // B would classify relay-signed state against community A's relay identity.
+  assert.match(
+    resetCommunityStateSource(),
+    /queryClient\.removeQueries\(\{\s*queryKey:\s*relaySelfQueryKey\s*\}\)/,
+  );
+});
+
 test("resetCommunityState tears down the coding-session lane registry", () => {
   assert.match(
     resetCommunityStateSource(),

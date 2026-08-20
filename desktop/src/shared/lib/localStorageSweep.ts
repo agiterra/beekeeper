@@ -375,7 +375,7 @@ function sweepChunked(now: number, isAlive: () => boolean): () => void {
  * - Subsequent sweeps run hourly via setInterval.
  * - The hidden→visible trigger has been removed. It stacked the sweep onto
  *   the exact moment focus-refetch storms fire. Hourly + boot-delayed covers
- *   the TTL contract — the shortest rule TTL is 14 days.
+ *   the TTL contract — the shortest rule TTL is 7 days.
  *
  * Returns a cleanup function for tests or future teardown.
  */

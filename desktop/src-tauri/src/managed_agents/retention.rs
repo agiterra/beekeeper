@@ -15,7 +15,9 @@ use tauri::AppHandle;
 use crate::app_state::AppState;
 
 mod legacy_migration;
+mod purge;
 pub use legacy_migration::migrate_legacy_retention_db;
+pub use purge::purge_retention_scope;
 
 /// Durable event-retention scope for one community relay and owner identity.
 ///
@@ -48,7 +50,7 @@ pub fn scope_for_arrival(scope: RetentionScope, arrival_relay_url: &str) -> Opti
 
 /// Relay-URL form that identifies a retention scope: equivalent workspace URLs
 /// (surrounding space, trailing slash) must resolve to one scope.
-fn normalized_relay_scope(relay_url: &str) -> &str {
+pub(crate) fn normalized_relay_scope(relay_url: &str) -> &str {
     relay_url.trim().trim_end_matches('/')
 }
 

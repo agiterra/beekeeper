@@ -13,6 +13,7 @@ import type { ChannelType } from "@/shared/api/types";
 const MODERATABLE_CHANNEL_TYPE: Record<ChannelType, boolean> = {
   stream: true,
   forum: true,
+  transport: true,
   // A DM is not a moderated space. The relay refuses a kind:9005 here for
   // every role, so offering the control would be a lie about what it enforces.
   dm: false,

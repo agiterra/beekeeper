@@ -8,7 +8,7 @@ test("a DM is never moderatable", () => {
 });
 
 test("ordinary channel types are moderatable", () => {
-  for (const channelType of ["stream", "forum"]) {
+  for (const channelType of ["stream", "forum", "transport"]) {
     assert.equal(
       isModeratableChannelType(channelType),
       true,

@@ -2490,7 +2490,10 @@ impl DeletionStore {
 /// releases it. Migrations hold the exclusive session counterpart for their
 /// whole run (see [`crate::migration::run_migrations`]); shared holders do
 /// not block each other, so concurrent deletion executors are unaffected.
-async fn lock_schema_destruction_shared(conn: &mut PgConnection) -> Result<()> {
+///
+/// `pub(crate)` so [`crate::project_purge`] takes the identical exclusion
+/// rather than defining a second, silently divergent lock key.
+pub(crate) async fn lock_schema_destruction_shared(conn: &mut PgConnection) -> Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(SCHEMA_DESTRUCTION_LOCK_KEY)
         .execute(conn)

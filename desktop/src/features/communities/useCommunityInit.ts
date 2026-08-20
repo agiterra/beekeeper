@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { isTauri } from "@tauri-apps/api/core";
 import { isMacPlatform } from "@/shared/lib/platform";
 
@@ -39,11 +40,14 @@ import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessio
 import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { resetProjectPulseState } from "@/features/project-pulse";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
+import { relaySelfQueryKey } from "@/features/moderation/lib/relaySelf";
 
 import {
   initFirstCommunity,
   shouldAutoConnectDefaultRelay,
 } from "./communityStorage";
+import { reconcileRelayIdentity } from "./relayIdentityGuard";
+import { useCommunities } from "./useCommunities";
 import type { Community } from "./types";
 
 /**
@@ -54,8 +58,10 @@ import type { Community } from "./types";
  * See AGENTS.md "Community Switching" for the full contract.
  */
 async function resetCommunityState({
+  queryClient,
   resetAvatarState,
 }: {
+  queryClient: QueryClient;
   resetAvatarState: boolean;
 }): Promise<void> {
   relayClient.disconnect();
@@ -91,6 +97,12 @@ async function resetCommunityState({
   // UUIDs, but a hidden message with no lane to render in is the one outcome
   // the rule must never produce).
   resetCodingSessionLaneVisibility();
+  // The relay's NIP-11 `self` pubkey is cached under a global React Query key
+  // (call sites read it with an exact-key getQueryData, so the key cannot be
+  // relay-scoped). The QueryClient outlives the community remount, so without
+  // this the next community would classify moderation DMs and relay-signed
+  // state against the PREVIOUS relay's identity until the entry went stale.
+  queryClient.removeQueries({ queryKey: relaySelfQueryKey });
   // Folded Pulse digests are keyed by project coordinate, and a coordinate
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.
@@ -139,6 +151,16 @@ export function useCommunityInit(
   // actual relay boundary must clear both the queue and its presentation probe.
   const appliedRelayUrlRef = useRef<string | null>(null);
 
+  // Read through refs so the init effect keeps its narrow dependency list —
+  // `updateCommunity` is re-created whenever the active community id changes,
+  // and the QueryClient identity is stable but not guaranteed to be.
+  const queryClient = useQueryClient();
+  const queryClientRef = useRef(queryClient);
+  queryClientRef.current = queryClient;
+  const { updateCommunity } = useCommunities();
+  const updateCommunityRef = useRef(updateCommunity);
+  updateCommunityRef.current = updateCommunity;
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: we intentionally depend on specific properties (id/relayUrl/token/reposDir) — depending on the whole object would trigger resets on name-only changes
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +173,10 @@ export function useCommunityInit(
             prevCommunityIdRef.current = null;
           }
           try {
-            await resetCommunityState({ resetAvatarState: true });
+            await resetCommunityState({
+              queryClient: queryClientRef.current,
+              resetAvatarState: true,
+            });
           } catch (error) {
             console.error("Failed to reset community state:", error);
             if (!cancelled) {
@@ -247,6 +272,7 @@ export function useCommunityInit(
         }
         try {
           await resetCommunityState({
+            queryClient: queryClientRef.current,
             resetAvatarState:
               appliedRelayUrlRef.current !== activeCommunity.relayUrl,
           });
@@ -309,6 +335,34 @@ export function useCommunityInit(
           });
         }
         return;
+      }
+
+      if (cancelled) return;
+
+      // The backend now points at this community's relay, so the NIP-11 probe
+      // reads the right document. Reconcile the relay's *identity* here —
+      // before any community-scoped UI renders — because every persisted cache
+      // (channel/message snapshots, the retention DB, archive.db) is keyed by
+      // relay URL alone, and a relay reinstalled at the same URL with a fresh
+      // keypair is a different community. Wiping after render would leave
+      // components already hydrated from the stale snapshot.
+      //
+      // Bounded and fail-closed: an unreachable or silent relay yields "no
+      // action", so a community whose relay is down still boots on its caches.
+      try {
+        await reconcileRelayIdentity({
+          community: activeCommunity,
+          adoptRelayPubkey: (relayPubkey) => {
+            updateCommunityRef.current(activeCommunity.id, { relayPubkey });
+          },
+        });
+      } catch (error) {
+        // reconcileRelayIdentity is contracted never to reject; a throw is a
+        // bug in it, and never a reason to block the community from booting.
+        console.error(
+          "[useCommunityInit] relay identity reconcile failed:",
+          error,
+        );
       }
 
       if (!cancelled) {

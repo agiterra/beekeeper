@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getRelaySelf } from "@/features/moderation/lib/relaySelf";
+import {
+  getRelaySelf,
+  relaySelfQueryKey,
+} from "@/features/moderation/lib/relaySelf";
 import {
   banMember,
   type CommunityRestriction,
@@ -24,20 +27,40 @@ export const moderationAuditQueryKey = ["moderationAudit"] as const;
 export const moderationRestrictionsQueryKey = [
   "moderationRestrictions",
 ] as const;
-export const relaySelfQueryKey = ["relaySelf"] as const;
+export { relaySelfQueryKey };
+
+/**
+ * How long an observed relay `self` pubkey is trusted without re-asking.
+ *
+ * It used to be `Infinity`, which meant the value was fetched once per session
+ * and never revalidated — a relay reinstalled at the same URL with a fresh
+ * keypair kept being described by the previous instance's key for as long as
+ * the app stayed open. Five minutes bounds that window while keeping the NIP-11
+ * round trip off the hot path: the value genuinely is near-static (a relay's
+ * signing key changes only on reinstall/rotation), and the query is mounted by
+ * several frequently-remounted surfaces (channel screen, channel pane, forum,
+ * home), which would otherwise refetch on every navigation.
+ *
+ * `refetchOnWindowFocus` is enabled for this one query — the app's default is
+ * `false` — because returning to the app after a break is exactly when a relay
+ * is most likely to have been redeployed underneath it.
+ */
+const RELAY_SELF_STALE_TIME_MS = 5 * 60 * 1_000;
 
 /**
  * The active relay's NIP-11 `self` pubkey (hex), or `null` when it advertises
  * none. Used to recognize relay-signed state and moderation DMs. Community-
- * scoped and effectively static for a session, so it is cached indefinitely;
- * a `null` result is a valid answer, while request failures remain query errors.
+ * scoped: the cache entry is dropped on community switch by
+ * `resetCommunityState`. A `null` result is a valid answer, while request
+ * failures remain query errors.
  */
 export function useRelaySelfQuery(enabled = true) {
   return useQuery({
     enabled,
     queryKey: relaySelfQueryKey,
     queryFn: getRelaySelf,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: RELAY_SELF_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
   });
 }
 

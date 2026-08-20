@@ -9,6 +9,17 @@ export type Community = {
    * file resolved at startup, never this field.
    */
   pubkey?: string;
+  /**
+   * The relay's *own* signing key (NIP-11 `self`, lowercase hex) as observed
+   * the last time this community connected — the relay's identity, as opposed
+   * to `relayUrl` which is only its address.
+   *
+   * Optional and nullable by design: records written before this field existed
+   * have none, and a relay may legitimately advertise no `self`. Absent means
+   * "unknown", never "mismatch" — see `relayIdentity.ts`. It is adopted on the
+   * next connect that resolves a well-formed value.
+   */
+  relayPubkey?: string;
   addedAt: string;
   /**
    * Absolute directory the agent's `~/.buzz/REPOS` symlinks to, so agents
