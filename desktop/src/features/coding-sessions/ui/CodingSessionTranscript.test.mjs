@@ -563,3 +563,77 @@ test("a prompt published before attribution existed is still labelled You", asyn
 
   assert.equal(authorLabel(markup), "You");
 });
+
+test("wide content scrolls inside its block instead of being clipped by the column", async () => {
+  const html = await renderTranscript({
+    currentUserPubkey: null,
+    generationId: "gen-1",
+    isWorking: false,
+    items: [
+      message("m-1", "user", "a".repeat(400)),
+      message("m-2", "assistant", "Ran it."),
+      tool("t-1"),
+    ],
+    operatorProfiles: null,
+    scrollRef: { current: null },
+  });
+
+  // The prompt bubble is shrink-to-fit inside a flex column; without min-w-0 a
+  // wide `pre` inside it pushes the bubble past the section's overflow-hidden
+  // and the text is cut mid-word instead of scrolling.
+  assert.match(
+    html,
+    /data-testid="coding-session-user-message"[\s\S]{0,200}?class="[^"]*\bmin-w-0\b/,
+  );
+
+  // Markdown roots stay inside their parent so a `pre`'s own overflow-x-auto
+  // is what engages, rather than an ancestor clipping the block.
+  const markdownRoots = html.match(/class="[^"]*message-markdown[^"]*"/g) ?? [];
+  assert.ok(markdownRoots.length > 0, "expected a rendered markdown root");
+  for (const cls of markdownRoots) {
+    assert.ok(
+      cls.includes("min-w-0") && cls.includes("w-full"),
+      `markdown root must carry w-full min-w-0: ${cls}`,
+    );
+  }
+});
+
+test("tool output wraps rather than scrolling sideways, and unbroken tokens still wrap", async () => {
+  const blob = "x".repeat(300);
+
+  // Two distinct renderers own tool output: an executing/pending tool draws its
+  // own `pre`, a settled one goes through the shared agents ToolItem panel.
+  const running = await renderTranscript({
+    currentUserPubkey: null,
+    generationId: "gen-1",
+    isWorking: true,
+    items: [{ ...tool("t-1", "executing"), result: blob }],
+    operatorProfiles: null,
+    scrollRef: { current: null },
+  });
+  const pres = running.match(/<pre class="[^"]*"/g) ?? [];
+  assert.ok(pres.length > 0, `expected an active-tool pre: ${running}`);
+  for (const pre of pres) {
+    assert.ok(pre.includes("whitespace-pre-wrap"), `must wrap: ${pre}`);
+    // whitespace-pre-wrap alone will not break a single 300-char token — a long
+    // path, hash, or minified payload would still blow past the column.
+    assert.ok(pre.includes("wrap-anywhere"), `must break long tokens: ${pre}`);
+    assert.ok(pre.includes("max-w-full"), `must stay in the column: ${pre}`);
+  }
+
+  const settled = await renderTranscript({
+    currentUserPubkey: null,
+    generationId: "gen-1",
+    isWorking: false,
+    items: [{ ...tool("t-1"), result: blob }],
+    operatorProfiles: null,
+    scrollRef: { current: null },
+  });
+  assert.match(settled, /data-testid="transcript-shell-command"/);
+  assert.match(settled, /class="[^"]*whitespace-pre-wrap wrap-break-word/);
+  assert.doesNotMatch(
+    settled,
+    /data-testid="transcript-shell-command"[\s\S]*?overflow-x-auto/,
+    "settled tool output should wrap, not scroll sideways",
+  );
+});

@@ -12,6 +12,10 @@ import {
   pendingCodingSessionWorkspaceStatus,
   type NewCodingSessionHostPhase,
 } from "../lib/newCodingSessionModel";
+import {
+  CODING_SESSION_COLUMN_GUTTER,
+  CodingSessionColumn,
+} from "./CodingSessionColumn";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { ProviderLoginNeeded } from "./NewCodingSessionScreen";
 
@@ -98,14 +102,19 @@ export function PendingCodingSessionScreen({
         status={headerStatus}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-5 py-6 sm:px-8">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
+          CODING_SESSION_COLUMN_GUTTER,
+        )}
+      >
+        <CodingSessionColumn className="flex flex-1 flex-col gap-6 py-6">
           {initialTurn ? (
             // The optimistic transcript of one: the first message, echoed as
             // the conversation the workspace will pick up.
             <div className="flex justify-end">
               <div
-                className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary/10 px-4 py-2.5 text-base"
+                className="min-w-0 max-w-[85%] whitespace-pre-wrap wrap-break-word rounded-2xl rounded-br-md bg-primary/10 px-4 py-2.5 text-base"
                 data-testid="pending-coding-session-first-message"
               >
                 {initialTurn}
@@ -180,7 +189,7 @@ export function PendingCodingSessionScreen({
               Retry this exact request
             </Button>
           </div>
-        </div>
+        </CodingSessionColumn>
       </div>
     </main>
   );

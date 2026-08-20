@@ -27,6 +27,7 @@ export default defineConfig({
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",
         "**/coding-session-connect.spec.ts",
+        "**/coding-session-width.spec.ts",
         "**/onboarding-docked-cta-screenshots.spec.ts",
         "**/identity-key-help.spec.ts",
         "**/key-import-reveal.spec.ts",

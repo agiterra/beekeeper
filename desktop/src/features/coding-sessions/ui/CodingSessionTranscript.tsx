@@ -509,7 +509,7 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
           data-role="user-message"
           data-testid="coding-session-user-message"
         >
-          <div className="max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
+          <div className="min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
             <Markdown content={item.text.trim() || " "} mediaInset />
           </div>
           <p className="pe-1 text-2xs text-muted-foreground">

@@ -37,6 +37,12 @@ import { AddCodingSessionProviderDialog } from "./AddCodingSessionProviderDialog
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import { cn } from "@/shared/lib/cn";
+
+import {
+  CODING_SESSION_COLUMN_GUTTER,
+  CodingSessionColumn,
+} from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
@@ -499,7 +505,7 @@ function ReadyCodingSessionWorkspace({
           founderPubkey={founderPubkey}
           genesisRef={genesisRef}
         />
-        <div className="px-5 pb-2 sm:px-8">
+        <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
           <CodingSessionGoalPill
             channelId={channelId}
             currentUserPubkey={currentUserPubkey}
@@ -524,12 +530,15 @@ function ReadyCodingSessionWorkspace({
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
           <div
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            className={cn(
+              "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
+              CODING_SESSION_COLUMN_GUTTER,
+            )}
             onScroll={onScroll}
             ref={scrollRef}
           >
-            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-44 sm:px-8">
-              <div ref={contentRef}>
+            <CodingSessionColumn className="min-h-full pt-7 pb-44">
+              <div className="min-w-0" ref={contentRef}>
                 <CodingSessionTranscript
                   currentUserPubkey={currentUserPubkey}
                   generationId={generationId}
@@ -539,7 +548,7 @@ function ReadyCodingSessionWorkspace({
                   scrollRef={scrollRef}
                 />
               </div>
-            </div>
+            </CodingSessionColumn>
           </div>
           {!isAtBottom ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-32 z-30 flex justify-center">
@@ -559,8 +568,13 @@ function ReadyCodingSessionWorkspace({
             </div>
           ) : null}
           {session.commandTarget && !sessionClosed ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
-              <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+            <div
+              className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background pt-8 pb-4",
+                CODING_SESSION_COLUMN_GUTTER,
+              )}
+            >
+              <CodingSessionColumn className="pointer-events-auto">
                 <CodingSessionComposer
                   authorityReason={composerAuthority.reason}
                   canInterrupt={
@@ -589,7 +603,7 @@ function ReadyCodingSessionWorkspace({
                   target={session.commandTarget}
                   variant="floating"
                 />
-              </div>
+              </CodingSessionColumn>
             </div>
           ) : null}
         </section>

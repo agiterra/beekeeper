@@ -97,3 +97,39 @@
 .buzz-content-scrollbar::-webkit-scrollbar-thumb:active {
   background-color: hsl(var(--border) / 0.9);
 }
+
+/*
+ * Code blocks and other in-transcript scrollers that must advertise their
+ * own horizontal overflow. Native overlay scrollbars only paint while the
+ * user is already scrolling, so a wide code block looks *clipped* rather
+ * than scrollable — nearly as dishonest as the clip this replaced. A styled
+ * thumb is always present when (and only when) there is overflow.
+ *
+ * As in `.buzz-content-scrollbar`, no `scrollbar-color` here on purpose:
+ * setting the standard property makes engines drop the `::-webkit-scrollbar`
+ * pseudo styles and fall back to overlay scrollbars.
+ */
+.buzz-code-scrollbar::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.buzz-code-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.buzz-code-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.buzz-code-scrollbar::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  background-color: hsl(var(--foreground) / 0.2);
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.buzz-code-scrollbar::-webkit-scrollbar-thumb:hover,
+.buzz-code-scrollbar::-webkit-scrollbar-thumb:active {
+  background-color: hsl(var(--foreground) / 0.38);
+}

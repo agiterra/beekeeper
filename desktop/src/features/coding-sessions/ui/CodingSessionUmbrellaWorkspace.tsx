@@ -41,6 +41,10 @@ import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
+import {
+  CODING_SESSION_COLUMN_GUTTER,
+  CodingSessionColumn,
+} from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
@@ -206,7 +210,7 @@ export function UmbrellaCodingSessionWorkspace({
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
         />
-        <div className="px-5 pb-2 sm:px-8">
+        <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
           <CodingSessionGoalPill
             channelId={channelId}
             currentUserPubkey={currentUserPubkey}
@@ -230,8 +234,13 @@ export function UmbrellaCodingSessionWorkspace({
           aria-label="Umbrella session narrative"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div className="mx-auto min-h-full w-full max-w-3xl px-5 pt-7 pb-64 sm:px-8">
+          <div
+            className={cn(
+              "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
+              CODING_SESSION_COLUMN_GUTTER,
+            )}
+          >
+            <CodingSessionColumn className="min-h-full pt-7 pb-64">
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 currentUserPubkey={currentUserPubkey}
@@ -240,11 +249,16 @@ export function UmbrellaCodingSessionWorkspace({
                 operatorProfiles={operatorProfiles}
                 umbrella={umbrella}
               />
-            </div>
+            </CodingSessionColumn>
           </div>
           {!sessionClosed ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background px-4 pt-8 pb-4">
-              <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+            <div
+              className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background pt-8 pb-4",
+                CODING_SESSION_COLUMN_GUTTER,
+              )}
+            >
+              <CodingSessionColumn className="pointer-events-auto">
                 <CodingSessionUmbrellaComposer
                   channelId={channelId}
                   currentUserPubkey={identity.data?.pubkey ?? null}
@@ -252,7 +266,7 @@ export function UmbrellaCodingSessionWorkspace({
                   prefill={prefill}
                   umbrella={umbrella}
                 />
-              </div>
+              </CodingSessionColumn>
             </div>
           ) : null}
         </section>
@@ -681,7 +695,9 @@ function UmbrellaConversationRow({
         </span>{" "}
         · {formatLaneTimestamp(message.timestampMs)}
       </p>
-      <p className="mt-0.5 text-base whitespace-pre-wrap">{message.content}</p>
+      <p className="mt-0.5 text-base whitespace-pre-wrap wrap-break-word">
+        {message.content}
+      </p>
     </div>
   );
 }

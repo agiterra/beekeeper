@@ -93,14 +93,14 @@ export function CodingSessionActiveTool({
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2">
         {summary}
       </summary>
-      <div className="mt-1 ml-1 border-l border-border/60 pl-4">
+      <div className="mt-1 ml-1 min-w-0 border-l border-border/60 pl-4">
         {Object.keys(item.args).length > 0 ? (
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-xs">
+          <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
             {safeFormatToolArgs(item.args)}
           </pre>
         ) : null}
         {item.result.trim() ? (
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-xs">
+          <pre className="buzz-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
             {item.result}
           </pre>
         ) : null}
@@ -345,7 +345,7 @@ function CodingSessionChangedFileRow({
         {label}
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open/changed-file:rotate-180" />
       </summary>
-      <div className="mt-1 flex flex-col gap-2 overflow-hidden rounded-lg border border-border/50 bg-background/50">
+      <div className="mt-1 flex min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border/50 bg-background/50">
         {inlineDiffs.map((diff) => (
           <FileEditDiffBlock diff={diff} key={diff.id} />
         ))}

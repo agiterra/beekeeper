@@ -17,6 +17,9 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Textarea } from "@/shared/ui/textarea";
+import { cn } from "@/shared/lib/cn";
+
+import { CODING_SESSION_COLUMN_CLASS } from "./CodingSessionColumn";
 
 export function CodingSessionGoalPill({
   channelId,
@@ -71,7 +74,10 @@ export function CodingSessionGoalPill({
         className={
           compact
             ? "mt-2 flex min-w-0 items-start gap-1.5 rounded-md bg-primary/8 px-2 py-1.5 text-xs"
-            : "mx-auto flex w-full max-w-3xl items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2"
+            : cn(
+                CODING_SESSION_COLUMN_CLASS,
+                "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2",
+              )
         }
         data-testid={`coding-session-goal-${variant}`}
       >
