@@ -30,6 +30,7 @@ import { DayDivider } from "./DayDivider";
 import { MessageRowItem, SystemRow } from "./TimelineMessageRow";
 import { TimelineRowShell } from "./TimelineRowShell";
 import { UnreadDivider } from "./UnreadDivider";
+import { useMessageDeleteAffordance } from "./useMessageDeleteAffordance";
 import { useTimelineRetention } from "./useTimelineRetention";
 import { useUpwardPaginationWheel } from "./useUpwardPaginationWheel";
 import { useVirtualizedBottomSettle } from "./useVirtualizedBottomSettle";
@@ -168,6 +169,18 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
   onVirtualizerRangeChanged,
   onVirtualizerScrollerChange,
 }: TimelineMessageListProps) {
+  // The single delete/edit policy for this surface, resolved once for the whole
+  // list — it owns a query subscription and a mutation observer, so it must not
+  // be called per row. Rows call `resolveDelete(message)` and render what it
+  // says; they do not re-derive moderator standing. Passing no `onDelete` (an
+  // archived channel) turns every delete off, moderator included.
+  const resolveDelete = useMessageDeleteAffordance({
+    channelId,
+    channelType,
+    currentPubkey,
+    onDelete,
+    profiles,
+  });
   const entries = React.useMemo(
     () =>
       mainEntries ??
@@ -244,7 +257,6 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
           return (
             <MessageRowItem
               channelId={channelId}
-              currentPubkey={currentPubkey}
               entry={item.entry}
               followThreadById={followThreadById}
               footer={messageFooters?.[item.entry.message.id] ?? null}
@@ -264,7 +276,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
               isUnread={isMessageUnreadById?.(item.entry.message.id)}
               playEntrance={item.entry.message.id === entranceMessageId}
               onEntranceComplete={onEntranceMessageComplete}
-              onDelete={onDelete}
+              resolveDelete={resolveDelete}
               onEdit={onEdit}
               onMarkRead={onMarkRead}
               onMarkUnread={onMarkUnread}
@@ -289,6 +301,7 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
       alwaysShowMessageIdentity,
       currentPubkey,
       followThreadById,
+      resolveDelete,
       highlightedMessageId,
       huddleMemberPubkeys,
       huddleMemberPubkeysPending,
@@ -298,7 +311,6 @@ export const TimelineMessageList = React.memo(function TimelineMessageList({
       entranceMessageId,
       onEntranceMessageComplete,
       messageFooters,
-      onDelete,
       onEdit,
       onMarkRead,
       onMarkUnread,

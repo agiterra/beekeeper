@@ -461,12 +461,12 @@ export function HomeView({
     return null;
   }, [filteredItems, selectedConversationId, selectedEventId]);
   const deleteInboxMessage = React.useCallback(
-    async (eventId: string) => {
+    async (eventId: string, moderator = false) => {
       const channelId = selectedItem?.item.channelId;
       if (!channelId) return;
       setIsDeletingMessage(true);
       try {
-        await deleteMessage(channelId, eventId);
+        await deleteMessage(channelId, eventId, moderator);
         await threadContext.refreshStructuralEvents();
         onRefresh();
       } finally {

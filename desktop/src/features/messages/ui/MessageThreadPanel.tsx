@@ -16,7 +16,6 @@ import {
   isWithinGroupingWindow,
 } from "@/features/messages/lib/messageGrouping";
 import type { MessageComposerEditTarget } from "@/features/messages/ui/MessageComposer.types";
-import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { VideoReviewPresentation } from "@/features/messages/lib/videoReviewContext";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
@@ -50,6 +49,7 @@ import { TypingIndicatorRow } from "./TypingIndicatorRow";
 import { UnreadDivider } from "./UnreadDivider";
 import { useComposerHeightPadding } from "./useComposerHeightPadding";
 import { useStableSendToChannel } from "./useStableSendToChannel";
+import { useMessageDeleteAffordance } from "./useMessageDeleteAffordance";
 import { useAnchoredScroll } from "./useAnchoredScroll";
 import { selectDeferredListRenderState } from "@/features/messages/lib/timelineSnapshot";
 
@@ -382,6 +382,14 @@ export function MessageThreadPanel({
     () => hasNestedThreadBranches(deferredThreadReplies),
     [deferredThreadReplies],
   );
+  const resolveDelete = useMessageDeleteAffordance({
+    channelId,
+    channelType: channel?.channelType,
+    currentPubkey,
+    onDelete,
+    profiles,
+  });
+  const threadHeadDelete = resolveDelete(threadHead);
   const highlightedBranch = React.useMemo(() => {
     if (!hoveredCollapseBranchId) {
       return null;
@@ -593,26 +601,9 @@ export function MessageThreadPanel({
                 isUnread={isMessageUnreadById?.(threadHead.id)}
                 layoutVariant="thread-reply"
                 message={threadHead}
-                onDelete={
-                  onDelete &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onDelete
-                    : undefined
-                }
-                onEdit={
-                  onEdit &&
-                  canManageMessageForCurrentUser(
-                    threadHead,
-                    currentPubkey,
-                    profiles,
-                  )
-                    ? onEdit
-                    : undefined
-                }
+                deleteAuthority={threadHeadDelete.deleteAuthority}
+                onDelete={threadHeadDelete.onDelete}
+                onEdit={onEdit && threadHeadDelete.canEdit ? onEdit : undefined}
                 onFollowThread={
                   onFollowThread ? (_msg) => onFollowThread() : undefined
                 }
@@ -687,6 +678,7 @@ export function MessageThreadPanel({
                     index,
                     isContinuation,
                   } = item;
+                  const deleteAffordance = resolveDelete(entry.message);
                   const showUnreadDivider =
                     index > 0 && entry.message.id === firstUnreadReplyId;
                   const isHighlightedBranchOwner =
@@ -761,23 +753,10 @@ export function MessageThreadPanel({
                         onCollapseDescendantsHoverChange={
                           handleCollapseBranchHoverChange
                         }
-                        onDelete={
-                          onDelete &&
-                          canManageMessageForCurrentUser(
-                            entry.message,
-                            currentPubkey,
-                            profiles,
-                          )
-                            ? onDelete
-                            : undefined
-                        }
+                        deleteAuthority={deleteAffordance.deleteAuthority}
+                        onDelete={deleteAffordance.onDelete}
                         onEdit={
-                          onEdit &&
-                          canManageMessageForCurrentUser(
-                            entry.message,
-                            currentPubkey,
-                            profiles,
-                          )
+                          onEdit && deleteAffordance.canEdit
                             ? onEdit
                             : undefined
                         }

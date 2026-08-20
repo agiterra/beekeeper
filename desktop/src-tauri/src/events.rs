@@ -394,6 +394,60 @@ pub fn build_delete_compat(
     Ok(EventBuilder::new(Kind::Custom(5), "").tags(tags))
 }
 
+/// Which authority a message delete is being performed under.
+///
+/// This is not cosmetic — it picks the wire kind, and the two kinds behave
+/// differently on the relay:
+///
+/// * [`DeleteAuthority::Author`] → kind:5 (NIP-09). The relay authorizes the
+///   author only (plus the NIP-OA agent owner) and removes the message
+///   silently, leaving no trace in the channel.
+/// * [`DeleteAuthority::Moderator`] → kind:9005 (Buzz-native). The relay also
+///   authorizes channel and community owners/admins, and answers with a
+///   `message_deleted` system tombstone in the channel.
+///
+/// Ordinary self-deletes must stay on `Author`: routing them through 9005
+/// would paint a public tombstone for every self-delete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteAuthority {
+    /// The caller is the message author (or the author agent's NIP-OA owner).
+    Author,
+    /// The caller is acting as a channel or community moderator.
+    Moderator,
+}
+
+impl From<bool> for DeleteAuthority {
+    /// `true` is the moderator path. Mirrors the `moderator` flag the desktop
+    /// `delete_message` command receives from the UI.
+    fn from(moderator: bool) -> Self {
+        if moderator {
+            Self::Moderator
+        } else {
+            Self::Author
+        }
+    }
+}
+
+/// Build the delete event for `authority`, picking kind:5 or kind:9005.
+///
+/// The kind:9005 branch delegates to `buzz-sdk` so the tag shape stays
+/// identical to the one `buzz messages delete` publishes.
+pub fn build_delete_for_authority(
+    channel_id: Uuid,
+    target_event_id: EventId,
+    authority: DeleteAuthority,
+) -> Result<EventBuilder, String> {
+    match authority {
+        DeleteAuthority::Author => build_delete_compat(channel_id, target_event_id),
+        DeleteAuthority::Moderator => buzz_sdk_pkg::build_delete_message_with_options(
+            channel_id,
+            target_event_id,
+            buzz_sdk_pkg::DeleteMessageOptions::default(),
+        )
+        .map_err(|e| format!("invalid moderator delete: {e}")),
+    }
+}
+
 // ── Reactions ────────────────────────────────────────────────────────────────
 
 /// Kind 7 — NIP-25 reaction.
@@ -885,6 +939,44 @@ mod tests {
         .unwrap();
         let event = builder.sign_with_keys(&Keys::new(secret)).unwrap();
         event.tags.iter().map(|t| t.as_slice().to_vec()).collect()
+    }
+
+    #[test]
+    fn delete_authority_selects_the_wire_kind() {
+        let channel = Uuid::parse_str(CH_ID).unwrap();
+        let target =
+            EventId::from_hex("d24da132115ca0a46233cf4c2ad8338fbf914250cbcaa9181a6dd59533cb5ac1")
+                .unwrap();
+        let signed = |authority: DeleteAuthority| {
+            let secret = nostr::SecretKey::from_hex(
+                "0000000000000000000000000000000000000000000000000000000000000003",
+            )
+            .unwrap();
+            build_delete_for_authority(channel, target, authority)
+                .unwrap()
+                .sign_with_keys(&Keys::new(secret))
+                .unwrap()
+        };
+
+        // The `moderator` command flag maps straight onto the authority.
+        assert_eq!(DeleteAuthority::from(false), DeleteAuthority::Author);
+        assert_eq!(DeleteAuthority::from(true), DeleteAuthority::Moderator);
+
+        // Self-delete stays on NIP-09 kind:5 — no channel tombstone.
+        let author = signed(DeleteAuthority::Author);
+        assert_eq!(author.kind.as_u16(), 5);
+        // Moderator delete rides kind:9005, which the relay answers with a
+        // `message_deleted` system tombstone.
+        let moderator = signed(DeleteAuthority::Moderator);
+        assert_eq!(moderator.kind.as_u16(), 9005);
+
+        // Both scope to the channel (`h`) and name the target (`e`); 9005 is
+        // rejected outright without the `h` tag.
+        for event in [&author, &moderator] {
+            let tags: Vec<Vec<String>> = event.tags.iter().map(|t| t.as_slice().to_vec()).collect();
+            assert_eq!(tags[0], vec!["h".to_string(), CH_ID.to_string()]);
+            assert_eq!(tags[1], vec!["e".to_string(), target.to_hex()]);
+        }
     }
 
     #[test]

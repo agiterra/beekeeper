@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 import {
   type QueryClient,
   useMutation,
@@ -32,6 +32,8 @@ import {
 export { mergeMessages, mergeTimelineCacheMessages };
 import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import { messageMentionPubkeys } from "@/features/messages/lib/messageMentionPubkeys";
+import { isModeratableChannelType } from "@/features/messages/lib/moderatableChannel";
+import { decideMessageModeration } from "@/features/messages/lib/messageModerationAuthority";
 import { buildSentFromThreadTag } from "@/features/messages/lib/sentFromThread";
 import {
   clearTimeoutState,
@@ -39,7 +41,10 @@ import {
 } from "@/features/moderation/lib/timeoutStore";
 import { relayClient, setVisibleChannel } from "@/shared/api/relayClient";
 import { customEmojiQueryKey } from "@/features/custom-emoji/hooks";
-import { channelsQueryKey } from "@/features/channels/hooks";
+import {
+  channelsQueryKey,
+  useChannelMembersQuery,
+} from "@/features/channels/hooks";
 import { reactionEmojiUrl } from "@/shared/api/customEmoji";
 import type { CustomEmoji } from "@/shared/lib/remarkCustomEmoji";
 import {
@@ -50,7 +55,15 @@ import {
   sendChannelMessage,
 } from "@/shared/api/tauri";
 import { getChannelWindowEvents } from "@/shared/api/channelWindow";
-import type { Channel, Identity, RelayEvent } from "@/shared/api/types";
+import { canManageCommunityMembers } from "@/shared/api/relayMembers";
+import { useIdentityQuery } from "@/shared/api/hooks";
+import { useMyRelayMembershipLookupQuery } from "@/features/community-members/hooks";
+import type {
+  Channel,
+  ChannelType,
+  Identity,
+  RelayEvent,
+} from "@/shared/api/types";
 // Same .mjs the renderer uses, so the cache-update projection can't drift
 // from the on-render overlay.
 import { applyEditTagOverlay } from "@/features/messages/lib/applyEditTagOverlay.mjs";
@@ -757,6 +770,117 @@ export function useDeleteMessageMutation(channel: Channel | null) {
       toast.error(`Failed to delete message: ${error.message}`);
     },
   });
+}
+
+/**
+ * Delete someone else's message under moderator authority (kind:9005).
+ *
+ * Deliberately separate from {@link useDeleteMessageMutation}: that one is the
+ * author path and stays on kind:5, which the relay applies silently. A kind:9005
+ * delete is answered with a public `message_deleted` tombstone in the channel,
+ * so routing self-deletes through here would paint a tombstone every time
+ * someone removed their own message.
+ */
+export function useModeratorDeleteMessageMutation(
+  channelId: string | null | undefined,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, { eventId: string }>({
+    mutationFn: async ({ eventId }) => {
+      if (!channelId) {
+        throw new Error("No channel selected.");
+      }
+      await deleteMessage(channelId, eventId, true);
+    },
+    onSuccess: (_data, { eventId }) => {
+      if (!channelId) return;
+      queryClient.setQueryData<RelayEvent[]>(
+        channelMessagesKey(channelId),
+        (current = []) => current.filter((message) => message.id !== eventId),
+      );
+    },
+    onError: (error) => {
+      toast.error(`Failed to delete message: ${error.message}`);
+    },
+  });
+}
+
+export type MessageModeration = {
+  /** True when the viewer may delete other people's messages here. */
+  isModerator: boolean;
+  /** Publishes the kind:9005 moderator delete. Errors surface as a toast. */
+  deleteAsModerator: (message: { id: string }) => void;
+};
+
+/**
+ * Resolves the viewer's moderator standing for one channel and hands back the
+ * matching delete action.
+ *
+ * Call this once per message surface (timeline, thread panel, inbox) rather
+ * than per row — it owns a query subscription and a mutation observer.
+ *
+ * Standing matches the two authorities the relay grants for `DeleteMessage`
+ * (`decide_authority`, `buzz-relay/src/handlers/moderation_authz.rs`):
+ * community `owner`/`admin` from `relay_members`, **or** channel
+ * `owner`/`admin` from `channel_members` within that channel. Implementing only
+ * the first left a channel owner with no `relay_members` row unable to moderate
+ * their own channel from the app while `buzz messages delete` worked.
+ *
+ * DMs are excluded ahead of both: kind:9005 is channel-scoped moderation, and
+ * neither a community admin nor a DM's own channel role holds authority over a
+ * two-person conversation. The relay refuses it for every role.
+ *
+ * The channel-type test is a **positive** one — see `isModeratableChannelType`.
+ * Callers pass `null`/`undefined` while a channel record is still loading and
+ * for cold-recovered inbox items that carry no type at all, so a `!== "dm"`
+ * test would read every unresolved channel as moderatable. Unknown fails
+ * closed: no moderator affordance.
+ *
+ * Cost: the channel-members query is `enabled` only where a channel role could
+ * change the answer — a real channel id, a moderatable type, and no community
+ * authority already settling it (the relay skips the same lookup in that case).
+ * It is shared, keyed, and `staleTime: 30_000`, so this stays one subscription
+ * per surface. Still never call this per row.
+ */
+export function useMessageModeration(
+  channelId: string | null | undefined,
+  channelType: ChannelType | null | undefined,
+): MessageModeration {
+  const membershipLookup = useMyRelayMembershipLookupQuery();
+  const identity = useIdentityQuery();
+  const { mutateAsync } = useModeratorDeleteMessageMutation(channelId);
+  const isCommunityManager = canManageCommunityMembers(membershipLookup.data);
+  const channelRoleCouldMatter =
+    Boolean(channelId) &&
+    isModeratableChannelType(channelType) &&
+    !isCommunityManager;
+  const channelMembers = useChannelMembersQuery(
+    channelId ?? null,
+    channelRoleCouldMatter,
+  );
+  const isModerator = decideMessageModeration({
+    channelId,
+    channelType,
+    isCommunityManager,
+    viewerPubkey: identity.data?.pubkey,
+    // Only a successful query answers the question. Pending, disabled, and
+    // errored all arrive here as `undefined` and grant nothing.
+    channelMembers: channelMembers.isSuccess ? channelMembers.data : undefined,
+  });
+
+  const deleteAsModerator = useCallback(
+    (message: { id: string }) => {
+      // Failure is surfaced by the mutation's onError toast.
+      void mutateAsync({ eventId: message.id }).catch(() => {});
+    },
+    [mutateAsync],
+  );
+
+  return useMemo(
+    () => ({ isModerator, deleteAsModerator }),
+    [deleteAsModerator, isModerator],
+  );
 }
 
 export function useEditMessageMutation(channel: Channel | null) {

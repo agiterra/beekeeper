@@ -3,10 +3,10 @@ import * as React from "react";
 import type { MainTimelineEntry } from "@/features/messages/lib/threadPanel";
 import { THREAD_REPLY_ROW_MARGIN_INLINE_REM } from "@/features/messages/lib/threadTreeLayout";
 import type { buildVideoReviewContextForMessage } from "@/features/messages/lib/videoReviewContext";
-import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
+import type { MessageDeleteAffordance } from "./useMessageDeleteAffordance";
 import { MessageRow } from "./MessageRow";
 import { MessageThreadSummaryRow } from "./MessageThreadSummaryRow";
 import { SystemMessageRow } from "./SystemMessageRow";
@@ -61,7 +61,6 @@ export function SystemRow({
 
 type MessageRowItemProps = {
   channelId?: string | null;
-  currentPubkey?: string;
   entry: MainTimelineEntry;
   followThreadById?: (rootId: string) => void;
   footer: React.ReactNode;
@@ -75,7 +74,11 @@ type MessageRowItemProps = {
   isUnread?: boolean;
   playEntrance?: boolean;
   onEntranceComplete?: (messageId: string) => void;
-  onDelete?: (message: TimelineMessage) => void;
+  /** The one delete/edit policy, resolved per message by the surface's
+   *  `useMessageDeleteAffordance`. This row must not re-derive it: the DM and
+   *  archived-channel carve-outs live in that resolver, and a second derivation
+   *  here is a second place for them to be forgotten. */
+  resolveDelete: (message: TimelineMessage | null) => MessageDeleteAffordance;
   onEdit?: (message: TimelineMessage) => void;
   onMarkUnread?: (message: TimelineMessage) => void;
   onMarkRead?: (message: TimelineMessage) => void;
@@ -93,7 +96,6 @@ type MessageRowItemProps = {
 
 export function MessageRowItem({
   channelId,
-  currentPubkey,
   entry,
   followThreadById,
   footer,
@@ -107,7 +109,7 @@ export function MessageRowItem({
   isUnread,
   playEntrance = false,
   onEntranceComplete,
-  onDelete,
+  resolveDelete,
   onEdit,
   onMarkUnread,
   onMarkRead,
@@ -123,13 +125,14 @@ export function MessageRowItem({
   videoReviewContext,
 }: MessageRowItemProps) {
   const { message, summary } = entry;
-  const canManage = canManageMessageForCurrentUser(
-    message,
-    currentPubkey,
-    profiles,
-  );
-  const canDelete = canManage && onDelete ? onDelete : undefined;
-  const canEdit = canManage && onEdit ? onEdit : undefined;
+  const {
+    deleteAuthority,
+    onDelete: canDelete,
+    canEdit: mayEdit,
+  } = resolveDelete(message);
+  // Moderator authority covers deletion only — the relay rejects a moderator
+  // edit of someone else's message, so editing stays gated on "self".
+  const canEdit = mayEdit ? onEdit : undefined;
 
   if (summary && onOpenThread) {
     const isHighlighted = message.id === highlightedMessageId;
@@ -157,6 +160,7 @@ export function MessageRowItem({
           isContinuation={isContinuation}
           playEntrance={playEntrance}
           onEntranceComplete={onEntranceComplete}
+          deleteAuthority={deleteAuthority}
           message={message}
           onDelete={canDelete}
           onEdit={canEdit}
@@ -210,6 +214,7 @@ export function MessageRowItem({
         isUnread={isUnread}
         playEntrance={playEntrance}
         onEntranceComplete={onEntranceComplete}
+        deleteAuthority={deleteAuthority}
         message={message}
         onDelete={canDelete}
         onEdit={canEdit}

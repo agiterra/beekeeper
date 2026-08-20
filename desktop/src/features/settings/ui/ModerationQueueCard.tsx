@@ -30,6 +30,8 @@ import {
   type ReportType,
   type SeverityTier,
 } from "@/features/settings/lib/moderationQueue";
+import { requiresModeratorDelete } from "@/features/messages/lib/canManageMessage";
+import { useIdentityQuery } from "@/shared/api/hooks";
 import { cn } from "@/shared/lib/cn";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
@@ -110,13 +112,29 @@ async function enforceResolution(
   group: ModerationQueueGroup,
   action: ResolutionAction,
   ban: (input: { pubkey: string; reason?: string }) => Promise<unknown>,
+  currentPubkey: string | undefined,
 ): Promise<void> {
   switch (action) {
-    case "delete":
+    case "delete": {
       // Gated to event targets with a channel (resolvableActions).
       if (group.channelId == null) throw new Error("Report has no channel.");
-      await deleteMessage(group.channelId, group.target);
+      // Which authority to publish under. A moderator resolving a report
+      // against their OWN message takes the author path (kind:5), exactly as
+      // `messageManageAuthority` does everywhere else: kind:9005 answers with a
+      // public `message_deleted` tombstone naming the actor, so routing a
+      // self-delete through it would post a notice in the channel announcing
+      // that this moderator deleted themselves. Every other target is someone
+      // else's message, which the author-only kind:5 path rejects — that
+      // rejection is what left resolved reports stuck open.
+      //
+      // An unresolvable author (already deleted, fetch failed) falls back to
+      // the moderator path rather than aborting the resolution: that is the
+      // pre-existing behaviour and the relay is the authority either way.
+      const author = await resolveTargetAuthor(group).catch(() => null);
+      const asModerator = requiresModeratorDelete(author, currentPubkey);
+      await deleteMessage(group.channelId, group.target, asModerator);
       return;
+    }
     case "ban":
       await ban({ pubkey: await resolveTargetAuthor(group) });
       return;
@@ -144,8 +162,14 @@ const RESOLUTION_OPTIONS: {
 }[] = [
   {
     action: "delete",
+    // The relay answers a moderator delete (kind:9005) with a PUBLIC
+    // `message_deleted` system message in the channel, naming the actor
+    // (`side_effects.rs`). The message-level dialog says so; so must this.
+    // Your own message goes out as a silent kind:5 self-delete instead, which
+    // is why the disclosure is scoped to someone else's content.
     label: "Delete content",
-    description: "Remove the reported content and resolve.",
+    description:
+      "Remove the reported content and resolve. Deleting someone else's message posts a public deletion notice in the channel, naming you.",
   },
   {
     action: "kick",
@@ -369,6 +393,8 @@ function QueueTab() {
   const auditQuery = useModerationAuditQuery();
   const resolveMutation = useResolveReportMutation();
   const banMutation = useBanMemberMutation();
+  // Needed to spot a self-authored target: see `enforceResolution`.
+  const currentPubkey = useIdentityQuery().data?.pubkey;
 
   const groups = useMemo(() => {
     const reports = (reportsQuery.data ?? []).map(toQueueReport);
@@ -407,7 +433,12 @@ function QueueTab() {
       // on" — if enforcement fails we must not send that lie, and we leave the
       // report open (retryable, no orphan decision row). Only after the paired
       // 9040/9005/9001 lands do we resolve every open report about this target.
-      await enforceResolution(group, action, banMutation.mutateAsync);
+      await enforceResolution(
+        group,
+        action,
+        banMutation.mutateAsync,
+        currentPubkey,
+      );
       await Promise.all(
         openReports.map((report) =>
           resolveMutation.mutateAsync({

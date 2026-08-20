@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use buzz_core::channel::ChannelType;
 use buzz_core::tenant::TenantContext;
 use uuid::Uuid;
 
@@ -77,6 +78,8 @@ pub enum ModerationAuthority {
 ///   `DeleteMessage`/`Kick` (via `channel_id`).
 /// - Guard rails (plan): an admin cannot ban/timeout the community owner or
 ///   a fellow admin; only the owner can action an admin.
+/// - **DM carve-out**: no role grants `DeleteMessage`/`Kick` inside a
+///   `channel_type = 'dm'` channel. See [`decide_authority`].
 ///
 /// Returns the matched authority for the audit row, or `Err` with a
 /// client-safe denial message.
@@ -89,6 +92,28 @@ pub async fn authorize_moderation_action(
     action: ModerationAction,
 ) -> anyhow::Result<ModerationAuthority> {
     let community = tenant.community();
+
+    // DM carve-out, resolved before any role is read so the cheapest denial is
+    // also the first one. Only the channel-local actions can land inside a DM;
+    // the community-wide actions (ban/timeout/queue reads) are not channel
+    // scoped, so they skip the lookup entirely. A DB fault propagates and the
+    // caller denies — fail closed.
+    let channel_is_dm = match (action, channel_id) {
+        (ModerationAction::DeleteMessage | ModerationAction::Kick, Some(channel_id)) => {
+            state
+                .db
+                .get_channel(community, channel_id)
+                .await?
+                .channel_type
+                == ChannelType::Dm.as_str()
+        }
+        _ => false,
+    };
+    if channel_is_dm {
+        // No role changes this outcome, so the role lookups are skipped. The
+        // decision itself still comes from `decide_authority` — one policy.
+        return decide_authority(None, None, None, true, action);
+    }
 
     // Community role: `relay_members` stores pubkeys as 64-char hex, fenced to
     // `community` in the query itself. This is the primary authority — owner and
@@ -133,6 +158,7 @@ pub async fn authorize_moderation_action(
         actor_role.as_deref(),
         target_role.as_deref(),
         channel_role.as_deref(),
+        false,
         action,
     )
 }
@@ -143,12 +169,39 @@ pub async fn authorize_moderation_action(
 /// - `actor_role` / `target_role`: community `relay_members` role, if any.
 /// - `channel_role`: the actor's channel role, resolved by the caller only when
 ///   community authority does not apply and the action is channel-local.
+/// - `channel_is_dm`: the target channel is `channel_type = 'dm'`.
 fn decide_authority(
     actor_role: Option<&str>,
     target_role: Option<&str>,
     channel_role: Option<&str>,
+    channel_is_dm: bool,
     action: ModerationAction,
 ) -> anyhow::Result<ModerationAuthority> {
+    // A direct message is not a moderated space. Community owner/admin
+    // authority is community-*wide*, not community-*total*: it stops at the
+    // door of a private conversation between members, and delegated authority
+    // over someone else's DM is not a capability this product grants at all.
+    // So the carve-out is by channel type, ahead of every role — a channel
+    // owner/admin of a DM would be refused too. That case is not reachable
+    // through the product (DM participants are inserted with `role = 'member'`,
+    // `buzz-db/src/dm.rs`), and were it ever minted by a migration or a direct
+    // write it would still be the wrong grant.
+    //
+    // What this does NOT touch: a participant deleting their own DM message.
+    // That is the author fast-path in `validate_admin_event`, upstream of this
+    // seam (`side_effects.rs`), and the kind:5 self-delete path — neither
+    // consults `authorize_moderation_action`.
+    if channel_is_dm
+        && matches!(
+            action,
+            ModerationAction::DeleteMessage | ModerationAction::Kick
+        )
+    {
+        anyhow::bail!(
+            "direct messages cannot be moderated; only a participant can delete their own message"
+        );
+    }
+
     match actor_role {
         // Owner holds every capability, community-wide, with no guard rail.
         Some("owner") => Ok(ModerationAuthority::CommunityOwner),
@@ -201,12 +254,23 @@ mod tests {
         r.expect("expected authorization")
     }
 
+    /// The role tables below all describe a *non-DM* channel; the DM carve-out
+    /// has its own tests, which call [`decide_authority`] with `true`.
+    fn decide(
+        actor_role: Option<&str>,
+        target_role: Option<&str>,
+        channel_role: Option<&str>,
+        action: ModerationAction,
+    ) -> anyhow::Result<ModerationAuthority> {
+        decide_authority(actor_role, target_role, channel_role, false, action)
+    }
+
     #[test]
     fn community_owner_authorized_for_everything() {
         for action in ALL_ACTIONS {
             // Even against another owner/admin target: the owner has no guard rail.
             assert_eq!(
-                ok(decide_authority(Some("owner"), Some("admin"), None, action)),
+                ok(decide(Some("owner"), Some("admin"), None, action)),
                 ModerationAuthority::CommunityOwner,
                 "owner must be authorized for {action:?}"
             );
@@ -218,17 +282,12 @@ mod tests {
         for action in ALL_ACTIONS {
             // Target is a plain member (or unknown) — admin holds every capability.
             assert_eq!(
-                ok(decide_authority(
-                    Some("admin"),
-                    Some("member"),
-                    None,
-                    action
-                )),
+                ok(decide(Some("admin"), Some("member"), None, action)),
                 ModerationAuthority::CommunityAdmin,
                 "admin must be authorized for {action:?} against a member"
             );
             assert_eq!(
-                ok(decide_authority(Some("admin"), None, None, action)),
+                ok(decide(Some("admin"), None, None, action)),
                 ModerationAuthority::CommunityAdmin,
                 "admin must be authorized for {action:?} against a non-member"
             );
@@ -240,7 +299,7 @@ mod tests {
         for target in ["owner", "admin"] {
             for action in [ModerationAction::Ban, ModerationAction::Timeout] {
                 assert!(
-                    decide_authority(Some("admin"), Some(target), None, action).is_err(),
+                    decide(Some("admin"), Some(target), None, action).is_err(),
                     "admin must not {action:?} a community {target}"
                 );
             }
@@ -254,18 +313,13 @@ mod tests {
         // *role*, never on a missing row.
         for action in [ModerationAction::Ban, ModerationAction::Timeout] {
             assert_eq!(
-                ok(decide_authority(Some("admin"), None, None, action)),
+                ok(decide(Some("admin"), None, None, action)),
                 ModerationAuthority::CommunityAdmin,
                 "admin must be able to {action:?} a non-member target"
             );
             // A plain member target is likewise fair game.
             assert_eq!(
-                ok(decide_authority(
-                    Some("admin"),
-                    Some("member"),
-                    None,
-                    action
-                )),
+                ok(decide(Some("admin"), Some("member"), None, action)),
                 ModerationAuthority::CommunityAdmin,
                 "admin must be able to {action:?} a plain member"
             );
@@ -285,7 +339,7 @@ mod tests {
             ModerationAction::ViewQueue,
         ] {
             assert_eq!(
-                ok(decide_authority(Some("admin"), Some("admin"), None, action)),
+                ok(decide(Some("admin"), Some("admin"), None, action)),
                 ModerationAuthority::CommunityAdmin,
                 "admin must be authorized for {action:?} even against an admin target"
             );
@@ -297,7 +351,7 @@ mod tests {
         for role in ["owner", "admin"] {
             for action in [ModerationAction::DeleteMessage, ModerationAction::Kick] {
                 assert_eq!(
-                    ok(decide_authority(None, None, Some(role), action)),
+                    ok(decide(None, None, Some(role), action)),
                     ModerationAuthority::ChannelRole,
                     "channel {role} must be authorized for {action:?}"
                 );
@@ -312,10 +366,116 @@ mod tests {
                 ModerationAction::ViewQueue,
             ] {
                 assert!(
-                    decide_authority(None, None, Some(role), action).is_err(),
+                    decide(None, None, Some(role), action).is_err(),
                     "channel {role} must NOT be authorized for community action {action:?}"
                 );
             }
+        }
+    }
+
+    /// The kind:9005 delete seam: `validate_admin_event` routes non-author
+    /// deletes here, so the community-role rows below are exactly the cases the
+    /// old `channel_members`-only check refused.
+    #[test]
+    fn delete_message_seam_covers_community_and_channel_roles() {
+        // Community owner/admin with NO channel membership: authorized.
+        for role in ["owner", "admin"] {
+            let authority = ok(decide(
+                Some(role),
+                None,
+                None,
+                ModerationAction::DeleteMessage,
+            ));
+            assert_eq!(
+                authority,
+                match role {
+                    "owner" => ModerationAuthority::CommunityOwner,
+                    _ => ModerationAuthority::CommunityAdmin,
+                },
+                "community {role} must delete messages in a channel they never joined"
+            );
+        }
+        // Plain community member with no channel role: refused.
+        assert!(
+            decide(Some("member"), None, None, ModerationAction::DeleteMessage).is_err(),
+            "a plain community member must not delete another user's message"
+        );
+        // Channel owner/admin with no community role: still authorized (this is
+        // the case the pre-existing check covered — the seam is strictly wider).
+        for role in ["owner", "admin"] {
+            assert_eq!(
+                ok(decide(
+                    None,
+                    None,
+                    Some(role),
+                    ModerationAction::DeleteMessage
+                )),
+                ModerationAuthority::ChannelRole,
+                "channel {role} must keep channel-local delete authority"
+            );
+        }
+        // Plain channel member, and a community member who is also only a plain
+        // channel member: refused on both.
+        assert!(
+            decide(None, None, Some("member"), ModerationAction::DeleteMessage).is_err(),
+            "a plain channel member must not delete another user's message"
+        );
+        assert!(
+            decide(
+                Some("member"),
+                None,
+                Some("member"),
+                ModerationAction::DeleteMessage
+            )
+            .is_err(),
+            "community member + channel member must not delete another user's message"
+        );
+    }
+
+    /// The DM carve-out. Before the 9005 widening, the non-author delete branch
+    /// required an owner/admin row in `channel_members` for that channel, and
+    /// DM participants are all inserted with `role = 'member'` — so a community
+    /// admin who was not a participant was refused. The widening removed that
+    /// accidental guard; this restores it deliberately, by channel type.
+    #[test]
+    fn no_role_can_moderate_inside_a_dm() {
+        for action in [ModerationAction::DeleteMessage, ModerationAction::Kick] {
+            for actor in [Some("owner"), Some("admin"), Some("member"), None] {
+                assert!(
+                    decide_authority(actor, None, None, true, action).is_err(),
+                    "community {actor:?} must not {action:?} inside a DM"
+                );
+                // Even holding a channel owner/admin row (not reachable through
+                // the product, but not worth trusting) grants nothing in a DM.
+                for channel_role in ["owner", "admin", "member"] {
+                    assert!(
+                        decide_authority(actor, None, Some(channel_role), true, action).is_err(),
+                        "community {actor:?} + channel {channel_role} must not {action:?} in a DM"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The carve-out is scoped to the channel-local actions. Community-wide
+    /// enforcement (ban/timeout/queue) is not channel-scoped, so a DM in the
+    /// picture must not disarm it — the caller does not even resolve a channel
+    /// type for those.
+    #[test]
+    fn dm_carve_out_does_not_disarm_community_wide_actions() {
+        for action in [
+            ModerationAction::Ban,
+            ModerationAction::Unban,
+            ModerationAction::Timeout,
+            ModerationAction::Untimeout,
+            ModerationAction::ResolveReport,
+            ModerationAction::ViewQueue,
+        ] {
+            assert_eq!(
+                ok(decide_authority(Some("owner"), None, None, true, action)),
+                ModerationAuthority::CommunityOwner,
+                "owner must keep {action:?} regardless of channel type"
+            );
         }
     }
 
@@ -323,11 +483,11 @@ mod tests {
     fn plain_channel_member_and_stranger_are_denied() {
         for action in ALL_ACTIONS {
             assert!(
-                decide_authority(None, None, Some("member"), action).is_err(),
+                decide(None, None, Some("member"), action).is_err(),
                 "channel member must be denied {action:?}"
             );
             assert!(
-                decide_authority(None, None, None, action).is_err(),
+                decide(None, None, None, action).is_err(),
                 "user with no role must be denied {action:?}"
             );
         }

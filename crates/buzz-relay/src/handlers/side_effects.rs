@@ -17,6 +17,7 @@ use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
 
 use super::event::dispatch_persistent_event;
+use super::moderation_authz::{authorize_moderation_action, ModerationAction, ModerationTarget};
 use crate::protocol::RelayMessage;
 use crate::state::AppState;
 use buzz_core::tenant::TenantContext;
@@ -698,22 +699,69 @@ pub async fn validate_admin_event(
             }
 
             // Not the author, or author who is no longer a member of a private channel —
-            // must be owner/admin or the owning human of the message's agent-author.
-            let members = state.db.get_members(tenant.community(), channel_id).await?;
-            if actor_is_channel_owner_or_admin(&members, &actor_bytes) {
-                Ok(())
-            } else {
-                // Allow the owning human of the agent that authored the target message,
-                // even when the human is not a channel member.
-                if state
-                    .db
-                    .is_agent_owner(tenant.community(), &author, &actor_bytes)
-                    .await?
-                {
+            // must hold moderation authority or be the owning human of the message's
+            // agent-author. Authority routes through the single moderation seam, so a
+            // community owner/admin who never joined this channel is authorized here
+            // exactly as they are for kind:9001 — strictly wider than the previous
+            // `channel_members`-only check, which this call subsumes (`ChannelRole`).
+            match authorize_moderation_action(
+                tenant,
+                state,
+                &actor_bytes,
+                Some(channel_id),
+                ModerationTarget::Event(&target_id),
+                ModerationAction::DeleteMessage,
+            )
+            .await
+            {
+                Ok(authority) => {
+                    // The authority is the *why* behind an accepted moderator
+                    // delete, and the tombstone this event produces names only
+                    // the actor. kind:9005 writes no `moderation_actions` row:
+                    // this is a pre-storage validator, and a row written here
+                    // would claim a delete that a later storage failure never
+                    // performed (the tombstone is emitted only after the
+                    // soft-delete lands, in `handle_delete_event`). Until the
+                    // authority is threaded through to that post-storage seam,
+                    // this log line is the record.
+                    info!(
+                        actor = %hex::encode(&actor_bytes),
+                        channel_id = %channel_id,
+                        target_event = %hex::encode(&target_id),
+                        authority = ?authority,
+                        "kind:9005 moderator delete authorized"
+                    );
                     Ok(())
-                } else {
+                }
+                Err(e) => {
+                    // Denied (or the role/channel lookup failed — fail closed
+                    // either way). Allow the owning human of the agent that
+                    // authored the target message, even when the human holds no
+                    // role at all: the moderation seam intentionally does not
+                    // model NIP-OA ownership.
+                    if state
+                        .db
+                        .is_agent_owner(tenant.community(), &author, &actor_bytes)
+                        .await?
+                    {
+                        return Ok(());
+                    }
+                    // Logged only once the agent-owner fallback has also failed,
+                    // so a legitimate owner delete does not log a denial. `warn`
+                    // rather than `debug`: this is the only trace of a denial,
+                    // including a DB-fault-induced one, and debug is off in
+                    // production — a database outage would otherwise reach the
+                    // user as a bare permissions message with nothing in the log.
+                    warn!(
+                        error = %e,
+                        actor = %hex::encode(&actor_bytes),
+                        channel_id = %channel_id,
+                        target_event = %hex::encode(&target_id),
+                        "kind:9005 delete denied"
+                    );
                     Err(anyhow::anyhow!(
-                        "must be event author or channel owner/admin"
+                        "must be the event author, the owner of the authoring agent, \
+                         or a moderator with authority over this channel"
                     ))
                 }
             }
@@ -2469,12 +2517,6 @@ fn author_delete_can_use_self_delete_path(author: &[u8], actor: &[u8], event: &E
     author == actor && !has_moderation_delete_metadata(event)
 }
 
-fn actor_is_channel_owner_or_admin(members: &[MemberRecord], actor: &[u8]) -> bool {
-    members
-        .iter()
-        .any(|m| m.pubkey == actor && (m.role == "owner" || m.role == "admin"))
-}
-
 #[cfg(test)]
 fn delete_tombstone_content(
     actor_hex: String,
@@ -3446,37 +3488,5 @@ mod tests {
         assert!(!author_delete_can_use_self_delete_path(
             &actor, &actor, &event
         ));
-    }
-
-    #[test]
-    fn member_role_is_not_owner_or_admin_for_moderation_metadata() {
-        let channel_id = Uuid::new_v4();
-        let actor = vec![7_u8; 32];
-        let members = vec![MemberRecord {
-            channel_id,
-            pubkey: actor.clone(),
-            role: "member".to_string(),
-            joined_at: chrono::Utc::now(),
-            invited_by: None,
-            removed_at: None,
-        }];
-
-        assert!(!actor_is_channel_owner_or_admin(&members, &actor));
-    }
-
-    #[test]
-    fn admin_role_is_owner_or_admin_for_moderation_metadata() {
-        let channel_id = Uuid::new_v4();
-        let actor = vec![7_u8; 32];
-        let members = vec![MemberRecord {
-            channel_id,
-            pubkey: actor.clone(),
-            role: "admin".to_string(),
-            joined_at: chrono::Utc::now(),
-            invited_by: None,
-            removed_at: None,
-        }];
-
-        assert!(actor_is_channel_owner_or_admin(&members, &actor));
     }
 }

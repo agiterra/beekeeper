@@ -50,11 +50,15 @@ import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
+/** Authority a rendered delete control exercises. See `canManageMessage.ts`. */
+export type MessageDeleteAuthority = "self" | "moderator";
+
 const ACTION_BUTTON_CLASS = "h-8 w-8 rounded-full p-0";
 const ACTION_ICON_CLASS = "!h-4 !w-4";
 
 function MoreActionsMenu({
   channelId,
+  deleteAuthority = "self",
   message,
   onDelete,
   onEdit,
@@ -72,6 +76,8 @@ function MoreActionsMenu({
   /** Channel UUID for the "Copy link" action. When null/undefined, the
    *  Copy link entry is hidden (e.g. inbox preview rows that don't have it). */
   channelId?: string | null;
+  /** Authority the delete entry will actually exercise — see `onDelete`. */
+  deleteAuthority?: MessageDeleteAuthority;
   message: TimelineMessage;
   onDelete?: (message: TimelineMessage) => void;
   onEdit?: (message: TimelineMessage) => void;
@@ -283,7 +289,9 @@ function MoreActionsMenu({
               }}
             >
               <Trash2 className="h-4 w-4" />
-              Delete message
+              {deleteAuthority === "moderator"
+                ? "Delete as moderator"
+                : "Delete message"}
             </DropdownMenuItem>
           ) : null}
 
@@ -298,6 +306,7 @@ function MoreActionsMenu({
 
       {onDelete ? (
         <DeleteMessageConfirmDialog
+          authority={deleteAuthority}
           onConfirm={() => onDelete(message)}
           onOpenChange={setIsDeleteDialogOpen}
           open={isDeleteDialogOpen}
@@ -363,6 +372,7 @@ function isCustomEmojiShortcode(emoji: string) {
 
 export const MessageActionBar = React.memo(function MessageActionBar({
   channelId,
+  deleteAuthority = "self",
   message,
   onDelete,
   onEdit,
@@ -383,6 +393,12 @@ export const MessageActionBar = React.memo(function MessageActionBar({
   /** Channel UUID — required for the "Copy link" action; when omitted the
    *  action is hidden (callers like the home inbox that lack the context). */
   channelId?: string | null;
+  /**
+   * Which authority `onDelete` will publish under. `"moderator"` relabels the
+   * control to "Delete as moderator" so it never claims to be an ordinary
+   * self-delete while actually exercising a community role.
+   */
+  deleteAuthority?: MessageDeleteAuthority;
   message: TimelineMessage;
   onDelete?: (message: TimelineMessage) => void;
   onEdit?: (message: TimelineMessage) => void;
@@ -569,6 +585,7 @@ export const MessageActionBar = React.memo(function MessageActionBar({
           {hasMoreMenuActions ? (
             <MoreActionsMenu
               channelId={channelId}
+              deleteAuthority={deleteAuthority}
               message={message}
               onDelete={onDelete}
               onEdit={onEdit}

@@ -44,7 +44,10 @@ import { resolveSnapshotSharedBy } from "@/features/messages/lib/snapshotSharedB
 import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { VideoReviewCommentMarkdown } from "@/shared/ui/VideoReviewCommentMarkdown";
-import { MessageActionBar } from "./MessageActionBar";
+import {
+  MessageActionBar,
+  type MessageDeleteAuthority,
+} from "./MessageActionBar";
 import { editMessage } from "@/shared/api/tauri";
 import { hasLinkPreviewSuppression } from "@/features/messages/lib/formatTimelineMessages";
 import { toast } from "sonner";
@@ -75,6 +78,7 @@ export const MessageRow = React.memo(
     currentPubkey,
     collapseDepthGuideActions,
     connectDescendants = false,
+    deleteAuthority = "self",
     depthGuideDepths,
     highlighted = false,
     highlightDescendantRail = false,
@@ -116,6 +120,8 @@ export const MessageRow = React.memo(
     currentPubkey?: string;
     collapseDepthGuideActions?: ReadonlyArray<ThreadDepthGuideAction>;
     connectDescendants?: boolean;
+    /** Authority `onDelete` exercises — forwarded to the action bar's label. */
+    deleteAuthority?: MessageDeleteAuthority;
     depthGuideDepths?: ReadonlyArray<number>;
     highlighted?: boolean;
     highlightDescendantRail?: boolean;
@@ -554,6 +560,7 @@ export const MessageRow = React.memo(
       >
         <MessageActionBar
           channelId={channelId}
+          deleteAuthority={deleteAuthority}
           isFollowingThread={isFollowingThread}
           isUnread={isUnread}
           message={message}

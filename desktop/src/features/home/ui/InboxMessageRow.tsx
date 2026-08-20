@@ -7,7 +7,10 @@ import { formatTimeWithoutDayPeriod } from "@/features/messages/lib/dateFormatte
 import { formatItemTimestamp } from "@/shared/lib/datetime";
 import type { TimelineMessage } from "@/features/messages/types";
 import { getConfigNudgeAuthorPubkey } from "@/features/messages/ui/configNudgeAuthPubkey";
-import { MessageActionBar } from "@/features/messages/ui/MessageActionBar";
+import {
+  MessageActionBar,
+  type MessageDeleteAuthority,
+} from "@/features/messages/ui/MessageActionBar";
 import { MessageAgentOwner } from "@/features/messages/ui/MessageAgentOwner";
 import { MessageMetaSeparator } from "@/features/messages/ui/MessageHeader";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
@@ -32,6 +35,9 @@ type InboxMessageRowProps = {
   canReply: boolean;
   /** Channel UUID for "Copy link" — passed straight through to MessageActionBar. */
   channelId?: string | null;
+  /** Authority `onDelete` publishes under — relabels the control when it is a
+   *  moderator delete rather than the viewer's own. */
+  deleteAuthority?: MessageDeleteAuthority;
   isContinuation?: boolean;
   isFirst?: boolean;
   isFocusHighlightVisible: boolean;
@@ -53,6 +59,7 @@ export function InboxMessageRow({
   agentPubkeys,
   canReply,
   channelId = null,
+  deleteAuthority = "self",
   isContinuation = false,
   isFirst = false,
   isFocusHighlightVisible,
@@ -157,6 +164,7 @@ export function InboxMessageRow({
           >
             <MessageActionBar
               channelId={channelId}
+              deleteAuthority={deleteAuthority}
               message={timelineMessage}
               onDelete={onDelete ? () => onDelete(message) : undefined}
               onEdit={onEdit ? () => onEdit(message) : undefined}
