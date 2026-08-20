@@ -11,7 +11,7 @@ use buzz_core::kind::{
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
     KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
-    KIND_REACTION, KIND_THREAD_SUMMARY,
+    KIND_REACTION, KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -2626,6 +2626,26 @@ async fn handle_a_tag_deletion(
                     .await?;
                 if link_cleared {
                     state.invalidate_all_accessible_channels(tenant);
+                }
+            }
+            // A deleted shared-terminal announce drops its roster projection
+            // (same created_at scoping), so the 24310 watch / 24312 input gates
+            // fall back to project-only access instead of honoring invites on a
+            // session that no longer exists. The flushed cache is the roster
+            // cache — what this ACL gates — not the channel-access caches the
+            // project/repo branches above flush.
+            if k == KIND_SHELL_SESSION {
+                let roster_dropped = state
+                    .db
+                    .delete_shell_session_acl(
+                        tenant.community(),
+                        &pubkey_bytes,
+                        d_tag,
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if roster_dropped {
+                    state.shell_roster_cache.invalidate_all();
                 }
             }
         }
