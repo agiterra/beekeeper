@@ -5,9 +5,9 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-20, correcting §1 (the deployed build is
-`build/2026-08-19.4`, not `build/2026-08-18.7`) after probing lightyear from
-outside._
+_Last updated: 2026-08-20, adding §2 items 24-27 from the second live-use
+pass (transcript redaction, transcript content clipping, and the two things
+that stayed open) at the `build/2026-08-20.3` ceremony._
 
 ---
 
@@ -167,6 +167,108 @@ a claim about the project made from a read that returned no claims.
 `ProjectPulseView.tsx` now derives `countsAreLowerBounds` and states floors;
 at zero the floor reads "no entries in what this read returned", a fact about
 the read rather than about the project.
+
+### Found 2026-08-20, second live-use pass
+
+Items 24 and 25 are fixed in `build/2026-08-20.3`. Items 26 and 27 are
+**open** and need Brian's product call.
+
+24. **Signed transcripts were never redacted, and a title could eat ACP's
+   `kind`.** NIP-CST :43 says the published `item` is "deeply redacted" and
+   that host paths and raw provider objects are forbidden. The sanitizer
+   existed and worked —
+   `buzz_core::coding_session_context::sanitize_coding_session_context_content`
+   — but it ran only when building the *private* rehydration package, so the
+   one item stream that leaves the machine was the one stream nobody
+   redacted. Reproduced against the unfixed translator: `{"kind":"tool_call",
+   "tool":{"input":{"file_path":"/Users/brian/Projects/buzz/secret.rs"},
+   "toolName":"Read /Users/brian/Projects/buzz/secret.rs"}}` reached
+   `sign_with_keys` verbatim. The second half was `Null` where a
+   discriminant belonged: `tool_name()` fell back `toolName → title → kind`
+   (`crates/buzz-session-provider/src/transcript.rs:382-391` before the fix),
+   folding ACP's *discriminant* into the *name*, so any adapter that also
+   wrote a title silently erased its own kind. **Fixed:** `fit_item`
+   (`transcript.rs:289-295`) is now the redaction seam — it calls the shared
+   sanitizer and then delegates the old body to a private `shrink_item`
+   (`:297`); redaction runs *first*, because eliding a path makes the value
+   longer and it is the fitted size that has to respect the 32 KiB cap.
+   `fit_item` has exactly one non-test caller,
+   `crates/buzz-session-provider/src/lib.rs:1845` in `enqueue_transcript`,
+   which is the sole path to `sign_with_keys` (`:1849`) for kind:44225, so
+   translator items, payload builders and lifecycle rows are all covered and
+   a future producer cannot forget it. The discriminant now publishes as its
+   own `toolKind` key on the call (`transcript.rs:226`) and is recalled onto
+   the paired result (`:241-255`) from a `tool_kinds` map (`:77`, cleared
+   with `tool_names` at turn end, `:170`) — a `tool_call_update` almost
+   never repeats it. **ACP marks `kind` OPTIONAL**, so it is written only
+   when the adapter actually sent one; an invented discriminant would be a
+   worse lie than an absent one, and a third test pins that
+   (`transcript.rs:993-995`). Wire-compatible: the tag list is untouched.
+
+25. **Wide content in a coding-session transcript ended in a flat vertical
+   cut.** An earlier study blamed a wide `pre` escaping its parent. The fix
+   lane **disproved that** in Chromium — `codeOverflowsSectionPx` measured 0
+   both before and after, because the `pre` already scrolled. Two real
+   findings replaced it.
+   *(a) Latent, and the reason it was never spotted.* Each turn renders with
+   `content-visibility: auto`
+   (`desktop/src/features/coding-sessions/ui/CodingSessionTranscript.tsx:357`,
+   utility defined at `desktop/src/shared/styles/globals/utilities.css:8-11`),
+   which implies `contain: layout style paint`. Paint containment makes the
+   section a **hard clipping box**: an overflowing child is cut with no
+   scrollbar and no ellipsis, and `getComputedStyle().contain` still reports
+   `"none"`, which is why inspecting the element never explained the cut.
+   Proven with a 900px child inside a 400px section. `content-visibility` was
+   deliberately **kept** for its perf win; the containment chain below now
+   ensures nothing overflows it.
+   *(b) User-visible.* Wide code blocks and markdown tables were genuinely
+   scrollable, but macOS paints overlay scrollbars that show nothing at rest,
+   so a full 48rem column ended in a cut indistinguishable from truncation.
+   Scrollbar styling alone was **measured not to work** — `::-webkit-scrollbar`
+   pseudos, `scrollbar-width: thin` and `scrollbar-color` all yielded
+   `scrollbarLayoutPx: 0`. The fix is `useHorizontalOverflow`
+   (`desktop/src/shared/ui/markdown/useHorizontalOverflow.ts:27`), setting
+   `data-overflow` from `scrollWidth - clientWidth - scrollLeft` to drive a
+   right-edge mask fade that retracts at the end of the scroll.
+   Also fixed, a genuine layout bug rather than a perception one: a ~300-char
+   unbroken path in a tool-call parameter box ran off the edge with no
+   continuation, now `wrap-anywhere`
+   (`CodingSessionTranscriptParts.tsx:98,103`). And the composer
+   misregistration was worse than estimated, because the padding sat
+   **inside** the measure box; gutter and measure are now separate constants
+   (`CodingSessionColumn.tsx:20,31`). The 48rem measure is unchanged and
+   deliberate — the reference implementation uses the same one. Landed as
+   `feature/coding-sessions` `b6032378`, plus one `integration/glue` hunk for
+   `StaticCodeBlock`, which exists only above `feature/project-containers`.
+
+26. **OPEN, needs a product decision: `cst-attempt` is deferred.** Item 2
+   above wants "has this exact thing already failed" to be answerable; the
+   obvious shape is a filterable tag on the transcript event, so a relay
+   query answers it without replaying the stream. It did not ship, for three
+   reasons that are each independently sufficient:
+   - **It is not additive.** Transcript ingress parses an *exact* five-tag
+     list — `h`, `cst-v`, `cs-target`, `cst-seq`, `cst-key`
+     (`desktop/src/features/coding-sessions/lib/codingSessionTrustedIngress.ts:339-346`,
+     via `parseExactTags`) — so a sixth tag requires a CST wire-version bump
+     and a migration for already-shipped readers.
+   - **The identifier has to be designed, not picked.** It needs domain
+     separation by project and an explicit canonicalization version, and the
+     *same* value must appear on both the call and the terminal result, or
+     "already failed" cannot be joined at all.
+   - **It is a disclosure surface.** A hash of a low-entropy command is not
+     opaque — `git status` has exactly one preimage — so a dictionary attack
+     recovers the command, and a stable per-command identifier visible across
+     sessions then becomes a cross-session correlation oracle. The threat
+     model has to precede the tag, not follow it.
+
+27. **OPEN: the session-lease / heartbeat work is in flight in another
+   lane.** Item 20 above (a live-but-idle session ages out of Active work) is
+   untouched by this build and remains open. Its fix — a provider heartbeat,
+   so silence honestly means absence — is being built as session-lease work
+   in a concurrent lane (`crates/buzz-session-provider/src/lease.rs`,
+   uncommitted at ceremony time), and nothing in `build/2026-08-20.3` touches
+   it. The cadence-versus-permanent-event-volume call in item 20 is still
+   Brian's to make.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
