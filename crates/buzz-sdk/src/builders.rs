@@ -12,12 +12,13 @@ use buzz_core::{
         KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
         KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
         KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
-        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
         OBSERVER_FRAME_TELEMETRY,
     },
+    pulse::{validate_pulse_entry_envelope, PulseEntry, PULSE_ENTRY_TAG_VERSION},
 };
 use nostr::{EventBuilder, Kind, Tag};
 use uuid::Uuid;
@@ -2436,6 +2437,77 @@ pub fn build_delete_addressable(
     let coord = format!("{kind}:{pk}:{d}");
     let tags = vec![tag(&["a", &coord])?];
     Ok(EventBuilder::new(Kind::Custom(KIND_DELETION as u16), "").tags(tags))
+}
+
+// ---- Project Pulse (kind 44240) --------------------------------------------
+
+/// Build one Project Pulse entry (kind 44240).
+///
+/// `coordinate` is the NIP-MP project coordinate the entry is scoped to and
+/// must already be canonical (`30621:<lowercase-hex>:<dtag>`); `channel` adds
+/// the optional `h` tag; `session_ref` adds the optional `pu-session` tag and
+/// is the umbrella **`sessionRef` UUID**, never a genesis event id — the same
+/// value 44227/44229/44230 carry in their `d` tag, so a consumer's fold joins
+/// on it with no lookup.
+///
+/// Tags are emitted in the canonical order `a`, `pu-v`, `pu-type`, `[h]`,
+/// `[branch]`, `[pu-session]`. The `branch` tag is derived from the payload —
+/// never supplied separately — so the tag and the content it addresses can
+/// never disagree.
+///
+/// Every rule is [`validate_pulse_entry_envelope`]'s: this builder owns no
+/// copy of the tag grammar, the canonical-coordinate rule, or the content
+/// caps. The one rule it cannot decide is `supersedes != this event's own id`,
+/// because the id does not exist until the caller signs; the relay re-runs the
+/// same validator against the real id at ingest.
+pub fn build_pulse_entry(
+    coordinate: &str,
+    entry: &PulseEntry,
+    channel: Option<Uuid>,
+    session_ref: Option<&str>,
+) -> Result<EventBuilder, SdkError> {
+    let content = serde_json::to_string(entry)
+        .map_err(|error| SdkError::InvalidInput(format!("pulse entry serialization: {error}")))?;
+    let mut tags = vec![
+        tag(&["a", coordinate])?,
+        tag(&["pu-v", PULSE_ENTRY_TAG_VERSION])?,
+        tag(&["pu-type", entry.entry_type.as_str()])?,
+    ];
+    if let Some(channel) = channel {
+        tags.push(tag(&["h", &channel.to_string()])?);
+    }
+    if let Some(branch) = entry.branch.as_deref() {
+        tags.push(tag(&["branch", branch])?);
+    }
+    if let Some(session_ref) = session_ref {
+        tags.push(tag(&["pu-session", session_ref])?);
+    }
+    validate_pulse_entry_envelope(&pulse_entry_probe(&tags, &content)?)
+        .map_err(SdkError::InvalidInput)?;
+    Ok(EventBuilder::new(Kind::Custom(KIND_PULSE_ENTRY as u16), content).tags(tags))
+}
+
+/// Assemble the unsigned tags and content into the shape buzz-core validates.
+///
+/// [`validate_pulse_entry_envelope`] reads a *signed* event, and a builder has
+/// no id, author, or signature yet, so the probe carries placeholders for the
+/// three. Only `event.id` is read by any rule (the self-supersession check),
+/// and an all-zero id is not a value any real entry can carry.
+fn pulse_entry_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkError> {
+    // The only way to build the placeholder signature rejects a wrong length,
+    // and this slice is exactly 64 bytes — the error arm is unreachable, and is
+    // mapped rather than unwrapped.
+    let signature = nostr::secp256k1::schnorr::Signature::from_slice(&[0u8; 64])
+        .map_err(|error| SdkError::InvalidInput(format!("pulse entry probe: {error}")))?;
+    Ok(nostr::Event::new(
+        nostr::EventId::from_byte_array([0u8; 32]),
+        nostr::PublicKey::from_byte_array([0u8; 32]),
+        nostr::Timestamp::from_secs(0),
+        Kind::Custom(KIND_PULSE_ENTRY as u16),
+        tags.to_vec(),
+        content,
+        signature,
+    ))
 }
 
 #[cfg(test)]
@@ -4977,5 +5049,173 @@ mod tests {
 
         assert_eq!(accept_count, 16, "expected 16 accept cases");
         assert_eq!(reject_count, 29, "expected 29 reject cases");
+    }
+
+    // ---- Project Pulse (44240) ---------------------------------------------
+
+    const PULSE_COORD: &str =
+        "30621:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:platform";
+    const PULSE_SESSION_REF: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+    fn pulse_entry() -> buzz_core::pulse::PulseEntry {
+        buzz_core::pulse::PulseEntry {
+            schema: buzz_core::pulse::PULSE_ENTRY_SCHEMA.to_owned(),
+            entry_type: buzz_core::pulse::PulseEntryType::Plan,
+            text: "Refactoring session creation in buzz-acp.".to_owned(),
+            code_areas: vec!["crates/buzz-acp/src/pool.rs".to_owned()],
+            branch: None,
+            supersedes: None,
+        }
+    }
+
+    #[test]
+    fn pulse_entry_emits_the_canonical_tag_order() {
+        let channel = uuid();
+        let mut entry = pulse_entry();
+        entry.branch = Some("wip/project-pulse".to_owned());
+        let event = sign(
+            build_pulse_entry(PULSE_COORD, &entry, Some(channel), Some(PULSE_SESSION_REF))
+                .expect("build"),
+        );
+        assert_eq!(event.kind.as_u16(), 44240);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("a".to_string(), PULSE_COORD.to_string()),
+                ("pu-v".to_string(), "pu1-1".to_string()),
+                ("pu-type".to_string(), "plan".to_string()),
+                ("h".to_string(), channel.to_string()),
+                ("branch".to_string(), "wip/project-pulse".to_string()),
+                ("pu-session".to_string(), PULSE_SESSION_REF.to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn pulse_entry_omits_every_absent_optional_tag() {
+        let event =
+            sign(build_pulse_entry(PULSE_COORD, &pulse_entry(), None, None).expect("build"));
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("a".to_string(), PULSE_COORD.to_string()),
+                ("pu-v".to_string(), "pu1-1".to_string()),
+                ("pu-type".to_string(), "plan".to_string()),
+            ]
+        );
+        // The payload always spells out every optional key, so a consumer never
+        // has to tell "absent" from "null".
+        let decoded: serde_json::Value = serde_json::from_str(&event.content).expect("json");
+        assert_eq!(decoded["branch"], serde_json::Value::Null);
+        assert_eq!(decoded["supersedes"], serde_json::Value::Null);
+        assert_eq!(decoded["codeAreas"][0], "crates/buzz-acp/src/pool.rs");
+    }
+
+    #[test]
+    fn pulse_entry_branch_tag_is_derived_from_the_payload() {
+        let mut entry = pulse_entry();
+        entry.branch = Some("wip/project-pulse".to_owned());
+        let event = sign(build_pulse_entry(PULSE_COORD, &entry, None, None).expect("build"));
+        assert_eq!(
+            tag_values(&event, "branch"),
+            vec!["wip/project-pulse".to_string()]
+        );
+    }
+
+    /// Every rejection below is buzz-core's, reached through the builder — the
+    /// point of the test is that the builder owns no second copy of the rules.
+    #[test]
+    fn pulse_entry_delegates_every_rejection_to_buzz_core() {
+        // Non-canonical coordinate (upper-case owner hex).
+        let upper = format!(
+            "30621:{}:platform",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_uppercase()
+        );
+        assert!(matches!(
+            build_pulse_entry(&upper, &pulse_entry(), None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // Absolute code area.
+        let mut absolute = pulse_entry();
+        absolute.code_areas = vec!["/etc/passwd".to_owned()];
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &absolute, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // Parent traversal.
+        let mut traversal = pulse_entry();
+        traversal.code_areas = vec!["crates/../etc".to_owned()];
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &traversal, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // Empty prose.
+        let mut blank = pulse_entry();
+        blank.text = "   ".to_owned();
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &blank, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // Over the text cap.
+        let mut long = pulse_entry();
+        long.text = "a".repeat(buzz_core::pulse::MAX_PULSE_TEXT_BYTES + 1);
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &long, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // Wrong schema.
+        let mut schema = pulse_entry();
+        schema.schema = "buzz-pulse-entry/v2".to_owned();
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &schema, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // `pu-session` that is not a canonical UUID.
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &pulse_entry(), None, Some("not-a-uuid")),
+            Err(SdkError::InvalidInput(_))
+        ));
+
+        // `supersedes` that is not a 64-char lowercase hex id.
+        let mut supersedes = pulse_entry();
+        supersedes.supersedes = Some("NOTHEX".to_owned());
+        assert!(matches!(
+            build_pulse_entry(PULSE_COORD, &supersedes, None, None),
+            Err(SdkError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn pulse_entry_accepts_a_syntactically_valid_unknown_supersedes() {
+        let mut entry = pulse_entry();
+        entry.supersedes = Some("ff".repeat(32));
+        let event = sign(build_pulse_entry(PULSE_COORD, &entry, None, None).expect("build"));
+        let decoded: serde_json::Value = serde_json::from_str(&event.content).expect("json");
+        assert_eq!(decoded["supersedes"], "ff".repeat(32));
+    }
+
+    #[test]
+    fn pulse_entry_accepts_every_entry_type() {
+        for entry_type in [
+            buzz_core::pulse::PulseEntryType::Plan,
+            buzz_core::pulse::PulseEntryType::Milestone,
+            buzz_core::pulse::PulseEntryType::Note,
+            buzz_core::pulse::PulseEntryType::Handoff,
+            buzz_core::pulse::PulseEntryType::Blocker,
+        ] {
+            let mut entry = pulse_entry();
+            entry.entry_type = entry_type;
+            let event = sign(build_pulse_entry(PULSE_COORD, &entry, None, None).expect("build"));
+            assert_eq!(
+                tag_values(&event, "pu-type"),
+                vec![entry_type.as_str().to_string()]
+            );
+        }
     }
 }

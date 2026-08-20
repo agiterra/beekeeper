@@ -247,6 +247,10 @@ enum Cmd {
     /// List, share, and drive shared terminals (NIP-ST)
     #[command(subcommand)]
     Terminals(TerminalsCmd),
+    /// Read and write a project's Pulse — explicit coordination entries
+    /// (kind 44240) folded with observed coding-session facts
+    #[command(subcommand)]
+    Pulse(PulseCmd),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -2158,6 +2162,106 @@ pub enum ModerationCmd {
     },
 }
 
+/// The claim a Pulse entry makes — the `pu-type` tag and the content `type`,
+/// which are always the same value.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum PulseKindArg {
+    /// What the author intends to do next.
+    Plan,
+    /// A completed step worth recording.
+    Milestone,
+    /// Context that is neither a plan nor a blocker.
+    Note,
+    /// Work being passed to somebody else.
+    Handoff,
+    /// Something another worker should not walk into.
+    Blocker,
+}
+
+impl PulseKindArg {
+    /// The wire value this variant carries in the `pu-type` tag.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PulseKindArg::Plan => "plan",
+            PulseKindArg::Milestone => "milestone",
+            PulseKindArg::Note => "note",
+            PulseKindArg::Handoff => "handoff",
+            PulseKindArg::Blocker => "blocker",
+        }
+    }
+}
+
+/// `buzz pulse` — per-project coordination.
+///
+/// Every subcommand takes `--project`, which accepts a full
+/// `30621:<owner-hex>:<dtag>` coordinate or a bare dtag that resolves only
+/// when exactly one *visible* project matches. `BUZZ_PULSE_PROJECT` supplies
+/// the same value when the flag is absent; the ACP harness sets it per
+/// channel session.
+#[derive(Subcommand)]
+pub enum PulseCmd {
+    /// Publish one Pulse entry (kind 44240)
+    Update {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// What the entry claims
+        #[arg(long, value_enum)]
+        kind: PulseKindArg,
+        /// Repository-relative paths you claim to be working in, comma-separated
+        #[arg(long)]
+        areas: Option<String>,
+        /// Branch the claim applies to
+        #[arg(long)]
+        branch: Option<String>,
+        /// Coding-session `sessionRef` UUID this entry belongs to (not a genesis event id)
+        #[arg(long)]
+        session: Option<String>,
+        /// Event id of your own earlier entry this one revises
+        #[arg(long)]
+        supersedes: Option<String>,
+        /// Entry text, taken verbatim; use '-' to read stdin to EOF
+        #[arg(long)]
+        content: String,
+    },
+    /// List a project's Pulse entries, unfolded and newest first
+    List {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Only entries created at or after this Unix timestamp
+        #[arg(long)]
+        since: Option<u64>,
+        /// Only entries of this type
+        #[arg(long, value_enum)]
+        kind: Option<PulseKindArg>,
+        /// Only entries on this branch; the reserved value '-' selects entries with no branch
+        #[arg(long)]
+        branch: Option<String>,
+        /// Maximum entries to return
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+    /// List the coding sessions observed in the project's channels
+    Sessions {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+    },
+    /// Print the project's Pulse digest — entries and sessions, folded
+    Digest {
+        /// Project coordinate `30621:<owner-hex>:<dtag>`, or a bare dtag
+        #[arg(long, env = "BUZZ_PULSE_PROJECT")]
+        project: Option<String>,
+        /// Only rows on this branch; the reserved value '-' selects rows with no branch
+        #[arg(long)]
+        branch: Option<String>,
+        /// Maximum entries to fold; a truncated read is reported as incomplete
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+}
+
 /// Normalize hand-authored `BUZZ_AUTH_TAG` input to strict JSON.
 ///
 /// `.env` files and shell exports sometimes carry the tag in the unquoted
@@ -2276,6 +2380,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
+        Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Session(_) => unreachable!("handled above"),
     }
@@ -2380,6 +2485,7 @@ mod tests {
             "patches",
             "pr",
             "projects",
+            "pulse",
             "reactions",
             "repos",
             "session",
@@ -2554,6 +2660,10 @@ mod tests {
             ]
         );
         assert_eq!(
+            names(&cmd, "pulse"),
+            vec!["digest", "list", "sessions", "update"]
+        );
+        assert_eq!(
             names(&cmd, "issues"),
             vec!["assign", "create", "get", "list", "status", "unassign"]
         );
@@ -2595,6 +2705,7 @@ mod tests {
             ("patches", 4),
             ("pr", 5),
             ("projects", 11),
+            ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
             ("social", 7),
@@ -2733,6 +2844,67 @@ mod tests {
             Cli::try_parse_from(["buzz", "projects", "update", "my-slug"]).is_err(),
             "update with no setters or clearers must be rejected at parse time"
         );
+    }
+
+    // ── pulse ────────────────────────────────────────────────────────────────
+
+    /// A missing `--content` is a clap-level usage error, not a signed event
+    /// with empty prose.
+    #[test]
+    fn pulse_update_requires_content() {
+        assert!(
+            Cli::try_parse_from(["buzz", "pulse", "update", "--kind", "plan"]).is_err(),
+            "update without --content must be rejected at parse time"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "buzz",
+                "pulse",
+                "update",
+                "--kind",
+                "plan",
+                "--content",
+                "Working in pool.rs",
+            ])
+            .is_ok(),
+            "--content is taken verbatim, never as a file path"
+        );
+    }
+
+    /// The entry type is a closed set; an unrecognised value never reaches the
+    /// relay.
+    #[test]
+    fn pulse_update_invalid_kind_is_rejected_by_clap() {
+        assert!(Cli::try_parse_from([
+            "buzz",
+            "pulse",
+            "update",
+            "--kind",
+            "chartreuse",
+            "--content",
+            "x",
+        ])
+        .is_err());
+        for kind in ["plan", "milestone", "note", "handoff", "blocker"] {
+            assert!(
+                Cli::try_parse_from(["buzz", "pulse", "update", "--kind", kind, "--content", "x"])
+                    .is_ok(),
+                "--kind {kind} must be accepted"
+            );
+        }
+    }
+
+    /// `--project` is optional at parse time on every subcommand: the value may
+    /// come from `BUZZ_PULSE_PROJECT`, and its absence is a runtime usage error
+    /// that names the variable.
+    #[test]
+    fn pulse_reads_parse_without_an_explicit_project() {
+        for command in ["list", "sessions", "digest"] {
+            assert!(
+                Cli::try_parse_from(["buzz", "pulse", command]).is_ok(),
+                "pulse {command} must parse without --project"
+            );
+        }
     }
 
     /// An unrecognised visibility token must be rejected by clap before any I/O.
