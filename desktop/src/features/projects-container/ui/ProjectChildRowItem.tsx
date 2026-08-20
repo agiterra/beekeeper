@@ -30,7 +30,10 @@ import type {
   ExactProjectCodingSessionCoordinates,
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
-import type { ProjectChildRow } from "../lib/projectChildren";
+import {
+  projectChildLabel,
+  type ProjectChildRow,
+} from "../lib/projectChildren";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
 /**
@@ -227,7 +230,7 @@ export function ProjectChildRowItem({
             type="button"
           >
             <Activity className="size-4 shrink-0" />
-            <span className="truncate">Pulse</span>
+            <span className="truncate">{projectChildLabel(row)}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       );

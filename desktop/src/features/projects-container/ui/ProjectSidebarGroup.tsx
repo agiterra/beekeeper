@@ -245,9 +245,15 @@ export function ProjectSidebarGroup({
   const terminalRows = children.filter(
     (row) => row.type === "shell" || row.type === "remote-shell",
   );
+  // Pulse is the live coordination view of the sessions above it, not a tool.
+  // Filed under "Repos & Tools" — a collapsible section next to repos and
+  // workflows — it sits where nobody looks for "what is happening right now",
+  // so it renders ungrouped directly under the project header instead.
+  const pulseRows = children.filter((row) => row.type === "pulse");
   const toolRows = children.filter(
     (row) =>
       row.type !== "coding-session" &&
+      row.type !== "pulse" &&
       row.type !== "channel" &&
       row.type !== "forum" &&
       row.type !== "shell" &&
@@ -402,6 +408,7 @@ export function ProjectSidebarGroup({
             className="px-2"
             data-testid={`project-children-${project.dtag}`}
           >
+            {pulseRows.map(renderRow)}
             {sessionRows.length > 0 || terminalRows.length > 0 ? (
               <ProjectChildSection
                 label="Active Sessions"

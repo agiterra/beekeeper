@@ -104,7 +104,11 @@ export function projectChildLabel(row: ProjectChildRow): string {
     case "coding-session":
       return row.entry.label;
     case "pulse":
-      return "Pulse";
+      // "Project Pulse", never bare "Pulse": the pinned top-level social
+      // activity feed is also called Pulse, and with both preview flags on a
+      // user would see the same word meaning two unrelated things in one
+      // sidebar. Matches the preview feature's own display name.
+      return "Project Pulse";
     case "channel":
     case "forum":
       return row.channel.name;
