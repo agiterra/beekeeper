@@ -1285,6 +1285,14 @@ declare global {
     __BUZZ_E2E_PROJECT_OWNER_OVERRIDE__?: string;
     /** Project history kinds rejected with CLOSED for aggregate-query tests. */
     __BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__?: number[];
+    /**
+     * Project history kinds whose REQ is never answered — no EVENT, no EOSE,
+     * no CLOSED. A rejection and a read still in flight are different answers,
+     * and a surface that renders them the same way is the defect; this seam is
+     * how a spec holds a screen in its in-flight state long enough to look at
+     * it.
+     */
+    __BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__?: number[];
     /** Captured aggregate project-history filters for request-count assertions. */
     __BUZZ_E2E_PROJECT_QUERY_FILTERS__?: MockFilter[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
@@ -10021,6 +10029,11 @@ function sendToMockSocket(args: {
     ) {
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__ ??= [];
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__.push(filter);
+      const hungKinds = window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ ?? [];
+      if (filter.kinds?.some((kind) => hungKinds.includes(kind))) {
+        // Deliberately silent: the caller's read stays in flight.
+        return;
+      }
       const rejectedKinds =
         window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ ?? [];
       if (filter.kinds?.some((kind) => rejectedKinds.includes(kind))) {

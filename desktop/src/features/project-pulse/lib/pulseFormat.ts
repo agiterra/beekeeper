@@ -116,6 +116,59 @@ export function formatPulseEntryType(type: PulseDigestEntry["type"]): string {
   return `${type.slice(0, 1).toUpperCase()}${type.slice(1)}`;
 }
 
+/**
+ * Salience order for the active list: the entries that can stop somebody else
+ * from working come first.
+ *
+ * "Salience tracks consequence" (`VISION_ACTIVITY.md`): a standing *do not
+ * touch* buried as row 3 of 3, in the same grey as a plan, is a wait-signal
+ * the reader has to hunt for. Within a rank the digest's own newest-first
+ * order is preserved, so this re-weights the list without inventing a
+ * recency claim the fold did not make.
+ */
+export const PULSE_ENTRY_CONSEQUENCE_RANK: Record<
+  PulseDigestEntry["type"],
+  number
+> = {
+  blocker: 0,
+  handoff: 1,
+  plan: 2,
+  milestone: 3,
+  note: 4,
+};
+
+/** Entries reordered by consequence; input order breaks ties (stable). */
+export function sortPulseEntriesByConsequence(
+  entries: readonly PulseDigestEntry[],
+): PulseDigestEntry[] {
+  return [...entries].sort(
+    (left, right) =>
+      PULSE_ENTRY_CONSEQUENCE_RANK[left.type] -
+      PULSE_ENTRY_CONSEQUENCE_RANK[right.type],
+  );
+}
+
+/**
+ * How old the read itself is — `read just now`, `read 4m ago`.
+ *
+ * Separate from every other age on the screen because it answers a different
+ * question: not "how old is this claim" but "how old is this *answer*". A
+ * cached digest painted under a screen that looks current is the failure this
+ * line exists to prevent.
+ */
+export function formatPulseReadAge(secondsSinceRead: number): string {
+  const age = formatPulseAge(secondsSinceRead);
+  return age === "just now" ? "read just now" : `read ${age} ago`;
+}
+
+/** Shorten a quoted entry for a one-line reference; the full text stays in a `title`. */
+export function quotePulseEntryText(text: string, maxLength = 56): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  return collapsed.length <= maxLength
+    ? collapsed
+    : `${collapsed.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 /** Branch chips over a digest; `null` is the real "no branch" group. */
 export function branchChipLabel(branch: string | null): string {
   return branch ?? "no branch";
@@ -128,4 +181,24 @@ export function matchesBranchFilter(
 ): boolean {
   if (selected === undefined) return true;
   return branch === selected;
+}
+
+/**
+ * How many rows a branch chip would show: sessions plus **active** entries.
+ *
+ * Superseded entries are deliberately excluded — they sit behind a disclosure
+ * whose own count is computed from the same filtered list, and a chip count
+ * that included them would promise rows the screen does not show until asked.
+ */
+export function countPulseBranchRows(
+  digest: ProjectPulseDigest,
+  selected: string | null | undefined,
+): number {
+  const sessions = digest.sessions.filter((session) =>
+    matchesBranchFilter(session.branch, selected),
+  ).length;
+  const entries = digest.entries.filter(
+    (entry) => entry.active && matchesBranchFilter(entry.branch, selected),
+  ).length;
+  return sessions + entries;
 }

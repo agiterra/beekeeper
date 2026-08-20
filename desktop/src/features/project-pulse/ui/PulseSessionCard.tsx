@@ -107,8 +107,12 @@ export function PulseSessionCard({
         ) : null}
       </div>
 
+      {/* text-xs, not the 2xs of the chips above: this line is the difference
+          between "the relay has this commit" and "nobody checked", and the
+          qualifiers that keep the screen honest should not be the smallest
+          type on it. */}
       <p
-        className="mt-1 text-2xs text-muted-foreground"
+        className="mt-1 text-xs text-muted-foreground"
         data-testid="pulse-session-commit-confirmation"
       >
         {formatCommitConfirmation(session, nowSeconds)}

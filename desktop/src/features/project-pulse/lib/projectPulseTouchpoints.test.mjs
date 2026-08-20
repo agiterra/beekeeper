@@ -83,9 +83,32 @@ test("the child-type rank map stays gapless after the renumber", () => {
   );
 });
 
-test("the Pulse row has a stable key and label", () => {
+/**
+ * Two features called "Pulse" in one sidebar — the social activity feed and
+ * this per-project coordination view — is a scan the tooltip cannot fix. The
+ * project row carries the feature's own display name.
+ */
+test("the Pulse row has a stable key and an unambiguous label", () => {
   assert.equal(projectChildKey({ type: "pulse" }), "pulse");
-  assert.equal(projectChildLabel({ type: "pulse" }), "Pulse");
+  assert.equal(projectChildLabel({ type: "pulse" }), "Project Pulse");
+});
+
+/**
+ * §5.6 touchpoint 1 puts Pulse with the live work it describes. Bucketed into
+ * `toolRows` it rendered under "Repos & Tools", next to repos and workflows —
+ * a collapsible drawer nobody opens to ask "what is happening right now".
+ */
+test("the sidebar renders Pulse with the live work, not under Repos & Tools", () => {
+  const group = sidebarSource("ProjectSidebarGroup.tsx");
+  assert.match(group, /const pulseRows = children\.filter/);
+  assert.match(group, /row\.type !== "pulse"/);
+  assert.match(group, /\{pulseRows\.map\(renderRow\)\}/);
+  const toolSection = group.slice(group.indexOf("const toolRows"));
+  assert.ok(
+    toolSection.indexOf("{pulseRows.map(renderRow)}") <
+      toolSection.indexOf('label="Repos & Tools"'),
+    "the Pulse row is emitted before the Repos & Tools section",
+  );
 });
 
 test("switching communities clears every folded digest", () => {

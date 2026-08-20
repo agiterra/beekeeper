@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import {
   partitionChannels,
@@ -19,6 +20,7 @@ import {
   ProjectPulseView,
   type ProjectPulseViewState,
 } from "./ProjectPulseView";
+import { usePulseAuthorNames } from "./usePulseAuthorNames";
 
 /** A project's channel set, plus whether that set is a settled answer. */
 export type ProjectPulseChannelSet = {
@@ -138,12 +140,20 @@ export function ProjectPulseScreen({ projectId }: { projectId: string }) {
       return projectLoading ? { kind: "loading" } : { kind: "unavailable" };
     }
     if (pulse.kind === "loading") {
+      // A cached digest is the *last complete read*, not the current one. It
+      // paints (a screen that blanks on every refetch is worse), but it is
+      // marked so the header can say so — an entry posted since that read is
+      // simply absent, and nothing else on the screen would admit it.
       return pulse.digest
-        ? { kind: "ready", digest: pulse.digest }
+        ? { kind: "ready", digest: pulse.digest, refreshing: true }
         : { kind: "loading" };
     }
     return pulse;
   }, [isFallback, project, projectLoading, pulse]);
+
+  const authorNames = usePulseAuthorNames(
+    state.kind === "ready" || state.kind === "partial" ? state.digest : null,
+  );
 
   // One clock for the whole paint, ticking once a minute so ages stay honest
   // without re-rendering on every frame.
@@ -158,5 +168,17 @@ export function ProjectPulseScreen({ projectId }: { projectId: string }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  return <ProjectPulseView nowSeconds={nowSeconds} state={state} />;
+  const { goProject } = useAppNavigation();
+  return (
+    <ProjectPulseView
+      authorNames={authorNames}
+      nowSeconds={nowSeconds}
+      // Named, not implied by a 300px-away sidebar selection: two projects'
+      // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"
+      // read against the wrong project is a coordination lie.
+      onBack={() => void goProject(project?.id ?? projectId)}
+      projectName={project?.name ?? null}
+      state={state}
+    />
+  );
 }
