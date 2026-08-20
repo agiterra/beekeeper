@@ -1035,6 +1035,20 @@ fn filter_to_query_params(
         }
     });
 
+    // Push #a tag filter into SQL via JSONB containment, same mechanism as
+    // #e. The NIP-MP Pulse read (`{"kinds":[44240],"#a":["30621:…"]}`) is
+    // channel-less, so without this pushdown a project's entries are starved
+    // off the candidate page by unrelated global events. `filters_match`
+    // still re-checks NIP-01 semantics on every returned row.
+    let a_tag_key = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    let a_tags = filter.generic_tags.get(&a_tag_key).and_then(|values| {
+        if values.is_empty() {
+            None
+        } else {
+            Some(values.iter().map(|v| v.to_string()).collect::<Vec<_>>())
+        }
+    });
+
     // Push single-value #p tag into SQL via event_mentions join.
     // This is critical for gift-wrap (kind:1059) and membership notification
     // queries where >500 events for other recipients would otherwise push
@@ -1093,6 +1107,7 @@ fn filter_to_query_params(
         authors,
         ids,
         e_tags,
+        a_tags,
         ..EventQuery::for_community(community)
     }
 }
@@ -1369,15 +1384,48 @@ pub(crate) fn filter_can_match_project_kind(filter: &Filter) -> bool {
 /// coordinates from that set, so a filter that can match a 30623 must fetch
 /// it or the announce gate would silently see an empty set and fail open.
 /// The NIP-MP membership kinds (9010/9011/39010) ride the same rule for the
-/// same reason ([`buzz_core::kind::project_membership_event_hidden_from`]).
+/// same reason ([`buzz_core::kind::project_membership_event_hidden_from`]),
+/// and so does the Pulse entry (kind:44240) —
+/// [`buzz_core::kind::pulse_entry_hidden_from`] reads the same coordinate set,
+/// so omitting 44240 here would leave that gate looking at an empty set and
+/// failing open on every private project's Pulse.
 pub(crate) fn filter_can_match_git_gated_kinds(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_none_or(|ks| {
-        ks.iter().any(|k| {
-            let kind = k.as_u16() as u32;
-            buzz_core::kind::is_git_project_gated_kind(kind)
-                || kind == buzz_core::kind::KIND_SHELL_SESSION
-                || buzz_core::kind::is_project_membership_kind(kind)
-        })
+        // An *empty* kind set is a wildcard for arming purposes, not "matches
+        // nothing". `{"kinds":[]}` deserializes to `Some(∅)`, and while the
+        // catchall SQL short-circuits it to zero rows, the channel-window path
+        // treats an empty kind list as "no kind clause". Arming conservatively
+        // here keeps the decision correct independently of what each
+        // downstream query chooses to do with the empty set.
+        ks.is_empty()
+            || ks.iter().any(|k| {
+                let kind = k.as_u16() as u32;
+                buzz_core::kind::is_git_project_gated_kind(kind)
+                    || kind == buzz_core::kind::KIND_SHELL_SESSION
+                    || buzz_core::kind::is_project_membership_kind(kind)
+                    || kind == buzz_core::kind::KIND_PULSE_ENTRY
+            })
+    })
+}
+
+/// Returns `true` if the filter CAN match a Pulse entry (kind:44240) — no
+/// `kinds` constraint (wildcard) or 44240 among them.
+///
+/// Used by the COUNT handlers to force the per-event fallback. The fast SQL
+/// `count_events()` applies no per-event gate *and* carries no
+/// `git_gated_reader` clause, so it would count a private project's entries
+/// for an outsider and leak the project's existence through the total alone.
+/// Unlike the git gate this is not conditioned on a non-empty hidden set: the
+/// set is resolved from the same call, and a count is cheap to route through
+/// the fallback.
+pub(crate) fn filter_can_match_pulse_kind(filter: &Filter) -> bool {
+    filter.kinds.as_ref().is_none_or(|ks| {
+        // Empty kind set == wildcard, same reasoning as
+        // [`filter_can_match_git_gated_kinds`].
+        ks.is_empty()
+            || ks
+                .iter()
+                .any(|k| k.as_u16() as u32 == buzz_core::kind::KIND_PULSE_ENTRY)
     })
 }
 
@@ -1496,6 +1544,18 @@ pub(crate) fn event_visible_to_reader(
     ) {
         return false;
     }
+    // NIP-MP Pulse: an explicit project entry (44240) inside a private
+    // project the reader is not admitted to is withheld — the entry names the
+    // project in its `a` tag and is otherwise a channel-less global event, so
+    // this is the only gate standing between it and every authenticated
+    // pubkey. Fails closed when no coordinate parses.
+    if buzz_core::kind::pulse_entry_hidden_from(
+        event,
+        &requester_pubkey_hex,
+        &hidden_repos.project_coordinates,
+    ) {
+        return false;
+    }
     true
 }
 
@@ -1537,6 +1597,28 @@ pub(crate) fn author_only_filters_authorized(filters: &[Filter], authed_pubkey_h
 mod tests {
     use super::*;
     use nostr::{Alphabet, Filter, SingleLetterTag};
+
+    /// An explicitly empty `kinds` array deserializes to `Some(∅)`, not
+    /// `None`, and `.any()` over an empty set is `false` — so a naive
+    /// predicate reads `{"kinds":[]}` as "matches no gated kind" and leaves
+    /// every consumer running against an empty `HiddenRepos`, silently failing
+    /// open on private-project repo, shell, membership and Pulse events. Both
+    /// arming predicates must treat it as the wildcard it is.
+    #[test]
+    fn empty_kind_set_arms_the_gated_kind_predicates() {
+        let filter: Filter = serde_json::from_str(r#"{"kinds":[]}"#).expect("filter parses");
+        assert!(
+            filter.kinds.as_ref().is_some_and(|ks| ks.is_empty()),
+            "an empty kinds array must deserialize to Some(empty), not None"
+        );
+        assert!(filter_can_match_git_gated_kinds(&filter));
+        assert!(filter_can_match_pulse_kind(&filter));
+
+        // A genuinely narrow, ungated filter still short-circuits.
+        let narrow: Filter = serde_json::from_str(r#"{"kinds":[1]}"#).expect("filter parses");
+        assert!(!filter_can_match_git_gated_kinds(&narrow));
+        assert!(!filter_can_match_pulse_kind(&narrow));
+    }
 
     #[test]
     fn global_queries_push_access_scope_before_limit() {

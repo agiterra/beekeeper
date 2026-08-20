@@ -401,12 +401,20 @@ const WINDOW_AUX_DELETE_KINDS: [u32; 2] = [
 /// Validation errors (missing `#h`, half a cursor) are deterministic client
 /// mistakes and return `400`; an inaccessible channel is an access-scope skip
 /// that still emits nothing, matching every other read path here.
+// One caller. The reader's identity and hidden-repo set are separate arguments
+// on purpose: they are what `event_visible_to_reader` needs, and bundling them
+// into a request-context struct here would have to be threaded through the
+// feed, thread, search and catchall paths too, which all take them the same
+// way.
+#[allow(clippy::too_many_arguments)]
 async fn handle_channel_window_filter(
     state: &AppState,
     tenant: &buzz_core::TenantContext,
     raw: &Value,
     filter: &nostr::Filter,
     accessible_channels: &[uuid::Uuid],
+    pubkey_bytes: &[u8],
+    hidden_repos: &buzz_db::git_repo::HiddenRepos,
     events: &mut Vec<Value>,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     use buzz_core::kind::{KIND_THREAD_SUMMARY, KIND_WINDOW_BOUNDS};
@@ -457,6 +465,14 @@ async fn handle_channel_window_filter(
         .map(|l| (l as u32).min(BRIDGE_WINDOW_MAX_LIMIT))
         .unwrap_or(BRIDGE_WINDOW_DEFAULT_LIMIT)
         .max(1);
+    // An explicitly empty `kinds` array matches nothing, exactly as
+    // `query_events_on` treats it (`crates/buzz-db/src/event.rs`). The window
+    // SQL omits the `AND e.kind IN (…)` clause for an empty slice, which would
+    // silently turn `"kinds":[]` into a wildcard over every top-level row in
+    // the channel — the opposite of what every other read surface does.
+    if filter.kinds.as_ref().is_some_and(|ks| ks.is_empty()) {
+        return Ok(());
+    }
     let kind_filter: Option<Vec<u32>> = filter
         .kinds
         .as_ref()
@@ -475,8 +491,24 @@ async fn handle_channel_window_filter(
         .map_err(|e| internal_error(&format!("channel window error: {e}")))?;
 
     // 1. Rows, in keyset order.
+    //
+    // Result-level read auth, same call every other read surface makes: the
+    // window SQL scopes by community/channel/deletion/cursor only, so a row
+    // whose *content* is gated (a private project's kind:44240 Pulse entry
+    // published with an `h` tag, a viewer-private snapshot, an author-only
+    // kind) would otherwise be served verbatim. Skipping before the id is
+    // collected also keeps it out of the aux closure below. `next_cursor` and
+    // `has_more` come from the raw page (`buzz-db/src/thread.rs`), so skipped
+    // rows cannot stall pagination.
     let mut row_ids_hex = Vec::with_capacity(window.rows.len());
     for row in &window.rows {
+        if !crate::handlers::req::event_visible_to_reader(
+            &row.stored_event.event,
+            pubkey_bytes,
+            hidden_repos,
+        ) {
+            continue;
+        }
         row_ids_hex.push(row.stored_event.event.id.to_hex());
         let v = serde_json::to_value(&row.stored_event.event)
             .map_err(|e| internal_error(&format!("window row serialize: {e}")))?;
@@ -513,6 +545,13 @@ async fn handle_channel_window_filter(
                 if !event_in_accessible_channel(&se, accessible_channels) {
                     continue;
                 }
+                if !crate::handlers::req::event_visible_to_reader(
+                    &se.event,
+                    pubkey_bytes,
+                    hidden_repos,
+                ) {
+                    continue;
+                }
                 hop_ids.push(se.event.id.to_hex());
                 let v = serde_json::to_value(&se.event)
                     .map_err(|e| internal_error(&format!("window aux serialize: {e}")))?;
@@ -541,6 +580,15 @@ async fn handle_channel_window_filter(
             let Some(summary) = &row.thread_summary else {
                 continue;
             };
+            // A summary names its root's id and participant pubkeys — never
+            // emit one for a row the reader was not served.
+            if !crate::handlers::req::event_visible_to_reader(
+                &row.stored_event.event,
+                pubkey_bytes,
+                hidden_repos,
+            ) {
+                continue;
+            }
             let root_hex = row.stored_event.event.id.to_hex();
             let content = serde_json::json!({
                 "reply_count": summary.reply_count,
@@ -983,6 +1031,8 @@ async fn query_events_authed(
         .map_err(|e| api_error(StatusCode::BAD_REQUEST, &format!("invalid filters: {e}")))?;
     crate::handlers::req::extract_channel_ids_from_filters_limited(&filters)
         .map_err(|()| api_error(StatusCode::BAD_REQUEST, "too many explicit channels"))?;
+    // NIP-MP Pulse request shape (400 level, not the authorization boundary).
+    let pulse_coordinates = pulse_coordinates_by_filter(&filters)?;
 
     // P-gated kinds (gift wraps, member notifications, observer frames) require
     // the caller's own pubkey in the #p tag — same enforcement as WS REQ handler.
@@ -1074,6 +1124,8 @@ async fn query_events_authed(
             raw,
             filter,
             &accessible_channels,
+            &pubkey_bytes,
+            &hidden_repos,
             &mut events,
         )
         .await?;
@@ -1158,20 +1210,17 @@ async fn query_events_authed(
                 if !event_in_accessible_channel(&se, &accessible_channels) {
                     continue;
                 }
-                // Defense-in-depth: never deliver a result-gated event (e.g. kind:44200
-                // or kind:30622) to a non-owner via the feed path, even though feed SQL
-                // kind allowlists already exclude these kinds.
-                if !buzz_core::filter::reader_authorized_for_event(&se.event, &authed_pubkey_hex) {
-                    continue;
-                }
-                // Same defense-in-depth for private-project repo events
-                // (NIP-MP phase 2) — feed allowlists exclude git kinds today,
-                // but a future allowlist change must not reopen the leak.
-                if buzz_core::kind::repo_event_hidden_from(
+                // Defense-in-depth: never deliver a result-gated event (e.g.
+                // kind:44200 or kind:30622) to a non-owner via the feed path,
+                // even though feed SQL kind allowlists already exclude these
+                // kinds. The same single call the catchall/search/window
+                // branches make, so it also covers private-project repo events,
+                // shell announces, membership ops and Pulse entries — a future
+                // allowlist change must not reopen any of those leaks.
+                if !crate::handlers::req::event_visible_to_reader(
                     &se.event,
-                    &authed_pubkey_hex,
-                    &hidden_repos.names,
-                    &hidden_repos.project_coordinates,
+                    &pubkey_bytes,
+                    &hidden_repos,
                 ) {
                     continue;
                 }
@@ -1235,18 +1284,16 @@ async fn query_events_authed(
             if !event_in_accessible_channel(&se, &accessible_channels) {
                 continue;
             }
-            // Defense-in-depth: never deliver a result-gated event (e.g. kind:44200
-            // or kind:30622) to a non-owner via the thread path, even though
-            // requires_h_channel_scope already excludes these kinds from thread metadata.
-            if !buzz_core::filter::reader_authorized_for_event(&se.event, &authed_pubkey_hex) {
-                continue;
-            }
-            // Private-project repo events (NIP-MP phase 2), same rationale.
-            if buzz_core::kind::repo_event_hidden_from(
+            // Defense-in-depth: never deliver a result-gated event (e.g.
+            // kind:44200 or kind:30622) to a non-owner via the thread path,
+            // even though requires_h_channel_scope already excludes these kinds
+            // from thread metadata. Same single call as the other branches —
+            // covers private-project repo events, shell announces, membership
+            // ops and Pulse entries too.
+            if !crate::handlers::req::event_visible_to_reader(
                 &se.event,
-                &authed_pubkey_hex,
-                &hidden_repos.names,
-                &hidden_repos.project_coordinates,
+                &pubkey_bytes,
+                &hidden_repos,
             ) {
                 continue;
             }
@@ -1269,6 +1316,15 @@ async fn query_events_authed(
 
         if let Some(ch_id) = extract_channel_from_filter(filter) {
             if !accessible_channels.contains(&ch_id) {
+                continue;
+            }
+        }
+
+        // NIP-MP Pulse pre-query access-scope skip. An optimization only —
+        // `event_visible_to_reader` below is the authority — and it emits an
+        // empty 200, never a 403 (§5.3).
+        if let Some(coordinate) = pulse_coordinates.get(idx).and_then(Option::as_deref) {
+            if pulse_filter_is_out_of_scope(state, tenant, coordinate, &pubkey_bytes).await? {
                 continue;
             }
         }
@@ -1516,6 +1572,9 @@ async fn count_events_authed(
         .map_err(|e| api_error(StatusCode::BAD_REQUEST, &format!("invalid filters: {e}")))?;
     crate::handlers::req::extract_channel_ids_from_filters_limited(&filters)
         .map_err(|()| api_error(StatusCode::BAD_REQUEST, "too many explicit channels"))?;
+    // NIP-MP Pulse request shape (400 level, not the authorization boundary) —
+    // identical rule to /query, so a client cannot dodge it by counting.
+    let pulse_coordinates = pulse_coordinates_by_filter(&filters)?;
 
     // P-gated kinds enforcement — same as WS REQ and /query.
     let authed_pubkey_hex = pubkey.to_hex();
@@ -1566,7 +1625,14 @@ async fn count_events_authed(
     };
 
     let mut total: u64 = 0;
-    for filter in &filters {
+    for (idx, filter) in filters.iter().enumerate() {
+        // NIP-MP Pulse pre-query access-scope skip: an inadmissible project
+        // contributes nothing to the total, and the response stays a 200.
+        if let Some(coordinate) = pulse_coordinates.get(idx).and_then(Option::as_deref) {
+            if pulse_filter_is_out_of_scope(state, tenant, coordinate, &pubkey_bytes).await? {
+                continue;
+            }
+        }
         let needs_author_only_filtering =
             crate::handlers::req::filter_can_match_author_only_kinds(filter);
         // Same result-gated guard as the WS COUNT handler: force the per-event
@@ -1591,6 +1657,10 @@ async fn count_events_authed(
         // handler; only relevant when this reader actually has hidden repos.
         let needs_git_gate_filtering = !hidden_repos.is_empty()
             && crate::handlers::req::filter_can_match_git_gated_kinds(filter);
+        // NIP-MP Pulse (44240) — mirrors the WS COUNT handler: the fast SQL
+        // path applies no per-event gate, so a private project's entry count
+        // would leak the project's existence through the total alone.
+        let needs_pulse_gate_filtering = crate::handlers::req::filter_can_match_pulse_kind(filter);
 
         // If filter targets a specific channel, verify access.
         if crate::handlers::req::extract_channel_ids_from_filters(std::slice::from_ref(filter))
@@ -1647,6 +1717,7 @@ async fn count_events_authed(
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
                 && !needs_git_gate_filtering
+                && !needs_pulse_gate_filtering
             {
                 match state.db.count_events_routed("bridge_count", &query).await {
                     Ok(n) => total += n as u64,
@@ -1729,6 +1800,7 @@ async fn count_events_authed(
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
                 && !needs_git_gate_filtering
+                && !needs_pulse_gate_filtering
             {
                 query.limit = None;
                 match state.db.count_events_routed("bridge_count", &query).await {
@@ -1777,6 +1849,123 @@ async fn count_events_authed(
     }
 
     Ok(Json(serde_json::json!({ "count": total })))
+}
+
+/// Request-shape validation for a filter targeting NIP-MP Pulse entries
+/// (kind:44240), yielding the single canonical project coordinate it names.
+///
+/// `Ok(None)` means "not a Pulse filter, nothing to check". `Err` is a
+/// **400-level client mistake and explicitly not an authorization verdict**:
+/// read authorization for 44240 lives in the per-event gate
+/// ([`crate::handlers::req::event_visible_to_reader`]), which every read
+/// surface — WS REQ, live fan-out, `/query`, `/count`, FTS — already shares.
+/// Two shapes are refused:
+///
+/// - A 44240 query without exactly one canonical `30621:<lowercase-hex>:<dtag>`
+///   value in `#a`. An unscoped or multi-project Pulse read has no meaning,
+///   and a case-variant coordinate can never match the stored (canonical) tag.
+/// - A filter mixing 44240 with any other kind. JSONB `#a` containment
+///   excludes every coding-session kind — 44223 and friends carry no `a` tag
+///   (`crates/buzz-sdk/src/builders.rs`) — so
+///   `{"kinds":[44240,44223],"#a":[…]}` satisfies the `#a` rule and still
+///   returns only entries, with an empty session list and no error. Query the
+///   session kinds in their own `#h`-scoped filter.
+///
+/// A filter with no `kinds` at all is not treated as a Pulse query: the
+/// p-gate already refuses a kindless read unless it is pinned to `#p=[self]`,
+/// and a 44240 carries no `p` tag, so it can never match one.
+fn pulse_query_coordinate(filter: &nostr::Filter) -> Result<Option<String>, String> {
+    let Some(kinds) = filter.kinds.as_ref() else {
+        return Ok(None);
+    };
+    if !kinds
+        .iter()
+        .any(|k| k.as_u16() as u32 == buzz_core::kind::KIND_PULSE_ENTRY)
+    {
+        return Ok(None);
+    }
+    if kinds.len() != 1 {
+        return Err(
+            "kind 44240 must be queried in its own filter, not mixed with other kinds".to_string(),
+        );
+    }
+    let a_tag = nostr::SingleLetterTag::lowercase(nostr::Alphabet::A);
+    let values: Vec<String> = filter
+        .generic_tags
+        .get(&a_tag)
+        .map(|vs| vs.iter().map(ToString::to_string).collect())
+        .unwrap_or_default();
+    let [coordinate] = values.as_slice() else {
+        return Err(format!(
+            "kind 44240 queries require exactly one project coordinate in #a (got {})",
+            values.len()
+        ));
+    };
+    if buzz_core::kind::normalize_project_coordinate(coordinate).as_deref()
+        != Some(coordinate.as_str())
+    {
+        return Err(
+            "kind 44240 #a must be a canonical 30621:<lowercase-hex>:<dtag> coordinate".to_string(),
+        );
+    }
+    Ok(Some(coordinate.clone()))
+}
+
+/// Validate the Pulse request shape of every filter in one request, returning
+/// each filter's coordinate by index (`None` for non-Pulse filters).
+///
+/// Runs before any database work so the 400 is deterministic and never
+/// interleaved with transient DB errors.
+fn pulse_coordinates_by_filter(
+    filters: &[nostr::Filter],
+) -> Result<Vec<Option<String>>, (StatusCode, Json<Value>)> {
+    filters
+        .iter()
+        .map(|filter| {
+            pulse_query_coordinate(filter).map_err(|e| api_error(StatusCode::BAD_REQUEST, &e))
+        })
+        .collect()
+}
+
+/// Pre-query access-scope skip for a Pulse filter: `true` when this reader may
+/// not read the named project's entries and the filter must emit nothing.
+///
+/// This is an optimization layered on top of the per-event gate, and its two
+/// cases are the ones that decide honesty:
+///
+/// - `None` from the gate lookup means **public-or-unknown** (the query
+///   filters `visibility = 'private'`): proceed.
+/// - `Some(gate)` the reader is not admitted to: emit no events and return
+///   200 with an empty list — an access-scope skip, **never a 403**, matching
+///   `handle_channel_window_filter`'s rule for an inaccessible channel. A 403
+///   would tell an outsider that a private project exists, which no other read
+///   path in this relay will do.
+///
+/// A lookup failure **propagates as a 500** rather than skipping. Skipping
+/// would emit `200 []` / `200 {"count":0}` — byte-identical to a genuinely
+/// empty project — and R3 forbids a read error rendering as a quiet project.
+/// Nothing is protected by swallowing it: the per-event
+/// `event_visible_to_reader` gate below is the authority and withholds the
+/// same rows regardless. A 500 discloses nothing about the project's
+/// existence (it is returned identically for public, private and unknown
+/// coordinates) while letting the client mark the read partial.
+async fn pulse_filter_is_out_of_scope(
+    state: &AppState,
+    tenant: &TenantContext,
+    coordinate: &str,
+    pubkey_bytes: &[u8],
+) -> Result<bool, (StatusCode, Json<Value>)> {
+    match state
+        .project_coordinate_gate_cached(tenant.community(), coordinate)
+        .await
+    {
+        Ok(None) => Ok(false),
+        Ok(Some(gate)) => Ok(!gate.admits_read(pubkey_bytes)),
+        Err(e) => {
+            tracing::warn!(%coordinate, "pulse pre-query gate lookup failed: {e}");
+            Err(internal_error(&format!("pulse gate lookup: {e}")))
+        }
+    }
 }
 
 fn has_mixed_search_filters(filters: &[nostr::Filter]) -> bool {

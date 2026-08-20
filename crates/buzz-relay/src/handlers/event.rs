@@ -309,6 +309,56 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // NIP-MP Pulse gate (fan-out): a project entry (44240) is a global,
+    // channel-less event, so the channel filtering below never sees it and
+    // every matching subscriber would otherwise receive a private project's
+    // coordination view live. Deliver past the author only to connections the
+    // project's gate admits, matching REQ semantics
+    // (`pulse_entry_hidden_from`). A missing coordinate or a gate-lookup
+    // failure delivers to nobody but the author (fail closed).
+    let matches = if event_kind_u32(&stored_event.event) == buzz_core::kind::KIND_PULSE_ENTRY {
+        let author = stored_event.event.pubkey.to_bytes();
+        type ConnMatches = Vec<(crate::subscription::ConnId, crate::subscription::SubId)>;
+        let author_only = |matches: ConnMatches| -> ConnMatches {
+            matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    state
+                        .conn_manager
+                        .pubkey_for_conn(*conn_id)
+                        .is_some_and(|pk| pk == author)
+                })
+                .collect()
+        };
+        // Ingest rejects a 44240 without exactly one canonical `a`, so a
+        // missing coordinate here is a stored event no gate can describe.
+        match buzz_core::pulse::pulse_entry_project_coordinate(&stored_event.event) {
+            None => author_only(matches),
+            Some(coordinate) => match state
+                .project_coordinate_gate_cached(community_id, &coordinate)
+                .await
+            {
+                // Public-or-unknown project: no gate to apply.
+                Ok(None) => matches,
+                Ok(Some(gate)) => matches
+                    .into_iter()
+                    .filter(|(conn_id, _)| {
+                        let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                            return false;
+                        };
+                        pk == author || gate.admits_read(&pk)
+                    })
+                    .collect(),
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: pulse gate lookup failed: {e}");
+                    author_only(matches)
+                }
+            },
+        }
+    } else {
+        matches
+    };
+
     // NIP-ST shared-terminal gate (fan-out): session announces (30623) and
     // the ephemeral watch/frame kinds (24310/24311) scoped to a *private*
     // project are delivered past the author only to connections the project

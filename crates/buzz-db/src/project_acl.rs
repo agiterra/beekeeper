@@ -662,6 +662,38 @@ pub async fn get_project_gate_by_coordinate(
     Ok(row.map(GateRow::into_gate))
 }
 
+/// Returns `true` when a project head with `coordinate` exists in `community`,
+/// at any visibility.
+///
+/// [`get_project_gate_by_coordinate`] returns `None` for *both* "public" and
+/// "never created", because its query filters `visibility = 'private'`. That
+/// conflation is safe for a soft back-reference and unsafe for a required
+/// singleton `a` tag: a Pulse entry naming a coordinate no kind:30621 event
+/// ever created is in nobody's hidden set, so it would be stored and shown to
+/// everyone as a coordination fact invented out of nothing. This is the same
+/// query minus the visibility clause, so ingest can tell the two apart.
+///
+/// Indexed by `idx_project_acl_coordinate` on `(community_id, coordinate)`
+/// (`migrations/0033_project_acl.sql`).
+pub async fn project_exists_by_coordinate(
+    pool: &PgPool,
+    community: CommunityId,
+    coordinate: &str,
+) -> Result<bool> {
+    let row: Option<(i32,)> = sqlx::query_as(
+        r#"
+        SELECT 1
+        FROM project_acl pa
+        WHERE pa.community_id = $1 AND pa.coordinate = $2
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(coordinate)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}
+
 /// Returns `true` if `pubkey` is positively admitted to the **private**
 /// project at `coordinate` — its owner or an invited member.
 ///
