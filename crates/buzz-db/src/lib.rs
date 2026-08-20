@@ -6548,8 +6548,12 @@ mod tests {
         let db = setup_db().await;
         let owner = format!("{:064x}", Uuid::new_v4().as_u128());
 
-        // Create 3 communities for this owner (the max).
-        for i in 0..3 {
+        // Fill this owner to the effective cap. Read the limit rather than
+        // restating it: the literal 3 here silently stopped matching when the
+        // constant moved to 5, so the "over the limit" create was still under
+        // it and was correctly accepted.
+        let limit = relay_members::max_communities_per_owner();
+        for i in 0..limit {
             let host = format!("limit-test-{}-{}.example", i, Uuid::new_v4().simple());
             assert!(matches!(
                 db.create_community_with_owner(&host, &owner)
@@ -6559,7 +6563,7 @@ mod tests {
             ));
         }
 
-        let host = format!("limit-test-3-{}.example", Uuid::new_v4().simple());
+        let host = format!("limit-test-{}-{}.example", limit, Uuid::new_v4().simple());
         assert_eq!(
             db.create_community_with_owner(&host, &owner)
                 .await
