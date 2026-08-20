@@ -119,6 +119,55 @@ across two machines simultaneously.
    session facts will not reach the agent until the session fold is built
    into `buzz-acp`. Not lying, but not done.
 
+### Found 2026-08-20 in the first live use of Project Pulse
+
+Items 21–23 are fixed in `build/2026-08-20.2`. Item 20 is **open** and needs
+Brian's product call.
+
+20. **A live session ages out of Active work.** `publish_metadata` fires only
+   on transitions (`crates/buzz-session-provider/src/lib.rs:905` create,
+   `:1170` idle, `:1194` stopped, `:440` disconnected); there is no
+   heartbeat, so an idle-but-alive session emits nothing and after
+   `PULSE_ACTIVE_WINDOW_SECONDS` (1800,
+   `desktop/src/features/project-pulse/lib/pulseFold.ts:67`) it falls to Last
+   seen. Observed live 2026-08-20: PulseTestV2 was alive while Pulse showed
+   "Idle · last observed 30m ago" and Active work was empty. Widening the
+   window re-admits the ghosts the gate was built to stop; the fix is a
+   provider heartbeat, so silence honestly means absence. Needs a product
+   call on cadence vs permanent event volume. *Re-verified at the
+   2026-08-20.2 ceremony, and the mechanism is stronger than "only on
+   transitions":* `publish_metadata` itself (`lib.rs:1786`) returns early
+   when the serialized content equals the last publication (`:1794-1799`), so
+   even the periodic git-probe republish (`:2068`) emits nothing when nothing
+   changed. The silence is structural, not incidental.
+21. **Entries were buried below the session groups**, so the screen led with
+   what Pulse *observed* rather than what people *claimed*. Fixed: entries +
+   superseded now render above the session groups, with a counts line and an
+   entries empty-state carrying the same three-way honesty split the sessions
+   empty-state already had.
+22. **Repeated executions of one session rendered as repeated full cards.**
+   Fixed **at presentation level only**: `groupPulseSessionExecutions`
+   (`desktop/src/features/project-pulse/lib/pulseFormat.ts`) keys on
+   `session.sessionRef ?? session.targetKey` and collapses them into one card
+   with a `> N executions` disclosure. The digest shape, `pulseFold.ts`
+   identity and the 42 conformance vectors are untouched and re-verified
+   green — what the fold calls one session did not change, only how many
+   cards that draws.
+23. **Card noise, including a redundant Closed/Ended pair.** Fixed: the
+   commit-confirmation qualifier moved inline into the chip row (~19
+   dedicated lines gone), the "observed Nm ago" chip renders only on active
+   sessions (non-active headers carry "… · last observed Nh ago"), and the
+   "Closed" chip is suppressed only when the status label already reads
+   "Ended". The honest tri-state survives; only the duplication went.
+
+The fix for 21 introduced, and the verify pass caught, one honesty defect
+before it shipped: the new counts line asserted an *absence* over a read that
+admits it lost data — a partial read printed a bare "no entries no sessions",
+a claim about the project made from a read that returned no claims.
+`ProjectPulseView.tsx` now derives `countsAreLowerBounds` and states floors;
+at zero the floor reads "no entries in what this read returned", a fact about
+the read rather than about the project.
+
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
 These were tracked in documents that had been superseded and had fallen off
@@ -216,6 +265,15 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 - **`just dev` and `just desktop-standalone` differ**: only the latter
   honored `BUZZ_DESKTOP_NOKEYRING` until 2026-08-18. `just dev` also starts
   local Postgres/Redis/relay; `desktop-standalone` starts none of it.
+- **The per-instance identity trap is broader than a branch switch — *how*
+  you launch is the other half of it.** `just dev` uses the default OS keyring
+  service `buzz-desktop-dev`, while `just desktop-standalone` scopes the
+  service to `buzz-desktop-dev.<branch-slug>` (`Justfile:609`) and unsets
+  `BUZZ_SHARE_IDENTITY` (`Justfile:603`); `just dev` sets neither, so it falls
+  back to the plain default. So launching the *same* checkout the other way
+  presents an empty keyring, and the provider refuses to start a session
+  ("has no private key available"). The branch slug (bullet above) is only
+  half the rule. Observed 2026-08-20.
 - **Non-interactive shells do not source `~/.zshrc`**, so anything an agent
   launches misses profile exports (this is how the mode mismatch happened).
 - Ceremony: `LEFTHOOK=0 CHECK_FILE_SIZES_BASE=$(git rev-parse upstream/main)
@@ -255,6 +313,15 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   project coordinate`, while an older build rejects it `unknown event kind`.
   The write never lands, so nothing is stored — this is the cheapest way to
   confirm a deploy from outside, without a cluster login.
+- **A raw NUL byte in a TypeScript source makes git classify the file as
+  binary**, which hides it from every diff and every reviewer: `git diff`
+  prints "Binary files differ", so a whole-file rewrite reviews as nothing at
+  all. Hit **twice**, both times a NUL used as a composite-key delimiter —
+  `desktop/src/features/project-pulse/ui/ProjectPulseView.tsx` during the
+  Pulse UX pass, and
+  `desktop/src/features/agent-progress/lib/agentProgressSources.ts` on
+  `wip/agent-sidebar` (fixed by `9cf627a0a`). Use `"\u0000"` in source, or a
+  printable delimiter. Worth a lint rule.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 
