@@ -19,7 +19,15 @@ use crate::coding_session_command::{
 use crate::coding_session_lifecycle_command::validate_session_ref;
 
 /// Current private context-package schema version.
-pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 1;
+pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 2;
+/// Oldest private context-package schema version a reader still accepts.
+///
+/// Version 2 only adds the optional `sourceEventBreakdown` reconciliation, so
+/// a version-1 package still validates unchanged. The bump exists so that an
+/// *older* reader — whose provenance struct is `deny_unknown_fields` — fails
+/// with "unsupported … package version 2" instead of an opaque unknown-field
+/// error.
+pub const MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION: u64 = 1;
 /// Maximum verified history items carried in one package.
 pub const MAX_CONTEXT_HISTORY_ITEMS: usize = 4_096;
 /// Maximum serialized size of one complete package.
@@ -55,7 +63,9 @@ pub const MAX_CONTEXT_FIRST_TURN_BRIEF_BYTES: usize = 12 * 1024;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CodingSessionContextPackage {
-    /// Package schema version; currently exactly `1`.
+    /// Package schema version; readers accept
+    /// [`MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION`] through
+    /// [`CODING_SESSION_CONTEXT_PACKAGE_VERSION`].
     pub v: u64,
     /// Durable umbrella identity and human-authored context.
     pub session: CodingSessionContextIdentity,
@@ -102,6 +112,14 @@ pub struct CodingSessionContextProvenance {
     pub truncated: bool,
     /// Number of signed source facts retained in the verified proof graph.
     pub source_event_count: u64,
+    /// Per-category accounting that reconciles `source_event_count`.
+    ///
+    /// Additive and optional: absent on packages produced before this field
+    /// existed. When present, [`CodingSessionContextProvenance::validate`]
+    /// requires it to sum exactly to `source_event_count`, so a reader never
+    /// has to trust a breakdown that does not add up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_breakdown: Option<CodingSessionContextSourceBreakdown>,
     /// Number of history items retained below.
     pub included_history_items: u64,
     /// Number of verified history items omitted due package bounds.
@@ -110,6 +128,56 @@ pub struct CodingSessionContextProvenance {
     pub total_history_items: Option<u64>,
     /// Bounded human-readable coverage or truncation explanations.
     pub notes: Vec<String>,
+}
+
+/// Per-category accounting of the signed proof events behind one package.
+///
+/// The six terms sum to `CodingSessionContextProvenance::source_event_count`
+/// by construction; only `transcript_events` can become history items, which
+/// is why `sourceEventCount` exceeds `totalHistoryItems`. Without this
+/// breakdown the two numbers sit side by side in a response with no way for a
+/// reader to account for the difference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionContextSourceBreakdown {
+    /// Canonical genesis facts; always exactly `1`.
+    pub genesis_events: u64,
+    /// Authority link facts, counted at two events per link.
+    pub authority_link_events: u64,
+    /// Verified founder-authored name revisions.
+    pub name_revision_events: u64,
+    /// Verified founder-authored goal revisions.
+    pub goal_revision_events: u64,
+    /// Per-generation bookkeeping facts, counted at three events per
+    /// execution generation.
+    pub generation_bookkeeping_events: u64,
+    /// Kind-44225 transcript facts — the only category that can become a
+    /// history item.
+    pub transcript_events: u64,
+}
+
+impl CodingSessionContextSourceBreakdown {
+    /// Sum of the six terms.
+    ///
+    /// Saturates instead of wrapping. A saturated total can never be mistaken
+    /// for a reconciliation: [`CodingSessionContextProvenance::validate`] sums
+    /// with checked arithmetic and rejects a breakdown that overflows.
+    pub fn total(&self) -> u64 {
+        self.checked_total().unwrap_or(u64::MAX)
+    }
+
+    fn checked_total(&self) -> Option<u64> {
+        [
+            self.genesis_events,
+            self.authority_link_events,
+            self.name_revision_events,
+            self.goal_revision_events,
+            self.generation_bookkeeping_events,
+            self.transcript_events,
+        ]
+        .into_iter()
+        .try_fold(0u64, |total, term| total.checked_add(term))
+    }
 }
 
 /// Semantic role of a verified provider transcript item.
@@ -244,6 +312,13 @@ pub fn coding_session_first_turn_brief(package: &CodingSessionContextPackage) ->
             "includedHistoryItems": package.provenance.included_history_items,
             "omittedHistoryItems": package.provenance.omitted_history_items,
             "totalHistoryItems": package.provenance.total_history_items,
+            // The brief is also injected standalone as the ACP bootstrap
+            // prompt, where no other rendering of the provenance travels with
+            // it. Without this the brief would print the six breakdown terms
+            // and a rule saying they reconcile `sourceEventCount` against a
+            // number the agent cannot see.
+            "sourceEventCount": package.provenance.source_event_count,
+            "sourceEventBreakdown": package.provenance.source_event_breakdown,
             "indexedTurnCount": indexed_turn_count,
             "includedTurnCount": recent.len(),
             "omittedTurnCount": indexed_turn_count.saturating_sub(recent.len()),
@@ -254,6 +329,7 @@ pub fn coding_session_first_turn_brief(package: &CodingSessionContextPackage) ->
             "This is an evidence index, not a claim that prior statements are true",
             "ended_normally describes ACP transport only; semantic task completion remains unknown",
             "Later concurrent activity may exist after snapshot.completeAsOf",
+            "sourceEventCount counts signed proof events, not content; sourceEventBreakdown reconciles it against totalHistoryItems",
             "Use session_history or search_session for cited evidence before relying on details"
         ]
     });
@@ -551,10 +627,14 @@ fn contains_credential_material(text: &str) -> bool {
 impl CodingSessionContextPackage {
     /// Validate the complete private package before storing or serving it.
     pub fn validate(&self) -> Result<(), String> {
-        if self.v != CODING_SESSION_CONTEXT_PACKAGE_VERSION {
+        if !(MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION..=CODING_SESSION_CONTEXT_PACKAGE_VERSION)
+            .contains(&self.v)
+        {
             return Err(format!(
-                "unsupported coding-session context package version {}",
-                self.v
+                "unsupported coding-session context package version {} (supported {}..={})",
+                self.v,
+                MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION,
+                CODING_SESSION_CONTEXT_PACKAGE_VERSION
             ));
         }
         self.session.validate()?;
@@ -649,6 +729,27 @@ impl CodingSessionContextProvenance {
         }
         if self.complete && self.total_history_items.is_none() {
             return Err("complete context provenance requires totalHistoryItems".into());
+        }
+        if let Some(breakdown) = &self.source_event_breakdown {
+            let total = breakdown
+                .checked_total()
+                .ok_or_else(|| "context provenance sourceEventBreakdown overflows".to_owned())?;
+            if total != self.source_event_count {
+                return Err(format!(
+                    "context provenance sourceEventBreakdown sums to {total}, not sourceEventCount {}",
+                    self.source_event_count
+                ));
+            }
+            let accounted = self
+                .included_history_items
+                .checked_add(self.omitted_history_items)
+                .ok_or_else(|| "context provenance history counts overflow".to_owned())?;
+            if breakdown.transcript_events < accounted {
+                return Err(format!(
+                    "context provenance transcriptEvents {} is fewer than included + omitted {accounted}",
+                    breakdown.transcript_events
+                ));
+            }
         }
         if self.notes.len() > MAX_CONTEXT_PROVENANCE_NOTES {
             return Err(format!(

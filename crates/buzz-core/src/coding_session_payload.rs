@@ -575,9 +575,64 @@ pub fn result_item(
     item
 }
 
+/// Closed set of reasons a create or resume lost its verified prior context.
+///
+/// The set is closed on purpose. Projector failures interpolate event and
+/// command ids, and a storage failure formats a host path; publishing either
+/// into a signed durable event would leak host-private material. A reason is a
+/// *class*, never the underlying message — the class goes on the wire, the
+/// detail stays in the provider's log.
+///
+/// `no_prior_execution` and `no_umbrella_context` name the *same* missing
+/// input — the umbrella `sessionRef`/`genesisRef` pair the projector is keyed
+/// on — but they are two different facts about the execution reading them, and
+/// only the create path can honestly claim the first. On a create, no umbrella
+/// refs means this really is the session's first execution. On a resume, an
+/// earlier generation of this execution demonstrably ran, so the same missing
+/// pair means only that it never ran under an umbrella; publishing
+/// `no_prior_execution` there would print "this is the session's first
+/// execution" directly above that execution's own earlier turns.
+pub const CONTEXT_UNAVAILABLE_REASONS: &[&str] = &[
+    "no_prior_execution",
+    "no_umbrella_context",
+    "context_fact_conflict",
+    "relay_unavailable",
+    "relay_query_failed",
+    "unverifiable_source_fact",
+    "source_exceeds_projection_bound",
+    "context_sidecar_unavailable",
+    "context_sidecar_path_invalid",
+    "brief_encode_failed",
+    "package_write_failed",
+];
+
 /// Build a bounded `status` item — the projector renders it as a lifecycle row.
 pub fn status_item(status: &str) -> serde_json::Value {
-    serde_json::json!({ "kind": "status", "status": status })
+    status_item_with_reason(status, None)
+}
+
+/// Build a status item that may name why continuity was lost.
+///
+/// `reason` is emitted only when it is a member of
+/// [`CONTEXT_UNAVAILABLE_REASONS`]; anything else is dropped rather than
+/// published, because this value enters a signed durable event.
+///
+/// The key is **additive and optional**: when there is no recognized reason it
+/// is omitted entirely rather than sent as `null`, so the output is
+/// byte-identical to the shape shipped before this field existed. A `null` on a
+/// durable record would claim the provider observed "no reason", which is a
+/// different fact from "this item carries no reason".
+pub fn status_item_with_reason(status: &str, reason: Option<&str>) -> serde_json::Value {
+    let mut item = serde_json::json!({ "kind": "status", "status": status });
+    // The literal above is an object, so this always matches; written as a
+    // pattern rather than an `expect` so a future edit degrades into a status
+    // row without a reason rather than a panic mid-turn.
+    if let (Some(object), Some(reason)) = (item.as_object_mut(), reason) {
+        if CONTEXT_UNAVAILABLE_REASONS.contains(&reason) {
+            object.insert("reason".into(), serde_json::json!(reason));
+        }
+    }
+    item
 }
 
 /// Build the `user_prompt` item that opens a turn.
@@ -1093,5 +1148,68 @@ mod tests {
             keys(&value),
             sorted(&["driver", "instanceId", "sessionId", "generation"])
         );
+    }
+
+    /// Every existing reader of a status item was written against this exact
+    /// shape, so the no-reason path has to stay byte-for-byte what it was.
+    #[test]
+    fn a_status_item_without_a_reason_is_byte_identical_to_the_shipped_shape() {
+        let shipped = serde_json::json!({ "kind": "status", "status": "session_fresh" });
+        assert_eq!(status_item("session_fresh"), shipped);
+        assert_eq!(status_item_with_reason("session_fresh", None), shipped);
+        assert_eq!(
+            serde_json::to_string(&status_item("session_fresh")).expect("serialize"),
+            serde_json::to_string(&shipped).expect("serialize")
+        );
+        assert_eq!(
+            keys(&status_item("session_fresh")),
+            sorted(&["kind", "status"])
+        );
+    }
+
+    #[test]
+    fn status_item_with_reason_emits_only_enumerated_reasons() {
+        assert_eq!(CONTEXT_UNAVAILABLE_REASONS.len(), 11);
+        for reason in CONTEXT_UNAVAILABLE_REASONS {
+            let item = status_item_with_reason("session_fresh", Some(reason));
+            assert_eq!(
+                keys(&item),
+                sorted(&["kind", "status", "reason"]),
+                "{reason} must be published"
+            );
+            assert_eq!(item["reason"], serde_json::json!(reason));
+            assert_eq!(item["status"], "session_fresh");
+            assert_eq!(item["kind"], "status");
+        }
+        // No slug may leak an id, a path, or free text into a signed event.
+        for reason in CONTEXT_UNAVAILABLE_REASONS {
+            assert!(
+                reason
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+                "{reason} must be a bare lowercase slug"
+            );
+        }
+    }
+
+    /// An unrecognized reason is dropped, not published as `null`: a `null` on
+    /// a durable record claims the provider observed an absence.
+    #[test]
+    fn an_unrecognized_reason_is_omitted_not_published_as_null() {
+        for reason in [
+            "",
+            "Fresh",
+            "relay_query_failed ",
+            "command 0123abcd has more than one provider receipt",
+            "/Users/alice/state/context-packages",
+            "no_prior_execution_v2",
+        ] {
+            let item = status_item_with_reason("session_restarted_without_context", Some(reason));
+            assert!(
+                item.get("reason").is_none(),
+                "{reason:?} must not be published"
+            );
+            assert_eq!(keys(&item), sorted(&["kind", "status"]));
+        }
     }
 }

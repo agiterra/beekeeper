@@ -41,6 +41,7 @@ fn package() -> CodingSessionContextPackage {
             complete: true,
             truncated: false,
             source_event_count: 4,
+            source_event_breakdown: None,
             included_history_items: 2,
             omitted_history_items: 0,
             total_history_items: Some(2),
@@ -245,4 +246,194 @@ fn first_turn_brief_is_byte_bounded_and_reports_omitted_turns() {
     assert!(encoded.len() <= MAX_CONTEXT_FIRST_TURN_BRIEF_BYTES);
     assert_eq!(brief["snapshot"]["indexedTurnCount"], 40);
     assert!(brief["snapshot"]["omittedTurnCount"].as_u64().unwrap() > 0);
+}
+
+/// A package whose `sourceEventCount` is reconciled by an explicit breakdown:
+/// one genesis, two authority links (two events each), one name revision, one
+/// goal revision, one generation (three bookkeeping events) and the two
+/// transcript facts that became history items.
+fn reconciled() -> CodingSessionContextPackage {
+    let breakdown = CodingSessionContextSourceBreakdown {
+        genesis_events: 1,
+        authority_link_events: 4,
+        name_revision_events: 1,
+        goal_revision_events: 1,
+        generation_bookkeeping_events: 3,
+        transcript_events: 2,
+    };
+    let mut package = package();
+    package.provenance.source_event_count = breakdown.total();
+    package.provenance.source_event_breakdown = Some(breakdown);
+    package
+}
+
+#[test]
+fn source_breakdown_terms_sum_to_source_event_count() {
+    let package = reconciled();
+    package.validate().unwrap();
+
+    let breakdown = package.provenance.source_event_breakdown.clone().unwrap();
+    assert_eq!(breakdown.total(), 12);
+    assert_eq!(breakdown.total(), package.provenance.source_event_count);
+    // Only transcript events can become history items — that is the whole
+    // reason sourceEventCount exceeds totalHistoryItems.
+    assert_eq!(
+        breakdown.transcript_events,
+        package.provenance.total_history_items.unwrap()
+    );
+
+    let encoded = serde_json::to_string(&package).unwrap();
+    let decoded: CodingSessionContextPackage = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, package);
+    decoded.validate().unwrap();
+    for key in [
+        "genesisEvents",
+        "authorityLinkEvents",
+        "nameRevisionEvents",
+        "goalRevisionEvents",
+        "generationBookkeepingEvents",
+        "transcriptEvents",
+    ] {
+        assert!(encoded.contains(key), "{key} must be on the wire");
+    }
+}
+
+#[test]
+fn a_package_whose_breakdown_does_not_sum_is_rejected() {
+    for terms in [2, 4] {
+        let mut package = reconciled();
+        let breakdown = package.provenance.source_event_breakdown.as_mut().unwrap();
+        breakdown.generation_bookkeeping_events = terms;
+        let error = package.validate().unwrap_err();
+        assert!(
+            error.contains("sourceEventBreakdown"),
+            "unexpected error: {error}"
+        );
+    }
+
+    // A term large enough to overflow the sum is a rejection, not a wrap.
+    let mut overflowing = reconciled();
+    overflowing
+        .provenance
+        .source_event_breakdown
+        .as_mut()
+        .unwrap()
+        .transcript_events = u64::MAX;
+    let error = overflowing.validate().unwrap_err();
+    assert!(error.contains("overflows"), "unexpected error: {error}");
+
+    // The count moving without the breakdown moving is the same defect.
+    let mut package = reconciled();
+    package.provenance.source_event_count += 1;
+    assert!(package.validate().is_err());
+}
+
+#[test]
+fn a_package_whose_transcript_events_are_fewer_than_included_plus_omitted_is_rejected() {
+    let mut package = reconciled();
+    package.provenance.truncated = true;
+    package.provenance.omitted_history_items = 1;
+    package.provenance.total_history_items = Some(3);
+    let error = package.validate().unwrap_err();
+    assert!(
+        error.contains("transcriptEvents"),
+        "unexpected error: {error}"
+    );
+
+    // Accounting for the omitted item in the breakdown makes it reconcile.
+    let breakdown = package.provenance.source_event_breakdown.as_mut().unwrap();
+    breakdown.transcript_events = 3;
+    package.provenance.source_event_count += 1;
+    package.validate().unwrap();
+}
+
+#[test]
+fn a_version_1_package_without_a_breakdown_still_validates() {
+    let mut package = package();
+    package.v = MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION;
+    assert_eq!(package.provenance.source_event_breakdown, None);
+    package.validate().unwrap();
+
+    let encoded = serde_json::to_string(&package).unwrap();
+    assert!(
+        !encoded.contains("sourceEventBreakdown"),
+        "an absent breakdown must be omitted, never emitted as null"
+    );
+    let decoded: CodingSessionContextPackage = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded.provenance.source_event_breakdown, None);
+    decoded.validate().unwrap();
+}
+
+#[test]
+fn a_version_3_package_is_rejected_by_name() {
+    let mut package = reconciled();
+    package.v = CODING_SESSION_CONTEXT_PACKAGE_VERSION + 1;
+    let error = package.validate().unwrap_err();
+    assert!(error.contains("unsupported"), "unexpected error: {error}");
+    assert!(error.contains('3'), "unexpected error: {error}");
+    assert!(error.contains("1..=2"), "unexpected error: {error}");
+}
+
+#[test]
+fn the_first_turn_brief_carries_the_source_breakdown() {
+    let reconciled = reconciled();
+    let brief = coding_session_first_turn_brief(&reconciled);
+    let encoded = serde_json::to_string(&brief).unwrap();
+    validate_coding_session_first_turn_brief_json(&encoded).unwrap();
+
+    assert_eq!(
+        brief["snapshot"]["sourceEventBreakdown"],
+        serde_json::to_value(
+            reconciled
+                .provenance
+                .source_event_breakdown
+                .clone()
+                .unwrap()
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        brief["snapshot"]["sourceEventBreakdown"]["genesisEvents"],
+        1
+    );
+    assert_eq!(
+        brief["snapshot"]["sourceEventBreakdown"]["transcriptEvents"],
+        2
+    );
+
+    // The brief is injected standalone as the ACP bootstrap prompt, so the
+    // number the six terms reconcile has to travel in the brief itself — not
+    // only in the surrounding `session_overview` response.
+    assert_eq!(
+        brief["snapshot"]["sourceEventCount"],
+        serde_json::json!(reconciled.provenance.source_event_count)
+    );
+    let terms = brief["snapshot"]["sourceEventBreakdown"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|term| term.as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(
+        terms,
+        brief["snapshot"]["sourceEventCount"].as_u64().unwrap(),
+        "the breakdown terms must sum to the count printed beside them"
+    );
+
+    let rules = brief["rules"].as_array().unwrap();
+    assert!(
+        rules
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|rule| rule
+                .contains("sourceEventBreakdown reconciles it against totalHistoryItems")),
+        "the brief must say how the two numbers reconcile"
+    );
+
+    // A package with no breakdown says so explicitly rather than omitting the
+    // key from a rendering a reader scans for it.
+    let legacy = coding_session_first_turn_brief(&package());
+    assert_eq!(legacy["snapshot"]["sourceEventBreakdown"], Value::Null);
+    validate_coding_session_first_turn_brief_json(&serde_json::to_string(&legacy).unwrap())
+        .unwrap();
 }
