@@ -50,6 +50,14 @@ pub struct StateDirLock {
     _file: File,
 }
 
+impl Drop for StateDirLock {
+    fn drop(&mut self) {
+        // Release explicitly before closing the descriptor so callers can
+        // immediately reacquire on every supported platform.
+        let _ = self._file.unlock();
+    }
+}
+
 /// Take the exclusive advisory lock that makes this process the *only*
 /// provider allowed to touch `dir`.
 ///
