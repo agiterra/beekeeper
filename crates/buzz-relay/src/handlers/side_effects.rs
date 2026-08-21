@@ -10,8 +10,8 @@ use buzz_core::kind::{
     event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_REACTION,
-    KIND_THREAD_SUMMARY,
+    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
+    KIND_REACTION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -25,7 +25,10 @@ use buzz_pubsub::EventTopic;
 
 /// Check if a kind is an admin kind (9000-9022) that needs pre-storage validation.
 pub fn is_admin_kind(kind: u32) -> bool {
-    matches!(kind, 9000..=9022)
+    // 9010/9011 sit inside the NIP-29 admin range numerically but are
+    // NIP-MP project membership ops: project-scoped (`a` tag, no channel),
+    // validated by `validate_project_member_op` instead.
+    matches!(kind, 9000..=9022) && !buzz_core::kind::is_project_membership_kind(kind)
 }
 
 /// Check if a kind triggers side effects after storage.
@@ -34,7 +37,7 @@ pub fn is_admin_kind(kind: u32) -> bool {
 /// handled in `ingest_event()` before storage so we can short-circuit on
 /// duplicates without storing the event at all.
 pub fn is_side_effect_kind(kind: u32) -> bool {
-    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | 41001..=41003 | 40099)
+    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | KIND_PROJECT | 41001..=41003 | 40099)
 }
 
 async fn evict_live_channel_subscriptions(
@@ -217,6 +220,15 @@ pub async fn handle_side_effects(
         // NIP-34: Git repo announcement → reserve name + seed manifest pointer.
         KIND_GIT_REPO_ANNOUNCEMENT => handle_git_repo_announcement(tenant, event, state).await,
         KIND_AGENT_PROFILE => handle_agent_profile(tenant, event, state).await,
+        // NIP-MP Buzz access extension: project the head's access level and
+        // invited-member `p` tags into `project_acl` (store+project) so the
+        // accessible-channels query can gate private-project channels in SQL.
+        KIND_PROJECT => handle_project_acl_projection(tenant, event, state).await,
+        // NIP-MP membership ops: apply to the relay-managed roster, then
+        // re-project the relay-signed 39010 roster head.
+        buzz_core::kind::KIND_PROJECT_PUT_MEMBER | buzz_core::kind::KIND_PROJECT_REMOVE_MEMBER => {
+            handle_project_member_op(tenant, kind, event, state).await
+        }
         // kind:7 (reaction) handled inline in ingest_event() before storage.
         _ => Ok(()),
     }
@@ -367,8 +379,26 @@ pub async fn validate_admin_event(
             // require the actor to be an existing active member. Any active member may
             // add an ordinary member, guest, or bot, but only owners/admins may grant
             // an elevated role.
+            //
+            // Session-transport channels extend the private arm: a project
+            // member admitted through the transport gate has member-level
+            // authority even without a channel_members row — they must be
+            // able to add their own provider bot to a transport channel some
+            // other member created. Member-level only: the elevated-role
+            // check below still requires a real elevated channel role, and a
+            // gate lookup failure fails closed to the members-only rule.
             if channel.visibility == "private" {
-                if actor_role.is_none() {
+                let transport_admitted = if actor_role.is_none() {
+                    state
+                        .channel_transport_gate_cached(tenant.community(), channel_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some_and(|gate| gate.admits_write(&actor_bytes))
+                } else {
+                    false
+                };
+                if actor_role.is_none() && !transport_admitted {
                     return Err(anyhow::anyhow!("actor not authorized"));
                 }
 
@@ -1157,6 +1187,12 @@ pub async fn emit_group_discovery_events(
             // Explicit "public" tag complements NIP-29's absence-of-"private" convention,
             // making channel visibility self-describing for clients.
             tags.push(Tag::parse(["public"])?);
+        }
+        // NIP-29 hidden tag: hint to clients not to show session-transport
+        // channels in group lists. Not a security boundary — access control
+        // is handled by channel-scoped storage and the transport gate.
+        if channel.channel_type == "transport" {
+            tags.push(Tag::parse(["hidden"])?);
         }
         // NIP-29 hidden tag: hint to clients not to show DMs in public group lists.
         // Not a security boundary — access control is handled by channel-scoped storage.
@@ -2199,6 +2235,238 @@ async fn handle_leave_request(
 
 /// Handle NIP-09 deletion via `a` tag (addressable/parameterized-replaceable events).
 /// Parses "kind:pubkey:d-tag" and deletes the corresponding DB record.
+/// Handle a kind:30621 project head (NIP-MP Buzz access extension).
+///
+/// Projects the head's `buzz-access` level and invited-member `p` tags into
+/// `project_acl` / `project_acl_members`. The event stays authoritative
+/// (owner-curated republish); the projection backs the accessible-channels
+/// SQL gate and the write-path project-membership check. Stale replays are
+/// ignored by the projection's `head_created_at` guard.
+async fn handle_project_acl_projection(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let dtag =
+        extract_tag_value(event, "d").ok_or_else(|| anyhow::anyhow!("kind:30621 missing d tag"))?;
+    let visibility = if buzz_core::kind::is_private_project_event(event) {
+        "private"
+    } else {
+        "public"
+    };
+    // Ingest validated each `p` value as lowercase 64-hex with no duplicates
+    // and any 4th tag element as a pinned role; a role-less invite is a
+    // legacy collaborator (pre-role members could already write).
+    let members: Vec<buzz_db::project_acl::ProjectMember> = event
+        .tags
+        .iter()
+        .filter_map(|t| {
+            let parts = t.as_slice();
+            if parts.first().map(|s| s.as_str()) != Some("p") {
+                return None;
+            }
+            let pubkey = parts.get(1).and_then(|v| hex::decode(v.as_str()).ok())?;
+            let role = parts
+                .get(3)
+                .and_then(|r| r.as_str().parse::<buzz_db::project_acl::ProjectRole>().ok())
+                .unwrap_or(buzz_db::project_acl::ProjectRole::Collaborator);
+            Some((pubkey, role))
+        })
+        .collect();
+    let members_applied = state
+        .db
+        .upsert_project_acl(
+            tenant.community(),
+            &event.pubkey.to_bytes(),
+            &dtag,
+            visibility,
+            &members,
+            event.created_at.as_secs() as i64,
+        )
+        .await?;
+    // The accessible-channel set of every non-member changes when a project
+    // flips visibility or its invite list; 30621 writes are rare relative to
+    // reads, so the coarse community-wide flush is the right trade.
+    state.invalidate_all_accessible_channels(tenant);
+    let coordinate = format!("30621:{}:{}", hex::encode(event.pubkey.to_bytes()), dtag);
+    emit_project_members_projection(tenant, state, &coordinate).await?;
+    info!(
+        d_tag = %dtag,
+        visibility,
+        members = members.len(),
+        members_applied,
+        "kind:30621 project ACL projected"
+    );
+    Ok(())
+}
+
+/// Apply a stored NIP-MP membership op (kind 9010 put-member / 9011
+/// remove-member) to the relay-managed roster, then flush the read caches
+/// and re-project the kind:39010 roster head.
+///
+/// Ingest validated the envelope and authorized the signer pre-storage; the
+/// DB op re-checks inside its row-locked transaction, so a refusal here is a
+/// lost race (e.g. the signer's own owner role was revoked concurrently) —
+/// logged, never applied.
+async fn handle_project_member_op(
+    tenant: &TenantContext,
+    kind: u32,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let coordinate = buzz_core::kind::project_membership_event_coordinate(event)
+        .ok_or_else(|| anyhow::anyhow!("membership op missing project `a` tag"))?;
+    let normalized = buzz_core::kind::normalize_project_coordinate(&coordinate)
+        .ok_or_else(|| anyhow::anyhow!("membership op has malformed coordinate {coordinate:?}"))?;
+    let mut segments = normalized.splitn(3, ':');
+    let (_, Some(owner_hex), Some(dtag)) = (segments.next(), segments.next(), segments.next())
+    else {
+        return Err(anyhow::anyhow!(
+            "membership op has malformed coordinate {coordinate:?}"
+        ));
+    };
+    let owner = hex::decode(owner_hex)?;
+    let actor = event.pubkey.to_bytes();
+
+    let outcome = if kind == buzz_core::kind::KIND_PROJECT_PUT_MEMBER {
+        // Ingest validated every target as `["p", hex, hint, role]`.
+        let members: Vec<buzz_db::project_acl::ProjectMember> = event
+            .tags
+            .iter()
+            .filter_map(|t| {
+                let parts = t.as_slice();
+                if parts.first().map(|s| s.as_str()) != Some("p") {
+                    return None;
+                }
+                let pubkey = parts.get(1).and_then(|v| hex::decode(v.as_str()).ok())?;
+                let role = parts
+                    .get(3)
+                    .and_then(|r| r.as_str().parse::<buzz_db::project_acl::ProjectRole>().ok())?;
+                Some((pubkey, role))
+            })
+            .collect();
+        state
+            .db
+            .put_project_members(tenant.community(), &owner, dtag, &actor, &members)
+            .await?
+    } else {
+        let targets: Vec<Vec<u8>> = event
+            .tags
+            .iter()
+            .filter_map(|t| {
+                let parts = t.as_slice();
+                if parts.first().map(|s| s.as_str()) == Some("p") {
+                    parts.get(1).and_then(|v| hex::decode(v.as_str()).ok())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        state
+            .db
+            .remove_project_members(tenant.community(), &owner, dtag, &actor, &targets)
+            .await?
+    };
+
+    match outcome {
+        buzz_db::project_acl::ProjectMemberOpOutcome::Applied => {
+            state.invalidate_all_accessible_channels(tenant);
+            emit_project_members_projection(tenant, state, &normalized).await?;
+            info!(coordinate = %normalized, kind, "project membership op applied");
+            Ok(())
+        }
+        buzz_db::project_acl::ProjectMemberOpOutcome::Refused(refusal) => {
+            warn!(
+                coordinate = %normalized,
+                kind,
+                ?refusal,
+                "project membership op refused at apply time (ingest validation raced)"
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Emit the relay-signed kind:39010 project roster projection for
+/// `coordinate` (`d` = the coordinate, one `["p", hex, "", role]` per
+/// member). Called after every roster change — head-sourced (30621 ingest)
+/// or ops-sourced (9010/9011). Stored globally (no channel scope) and
+/// withheld from readers outside a private project at the read chokepoints
+/// via the hidden-project-coordinate predicate.
+pub async fn emit_project_members_projection(
+    tenant: &TenantContext,
+    state: &Arc<AppState>,
+    coordinate: &str,
+) -> anyhow::Result<()> {
+    let Some(roster) = state
+        .db
+        .get_project_roster(tenant.community(), coordinate)
+        .await?
+    else {
+        // Unknown coordinate (e.g. the project was deleted between the op
+        // and this projection) — nothing to project.
+        return Ok(());
+    };
+    let mut tags: Vec<Tag> = Vec::with_capacity(roster.members.len() + 1);
+    tags.push(Tag::parse(["d", coordinate])?);
+    for (pubkey, role) in &roster.members {
+        let pubkey_hex = hex::encode(pubkey);
+        // Same convention as the NIP-29 39002 projection: ["p", pubkey,
+        // relay_url, role], empty relay_url because the canonical relay is
+        // implicit (this event is signed by it).
+        tags.push(Tag::parse(["p", &pubkey_hex, "", role.as_str()])?);
+    }
+
+    // Strictly-increasing created_at, same reasoning as
+    // `emit_addressable_discovery_event`: two roster ops inside one second
+    // must not produce a replacement the stale-write guard rejects.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let min_ts = {
+        let existing = state
+            .db
+            .query_events(&buzz_db::event::EventQuery {
+                kinds: Some(vec![buzz_core::kind::KIND_PROJECT_MEMBERS as i32]),
+                d_tag: Some(coordinate.to_string()),
+                limit: Some(1),
+                ..buzz_db::event::EventQuery::for_community(tenant.community())
+            })
+            .await
+            .unwrap_or_default();
+        existing
+            .first()
+            .map(|e| e.event.created_at.as_secs() + 1)
+            .unwrap_or(now)
+    };
+    let ts = now.max(min_ts);
+
+    let relay_pubkey_hex = hex::encode(state.relay_keypair.public_key().to_bytes());
+    let projection = EventBuilder::new(
+        Kind::Custom(buzz_core::kind::KIND_PROJECT_MEMBERS as u16),
+        "",
+    )
+    .tags(tags)
+    .custom_created_at(nostr::Timestamp::from(ts))
+    .sign_with_keys(&state.relay_keypair)
+    .map_err(|e| anyhow::anyhow!("failed to sign kind:39010: {e}"))?;
+
+    // NIP-33 replacement keyed by the `d` coordinate: every project's roster
+    // is its own slot. (`replace_addressable_event` keys by channel_id and
+    // would make all 39010s share one global slot, so concurrent emissions
+    // for different projects would clobber each other.)
+    let (stored, was_inserted) = state
+        .db
+        .replace_parameterized_event(tenant.community(), &projection, coordinate, None)
+        .await?;
+    if was_inserted {
+        let kind_u32 = event_kind_u32(&stored.event);
+        dispatch_persistent_event(tenant, state, &stored, kind_u32, &relay_pubkey_hex, None).await;
+    }
+    Ok(())
+}
+
 async fn handle_a_tag_deletion(
     tenant: &TenantContext,
     event: &Event,
@@ -2323,6 +2591,42 @@ async fn handle_a_tag_deletion(
                     d_tag = d_tag,
                     "NIP-09 a-tag deletion: no live row matched coordinate"
                 );
+            }
+            // A deleted project's ACL row must go with it (same created_at
+            // scoping), so its channels revert to their own access rules.
+            if k == KIND_PROJECT {
+                let acl_dropped = state
+                    .db
+                    .delete_project_acl(
+                        tenant.community(),
+                        &pubkey_bytes,
+                        d_tag,
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if acl_dropped {
+                    state.invalidate_all_accessible_channels(tenant);
+                }
+            }
+            // A deleted repo announcement drops its project link (same
+            // created_at scoping): with the 30617 gone the repo's child
+            // events revert to their own access rules, mirroring
+            // project-deletion semantics. The name reservation itself stays —
+            // deletion never frees a name for another owner to squat.
+            if k == KIND_GIT_REPO_ANNOUNCEMENT {
+                let link_cleared = state
+                    .db
+                    .clear_repo_project_ref(
+                        tenant.community(),
+                        d_tag,
+                        // git_repo_names stores the owner lowercase-hex.
+                        &pubkey_hex.to_ascii_lowercase(),
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if link_cleared {
+                    state.invalidate_all_accessible_channels(tenant);
+                }
             }
         }
         _ => {
@@ -2785,10 +3089,32 @@ async fn handle_git_repo_announcement(
         ));
     }
 
+    // Project the repo → project link (NIP-MP access extension phase 2).
+    // Ingest already validated the tag's shape and the author's project
+    // membership, so a `None` here means "no (valid) project tag" and clears
+    // any previous link. LWW-guarded like the project ACL projection; the
+    // repo-gating caches flush community-wide because a link change alters
+    // the hidden-repo set of every non-member.
+    let project_ref = buzz_core::kind::repo_project_ref(event);
+    let link_changed = state
+        .db
+        .set_repo_project_ref(
+            community,
+            &repo_id,
+            &owner_hex,
+            project_ref.as_deref(),
+            event.created_at.as_secs() as i64,
+        )
+        .await?;
+    if link_changed {
+        state.invalidate_all_accessible_channels(tenant);
+    }
+
     info!(
         repo_id = %repo_id,
         owner = %owner_hex,
         reserved = reserved_by_this_attempt,
+        project_ref = project_ref.as_deref().unwrap_or(""),
         "kind:30617 repo announced (name reserved, manifest pointer ensured)"
     );
 

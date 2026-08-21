@@ -5,6 +5,7 @@ import {
   FileText,
   FolderKanban,
   Hash,
+  Lock,
   Plus,
 } from "lucide-react";
 
@@ -164,6 +165,15 @@ export function ProjectSidebarGroup({
             >
               <FolderKanban />
               <span className="truncate">{project.name}</span>
+              {project.visibility === "private" ? (
+                <span className="flex shrink-0 items-center">
+                  <Lock
+                    aria-label="Private project"
+                    className="size-3 text-sidebar-foreground/45"
+                    data-testid={`project-lock-${project.dtag}`}
+                  />
+                </span>
+              ) : null}
               {isFallback ? (
                 <span className="text-2xs text-sidebar-foreground/45">
                   (local)

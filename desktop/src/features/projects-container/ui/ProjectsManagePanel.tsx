@@ -14,6 +14,7 @@ import {
   FolderGit2,
   FolderKanban,
   Hash,
+  Lock,
   Pencil,
   Trash2,
   Zap,
@@ -244,6 +245,13 @@ export function ProjectsManagePanel() {
             <h3 className="flex items-center gap-2 text-sm font-semibold">
               <FolderKanban className="size-4 shrink-0" />
               <span className="truncate">{project.name}</span>
+              {project.visibility === "private" ? (
+                <Lock
+                  aria-label="Private project"
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                  data-testid={`manage-project-lock-${project.dtag}`}
+                />
+              ) : null}
               {isFallback ? (
                 <span className="text-2xs font-normal text-muted-foreground">
                   (local)
@@ -429,6 +437,8 @@ export function ProjectsManagePanel() {
           if (!open) setDeleteTarget(null);
         }}
       />
+
+      {moves.confirmDialog}
     </DndContext>
   );
 }

@@ -11,16 +11,21 @@ pub fn filters_match(filters: &[Filter], event: &StoredEvent) -> bool {
     filters.iter().any(|f| filter_match_one(f, event))
 }
 
-/// Result-level read authorization for relay-signed events whose content is
-/// private to a single viewer. Currently gates `KIND_DM_VISIBILITY` and
-/// `KIND_AGENT_TURN_METRIC`: the reader MUST equal the event's `#p` tag
-/// (owner). Returns `true` for every other kind.
+/// Result-level read authorization for events whose content is private to a
+/// bounded viewer set. Gates `KIND_DM_VISIBILITY` and `KIND_AGENT_TURN_METRIC`
+/// (reader MUST equal the event's `#p` tag) and private `KIND_PROJECT`
+/// containers (reader MUST be the author or an invited `p`-tag member — see
+/// [`crate::kind::project_container_hidden_from`]). Returns `true` for every
+/// other kind.
 ///
 /// This guards every delivery surface — WS historical pull (`req.rs`), HTTP
 /// bridge (`bridge.rs`), and live fan-out (`event.rs`) — so a query that
 /// bypasses the filter-level `#p` gate (e.g. a kindless `ids:[…]` lookup of
 /// a known event id) still cannot read another user's private event.
 pub fn reader_authorized_for_event(event: &nostr::Event, reader_pubkey_hex: &str) -> bool {
+    if crate::kind::project_container_hidden_from(event, reader_pubkey_hex) {
+        return false;
+    }
     let kind = crate::kind::event_kind_u32(event);
     if kind != crate::kind::KIND_DM_VISIBILITY && kind != crate::kind::KIND_AGENT_TURN_METRIC {
         return true;
@@ -285,6 +290,43 @@ mod tests {
             .sign_with_keys(&relay)
             .expect("sign");
         assert!(reader_authorized_for_event(&note, other));
+    }
+
+    #[test]
+    fn reader_authorized_for_event_gates_private_project() {
+        use nostr::{EventBuilder, Keys, Kind, Tag};
+        let owner_keys = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let stranger = Keys::generate().public_key().to_hex();
+        let private = EventBuilder::new(Kind::Custom(crate::kind::KIND_PROJECT as u16), "")
+            .tags([
+                Tag::parse(["d", "secret"]).unwrap(),
+                Tag::parse(["buzz-access", "private"]).unwrap(),
+                Tag::parse(["p", &member]).unwrap(),
+            ])
+            .sign_with_keys(&owner_keys)
+            .unwrap();
+        assert!(
+            reader_authorized_for_event(&private, &owner_keys.public_key().to_hex()),
+            "author must always read their own private project"
+        );
+        assert!(
+            reader_authorized_for_event(&private, &member),
+            "invited p-tag member must read the private project"
+        );
+        assert!(
+            !reader_authorized_for_event(&private, &stranger),
+            "uninvited reader must not read a private project"
+        );
+
+        let public = EventBuilder::new(Kind::Custom(crate::kind::KIND_PROJECT as u16), "")
+            .tags([Tag::parse(["d", "open"]).unwrap()])
+            .sign_with_keys(&owner_keys)
+            .unwrap();
+        assert!(
+            reader_authorized_for_event(&public, &stranger),
+            "tag-less project stays community-readable"
+        );
     }
 
     #[test]

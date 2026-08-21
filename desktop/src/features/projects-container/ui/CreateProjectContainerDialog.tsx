@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import type { UserSearchResult } from "@/shared/api/types";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -12,7 +13,15 @@ import {
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 
+import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
 import type { CreateProjectContainerInput } from "../useCreateProjectContainer";
+import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
+
+const VISIBILITY_COPY = {
+  public: "Everyone in the community can see it.",
+  private:
+    "Only you and the people you invite can see this project — its channels, forums, and code repositories. New projects are private by default.",
+} as const;
 
 /** Modal for creating a project container (kind:30621). */
 export function CreateProjectContainerDialog({
@@ -28,12 +37,18 @@ export function CreateProjectContainerDialog({
 }) {
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
+  const [visibility, setVisibility] = React.useState<"public" | "private">(
+    "private",
+  );
+  const [members, setMembers] = React.useState<UserSearchResult[]>([]);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
     setName("");
     setDescription("");
+    setVisibility("private");
+    setMembers([]);
     setErrorMessage(null);
   }, [open]);
 
@@ -43,9 +58,16 @@ export function CreateProjectContainerDialog({
     if (!trimmedName) return;
     setErrorMessage(null);
     try {
+      // Initial invitees join as Collaborator; roles are managed afterward
+      // on the project page's Members card.
       await onCreate({
         name: trimmedName,
         description: description.trim() || undefined,
+        visibility,
+        members: members.map((member) => ({
+          pubkey: member.pubkey,
+          role: "collaborator" as const,
+        })),
       });
       onOpenChange(false);
     } catch (error) {
@@ -62,7 +84,7 @@ export function CreateProjectContainerDialog({
           <DialogTitle>New project</DialogTitle>
           <DialogDescription>
             A project groups agents, channels, code, shells, and forums in the
-            sidebar.
+            sidebar. {VISIBILITY_COPY[visibility]}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
@@ -82,6 +104,19 @@ export function CreateProjectContainerDialog({
               placeholder="What is this project about? (optional)"
               rows={3}
               value={description}
+            />
+            <ProjectVisibilitySettings
+              onVisibilityChange={setVisibility}
+              testIdPrefix="create-project-container"
+              visibility={visibility}
+            />
+            <PersonaShareRecipients
+              allowDirectPubkeyEntry
+              disabled={false}
+              onSelectionChange={setMembers}
+              open={open}
+              selectedUsers={members}
+              testIdPrefix="create-project-container-members"
             />
             {errorMessage ? (
               <p className="text-sm text-destructive">{errorMessage}</p>

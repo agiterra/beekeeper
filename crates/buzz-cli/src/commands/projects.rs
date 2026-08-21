@@ -16,12 +16,14 @@
 //!   - Deletion durability against later arrival (watermark follow-up) is
 //!     not in scope.
 
-use buzz_core::kind::KIND_PROJECT;
-use buzz_sdk::{
-    build_delete_addressable, build_project, build_project_with_tags, ProjectMemberCoord,
-    PROJECT_D_MAX_LEN,
+use buzz_core::kind::{
+    KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PROJECT_PUT_MEMBER, KIND_PROJECT_REMOVE_MEMBER,
+    PROJECT_ROLE_COLLABORATOR,
 };
-use nostr::{Event, EventBuilder, Tag, Timestamp};
+use buzz_sdk::{
+    build_delete_addressable, build_project_with_tags, ProjectMemberCoord, PROJECT_D_MAX_LEN,
+};
+use nostr::{Event, EventBuilder, Kind, Tag, Timestamp};
 
 use crate::client::BuzzClient;
 use crate::commands::parse_write_response;
@@ -110,29 +112,13 @@ fn make_tag(parts: &[&str]) -> Result<Tag, CliError> {
 
 // ── Submit helper ─────────────────────────────────────────────────────────────
 
-/// Submit a project event and print the relay's write response.
-///
-/// `link_slug` carries the project's d-tag on creates whose slug fits the
-/// `buzz://` link charset; the response then also carries a `link` field,
-/// which renders as a rich preview card in Buzz Desktop when included in a
-/// chat message — agents announce projects with it (see base_prompt.md).
-async fn submit_project(
-    client: &BuzzClient,
-    builder: EventBuilder,
-    link_slug: Option<&str>,
-) -> Result<(), CliError> {
+async fn submit_project(client: &BuzzClient, builder: EventBuilder) -> Result<(), CliError> {
     let event = client.sign_event(builder)?;
-    let owner = event.pubkey.to_hex();
     let raw = client.submit_event(event).await?;
-    let response = parse_write_response(&raw, "project changed concurrently; retry")?;
-    match link_slug {
-        Some(slug) => crate::client::print_create_response(
-            &response,
-            "link",
-            &crate::links::project_link(&owner, slug),
-        ),
-        None => println!("{response}"),
-    }
+    println!(
+        "{}",
+        parse_write_response(&raw, "project changed concurrently; retry")?
+    );
     Ok(())
 }
 
@@ -172,6 +158,7 @@ fn rebuild_project(
 // ── Command implementations ───────────────────────────────────────────────────
 
 /// `buzz projects create`
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_create(
     client: &BuzzClient,
     slug: &str,
@@ -180,6 +167,8 @@ pub async fn cmd_create(
     description: Option<&str>,
     channel: Option<&str>,
     visibility: Option<&str>,
+    access: &str,
+    invited: &[String],
 ) -> Result<(), CliError> {
     // ── Local validation (all checks before any .await) ───────────────────
     validate_project_slug(slug)?;
@@ -219,6 +208,10 @@ pub async fn cmd_create(
         }
     }
 
+    // Parse invited members (`<pubkey>[:role]`); the creator is an implicit
+    // owner and must not be invited.
+    let invites = parse_member_args(invited, &caller_pubkey)?;
+
     // ── Network: collision preflight ──────────────────────────────────────
     if fetch_own_project(client, slug).await?.is_some() {
         return Err(CliError::Conflict(format!(
@@ -226,18 +219,35 @@ pub async fn cmd_create(
         )));
     }
 
-    // ── Build via Layer B (enforces all writer policy) ────────────────────
-    let builder = build_project(slug, name, description, &members, channel, visibility)
-        .map_err(|e| CliError::Usage(e.to_string()))?;
+    // ── Build the full tag set and validate through Layer A ──────────────
+    let mut tags: Vec<Tag> = vec![make_tag(&["d", slug])?];
+    if let Some(n) = name {
+        tags.push(make_tag(&["name", n])?);
+    }
+    if let Some(d) = description {
+        tags.push(make_tag(&["description", d])?);
+    }
+    for m in &members {
+        let parts = m.to_tag_parts();
+        let parts_ref: Vec<&str> = parts.iter().map(String::as_str).collect();
+        tags.push(
+            Tag::parse(parts_ref.iter().copied())
+                .map_err(|e| CliError::Other(format!("member tag construction failed: {e}")))?,
+        );
+    }
+    if let Some(ch) = channel {
+        tags.push(make_tag(&["buzz-channel", ch])?);
+    }
+    if let Some(vis) = visibility {
+        tags.push(make_tag(&["buzz-visibility", vis])?);
+    }
+    tags.push(make_tag(&["buzz-access", access])?);
+    for (pubkey, role) in &invites {
+        tags.push(make_tag(&["p", pubkey, "", role])?);
+    }
 
-    // Slugs wider than the link charset stay linkless rather than emitting a
-    // `link` no client can parse.
-    submit_project(
-        client,
-        builder,
-        crate::links::is_linkable_dtag(slug).then_some(slug),
-    )
-    .await
+    let builder = build_project_with_tags("", tags).map_err(crate::validate::sdk_err)?;
+    submit_project(client, builder).await
 }
 
 /// `buzz projects get`
@@ -350,7 +360,7 @@ pub async fn cmd_add_repo(
     }
 
     let builder = rebuild_project(&head.content, tags, next_ts)?;
-    submit_project(client, builder, None).await
+    submit_project(client, builder).await
 }
 
 /// `buzz projects remove-repo`
@@ -413,7 +423,7 @@ pub async fn cmd_remove_repo(
 
     // Single rebuild validates the full envelope and strips any remaining auth.
     let builder = rebuild_project(&head.content, tags, next_ts)?;
-    submit_project(client, builder, None).await
+    submit_project(client, builder).await
 }
 
 /// `buzz projects update`
@@ -431,6 +441,7 @@ pub async fn cmd_update(
     clear_channel: bool,
     visibility: Option<&str>,
     clear_visibility: bool,
+    access: Option<&str>,
 ) -> Result<(), CliError> {
     // Guard: at least one mutation required. The clap `ArgGroup` with
     // `required(true).multiple(true)` enforces this at parse time; this
@@ -443,12 +454,14 @@ pub async fn cmd_update(
         || channel.is_some()
         || clear_channel
         || visibility.is_some()
-        || clear_visibility;
+        || clear_visibility
+        || access.is_some();
     if !has_mutation {
         return Err(CliError::Usage(
             "buzz projects update requires at least one of: \
              --name, --clear-name, --description, --clear-description, \
-             --channel, --clear-channel, --visibility, --clear-visibility"
+             --channel, --clear-channel, --visibility, --clear-visibility, \
+             --access"
                 .into(),
         ));
     }
@@ -470,8 +483,16 @@ pub async fn cmd_update(
     //   - setter present: replace value (strip old, append new)
     //   - clear flag set: drop the tag
     //   - neither: keep existing
-    // Non-singleton / non-metadata tags (d, a, unknown) are preserved as-is.
-    let singleton_fields = ["name", "description", "buzz-channel", "buzz-visibility"];
+    // Non-singleton / non-metadata tags (d, a, p, unknown) are preserved
+    // as-is. `buzz-access` has no clear variant: an absent tag means public,
+    // so flipping must always be an explicit setter.
+    let singleton_fields = [
+        "name",
+        "description",
+        "buzz-channel",
+        "buzz-visibility",
+        "buzz-access",
+    ];
     let mut tags: Vec<Tag> = head
         .tags
         .iter()
@@ -487,6 +508,7 @@ pub async fn cmd_update(
                         "description" => clear_description || description.is_some(),
                         "buzz-channel" => clear_channel || channel.is_some(),
                         "buzz-visibility" => clear_visibility || visibility.is_some(),
+                        "buzz-access" => access.is_some(),
                         _ => false,
                     };
                     return !clear;
@@ -510,11 +532,14 @@ pub async fn cmd_update(
     if let Some(vis) = visibility {
         tags.push(make_tag(&["buzz-visibility", vis])?);
     }
+    if let Some(acc) = access {
+        tags.push(make_tag(&["buzz-access", acc])?);
+    }
 
     let builder = build_project_with_tags(&head.content, tags)
         .map_err(|e| CliError::Other(format!("envelope validation failed: {e}")))?
         .custom_created_at(next_ts);
-    submit_project(client, builder, None).await
+    submit_project(client, builder).await
 }
 
 /// `buzz projects delete`
@@ -551,6 +576,210 @@ pub async fn cmd_delete(client: &BuzzClient, slug: &str) -> Result<(), CliError>
     }
 
     println!("{}", serde_json::json!({ "deleted": slug, "status": "ok" }));
+    Ok(())
+}
+
+// ── Membership ops (kinds 9010/9011 + kind 39010 roster reads) ────────────────
+
+/// Parse repeated `--member <pubkey>[:role]` create arguments.
+///
+/// Role defaults to `collaborator`; the pubkey must be 64 lowercase hex and
+/// must not be the caller (the creator is the project's implicit owner and
+/// never appears in `p` tags).
+fn parse_member_args(
+    members: &[String],
+    caller_pubkey: &str,
+) -> Result<Vec<(String, &'static str)>, CliError> {
+    let mut parsed = Vec::with_capacity(members.len());
+    let mut seen = std::collections::HashSet::new();
+    for member in members {
+        let (pubkey, role) = match member.split_once(':') {
+            Some((pubkey, role)) => (pubkey, parse_project_role(role)?),
+            None => (member.as_str(), PROJECT_ROLE_COLLABORATOR),
+        };
+        validate_member_pubkey(pubkey)?;
+        if pubkey == caller_pubkey {
+            return Err(CliError::Usage(
+                "the project creator is an implicit owner and must not be listed in --member"
+                    .into(),
+            ));
+        }
+        if !seen.insert(pubkey.to_string()) {
+            return Err(CliError::Usage(format!(
+                "duplicate --member pubkey in this invocation: {pubkey:?}"
+            )));
+        }
+        parsed.push((pubkey.to_string(), role));
+    }
+    Ok(parsed)
+}
+
+/// Validate a project role token against the pinned vocabulary.
+fn parse_project_role(role: &str) -> Result<&'static str, CliError> {
+    buzz_core::kind::PROJECT_ROLES
+        .iter()
+        .find(|candidate| **candidate == role)
+        .copied()
+        .ok_or_else(|| {
+            CliError::Usage(format!(
+                "member role must be one of {:?} (got {role:?})",
+                buzz_core::kind::PROJECT_ROLES
+            ))
+        })
+}
+
+/// Validate a member pubkey: exactly 64 lowercase hex characters (the relay
+/// gate compares byte-exact, so uppercase would silently never match).
+fn validate_member_pubkey(pubkey: &str) -> Result<(), CliError> {
+    if pubkey.len() != 64
+        || !pubkey
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(CliError::Usage(format!(
+            "member pubkey must be a 64-character lowercase hex string: {pubkey}"
+        )));
+    }
+    Ok(())
+}
+
+/// Build the canonical project coordinate `30621:<owner>:<slug>` a membership
+/// op or roster read is scoped to. Owner defaults to the caller.
+fn membership_coordinate(
+    client: &BuzzClient,
+    slug: &str,
+    owner: Option<&str>,
+) -> Result<String, CliError> {
+    validate_project_slug(slug)?;
+    let owner_hex = match owner {
+        Some(owner) => {
+            validate_member_pubkey(owner)?;
+            owner.to_string()
+        }
+        None => client.keys().public_key().to_hex(),
+    };
+    Ok(format!("{KIND_PROJECT}:{owner_hex}:{slug}"))
+}
+
+/// Publish a kind 9010 put-member op: add a member or change their role.
+///
+/// Shared by `add-member` and `set-role` — the relay treats a re-put of an
+/// existing member as a role change.
+pub async fn cmd_put_member(
+    client: &BuzzClient,
+    slug: &str,
+    pubkey: &str,
+    role: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
+    validate_member_pubkey(pubkey)?;
+    let role = parse_project_role(role)?;
+    let coordinate = membership_coordinate(client, slug, owner)?;
+
+    let tags = vec![
+        make_tag(&["a", &coordinate])?,
+        make_tag(&["p", pubkey, "", role])?,
+    ];
+    let builder = EventBuilder::new(Kind::Custom(KIND_PROJECT_PUT_MEMBER as u16), "").tags(tags);
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    println!(
+        "{}",
+        parse_write_response(&raw, "membership op was already applied")?
+    );
+    Ok(())
+}
+
+/// Publish a kind 9011 remove-member op.
+pub async fn cmd_remove_member(
+    client: &BuzzClient,
+    slug: &str,
+    pubkey: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
+    validate_member_pubkey(pubkey)?;
+    let coordinate = membership_coordinate(client, slug, owner)?;
+
+    let tags = vec![make_tag(&["a", &coordinate])?, make_tag(&["p", pubkey])?];
+    let builder = EventBuilder::new(Kind::Custom(KIND_PROJECT_REMOVE_MEMBER as u16), "").tags(tags);
+    let event = client.sign_event(builder)?;
+    let raw = client.submit_event(event).await?;
+    println!(
+        "{}",
+        parse_write_response(&raw, "membership op was already applied")?
+    );
+    Ok(())
+}
+
+/// Extract `(pubkey, role)` pairs from `["p", <hex>, <hint>, <role>]` tags in
+/// a raw event JSON value. A missing or unknown role falls back to
+/// `collaborator` — the legacy meaning of a role-less invite.
+fn roster_from_event_json(event: &serde_json::Value) -> Vec<(String, String)> {
+    let Some(tags) = event.get("tags").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    tags.iter()
+        .filter_map(|tag| {
+            let parts = tag.as_array()?;
+            if parts.first()?.as_str()? != "p" {
+                return None;
+            }
+            let pubkey = parts.get(1)?.as_str()?.to_string();
+            let role = parts
+                .get(3)
+                .and_then(serde_json::Value::as_str)
+                .filter(|role| buzz_core::kind::is_valid_project_role(role))
+                .unwrap_or(PROJECT_ROLE_COLLABORATOR)
+                .to_string();
+            Some((pubkey, role))
+        })
+        .collect()
+}
+
+/// `buzz projects members` — print the authoritative roster as
+/// `[{pubkey, role}]`.
+///
+/// Reads the latest relay-signed kind:39010 projection for the coordinate;
+/// when none exists (the roster is still head-sourced) falls back to the
+/// head's own `p` tags, where a role-less invite is a legacy collaborator.
+pub async fn cmd_members(
+    client: &BuzzClient,
+    slug: &str,
+    owner: Option<&str>,
+) -> Result<(), CliError> {
+    let coordinate = membership_coordinate(client, slug, owner)?;
+
+    let filter = serde_json::json!({
+        "kinds": [KIND_PROJECT_MEMBERS],
+        "#d": [coordinate],
+        "limit": 1,
+    });
+    let raw = client.query(&filter).await?;
+    let mut projections: Vec<serde_json::Value> = serde_json::from_str(&raw)
+        .map_err(|e| CliError::Other(format!("failed to parse relay response: {e}")))?;
+    projections.sort_by_key(|event| {
+        std::cmp::Reverse(event.get("created_at").and_then(serde_json::Value::as_i64))
+    });
+
+    let roster = match projections.first() {
+        Some(projection) => roster_from_event_json(projection),
+        None => {
+            // Head-sourced roster: no membership op has been accepted yet.
+            let head = fetch_project(client, slug, owner)
+                .await?
+                .ok_or_else(|| CliError::NotFound(format!("project {slug:?} not found")))?;
+            let head_json = serde_json::json!({
+                "tags": head.tags.iter().map(|t| t.as_slice().to_vec()).collect::<Vec<_>>(),
+            });
+            roster_from_event_json(&head_json)
+        }
+    };
+
+    let output: Vec<serde_json::Value> = roster
+        .iter()
+        .map(|(pubkey, role)| serde_json::json!({ "pubkey": pubkey, "role": role }))
+        .collect();
+    println!("{}", serde_json::Value::Array(output));
     Ok(())
 }
 
@@ -593,6 +822,8 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
             description,
             channel,
             visibility,
+            access,
+            member,
         } => {
             cmd_create(
                 client,
@@ -602,6 +833,8 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
                 description.as_deref(),
                 channel.as_deref(),
                 visibility.map(|v| v.as_str()),
+                access.as_str(),
+                &member,
             )
             .await
         }
@@ -619,6 +852,7 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
             clear_channel,
             visibility,
             clear_visibility,
+            access,
         } => {
             cmd_update(
                 client,
@@ -631,10 +865,29 @@ pub async fn dispatch(cmd: crate::ProjectsCmd, client: &BuzzClient) -> Result<()
                 clear_channel,
                 visibility.map(|v| v.as_str()),
                 clear_visibility,
+                access.map(|a| a.as_str()),
             )
             .await
         }
         ProjectsCmd::Delete { slug } => cmd_delete(client, &slug).await,
+        ProjectsCmd::AddMember {
+            slug,
+            pubkey,
+            role,
+            owner,
+        } => cmd_put_member(client, &slug, &pubkey, role.as_str(), owner.as_deref()).await,
+        ProjectsCmd::RemoveMember {
+            slug,
+            pubkey,
+            owner,
+        } => cmd_remove_member(client, &slug, &pubkey, owner.as_deref()).await,
+        ProjectsCmd::SetRole {
+            slug,
+            pubkey,
+            role,
+            owner,
+        } => cmd_put_member(client, &slug, &pubkey, role.as_str(), owner.as_deref()).await,
+        ProjectsCmd::Members { slug, owner } => cmd_members(client, &slug, owner.as_deref()).await,
     }
 }
 
@@ -1077,6 +1330,7 @@ mod tests {
             None, false, // description / clear_description
             None, false, // channel / clear_channel
             None, false, // visibility / clear_visibility
+            None,  // access
         )
         .await
         .expect_err("empty update must fail");
@@ -1111,6 +1365,8 @@ mod tests {
             None,
             None,
             Some("chartreuse"),
+            "private",
+            &[],
         )
         .await
         .expect_err("invalid visibility must fail");
@@ -1133,6 +1389,8 @@ mod tests {
             None,
             None,
             None,
+            "private",
+            &[],
         )
         .await
         .expect_err("overlong name must fail");
@@ -1154,6 +1412,8 @@ mod tests {
             None,
             None,
             None,
+            "private",
+            &[],
         )
         .await
         .expect_err("malformed repo must fail");
@@ -1205,6 +1465,8 @@ mod tests {
             None,
             None,
             None,
+            "private",
+            &[],
         )
         .await
         .expect_err("duplicate repo must fail");
@@ -1232,6 +1494,127 @@ mod tests {
             matches!(err, CliError::Usage(_)),
             "expected CliError::Usage for duplicate repo on add-repo, got {err:?}"
         );
+    }
+
+    // ── parse_member_args (`--member <pubkey>[:role]`) ────────────────────────
+
+    #[test]
+    fn parse_member_args_defaults_role_to_collaborator() {
+        let member = "c".repeat(64);
+        let parsed = parse_member_args(std::slice::from_ref(&member), OWNER_HEX).unwrap();
+        assert_eq!(parsed, vec![(member, PROJECT_ROLE_COLLABORATOR)]);
+    }
+
+    #[test]
+    fn parse_member_args_accepts_explicit_roles() {
+        for role in ["owner", "collaborator", "viewer"] {
+            let member = format!("{}:{role}", "c".repeat(64));
+            let parsed = parse_member_args(&[member], OWNER_HEX).unwrap();
+            assert_eq!(parsed[0].1, role);
+        }
+    }
+
+    #[test]
+    fn parse_member_args_rejects_unknown_role() {
+        let member = format!("{}:admin", "c".repeat(64));
+        let err = parse_member_args(&[member], OWNER_HEX).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_member_args_rejects_uppercase_and_short_pubkeys() {
+        for bad in ["C".repeat(64), "c".repeat(63), "not-hex".to_string()] {
+            let err = parse_member_args(&[bad], OWNER_HEX).unwrap_err();
+            assert!(matches!(err, CliError::Usage(_)));
+        }
+    }
+
+    #[test]
+    fn parse_member_args_rejects_the_caller() {
+        let err = parse_member_args(&[OWNER_HEX.to_string()], OWNER_HEX).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_member_args_rejects_duplicates_across_role_spellings() {
+        let plain = "c".repeat(64);
+        let roled = format!("{plain}:viewer");
+        let err = parse_member_args(&[plain, roled], OWNER_HEX).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    // ── roster_from_event_json ────────────────────────────────────────────────
+
+    #[test]
+    fn roster_from_event_json_reads_role_element_four() {
+        let event = serde_json::json!({
+            "tags": [
+                ["d", "coord"],
+                ["p", "a".repeat(64), "", "owner"],
+                ["p", "b".repeat(64), "", "viewer"],
+            ]
+        });
+        assert_eq!(
+            roster_from_event_json(&event),
+            vec![
+                ("a".repeat(64), "owner".to_string()),
+                ("b".repeat(64), "viewer".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn roster_from_event_json_defaults_missing_or_unknown_role_to_collaborator() {
+        let event = serde_json::json!({
+            "tags": [
+                ["p", "a".repeat(64)],
+                ["p", "b".repeat(64), "wss://relay"],
+                ["p", "c".repeat(64), "", "mystery-role"],
+            ]
+        });
+        let roster = roster_from_event_json(&event);
+        assert_eq!(roster.len(), 3);
+        assert!(roster.iter().all(|(_, role)| role == "collaborator"));
+    }
+
+    // ── membership_coordinate ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn membership_coordinate_defaults_owner_to_caller() {
+        let client = discard_client();
+        let caller = client.keys().public_key().to_hex();
+        let coord = membership_coordinate(&client, "platform", None).unwrap();
+        assert_eq!(coord, format!("30621:{caller}:platform"));
+    }
+
+    #[tokio::test]
+    async fn membership_coordinate_uses_explicit_owner_and_rejects_uppercase() {
+        let client = discard_client();
+        let coord = membership_coordinate(&client, "platform", Some(OWNER_HEX)).unwrap();
+        assert_eq!(coord, format!("30621:{OWNER_HEX}:platform"));
+
+        let upper = OWNER_HEX.to_uppercase();
+        assert!(membership_coordinate(&client, "platform", Some(&upper)).is_err());
+    }
+
+    // ── membership op input validation (no network) ───────────────────────────
+
+    #[tokio::test]
+    async fn put_member_invalid_role_returns_usage_before_any_network_call() {
+        let client = discard_client();
+        let err = cmd_put_member(&client, "my-slug", &"c".repeat(64), "admin", None)
+            .await
+            .expect_err("unknown role must fail");
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[tokio::test]
+    async fn remove_member_invalid_pubkey_returns_usage_before_any_network_call() {
+        let client = discard_client();
+        let err = cmd_remove_member(&client, "my-slug", "not-a-pubkey", None)
+            .await
+            .expect_err("malformed pubkey must fail");
+        assert!(matches!(err, CliError::Usage(_)));
     }
 
     // ── create collision guard ────────────────────────────────────────────────

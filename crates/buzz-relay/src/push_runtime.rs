@@ -88,11 +88,16 @@ pub async fn run_matcher(state: Arc<AppState>) {
     }
 }
 
-/// Per-batch state shared by every job: the community's active leases and
-/// the exact (channel, lease author) membership pairs the jobs can consult.
+/// Per-batch state shared by every job: the community's active leases, the
+/// exact (channel, lease author) membership pairs the jobs can consult, and —
+/// only when the batch carries NIP-34 repo-surface events — each lease
+/// author's hidden-repo names (NIP-MP access extension phase 2).
 struct MatchContext {
     leases: Vec<buzz_db::push::MatchLease>,
     memberships: std::collections::HashSet<(uuid::Uuid, Vec<u8>)>,
+    /// Lease author → their hidden-repo set. Empty map when the batch has no
+    /// git-gated events (the common case; no lookups are issued).
+    hidden_repos: std::collections::HashMap<Vec<u8>, buzz_db::git_repo::HiddenRepos>,
 }
 
 async fn load_match_context(
@@ -116,9 +121,32 @@ async fn load_match_context(
         .await?
         .into_iter()
         .collect();
+    // A push wake matched against a private project's repo event would leak
+    // that project's activity to an outsider's device, so resolve each lease
+    // author's hidden set — but only for batches that actually carry
+    // git-gated events (repo events are a sliver of push traffic).
+    let mut hidden_repos = std::collections::HashMap::new();
+    let batch_has_git_events = batch.jobs.iter().any(|job| {
+        buzz_core::kind::is_git_project_gated_kind(buzz_core::kind::event_kind_u32(
+            &job.event.event,
+        ))
+    });
+    if batch_has_git_events {
+        for lease in &leases {
+            if hidden_repos.contains_key(&lease.author) {
+                continue;
+            }
+            let hidden = state
+                .db
+                .hidden_repos_for_reader(batch.community, &lease.author)
+                .await?;
+            hidden_repos.insert(lease.author.clone(), hidden);
+        }
+    }
     Ok(MatchContext {
         leases,
         memberships,
+        hidden_repos,
     })
 }
 
@@ -226,6 +254,20 @@ fn match_job(
         let author_hex = hex::encode(&lease.author);
         if !reader_authorized_for_event(&job.event.event, &author_hex) {
             continue;
+        }
+        // Private-project repo events (NIP-MP phase 2): never wake a device
+        // whose owner may not see the repo. The map is populated only for
+        // batches carrying git-gated events; `get` misses mean "nothing
+        // hidden" for non-git batches.
+        if let Some(hidden) = context.hidden_repos.get(&lease.author) {
+            if buzz_core::kind::repo_event_hidden_from(
+                &job.event.event,
+                &author_hex,
+                &hidden.names,
+                &hidden.project_coordinates,
+            ) {
+                continue;
+            }
         }
         if let Some(channel) = job.event.channel_id {
             if !context

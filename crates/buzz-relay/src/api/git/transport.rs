@@ -454,8 +454,12 @@ fn hydrate_error_to_response(owner: &str, repo: &str, err: HydrateError) -> Resp
 /// 1. current live kind:30617 by `(community, owner pubkey from the URL,
 ///    d = canonical repo name)` — soft-deleted/replaced announcements do not
 ///    resolve;
-/// 2. its `buzz-channel` tag → channel UUID;
-/// 3. [`buzz_db::Db::get_member_role`] for the caller — a read is allowed
+/// 2. its `["project", …]` back-reference (NIP-MP access extension phase 2):
+///    when it names a **private** project, the project's owner and invited
+///    members are allowed immediately — an additive grant so inviting
+///    someone to a private project lets them clone its code;
+/// 3. its `buzz-channel` tag → channel UUID;
+/// 4. [`buzz_db::Db::get_member_role`] for the caller — a read is allowed
 ///    only on `Ok(Some(role))` with a role the relay recognizes.
 ///
 /// Fail-closed: missing/deleted announcement, invalid owner, missing or
@@ -508,6 +512,30 @@ async fn authorize_git_read(
             return Err(denied());
         }
     };
+
+    // NIP-MP access extension phase 2: a repo whose announcement carries a
+    // `["project", …]` back-reference into a *private* project is readable by
+    // that project's owner and invited members even without bound-channel
+    // membership — inviting someone to a private project is supposed to let
+    // them clone its code. This is a purely additive grant layered ABOVE the
+    // channel gate: explicit channel members keep their access (the phase-1
+    // consent rule), pushes still authorize exclusively through the policy
+    // endpoint's channel roles, and a lookup failure simply falls through to
+    // the channel gate (never widens access). Membership in a public/unknown
+    // project grants nothing — `is_private_project_member` is a positive
+    // grant against private ACL rows only.
+    if let Some(coordinate) = buzz_core::kind::repo_project_ref(&repo_event.event) {
+        match db
+            .is_private_project_member(community, &coordinate, &caller.to_bytes())
+            .await
+        {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => {
+                error!(repo = %repo_name, error = %e, "git read gate: project member lookup failed (fall through to channel gate)");
+            }
+        }
+    }
 
     let channel_id = match resolve_repo_binding(&repo_event.event) {
         RepoBinding::Bound(id) => id,

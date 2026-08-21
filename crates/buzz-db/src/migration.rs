@@ -625,7 +625,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 31);
+        assert_eq!(migrations.len(), 34);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1044,6 +1044,67 @@ mod tests {
         let project_ref = migrations[30].sql.as_str();
         assert!(project_ref.contains("ALTER TABLE channels ADD COLUMN project_ref"));
         assert!(!migrations[0].sql.as_str().contains("project_ref"));
+
+        // Project ACL projection (NIP-MP Buzz access extension): additive
+        // migration, its own version — same brownfield checksum rule. The
+        // LWW guard and the members CASCADE are load-bearing for the private-
+        // project read gate, so their shapes are pinned here.
+        assert_eq!(migrations[31].version, 32);
+        let project_acl = migrations[31].sql.as_str();
+        assert!(project_acl.contains("CREATE TABLE project_acl"));
+        assert!(project_acl.contains("CREATE TABLE project_acl_members"));
+        assert!(project_acl.contains("CHECK (visibility IN ('public', 'private'))"));
+        assert!(project_acl.contains("ON DELETE CASCADE"));
+        assert!(project_acl.contains("idx_project_acl_coordinate"));
+        assert!(project_acl.contains("idx_project_acl_members_pubkey"));
+        assert!(
+            project_acl.contains("WHERE EXCLUDED.head_created_at >= project_acl.head_created_at")
+        );
+        assert!(!migrations[0].sql.as_str().contains("project_acl"));
+
+        // Repo → project link projection (NIP-MP access extension phase 2):
+        // additive migration, its own version. The LWW guard column and the
+        // partial index back the hidden-repo read gate, so they are pinned.
+        assert_eq!(migrations[32].version, 33);
+        let repo_project_ref = migrations[32].sql.as_str();
+        assert!(repo_project_ref.contains("ALTER TABLE git_repo_names ADD COLUMN project_ref"));
+        assert!(repo_project_ref.contains("ADD COLUMN head_created_at BIGINT NOT NULL DEFAULT 0"));
+        assert!(repo_project_ref.contains("idx_git_repo_names_project_ref"));
+        assert!(!migrations[0].sql.as_str().contains("git_repo_names"));
+
+        // Session-transport channel type: located by content, not index, so
+        // these assertions survive the integration renumbering that shifts
+        // this branch's migrations when upstream claims version numbers.
+        let transport_type = migrations
+            .iter()
+            .find(|migration| {
+                migration
+                    .sql
+                    .as_str()
+                    .contains("ADD VALUE IF NOT EXISTS 'transport'")
+            })
+            .expect("transport channel_type migration");
+        let transport_backfill = migrations
+            .iter()
+            .find(|migration| {
+                migration
+                    .sql
+                    .as_str()
+                    .contains("SET channel_type = 'transport'")
+            })
+            .expect("transport backfill migration");
+        // The enum value must exist (and be committed) before the backfill
+        // uses it — Postgres cannot use a value added in the same transaction.
+        assert!(transport_backfill.version > transport_type.version);
+        // The backfill keys on actual coding-session traffic plus a project
+        // ref — never on the display name, which a person could reuse.
+        let backfill_sql = strip_sql_comments(transport_backfill.sql.as_str());
+        assert!(backfill_sql.contains("kind BETWEEN 44220 AND 44225"));
+        assert!(backfill_sql.contains("project_ref IS NOT NULL"));
+        assert!(backfill_sql.contains("visibility = 'private'"));
+        assert!(!backfill_sql.contains(".name"));
+        assert!(include_str!("../../../schema/schema.sql")
+            .contains("'stream', 'forum', 'dm', 'workflow', 'transport'"));
     }
 
     #[test]

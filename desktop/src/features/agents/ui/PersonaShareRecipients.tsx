@@ -15,6 +15,7 @@ import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { SelectedRecipientChip } from "@/features/profile/ui/SelectedRecipientChip";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import type { UserSearchResult } from "@/shared/api/types";
+import { parsePubkeyInput } from "@/shared/lib/nostrUtils";
 import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { Popover, PopoverAnchor, PopoverContent } from "@/shared/ui/popover";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -30,15 +31,23 @@ export function formatShareRecipientName(user: UserSearchResult) {
 }
 
 export function PersonaShareRecipients({
+  allowDirectPubkeyEntry = false,
   disabled,
   excludedPubkeys = [],
+  limit = RECIPIENT_LIMIT,
   onSelectionChange,
   open,
   selectedUsers,
   testIdPrefix = "persona-share",
 }: {
+  /** Offer a synthetic "by public key" result when the search text parses as
+   * a hex pubkey or npub — for inviting someone with no kind:0 profile on the
+   * relay yet (mirrors `ChannelMemberInviteCard`'s direct-invite behavior). */
+  allowDirectPubkeyEntry?: boolean;
   disabled: boolean;
   excludedPubkeys?: readonly string[];
+  /** Maximum number of selectable recipients. */
+  limit?: number;
   onSelectionChange: (users: UserSearchResult[]) => void;
   open: boolean;
   selectedUsers: UserSearchResult[];
@@ -61,14 +70,14 @@ export function PersonaShareRecipients({
   );
   const userSearchQuery = useInfiniteUserSearchQuery(deferredSearchQuery, {
     allowEmpty: true,
-    enabled: open && selectedUsers.length < RECIPIENT_LIMIT,
+    enabled: open && selectedUsers.length < limit,
     limit: 50,
   });
   const userSearchResults = useFlattenedUserSearchResults(userSearchQuery.data);
+  const currentPubkey = identityQuery.data?.pubkey
+    ? normalizePubkey(identityQuery.data.pubkey)
+    : null;
   const searchResults = React.useMemo(() => {
-    const currentPubkey = identityQuery.data?.pubkey
-      ? normalizePubkey(identityQuery.data.pubkey)
-      : null;
     const candidates = userSearchResults.filter((user) => {
       const pubkey = normalizePubkey(user.pubkey);
       return (
@@ -88,19 +97,58 @@ export function PersonaShareRecipients({
       query: deferredSearchQuery,
     });
   }, [
+    currentPubkey,
     deferredSearchQuery,
     excludedPubkeySet,
-    identityQuery.data?.pubkey,
     isArchived,
     selectedPubkeys,
     userSearchResults,
   ]);
+  // Someone without a kind:0 profile is invisible to search — offer a
+  // synthetic result so they can still be added by pubkey/npub. Suppressed
+  // against `searchResults` (the ranked, *displayed* list), not the raw
+  // `userSearchResults` — the fuzzy name ranker can legitimately drop a
+  // pubkey-matched hit (a raw hex string rarely fuzzy-matches a display
+  // name), and checking the raw list would then hide the person from both
+  // the ranked results and this synthetic fallback.
+  const directPubkeyUser = React.useMemo<UserSearchResult | null>(() => {
+    if (!allowDirectPubkeyEntry) return null;
+    const pubkey = parsePubkeyInput(deferredSearchQuery);
+    if (
+      pubkey === null ||
+      pubkey === currentPubkey ||
+      excludedPubkeySet.has(pubkey) ||
+      selectedPubkeys.has(pubkey) ||
+      searchResults.some((user) => normalizePubkey(user.pubkey) === pubkey)
+    ) {
+      return null;
+    }
+    return {
+      pubkey,
+      displayName: null,
+      avatarUrl: null,
+      nip05Handle: null,
+      ownerPubkey: null,
+      isAgent: false,
+    };
+  }, [
+    allowDirectPubkeyEntry,
+    currentPubkey,
+    deferredSearchQuery,
+    excludedPubkeySet,
+    searchResults,
+    selectedPubkeys,
+  ]);
   const isSearchSettling =
     userSearchQuery.isLoading || searchQuery.trim() !== deferredSearchQuery;
-  const visibleSearchResults = isSearchSettling ? [] : searchResults;
+  const visibleSearchResults = isSearchSettling
+    ? []
+    : directPubkeyUser
+      ? [directPubkeyUser, ...searchResults]
+      : searchResults;
   const handleDirectoryScroll = useUserSearchFetchMoreOnScroll(
     userSearchQuery,
-    selectedUsers.length < RECIPIENT_LIMIT,
+    selectedUsers.length < limit,
   );
 
   React.useEffect(() => {
@@ -111,7 +159,7 @@ export function PersonaShareRecipients({
   }, [open]);
 
   function selectUser(user: UserSearchResult) {
-    if (selectedUsers.length >= RECIPIENT_LIMIT) return;
+    if (selectedUsers.length >= limit) return;
     onSelectionChange([...selectedUsers, user]);
     setSearchQuery("");
     setIsPickerOpen(true);
@@ -178,7 +226,7 @@ export function PersonaShareRecipients({
                 autoCorrect="off"
                 className="h-7 min-w-16 flex-1 border-0 bg-transparent p-0 text-sm outline-hidden placeholder:text-muted-foreground/55"
                 data-testid={`${testIdPrefix}-recipient-search`}
-                disabled={disabled || selectedUsers.length >= RECIPIENT_LIMIT}
+                disabled={disabled || selectedUsers.length >= limit}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
                   setIsPickerOpen(true);
@@ -213,7 +261,7 @@ export function PersonaShareRecipients({
                   selectUser(selection);
                 }}
                 placeholder={
-                  selectedUsers.length >= RECIPIENT_LIMIT
+                  selectedUsers.length >= limit
                     ? "Recipient limit reached"
                     : selectedUsers.length === 0
                       ? "Search people"
@@ -287,6 +335,11 @@ export function PersonaShareRecipients({
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">
                     {formatShareRecipientName(user)}
                   </span>
+                  {directPubkeyUser?.pubkey === user.pubkey ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      by public key
+                    </span>
+                  ) : null}
                 </button>
               ))
             ) : (

@@ -1020,6 +1020,21 @@ async fn query_events_authed(
     )
     .await?;
 
+    // NIP-MP access extension phase 2: the reader's hidden-repo set, resolved
+    // once per request (10s cache) when any filter could match a git-gated
+    // kind. Empty disables all git gating below. Fails closed.
+    let hidden_repos = if filters
+        .iter()
+        .any(crate::handlers::req::filter_can_match_git_gated_kinds)
+    {
+        state
+            .hidden_repos_cached(tenant.community(), &pubkey_bytes)
+            .await
+            .map_err(|e| internal_error(&format!("hidden-repo lookup: {e}")))?
+    } else {
+        Arc::new(buzz_db::git_repo::HiddenRepos::default())
+    };
+
     if filters.iter().any(|f| f.search.is_some()) {
         if has_mixed_search_filters(&filters) {
             return Err(api_error(
@@ -1035,6 +1050,7 @@ async fn query_events_authed(
             tenant,
             &authed_pubkey_hex,
             &pubkey_bytes,
+            &hidden_repos,
         )
         .await;
     }
@@ -1148,6 +1164,17 @@ async fn query_events_authed(
                 if !buzz_core::filter::reader_authorized_for_event(&se.event, &authed_pubkey_hex) {
                     continue;
                 }
+                // Same defense-in-depth for private-project repo events
+                // (NIP-MP phase 2) — feed allowlists exclude git kinds today,
+                // but a future allowlist change must not reopen the leak.
+                if buzz_core::kind::repo_event_hidden_from(
+                    &se.event,
+                    &authed_pubkey_hex,
+                    &hidden_repos.names,
+                    &hidden_repos.project_coordinates,
+                ) {
+                    continue;
+                }
                 if let Ok(v) = serde_json::to_value(&se.event) {
                     events.push(v);
                     feed_count += 1;
@@ -1214,6 +1241,15 @@ async fn query_events_authed(
             if !buzz_core::filter::reader_authorized_for_event(&se.event, &authed_pubkey_hex) {
                 continue;
             }
+            // Private-project repo events (NIP-MP phase 2), same rationale.
+            if buzz_core::kind::repo_event_hidden_from(
+                &se.event,
+                &authed_pubkey_hex,
+                &hidden_repos.names,
+                &hidden_repos.project_coordinates,
+            ) {
+                continue;
+            }
             if let Ok(v) = serde_json::to_value(&se.event) {
                 events.push(v);
             }
@@ -1254,6 +1290,20 @@ async fn query_events_authed(
         // newer private events does not starve older shared ones off the page.
         if crate::handlers::req::filter_can_match_shared_gated_kinds(filter) {
             query.shared_gated_reader = Some(pubkey_bytes.clone());
+        }
+        // Private-project visibility pushdown, same starvation rationale.
+        if crate::handlers::req::filter_can_match_project_kind(filter) {
+            query.project_gated_reader = Some(pubkey_bytes.clone());
+        }
+        // Private-project *repo* pushdown (NIP-MP phase 2) — armed only when
+        // this reader actually has hidden repos.
+        if !hidden_repos.is_empty()
+            && crate::handlers::req::filter_can_match_git_gated_kinds(filter)
+        {
+            query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                reader: pubkey_bytes.clone(),
+                hidden: (*hidden_repos).clone(),
+            });
         }
 
         match extract_before_id(raw) {
@@ -1315,10 +1365,15 @@ async fn query_events_authed(
                     }
                     // Result-level read auth: never hand a viewer-private snapshot
                     // (kind:30622) to anyone but its owner, even via kindless `ids`.
-                    // Also enforces author-only kinds (30300/30350) and the persona
-                    // shared-gate (kind:30175 without ["shared","true"]). Single call
-                    // covers all three gated event classes.
-                    if !crate::handlers::req::event_visible_to_reader(&se.event, &pubkey_bytes) {
+                    // Also enforces author-only kinds (30300/30350), the persona
+                    // shared-gate (kind:30175 without ["shared","true"]), and
+                    // private-project repo events. Single call covers all gated
+                    // event classes.
+                    if !crate::handlers::req::event_visible_to_reader(
+                        &se.event,
+                        &pubkey_bytes,
+                        &hidden_repos,
+                    ) {
                         continue;
                     }
                     if let Ok(v) = serde_json::to_value(&se.event) {
@@ -1497,6 +1552,19 @@ async fn count_events_authed(
     )
     .await?;
 
+    // NIP-MP access extension phase 2: reader's hidden-repo set (see /query).
+    let hidden_repos = if filters
+        .iter()
+        .any(crate::handlers::req::filter_can_match_git_gated_kinds)
+    {
+        state
+            .hidden_repos_cached(tenant.community(), &pubkey_bytes)
+            .await
+            .map_err(|e| internal_error(&format!("hidden-repo lookup: {e}")))?
+    } else {
+        Arc::new(buzz_db::git_repo::HiddenRepos::default())
+    };
+
     let mut total: u64 = 0;
     for filter in &filters {
         let needs_author_only_filtering =
@@ -1515,6 +1583,14 @@ async fn count_events_authed(
         // would over-count foreign unshared events (existence leak).
         let needs_shared_gate_filtering =
             crate::handlers::req::filter_can_match_shared_gated_kinds(filter);
+        // Private kind:30621 heads must not be counted for readers who are
+        // neither the author nor invited — mirrors the WS COUNT handler.
+        let needs_project_gate_filtering =
+            crate::handlers::req::filter_can_match_project_kind(filter);
+        // Private-project repo events (NIP-MP phase 2) — mirrors the WS COUNT
+        // handler; only relevant when this reader actually has hidden repos.
+        let needs_git_gate_filtering = !hidden_repos.is_empty()
+            && crate::handlers::req::filter_can_match_git_gated_kinds(filter);
 
         // If filter targets a specific channel, verify access.
         if crate::handlers::req::extract_channel_ids_from_filters(std::slice::from_ref(filter))
@@ -1550,6 +1626,15 @@ async fn count_events_authed(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
+            if needs_git_gate_filtering {
+                query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    hidden: (*hidden_repos).clone(),
+                });
+            }
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
                     && authors
@@ -1560,6 +1645,8 @@ async fn count_events_authed(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
+                && !needs_git_gate_filtering
             {
                 match state.db.count_events_routed("bridge_count", &query).await {
                     Ok(n) => total += n as u64,
@@ -1592,6 +1679,7 @@ async fn count_events_authed(
                             if !crate::handlers::req::event_visible_to_reader(
                                 &se.event,
                                 &pubkey_bytes,
+                                &hidden_repos,
                             ) {
                                 continue;
                             }
@@ -1619,6 +1707,15 @@ async fn count_events_authed(
             if needs_shared_gate_filtering {
                 query.shared_gated_reader = Some(pubkey_bytes.clone());
             }
+            if needs_project_gate_filtering {
+                query.project_gated_reader = Some(pubkey_bytes.clone());
+            }
+            if needs_git_gate_filtering {
+                query.git_gated_reader = Some(buzz_db::event::GitGatedReader {
+                    reader: pubkey_bytes.clone(),
+                    hidden: (*hidden_repos).clone(),
+                });
+            }
 
             let author_is_self = filter.authors.as_ref().is_some_and(|authors| {
                 !authors.is_empty()
@@ -1630,6 +1727,8 @@ async fn count_events_authed(
                 && (!needs_author_only_filtering || author_is_self)
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
+                && !needs_project_gate_filtering
+                && !needs_git_gate_filtering
             {
                 query.limit = None;
                 match state.db.count_events_routed("bridge_count", &query).await {
@@ -1662,6 +1761,7 @@ async fn count_events_authed(
                             if !crate::handlers::req::event_visible_to_reader(
                                 &se.event,
                                 &pubkey_bytes,
+                                &hidden_repos,
                             ) {
                                 continue;
                             }
@@ -1717,6 +1817,7 @@ fn search_hit_accepted(
 
 /// Handle search filters by routing to Postgres FTS, then fetching full events
 /// from DB. Supports a bridge-only `page` extension over the FTS result set.
+#[allow(clippy::too_many_arguments)]
 async fn handle_bridge_search(
     state: &AppState,
     raw_filters: &[Value],
@@ -1725,6 +1826,7 @@ async fn handle_bridge_search(
     tenant: &buzz_core::tenant::TenantContext,
     reader_pubkey_hex: &str,
     pubkey_bytes: &[u8],
+    hidden_repos: &buzz_db::git_repo::HiddenRepos,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Bridge always includes global (channel-less) events — same as WS with
     // full scopes. `None` means no accessible channels and no global access →
@@ -1837,13 +1939,18 @@ async fn handle_bridge_search(
                 continue;
             }
             // Defense-in-depth: apply the full per-event visibility gate, which
-            // covers author-only kinds, the persona shared-gate (kind:30175), and
-            // result-gated kinds. Kind:30175 is not in the FTS positive allowlist
-            // today (migration 8 indexes only 0,9,40002,45001,45003), so this
-            // branch cannot currently return unshared persona content — but the
-            // check here ensures that a future FTS allowlist change cannot silently
-            // reopen the bypass.
-            if !crate::handlers::req::event_visible_to_reader(&stored.event, pubkey_bytes) {
+            // covers author-only kinds, the persona shared-gate (kind:30175),
+            // result-gated kinds, and private-project repo events. Kind:30175
+            // is not in the FTS positive allowlist today (migration 8 indexes
+            // only 0,9,40002,45001,45003), so this branch cannot currently
+            // return unshared persona content — but the check here ensures
+            // that a future FTS allowlist change cannot silently reopen the
+            // bypass.
+            if !crate::handlers::req::event_visible_to_reader(
+                &stored.event,
+                pubkey_bytes,
+                hidden_repos,
+            ) {
                 continue;
             }
             // Dedup across filters.

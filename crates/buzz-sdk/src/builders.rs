@@ -1974,7 +1974,7 @@ pub fn build_unarchive_identity_request(
 // ─── NIP-MP: Multi-repo projects (kind:30621) ────────────────────────────────
 //
 //  Public surface:
-//  • `validate_project_envelope` — Layer A protocol validator (8 ingest rules)
+//  • `validate_project_envelope` — Layer A protocol validator (12 ingest rules)
 //  • `build_project_with_tags`   — Layer A raw builder (content + tags, no canonicalization)
 //  • `ProjectMemberCoord`        — parsed member coordinate + optional relay hint
 //  • `build_project`             — Layer B writer-policy builder
@@ -1993,6 +1993,11 @@ pub const PROJECT_CHANNEL_MAX: usize = 256;
 pub const PROJECT_VISIBILITY_MAX: usize = 256;
 /// Maximum number of `a` member tags per project event (checked before dedup).
 pub const PROJECT_MEMBER_CAP: usize = 64;
+/// Maximum byte length of a project `buzz-access` tag value.
+pub const PROJECT_ACCESS_MAX: usize = 256;
+/// Maximum number of invited-member `p` tags per project event (checked
+/// before per-tag work, same rationale as [`PROJECT_MEMBER_CAP`]).
+pub const PROJECT_INVITE_CAP: usize = 256;
 
 /// A validated NIP-MP member `a`-tag coordinate with an optional relay hint.
 ///
@@ -2076,8 +2081,9 @@ impl ProjectMemberCoord {
     }
 }
 
-/// **Layer A**: Validate a complete kind:30621 envelope against the 8 NIP-MP
-/// ingest rules.  This is the single source of protocol truth used by both
+/// **Layer A**: Validate a complete kind:30621 envelope against the 12 NIP-MP
+/// ingest rules (including the Buzz access extension).  This is the single
+/// source of protocol truth used by both
 /// `build_project_with_tags` (raw path) and `build_project` (policy path).
 ///
 /// Rules enforced (matches relay `buzz-db` ingest logic):
@@ -2091,9 +2097,23 @@ impl ProjectMemberCoord {
 /// 6. Member deduplication: coordinate equality only (hint ignored); any
 ///    coordinate that appears more than once is a duplicate.
 /// 7. Singleton metadata: each of `name`, `description`, `buzz-channel`,
-///    `buzz-visibility` appears at most once.
+///    `buzz-visibility`, `buzz-access` appears at most once.
 /// 8. Metadata byte lengths: `name` ≤256, `description` ≤2048,
-///    `buzz-channel` ≤256, `buzz-visibility` ≤256.
+///    `buzz-channel` ≤256, `buzz-visibility` ≤256, `buzz-access` ≤256.
+/// 9. Access value: if present, `buzz-access` must be `"private"` or
+///    `"public"` — an unrecognized value is rejected rather than silently
+///    falling open to public (fail closed). The community's shared default
+///    project (`d` = `"general"`) can never be private
+///    (rule `access-general-forced-public`).
+/// 10. Invite cap: raw count of every `p` tag ≤256 (checked before per-tag
+///     parsing, matching relay rule order).
+/// 11. Invite tag arity: every `p` tag has 2 to 4 elements — pubkey, optional
+///     relay hint, optional role (Buzz roles extension, mirroring the NIP-29
+///     39002 grammar). A present 4th element must be a pinned
+///     [`buzz_core::kind::PROJECT_ROLES`] value (rule `invite-role`); a
+///     role-less invite is a legacy collaborator.
+/// 12. Invite grammar + deduplication: each `p` value is a lowercase 64-hex
+///     pubkey; any pubkey that appears more than once is a duplicate.
 pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), SdkError> {
     // --- Rule 1 & 2: d tag ---
     let d_tags: Vec<&Tag> = tags.iter().filter(|t| tag_name(t) == Some("d")).collect();
@@ -2182,7 +2202,14 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
             "metadata-cardinality",
             "metadata-length",
         ),
+        (
+            buzz_core::kind::PROJECT_ACCESS_TAG,
+            PROJECT_ACCESS_MAX,
+            "metadata-cardinality",
+            "metadata-length",
+        ),
     ];
+    let mut buzz_access: Option<&str> = None;
     for (field, max_bytes, card_rule, len_rule) in singleton_fields {
         let matches: Vec<&Tag> = tags.iter().filter(|t| tag_name(t) == Some(field)).collect();
         if matches.len() > 1 {
@@ -2197,6 +2224,88 @@ pub fn validate_project_envelope(tags: &[Tag], _content: &str) -> Result<(), Sdk
                     "'{field}' tag exceeds {max_bytes} bytes (rule: {len_rule})"
                 )));
             }
+            if field == buzz_core::kind::PROJECT_ACCESS_TAG {
+                buzz_access = Some(val);
+            }
+        }
+    }
+
+    // --- Rule 9: access value (Buzz access extension) ---
+    // `buzz-access` is an access-control input, not a display hint — an
+    // unrecognized value must be rejected rather than silently falling open
+    // to public (fail closed), matching relay ingest.
+    if let Some(access) = buzz_access {
+        if access != buzz_core::kind::PROJECT_ACCESS_PRIVATE
+            && access != buzz_core::kind::PROJECT_ACCESS_PUBLIC
+        {
+            return Err(SdkError::InvalidInput(format!(
+                "project 'buzz-access' tag must be \"private\" or \"public\" (got {access:?}) (rule: access-value)"
+            )));
+        }
+        // The community's shared default project can never be private,
+        // mirroring relay ingest (`access-general-forced-public`).
+        if access == buzz_core::kind::PROJECT_ACCESS_PRIVATE
+            && d_val == buzz_core::kind::GENERAL_PROJECT_DTAG
+        {
+            return Err(SdkError::InvalidInput(
+                "the \"general\" project is the community's shared default and cannot be private \
+                 (rule: access-general-forced-public)"
+                    .into(),
+            ));
+        }
+    }
+
+    // --- Rules 10, 11, 12: invited-member `p` tags (Buzz access extension) ---
+    let p_tags: Vec<&Tag> = tags.iter().filter(|t| tag_name(t) == Some("p")).collect();
+
+    // Rule 10: invite cap (checked before per-tag work, matching member-cap order).
+    if p_tags.len() > PROJECT_INVITE_CAP {
+        return Err(SdkError::InvalidInput(format!(
+            "project exceeds invite cap of {PROJECT_INVITE_CAP} (got {}) (rule: invite-cap)",
+            p_tags.len()
+        )));
+    }
+
+    // Rule 11: invite tag arity — `["p", pubkey]` plus NIP-01's optional relay
+    // hint, plus an optional 4th role element (Buzz roles extension). A
+    // present role must be from the pinned vocabulary — a role typo must not
+    // silently grant or deny (mirrors relay ingest `invite-role`).
+    for p in &p_tags {
+        let parts = p.as_slice();
+        let len = parts.len();
+        if !(2..=4).contains(&len) {
+            return Err(SdkError::InvalidInput(format!(
+                "invited-member 'p' tag must have 2 to 4 elements (got {len}) (rule: invite-tag-arity)"
+            )));
+        }
+        if let Some(role) = parts.get(3) {
+            if !buzz_core::kind::is_valid_project_role(role.as_str()) {
+                return Err(SdkError::InvalidInput(format!(
+                    "invited-member role must be one of {:?} (got {role:?}) (rule: invite-role)",
+                    buzz_core::kind::PROJECT_ROLES
+                )));
+            }
+        }
+    }
+
+    // Rule 12: invite grammar + deduplication — lowercase 64-hex pubkeys only,
+    // same byte-exact-matching reason as member coordinates.
+    let mut seen_invites: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for p in &p_tags {
+        let invite = tag_value(p).unwrap_or("");
+        if invite.len() != 64
+            || !invite
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(SdkError::InvalidInput(format!(
+                "invited-member 'p' tag must be a lowercase 64-hex pubkey (got {invite:?}) (rule: invite-malformed)"
+            )));
+        }
+        if !seen_invites.insert(invite) {
+            return Err(SdkError::InvalidInput(format!(
+                "duplicate invited-member 'p' tag {invite:?} (rule: invite-duplicate)"
+            )));
         }
     }
 
@@ -4808,19 +4917,21 @@ mod tests {
     }
 
     #[test]
-    fn nip_mp_fixtures_all_31_cases_exercised() {
+    fn nip_mp_fixtures_all_cases_exercised() {
         const FIXTURE_JSON: &str = include_str!("../../../docs/nips/NIP-MP.fixtures.json");
 
         let data: serde_json::Value =
             serde_json::from_str(FIXTURE_JSON).expect("fixture JSON must parse");
         let cases = data["cases"].as_array().expect("cases must be array");
 
-        // Count gate: the spec says "required to test against this one file"
-        // with the exact count as-shipped.
+        // Count gate (tamper detection): if NIP-MP.fixtures.json gains or
+        // loses cases, this assert must be updated in the same change —
+        // otherwise new fixtures would silently sit unexercised by the
+        // accept/reject loop below. Keep this an exact-count assert.
         assert_eq!(
             cases.len(),
-            31,
-            "expected 31 fixture cases, got {} — was NIP-MP.fixtures.json edited?",
+            45,
+            "expected 45 fixture cases, got {} — was NIP-MP.fixtures.json edited?",
             cases.len()
         );
 
@@ -4864,7 +4975,7 @@ mod tests {
             }
         }
 
-        assert_eq!(accept_count, 11, "expected 11 accept cases");
-        assert_eq!(reject_count, 20, "expected 20 reject cases");
+        assert_eq!(accept_count, 16, "expected 16 accept cases");
+        assert_eq!(reject_count, 29, "expected 29 reject cases");
     }
 }

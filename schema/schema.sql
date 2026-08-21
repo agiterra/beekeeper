@@ -25,7 +25,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ── Custom types ──────────────────────────────────────────────────────────────
 
-CREATE TYPE channel_type AS ENUM ('stream', 'forum', 'dm', 'workflow');
+CREATE TYPE channel_type AS ENUM ('stream', 'forum', 'dm', 'workflow', 'transport');
 CREATE TYPE channel_visibility AS ENUM ('open', 'private');
 CREATE TYPE member_role AS ENUM ('owner', 'admin', 'member', 'guest', 'bot');
 CREATE TYPE workflow_status AS ENUM ('active', 'disabled', 'archived');
@@ -558,6 +558,50 @@ CREATE INDEX idx_reactions_pubkey ON reactions (community_id, pubkey);
 -- A reaction's source event id is unique within a community.
 CREATE UNIQUE INDEX idx_reactions_source_event ON reactions (community_id, reaction_event_id)
     WHERE reaction_event_id IS NOT NULL;
+
+-- ── Project ACL (NIP-MP Buzz access extension) ───────────────────────────────
+-- Conformance: project access rows filter by community before coordinate/pubkey
+-- matching. Store+project projection of kind:30621 heads (buzz-access level +
+-- invited-member p tags); see migrations/0030_project_acl.sql for the full
+-- rationale. One row per (community_id, owner, dtag); republish-latest by
+-- head_created_at. The accessible-channels query and the ingest write path
+-- join here to gate channels inside private projects.
+--
+-- Phase 2 (migration 0031): git_repo_names (migration 0002) gains
+-- `project_ref TEXT` + `head_created_at BIGINT` — the projected 30617
+-- `["project", …]` back-reference. The per-reader hidden-repo query joins
+-- git_repo_names.project_ref = project_acl.coordinate to gate the NIP-34
+-- repo event surface (30617/30618/1617/1618/1619/1621/1630-1633) and git
+-- smart-HTTP reads behind private projects.
+
+CREATE TABLE project_acl (
+    community_id    UUID   NOT NULL REFERENCES communities(id),
+    owner           BYTEA  NOT NULL,
+    dtag            TEXT   NOT NULL,
+    coordinate      TEXT   NOT NULL,
+    visibility      TEXT   NOT NULL DEFAULT 'public'
+                      CHECK (visibility IN ('public', 'private')),
+    head_created_at BIGINT NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (community_id, owner, dtag)
+);
+
+CREATE UNIQUE INDEX idx_project_acl_coordinate
+    ON project_acl (community_id, coordinate);
+
+CREATE TABLE project_acl_members (
+    community_id UUID  NOT NULL,
+    owner        BYTEA NOT NULL,
+    dtag         TEXT  NOT NULL,
+    pubkey       BYTEA NOT NULL,
+    PRIMARY KEY (community_id, owner, dtag, pubkey),
+    FOREIGN KEY (community_id, owner, dtag)
+        REFERENCES project_acl (community_id, owner, dtag)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_project_acl_members_pubkey
+    ON project_acl_members (community_id, pubkey);
 
 -- ── Pubkey allowlist ──────────────────────────────────────────────────────────
 -- Conformance: "Relay membership, pubkey allowlist, archived identities".

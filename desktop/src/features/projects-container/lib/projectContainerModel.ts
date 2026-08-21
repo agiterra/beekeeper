@@ -6,6 +6,42 @@ import {
   KIND_TEAM,
 } from "@/shared/constants/kinds";
 import type { RelayEvent } from "@/shared/api/types";
+import { parseEntityRole, type EntityRole } from "@/shared/lib/entityRoles";
+
+/** An invited project member: pubkey plus the role carried on the head/roster
+ * `p` tag. Role-less tags (legacy, pre-roles events) read as collaborator. */
+export type ProjectMember = {
+  pubkey: string;
+  role: EntityRole;
+};
+
+/**
+ * Normalizes a persisted `members` value of unknown vintage: pre-roles
+ * snapshots stored bare pubkey strings, current ones store `{pubkey, role}`.
+ * Anything unrecognized is dropped rather than failing the whole snapshot.
+ */
+export function normalizeProjectMemberEntries(value: unknown): ProjectMember[] {
+  if (!Array.isArray(value)) return [];
+  const members: ProjectMember[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      members.push({ pubkey: entry.toLowerCase(), role: "collaborator" });
+      continue;
+    }
+    if (typeof entry === "object" && entry !== null) {
+      const { pubkey, role } = entry as { pubkey?: unknown; role?: unknown };
+      if (typeof pubkey === "string" && pubkey.length > 0) {
+        members.push({
+          pubkey: pubkey.toLowerCase(),
+          role:
+            parseEntityRole(typeof role === "string" ? role : undefined) ??
+            "collaborator",
+        });
+      }
+    }
+  }
+  return members;
+}
 
 /**
  * A Buzz project container (kind:30621, NIP-MP) — a shared, owner-authored grouping
@@ -16,6 +52,12 @@ import type { RelayEvent } from "@/shared/api/types";
  * curated forward references from the project event itself; items created by
  * other members back-reference the project (repo `project` tag, channel
  * `project_ref`) and are unioned in at read time.
+ *
+ * `visibility`/`members` gate the container and its contents (relay-enforced):
+ * `visibility: "private"` restricts the project to the owner plus `members`
+ * (the event's `p` tags). Absent or non-"private" `buzz-access` reads as
+ * public — matches the relay's fail-open-to-public default for untagged
+ * events (see `PROJECT_ACCESS_TAG` in buzz-core's `kind.rs`).
  */
 export type ProjectContainer = {
   id: string;
@@ -28,10 +70,22 @@ export type ProjectContainer = {
   repoAddrs: string[];
   agentAddrs: string[];
   channelIds: string[];
+  visibility: "public" | "private";
+  /** Invited members (lowercased hex pubkeys + role), owner excluded — the
+   * owner is implicit and never appears in `p` tags. Head tags are only the
+   * roster until the first membership op; the authoritative read is the
+   * kind:39010 projection (see lib/projectMembers.ts). */
+  members: ProjectMember[];
 };
 
-/** Reserved dtag for the auto-created default project. */
+/** Reserved dtag for the auto-created default project. Always public — the
+ * relay never auto-privatizes it and the desktop write path guards it too. */
 export const GENERAL_PROJECT_DTAG = "general";
+
+/** Singleton tag carrying a project's access level. Absent ⇒ public. Distinct
+ * from `buzz-visibility` (listed/unlisted display filtering) — orthogonal,
+ * do not conflate. Mirrors buzz-core's `PROJECT_ACCESS_TAG`. */
+export const PROJECT_ACCESS_TAG = "buzz-access";
 
 /**
  * Canonicalizes a project coordinate: a `kind:owner:dtag` back-reference
@@ -63,6 +117,8 @@ export function makeLocalGeneral(): ProjectContainer {
     repoAddrs: [],
     agentAddrs: [],
     channelIds: [],
+    visibility: "public",
+    members: [],
   };
 }
 
@@ -78,6 +134,19 @@ export function displayProjectsWithGeneral(
     (project) => project.dtag === GENERAL_PROJECT_DTAG,
   );
   return hasGeneral ? projects : [makeLocalGeneral(), ...projects];
+}
+
+/** True when `pubkey` is the project owner or an invited member. Owner is
+ * implicit (never in `members`), so it's checked separately. */
+export function isProjectMember(
+  project: ProjectContainer,
+  pubkey: string,
+): boolean {
+  const normalized = pubkey.toLowerCase();
+  return (
+    normalized === project.owner ||
+    project.members.some((member) => member.pubkey === normalized)
+  );
 }
 
 export type ProjectMemberRef = {
@@ -125,6 +194,8 @@ function getAllTags(event: RelayEvent, name: string): string[] {
     .map((t) => t[1]);
 }
 
+const HEX64_REGEX = /^[0-9a-f]{64}$/;
+
 /**
  * Converts a kind:30621 project event into a `ProjectContainer`. Returns null
  * for events without a `d` tag (they cannot be addressed). Unknown-kind `a`
@@ -148,6 +219,28 @@ export function eventToProjectContainer(
       agentAddrs.push(value);
     }
   }
+  // Any value other than exactly "private" reads as public — matches the
+  // relay's fail-open default for untagged events. The relay itself rejects
+  // unknown values at ingest, so a malformed value here only reaches us via
+  // a foreign event we don't otherwise control.
+  const visibility: ProjectContainer["visibility"] =
+    getTag(event, PROJECT_ACCESS_TAG) === "private" ? "private" : "public";
+  // `p` tag arity is 2..=4: ["p", <hex>, <relay-hint>, <role>]. Role-less
+  // (legacy) tags read as collaborator; unknown roles fall back the same way
+  // — client role state is advisory, the relay enforces the real grant.
+  const members: ProjectMember[] = [];
+  const seenMembers = new Set<string>();
+  for (const tag of event.tags) {
+    if (tag[0] !== "p" || typeof tag[1] !== "string") continue;
+    const pubkey = tag[1].toLowerCase();
+    if (!HEX64_REGEX.test(pubkey) || pubkey === owner) continue;
+    if (seenMembers.has(pubkey)) continue;
+    seenMembers.add(pubkey);
+    members.push({
+      pubkey,
+      role: parseEntityRole(tag[3]) ?? "collaborator",
+    });
+  }
   return {
     id: `${owner}:${dtag}`,
     dtag,
@@ -159,6 +252,8 @@ export function eventToProjectContainer(
     repoAddrs: [...new Set(repoAddrs)],
     agentAddrs: [...new Set(agentAddrs)],
     channelIds: [...new Set(getAllTags(event, "channel"))],
+    visibility,
+    members,
   };
 }
 

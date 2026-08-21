@@ -197,13 +197,23 @@ export type UpdateProjectContainerInput = {
   project: ProjectContainer;
   name: string;
   description?: string;
+  /** Defaults to the project's current visibility when omitted. */
+  visibility?: ProjectContainer["visibility"];
+  /** Defaults to the project's current members when omitted. Members are
+   * kept across visibility changes — they carry roles, not just a
+   * private-project ACL. */
+  members?: ProjectContainer["members"];
 };
 
-/** Rename/edit a project the current identity owns (same-dtag republish). */
+/** Rename/edit a project the current identity owns (same-dtag republish).
+ * Exported (in addition to the mutation hook below) so the
+ * visibility/member-passthrough regression is directly unit-testable. */
 export async function updateProjectContainer({
   project,
   name,
   description,
+  visibility,
+  members,
 }: UpdateProjectContainerInput): Promise<ProjectContainer> {
   const self = await selfPubkey();
   if (project.owner !== self) {
@@ -213,10 +223,13 @@ export async function updateProjectContainer({
   if (!trimmed) {
     throw new Error("Project name is required.");
   }
+  const nextVisibility = visibility ?? project.visibility;
   return publishProjectContainer({
     name: trimmed,
     dtag: project.dtag,
     description: description?.trim() ?? "",
+    visibility: nextVisibility,
+    members: members ?? project.members,
     extraTags: [
       ...project.repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),

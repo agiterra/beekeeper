@@ -174,6 +174,141 @@ pub async fn filter_fanout_by_access(
         matches
     };
 
+    // Private-project container gate (fan-out): a kind:30621 head carrying
+    // ["buzz-access","private"] is delivered only to the author's and invited
+    // members' connections, matching REQ semantics
+    // (buzz_core::filter::reader_authorized_for_event).
+    let matches = if buzz_core::kind::is_private_project_event(&stored_event.event) {
+        matches
+            .into_iter()
+            .filter(|(conn_id, _)| {
+                let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                    return false;
+                };
+                !buzz_core::kind::project_container_hidden_from(
+                    &stored_event.event,
+                    &hex::encode(pk),
+                )
+            })
+            .collect()
+    } else {
+        matches
+    };
+
+    // Project-membership gate (fan-out): a kind 9010/9011 op or a
+    // relay-signed kind:39010 roster projection scoped to a *private*
+    // project is delivered past the author only to the project's admitted
+    // connections, matching REQ semantics
+    // (`project_membership_event_hidden_from`). Public/unknown coordinates
+    // carry no gate; a missing coordinate or a lookup failure fails closed.
+    let matches = if buzz_core::kind::is_project_membership_kind(event_kind_u32(
+        &stored_event.event,
+    )) {
+        let author = stored_event.event.pubkey.to_bytes();
+        match buzz_core::kind::project_membership_event_coordinate(&stored_event.event) {
+            None => matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    state
+                        .conn_manager
+                        .pubkey_for_conn(*conn_id)
+                        .is_some_and(|pk| pk == author)
+                })
+                .collect(),
+            Some(coordinate) => match state
+                .project_coordinate_gate_cached(community_id, &coordinate)
+                .await
+            {
+                Ok(None) => matches,
+                Ok(Some(gate)) => matches
+                    .into_iter()
+                    .filter(|(conn_id, _)| {
+                        let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                            return false;
+                        };
+                        pk == author || gate.admits_read(&pk)
+                    })
+                    .collect(),
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: membership gate lookup failed: {e}");
+                    Vec::new()
+                }
+            },
+        }
+    } else {
+        matches
+    };
+
+    // Private-project repo gate (fan-out): NIP-34 repo-surface events
+    // (announcement/ref-state/patches/PRs/issues/status) are delivered past
+    // the author only to connections admitted by every referenced repo's
+    // gate — repo owner, project owner, or invited member — matching REQ
+    // semantics (`repo_event_hidden_from`). One cached gate lookup per
+    // referenced repo; the common no-gate case falls straight through.
+    // Necessary here because these are global (channel-less) events, so the
+    // channel-membership filtering below never sees them.
+    let matches = if buzz_core::kind::is_git_project_gated_kind(event_kind_u32(&stored_event.event))
+    {
+        let repo_names = buzz_core::kind::git_event_repo_names(&stored_event.event);
+        let mut gates = Vec::new();
+        let mut lookup_failed = false;
+        for name in &repo_names {
+            match state.repo_project_gate_cached(community_id, name).await {
+                Ok(Some(gate)) => gates.push(gate),
+                Ok(None) => {}
+                Err(e) => {
+                    // Fail closed, mirroring the visibility-lookup failure arm.
+                    warn!(repo = %name, "fan-out access filter: repo gate lookup failed: {e}");
+                    lookup_failed = true;
+                }
+            }
+        }
+        // A 30617's own `project` tag is checked directly against the
+        // project ACL as well: if the announcement's side-effect projection
+        // failed, the name-based gate above resolves to nothing, but the
+        // event's intent to sit inside a private project must still gate its
+        // delivery. Announcements are rare, so the uncached lookup is fine.
+        if let Some(coordinate) = buzz_core::kind::repo_project_ref(&stored_event.event) {
+            match state
+                .db
+                .get_project_gate_by_coordinate(community_id, &coordinate)
+                .await
+            {
+                Ok(Some(project)) => {
+                    gates.push(std::sync::Arc::new(buzz_db::git_repo::RepoProjectGate {
+                        repo_owner_hex: stored_event.event.pubkey.to_hex(),
+                        project,
+                    }))
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(%coordinate, "fan-out access filter: project gate lookup failed: {e}");
+                    lookup_failed = true;
+                }
+            }
+        }
+        if lookup_failed {
+            return Vec::new();
+        }
+        if gates.is_empty() {
+            matches
+        } else {
+            let author = stored_event.event.pubkey.to_bytes();
+            matches
+                .into_iter()
+                .filter(|(conn_id, _)| {
+                    let Some(pk) = state.conn_manager.pubkey_for_conn(*conn_id) else {
+                        return false;
+                    };
+                    // Authors always receive their own events.
+                    pk == author || gates.iter().all(|gate| gate.admits_read(&pk))
+                })
+                .collect()
+        }
+    } else {
+        matches
+    };
+
     let Some(channel_id) = stored_event.channel_id else {
         return matches;
     };
@@ -192,7 +327,46 @@ pub async fn filter_fanout_by_access(
         }
     };
     match visibility {
-        Ok(v) if v != "private" => return matches,
+        Ok(v) if v != "private" => {
+            // Open channel — normally zero-cost, but an open channel inside a
+            // private project (NIP-MP Buzz access extension) fans out only to
+            // the project's owner, invited members, and explicit channel
+            // members. The gate lookup is one cached read per channel; the
+            // common no-gate case stays a fast return.
+            let gate = match state
+                .channel_project_gate_cached(community_id, channel_id)
+                .await
+            {
+                Ok(None) => return matches,
+                Ok(Some(gate)) => gate,
+                Err(e) => {
+                    // Fail closed, mirroring the visibility-lookup failure arm.
+                    warn!(%channel_id, "fan-out access filter: project gate lookup failed: {e}");
+                    return Vec::new();
+                }
+            };
+            let mut allowed = Vec::with_capacity(matches.len());
+            for (conn_id, sub_id) in matches {
+                let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
+                    continue;
+                };
+                if gate.admits_read(&pubkey) {
+                    allowed.push((conn_id, sub_id));
+                    continue;
+                }
+                match state
+                    .is_member_cached(community_id, channel_id, &pubkey)
+                    .await
+                {
+                    Ok(true) => allowed.push((conn_id, sub_id)),
+                    Ok(false) => {}
+                    Err(e) => {
+                        warn!(%channel_id, "fan-out access filter: membership lookup failed: {e}");
+                    }
+                }
+            }
+            return allowed;
+        }
         Ok(_) => {}
         Err(e) => {
             // Fail closed: if we cannot determine visibility, do not leak a
@@ -202,11 +376,32 @@ pub async fn filter_fanout_by_access(
         }
     }
 
+    // Private channel: explicit members, plus — for a session-transport
+    // channel — the project's owner and invited members (project membership
+    // IS transport access, resolved through the cached ACL projection). A
+    // gate lookup failure degrades to members-only: over-restrictive, never
+    // a leak.
+    let transport_gate = match state
+        .channel_transport_gate_cached(community_id, channel_id)
+        .await
+    {
+        Ok(gate) => gate,
+        Err(e) => {
+            warn!(%channel_id, "fan-out access filter: transport gate lookup failed: {e}");
+            None
+        }
+    };
     let mut allowed = Vec::with_capacity(matches.len());
     for (conn_id, sub_id) in matches {
         let Some(pubkey) = state.conn_manager.pubkey_for_conn(conn_id) else {
             continue;
         };
+        if let Some(gate) = &transport_gate {
+            if gate.admits_read(&pubkey) {
+                allowed.push((conn_id, sub_id));
+                continue;
+            }
+        }
         match state
             .is_member_cached(community_id, channel_id, &pubkey)
             .await

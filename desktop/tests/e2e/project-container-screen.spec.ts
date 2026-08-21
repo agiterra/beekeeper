@@ -24,9 +24,19 @@ async function boot(page: Page) {
   });
 }
 
-async function createProject(page: Page, name: string) {
+async function createProject(
+  page: Page,
+  name: string,
+  options?: { visibility?: "private" },
+) {
   await page.getByTestId("project-container-new").click();
   await page.getByTestId("create-project-container-name").fill(name);
+  if (options?.visibility === "private") {
+    await page.getByTestId("create-project-container-visibility").click();
+    await page
+      .getByTestId("create-project-container-visibility-option-private")
+      .click();
+  }
   await page.getByTestId("create-project-container-submit").click();
 }
 
@@ -78,6 +88,29 @@ test("owner can edit a project from its screen; General cannot be deleted", asyn
   await page.getByTestId("project-screen-actions").click();
   await expect(page.getByTestId("project-screen-edit")).toBeVisible();
   await expect(page.getByTestId("project-screen-delete")).toHaveCount(0);
+});
+
+test("item rows offer moves; private targets require confirmation", async ({
+  page,
+}) => {
+  await boot(page);
+  await createProject(page, "Skunkworks", { visibility: "private" });
+  await expect(page.getByTestId("project-lock-skunkworks")).toBeVisible({
+    timeout: 10_000,
+  });
+  await openProjectScreen(page, "general");
+
+  // The seeded mock repos are unclaimed, so they land under General.
+  const repoRow = page.getByTestId("project-screen-item-row").first();
+  await expect(repoRow).toBeVisible({ timeout: 10_000 });
+  await repoRow.hover();
+  await repoRow.getByTestId("manage-item-move").click();
+  await page.getByRole("menuitem", { name: "Skunkworks" }).click();
+
+  // Moving into a private project pauses on the shared confirm gate.
+  await expect(page.getByTestId("manage-move-confirm")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByTestId("manage-move-confirm")).toHaveCount(0);
 });
 
 test("section + buttons create items scoped to the project", async ({

@@ -7,7 +7,9 @@ import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
   isProjectContainerDeleted,
+  isProjectMember,
   makeLocalGeneral,
+  normalizeProjectMemberEntries,
   parseMemberRef,
   partitionByChannelProject,
   partitionByProject,
@@ -82,6 +84,98 @@ test("eventToProjectContainer returns null without a d tag", () => {
   const event = makeProjectEvent();
   event.tags = event.tags.filter(([name]) => name !== "d");
   assert.equal(eventToProjectContainer(event), null);
+});
+
+test("eventToProjectContainer defaults to public when buzz-access is absent", () => {
+  const project = eventToProjectContainer(makeProjectEvent());
+  assert.equal(project.visibility, "public");
+  assert.deepEqual(project.members, []);
+});
+
+test("eventToProjectContainer reads private visibility and p-tag members", () => {
+  const event = makeProjectEvent({
+    tags: [
+      ["buzz-access", "private"],
+      ["p", OTHER],
+      ["p", OTHER.toUpperCase()], // dedupe is case-insensitive
+      ["p", OWNER], // owner is implicit — excluded even if self-listed
+      ["p", "not-a-pubkey"], // malformed — dropped
+    ],
+  });
+  const project = eventToProjectContainer(event);
+  assert.equal(project.visibility, "private");
+  // Role-less legacy tags read as collaborator.
+  assert.deepEqual(project.members, [{ pubkey: OTHER, role: "collaborator" }]);
+});
+
+test("eventToProjectContainer reads roles from arity-4 p tags", () => {
+  const THIRD = "c".repeat(64);
+  const project = eventToProjectContainer(
+    makeProjectEvent({
+      tags: [
+        ["p", OTHER, "", "owner"],
+        ["p", THIRD, "", "not-a-role"], // unknown roles fall back
+      ],
+    }),
+  );
+  assert.deepEqual(project.members, [
+    { pubkey: OTHER, role: "owner" },
+    { pubkey: THIRD, role: "collaborator" },
+  ]);
+});
+
+test("eventToProjectContainer treats any non-private buzz-access value as public", () => {
+  const project = eventToProjectContainer(
+    makeProjectEvent({ tags: [["buzz-access", "public"]] }),
+  );
+  assert.equal(project.visibility, "public");
+  const legacyValue = eventToProjectContainer(
+    makeProjectEvent({ tags: [["buzz-access", "unlisted"]] }),
+  );
+  assert.equal(legacyValue.visibility, "public");
+});
+
+test("isProjectMember treats the owner as an implicit member", () => {
+  const project = eventToProjectContainer(
+    makeProjectEvent({
+      tags: [
+        ["buzz-access", "private"],
+        ["p", OTHER],
+      ],
+    }),
+  );
+  assert.equal(isProjectMember(project, OWNER), true);
+  assert.equal(isProjectMember(project, OWNER.toUpperCase()), true);
+  assert.equal(isProjectMember(project, OTHER), true);
+  assert.equal(isProjectMember(project, "c".repeat(64)), false);
+});
+
+test("normalizeProjectMemberEntries upgrades legacy snapshot shapes", () => {
+  // Pre-roles snapshots stored bare pubkey strings.
+  assert.deepEqual(normalizeProjectMemberEntries([OTHER.toUpperCase()]), [
+    { pubkey: OTHER, role: "collaborator" },
+  ]);
+  // Current shape passes through; unknown roles fall back to collaborator.
+  assert.deepEqual(
+    normalizeProjectMemberEntries([
+      { pubkey: OTHER, role: "viewer" },
+      { pubkey: OWNER, role: "bogus" },
+    ]),
+    [
+      { pubkey: OTHER, role: "viewer" },
+      { pubkey: OWNER, role: "collaborator" },
+    ],
+  );
+  // Garbage entries are dropped, not fatal.
+  assert.deepEqual(normalizeProjectMemberEntries([null, 42, {}]), []);
+  assert.deepEqual(normalizeProjectMemberEntries("nope"), []);
+});
+
+test("makeLocalGeneral is public with no members", () => {
+  const general = makeLocalGeneral();
+  assert.equal(general.dtag, GENERAL_PROJECT_DTAG);
+  assert.equal(general.visibility, "public");
+  assert.deepEqual(general.members, []);
 });
 
 test("dedupProjectEvents keeps newest head per (pubkey, d)", () => {

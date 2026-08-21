@@ -37,6 +37,7 @@ pub mod moderation;
 pub mod partition;
 /// Buzz product-feedback sidecar persistence.
 pub mod product_feedback;
+pub mod project_acl;
 /// Community-scoped push lease and durable wake-outbox persistence.
 pub mod push;
 /// Reaction persistence.
@@ -2687,6 +2688,131 @@ impl Db {
         .await
     }
 
+    /// Upsert the project ACL projection row + invited-member set from an
+    /// ingested 30621 head (store+project side effect; republish-latest,
+    /// stale replays ignored; head `p` tags ignored once the roster is
+    /// ops-sourced). Returns whether the head's members were applied.
+    pub async fn upsert_project_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        visibility: &str,
+        members: &[project_acl::ProjectMember],
+        head_created_at: i64,
+    ) -> Result<bool> {
+        project_acl::upsert_project_acl(
+            &self.pool,
+            community,
+            owner,
+            dtag,
+            visibility,
+            members,
+            head_created_at,
+        )
+        .await
+    }
+
+    /// Apply a kind:9010 put-member op (add members / change roles),
+    /// authorized for the project creator or a roster owner.
+    pub async fn put_project_members(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        actor: &[u8],
+        members: &[project_acl::ProjectMember],
+    ) -> Result<project_acl::ProjectMemberOpOutcome> {
+        project_acl::put_project_members(&self.pool, community, owner, dtag, actor, members).await
+    }
+
+    /// Apply a kind:9011 remove-member op, authorized for the project
+    /// creator or a roster owner.
+    pub async fn remove_project_members(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        actor: &[u8],
+        member_pubkeys: &[Vec<u8>],
+    ) -> Result<project_acl::ProjectMemberOpOutcome> {
+        project_acl::remove_project_members(
+            &self.pool,
+            community,
+            owner,
+            dtag,
+            actor,
+            member_pubkeys,
+        )
+        .await
+    }
+
+    /// Resolve a project's roster (creator, visibility, members with roles)
+    /// by coordinate, for the relay-signed kind:39010 projection.
+    pub async fn get_project_roster(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+    ) -> Result<Option<project_acl::ProjectRoster>> {
+        project_acl::get_project_roster(&self.pool, community, coordinate).await
+    }
+
+    /// Returns whether `pubkey` may write contents into the project at
+    /// `coordinate` (unknown/public project, creator, or owner/collaborator
+    /// member — viewers are read-only).
+    pub async fn can_write_project_contents(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::can_write_project_contents(&self.pool, community, coordinate, pubkey).await
+    }
+
+    /// Drop the project ACL row for a NIP-09-deleted 30621 coordinate
+    /// (members cascade). Returns whether a row was removed.
+    pub async fn delete_project_acl(
+        &self,
+        community: CommunityId,
+        owner: &[u8],
+        dtag: &str,
+        deleted_at: i64,
+    ) -> Result<bool> {
+        project_acl::delete_project_acl(&self.pool, community, owner, dtag, deleted_at).await
+    }
+
+    /// Returns whether `pubkey` may access contents of the project at
+    /// `coordinate` (unknown/public project, owner, or invited member).
+    pub async fn can_access_project_contents(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::can_access_project_contents(&self.pool, community, coordinate, pubkey).await
+    }
+
+    /// Resolve a channel's private-project gate (owner + invited members),
+    /// or `None` when the channel's project is absent, unknown, or public.
+    pub async fn get_channel_project_gate(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_channel_project_gate(&self.pool, community, channel_id).await
+    }
+
+    /// Resolve a session-transport channel's project gate (owner + invited
+    /// members, public projects included), or `None` when the channel is not
+    /// a transport channel or its project is absent/unknown.
+    pub async fn get_channel_transport_gate(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_channel_transport_gate(&self.pool, community, channel_id).await
+    }
+
     /// Ensure a user record exists (upsert).
     ///
     /// Returns `true` if a new row was inserted (first time), `false` if it
@@ -4753,6 +4879,83 @@ impl Db {
         owner_pubkey: &str,
     ) -> Result<u64> {
         git_repo::release_repo_name(&self.pool, community, repo_id, owner_pubkey).await
+    }
+
+    /// Project the repo → project link of a 30617 head into `git_repo_names`
+    /// (LWW-guarded; `None` clears the link). Returns whether the link value
+    /// changed.
+    pub async fn set_repo_project_ref(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+        owner_pubkey: &str,
+        project_ref: Option<&str>,
+        head_created_at: i64,
+    ) -> Result<bool> {
+        git_repo::set_repo_project_ref(
+            &self.pool,
+            community,
+            repo_id,
+            owner_pubkey,
+            project_ref,
+            head_created_at,
+        )
+        .await
+    }
+
+    /// Clear a repo's project link after a NIP-09 deletion of its 30617
+    /// coordinate (same `created_at` scoping). Returns whether it applied.
+    pub async fn clear_repo_project_ref(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+        owner_pubkey: &str,
+        deleted_at: i64,
+    ) -> Result<bool> {
+        git_repo::clear_repo_project_ref(&self.pool, community, repo_id, owner_pubkey, deleted_at)
+            .await
+    }
+
+    /// The repos hidden from `reader`: linked to a private project the reader
+    /// is not admitted to. See [`git_repo::HiddenRepos`].
+    pub async fn hidden_repos_for_reader(
+        &self,
+        community: CommunityId,
+        reader: &[u8],
+    ) -> Result<git_repo::HiddenRepos> {
+        git_repo::hidden_repos_for_reader(&self.pool, community, reader).await
+    }
+
+    /// Resolve the private-project gate of the repo named `repo_id`, or
+    /// `None` when the repo has no gate. See [`git_repo::get_repo_project_gate`].
+    pub async fn get_repo_project_gate(
+        &self,
+        community: CommunityId,
+        repo_id: &str,
+    ) -> Result<Option<git_repo::RepoProjectGate>> {
+        git_repo::get_repo_project_gate(&self.pool, community, repo_id).await
+    }
+
+    /// Resolve the gate of the **private** project at `coordinate`, or
+    /// `None` for public/unknown. See [`project_acl::get_project_gate_by_coordinate`].
+    pub async fn get_project_gate_by_coordinate(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+    ) -> Result<Option<project_acl::ProjectGate>> {
+        project_acl::get_project_gate_by_coordinate(&self.pool, community, coordinate).await
+    }
+
+    /// Returns `true` if `pubkey` is the owner or an invited member of the
+    /// **private** project at `coordinate` (positive grant; public/unknown
+    /// projects return `false`). See [`project_acl::is_private_project_member`].
+    pub async fn is_private_project_member(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        project_acl::is_private_project_member(&self.pool, community, coordinate, pubkey).await
     }
 
     /// Returns `true` if `pubkey` (64-char hex) is archived in `community_id`.

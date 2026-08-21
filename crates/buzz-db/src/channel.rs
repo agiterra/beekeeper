@@ -418,23 +418,52 @@ pub async fn add_member(
         let is_creator_bootstrap = inviter == pubkey && inviter == channel.created_by.as_slice();
 
         if !is_creator_bootstrap {
-            let inviter_role_str = get_active_role_tx(&mut tx, community_id, channel_id, inviter)
-                .await?
-                .ok_or_else(|| {
-                    DbError::AccessDenied("inviter is not an active member".to_string())
-                })?;
+            match get_active_role_tx(&mut tx, community_id, channel_id, inviter).await? {
+                Some(inviter_role_str) => {
+                    let inviter_role: MemberRole = inviter_role_str.parse().map_err(|_| {
+                        DbError::InvalidData(format!(
+                            "invalid role in database: {inviter_role_str}"
+                        ))
+                    })?;
 
-            let inviter_role: MemberRole = inviter_role_str.parse().map_err(|_| {
-                DbError::InvalidData(format!("invalid role in database: {inviter_role_str}"))
-            })?;
-
-            // Any active member may extend private-channel access with an
-            // ordinary role. Granting owner/admin remains reserved for an
-            // existing owner/admin.
-            if role.is_elevated() && !inviter_role.is_elevated() {
-                return Err(DbError::AccessDenied(
-                    "only owners/admins may grant elevated roles".to_string(),
-                ));
+                    // Any active member may extend private-channel access with
+                    // an ordinary role. Granting owner/admin remains reserved
+                    // for an existing owner/admin.
+                    if role.is_elevated() && !inviter_role.is_elevated() {
+                        return Err(DbError::AccessDenied(
+                            "only owners/admins may grant elevated roles".to_string(),
+                        ));
+                    }
+                }
+                None => {
+                    // Parity with the ingest validator (`validate_admin_event`):
+                    // a project member admitted through the transport gate has
+                    // member-level authority on a session-transport channel
+                    // even without a channel_members row. Without this arm the
+                    // validator accepts the 9000, the event is stored, and the
+                    // membership silently never applies — the client is told
+                    // "accepted" over a roster that never changes. Member-level
+                    // only; a gate that fails to resolve fails closed. Write
+                    // tier: a project Viewer reads the transport but must not
+                    // extend its membership.
+                    let admitted = crate::project_acl::get_channel_transport_gate(
+                        pool,
+                        community_id,
+                        channel_id,
+                    )
+                    .await?
+                    .is_some_and(|gate| gate.admits_write(inviter));
+                    if !admitted {
+                        return Err(DbError::AccessDenied(
+                            "inviter is not an active member".to_string(),
+                        ));
+                    }
+                    if role.is_elevated() {
+                        return Err(DbError::AccessDenied(
+                            "only owners/admins may grant elevated roles".to_string(),
+                        ));
+                    }
+                }
             }
         }
 
@@ -442,6 +471,12 @@ pub async fn add_member(
     } else {
         // Open channel: anyone may join, but only existing owners/admins may grant
         // elevated roles. Self-join always gets Member.
+        //
+        // Known divergence: the ingest validator (`validate_admin_event`) only
+        // authorizes 9000s on *private* channels, so an elevated grant on an
+        // open channel from a non-elevated granter is stored upstream and then
+        // refused here — visible to the client only if ingest propagates this
+        // error. Kept as-is deliberately: this refusal is the authority.
         if role.is_elevated() {
             let granter_role = match invited_by {
                 Some(inv) => get_active_role_tx(&mut tx, community_id, channel_id, inv).await?,
@@ -758,6 +793,23 @@ pub async fn get_members_bulk(
 ///
 /// Includes channels where the pubkey is an active member AND all open channels.
 /// Open channels must be included in REQ filter resolution.
+///
+/// Private-project gate (NIP-MP Buzz access extension): an *open* channel whose
+/// `project_ref` resolves to a `project_acl` row with `visibility = 'private'`
+/// is accessible only to the project's owner and invited members. Explicit
+/// channel membership still grants access (the member arm is ungated) — being
+/// added to a channel is deliberate consent by its owner/admin, and it keeps a
+/// channel owner from being locked out of their own channel by pointing its
+/// `project_ref` at someone else's private project. An unresolvable
+/// `project_ref` (deleted or never-published project) means no gate.
+///
+/// Session-transport channels (third arm): a private `channel_type =
+/// 'transport'` channel is additionally readable by its project's owner and
+/// invited members — project membership IS transport access, kept in sync
+/// server-side by the 30621 ACL projection. This is a positive grant with no
+/// visibility filter on the ACL row (public-project members are admitted
+/// too); a transport channel whose project is unknown or deleted grants
+/// nothing here and falls back to explicit membership.
 pub async fn get_accessible_channel_ids(
     pool: &PgPool,
     community_id: CommunityId,
@@ -770,9 +822,43 @@ pub async fn get_accessible_channel_ids(
         JOIN channels c ON cm.community_id = c.community_id AND cm.channel_id = c.id AND c.deleted_at IS NULL
         WHERE cm.community_id = $1 AND cm.pubkey = $2 AND cm.removed_at IS NULL
         UNION
-        SELECT id AS channel_id
-        FROM channels
-        WHERE community_id = $1 AND visibility = 'open' AND deleted_at IS NULL
+        SELECT c.id AS channel_id
+        FROM channels c
+        WHERE c.community_id = $1 AND c.visibility = 'open' AND c.deleted_at IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM project_acl pa
+              WHERE pa.community_id = c.community_id
+                AND pa.coordinate = c.project_ref
+                AND pa.visibility = 'private'
+                AND pa.owner <> $2
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM project_acl_members pam
+                    WHERE pam.community_id = pa.community_id
+                      AND pam.owner = pa.owner
+                      AND pam.dtag = pa.dtag
+                      AND pam.pubkey = $2
+                )
+          )
+        UNION
+        SELECT c.id AS channel_id
+        FROM channels c
+        JOIN project_acl pa
+          ON pa.community_id = c.community_id
+         AND pa.coordinate = c.project_ref
+        WHERE c.community_id = $1 AND c.channel_type = 'transport' AND c.deleted_at IS NULL
+          AND (
+              pa.owner = $2
+              OR EXISTS (
+                  SELECT 1
+                  FROM project_acl_members pam
+                  WHERE pam.community_id = pa.community_id
+                    AND pam.owner = pa.owner
+                    AND pam.dtag = pa.dtag
+                    AND pam.pubkey = $2
+              )
+          )
         "#,
     )
     .bind(community_id.as_uuid())
@@ -2801,5 +2887,155 @@ mod tests {
             .await
             .expect("read role after restore");
         assert_eq!(restored.as_deref(), Some("owner"));
+    }
+
+    /// Insert a private transport channel bound to `coordinate`, owned by
+    /// `created_by`, mirroring what the session-channel publisher creates.
+    async fn insert_transport_channel(
+        pool: &PgPool,
+        community_id: Uuid,
+        created_by: &[u8],
+        coordinate: &str,
+    ) -> Uuid {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO channels
+                (id, community_id, name, channel_type, visibility, created_by, project_ref)
+            VALUES ($1, $2, $3, 'transport', 'private', $4, $5)
+            "#,
+        )
+        .bind(id)
+        .bind(community_id)
+        .bind(format!("transport-{}", id.simple()))
+        .bind(created_by)
+        .bind(coordinate)
+        .execute(pool)
+        .await
+        .expect("insert transport channel");
+        sqlx::query(
+            r#"
+            INSERT INTO channel_members (community_id, channel_id, pubkey, role, invited_by)
+            VALUES ($1, $2, $3, 'owner', $3)
+            "#,
+        )
+        .bind(community_id)
+        .bind(id)
+        .bind(created_by)
+        .execute(pool)
+        .await
+        .expect("insert transport owner");
+        id
+    }
+
+    /// Parity regression for the validator/apply divergence: the ingest
+    /// validator admits a project member (no channel_members row) for a
+    /// member-level PUT_USER on a transport channel, so `add_member` must
+    /// admit the same inviter — otherwise the 9000 is stored, the client is
+    /// told "accepted", and the roster silently never changes.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn transport_gate_admits_a_row_less_project_member_for_bot_grants() {
+        let pool = setup_pool().await;
+        let community_uuid = make_test_community(&pool).await;
+        let community = CommunityId::from_uuid(community_uuid);
+        let project_owner = random_pubkey();
+        let project_member = random_pubkey();
+        let stranger = random_pubkey();
+        let bot = random_pubkey();
+
+        let dtag = "tankloop";
+        let coordinate = format!("30621:{}:{}", hex::encode(&project_owner), dtag);
+        crate::project_acl::upsert_project_acl(
+            &pool,
+            community,
+            &project_owner,
+            dtag,
+            "private",
+            &[(
+                project_member.clone(),
+                crate::project_acl::ProjectRole::Collaborator,
+            )],
+            1_800_000_000,
+        )
+        .await
+        .expect("seed project acl");
+        let channel_id =
+            insert_transport_channel(&pool, community_uuid, &project_owner, &coordinate).await;
+
+        // A project member with no channel_members row may grant member-level.
+        add_member(
+            &pool,
+            community,
+            channel_id,
+            &bot,
+            MemberRole::Bot,
+            Some(&project_member),
+        )
+        .await
+        .expect("gate-admitted inviter must place a bot on the roster");
+        let role = get_member_role(&pool, community, channel_id, &bot)
+            .await
+            .expect("read bot role");
+        assert_eq!(role.as_deref(), Some("bot"));
+
+        // The same admittance never reaches elevated roles.
+        let elevated = random_pubkey();
+        let refused = add_member(
+            &pool,
+            community,
+            channel_id,
+            &elevated,
+            MemberRole::Admin,
+            Some(&project_member),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(DbError::AccessDenied(_))),
+            "transport admittance must stay member-level: {refused:?}"
+        );
+
+        // A stranger to the project stays refused.
+        let refused = add_member(
+            &pool,
+            community,
+            channel_id,
+            &bot,
+            MemberRole::Bot,
+            Some(&stranger),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(DbError::AccessDenied(_))),
+            "a non-member inviter must still be refused: {refused:?}"
+        );
+
+        // An ordinary private channel with no project binding is unchanged.
+        let plain_owner = random_pubkey();
+        let plain = create_test_channel(
+            &pool,
+            community_uuid,
+            "plain-private",
+            ChannelType::Stream,
+            ChannelVisibility::Private,
+            None,
+            &plain_owner,
+            None,
+        )
+        .await
+        .expect("create private stream channel");
+        let refused = add_member(
+            &pool,
+            community,
+            plain.id,
+            &bot,
+            MemberRole::Bot,
+            Some(&project_member),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(DbError::AccessDenied(_))),
+            "non-transport private channels must not admit project members: {refused:?}"
+        );
     }
 }
