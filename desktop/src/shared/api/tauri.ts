@@ -613,12 +613,7 @@ export async function uploadMediaBytes(
 
 export { editMessage } from "@/shared/api/editMessage";
 
-export async function deleteMessage(
-  channelId: string,
-  eventId: string,
-): Promise<void> {
-  await invokeTauri("delete_message", { channelId, eventId });
-}
+export { deleteMessage } from "@/shared/api/deleteMessage";
 
 export async function addReaction(
   eventId: string,

@@ -940,16 +940,22 @@ pub async fn edit_message(
     Ok(())
 }
 
+/// Delete a message. `moderator` selects the authority, and with it the wire
+/// kind: `false` is the author's silent NIP-09 kind:5, `true` the Buzz-native
+/// kind:9005 that owners/admins may also publish and that the relay answers
+/// with a channel `message_deleted` tombstone. See [`events::DeleteAuthority`];
+/// callers must not set it for DMs or other non-channel messages.
 #[tauri::command]
 pub async fn delete_message(
     channel_id: String,
     event_id: String,
+    moderator: bool,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let channel_uuid = uuid::Uuid::parse_str(&channel_id)
         .map_err(|_| format!("invalid channel UUID: {channel_id}"))?;
     let target_eid = EventId::from_hex(&event_id).map_err(|e| format!("invalid event ID: {e}"))?;
-    let builder = events::build_delete_compat(channel_uuid, target_eid)?;
+    let builder = events::build_delete_for_authority(channel_uuid, target_eid, moderator.into())?;
     submit_event(builder, &state).await?;
     Ok(())
 }

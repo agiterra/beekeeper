@@ -16,23 +16,35 @@ import { Button } from "@/shared/ui/button";
  * and the empty-edit delete path (clearing an edit to empty and hitting accept
  * routes here, so it prompts exactly like the menu's Delete does). `onConfirm`
  * fires when the user presses Delete; the caller owns the actual deletion.
+ *
+ * `authority` must match the authority the caller will actually publish under.
+ * A moderator delete is a different, visible act — the relay posts a
+ * `message_deleted` tombstone into the channel — so it says so up front rather
+ * than presenting itself as an ordinary delete.
  */
 export function DeleteMessageConfirmDialog({
+  authority = "self",
   open,
   onOpenChange,
   onConfirm,
 }: {
+  authority?: "self" | "moderator";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }) {
+  const isModerator = authority === "moderator";
   return (
     <AlertDialog onOpenChange={onOpenChange} open={open}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete message?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {isModerator ? "Delete as moderator?" : "Delete message?"}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete this message and cannot be undone.
+            {isModerator
+              ? "This deletes someone else's message using your moderator role. It cannot be undone, and everyone in the channel will see that a message was deleted."
+              : "This will permanently delete this message and cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

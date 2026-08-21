@@ -35,7 +35,8 @@ import {
   startsNewMessageGroup,
 } from "@/features/messages/lib/messageGrouping";
 import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionPubkeys";
-import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
+import { messageManageAuthority } from "@/features/messages/lib/canManageMessage";
+import { useMessageModeration } from "@/features/messages/hooks";
 import { buildEditMentionState } from "@/features/messages/lib/draftMentionRefs";
 import { imetaMediaFromTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import {
@@ -113,7 +114,8 @@ type InboxDetailPaneProps = {
   latchedDefaultParentId?: string | null;
   onBack?: () => void;
   onDelete: () => void;
-  onDeleteMessage: (eventId: string) => void;
+  /** `moderator` routes the delete through kind:9005 (see `deleteMessage`). */
+  onDeleteMessage: (eventId: string, moderator?: boolean) => void;
   onEditTargetChange: React.Dispatch<React.SetStateAction<string | null>>;
   onEditSave: (input: {
     content: string;
@@ -197,6 +199,13 @@ function InboxMessageDetailPane({
 }: InboxDetailPaneProps) {
   const detailPaneRef = React.useRef<HTMLElement | null>(null);
   const { activeCommunity } = useCommunities();
+  // Resolved once for the pane, not per row — it owns a query subscription.
+  // The inbox publishes its moderator delete through `onDeleteMessage`, so
+  // only the `isModerator` half of this is used here.
+  const { isModerator } = useMessageModeration(
+    item?.item.channelId ?? null,
+    channel?.channelType ?? (item?.item.channelType === "dm" ? "dm" : null),
+  );
   // Refs for the shared anchored-scroll hook's container and content roots.
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
@@ -717,7 +726,7 @@ function InboxMessageDetailPane({
                   message.createdAt,
                 );
 
-              const canManageMessage = canManageMessageForCurrentUser(
+              const authority = messageManageAuthority(
                 {
                   id: message.id,
                   author: message.authorLabel,
@@ -730,10 +739,13 @@ function InboxMessageDetailPane({
                 },
                 currentPubkey,
                 profiles,
+                { isModerator },
               );
-
-              const canEditMessage =
-                channel?.archivedAt === null && canManageMessage;
+              const isUnarchived = channel?.archivedAt === null;
+              // Moderator authority covers deletion only — the relay rejects a
+              // moderator edit of someone else's message.
+              const canEditMessage = isUnarchived && authority === "self";
+              const canDeleteMessage = isUnarchived && authority !== null;
 
               return (
                 <InboxMessageRow
@@ -745,9 +757,13 @@ function InboxMessageDetailPane({
                   isFocusHighlightVisible={isFocusHighlightVisible}
                   key={message.id}
                   message={message}
+                  deleteAuthority={
+                    authority === "moderator" ? "moderator" : "self"
+                  }
                   onDelete={
-                    canEditMessage
-                      ? () => onDeleteMessage(message.id)
+                    canDeleteMessage
+                      ? () =>
+                          onDeleteMessage(message.id, authority === "moderator")
                       : undefined
                   }
                   onEdit={canEditMessage ? handleSelectEditTarget : undefined}
