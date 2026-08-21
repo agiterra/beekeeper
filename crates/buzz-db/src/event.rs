@@ -70,6 +70,16 @@ pub struct EventQuery {
     /// Restrict results to events with an `e` tag referencing any of these event IDs (hex).
     /// Uses JSONB containment (`tags @> ...`) against the `tags` column.
     pub e_tags: Option<Vec<String>>,
+    /// Restrict results to events with an `a` tag referencing any of these
+    /// addressable coordinates (`<kind>:<owner-hex>:<dtag>`).
+    ///
+    /// Uses the same JSONB containment (`tags @> ...`) mechanism as
+    /// [`EventQuery::e_tags`], served by the same GIN index. Needed by the
+    /// NIP-MP Pulse read path (`{"kinds":[44240],"#a":["30621:…"]}`), whose
+    /// entries are channel-less: without the pushdown a project's entries are
+    /// starved off the page by unrelated global events before post-filtering.
+    /// Matching is byte-exact, so callers must pass canonical coordinates.
+    pub a_tags: Option<Vec<String>>,
     /// Restrict results to events in any of these channels. By default,
     /// channel-less global events are retained so this can enforce a viewer's
     /// accessible-channel scope without hiding global events. Set
@@ -164,6 +174,7 @@ impl EventQuery {
             authors: None,
             ids: None,
             e_tags: None,
+            a_tags: None,
             channel_ids: None,
             channel_ids_include_global: true,
             max_limit: None,
@@ -409,6 +420,9 @@ pub(crate) async fn query_events_on(
     if q.e_tags.as_deref().is_some_and(|e| e.is_empty()) {
         return Ok(vec![]);
     }
+    if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
+        return Ok(vec![]);
+    }
 
     let clamp = q.max_limit.unwrap_or(DEFAULT_MAX_PAGE_LIMIT);
     let limit_val = q.limit.unwrap_or(100).min(clamp);
@@ -528,6 +542,24 @@ pub(crate) async fn query_events_on(
                 }
                 // Build the JSONB literal: [["e","<hex>"]]
                 let containment = serde_json::json!([["e", hex_id]]);
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(containment);
+            }
+            qb.push(")");
+        }
+    }
+
+    // a-tag pushdown via JSONB containment: tags @> '[["a","<coordinate>"]]'.
+    // Same mechanism, index, and starvation rationale as the e-tag clause
+    // above; `filters_match` still re-checks NIP-01 semantics afterwards.
+    if let Some(ref a_tags) = q.a_tags {
+        if !a_tags.is_empty() {
+            qb.push(" AND (");
+            for (i, coordinate) in a_tags.iter().enumerate() {
+                if i > 0 {
+                    qb.push(" OR ");
+                }
+                let containment = serde_json::json!([["a", coordinate]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }
@@ -687,6 +719,33 @@ pub(crate) async fn query_events_on(
             }
             qb.push("))))");
         }
+
+        // NIP-MP Pulse (44240): a Pulse entry belongs to a *project*, not to a
+        // repo, so none of the repo clauses above ever see it — 44240 is
+        // absent from `GIT_PROJECT_GATED_KINDS`, whose leading `kind NOT IN`
+        // guard would short-circuit the whole gate to TRUE for it. Exclude
+        // entries whose `a` tag names a private project hidden from this
+        // reader before ORDER/LIMIT, for the same starvation reason as the
+        // clauses above. `pulse_entry_hidden_from` stays as post-filter
+        // defense-in-depth: it normalizes case-variant coordinates this exact
+        // probe would miss, and fails closed when no coordinate parses.
+        if !git_gate.hidden.project_coordinates.is_empty() {
+            qb.push(format!(" AND ({col_prefix}kind <> "));
+            qb.push_bind(buzz_core::kind::KIND_PULSE_ENTRY as i32);
+            qb.push(format!(" OR {col_prefix}pubkey = "));
+            qb.push_bind(git_gate.reader.clone());
+            qb.push(" OR NOT (");
+            let mut first = true;
+            for coordinate in &git_gate.hidden.project_coordinates {
+                if !first {
+                    qb.push(" OR ");
+                }
+                first = false;
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(serde_json::json!([["a", coordinate]]));
+            }
+            qb.push("))");
+        }
     }
 
     // Composite ordering for deterministic pagination across ALL callers of
@@ -778,6 +837,9 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
         return Ok(0);
     }
     if q.e_tags.as_deref().is_some_and(|e| e.is_empty()) {
+        return Ok(0);
+    }
+    if q.a_tags.as_deref().is_some_and(|a| a.is_empty()) {
         return Ok(0);
     }
 
@@ -877,6 +939,22 @@ pub(crate) async fn count_events_on(conn: &mut sqlx::PgConnection, q: &EventQuer
                     qb.push(" OR ");
                 }
                 let containment = serde_json::json!([["e", hex_id]]);
+                qb.push(format!("{col_prefix}tags @> "));
+                qb.push_bind(containment);
+            }
+            qb.push(")");
+        }
+    }
+
+    // a-tag pushdown via JSONB containment — mirrors `query_events`.
+    if let Some(ref a_tags) = q.a_tags {
+        if !a_tags.is_empty() {
+            qb.push(" AND (");
+            for (i, coordinate) in a_tags.iter().enumerate() {
+                if i > 0 {
+                    qb.push(" OR ");
+                }
+                let containment = serde_json::json!([["a", coordinate]]);
                 qb.push(format!("{col_prefix}tags @> "));
                 qb.push_bind(containment);
             }
@@ -2132,6 +2210,179 @@ mod tests {
         assert_eq!(
             events[1].event.id, older_accessible.id,
             "older accessible row must not be hidden behind newer inaccessible rows"
+        );
+    }
+
+    /// Sign a Pulse-shaped event (kind 44240 + singleton `a` coordinate) at a
+    /// fixed timestamp, so `a_tags` pushdown tests can control page order.
+    fn make_a_tagged_event_at(
+        keys: &Keys,
+        kind: u16,
+        coordinate: &str,
+        content: &str,
+        created_at: u64,
+    ) -> nostr::Event {
+        EventBuilder::new(Kind::Custom(kind), content)
+            .tags(vec![Tag::parse(["a", coordinate]).expect("a tag")])
+            .custom_created_at(nostr::Timestamp::from(created_at))
+            .sign_with_keys(keys)
+            .expect("sign a-tagged event")
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn a_tag_pushdown_scopes_both_sql_paths_to_the_requested_project() {
+        let pool = setup_pool().await;
+        let community_uuid = make_test_community(&pool).await;
+        let community = CommunityId::from_uuid(community_uuid);
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let wanted = format!("30621:{owner_hex}:wanted");
+        let other = format!("30621:{owner_hex}:other");
+        let base = 1_800_000_100;
+
+        let mine = make_a_tagged_event_at(&owner, 44_240, &wanted, "wanted project", base + 1);
+        insert_event(&pool, community, &mine, None)
+            .await
+            .expect("insert wanted-project entry");
+        // Newer rows for a different project: without the pushdown these
+        // consume the page and starve the requested project's only entry.
+        for i in 0..3 {
+            let noise =
+                make_a_tagged_event_at(&owner, 44_240, &other, "other project", base + 2 + i);
+            insert_event(&pool, community, &noise, None)
+                .await
+                .expect("insert other-project entry");
+        }
+        let untagged = make_event_at(44_240, "no coordinate", base + 9);
+        insert_event(&pool, community, &untagged, None)
+            .await
+            .expect("insert untagged entry");
+
+        let events = query_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                a_tags: Some(vec![wanted.clone()]),
+                limit: Some(10),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("query a-tag scoped page");
+        assert_eq!(
+            events.len(),
+            1,
+            "only the requested project's entry may be returned"
+        );
+        assert_eq!(events[0].event.id, mine.id);
+
+        let counted = count_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                a_tags: Some(vec![wanted.clone()]),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("count a-tag scoped rows");
+        assert_eq!(counted, 1, "the COUNT path must apply the same containment");
+
+        let both = query_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                a_tags: Some(vec![wanted.clone(), other.clone()]),
+                limit: Some(10),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("query multi-coordinate page");
+        assert_eq!(both.len(), 4, "multiple coordinates OR together");
+
+        let none = query_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                a_tags: Some(vec![]),
+                limit: Some(10),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("query empty a_tags");
+        assert!(none.is_empty(), "an empty #a list means match nothing");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn git_gated_reader_excludes_pulse_entries_of_hidden_projects() {
+        let pool = setup_pool().await;
+        let community_uuid = make_test_community(&pool).await;
+        let community = CommunityId::from_uuid(community_uuid);
+        let author = Keys::generate();
+        let author_hex = author.public_key().to_hex();
+        let reader = Keys::generate();
+        let hidden_coordinate = format!("30621:{author_hex}:secret");
+        let open_coordinate = format!("30621:{author_hex}:open");
+        let base = 1_800_000_200;
+
+        let hidden_entry = make_a_tagged_event_at(
+            &author,
+            44_240,
+            &hidden_coordinate,
+            "private plan",
+            base + 1,
+        );
+        insert_event(&pool, community, &hidden_entry, None)
+            .await
+            .expect("insert hidden-project entry");
+        let open_entry =
+            make_a_tagged_event_at(&author, 44_240, &open_coordinate, "public plan", base + 2);
+        insert_event(&pool, community, &open_entry, None)
+            .await
+            .expect("insert open-project entry");
+
+        let gate = |who: &Keys| crate::event::GitGatedReader {
+            reader: who.public_key().to_bytes().to_vec(),
+            hidden: crate::git_repo::HiddenRepos {
+                coordinates: Vec::new(),
+                names: std::collections::HashSet::new(),
+                project_coordinates: std::collections::HashSet::from([hidden_coordinate.clone()]),
+            },
+        };
+
+        let visible = query_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                git_gated_reader: Some(gate(&reader)),
+                limit: Some(10),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("query as an outsider");
+        assert_eq!(visible.len(), 1, "the hidden project's entry is withheld");
+        assert_eq!(visible[0].event.id, open_entry.id);
+
+        let as_author = query_events(
+            &pool,
+            &EventQuery {
+                kinds: Some(vec![44_240]),
+                git_gated_reader: Some(gate(&author)),
+                limit: Some(10),
+                ..EventQuery::for_community(community)
+            },
+        )
+        .await
+        .expect("query as the author");
+        assert_eq!(
+            as_author.len(),
+            2,
+            "an author always reads back their own entries"
         );
     }
 

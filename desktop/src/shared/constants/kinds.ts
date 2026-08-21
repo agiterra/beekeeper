@@ -98,6 +98,16 @@ export const KIND_PROJECT_PUT_MEMBER = 9010;
 export const KIND_PROJECT_REMOVE_MEMBER = 9011;
 export const KIND_PROJECT_MEMBERS = 39010;
 
+// ── Project Pulse (44240) ────────────────────────────────────────────────────
+//
+// NIP-PU: an author's explicit claim about a project — a plan, milestone,
+// note, handoff, or blocker (`pu1-1`). Project-scoped by an `a` tag holding
+// the canonical 30621 coordinate, never by `h`, and append-only: a revision
+// supersedes its predecessor by event id, and the fold honors that only for
+// the same author (features/project-pulse/lib/pulseFold.ts). It carries no
+// observed fact — worktree state stays in the coding-session kinds.
+export const KIND_PULSE_ENTRY = 44240;
+
 // Human-visible "new content" message kinds. Used as the unread trigger set
 // (sidebar badges, catch-up queries) and as the Home-feed mention query.
 // Reactions, edits, diffs, deletions, and system messages are deliberately

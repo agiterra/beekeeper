@@ -149,6 +149,11 @@ pub async fn handle_count(
         // readers who are neither the author nor invited, so the fast path
         // is bypassed and the fallback applies event_visible_to_reader.
         let needs_project_gate_filtering = super::req::filter_can_match_project_kind(filter);
+        // NIP-MP Pulse (44240): the fast SQL path applies no per-event gate
+        // and carries no `git_gated_reader` clause, so a private project's
+        // entry count would leak the project's existence through the total
+        // alone. Force the fallback, which applies event_visible_to_reader.
+        let needs_pulse_gate_filtering = super::req::filter_can_match_pulse_kind(filter);
         // Private-project repo events (NIP-MP phase 2): the fast path has no
         // per-event repo-gate check, so it would count a private project's
         // repo activity for outsiders. Only relevant when this reader
@@ -239,6 +244,7 @@ pub async fn handle_count(
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
+                && !needs_pulse_gate_filtering
                 && !needs_git_gate_filtering
             {
                 match state.db.count_events_routed("count_req", &query).await {
@@ -323,6 +329,7 @@ pub async fn handle_count(
                 && !needs_result_gated_filtering
                 && !needs_shared_gate_filtering
                 && !needs_project_gate_filtering
+                && !needs_pulse_gate_filtering
                 && !needs_git_gate_filtering
             {
                 query.limit = None; // COUNT doesn't need a row limit

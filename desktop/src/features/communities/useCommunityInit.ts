@@ -34,6 +34,7 @@ import { resetAvatarPresentations } from "@/features/profile/avatarPresentationS
 import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
+import { resetProjectPulseState } from "@/features/project-pulse";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 
 import {
@@ -77,6 +78,10 @@ async function resetCommunityState({
   resetLinkPreviewPreparations();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
+  // Folded Pulse digests are keyed by project coordinate, and a coordinate
+  // names no relay: carrying them across a switch would paint one community's
+  // claims and observed commits under another community's project.
+  resetProjectPulseState();
 }
 
 type CommunityInitResult =

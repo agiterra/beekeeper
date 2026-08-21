@@ -30,6 +30,7 @@ import {
   KIND_AGENT_OBSERVER_FRAME,
   KIND_CHANNEL_THREAD_SUMMARY,
   KIND_CHANNEL_WINDOW_BOUNDS,
+  KIND_CODING_SESSION_LEASE,
   KIND_DM_VISIBILITY,
   KIND_EVENT_REMINDER,
   KIND_GIT_ISSUE,
@@ -46,6 +47,7 @@ import {
   KIND_PERSONA,
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_STREAM_MESSAGE_EDIT,
@@ -1177,6 +1179,20 @@ declare global {
       /** 64-hex id required for the event to be a valid reaction target. */
       id?: string;
     }) => RelayEvent;
+    /**
+     * Seed one already-signed relay event into the mock relay and fan it out
+     * live. Durable events enter channel history; kind 24223 enters the
+     * separate current-lease register and is never durable history.
+     *
+     * Unlike `__BUZZ_E2E_EMIT_MOCK_MESSAGE__`, nothing here is synthesized:
+     * the spec supplies the whole event, signature included. Coding-session
+     * kinds are verified signature-first by the consumer, so a mock-built
+     * event would be rejected before it could prove anything.
+     */
+    __BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__?: (input: {
+      channelName: string;
+      event: RelayEvent;
+    }) => RelayEvent;
     /** Prepend `count` synthetic older messages to a channel's mock store so
      *  an older-history fetch has something to paginate. Mirrors how the real
      *  relay backfills history. Returns the created events. */
@@ -1284,6 +1300,14 @@ declare global {
     __BUZZ_E2E_PROJECT_OWNER_OVERRIDE__?: string;
     /** Project history kinds rejected with CLOSED for aggregate-query tests. */
     __BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__?: number[];
+    /**
+     * Project history kinds whose REQ is never answered — no EVENT, no EOSE,
+     * no CLOSED. A rejection and a read still in flight are different answers,
+     * and a surface that renders them the same way is the defect; this seam is
+     * how a spec holds a screen in its in-flight state long enough to look at
+     * it.
+     */
+    __BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__?: number[];
     /** Captured aggregate project-history filters for request-count assertions. */
     __BUZZ_E2E_PROJECT_QUERY_FILTERS__?: MockFilter[];
     __BUZZ_E2E_PROJECT_REPO_SYNC_STATUS__?: {
@@ -3073,6 +3097,13 @@ const mockChannels: MockChannel[] = [
 ];
 
 const mockMessages = new Map<string, RelayEvent[]>();
+/**
+ * Current ephemeral session leases, keyed exactly like the relay's Redis
+ * register: channel, then `cs-target`. This must never be folded into
+ * `mockMessages`, because a cold durable-history query cannot resurrect an
+ * expired provider lease.
+ */
+const mockSessionLeases = new Map<string, Map<string, RelayEvent>>();
 const deferredSendMessageLiveEchoes: Array<{
   channelId: string;
   event: RelayEvent;
@@ -4313,6 +4344,117 @@ function emitMockHistory(
   emit();
 }
 
+const MOCK_SESSION_LEASE_TTL_SECONDS = 180;
+
+type MockSessionLeaseApplyResult =
+  | "applied"
+  | "duplicate"
+  | "conflict"
+  | "stale"
+  | "invalid";
+
+function sessionLeaseSequence(event: RelayEvent): number | null {
+  try {
+    const content = JSON.parse(event.content) as Record<string, unknown>;
+    const sequence = content.leaseSequence;
+    const sequenceTag = event.tags.find((tag) => tag[0] === "cslease-seq");
+    if (
+      !Number.isSafeInteger(sequence) ||
+      (sequence as number) <= 0 ||
+      sequenceTag?.length !== 2 ||
+      sequenceTag[1] !== String(sequence)
+    ) {
+      return null;
+    }
+    return sequence as number;
+  } catch {
+    return null;
+  }
+}
+
+function sessionLeaseTarget(event: RelayEvent): string | null {
+  const expectedTagNames = [
+    "h",
+    "cslease-v",
+    "cs-target",
+    "csl-command",
+    "cslease-seq",
+  ];
+  if (
+    event.kind !== KIND_CODING_SESSION_LEASE ||
+    event.tags.length !== expectedTagNames.length ||
+    event.tags.some(
+      (tag, index) =>
+        tag.length !== 2 || tag[0] !== expectedTagNames[index] || !tag[1],
+    ) ||
+    event.tags[1][1] !== "cslease1-1"
+  ) {
+    return null;
+  }
+  return event.tags[2][1];
+}
+
+function applyMockSessionLease(
+  channelId: string,
+  event: RelayEvent,
+): MockSessionLeaseApplyResult {
+  const target = sessionLeaseTarget(event);
+  const sequence = sessionLeaseSequence(event);
+  if (target === null || sequence === null || event.tags[0][1] !== channelId) {
+    return "invalid";
+  }
+
+  let channelLeases = mockSessionLeases.get(channelId);
+  if (!channelLeases) {
+    channelLeases = new Map<string, RelayEvent>();
+    mockSessionLeases.set(channelId, channelLeases);
+  }
+  const incumbent = channelLeases.get(target);
+  if (incumbent) {
+    const incumbentSequence = sessionLeaseSequence(incumbent);
+    if (incumbentSequence === null) return "invalid";
+    if (sequence < incumbentSequence) return "stale";
+    if (sequence === incumbentSequence) {
+      return event.id === incumbent.id ? "duplicate" : "conflict";
+    }
+  }
+  channelLeases.set(target, event);
+  return "applied";
+}
+
+function filterMockSessionLeases(filter: MockFilter): RelayEvent[] {
+  const channels = filter["#h"] ?? [];
+  const authors = filter.authors?.map((author) => author.toLowerCase());
+  const ids = filter.ids ? new Set(filter.ids) : null;
+  const now = Math.floor(Date.now() / 1_000);
+  const matches: RelayEvent[] = [];
+  for (const channelId of channels) {
+    const channelLeases = mockSessionLeases.get(channelId);
+    if (!channelLeases) continue;
+    for (const [target, event] of channelLeases) {
+      if (event.created_at + MOCK_SESSION_LEASE_TTL_SECONDS <= now) {
+        channelLeases.delete(target);
+        continue;
+      }
+      if (filter.kinds && !filter.kinds.includes(event.kind)) continue;
+      if (authors && !authors.includes(event.pubkey.toLowerCase())) continue;
+      if (ids && !ids.has(event.id)) continue;
+      if (filter.since !== undefined && event.created_at < filter.since)
+        continue;
+      if (filter.until !== undefined && event.created_at > filter.until)
+        continue;
+      matches.push(event);
+    }
+    if (channelLeases.size === 0) mockSessionLeases.delete(channelId);
+  }
+  return matches
+    .sort(
+      (left, right) =>
+        right.created_at - left.created_at || left.id.localeCompare(right.id),
+    )
+    .slice(0, filter.limit ?? 500);
+}
+
 function emitMockLiveEvent(channelId: string, event: RelayEvent) {
   for (const socket of mockSockets.values()) {
     for (const [subId, subscription] of socket.subscriptions) {
@@ -5440,6 +5582,10 @@ const MOCK_PROJECT_SUBJECTS = [
 const MOCK_PROJECT_KINDS = new Set<number>([
   KIND_PROJECT,
   KIND_PROJECT_ANNOUNCEMENT,
+  // Project Pulse entries are project-scoped by an `a` tag holding the 30621
+  // coordinate — the same shape the NIP-34 kinds below use, so they route
+  // through this store rather than the channel path.
+  KIND_PULSE_ENTRY,
   KIND_REPO_ANNOUNCEMENT,
   KIND_REPO_STATE,
   KIND_GIT_PATCH,
@@ -5645,11 +5791,20 @@ function isMockProjectScopedEvent(event: RelayEvent): boolean {
   ) {
     return true;
   }
-  const hasRepoAddressTag = event.tags.some(
-    (tag) => tag[0] === "a" && (tag[1] ?? "").startsWith("30617:"),
-  );
+  // Two project-address prefixes, not one: NIP-34 events name a repository
+  // (30617) while Pulse entries name a project container (30621). Without the
+  // 30621 arm a live-published 44240 falls through to the channel branch and
+  // is rejected with "Missing channel tag." — a fixture gap that reads exactly
+  // like a product bug.
+  const hasProjectAddressTag = event.tags.some((tag) => {
+    const address = tag[1] ?? "";
+    return (
+      tag[0] === "a" &&
+      (address.startsWith("30617:") || address.startsWith(`${KIND_PROJECT}:`))
+    );
+  });
   return (
-    (event.kind === KIND_REPO_ANNOUNCEMENT || hasRepoAddressTag) &&
+    (event.kind === KIND_REPO_ANNOUNCEMENT || hasProjectAddressTag) &&
     (event.kind === 1 || MOCK_PROJECT_KINDS.has(event.kind))
   );
 }
@@ -9883,6 +10038,18 @@ function sendToMockSocket(args: {
       sendWsText(socket.handler, ["CLOSED", subId, P_GATED_REJECTION_MESSAGE]);
       return;
     }
+    const explicitChannelCount = filters.reduce(
+      (count, filter) => count + (filter["#h"]?.length ?? 0),
+      0,
+    );
+    if (explicitChannelCount > 128) {
+      sendWsText(socket.handler, [
+        "CLOSED",
+        subId,
+        "invalid: too many explicit channel values",
+      ]);
+      return;
+    }
 
     if (subId.startsWith("live-")) {
       // Collect channel IDs from all filters in the REQ
@@ -9890,8 +10057,7 @@ function sendToMockSocket(args: {
       const kinds = new Set<number>();
       const ownerPubkeys = new Set<string>();
       for (const f of filters) {
-        const cid = f["#h"]?.[0];
-        if (cid) channelIds.add(cid);
+        for (const cid of f["#h"] ?? []) channelIds.add(cid);
         for (const kind of f.kinds ?? []) {
           kinds.add(kind);
         }
@@ -9993,6 +10159,38 @@ function sendToMockSocket(args: {
       return;
     }
 
+    if (filter.kinds?.includes(KIND_CODING_SESSION_LEASE)) {
+      window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__ ??= [];
+      window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__.push(filter);
+      if (!filter["#h"] || filter["#h"].length === 0) {
+        sendWsText(socket.handler, [
+          "CLOSED",
+          subId,
+          "invalid: session lease queries require an explicit #h filter",
+        ]);
+        return;
+      }
+      const hungKinds = window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ ?? [];
+      if (filter.kinds.some((kind) => hungKinds.includes(kind))) {
+        return;
+      }
+      const rejectedKinds =
+        window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ ?? [];
+      if (filter.kinds.some((kind) => rejectedKinds.includes(kind))) {
+        sendWsText(socket.handler, [
+          "CLOSED",
+          subId,
+          "mock session lease query failure",
+        ]);
+        return;
+      }
+      for (const event of filterMockSessionLeases(filter)) {
+        sendWsText(socket.handler, ["EVENT", subId, event]);
+      }
+      sendWsText(socket.handler, ["EOSE", subId]);
+      return;
+    }
+
     // Project queries: NIP-34 kinds; kind:1 comments scoped by repo `a`
     // tag or by issue/PR root `e` tag (discussions, approvals, review
     // requests, assignment operations — channel messages are kind 9, so a
@@ -10007,6 +10205,11 @@ function sendToMockSocket(args: {
     ) {
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__ ??= [];
       window.__BUZZ_E2E_PROJECT_QUERY_FILTERS__.push(filter);
+      const hungKinds = window.__BUZZ_E2E_HANG_PROJECT_QUERY_KINDS__ ?? [];
+      if (filter.kinds?.some((kind) => hungKinds.includes(kind))) {
+        // Deliberately silent: the caller's read stays in flight.
+        return;
+      }
       const rejectedKinds =
         window.__BUZZ_E2E_REJECT_PROJECT_QUERY_KINDS__ ?? [];
       if (filter.kinds?.some((kind) => rejectedKinds.includes(kind))) {
@@ -10250,6 +10453,21 @@ function sendToMockSocket(args: {
       return;
     }
 
+    if (event.kind === KIND_CODING_SESSION_LEASE) {
+      const result = applyMockSessionLease(channelId, event);
+      if (result === "applied") {
+        emitMockLiveEvent(channelId, event);
+      }
+      const accepted = result === "applied" || result === "duplicate";
+      sendWsText(socket.handler, [
+        "OK",
+        event.id,
+        accepted,
+        accepted ? "" : `invalid: session lease ${result}`,
+      ]);
+      return;
+    }
+
     const sendMessageError =
       event.kind === 9 ? getConfig()?.mock?.sendMessageErrors?.shift() : null;
     if (sendMessageError) {
@@ -10287,6 +10505,7 @@ export function maybeInstallE2eTauriMocks() {
   mockWebsocketUnavailable = false;
   mockAuthResponses.length = 0;
   mockChannelHistoryCloses.length = 0;
+  mockSessionLeases.clear();
   relayWebsocketConnectAttemptStarts.length = 0;
   deferredSendMessageLiveEchoes.length = 0;
   deferredLinkPreviewMetadataQueue = [];
@@ -10392,6 +10611,25 @@ export function maybeInstallE2eTauriMocks() {
       pending,
       id,
     );
+  };
+  window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__ = ({ channelName, event }) => {
+    const channel = mockChannels.find(
+      (candidate) => candidate.name === channelName,
+    );
+    if (!channel) {
+      throw new Error(`Mock channel ${channelName} not found.`);
+    }
+    if (event.kind === KIND_CODING_SESSION_LEASE) {
+      const result = applyMockSessionLease(channel.id, event);
+      if (result === "invalid" || result === "conflict") {
+        throw new Error(`Invalid mock session lease seed: ${result}.`);
+      }
+      if (result === "applied") emitMockLiveEvent(channel.id, event);
+      return event;
+    }
+    recordMockMessage(channel.id, event);
+    emitMockLiveEvent(channel.id, event);
+    return event;
   };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({

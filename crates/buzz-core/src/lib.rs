@@ -34,6 +34,10 @@ pub mod pairing;
 pub mod presence;
 /// NIP-PMA owner-encrypted private managed-agent wire codec.
 pub mod private_managed_agent;
+/// Project Pulse entries (44240): the explicit coordination claim contract.
+pub mod pulse;
+/// Pure Project Pulse v2 digest model and fold shared by every adapter.
+pub mod pulse_fold;
 /// Canonical relay runtime identities.
 pub mod relay;
 /// Tenant identity — the server-resolved community key carried on scoped paths.

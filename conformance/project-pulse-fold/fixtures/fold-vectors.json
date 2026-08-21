@@ -1,0 +1,2378 @@
+{
+  "schema": "buzz-project-pulse-fold-vectors/v2",
+  "contract": "conformance/project-pulse-fold/CONTRACT.md",
+  "digestSchema": "buzz-project-pulse-digest/v2",
+  "entrySchema": "buzz-pulse-entry/v1",
+  "vectors": [
+    {
+      "name": "empty-project",
+      "description": "A project with no Pulse entries and no sessions is a complete, confirmed-empty digest - never a partial read.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": []
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "same-author-supersession-chain",
+      "description": "Single-pass marking, never a traversal: each link marks exactly its own target, so only the newest entry stays active and every predecessor is returned with active:false and its honored claim recorded.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000011",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785510037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Draft the wire contract.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000012",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Wire contract landed; starting ingest.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000011\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000013",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Ingest landed; starting the CLI.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000012\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000013",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Ingest landed; starting the CLI.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000012",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000012",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "plan",
+            "text": "Wire contract landed; starting ingest.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000011",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000013",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000011",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785510037,
+            "type": "plan",
+            "text": "Draft the wire contract.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000012",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "cross-author-supersession-not-honored",
+      "description": "A supersedes across authors never removes its target: Alice's blocker stays active and Bob's entry carries the unhonored claim. Without this, any project writer could push a peer's blocker out of the set that drives wait|consult|proceed.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000021",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "blocker"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"blocker\",\"text\":\"Do not touch pool.rs; the creation path is half-migrated.\",\"codeAreas\":[\"crates/buzz-acp/src/pool.rs\"],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000022",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Picking pool.rs back up.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000021\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000022",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Picking pool.rs back up.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000021",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000021",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": false,
+                "reason": "cross-author"
+              }
+            ],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000021",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "blocker",
+            "text": "Do not touch pool.rs; the creation path is half-migrated.",
+            "claimedAreas": ["crates/buzz-acp/src/pool.rs"],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "unresolved-supersedes",
+      "description": "A reference to an id outside the fetched result set leaves the target unknown and the entry active; the claim is echoed verbatim as unresolved and recorded in errors[]. An unresolved reference is not a failed read, so complete stays true.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000031",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512137,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Continuing from an entry outside this window.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"00000000000000000000000000000000000000000000000000000000000000ff\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000031",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512137,
+            "type": "plan",
+            "text": "Continuing from an entry outside this window.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "00000000000000000000000000000000000000000000000000000000000000ff",
+            "supersededBy": [
+              {
+                "eventId": "00000000000000000000000000000000000000000000000000000000000000ff",
+                "pubkey": null,
+                "honored": false,
+                "reason": "unresolved"
+              }
+            ],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "unresolved-supersedes",
+            "message": "entry 0000000000000000000000000000000000000000000000000000000000000031 supersedes 00000000000000000000000000000000000000000000000000000000000000ff, which is not in the visible result set"
+          }
+        ]
+      }
+    },
+    {
+      "name": "created-at-tie-greater-id-honored",
+      "description": "Nostr timestamps have one-second precision, so a tie is broken by the greater event id - the same (created_at, event id) fold the coding-session closure uses.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000041",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"First of two entries at the same second.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000042",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, greater event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000041\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000042",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, greater event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000041",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000041",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "First of two entries at the same second.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000042",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "created-at-tie-lesser-id-not-honored",
+      "description": "The mirror of the tie rule: a claimant that loses the tie does not supersede, so the ordering is total and no two entries can supersede each other.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000052",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, greater event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000051",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Same second, lesser event id.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000052\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000052",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, greater event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000051",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511537,
+            "type": "note",
+            "text": "Same second, lesser event id.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000052",
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000052",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": false,
+                "reason": "out-of-order"
+              }
+            ],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "two-entries-supersede-one-target",
+      "description": "Marking is per-claim, not per-target: both revisions are honored and both are recorded on the target, which is returned once with active:false.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000061",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785510037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"The original plan.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000062",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785511037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"First revision.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000061\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000063",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512037,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Second revision, also naming the original.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000061\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000063",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512037,
+            "type": "plan",
+            "text": "Second revision, also naming the original.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000061",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000062",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785511037,
+            "type": "plan",
+            "text": "First revision.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": "0000000000000000000000000000000000000000000000000000000000000061",
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000061",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785510037,
+            "type": "plan",
+            "text": "The original plan.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000062",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              },
+              {
+                "eventId": "0000000000000000000000000000000000000000000000000000000000000063",
+                "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+                "honored": true,
+                "reason": null
+              }
+            ],
+            "active": false
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "self-referencing-entry-excluded",
+      "description": "An entry whose supersedes is its own id fails validation (buzz-core rejects it at ingest, so only a smuggled event reaches a reader). It is excluded from entries[] and recorded in errors[] - never dropped silently, and never counted as a valid claim.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000071",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512237,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Smuggled self-reference.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":\"0000000000000000000000000000000000000000000000000000000000000071\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000072",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"A well-formed entry beside it.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "0000000000000000000000000000000000000000000000000000000000000072",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "note",
+            "text": "A well-formed entry beside it.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "invalid-entry",
+            "message": "entry 0000000000000000000000000000000000000000000000000000000000000071 failed validation and was excluded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-branch-rows-preserved",
+      "description": "A null branch is its own group, never merged into a named branch and never rendered as one. The fold preserves null; the --branch - filter and Desktop's 'no branch' chip select on it.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"],
+              ["branch", "wip/project-pulse"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Branch-scoped claim.\",\"codeAreas\":[],\"branch\":\"wip/project-pulse\",\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000b2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512637,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Claim with no branch.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000b2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512637,
+            "type": "note",
+            "text": "Claim with no branch.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000b1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512537,
+            "type": "plan",
+            "text": "Branch-scoped claim.",
+            "claimedAreas": [],
+            "branch": "wip/project-pulse",
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "branch-tag-without-content-branch",
+      "description": "The envelope validator accepts a `branch` tag alongside a null content branch (it only rejects a mismatch), so this shape is valid on the wire. Both folds must derive the entry's branch the same way: content field first, then the `branch` tag. Without this vector the two folds can disagree - one filing the entry under `wip/x`, the other under 'no branch' - while every other vector stays green.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512537,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"],
+              ["branch", "wip/x"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"Tag-only branch claim.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "created_at": 1785512437,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"Genuinely branchless claim.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512537,
+            "type": "plan",
+            "text": "Tag-only branch claim.",
+            "claimedAreas": [],
+            "branch": "wip/x",
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          },
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c2",
+            "pubkey": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "createdAt": 1785512437,
+            "type": "note",
+            "text": "Genuinely branchless claim.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "partial-read-is-never-an-empty-digest",
+      "description": "complete:false plus a non-empty errors[] is the only representation of a partial read. A source query that failed must never render as a quiet project - the caller exits 2 on this digest.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [
+          {
+            "scope": "sessions:05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+            "message": "relay unavailable"
+          }
+        ],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "plan"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"plan\",\"text\":\"The one entry the reader could see.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": false,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000c1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "plan",
+            "text": "The one entry the reader could see.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "sessions:05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2",
+            "message": "relay unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "foreign-project-entry-is-never-an-error",
+      "description": "Project scope is decided before envelope validation. A 44240 tagged with a DIFFERENT project is not this digest's business - a mixed result set is a caller's shape, not a defect - so it is skipped silently even when its own envelope is malformed, and it never appears in errors[]. Only an entry whose coordinate cannot be resolved at all is recorded as invalid.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785513037,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a1",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512237,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:2222222222222222222222222222222222222222222222222222222222222222:other-project"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v2\",\"type\":\"note\",\"text\":\"Another project's malformed entry.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a2",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512238,
+            "kind": 44240,
+            "tags": [
+              ["a", "not-a-coordinate"],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"No project at all.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          },
+          {
+            "id": "00000000000000000000000000000000000000000000000000000000000000a3",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785512337,
+            "kind": 44240,
+            "tags": [
+              [
+                "a",
+                "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo"
+              ],
+              ["pu-v", "pu1-1"],
+              ["pu-type", "note"]
+            ],
+            "content": "{\"schema\":\"buzz-pulse-entry/v1\",\"type\":\"note\",\"text\":\"This project's entry.\",\"codeAreas\":[],\"branch\":null,\"supersedes\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785513037,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [
+          {
+            "eventId": "00000000000000000000000000000000000000000000000000000000000000a3",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "createdAt": 1785512337,
+            "type": "note",
+            "text": "This project's entry.",
+            "claimedAreas": [],
+            "branch": null,
+            "sessionRef": null,
+            "supersedes": null,
+            "supersededBy": [],
+            "active": true
+          }
+        ],
+        "errors": [
+          {
+            "scope": "invalid-entry",
+            "message": "entry 00000000000000000000000000000000000000000000000000000000000000a2 failed validation and was excluded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "idle-hours-old-with-live-authorized-lease",
+      "description": "An old idle observation remains provider-reachable when the exact accepted generation has a current lease signed by the lifecycle command's provider authority; repeated delivery of identical proof event IDs is deduplicated.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000101",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785589900,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-live-1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-live-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000102",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785589901,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-live-1"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|13:create-live-1"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-live-1\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000101",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785589900,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "create-live-1"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-live-1\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000102",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785589901,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "create-live-1"], ["csl-key", "coding-session-lifecycle-receipt/v1|13:create-live-1"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-live-1\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000103",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785590000,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-11:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000104",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599940,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:sess-11:1"],
+              ["csl-command", "create-live-1"],
+              ["cslease-seq", "42"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"sess-1\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":42}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "provider_reachable",
+            "latestObservationAt": 1785590000,
+            "observedAgeSeconds": 10000,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:sess-11:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:sess-1",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "provider_reachable",
+                "status": "idle",
+                "statusAt": 1785590000,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599940,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600090,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000104",
+                "leaseSequence": 42,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000101",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000102",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000101",
+                  "0000000000000000000000000000000000000000000000000000000000000102",
+                  "0000000000000000000000000000000000000000000000000000000000000103",
+                  "0000000000000000000000000000000000000000000000000000000000000104"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000101",
+              "0000000000000000000000000000000000000000000000000000000000000102",
+              "0000000000000000000000000000000000000000000000000000000000000103",
+              "0000000000000000000000000000000000000000000000000000000000000104"
+            ]
+          }
+        ],
+        "providerReachableSessions": ["5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "unverified-lease-outcomes",
+      "description": "No lease, released, exact-boundary expiry, equal-highest conflict, wrong signer, and terminal metadata all fail closed as open/unverified evidence under one umbrella.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000200",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599512,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-none"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-none\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000201",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599513,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-none"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|11:create-none"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-none\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"none\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000202",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599514,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-released"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-released\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000203",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599515,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-released"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|15:create-released"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-released\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"released\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000204",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599950,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:released1:1"],
+              ["csl-command", "create-released"],
+              ["cslease-seq", "1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"released\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000205",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:released1:1"],
+              ["csl-command", "create-released"],
+              ["cslease-seq", "2"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"released\",\"generation\":1},\"state\":\"released\",\"leaseSequence\":2}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000206",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599518,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-expired"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-expired\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000207",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599519,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-expired"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|14:create-expired"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-expired\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"expired\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000208",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599820,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-17:expired1:1"],
+              ["csl-command", "create-expired"],
+              ["cslease-seq", "3"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"expired\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":3}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000209",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599521,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-conflict"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-conflict\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020a",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599522,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-conflict"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|15:create-conflict"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-conflict\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"conflict\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020b",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599980,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:conflict1:1"],
+              ["csl-command", "create-conflict"],
+              ["cslease-seq", "7"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"conflict\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":7}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020c",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:conflict1:1"],
+              ["csl-command", "create-conflict"],
+              ["cslease-seq", "7"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"conflict\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":7}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020d",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599525,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-wrong"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-wrong\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020e",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599526,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-wrong"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|12:create-wrong"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-wrong\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"wrong\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "000000000000000000000000000000000000000000000000000000000000020f",
+            "pubkey": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-15:wrong1:1"],
+              ["csl-command", "create-wrong"],
+              ["cslease-seq", "9"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"wrong\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":9}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000210",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599528,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-terminal"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-terminal\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000211",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599529,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-terminal"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|15:create-terminal"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-terminal\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"terminal\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000212",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599970,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:terminal1:1"],
+              [
+                "csm-key",
+                "coding-session-metadata/v1|3:acp6:inst-18:terminal1:1"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"terminal\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"stopped\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000213",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-18:terminal1:1"],
+              ["csl-command", "create-terminal"],
+              ["cslease-seq", "11"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"terminal\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":11}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": 1785599970,
+            "observedAgeSeconds": 30,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-14:none1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-14:none",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000200",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000201",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000200",
+                  "0000000000000000000000000000000000000000000000000000000000000201"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-15:wrong1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-15:wrong",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "000000000000000000000000000000000000000000000000000000000000020d",
+                "lifecycleReceiptEventId": "000000000000000000000000000000000000000000000000000000000000020e",
+                "sourceEventIds": [
+                  "000000000000000000000000000000000000000000000000000000000000020d",
+                  "000000000000000000000000000000000000000000000000000000000000020e"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-17:expired1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-17:expired",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599820,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785599970,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000208",
+                "leaseSequence": 3,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000206",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000207",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000206",
+                  "0000000000000000000000000000000000000000000000000000000000000207",
+                  "0000000000000000000000000000000000000000000000000000000000000208"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-18:conflict1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-18:conflict",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": 7,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000209",
+                "lifecycleReceiptEventId": "000000000000000000000000000000000000000000000000000000000000020a",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000209",
+                  "000000000000000000000000000000000000000000000000000000000000020a",
+                  "000000000000000000000000000000000000000000000000000000000000020b",
+                  "000000000000000000000000000000000000000000000000000000000000020c"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-18:released1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-18:released",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "released",
+                "leaseIssuedAt": 1785599990,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600140,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000205",
+                "leaseSequence": 2,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000202",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000203",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000202",
+                  "0000000000000000000000000000000000000000000000000000000000000203",
+                  "0000000000000000000000000000000000000000000000000000000000000205"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-18:terminal1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-18:terminal",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "terminal",
+                "status": "stopped",
+                "statusAt": 1785599970,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599990,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600140,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000213",
+                "leaseSequence": 11,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000210",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000211",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000210",
+                  "0000000000000000000000000000000000000000000000000000000000000211",
+                  "0000000000000000000000000000000000000000000000000000000000000212",
+                  "0000000000000000000000000000000000000000000000000000000000000213"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000200",
+              "0000000000000000000000000000000000000000000000000000000000000201",
+              "0000000000000000000000000000000000000000000000000000000000000202",
+              "0000000000000000000000000000000000000000000000000000000000000203",
+              "0000000000000000000000000000000000000000000000000000000000000205",
+              "0000000000000000000000000000000000000000000000000000000000000206",
+              "0000000000000000000000000000000000000000000000000000000000000207",
+              "0000000000000000000000000000000000000000000000000000000000000208",
+              "0000000000000000000000000000000000000000000000000000000000000209",
+              "000000000000000000000000000000000000000000000000000000000000020a",
+              "000000000000000000000000000000000000000000000000000000000000020b",
+              "000000000000000000000000000000000000000000000000000000000000020c",
+              "000000000000000000000000000000000000000000000000000000000000020d",
+              "000000000000000000000000000000000000000000000000000000000000020e",
+              "0000000000000000000000000000000000000000000000000000000000000210",
+              "0000000000000000000000000000000000000000000000000000000000000211",
+              "0000000000000000000000000000000000000000000000000000000000000212",
+              "0000000000000000000000000000000000000000000000000000000000000213"
+            ]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "resume-generation-isolation-and-continuity",
+      "description": "A successful +1 resume stays in one umbrella; the predecessor lease cannot make the new generation reachable, and a skipped generation receipt is rejected.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000260",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599608,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-resume"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-resume\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000261",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599609,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-resume"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|13:create-resume"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-resume\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000262",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:resume1:1"],
+              ["csl-command", "create-resume"],
+              ["cslease-seq", "1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000263",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599611,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "resume-two"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"resume-two\",\"action\":{\"type\":\"session.resume\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":1},\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\"}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000264",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599612,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "resume-two"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|10:resume-two"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"resume-two\",\"status\":\"resumed\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":2},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000265",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599613,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "resume-four"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"resume-four\",\"action\":{\"type\":\"session.resume\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":2},\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\"}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000266",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599614,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "resume-four"],
+              ["csl-key", "coding-session-lifecycle-receipt/v1|11:resume-four"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"resume-four\",\"status\":\"resumed\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"resume\",\"generation\":4},\"error\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": null,
+            "observedAgeSeconds": null,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:resume1:2",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:resume",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000263",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000264",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000263",
+                  "0000000000000000000000000000000000000000000000000000000000000264"
+                ]
+              },
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:resume1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:resume",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": false,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599990,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600140,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000262",
+                "leaseSequence": 1,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000260",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000261",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000260",
+                  "0000000000000000000000000000000000000000000000000000000000000261",
+                  "0000000000000000000000000000000000000000000000000000000000000262"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000260",
+              "0000000000000000000000000000000000000000000000000000000000000261",
+              "0000000000000000000000000000000000000000000000000000000000000262",
+              "0000000000000000000000000000000000000000000000000000000000000263",
+              "0000000000000000000000000000000000000000000000000000000000000264"
+            ]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "closure-outranks-live-generation",
+      "description": "A durable umbrella closure places the session in closedSessions even while its current generation still has live lease evidence.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000281",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599641,
+            "kind": 44221,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csl-v", "csl1-1"],
+              ["csl-command", "create-closed"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-closed\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000282",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599642,
+            "kind": 44224,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslr-v", "cslr1-1"],
+              ["csl-command", "create-closed"],
+              [
+                "csl-key",
+                "coding-session-lifecycle-receipt/v1|13:create-closed"
+              ]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-closed\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"closed\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000283",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599940,
+            "kind": 44223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["csm-v", "csm1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:closed1:1"],
+              ["csm-key", "coding-session-metadata/v1|3:acp6:inst-16:closed1:1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"closed\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":null,\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000284",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["cslease-v", "cslease1-1"],
+              ["cs-target", "coding-session/v1|3:acp6:inst-16:closed1:1"],
+              ["csl-command", "create-closed"],
+              ["cslease-seq", "1"]
+            ],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-1\",\"sessionId\":\"closed\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000285",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599995,
+            "kind": 44230,
+            "tags": [
+              ["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],
+              ["d", "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+              ["cscl-v", "cscl1-1"],
+              [
+                "cscl-genesis",
+                "0000000000000000000000000000000000000000000000000000000000000281"
+              ]
+            ],
+            "content": "{\"action\":\"closed\",\"genesisRef\":\"0000000000000000000000000000000000000000000000000000000000000281\",\"sessionRef\":\"8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64\",\"v\":1}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "sessionRef": "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+            "name": null,
+            "goal": null,
+            "lifecycle": "closed",
+            "coordinationState": "closed",
+            "latestObservationAt": 1785599940,
+            "observedAgeSeconds": 60,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-16:closed1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-16:closed",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "provider_reachable",
+                "status": "idle",
+                "statusAt": 1785599940,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": "live",
+                "leaseIssuedAt": 1785599990,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": 1785600140,
+                "leaseSigner": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "leaseSourceEventId": "0000000000000000000000000000000000000000000000000000000000000284",
+                "leaseSequence": 1,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000281",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000282",
+                "sourceEventIds": [
+                  "0000000000000000000000000000000000000000000000000000000000000281",
+                  "0000000000000000000000000000000000000000000000000000000000000282",
+                  "0000000000000000000000000000000000000000000000000000000000000283",
+                  "0000000000000000000000000000000000000000000000000000000000000284"
+                ]
+              }
+            ],
+            "sourceEventIds": [
+              "0000000000000000000000000000000000000000000000000000000000000281",
+              "0000000000000000000000000000000000000000000000000000000000000282",
+              "0000000000000000000000000000000000000000000000000000000000000283",
+              "0000000000000000000000000000000000000000000000000000000000000284",
+              "0000000000000000000000000000000000000000000000000000000000000285"
+            ]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": ["8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "cross-channel-authority-proof-splicing-rejected",
+      "description": "Lifecycle authority and every generation or umbrella fact are channel-bound: a command in channel A cannot pair with a receipt in B, and metadata, lease, name, goal, or closure from B cannot attach to a generation accepted in A.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000301",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599700,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "cross-only"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"cross-only\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"0c50c3d8-f9ab-4c8b-a037-947307499382\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000302",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599701,
+            "kind": 44224,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["cslr-v", "cslr1-1"], ["csl-command", "cross-only"], ["csl-key", "coding-session-lifecycle-receipt/v1|10:cross-only"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"cross-only\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-cross\",\"sessionId\":\"cross-only\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000311",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599710,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "channel-bound"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"channel-bound\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"4c7f1a2b-3d5e-4678-9123-abcdef012345\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000312",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599711,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "channel-bound"], ["csl-key", "coding-session-lifecycle-receipt/v1|13:channel-bound"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"channel-bound\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-x\",\"sessionId\":\"chan-bound\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000313",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599900,
+            "kind": 44223,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["cs-target", "coding-session/v1|3:acp6:inst-x10:chan-bound1:1"]],
+            "content": "{\"schema\":\"buzz-coding-session-metadata/v1\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-x\",\"sessionId\":\"chan-bound\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"title\":null,\"agentRef\":null,\"provider\":\"provider-1\",\"runtime\":\"claude\",\"model\":null,\"status\":\"idle\",\"branch\":\"wrong-channel\",\"capabilities\":{\"threadTurnStart\":true,\"threadTurnInterrupt\":true,\"threadSteer\":false,\"context\":false,\"diff\":false,\"plan\":true},\"sessionRef\":\"4c7f1a2b-3d5e-4678-9123-abcdef012345\",\"observedCommit\":null,\"dirty\":null,\"relayReachable\":null,\"verifiedAt\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000314",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["cslease-v", "cslease1-1"], ["cs-target", "coding-session/v1|3:acp6:inst-x10:chan-bound1:1"], ["csl-command", "channel-bound"], ["cslease-seq", "1"]],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-x\",\"sessionId\":\"chan-bound\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000315",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599991,
+            "kind": 44229,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["d", "4c7f1a2b-3d5e-4678-9123-abcdef012345"]],
+            "content": "Wrong channel name"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000316",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599992,
+            "kind": 44227,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["d", "4c7f1a2b-3d5e-4678-9123-abcdef012345"]],
+            "content": "Wrong channel goal"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000317",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599993,
+            "kind": 44230,
+            "tags": [["h", "11111111-2222-4333-8444-555555555555"], ["d", "4c7f1a2b-3d5e-4678-9123-abcdef012345"], ["cscl-v", "cscl1-1"], ["cscl-genesis", "0000000000000000000000000000000000000000000000000000000000000311"]],
+            "content": "{\"action\":\"closed\",\"genesisRef\":\"0000000000000000000000000000000000000000000000000000000000000311\",\"sessionRef\":\"4c7f1a2b-3d5e-4678-9123-abcdef012345\",\"v\":1}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "4c7f1a2b-3d5e-4678-9123-abcdef012345",
+            "sessionRef": "4c7f1a2b-3d5e-4678-9123-abcdef012345",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": null,
+            "observedAgeSeconds": null,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp6:inst-x10:chan-bound1:1",
+                "executionKey": "coding-execution/v1|3:acp6:inst-x10:chan-bound",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000311",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000312",
+                "sourceEventIds": ["0000000000000000000000000000000000000000000000000000000000000311", "0000000000000000000000000000000000000000000000000000000000000312"]
+              }
+            ],
+            "sourceEventIds": ["0000000000000000000000000000000000000000000000000000000000000311", "0000000000000000000000000000000000000000000000000000000000000312"]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["4c7f1a2b-3d5e-4678-9123-abcdef012345"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "create-receipt-generation-two-rejected",
+      "description": "A successful create receipt can mint only generation 1; a generation-2 target is rejected even when command, channel, signer, and status otherwise agree.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000321",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599800,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "create-generation-two"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"create-generation-two\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"c1a55e22-4834-4b69-8aa0-8a98538c7012\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000322",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599801,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "create-generation-two"], ["csl-key", "coding-session-lifecycle-receipt/v1|21:create-generation-two"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"create-generation-two\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-gen\",\"sessionId\":\"create-two\",\"generation\":2},\"error\":null}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": [],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "competing-generation-proofs-rejected-forward",
+      "description": "Two distinct successful command/receipt proofs for the same channel and exact target make the generation inadmissible; first input order cannot choose authority.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {"id":"0000000000000000000000000000000000000000000000000000000000000401","pubkey":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","created_at":1785599800,"kind":44221,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["csl-v","csl1-1"],["csl-command","proof-a"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"proof-a\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"a1111111-1111-4111-8111-111111111111\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000402","pubkey":"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4","created_at":1785599801,"kind":44224,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["cslr-v","cslr1-1"],["csl-command","proof-a"],["csl-key","coding-session-lifecycle-receipt/v1|7:proof-a"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"proof-a\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-proof\",\"sessionId\":\"same-target\",\"generation\":1},\"error\":null}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000403","pubkey":"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2","created_at":1785599802,"kind":44221,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["csl-v","csl1-1"],["csl-command","proof-b"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"proof-b\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"b2222222-2222-4222-8222-222222222222\",\"providerInstanceRef\":\"provider-2\",\"providerAuthorityPubkey\":\"e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5\",\"model\":null,\"title\":null,\"initialTurn\":null}}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000404","pubkey":"e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5","created_at":1785599803,"kind":44224,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["cslr-v","cslr1-1"],["csl-command","proof-b"],["csl-key","coding-session-lifecycle-receipt/v1|7:proof-b"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"proof-b\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-proof\",\"sessionId\":\"same-target\",\"generation\":1},\"error\":null}"}
+        ]
+      },
+      "expected": {"schema":"buzz-project-pulse-digest/v2","source":"client-composed","project":"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo","asOf":1785600000,"complete":true,"sessionsScope":"project channels","sessions":[],"providerReachableSessions":[],"openUnverifiedSessions":[],"closedSessions":[],"entries":[],"errors":[]}
+    },
+    {
+      "name": "competing-generation-proofs-rejected-reverse",
+      "description": "The same competing exact-target proofs in reverse order remain inadmissible.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {"id":"0000000000000000000000000000000000000000000000000000000000000404","pubkey":"e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5","created_at":1785599803,"kind":44224,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["cslr-v","cslr1-1"],["csl-command","proof-b"],["csl-key","coding-session-lifecycle-receipt/v1|7:proof-b"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"proof-b\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-proof\",\"sessionId\":\"same-target\",\"generation\":1},\"error\":null}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000403","pubkey":"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2","created_at":1785599802,"kind":44221,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["csl-v","csl1-1"],["csl-command","proof-b"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"proof-b\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"b2222222-2222-4222-8222-222222222222\",\"providerInstanceRef\":\"provider-2\",\"providerAuthorityPubkey\":\"e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5\",\"model\":null,\"title\":null,\"initialTurn\":null}}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000402","pubkey":"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4","created_at":1785599801,"kind":44224,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["cslr-v","cslr1-1"],["csl-command","proof-a"],["csl-key","coding-session-lifecycle-receipt/v1|7:proof-a"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"proof-a\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-proof\",\"sessionId\":\"same-target\",\"generation\":1},\"error\":null}"},
+          {"id":"0000000000000000000000000000000000000000000000000000000000000401","pubkey":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","created_at":1785599800,"kind":44221,"tags":[["h","05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"],["csl-v","csl1-1"],["csl-command","proof-a"]],"content":"{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"proof-a\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"a1111111-1111-4111-8111-111111111111\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"}
+        ]
+      },
+      "expected": {"schema":"buzz-project-pulse-digest/v2","source":"client-composed","project":"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo","asOf":1785600000,"complete":true,"sessionsScope":"project channels","sessions":[],"providerReachableSessions":[],"openUnverifiedSessions":[],"closedSessions":[],"entries":[],"errors":[]}
+    },
+    {
+      "name": "strict-lifecycle-and-lease-json-rejected",
+      "description": "Unknown lifecycle/receipt/lease fields and duplicate lease keys are rejected exactly as the Rust decoders reject them; malformed facts cannot mint authority or liveness.",
+      "input": {
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "now": 1785600000,
+        "sourceErrors": [],
+        "events": [
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000331",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599800,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "strict-base"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"strict-base\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"a5f8a1c1-6ef2-4d8e-88a2-a0f51c3c9701\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000332",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599801,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "strict-base"], ["csl-key", "coding-session-lifecycle-receipt/v1|11:strict-base"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"strict-base\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"strict-base\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000333",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599990,
+            "kind": 24223,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslease-v", "cslease1-1"], ["cs-target", "coding-session/v1|3:acp11:inst-strict11:strict-base1:1"], ["csl-command", "strict-base"], ["cslease-seq", "3"]],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"strict-base\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":3,\"unexpected\":true}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000334",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599991,
+            "kind": 24223,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslease-v", "cslease1-1"], ["cs-target", "coding-session/v1|3:acp11:inst-strict11:strict-base1:1"], ["csl-command", "strict-base"], ["cslease-seq", "4"]],
+            "content": "{\"schema\":\"buzz-coding-session-lease/v1\",\"target\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"strict-base\",\"generation\":1},\"state\":\"live\",\"leaseSequence\":1,\"leaseSequence\":4}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000341",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599810,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "unknown-command"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"unknown-command\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"b6f8a1c1-6ef2-4d8e-88a2-a0f51c3c9702\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null},\"unexpected\":true}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000342",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599811,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "unknown-command"], ["csl-key", "coding-session-lifecycle-receipt/v1|15:unknown-command"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"unknown-command\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"unknown-command\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000351",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599820,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "unknown-receipt"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"unknown-receipt\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"c7f8a1c1-6ef2-4d8e-88a2-a0f51c3c9703\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000352",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599821,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "unknown-receipt"], ["csl-key", "coding-session-lifecycle-receipt/v1|15:unknown-receipt"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"unknown-receipt\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"unknown-receipt\",\"generation\":1},\"error\":null,\"unexpected\":true}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000361",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599830,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "bad-command-values"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"bad-command-values\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"d8f8a1c1-6ef2-4d8e-88a2-a0f51c3c9704\",\"providerInstanceRef\":7,\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000362",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599831,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "bad-command-values"], ["csl-key", "coding-session-lifecycle-receipt/v1|18:bad-command-values"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"bad-command-values\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"bad-command-values\",\"generation\":1},\"error\":null}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000371",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599840,
+            "kind": 44221,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["csl-v", "csl1-1"], ["csl-command", "bad-receipt-shape"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-command/v1\",\"commandId\":\"bad-receipt-shape\",\"action\":{\"type\":\"session.create\",\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"repoRef\":null,\"sessionRef\":\"e9f8a1c1-6ef2-4d8e-88a2-a0f51c3c9705\",\"providerInstanceRef\":\"provider-1\",\"providerAuthorityPubkey\":\"d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4\",\"model\":null,\"title\":null,\"initialTurn\":null}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000372",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599841,
+            "kind": 44224,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["cslr-v", "cslr1-1"], ["csl-command", "bad-receipt-shape"], ["csl-key", "coding-session-lifecycle-receipt/v1|17:bad-receipt-shape"]],
+            "content": "{\"schema\":\"buzz-coding-session-lifecycle-receipt/v1\",\"commandId\":\"bad-receipt-shape\",\"status\":\"created\",\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"bad-receipt-shape\",\"generation\":1},\"error\":{\"code\":\"oops\",\"message\":\"must be null for created\"}}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000381",
+            "pubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+            "created_at": 1785599992,
+            "kind": 44223,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"]],
+            "content": "{\"session\":{\"driver\":\"acp\",\"instanceId\":\"inst-strict\",\"sessionId\":\"strict-base\",\"generation\":1},\"projectRef\":\"30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo\",\"status\":\"idle\",\"status\":\"disconnected\"}"
+          },
+          {
+            "id": "0000000000000000000000000000000000000000000000000000000000000382",
+            "pubkey": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "created_at": 1785599993,
+            "kind": 44230,
+            "tags": [["h", "05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"], ["d", "a5f8a1c1-6ef2-4d8e-88a2-a0f51c3c9701"]],
+            "content": "{\"action\":\"closed\"}"
+          }
+        ]
+      },
+      "expected": {
+        "schema": "buzz-project-pulse-digest/v2",
+        "source": "client-composed",
+        "project": "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo",
+        "asOf": 1785600000,
+        "complete": true,
+        "sessionsScope": "project channels",
+        "sessions": [
+          {
+            "sessionKey": "a5f8a1c1-6ef2-4d8e-88a2-a0f51c3c9701",
+            "sessionRef": "a5f8a1c1-6ef2-4d8e-88a2-a0f51c3c9701",
+            "name": null,
+            "goal": null,
+            "lifecycle": "open",
+            "coordinationState": "open_unverified",
+            "latestObservationAt": null,
+            "observedAgeSeconds": null,
+            "generations": [
+              {
+                "targetKey": "coding-session/v1|3:acp11:inst-strict11:strict-base1:1",
+                "executionKey": "coding-execution/v1|3:acp11:inst-strict11:strict-base",
+                "providerAuthorityPubkey": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+                "current": true,
+                "reachability": "unverified",
+                "status": null,
+                "statusAt": null,
+                "branch": null,
+                "observedCommit": null,
+                "dirty": null,
+                "relayReachable": null,
+                "verifiedAt": null,
+                "commitConfirmation": "Commit not checked",
+                "leaseState": null,
+                "leaseIssuedAt": null,
+                "leaseAcceptedAt": null,
+                "leaseExpiresAt": null,
+                "leaseSigner": null,
+                "leaseSourceEventId": null,
+                "leaseSequence": null,
+                "lifecycleCommandEventId": "0000000000000000000000000000000000000000000000000000000000000331",
+                "lifecycleReceiptEventId": "0000000000000000000000000000000000000000000000000000000000000332",
+                "sourceEventIds": ["0000000000000000000000000000000000000000000000000000000000000331", "0000000000000000000000000000000000000000000000000000000000000332"]
+              }
+            ],
+            "sourceEventIds": ["0000000000000000000000000000000000000000000000000000000000000331", "0000000000000000000000000000000000000000000000000000000000000332", "0000000000000000000000000000000000000000000000000000000000000382"]
+          }
+        ],
+        "providerReachableSessions": [],
+        "openUnverifiedSessions": ["a5f8a1c1-6ef2-4d8e-88a2-a0f51c3c9701"],
+        "closedSessions": [],
+        "entries": [],
+        "errors": []
+      }
+    }
+  ]
+}

@@ -447,6 +447,16 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         // NIP-ST: a shared-terminal session announce is ordinary member
         // content, not repository metadata.
         buzz_core::kind::KIND_SHELL_SESSION => Ok(Scope::MessagesWrite),
+        // NIP-MP Pulse: an explicit project coordination entry is authored
+        // member content, not repository metadata. Per-project write
+        // admission is enforced separately at ingest (`pulse_write_admitted`).
+        //
+        // The computed digest (39011) and the relay-signed summary (44242) are
+        // deliberately absent from this match: the default arm below is what
+        // keeps them unwritable by clients, and adding an arm for 39011 would
+        // silently drop it into the generic parameterized-replaceable
+        // store-and-replace path.
+        buzz_core::kind::KIND_PULSE_ENTRY => Ok(Scope::MessagesWrite),
         KIND_GIT_PATCH
         | KIND_GIT_PULL_REQUEST
         | KIND_GIT_PR_UPDATE
@@ -460,6 +470,40 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_WORKFLOW_DEF | KIND_WORKFLOW_TRIGGER => Ok(Scope::MessagesWrite),
         KIND_APPROVAL_GRANT | KIND_APPROVAL_DENY => Ok(Scope::MessagesWrite),
         _ => Err("restricted: unknown event kind"),
+    }
+}
+
+/// Write admission for a NIP-MP Pulse entry (kind:44240), as a pure decision
+/// over already-resolved database facts.
+///
+/// `gate` is [`buzz_db::project_acl::get_project_gate_by_coordinate`]'s result
+/// — `Some` only for a **private** project — and `project_exists` answers the
+/// question that query cannot: whether any project head with the coordinate
+/// exists in this community at all.
+///
+/// - Private project → `admits_write`, so an owner or collaborator publishes
+///   and a read-only viewer does not. This deliberately diverges from the
+///   shipped NIP-ST 30623 gate's read-shaped `can_access_project_contents`:
+///   a Pulse entry is an authored claim about the project's work, not a
+///   view of it.
+/// - Public project → any community member may publish, as for any other
+///   public project content.
+/// - Unknown coordinate → refused. The `a` tag is a required singleton, and an
+///   entry naming a project that does not exist is in nobody's hidden set, so
+///   it would be shown to everyone as a coordination fact with no project
+///   behind it.
+fn pulse_write_admitted(
+    gate: Option<&buzz_db::project_acl::ProjectGate>,
+    project_exists: bool,
+    author_pubkey: &[u8],
+) -> Result<(), &'static str> {
+    match gate {
+        Some(gate) if !gate.admits_write(author_pubkey) => {
+            Err("restricted: project write access required")
+        }
+        Some(_) => Ok(()),
+        None if !project_exists => Err("restricted: unknown project coordinate"),
+        None => Ok(()),
     }
 }
 
@@ -3144,6 +3188,74 @@ async fn ingest_event_inner(
                 "restricted: project is private".into(),
             ));
         }
+    }
+
+    // NIP-MP Pulse (44240): an explicit project coordination entry. Its `a`
+    // tag is a *required* singleton, so unlike the soft `project`
+    // back-references above the coordinate must resolve to a project that
+    // really exists, and the author must hold write access to it.
+    //
+    // If the entry also carries `h`, the generic channel-membership gate
+    // earlier in this function has already run against that channel: project
+    // authorization never widens channel authorization, and vice versa.
+    if kind_u32 == buzz_core::kind::KIND_PULSE_ENTRY {
+        // Bound the payload before any parse, the standing content-cap idiom
+        // in this file. `decode_pulse_entry` repeats the check for callers
+        // that reach it directly.
+        let got = event.content.len();
+        if got > buzz_core::pulse::MAX_PULSE_ENTRY_CONTENT_BYTES {
+            return Err(IngestError::Rejected(format!(
+                "invalid: pulse entry content exceeds {} bytes (got {got})",
+                buzz_core::pulse::MAX_PULSE_ENTRY_CONTENT_BYTES
+            )));
+        }
+        // Tag grammar, the canonical-coordinate rule, and the content
+        // envelope. buzz-core owns the validator outright; the relay keeps no
+        // local copy (the duplicated-validator drift this avoids already
+        // exists in-tree for kind:30621). Note that `supersedes` is checked
+        // syntactically only — the relay never looks the target up, so
+        // `POST /events` cannot be used as an existence oracle for arbitrary
+        // 64-hex ids, and a supersession that arrives before its target under
+        // retry reordering still stores.
+        buzz_core::pulse::validate_pulse_entry_envelope(&event)
+            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
+        let coordinate =
+            buzz_core::pulse::pulse_entry_project_coordinate(&event).ok_or_else(|| {
+                IngestError::Rejected("invalid: pulse entry requires one a tag".into())
+            })?;
+        let author_bytes = event.pubkey.to_bytes();
+        let gate = state
+            .db
+            .get_project_gate_by_coordinate(tenant.community(), &coordinate)
+            .await
+            // Fail closed: an unknown gate must not admit a write, matching
+            // the git-child gate below.
+            .map_err(|e| {
+                IngestError::Internal(format!("error: project gate lookup failed: {e}"))
+            })?;
+        // `None` from that query means public-*or-unknown*, because it filters
+        // `visibility = 'private'`. Resolve the ambiguity with an indexed
+        // existence probe rather than the `can_write_project_contents` /
+        // `can_access_project_contents` helpers, which cannot: both
+        // `.unwrap_or(true)` on a missing row, so an entry naming a
+        // coordinate no kind:30621 event ever created would be accepted, and
+        // an unknown coordinate is in nobody's hidden set — the relay would
+        // then show everyone a coordination fact invented out of nothing.
+        let project_exists = match gate {
+            Some(_) => true,
+            None => state
+                .db
+                .project_exists_by_coordinate(tenant.community(), &coordinate)
+                .await
+                .map_err(|e| IngestError::Internal(format!("error: project lookup failed: {e}")))?,
+        };
+        // Raised as an *auth* failure, not a rejection: §5.4's exit-code table
+        // requires a refused Pulse write to surface as HTTP 403 (→ CLI exit 3),
+        // and `bridge.rs` maps every `Rejected` to 400 (→ exit 2, transport
+        // error). The WS wire text is unchanged — `handlers/event.rs` sends the
+        // identical `OK false "restricted: …"` for both variants.
+        pulse_write_admitted(gate.as_ref(), project_exists, &author_bytes)
+            .map_err(|msg| IngestError::AuthFailed(msg.to_string()))?;
     }
 
     if kind_u32 == KIND_GIT_REPO_ANNOUNCEMENT {
@@ -6197,6 +6309,242 @@ mod tests {
         assert_eq!(
             counts.get(&("ws".to_owned(), "invalid".to_owned())),
             Some(&1)
+        );
+    }
+
+    // ---- NIP-MP Pulse (kind:44240) ingest ----
+
+    /// Build a well-formed 44240 for `keys`, then let the caller mutate the
+    /// tag list to produce the malformed shapes under test.
+    fn pulse_event_with_tags(keys: &nostr::Keys, tags: &[Vec<&str>]) -> Event {
+        let content = serde_json::json!({
+            "schema": buzz_core::pulse::PULSE_ENTRY_SCHEMA,
+            "type": "plan",
+            "text": "Refactoring session creation; pool.rs will churn.",
+        })
+        .to_string();
+        let nostr_tags: Vec<nostr::Tag> = tags
+            .iter()
+            .map(|t| nostr::Tag::parse(t.iter().copied()).expect("tag"))
+            .collect();
+        nostr::EventBuilder::new(
+            nostr::Kind::Custom(buzz_core::kind::KIND_PULSE_ENTRY as u16),
+            content,
+        )
+        .tags(nostr_tags)
+        .sign_with_keys(keys)
+        .expect("sign pulse entry")
+    }
+
+    fn canonical_pulse_coordinate(keys: &nostr::Keys) -> String {
+        format!("30621:{}:pulse-fixture", keys.public_key().to_hex())
+    }
+
+    #[test]
+    fn pulse_entry_requires_messages_write_scope() {
+        let dummy = make_dummy_event();
+        assert_eq!(
+            required_scope_for_kind(buzz_core::kind::KIND_PULSE_ENTRY, &dummy).unwrap(),
+            Scope::MessagesWrite,
+        );
+    }
+
+    /// The digest (39011) and the relay-signed summary (44242) stay
+    /// client-unwritable by *omission* from `required_scope_for_kind`. A future
+    /// match arm for either would silently make them stored client content.
+    #[test]
+    fn pulse_digest_and_summary_kinds_are_not_client_writable() {
+        let dummy = make_dummy_event();
+        for kind in [39011, 44242] {
+            assert_eq!(
+                required_scope_for_kind(kind, &dummy),
+                Err("restricted: unknown event kind"),
+                "kind {kind} must not be client-writable in Slice 1"
+            );
+        }
+    }
+
+    /// 44240 carries `h` only optionally, so it must not be forced global —
+    /// otherwise an `h`-tagged entry would skip the channel-membership gate and
+    /// project authorization would silently widen channel authorization.
+    #[test]
+    fn pulse_entry_is_neither_global_only_nor_h_required() {
+        assert!(!is_global_only_kind(buzz_core::kind::KIND_PULSE_ENTRY));
+        assert!(!requires_h_channel_scope(buzz_core::kind::KIND_PULSE_ENTRY));
+    }
+
+    #[test]
+    fn pulse_entry_rejects_duplicate_singleton_tags() {
+        let keys = nostr::Keys::generate();
+        let coordinate = canonical_pulse_coordinate(&keys);
+        let channel = uuid::Uuid::new_v4().to_string();
+        let cases: Vec<Vec<Vec<&str>>> = vec![
+            // duplicate required singletons
+            vec![
+                vec!["a", coordinate.as_str()],
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+            ],
+            vec![
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+            ],
+            vec![
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+                vec!["pu-type", "plan"],
+            ],
+            // duplicate optional singletons
+            vec![
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+                vec!["h", channel.as_str()],
+                vec!["h", channel.as_str()],
+            ],
+            vec![
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+                vec!["branch", "wip/pulse"],
+                vec!["branch", "wip/pulse"],
+            ],
+        ];
+        for tags in cases {
+            let event = pulse_event_with_tags(&keys, &tags);
+            assert!(
+                buzz_core::pulse::validate_pulse_entry_envelope(&event).is_err(),
+                "duplicate singleton tag must be rejected: {tags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pulse_entry_rejects_unknown_tag_key() {
+        let keys = nostr::Keys::generate();
+        let coordinate = canonical_pulse_coordinate(&keys);
+        let event = pulse_event_with_tags(
+            &keys,
+            &[
+                vec!["a", coordinate.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+                vec!["e", &"a".repeat(64)],
+            ],
+        );
+        assert!(buzz_core::pulse::validate_pulse_entry_envelope(&event).is_err());
+    }
+
+    /// A case-variant coordinate would dodge the ACL projection (which joins on
+    /// string equality) and then be unfindable by any canonical `#a` query —
+    /// the same rule and rationale as the NIP-MP membership ops.
+    #[test]
+    fn pulse_entry_rejects_non_canonical_coordinate() {
+        let keys = nostr::Keys::generate();
+        let upper = format!(
+            "30621:{}:pulse-fixture",
+            keys.public_key().to_hex().to_uppercase()
+        );
+        let event = pulse_event_with_tags(
+            &keys,
+            &[
+                vec!["a", upper.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+            ],
+        );
+        let err = buzz_core::pulse::validate_pulse_entry_envelope(&event)
+            .expect_err("non-canonical coordinate must be rejected");
+        assert!(err.contains("canonical"), "unexpected message: {err}");
+
+        // The canonical form of the same project is accepted.
+        let canonical = canonical_pulse_coordinate(&keys);
+        let ok = pulse_event_with_tags(
+            &keys,
+            &[
+                vec!["a", canonical.as_str()],
+                vec!["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION],
+                vec!["pu-type", "plan"],
+            ],
+        );
+        assert!(buzz_core::pulse::validate_pulse_entry_envelope(&ok).is_ok());
+    }
+
+    /// `supersedes` is syntax-only at ingest: the relay performs no lookup, so
+    /// `POST /events` never becomes an existence oracle and a supersession that
+    /// arrives before its target under retry reordering still stores.
+    #[test]
+    fn pulse_entry_supersedes_is_syntactic_only() {
+        let keys = nostr::Keys::generate();
+        let coordinate = canonical_pulse_coordinate(&keys);
+        let content = serde_json::json!({
+            "schema": buzz_core::pulse::PULSE_ENTRY_SCHEMA,
+            "type": "plan",
+            "text": "Superseding an id this relay has never seen.",
+            "supersedes": "b".repeat(64),
+        })
+        .to_string();
+        let event = nostr::EventBuilder::new(
+            nostr::Kind::Custom(buzz_core::kind::KIND_PULSE_ENTRY as u16),
+            content,
+        )
+        .tags(vec![
+            nostr::Tag::parse(["a", coordinate.as_str()]).expect("a"),
+            nostr::Tag::parse(["pu-v", buzz_core::pulse::PULSE_ENTRY_TAG_VERSION]).expect("pu-v"),
+            nostr::Tag::parse(["pu-type", "plan"]).expect("pu-type"),
+        ])
+        .sign_with_keys(&keys)
+        .expect("sign");
+        assert!(buzz_core::pulse::validate_pulse_entry_envelope(&event).is_ok());
+    }
+
+    /// The write-admission decision, over the two database facts ingest
+    /// resolves. A read-only member of a **private** project cannot publish; a
+    /// public fixture would make that assertion vacuous, since a public project
+    /// admits any community member by design.
+    #[test]
+    fn pulse_write_admission_is_role_aware_and_refuses_unknown_projects() {
+        use buzz_db::project_acl::{ProjectGate, ProjectRole};
+
+        let owner = vec![1u8; 32];
+        let collaborator = vec![2u8; 32];
+        let viewer = vec![3u8; 32];
+        let stranger = vec![4u8; 32];
+        let gate = ProjectGate {
+            owner: owner.clone(),
+            members: vec![
+                (collaborator.clone(), ProjectRole::Collaborator),
+                (viewer.clone(), ProjectRole::Viewer),
+            ],
+        };
+
+        assert_eq!(pulse_write_admitted(Some(&gate), true, &owner), Ok(()));
+        assert_eq!(
+            pulse_write_admitted(Some(&gate), true, &collaborator),
+            Ok(())
+        );
+        assert_eq!(
+            pulse_write_admitted(Some(&gate), true, &viewer),
+            Err("restricted: project write access required"),
+            "a read-only member of a private project reads the Pulse and never writes it"
+        );
+        assert_eq!(
+            pulse_write_admitted(Some(&gate), true, &stranger),
+            Err("restricted: project write access required")
+        );
+
+        // Public project (no gate row) that exists: any community member.
+        assert_eq!(pulse_write_admitted(None, true, &stranger), Ok(()));
+        // Coordinate no kind:30621 event ever created: refused, because an
+        // unknown coordinate is in nobody's hidden set and the entry would
+        // otherwise be shown to everyone.
+        assert_eq!(
+            pulse_write_admitted(None, false, &owner),
+            Err("restricted: unknown project coordinate")
         );
     }
 }

@@ -36,6 +36,7 @@ use crate::acp::{
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
+use crate::pulse_fetch;
 use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
     PromptProfile, PromptProfileLookup, ThreadTags,
@@ -126,6 +127,13 @@ pub struct SessionState {
     /// fetch fails — all fail open. Cleared on session invalidation alongside
     /// `core_sections` so the next session picks up any canvas change.
     pub canvas_sections: HashMap<Uuid, String>,
+    /// channel_id → resolved Project Pulse (coordinate + rendered section).
+    ///
+    /// Populated once before session creation (same lifecycle as
+    /// `core_sections`/`canvas_sections`), gated by §5.5 project resolution:
+    /// absent when the channel resolves to zero or more than one project.
+    /// Cleared on session invalidation so the next session re-resolves.
+    pub pulse_cache: HashMap<Uuid, pulse_fetch::PulseInjection>,
     /// Per-channel successful-delivery state. Created with the ACP session and
     /// cleared atomically with every invalidation path.
     pub deliveries: HashMap<Uuid, ChannelDeliveryState>,
@@ -152,6 +160,7 @@ impl SessionState {
         self.turn_counts.remove(channel_id);
         self.core_sections.remove(channel_id);
         self.canvas_sections.remove(channel_id);
+        self.pulse_cache.remove(channel_id);
         self.deliveries.remove(channel_id);
         self.sessions.remove(channel_id).is_some()
     }
@@ -165,6 +174,7 @@ impl SessionState {
         self.heartbeat_standing_context_sent = false;
         self.core_sections.clear();
         self.canvas_sections.clear();
+        self.pulse_cache.clear();
         self.deliveries.clear();
     }
 
@@ -185,6 +195,7 @@ impl SessionState {
             || self.turn_counts.contains_key(channel_id)
             || self.core_sections.contains_key(channel_id)
             || self.canvas_sections.contains_key(channel_id)
+            || self.pulse_cache.contains_key(channel_id)
             || self.deliveries.contains_key(channel_id)
     }
 }
@@ -964,6 +975,11 @@ struct NewSessionChannelContext<'a> {
     name: Option<&'a str>,
     id: Option<Uuid>,
     channel_type: Option<&'a str>,
+    /// Resolved Project Pulse coordinate, or `None` when §5.5 project
+    /// resolution found zero or more than one project for this channel.
+    /// Rides onto `BUZZ_PULSE_PROJECT` for MCP servers, never onto the ACP
+    /// agent subprocess's own env (see `mcp_servers_with_git_origin`).
+    pulse_project: Option<&'a str>,
 }
 
 async fn create_session_and_apply_model(
@@ -1001,6 +1017,7 @@ async fn create_session_and_apply_model(
         &ctx.mcp_servers,
         channel.id,
         channel.channel_type,
+        channel.pulse_project,
         ctx.session_title.as_deref(),
     );
 
@@ -1111,10 +1128,20 @@ async fn create_session_and_apply_model(
     Ok(resp.session_id)
 }
 
+/// `pulse_project`, when present, is the §5.5-resolved Project Pulse
+/// coordinate for this channel session. It is pushed onto every MCP server's
+/// env as `BUZZ_PULSE_PROJECT`, the same mechanism `BUZZ_GIT_ORIGIN_CHANNEL_ID`
+/// already takes, so `buzz-dev-mcp` shell invocations (and `buzz` CLI calls
+/// made through them) inherit it. This is deliberately **not** set on the ACP
+/// agent subprocess's own env — that env is fixed once at pool-process spawn
+/// (`EnvFence::OPEN`, `acp.rs:530-546`) and is identical for every channel
+/// session that process ever serves, so it cannot carry a per-session
+/// coordinate.
 fn mcp_servers_with_git_origin(
     servers: &[McpServer],
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
+    pulse_project: Option<&str>,
     agent_name: Option<&str>,
 ) -> Vec<McpServer> {
     let mut servers = servers.to_vec();
@@ -1134,6 +1161,15 @@ fn mcp_servers_with_git_origin(
     if let Some(origin) = origin {
         for server in &mut servers {
             server.env.push(origin.clone());
+        }
+    }
+    if let Some(coordinate) = pulse_project.filter(|value| !value.trim().is_empty()) {
+        let pulse_env = EnvVar {
+            name: "BUZZ_PULSE_PROJECT".into(),
+            value: coordinate.trim().to_string(),
+        };
+        for server in &mut servers {
+            server.env.push(pulse_env.clone());
         }
     }
     servers
@@ -1431,6 +1467,22 @@ fn with_canvas(prompt: Option<String>, canvas: Option<&str>) -> Option<String> {
     }
 }
 
+/// Append the `[Project Pulse]` section onto the accumulated canvas/standing
+/// slot (see the `agent_canvas` computation in `run_prompt_task`).
+///
+/// The Pulse section already carries its own `[Project Pulse]` header (from
+/// `pulse_fetch::build_pulse_section`), so it is joined with a blank-line
+/// separator and never re-labeled — the same convention as `with_core` and
+/// `with_canvas`. Either side may be absent.
+fn with_pulse(canvas: Option<String>, pulse: Option<&str>) -> Option<String> {
+    match (canvas, pulse) {
+        (Some(canvas), Some(pulse)) => Some(format!("{canvas}\n\n{pulse}")),
+        (Some(canvas), None) => Some(canvas),
+        (None, Some(pulse)) => Some(pulse.to_string()),
+        (None, None) => None,
+    }
+}
+
 /// Return `agent` to the pool via `result_tx`, clearing any steer receiver first.
 ///
 /// Every path that returns an `OwnedAgent` to the pool via `PromptResult` goes
@@ -1644,9 +1696,18 @@ pub async fn run_prompt_task(
     // canvas DM check uses — see `resolve_new_session_channel_context`.
     let mut title_channel: Option<String> = None;
     let mut origin_channel_type: Option<String> = None;
+    // Project Pulse fetch — same lifecycle as canvas (once per new channel
+    // session, cached until invalidation, committed only after session
+    // creation succeeds — I3). `build_pulse_section` handles the plan's
+    // §5.5 tri-state and its own bounded timeouts internally, so no extra
+    // wrapping is needed here (contrast with the core-memory fetch above,
+    // which owns its timeout at the call site because `engram_fetch` does
+    // not).
+    let mut pending_pulse: Option<(Uuid, pulse_fetch::PulseInjection)> = None;
     if let PromptSource::Channel(cid) = &source {
         let is_new_channel_session = !agent.state.sessions.contains_key(cid);
         let needs_canvas = is_new_channel_session && !agent.state.canvas_sections.contains_key(cid);
+        let needs_pulse = is_new_channel_session && !agent.state.pulse_cache.contains_key(cid);
         if is_new_channel_session {
             let (is_dm, resolved_channel, resolved_channel_type) =
                 resolve_new_session_channel_context(&ctx.channel_info, *cid).await;
@@ -1663,6 +1724,13 @@ pub async fn run_prompt_task(
                     pending_canvas = Some((*cid, section));
                 }
             }
+            if needs_pulse {
+                if let Some(injection) =
+                    pulse_fetch::build_pulse_section(&ctx.rest_client, *cid).await
+                {
+                    pending_pulse = Some((*cid, injection));
+                }
+            }
         }
     }
 
@@ -1673,15 +1741,51 @@ pub async fn run_prompt_task(
         PromptSource::Heartbeat => None,
     };
 
-    // The canvas metadata section — channel-scoped, absent for heartbeats/DMs.
-    // Prefer the committed cache; fall back to pending (for new sessions being created now).
-    let agent_canvas: Option<String> = match &source {
+    // The resolved Project Pulse project coordinate, if any — read separately
+    // from the rendered section so it can also travel on
+    // `BUZZ_PULSE_PROJECT` for MCP servers (§5.5 "Where the coordinate
+    // travels"). Prefer the committed cache; fall back to pending.
+    let pulse_coordinate: Option<String> = match &source {
         PromptSource::Channel(cid) => agent
             .state
-            .canvas_sections
+            .pulse_cache
             .get(cid)
-            .cloned()
-            .or_else(|| pending_canvas.as_ref().map(|(_, s)| s.clone())),
+            .and_then(|injection| injection.coordinate.clone())
+            .or_else(|| {
+                pending_pulse
+                    .as_ref()
+                    .and_then(|(_, injection)| injection.coordinate.clone())
+            }),
+        PromptSource::Heartbeat => None,
+    };
+
+    // The canvas metadata section — channel-scoped, absent for heartbeats/DMs
+    // — with the Project Pulse section appended when one resolved. Both flow
+    // through the single `agent_canvas` slot into every delivery path
+    // (modern system-prompt agents via `create_session_and_apply_model`,
+    // legacy first-message via `StandingContext`, legacy batch flush via
+    // `FormatPromptArgs`) without a second field to keep in sync.
+    // Prefer the committed cache; fall back to pending (for new sessions being created now).
+    let agent_canvas: Option<String> = match &source {
+        PromptSource::Channel(cid) => {
+            let canvas = agent
+                .state
+                .canvas_sections
+                .get(cid)
+                .cloned()
+                .or_else(|| pending_canvas.as_ref().map(|(_, s)| s.clone()));
+            let pulse = agent
+                .state
+                .pulse_cache
+                .get(cid)
+                .map(|injection| injection.section.clone())
+                .or_else(|| {
+                    pending_pulse
+                        .as_ref()
+                        .map(|(_, injection)| injection.section.clone())
+                });
+            with_pulse(canvas, pulse.as_deref())
+        }
         PromptSource::Heartbeat => None,
     };
 
@@ -1704,6 +1808,7 @@ pub async fn run_prompt_task(
                         name: title_channel.as_deref(),
                         id: Some(*cid),
                         channel_type: origin_channel_type.as_deref(),
+                        pulse_project: pulse_coordinate.as_deref(),
                     },
                 )
                 .await
@@ -1721,9 +1826,12 @@ pub async fn run_prompt_task(
                         // Seed a zero usage baseline: buzz-acp spawned this session
                         // so prior usage is zero by definition — first turn is reliable.
                         agent.acp.notify_session_spawned(&sid);
-                        // Commit canvas only after session creation succeeds (I3).
+                        // Commit canvas and pulse only after session creation succeeds (I3).
                         if let Some((pending_cid, section)) = pending_canvas.take() {
                             agent.state.canvas_sections.insert(pending_cid, section);
+                        }
+                        if let Some((pending_cid, injection)) = pending_pulse.take() {
+                            agent.state.pulse_cache.insert(pending_cid, injection);
                         }
                         (sid, true)
                     }
@@ -1740,8 +1848,8 @@ pub async fn run_prompt_task(
                         return;
                     }
                     Err(e) => {
-                        // Session creation failed; pending canvas was never committed,
-                        // so the next retry will re-fetch a fresh revision.
+                        // Session creation failed; pending canvas/pulse were never
+                        // committed, so the next retry re-fetches a fresh revision.
                         send_prompt_result(
                             &result_tx,
                             &turn_id,
@@ -1769,6 +1877,7 @@ pub async fn run_prompt_task(
                         name: None,
                         id: None,
                         channel_type: None,
+                        pulse_project: None,
                     },
                 )
                 .await
@@ -4419,6 +4528,7 @@ mod tests {
             Some(channel_id),
             Some("stream"),
             None,
+            None,
         );
         assert!(servers[0].env.iter().any(|entry| {
             entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID" && entry.value == channel_id.to_string()
@@ -4435,6 +4545,7 @@ mod tests {
             &[test_mcp_server()],
             Some(Uuid::new_v4()),
             Some("dm"),
+            None,
             Some("Builder"),
         );
         assert!(servers[0].env.iter().any(|entry| {
@@ -4444,6 +4555,40 @@ mod tests {
             .env
             .iter()
             .any(|entry| entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID"));
+    }
+
+    #[test]
+    fn pulse_project_forwarded_to_every_mcp_server_regardless_of_channel_type() {
+        let channel_id = Uuid::new_v4();
+        let coordinate = format!("30621:{}:demo", "ab".repeat(32));
+        let servers = mcp_servers_with_git_origin(
+            &[test_mcp_server(), test_mcp_server()],
+            Some(channel_id),
+            Some("stream"),
+            Some(&coordinate),
+            None,
+        );
+        for server in &servers {
+            assert!(server
+                .env
+                .iter()
+                .any(|entry| entry.name == "BUZZ_PULSE_PROJECT" && entry.value == coordinate));
+        }
+    }
+
+    #[test]
+    fn absent_pulse_project_forwards_no_env_var() {
+        let servers = mcp_servers_with_git_origin(
+            &[test_mcp_server()],
+            Some(Uuid::new_v4()),
+            Some("stream"),
+            None,
+            None,
+        );
+        assert!(!servers[0]
+            .env
+            .iter()
+            .any(|entry| entry.name == "BUZZ_PULSE_PROJECT"));
     }
 
     // These pin the initial_message dispatch path (run_prompt_task, ~line 855):

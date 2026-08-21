@@ -5001,6 +5001,18 @@ impl Db {
         project_acl::get_project_gate_by_coordinate(&self.pool, community, coordinate).await
     }
 
+    /// Returns `true` when a project head with `coordinate` exists in
+    /// `community` at any visibility — the "public vs. never created"
+    /// distinction [`Self::get_project_gate_by_coordinate`] cannot make. See
+    /// [`project_acl::project_exists_by_coordinate`].
+    pub async fn project_exists_by_coordinate(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+    ) -> Result<bool> {
+        project_acl::project_exists_by_coordinate(&self.pool, community, coordinate).await
+    }
+
     /// Returns `true` if `pubkey` is the owner or an invited member of the
     /// **private** project at `coordinate` (positive grant; public/unknown
     /// projects return `false`). See [`project_acl::is_private_project_member`].

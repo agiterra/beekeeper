@@ -115,6 +115,7 @@ export default defineConfig({
         "**/project-pr-review.spec.ts",
         "**/projects-sidebar.spec.ts",
         "**/project-container-screen.spec.ts",
+        "**/projectPulse.spec.ts",
         "**/persona-model-combobox-screenshots.spec.ts",
         "**/drafts-screenshots.spec.ts",
         "**/drafts-all-fix-screenshots.spec.ts",
