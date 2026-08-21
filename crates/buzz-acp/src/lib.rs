@@ -4554,6 +4554,33 @@ mod agent_draft_prompt_tests {
         assert!(prompt.contains("buzz messages send ... --content -"));
     }
 
+    /// The read-side promise has to match what the harness actually injects.
+    ///
+    /// Both halves of it were false at once: the section was described as
+    /// carrying "entries only, never session state" (written 2026-08-19, made
+    /// wrong on 2026-08-20 when `render_digest` grew session groups), and
+    /// `BUZZ_PULSE_PROJECT` was described as being in scope for the agent when
+    /// `mcp_servers_with_git_origin` only ever puts it on MCP-server env.
+    #[test]
+    fn shared_base_prompt_describes_the_pulse_section_it_actually_receives() {
+        use crate::BASE_PROMPT;
+        assert!(
+            !BASE_PROMPT.contains("entries only, never session state"),
+            "the injected digest renders session groups too — see pulse_fetch::render_digest"
+        );
+        assert!(BASE_PROMPT.contains("provider-reachable, open-but-unverified, closed"));
+        assert!(
+            BASE_PROMPT.contains(
+                "`BUZZ_PULSE_PROJECT` is set on your MCP servers' environment, not on your own shell"
+            ),
+            "the coordinate never reaches the agent subprocess — see mcp_servers_with_git_origin"
+        );
+        // The write instruction is correct for *this* audience: managed agents
+        // inherit the harness's credentials. `buzz-session-provider` pins the
+        // other half — its fenced adapters must never be told the same thing.
+        assert!(BASE_PROMPT.contains("post it yourself with `buzz pulse update`"));
+    }
+
     #[test]
     fn shared_base_prompt_teaches_repo_context_and_learning_loop() {
         let prompt = include_str!("base_prompt.md");
