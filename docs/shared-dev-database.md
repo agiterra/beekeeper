@@ -5,11 +5,12 @@ hazards below destroyed a local dev database during the sessions authority
 phase.
 
 One Postgres instance (`buzz-postgres`, via `docker compose`) serves every
-worktree in this fork — `main`, `feature/*`, `integration/glue`, and
-`integrated`. Those branches carry **different migration sets**. The database
-can therefore only match one branch at a time, and several tools will silently
-or loudly disagree with it. All four hazards below are real and were hit in one
-afternoon.
+worktree in this fork. Branches carry **different migration sets** — far fewer
+of them now that the fork is a single `main` plus short-lived topic branches,
+but a topic branch that adds a migration still skews the database against every
+other worktree. The database can only match one branch at a time, and several
+tools will silently or loudly disagree with it. All four hazards below are real
+and were hit in one afternoon.
 
 ## 1. The `#[ignore]`d buzz-db tests rebuild the schema from the invoking worktree
 
@@ -85,20 +86,20 @@ the resolved migrations
 
 This is correct behaviour — it refuses rather than downgrading, and is exactly
 the protection hazard 1 bypasses by dropping the schema outright. But it means
-integration tests are runnable from `integrated` (whose migration set matches a
-restored database) and not from a feature branch behind it.
+integration tests are runnable from whichever branch the database was last
+migrated for, and not from one behind it.
 
-Practical consequence: **run the integration ceremony before expecting
-`just test` or a live-relay test to work on feature work.** The alternative —
+Practical consequence: **merge to `main` and re-migrate before expecting
+`just test` or a live-relay test to work across worktrees.** The alternative —
 pinning integration runs to a branch-matched scratch database — is parallel
-infrastructure for a problem the ceremony already solves.
+infrastructure for a problem one `just migrate` solves.
 
 ## Restoring a damaged database
 
 Volumes only; this leaves desktop state and keychain identities alone:
 
 ```bash
-cd /Users/brian/Projects/buzz        # the `integrated` worktree — matters
+cd <your clone>                      # a worktree on `main` — matters
 docker compose down -v --remove-orphans
 docker compose up -d
 just migrate                         # applies the full set, reseeds local hosts

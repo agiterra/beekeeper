@@ -9,56 +9,82 @@
 # `just desktop-release-build` — macOS will ask for the login keychain once on
 # the first launch after every update; that is expected and accepted.
 #
-# Builds happen in a dedicated detached worktree (default
-# ~/Code/lightyear/buzz-prod, override with BUZZ_PROD_WORKTREE) so they never
-# contend with the assembly worktree or a running dev instance. The bundle
-# additionally carries buzz-session-provider as a sidecar (delta config
-# tauri.local-prod.conf.json — not part of the tagged tree, so it is copied in
-# from this checkout before the build).
+# Builds happen in a dedicated detached worktree — a sibling of this clone's
+# main worktree named `<clone>-prod` (override with BUZZ_PROD_WORKTREE) — so
+# they never contend with the working checkout or a running dev instance. It is
+# derived from the main worktree rather than the invoking directory, so every
+# worktree of a clone shares one prod tree; /Applications/Buzz.app is a single
+# destination, so a second one would only fight over it. The bundle
+# additionally carries buzz-session-provider as a sidecar, via the tracked
+# delta config desktop/src-tauri/tauri.local-prod.conf.json.
 #
-# Usage: scripts/local-prod-build.sh [build-tag] [--no-install]
-#   build-tag     defaults to the newest build/* tag (version sort)
+# Usage: scripts/local-prod-build.sh [rev] [--no-install]
+#   rev           any commit-ish; defaults to the newest build/* tag if one
+#                 exists, else the current branch's upstream, else HEAD
 #   --no-install  build and verify only; skip the /Applications install
 set -euo pipefail
 
-GLUE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROD_ROOT="${BUZZ_PROD_WORKTREE:-$HOME/Code/lightyear/buzz-prod}"
+SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Absolute path of a checkout's main worktree. Git lists it first in
+# `worktree list`, and every worktree of a clone reports the same answer, so
+# this doubles as the clone's identity.
+main_worktree_of() {
+  git -C "$1" worktree list --porcelain 2>/dev/null \
+    | awk '/^worktree /{ print substr($0, 10); exit }'
+}
+
+SRC_MAIN="$(main_worktree_of "$SRC_ROOT")"
+[[ -n "$SRC_MAIN" ]] || { echo "not a git checkout: $SRC_ROOT" >&2; exit 1; }
+PROD_ROOT="${BUZZ_PROD_WORKTREE:-${SRC_MAIN}-prod}"
 TARGET=aarch64-apple-darwin
 
-TAG=""
+REV=""
 NO_INSTALL=false
 for arg in "$@"; do
   case "$arg" in
     --no-install) NO_INSTALL=true ;;
     -*) echo "unknown flag: $arg" >&2; exit 1 ;;
-    *) TAG="$arg" ;;
+    *) REV="$arg" ;;
   esac
 done
 
-git -C "$GLUE_ROOT" fetch --tags --quiet origin
-if [[ -z "$TAG" ]]; then
-  TAG="$(git -C "$GLUE_ROOT" tag -l 'build/*' | sort -V | tail -1)"
-  [[ -n "$TAG" ]] || { echo "no build/* tags found" >&2; exit 1; }
+git -C "$SRC_ROOT" fetch --tags --quiet origin || true
+if [[ -z "$REV" ]]; then
+  # Prefer a build tag when one exists — it is the rollback pin. A fresh clone
+  # has none, so fall back to the tracked upstream and finally to HEAD rather
+  # than refusing to build.
+  REV="$(git -C "$SRC_ROOT" tag -l 'build/*' | sort -V | tail -1)"
+  [[ -n "$REV" ]] || REV="$(git -C "$SRC_ROOT" rev-parse -q --verify '@{upstream}' 2>/dev/null || true)"
+  [[ -n "$REV" ]] || REV=HEAD
 fi
-git -C "$GLUE_ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
-  || { echo "tag not found: $TAG" >&2; exit 1; }
-echo "==> building Buzz.app from $TAG"
+SHA="$(git -C "$SRC_ROOT" rev-parse -q --verify "${REV}^{commit}" 2>/dev/null || true)"
+[[ -n "$SHA" ]] || { echo "not a commit: $REV" >&2; exit 1; }
+echo "==> building Buzz.app from $REV ($(git -C "$SRC_ROOT" rev-parse --short "$SHA"))"
 
-# ── worktree, detached at the tag ────────────────────────────────────────────
+# ── worktree, detached at the requested commit ───────────────────────────────
+# Objects live in *this* clone. A prod tree belonging to a different clone
+# cannot see them, and the checkout below then fails as git's thoroughly
+# unhelpful "--detach does not take a path argument" — it parsed the unknown
+# rev as a pathspec. Say what is actually wrong instead.
+if [[ -e "$PROD_ROOT" ]]; then
+  PROD_MAIN="$(main_worktree_of "$PROD_ROOT")"
+  if [[ "$PROD_MAIN" != "$SRC_MAIN" ]]; then
+    echo "prod worktree belongs to another clone (or is not a git worktree):" >&2
+    echo "  prod tree: $PROD_ROOT -> ${PROD_MAIN:-<not a git worktree>}" >&2
+    echo "  this clone: $SRC_MAIN" >&2
+    echo "Unset BUZZ_PROD_WORKTREE, or point it at a worktree of this clone." >&2
+    exit 1
+  fi
+fi
 if [[ ! -d "$PROD_ROOT" ]]; then
-  git -C "$GLUE_ROOT" worktree add --detach "$PROD_ROOT" "$TAG"
+  git -C "$SRC_ROOT" worktree add --detach "$PROD_ROOT" "$SHA"
 else
-  git -C "$PROD_ROOT" checkout --detach --quiet "$TAG"
+  git -C "$PROD_ROOT" checkout --detach --quiet "$SHA"
 fi
 
 cd "$PROD_ROOT"
 export PATH="$PROD_ROOT/bin:$PATH"
-
-# The delta config lives on integration/glue, not in the tagged tree; copy it
-# into the (gitignored) target dir immediately so the rest of the build is
-# immune to branch switches in the glue checkout while this runs.
-mkdir -p desktop/src-tauri/target
-cp "$GLUE_ROOT/desktop/src-tauri/tauri.local-prod.conf.json" desktop/src-tauri/target/local-prod.conf.json
 
 # ── release sidecars + coding-session provider ───────────────────────────────
 cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes \
@@ -71,7 +97,7 @@ chmod 755 "desktop/src-tauri/binaries/buzz-session-provider-$TARGET"
 # ── bundle ───────────────────────────────────────────────────────────────────
 pnpm install
 (cd desktop && pnpm tauri build --target "$TARGET" --features mesh-llm --bundles app \
-  --config "$PROD_ROOT/desktop/src-tauri/target/local-prod.conf.json")
+  --config "$PROD_ROOT/desktop/src-tauri/tauri.local-prod.conf.json")
 
 APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Buzz.app"
 
@@ -99,5 +125,5 @@ if pgrep -f "/Applications/Buzz.app/Contents/MacOS/Buzz" >/dev/null; then
 fi
 rm -rf /Applications/Buzz.app
 ditto "$APP" /Applications/Buzz.app
-echo "==> installed $TAG -> /Applications/Buzz.app"
+echo "==> installed $REV -> /Applications/Buzz.app"
 echo "    First launch will ask for the login keychain once — expected after every update."

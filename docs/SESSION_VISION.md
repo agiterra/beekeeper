@@ -287,46 +287,25 @@ product combines them.
 
 | Branch | Role |
 | --- | --- |
-| `main` | A pure, fast-forward-only mirror of upstream `block/buzz`. It never receives local feature commits. |
-| `feature/<name>` | One upstreamable feature, normally based on `main`. Feature code stays independent and upstream-clean. |
-| `integration/glue` | Cross-feature adaptation, fork-only documentation and tooling, integration CI, and `scripts/integrate.sh`. |
-| `integrated` | The generated daily product assembled from `main`, the feature stack, and glue. It is rebuilt and force-pushed. |
-| `build/YYYY-MM-DD[.n]` | Immutable pins for known assembled builds. |
+| `main` | The product. Deploys and daily work use it. |
+| topic branches | Short-lived, merged back when the user has confirmed the behavior. |
+| `build/YYYY-MM-DD[.n]` | Immutable pins for deployed builds. |
 
-The current relevant feature branches are:
-
-- `feature/project-containers`;
-- `feature/project-access`, stacked on project containers;
-- `feature/coding-sessions`;
-- `integration/glue`, which owns coupling among those features.
-
-This document lives on `integration/glue` because the vision crosses feature
-boundaries and describes fork-specific workflow. Provider/session work that can
-stand independently belongs on `feature/coding-sessions`. Adaptation that ties
-sessions into project containers, access, or fork-only behavior belongs in
-`integration/glue`.
+Upstream `block/buzz` is a remote, not a branch here: it is merged in
+occasionally. See [INTEGRATION.md](INTEGRATION.md) for the two checks that
+precede one.
 
 ### Important working rules
 
-- Do not commit directly to `integrated`; it is generated and its history is
-  rewritten on rebuild.
-- Do not put local product changes on `main`; it mirrors upstream.
-- Keep upstreamable coding-session changes on `feature/coding-sessions`.
-- Keep cross-feature integration and Agiterra-only material on
-  `integration/glue`.
+- `main` is the product. Commit to it directly, or via a short-lived topic
+  branch — there is no generated branch and nothing is force-pushed.
+- Upstream is **merged** in occasionally, never rebased.
 - Activate the repository's Hermit environment before Git commands and hooks.
 - Sign commits with `git commit -s`.
-- An integration rebuild merges the feature stack, rebases the glue patch
-  series over the assembly, runs the gate, creates a `build/*` tag, and may
-  force-push the assembled branches.
-- Consumers of `integrated` re-fetch it or pin a `build/*` tag; they do not
-  treat it as a conventional pull-only branch.
-- Do not push the current local work merely to checkpoint it. Brian is batching
-  fixes to avoid triggering repeated builds; push only when Brian or Andy asks
-  for the integration ceremony.
+- A push to `main` runs the Woodpecker gate and, when green, triggers the
+  relay autodeploy. Batch fixes rather than pushing to checkpoint.
 
-The full mechanics are documented in `docs/INTEGRATION.md` and
-`CONTRIBUTING-FORK.md` on the assembled/glue branches.
+The full mechanics are documented in `docs/INTEGRATION.md`.
 
 ### Current local handoff context
 

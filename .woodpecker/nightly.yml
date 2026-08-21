@@ -1,5 +1,5 @@
-# Nightly heavy suite on `integrated`: DB-bound Rust tests + browser e2e.
-# Requires a Woodpecker cron named "nightly" targeting branch `integrated`.
+# Nightly heavy suite on `main`: DB-bound Rust tests + browser e2e.
+# Requires a Woodpecker cron named "nightly" targeting branch `main`.
 # Best-effort on shared 8-core host — expect iteration on timeouts/deps.
 #
 # Caching mirrors gate.yml: prebaked `buzz-ci` image + /srv/ci-cache mounts.

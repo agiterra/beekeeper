@@ -1,4 +1,4 @@
-# Gate: unit-level checks on every push to `integrated` and every PR.
+# Gate: unit-level checks on every push to `main` and every PR.
 # Service credentials mirror the repo's dev docker-compose.yml (buzz/buzz_dev),
 # reached by service hostname instead of localhost. Heavy DB-only (`--ignored`)
 # suites and browser e2e live in nightly.yml.
@@ -9,7 +9,7 @@
 # compilation. Cache layout + image rebuild runbook: docs/INTEGRATION.md.
 when:
   - event: push
-    branch: integrated
+    branch: main
   - event: pull_request
 
 # Pin the workspace path so host cache mounts can target workspace-relative
@@ -23,9 +23,10 @@ workspace:
 # The default partial/blobless clone lazily fetches objects on demand, which
 # fails in command steps (no credentials there) — keep partial off. depth: 1
 # because the gate uses no git history: the file-size ratchet does not run
-# here (desktop `pnpm check` is biome + px-text + pubkey-truncation only), and
-# .ci/base-ref is a stamped file, not a git lookup. If the ratchet is ever
-# added to the gate, depth must be raised to reach the stamped base commit.
+# here (desktop `pnpm check` is biome + px-text + pubkey-truncation only). It
+# runs on pre-push instead, where it resolves its base from `origin/main`
+# directly. If it is ever added to the gate, raise the depth so that merge-base
+# is reachable.
 clone:
   git:
     image: woodpeckerci/plugin-git
@@ -115,10 +116,6 @@ steps:
     commands:
       # The clone step runs as a different uid than this container's root.
       - git config --global --add safe.directory "$CI_WORKSPACE"
-      # Historical: the file-size ratchet would need this base commit, but the
-      # gate does not currently run it (see the clone comment above). Kept
-      # because it is one `cat` and documents where the base comes from.
-      - export CHECK_FILE_SIZES_BASE=$(cat .ci/base-ref)
       - export PATH="$CI_WORKSPACE/bin:$PATH"
       # pnpm's store→node_modules copyfile occasionally hits a transient EAGAIN
       # on this docker-in-incus filesystem; install up front with one retry so

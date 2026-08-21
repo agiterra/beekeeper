@@ -1,9 +1,10 @@
 # Contributing to Buzz
 
-> **agiterra fork note** — this is agiterra's integration fork of block/buzz.
-> The guide below is upstream's. For how *this* repo works (branch model,
-> `integrated`, adding features), start with
-> [CONTRIBUTING-FORK.md](CONTRIBUTING-FORK.md).
+> **agiterra fork note** — this is Bee Keeper, agiterra's fork of block/buzz.
+> The guide below is upstream's and still describes the code accurately. For how
+> *this* repo works — single `main` branch, ordinary topic branches, upstream
+> merged in occasionally, CI on ci.agiterra.org — see
+> [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
 Welcome, and thank you for your interest in contributing! Buzz is an
 open-source project and we're glad you're here. This guide will help you

@@ -290,10 +290,11 @@ desktop-release-build target="aarch64-apple-darwin":
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
 
-# Build the local production Buzz.app from a build/* tag (default: newest) and
-# install it to /Applications. See docs/local-desktop-instances.md.
-prod-desktop tag="":
-    ./scripts/local-prod-build.sh {{tag}}
+# Build the local production Buzz.app from any commit-ish (default: newest
+# build/* tag, else the tracked upstream, else HEAD) and install it to
+# /Applications. See docs/local-desktop-instances.md.
+prod-desktop rev="":
+    ./scripts/local-prod-build.sh {{rev}}
 
 # Run desktop checks suitable for CI / pre-push
 desktop-ci: desktop-check desktop-test desktop-tauri-fmt-check desktop-build desktop-tauri-check desktop-tauri-test

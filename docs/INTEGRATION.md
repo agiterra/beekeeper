@@ -1,106 +1,52 @@
-# Integration workflow — agiterra/buzz
+# Working in agiterra/beekeeper
 
-How this fork tracks upstream `block/buzz` while keeping each feature separately
-maintainable and upstreamable. Quick version: [CONTRIBUTING-FORK.md](../CONTRIBUTING-FORK.md).
+This repo is **Bee Keeper**, agiterra's fork of
+[block/buzz](https://github.com/block/buzz). It is a single-branch repo: `main`
+is the product, and upstream is merged in occasionally.
 
-## Branch roles
+## Branches
 
-| Branch | Meaning | History |
-|---|---|---|
-| `main` | Pure mirror of `block/buzz` main. **Never** carries local commits. | ff-only |
-| `feature/<name>` | One upstreamable feature. Based on `main`, or stacked on another feature. No CI files, no agiterra-only bits. | rebased per sync |
-| `integration/glue` | Cross-feature adaptation patches + `scripts/integrate.sh` + this doc + `.woodpecker/` CI. A patch series **rebased onto the feature assembly** each build (so glue commits may edit files that only exist on feature branches); its current base is recorded in `integration/glue-base`. Force-pushed like `integrated`. | rebased per build |
-| `integrated` | The assembled product: `main` + every feature + glue. **Deploys and daily work use this.** | rebuilt + force-pushed; pin via `build/*` tags |
+| Branch | Meaning |
+|---|---|
+| `main` | The product. Default branch; deploys and daily work use it. |
+| topic branches | Ordinary short-lived branches, merged back via PR or fast-forward. |
+| `build/YYYY-MM-DD[.n]` (tags) | Immutable pins of a deployed build. Relay images are tagged with the build tag they came from. |
 
-`integrated` is rewritten on every rebuild (like linux-next). Consumers re-fetch
-rather than pull; anything that must not move pins a `build/YYYY-MM-DD[.n]` tag.
-Relay images are tagged with the build tag they were built from.
+Commit with `git commit -s` — the **DCO Check** fails any PR with a commit
+missing a `Signed-off-by` trailer.
 
-Current stack:
-- `feature/project-containers` — projects as containers (channels/forums/repos/workflows under projects; sidebar + management UI)
-- `feature/project-access` (stacked on containers) — visibility levels (`buzz-access`), project ACL, private-repo gating
-- `feature/builtin-shell` (stacked on access) — built-in shell terminals (`buzz-shell-host` sidecar, session broker + agent consent, `buzz session` CLI) and NIP-ST shared terminals (kinds 30623/24310/24311: project members observe sessions read-only)
-- `feature/project-pulse` (stacked on builtin-shell) — Project Pulse: kind 44240 entries, the project-membership read/write gate, `buzz pulse`, ACP context injection, and the desktop Pulse screen; the project-child wiring (sidebar row, home card, route registration) lives in glue. Known impurity: `crates/buzz-core/src/pulse.rs`, `crates/buzz-cli/src/commands/pulse.rs`, `desktop/src/features/project-pulse/lib/{pulseFormat,pulseQueries}.ts` reference `feature/coding-sessions` symbols, so the branch does not build standalone — Pulse's whole thesis is explicit claims *beside* observed coding-session state
-- `feature/coding-sessions` — coding sessions with a Claude Code provider (NIP-CSC/CSL/CST kinds 44220–44225, `buzz-session-provider` crate, workspace UI, transcript export, `buzz sessions` CLI); project-shelf coupling lives in glue. Known impurity: `agent_fence::tests::the_fenced_briefing_never_tells_a_session_to_write_the_pulse` asserts that `buzz_acp::BASE_PROMPT` keeps the Pulse write instruction its *unfenced* audience needs — a string that only `feature/project-pulse` introduces — so that one test is red on this branch standalone and green on the assembly. The pair is the point: the rule it pins is "never instruct an agent to do something its own environment forbids", and it is only checkable from both sides at once
+This repo previously carried an upstreamable-feature-branch model
+(`feature/*` rebased onto a `main` mirror, reassembled through
+`integration/glue` into a force-pushed `integrated`). That is gone. Upstream
+receives far too many submissions for ours to land in useful time, so the
+branches were being maintained for a merge that was never going to happen —
+and two of them had already stopped building standalone. The vanilla mirror,
+and the one CI patch that runs on ci.agiterra.org, now live in
+[agiterra/buzz](https://github.com/agiterra/buzz).
 
-## The sync loop
+## Merging upstream
 
+```sh
+git fetch upstream
+git merge upstream/main        # merge, never rebase — this is shared history
 ```
-scripts/integrate.sh              # full: sync main, rebase stack, rebuild, gate, tag, push
-scripts/integrate.sh --no-push    # dry run locally
-scripts/integrate.sh --skip-gate  # when you've just run the gate manually
-```
 
-`git rerere` is enabled by the script: conflict resolutions are recorded and
-replayed automatically on the next rebuild, so recurring conflicts are
-resolved once. A **new** conflict stops the script — resolve it, `git rebase
---continue`, and rerun.
+Two things to check before starting one:
 
-## Developing a change (prototype first)
-
-Do **not** develop new work directly on the feature branches. Keeping the
-branches separate during iteration costs a cross-branch dance per edit; the
-separation is only actually needed at push time. Instead:
-
-1. **Prototype on the assembly.** Cut a scratch branch from the current
-   build: `git checkout -b wip/<topic> integrated-build`. Commit freely
-   there (still `git commit -s`); feature code and cross-feature wiring land
-   together.
-2. **Test with the user at each step.** Build and run locally after each
-   feature addition and wait for the user to confirm the behavior before
-   moving on. The scratch tree is byte-for-byte what would ship, so this is
-   the real test — not an approximation of it.
-3. **Split when the user confirms it's ready to push.** Distribute the work
-   to the branches that own each file, base-most first for stacked branches:
-   on each `feature/<name>`, `git checkout wip/<topic> -- <paths it owns>`
-   and commit with a real message. A file belongs to the branch that
-   introduced it (`git ls-tree feature/<name> -- <path>` to check); changes
-   to shared upstream files go to the feature they serve. Whatever remains —
-   cross-feature wiring, files only the assembly has — becomes an
-   `integration/glue` commit (added *after* the ceremony rebuild, per
-   "Adding a feature" / integrate.sh).
-4. **Reassemble and verify equivalence.** Run the ceremony, add the glue
-   commit(s) on the rebased glue, then confirm the shipped tree is the
-   tested tree: `git diff wip/<topic> integrated-build` must be empty (or
-   every remaining hunk explained). Then gate, push, and delete
-   `wip/<topic>`.
-
-If the ceremony refs move under you while a `wip/*` branch is in flight
-(someone else pushed a rebuild), rebase the wip branch onto the new
-`integrated-build` before splitting — patch-ids, not ahead/behind counts,
-tell you what's actually yours.
-
-## Adding a feature
-
-1. `git checkout -b feature/<name> main` (or stack on another feature if it
-   genuinely depends on it — prefer independence).
-2. Keep it upstream-clean: no `.woodpecker/`, no deploy tooling, no references
-   to other features. Cross-feature adaptation goes in `integration/glue`.
-3. Add the branch to `FEATURES` in `scripts/integrate.sh` (on `integration/glue`),
-   in merge order (a stacked branch after its base).
-4. Run `scripts/integrate.sh`.
-
-## Retiring a feature (accepted upstream)
-
-When upstream merges a feature, at the next sync the rebase collapses to
-nothing (or to a small residual diff). Delete the branch, remove it from
-`FEATURES`, keep any residual as a glue patch until upstream releases it.
-
-## Upstreaming a feature
-
-1. Create (once) a **public** GitHub fork of `block/buzz` — private repos
-   cannot open PRs against public upstream. Suggested: fork under the GitHub
-   user proposing the PR.
-2. `git push <public-fork> feature/<name>` (freshly rebased on `main`).
-3. Open the PR from the public fork. Review feedback lands on the same branch;
-   the private repo keeps consuming it via the normal sync loop.
+- **Migration numbering.** This fork owns `migrations/0032`–`0040`. If upstream
+  has added migrations past `0031`, the numbers collide and the renumbering has
+  to be resolved deliberately — a migration that changes number after it has run
+  anywhere is a data-loss hazard, not a merge conflict.
+- **Feature collision.** Upstream has independently shipped its own `projects`
+  and `pulse`. The protocol layer is compatible (`KIND_PROJECT = 30621` is the
+  same number on both sides), but the desktop screens are two independent
+  redesigns of one surface. Picking hunks there produces a mixed, broken UI;
+  decide whether to retire ours or keep it before touching the files.
 
 ## CI
 
-`.woodpecker/` pipelines (on `integration/glue`, therefore present on
-`integrated`) run the gate on pushes to `integrated` and PRs. Feature branches
-are validated locally by `integrate.sh`'s gate — they intentionally carry no CI
-files so they stay upstream-clean.
+`.woodpecker/` pipelines run the gate on pushes to `main` and on PRs, at
+[ci.agiterra.org](https://ci.agiterra.org).
 
 Known runner-environment limitations (excluded from the gate, still run on
 dev machines; an upstream-issue candidate):
@@ -127,35 +73,21 @@ after, 0/65 across both conditions.
   under a fully loaded gate (observed 2026-08-15 during a local ceremony);
   51/51 pass in isolation. Load-sensitivity, not a regression.
 
-The ceremony gate is **narrower than CI**. `integrate.sh` runs
-`cargo test --workspace`, `just desktop-check`, `just desktop-test`, and
-`pnpm typecheck`; `.woodpecker/gate.yml` additionally runs
+`just ci` is **narrower than the gate**. The gate additionally runs
 `just conformance-check` and `just export-viewer-manifest-test`, starts
-Postgres/Redis/MinIO as services, and migrates a **fresh** database. A
-ceremony can therefore go green locally and still land red on CI. Run the two
-extra steps by hand before a ceremony you intend to deploy, and remember a
-fresh-database `cargo run -p buzz-admin -- migrate` exercises migration
-ordering that an already-migrated local database cannot.
+Postgres/Redis/MinIO as services, and migrates a **fresh** database — so a
+local run can go green and still land red. Run the two extra steps by hand
+before a push you intend to deploy, and remember that a fresh-database
+`cargo run -p buzz-admin -- migrate` exercises migration ordering that an
+already-migrated local database cannot.
 
 Without a Woodpecker login you can still read pipeline state: the badge and
 CCTray feeds are public — `https://ci.agiterra.org/api/badges/1/status.svg`
-(add `?branch=integrated`) and `.../api/badges/1/cc.xml`, the latter carrying
+(add `?branch=main`) and `.../api/badges/1/cc.xml`, the latter carrying
 the pipeline number and timestamp. Everything under `/api/repos/...` needs
-auth, so logs are login-only. Woodpecker fires on pushes to `integrated`, so
-**re-running a suspected-flaky pipeline without UI access means producing a
-new build** (a fresh ceremony) rather than restarting the old one. Whether a
-deploy actually landed is observable from outside: publish a probe event of a
-kind the new build introduced and read the relay's verdict — an older relay
-answers `restricted: unknown event kind`.
-
-Local-ceremony environment notes (Brian's post-migration machine): run the
-script as `LEFTHOOK=0 CHECK_FILE_SIZES_BASE=$(git rev-parse upstream/main)
-scripts/integrate.sh` — there is no `origin/main` in this clone (origin is
-the relay), so the desktop file-size hook needs the explicit base, and the
-hook-driven `cargo fmt --all` otherwise dirties the tree mid-run. The
-feature stack and `integration/glue-base` must exist as local branches
-(created from `upstream/*`), and the rerere cache was rebuilt 2026-08-15 —
-the recurring cross-feature union resolutions replay automatically again.
+auth, so logs are login-only. Whether a deploy actually landed is observable
+from outside: publish a probe event of a kind the new build introduced and read
+the relay's verdict — an older relay answers `restricted: unknown event kind`.
 
 Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
 `/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
@@ -176,7 +108,7 @@ ssh agincus "incus exec forge -- docker build -t buzz-ci:1 -" \
 No Rust toolchain is baked in — toolchains live in the mounted caches, so
 `rust-toolchain.toml`/hermit bumps need no rebuild. Rebuild **only when the
 apt dependency set changes**: bump the tag (`buzz-ci:2`), rebuild, and update
-`image:` in both `.woodpecker/*.yml` in the same glue change.
+`image:` in both `.woodpecker/*.yml` in the same change.
 
 Host cache mounts under `/srv/ci-cache` (require the repo's Trusted→Volumes
 flag in Woodpecker):
@@ -202,15 +134,17 @@ past 20 GB.
 
 The gate clones with `depth: 1` — nothing in it walks git history. The
 file-size ratchet (`just file-size-check`) does **not** run in the gate
-(desktop `pnpm check` is biome + px-text + pubkey-truncation); if it is ever
-added, raise the clone depth so the stamped `.ci/base-ref` commit is present.
+(desktop `pnpm check` is biome + px-text + pubkey-truncation); it runs on
+pre-push instead, where it resolves its base from `origin/main` directly. If it
+is ever added to the gate, raise the clone depth so that merge-base is
+reachable.
 
 ## Deploying
 
 The relay deploys itself: `buzz-autodeploy.timer` on the agincus host polls
-Woodpecker every 5 minutes, and when the newest `integrated` push pipeline is
-green it exports the source from the forge git mirror at that commit, builds
-`buzz-relay:<short-sha>` inside the `buzz` instance, takes a `pg_dump` backup
+Woodpecker every 5 minutes, and when the newest `main` push pipeline is green it
+exports the source from the forge git mirror at that commit, builds
+`buzz-relay:<short-sha>` inside the relay instance, takes a `pg_dump` backup
 (`/opt/buzz/backup-pre-*.sql.gz`), flips `BUZZ_IMAGE` in
 `/opt/buzz/compose/.env`, and restarts with compose health-wait. An unhealthy
 relay rolls back to the previous image automatically. Red pipelines never
@@ -223,5 +157,13 @@ The deployer itself lives at `/usr/local/sbin/buzz-autodeploy` on the host —
 CI has no credentials for (or access to) the prod instance; the deployer only
 pulls from Woodpecker's status DB and the read-only mirror.
 
+**The deployer still watches the branch name `integrated`.** It and the forge
+mirror both have to be repointed at `main` and at `agiterra/beekeeper`, or
+pushes stop deploying silently. That is host-side work, not a repo change.
+
 `build/*` tags remain the pins for reproducing or manually rolling to a known
-build. Desktop dev runs `just desktop-standalone` from `integrated`.
+build. Desktop dev runs `just desktop-standalone`.
+
+Running a daily-driver Buzz.app and a dev instance side by side on macOS
+(distinct icons, no repeated keychain prompts):
+[local-desktop-instances.md](local-desktop-instances.md).

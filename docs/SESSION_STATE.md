@@ -2,8 +2,22 @@
 
 **The one document to read first.** Everything else is either a binding
 authority (§4), a protocol for a specific experiment, or history. This file
-is updated at every ceremony and whenever live use produces a finding; if it
+is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
+
+> **2026-08-21 — the branch ceremony is gone, and so is the repo it ran in.**
+> This repo is now `agiterra/beekeeper`: a single `main` branch, ordinary topic
+> branches, upstream **merged** in occasionally. `scripts/integrate.sh`,
+> `CONTRIBUTING-FORK.md` and the split-map bookkeeping are deleted;
+> `docs/INTEGRATION.md` now describes only what is still live (CI, caching,
+> autodeploy). The near-pristine upstream mirror plus the single
+> ci.agiterra.org patch moved to `agiterra/buzz`, which will serve a **vanilla**
+> relay at `lightyear.agiterra.org`; Bee Keeper gets a new relay at
+> `hive.agiterra.org`. **All data on the current relay is being abandoned**, so
+> every deployment fact below this banner describes a relay that is going away.
+> Two host-side items are not repo changes and are still owed: the forge mirror
+> and `buzz-autodeploy` both still watch `agiterra/buzz` and the branch name
+> `integrated`.
 
 _Last updated: 2026-08-21, preparing the lease-backed **Agent Progress**
 surface for the next build (§2 item 36). `build/2026-08-21.1` is no longer a
@@ -22,7 +36,8 @@ partial because several session channels were inaccessible._
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
 | Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
-| Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
+| Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md` (since deleted
+along with the ceremony — recover from git history if ever needed). Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
 verified rehydration + systemPrompt-first bootstrap, continuity disclosure
