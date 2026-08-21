@@ -439,6 +439,28 @@ repo records findings the day they happen.
    The 57 entries banked 2026-08-19 and earlier, which the ceremony actually
    relies on, were left alone.
 
+30a. **A banked rerere resolution was silently corrupting the assembly — for
+   the second time.** During the rebuild, `crates/buzz-relay/src/state.rs`
+   was auto-staged "using previous resolution" and the result did not
+   compile: the recorded postimage interleaved two cache initializers,
+   truncating `shell_roster_cache: Arc::new(` and `project_gate_cache:
+   Arc::new(` to their opening parenthesis. Rebuilt the file from a clean
+   three-way `git merge-file` of the base/ours/theirs blobs — all three
+   hunks have an empty base and are pure unions — and then **overwrote the
+   `rr-cache` postimage with the verified result**, because leaving the bad
+   entry in place is what makes this recur.
+
+   It has recurred before: `97dda378f fix(integration): take the assembly's
+   merged relay, cli and tauri files` (2026-08-18) fixed the same four files
+   for the same reason, and that commit had itself dropped out of the glue
+   series, taking four accurate doc-comment lines in `state.rs` with it.
+   They are restored here. Ten more files were auto-staged from the bank this
+   run; each was checked by asserting that every line either side added since
+   the merge base is present in the result. All ten passed. The lesson for
+   §3a: **an auto-staged rerere resolution is an unreviewed merge** — verify
+   it, and when it is wrong, repair the cache entry rather than only the
+   working tree.
+
 31. **`POST /events` now refuses every ephemeral kind, and says so.** The
    lease work widened the HTTP gate from `KIND_GIFT_WRAP ||
    KIND_PRESENCE_UPDATE` to `KIND_GIFT_WRAP || is_ephemeral(kind)` — the
@@ -589,6 +611,14 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   `git diff <base> <head> -- <path> | git apply --index` (add `--3way` when
   context has drifted), and verify each folded file's changed-line multiset
   against its source diff afterwards.
+- **An auto-staged rerere resolution is an unreviewed merge.** "Staged
+  `<path>` using previous resolution" means Git wrote a merge result nobody
+  looked at. Twice now the banked `state.rs` resolution has produced a file
+  that does not compile (§2 item 30a, and `97dda378f` before it). After every
+  assembly, check each auto-staged path by asserting that every line either
+  parent added since the merge base survives in the result — and when one is
+  wrong, fix the `rr-cache` postimage too, not just the working tree, or the
+  next rebuild reintroduces it.
 - **`git apply --3way` writes conflict markers into the file *and* records a
   rerere preimage.** Those resolutions are branch-scoped — a per-file fold
   deliberately drops other features' hunks — so leaving them in `rr-cache`
