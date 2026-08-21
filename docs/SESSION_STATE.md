@@ -5,10 +5,14 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-20 night, closing §2 items 4, 5 and 6 and item 1's
-disclosure half with the rehydration-hardening build, and landing the five
-2026-08-19/20 design studies into `docs/` (§4), at the `build/2026-08-20.7`
-ceremony._
+_Last updated: 2026-08-20 night, shipping **verified session liveness** —
+the ephemeral kind-24223 provider lease and the Pulse v2 digest built on it
+(§2 items 28-33, closing item 20 for Pulse and resolving item 27) — on top of
+the rehydration-hardening build (§2 items 4, 5, 6 and item 1's disclosure
+half) and the five 2026-08-19/20 design studies (§4), at the
+`build/2026-08-20.4` ceremony. This entry also records a ceremony collision
+that destroyed an uncommitted edit to this file (item 30); nothing was
+pushed._
 
 ---
 
@@ -19,7 +23,7 @@ ceremony._
 | Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
 | Assembly | Andy rebuilt on top of our work; CI gate is now ~7 min (was ~40) and two of three documented flakes have real fixes |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
-| Latest assembly | `build/2026-08-20.7` — adds the **rehydration-hardening** build (§2 items 4/5/6 and item 1's disclosure half; four commits `02824ea5`…`6f85b431` on `feature/coding-sessions`) and the five design studies in §4. The preceding `build/2026-08-20.5`/`.6` carried the **admin-delete** work that never got its own ledger entry: `buzz projects delete --cascade` with a last-published tombstone, `buzz-admin project-purge` for already-soft-deleted rows, the relay-identity guard, the ghost-Inbox and moderator-delete fixes, and a `buzz-db` test harness that stops the push-matcher tests sharing state (`615637de`…`0b48fc25`) |
+| Latest assembly | `build/2026-08-20.4` — adds **verified session liveness**: the ephemeral kind-24223 provider lease (authority-bound, relay-clocked TTL, Lua sequence fencing, released tombstone) on `feature/coding-sessions`, the Pulse v2 digest and shared `buzz_core::pulse_fold` on `feature/project-pulse`, the `build_create_channel` arity fix on `feature/project-containers`, and `CONTEXT.md` + the lease implementation plan on `integration/glue` (§2 items 28-33). Gate evidence is three independent runs, not one: the lease stack's own (3239 Rust, 5896 desktop, 47 conformance incl. 21 Pulse fold vectors, clippy `-D warnings`, fmt), the branch-chip regression fix, and the rehydration lane's. The preceding `build/2026-08-20.7` adds the **rehydration-hardening** build (§2 items 4/5/6 and item 1's disclosure half; four commits `02824ea5`…`6f85b431` on `feature/coding-sessions`) and the five design studies in §4. The preceding `build/2026-08-20.5`/`.6` carried the **admin-delete** work that never got its own ledger entry: `buzz projects delete --cascade` with a last-published tombstone, `buzz-admin project-purge` for already-soft-deleted rows, the relay-identity guard, the ghost-Inbox and moderator-delete fixes, and a `buzz-db` test harness that stops the push-matcher tests sharing state (`615637de`…`0b48fc25`) |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -199,7 +203,12 @@ Brian's product call.
    transitions":* `publish_metadata` itself (`lib.rs:1786`) returns early
    when the serialized content equals the last publication (`:1794-1799`), so
    even the periodic git-probe republish (`:2068`) emits nothing when nothing
-   changed. The silence is structural, not incidental.
+   changed. The silence is structural, not incidental. **Closed for Project Pulse
+   2026-08-20 night by item 28** (the kind-24223 provider lease renews on
+   actor liveness, not on turn activity). **Still open for the coding-session
+   surfaces** — the session card, project shelf and sidebar do not read the
+   lease, so they can still print "Idle · last observed 30m ago" over a live
+   session.
 21. **Entries were buried below the session groups**, so the screen led with
    what Pulse *observed* rather than what people *claimed*. Fixed: entries +
    superseded now render above the session groups, with a counts line and an
@@ -328,7 +337,142 @@ Items 24 and 25 are fixed in `build/2026-08-20.3`. Items 26 and 27 are
    in a concurrent lane (`crates/buzz-session-provider/src/lease.rs`,
    uncommitted at ceremony time), and nothing in `build/2026-08-20.3` touches
    it. The cadence-versus-permanent-event-volume call in item 20 is still
-   Brian's to make.
+   Brian's to make. **Resolved 2026-08-20 night: that lane landed** — see
+   item 28. The cadence is 60 seconds against a 180-second relay-clocked TTL,
+   and the event volume is zero, because the lease is ephemeral.
+
+### Found and shipped 2026-08-20 night — verified session liveness
+
+This build closes items 20 and 27 for Project Pulse, and only for Project
+Pulse. It also records a ceremony collision that destroyed work, because this
+repo records findings the day they happen.
+
+28. **Liveness is now evidence, not inference — ephemeral kind 24223.** A
+   session was called "working" because its newest stored event was recent;
+   a provider that had died an hour ago still read as active work. The
+   provider now signs a short-lived lease for one exact execution generation
+   and renews it while its actor is alive. Four properties make the claim
+   worth trusting, and each was adversarially reviewed before the fold:
+   - **Authority-bound.** The relay admits a lease only when its signer
+     equals the `providerAuthorityPubkey` of the lifecycle command that
+     opened that exact generation
+     (`crates/buzz-db/src/coding_session_generation.rs`). Metadata authorship
+     establishes nothing.
+   - **The clock is the relay's.** TTL comes from Redis `TIME`
+     (`crates/buzz-pubsub/src/session_lease.rs`), never from the claimant, so
+     a skewed or hostile provider clock cannot extend its own lease.
+     `SESSION_LEASE_TTL_SECS` is 180 against a 60-second renewal ticker
+     (`crates/buzz-session-provider/src/lease.rs:19`).
+   - **Order-independent.** A Lua script fences on `cslease-seq`; a stale
+     renewal arriving after a newer one is dropped, and release writes a
+     211-second tombstone so a delayed renewal cannot revive a session the
+     operator ended.
+   - **Never durable.** 24223 lives only in the expiring Redis register, is
+     admitted over WebSocket only, and is served back through `/query` from
+     that register with the provider's original signature intact. A cold
+     history read cannot resurrect an expired lease.
+
+   Pulse therefore reports three distinct states instead of one guess —
+   `provider_reachable`, `open_unverified`, `closed` — and
+   `PULSE_ACTIVE_WINDOW_SECONDS` is deleted along with the inference it
+   encoded. The vocabulary is written down at `CONTEXT.md` (repo root, new).
+
+   **What this closes, stated narrowly.** Item 20's mechanism is gone: the
+   renewal ticker is driven by actor liveness (`live_session_ids()`), not by
+   turn activity, so an idle-but-alive session no longer falls silent, and
+   the cadence-versus-event-volume call item 20 left to Brian is answered by
+   construction — 60 seconds, zero permanent events. Item 27's "in another
+   lane" is resolved: that lane landed here.
+
+   **What this does not close.** Only Project Pulse reads 24223. On
+   `feature/coding-sessions` the lease kind appears in the desktop kind table
+   and nowhere else — `git grep -l KIND_CODING_SESSION_LEASE` over
+   `desktop/src` hits `pulseQueries.ts`, `e2eBridge.ts` and
+   `projectPulse.spec.ts`, all Pulse. The session card, the project shelf and
+   the sidebar still infer status from metadata transitions, so the exact
+   sentence item 20 was reported against — "Idle · last observed 30m ago"
+   over a live session — can still be produced by those surfaces. Item 20 is
+   closed **for Pulse** and open for the coding-session surfaces; see §3.
+
+29. **A branch chip offered rows it then refused to show.** Found by an
+   independent review of the lease work, not by its own gate, and fixed
+   before the ship. `pulseDigestBranches` enumerates a chip for every
+   generation's branch, but the row filter matched on the *display*
+   generation's branch alone, so a branch only a superseded generation ran on
+   got a chip that rendered `0` and, on click, an empty list. The lie was
+   symmetrical: the count and the rows agreed with each other and both
+   disagreed with the chip the reader had just been offered. The Rust twin
+   (`crates/buzz-cli/src/commands/pulse.rs`) was already correct — the two
+   implementations of one contract had drifted, and desktop was the outlier.
+   Fixed as a single shared predicate, `pulseSessionMatchesBranch`
+   (`desktop/src/features/project-pulse/lib/pulseFormat.ts:265`), called by
+   both the rows and the counts; the ambiguous helper `pulseSessionBranch` —
+   named "the session's branch", meaning "the display generation's branch" —
+   is deleted outright. Regression test at
+   `ProjectPulseView.test.mjs:879`. The existing corpus could never have
+   caught it: every seeded session keeps one branch across its generations.
+
+30. **A ceremony collision destroyed an uncommitted ledger edit. Nothing was
+   pushed.** Two ceremony pipelines were pointed at `/Users/brian/Projects/buzz-ship`
+   at the same time and interfered; the half-finished assembly was aborted.
+   `origin/integrated` and `origin/integration/glue` never moved from
+   `8261d1997` (`build/2026-08-20.3`), verified before recovery began, and
+   every branch survived. One thing did not: an uncommitted edit to this file
+   was lost, and its content is not recoverable. The mechanism was a
+   `git checkout <rev> -- .` staging a whole tree over the working copy. Two
+   rules follow, both now in §3a: **one agent in a ceremony worktree at a
+   time**, and **never stage a tree wholesale** — inspect with `git show` /
+   `git cat-file` / `git diff`, and fold with per-file
+   `git diff <base> <head> -- <path> | git apply --index`.
+
+   The recovery fold used exactly that, per-file, against
+   `LEASE_DELTA_PLAN.md`; 21 of the 23 files folded onto
+   `feature/project-pulse` came out byte-identical to the source branch, and
+   the two that did not are the module list and the E2E bridge, which carry
+   other features' content.
+
+   Also cleared during recovery: today's `rr-cache` entries were quarantined
+   to `/tmp/rr-quarantine-2026-08-20` before the rebuild. They came from
+   either the collided run or from per-file `git apply --3way` resolutions
+   that are branch-scoped by construction — replaying one of those into a
+   cross-feature assembly merge would have deleted the shared-terminal kinds.
+   The 57 entries banked 2026-08-19 and earlier, which the ceremony actually
+   relies on, were left alone.
+
+31. **`POST /events` now refuses every ephemeral kind, and says so.** The
+   lease work widened the HTTP gate from `KIND_GIFT_WRAP ||
+   KIND_PRESENCE_UPDATE` to `KIND_GIFT_WRAP || is_ephemeral(kind)` — the
+   whole 20000–29999 range. Verified before folding that no client depended
+   on the old behaviour: desktop publishes through
+   `relayClientSession.publishEvent` (WebSocket), mobile documents the
+   requirement at `mobile/lib/features/channels/compose_bar/helpers.dart:319`
+   ("the HTTP `/api/events` endpoint may silently discard them"), the CLI
+   routes shell input and agent drafts through `publish_ephemeral_event`,
+   `buzz-acp`'s `RelayEventPublisher` is the WebSocket task, and the
+   28936 leave request goes over a WebSocket relay client. HTTP previously
+   accepted these and dropped them silently; it now rejects them out loud.
+
+32. **A protocol contract changed inside a feature commit: kind 44223.**
+   Coding-session metadata is no longer "immutable per generation" but an
+   append-only observation history — providers publish on each observed
+   transition and consumers fold the newest valid observation per generation.
+   No relay-side uniqueness enforcement had to be relaxed to allow it.
+   Recorded here because it rode in on a lease commit rather than arriving as
+   its own change; `docs/nips/NIP-CSL.md` is updated.
+
+33. **Two latent breaks of the same class: a Tauri test call site that no
+   plain build compiles.** `desktop/src-tauri/src/commands/agent_discovery/relay_directory.rs:374`
+   passed six arguments to a `build_create_channel` that grew a seventh
+   (`project_ref`) in `5849a250e`. It sits behind
+   `#[cfg(all(test, not(target_os = "windows")))]`, so only `cargo check
+   --manifest-path desktop/src-tauri/Cargo.toml --tests` on macOS sees it.
+   Fixed on `feature/project-containers`, the branch that introduced the
+   parameter. Its sibling — `ChannelInfo`'s `project_ref` missing from
+   `commands/channels_tests.rs:273` — is **fixed on the wrong branch**
+   (`feature/builtin-shell` `bee7a76ff`), which is why the assembly is green
+   while `feature/project-containers` and `feature/project-access` are not.
+   Left alone deliberately: moving it now would collide with builtin-shell
+   during the assembly merge for no product gain. Recorded in §3.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
@@ -409,7 +553,21 @@ than replace them, and it is not started.
 3. **Verify Andy's People/roles flow** with a second identity
    (viewer → operator → revoke). It plausibly closes §2 items 7–8; do not
    strike them on commit messages alone.
-4. **P1**, whenever an hour exists. It gates the entire seed/checkpoint
+4. **Teach the coding-session surfaces to read the lease** (§2 item 20's
+   open half). The session card, project shelf and sidebar still infer status
+   from metadata transitions; Pulse no longer does. Two surfaces telling two
+   liveness stories over the same events is the bug class this build was
+   built to remove, so this is the next honesty item, not a polish item.
+5. **Move `ChannelInfo`'s `project_ref: None` to its owning branch** (§2 item
+   33). It is on `feature/builtin-shell`; it belongs on
+   `feature/project-containers`. The assembly is green either way, but two
+   feature branches do not compile under `--tests` until it moves, and the
+   split map cannot be executed cleanly around it.
+6. **Step 0b of the split map — the `buzz-core` Pulse/coding-session
+   impurity.** `pulse_fold.rs` now takes seven coding-session imports on top
+   of the one `pulse.rs` already had, so `feature/project-pulse` does not
+   compile standalone. Same class as before, deeper.
+7. **P1**, whenever an hour exists. It gates the entire seed/checkpoint
    track; everything downstream in the research report §7 is speculation
    until it runs.
 
@@ -421,6 +579,22 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
+- **One agent in a ceremony worktree at a time, and never stage a tree
+  wholesale.** Both rules were bought with destroyed work on 2026-08-20 (§2
+  item 30). Two pipelines pointed at the same worktree interfered; the damage
+  was done by `git checkout <rev> -- .`, which writes the index and working
+  copy for every path at once and so silently overwrote an uncommitted edit.
+  Inspect other revisions with `git show <rev>:<path>`, `git cat-file` or
+  `git diff`. Fold with per-file
+  `git diff <base> <head> -- <path> | git apply --index` (add `--3way` when
+  context has drifted), and verify each folded file's changed-line multiset
+  against its source diff afterwards.
+- **`git apply --3way` writes conflict markers into the file *and* records a
+  rerere preimage.** Those resolutions are branch-scoped — a per-file fold
+  deliberately drops other features' hunks — so leaving them in `rr-cache`
+  risks replaying a deletion into the cross-feature assembly merge. Quarantine
+  the day's entries before rebuilding; `rr-cache` is shared across every
+  worktree of this checkout.
 - **Provider identity is per app-instance, and the instance slug comes from
   the git branch** (`scripts/instance-env.sh`). Switching the worktree's
   branch gives the app a different app-data dir, a different provider
