@@ -37,6 +37,7 @@ pub mod config;
 pub mod context_projector;
 mod context_store;
 mod git_probe;
+mod lease;
 mod model_catalog;
 pub mod payload;
 pub mod publish;
@@ -45,7 +46,7 @@ pub mod session;
 pub mod state;
 pub mod transcript;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -53,14 +54,15 @@ use nostr::{Event, Kind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use buzz_acp::relay::{HarnessRelay, RestClient};
+use buzz_acp::relay::{HarnessRelay, RelayEventPublisher, RestClient};
 use buzz_acp::{ChannelFilter, TurnUsage};
 use buzz_core::coding_session_authority_transition::CodingSessionAuthorityTransitionType;
-use buzz_core::coding_session_command::CodingSessionTarget;
+use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use buzz_core::coding_session_context::coding_session_first_turn_brief;
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
 };
+use buzz_core::coding_session_lease::CodingSessionLeaseState;
 use buzz_core::kind::{
     KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -104,6 +106,8 @@ const OUTBOX_TICK: Duration = Duration::from_secs(2);
 /// proof-graph verification per minute per active rehydrated execution sits
 /// well inside a turn's own cost.
 const CONTEXT_REFRESH_MIN_INTERVAL_MS: i64 = 60_000;
+/// Maximum time clean shutdown spends waiting for durable relay ACKs.
+const SHUTDOWN_DURABLE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Backlog of actor reports the provider loop will buffer.
 const SESSION_EVENT_CAPACITY: usize = 256;
 /// A genesis published immediately before its create may take a brief moment
@@ -221,9 +225,27 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     let publisher = relay.event_publisher();
     let mut ticker = tokio::time::interval(OUTBOX_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut lease_ticker = lease::renewal_interval();
 
     loop {
         tokio::select! {
+            // Safety-critical ordering: once a slow durable ACK returns, both
+            // clocks may be overdue. Biased selection makes the lease renewal
+            // deterministic before another durable attempt, keeping backlog
+            // pressure from consuming the relay's 180-second lease TTL.
+            biased;
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!(target: "csp", "shutdown requested");
+                break;
+            }
+            _ = lease_ticker.tick() => {
+                if let Err(error) = provider.queue_lease_renewals() {
+                    tracing::error!(target: "csp::lease", "lease renewal construction failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease renewal handoff failed: {error}");
+                }
+            }
             event = relay.next_event() => match event {
                 Some(event) => {
                     if let Err(error) = provider
@@ -232,16 +254,26 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     {
                         tracing::error!(target: "csp", "failed to handle event: {error}");
                     }
+                    if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                        tracing::warn!(target: "csp::lease", "lease handoff after command failed: {error}");
+                    }
                 }
                 None => {
                     if let Err(error) = relay.reconnect().await {
                         return Err(error.into());
+                    }
+                    provider.queue_lease_renewals()?;
+                    if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                        tracing::warn!(target: "csp::lease", "lease handoff after reconnect failed: {error}");
                     }
                 }
             },
             Some(event) = provider.next_session_event() => {
                 if let Err(error) = provider.handle_session_event(event) {
                     tracing::error!(target: "csp", "failed to record session event: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff after session event failed: {error}");
                 }
             }
             _ = ticker.tick() => {
@@ -250,19 +282,64 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.refresh_catalog(false) {
                     tracing::error!(target: "csp", "catalog refresh failed: {error}");
                 }
-                if let Err(error) = provider.flush(&publisher).await {
+                if let Err(error) = provider.flush_one(&publisher).await {
                     tracing::error!(target: "csp", "outbox flush failed: {error}");
                 }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!(target: "csp", "shutdown requested");
-                break;
+                if let Err(error) = provider.queue_initial_live_leases() {
+                    tracing::error!(target: "csp::lease", "initial lease construction failed: {error}");
+                }
+                if let Err(error) = provider.flush_pending_leases(&publisher).await {
+                    tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
+                }
             }
         }
     }
 
-    let _ = provider.flush(&publisher).await;
+    if let Err(error) = provider.queue_live_releases() {
+        tracing::warn!(target: "csp::lease", "clean-shutdown release construction failed: {error}");
+    }
+    if let Err(error) = provider.flush_pending_leases(&publisher).await {
+        tracing::warn!(target: "csp::lease", "clean-shutdown release handoff failed: {error}");
+    }
+    match bounded_shutdown_drain(provider.flush(&publisher)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(target: "csp", "clean-shutdown durable drain failed: {error}");
+        }
+        Err(_) => {
+            tracing::warn!(
+                target: "csp",
+                timeout_secs = SHUTDOWN_DURABLE_DRAIN_TIMEOUT.as_secs(),
+                "clean-shutdown durable drain timed out"
+            );
+        }
+    }
     relay.shutdown().await;
+    Ok(())
+}
+
+async fn bounded_shutdown_drain<T>(
+    drain: impl std::future::Future<Output = T>,
+) -> Result<T, tokio::time::error::Elapsed> {
+    bounded_drain(SHUTDOWN_DURABLE_DRAIN_TIMEOUT, drain).await
+}
+
+async fn bounded_drain<T>(
+    timeout: Duration,
+    drain: impl std::future::Future<Output = T>,
+) -> Result<T, tokio::time::error::Elapsed> {
+    tokio::time::timeout(timeout, drain).await
+}
+
+fn prepare_terminal_stop<T>(
+    subject: &mut T,
+    persist_terminal_intent: impl FnOnce(&mut T) -> anyhow::Result<()>,
+    queue_release: impl FnOnce(&mut T) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    persist_terminal_intent(subject)?;
+    if let Err(error) = queue_release(subject) {
+        tracing::warn!(target: "csp::lease", "terminal release construction failed; relying on TTL: {error}");
+    }
     Ok(())
 }
 
@@ -343,6 +420,15 @@ pub struct Provider {
     context_refresh: HashMap<String, ContextRefreshState>,
     subscribed: BTreeSet<Uuid>,
     projects_fingerprint: Option<(SystemTime, u64)>,
+    /// Latest signed lease per exact target not yet handed to the relay task.
+    pending_leases: HashMap<String, lease::PendingLease>,
+    /// Exact generations whose first live lease has been handed off only after
+    /// their durable facts received positive relay acknowledgements.
+    established_leases: HashSet<String>,
+    /// Durable fact keys that must receive positive relay OK before the exact
+    /// generation may emit its first live lease. Keys survive latest-metadata
+    /// replacement, so a superseded row cannot masquerade as acceptance.
+    first_lease_prerequisites: HashMap<String, HashSet<(u32, String)>>,
 }
 
 /// What the provider must remember to write the *next* generation of one
@@ -396,6 +482,9 @@ impl Provider {
             context_refresh: HashMap::new(),
             subscribed: BTreeSet::new(),
             projects_fingerprint: None,
+            pending_leases: HashMap::new(),
+            established_leases: HashSet::new(),
+            first_lease_prerequisites: HashMap::new(),
         })
     }
 
@@ -793,6 +882,7 @@ impl Provider {
         plan: CreatePlan,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
+        let outbox_before = self.outbox.pending_keys();
         self.state.consume_command(&plan.command_id, now_secs())?;
 
         // Infallible in practice: `decide_lifecycle` only mints a plan whose
@@ -853,8 +943,13 @@ impl Provider {
             include_thoughts: self.config.include_thoughts,
         };
 
-        let startup = match self.sessions.create(request).await {
-            Ok(startup) => startup,
+        let events = self.sessions.event_sender();
+        let startup_future = SessionManager::start(request, events);
+        let started = match self
+            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
+            .await
+        {
+            Ok(started) => started,
             Err(failure) => {
                 tracing::warn!(
                     target: "csp",
@@ -870,12 +965,14 @@ impl Provider {
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
             }
         };
+        let startup = self.sessions.attach(started);
 
         let record = SessionRecord {
             session_id: target.session_id.clone(),
             generation: target.generation,
             channel_id: plan.channel_id,
             command_id: plan.command_id.clone(),
+            generation_command_id: Some(plan.command_id.clone()),
             provider_instance_ref: descriptor.instance_ref.clone(),
             runtime: descriptor.runtime.clone(),
             driver: descriptor.driver.clone(),
@@ -893,6 +990,7 @@ impl Provider {
             title: plan.title.clone(),
             created_at_ms: now_ms(),
             next_seq: 1,
+            next_lease_sequence: 1,
             bootstrap_transport: startup.bootstrap_transport,
             open_turn: None,
             closed: false,
@@ -978,6 +1076,7 @@ impl Provider {
         // on the provider loop — every other session's transcripts.
         self.spawn_git_probe(&target.session_id);
         self.publish_metadata(plan.channel_id, &target, status)?;
+        self.record_first_lease_prerequisites(&target, &outbox_before);
 
         tracing::info!(
             target: "csp",
@@ -986,6 +1085,60 @@ impl Provider {
             "session created"
         );
         Ok(())
+    }
+
+    /// Await one potentially slow actor startup while continuing to renew every
+    /// already-established live generation. The startup future owns all of its
+    /// inputs, so it never holds the provider's state or actor registry across
+    /// an await; each tick re-checks `SessionHandle::is_live` and persists a new
+    /// sequence before handing the signed assertion to the relay task.
+    async fn await_with_lease_maintenance<F>(
+        &mut self,
+        startup: F,
+        publisher: Option<RelayEventPublisher>,
+    ) -> F::Output
+    where
+        F: std::future::Future,
+    {
+        self.await_with_lease_maintenance_at(
+            startup,
+            publisher,
+            lease::LEASE_RENEWAL_INTERVAL,
+            || {},
+        )
+        .await
+    }
+
+    async fn await_with_lease_maintenance_at<F, O>(
+        &mut self,
+        startup: F,
+        publisher: Option<RelayEventPublisher>,
+        cadence: Duration,
+        mut maintenance_complete: O,
+    ) -> F::Output
+    where
+        F: std::future::Future,
+        O: FnMut(),
+    {
+        tokio::pin!(startup);
+        let mut ticker = lease::renewal_interval_with(cadence);
+        loop {
+            tokio::select! {
+                biased;
+                _ = ticker.tick() => {
+                    if let Err(error) = self.queue_lease_renewals() {
+                        tracing::error!(target: "csp::lease", "lease renewal during actor startup failed: {error}");
+                    }
+                    if let Some(publisher) = publisher.as_ref() {
+                        if let Err(error) = self.flush_pending_leases(publisher).await {
+                            tracing::warn!(target: "csp::lease", "lease handoff during actor startup failed: {error}");
+                        }
+                    }
+                    maintenance_complete();
+                }
+                result = &mut startup => return result,
+            }
+        }
     }
 
     /// Best-effort verified-history attachment for a fresh execution under an
@@ -1131,6 +1284,7 @@ impl Provider {
         plan: ResumePlan,
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
+        let outbox_before = self.outbox.pending_keys();
         if self
             .sessions
             .handle(&plan.target.session_id)
@@ -1176,6 +1330,7 @@ impl Provider {
             session_id: record.session_id.clone(),
             generation,
         };
+        let previous_semantic_key = coding_session_target_key(&self.target_for(&record));
         let package_id = Uuid::new_v4().to_string();
         let rehydration = self
             .prepare_rehydration_context(
@@ -1224,8 +1379,13 @@ impl Provider {
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
         };
-        let startup = match self.sessions.create(request).await {
-            Ok(startup) => startup,
+        let events = self.sessions.event_sender();
+        let startup_future = SessionManager::start(request, events);
+        let started = match self
+            .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
+            .await
+        {
+            Ok(started) => started,
             Err(failure) => {
                 self.state.consume_command(&plan.command_id, now_secs())?;
                 // The resume minted a fresh package id, and the refresh entry
@@ -1238,10 +1398,13 @@ impl Provider {
                 return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
             }
         };
+        let startup = self.sessions.attach(started);
 
         if let Err(error) = self.state.update_session(&record.session_id, |record| {
             record.generation = generation;
+            record.generation_command_id = Some(plan.command_id.clone());
             record.next_seq = 1;
+            record.next_lease_sequence = 1;
             record.open_turn = None;
             record.closed = false;
             record.resume_cursor = Some(startup.acp_session_id.clone());
@@ -1252,6 +1415,8 @@ impl Provider {
             self.sessions.shutdown(&record.session_id);
             return Err(error.into());
         }
+        self.established_leases.remove(&previous_semantic_key);
+        self.pending_leases.remove(&previous_semantic_key);
         self.state.consume_command(&plan.command_id, now_secs())?;
 
         // The previous generation's package is unreferenced from here: a
@@ -1312,6 +1477,7 @@ impl Provider {
             Priority::High,
         )?;
         self.publish_metadata(plan.channel_id, &target, SessionStatus::Idle)?;
+        self.record_first_lease_prerequisites(&target, &outbox_before);
         tracing::info!(
             target: "csp",
             command_id = %plan.command_id,
@@ -1323,27 +1489,63 @@ impl Provider {
     }
 
     fn stop_session(&mut self, plan: StopPlan) -> anyhow::Result<()> {
-        // Persist the operator's terminal intent before signalling the actor.
-        // If the process dies between this write and command-ledger append, a
-        // replay is harmless and completes the same stop transaction.
-        self.state
-            .update_session(&plan.target.session_id, |record| {
-                record.closed = true;
-                record.open_turn = None;
-            })?;
-        self.state.consume_command(&plan.command_id, now_secs())?;
+        let session_id = plan.target.session_id.clone();
+        let target_key = coding_session_target_key(&plan.target);
+        prepare_terminal_stop(
+            self,
+            |provider| {
+                // Persist terminal intent before a release can escape. If this
+                // write fails, the actor remains live and no contradictory
+                // ephemeral state is queued.
+                provider.state.update_session(&session_id, |record| {
+                    record.closed = true;
+                    record.open_turn = None;
+                })?;
+                Ok(())
+            },
+            |provider| {
+                // The release still precedes every durable terminal fact.
+                // Arrival is sequence-fenced, while this clean ordering avoids
+                // a transient live assertion after an intentional stop.
+                match provider.queue_lease(&session_id, CodingSessionLeaseState::Released) {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        // Never let an older queued/established live assertion
+                        // escape after durable stopping intent. The terminal
+                        // facts below complete; TTL handles the missing release.
+                        provider.pending_leases.remove(&target_key);
+                        provider.established_leases.remove(&target_key);
+                        Err(error)
+                    }
+                }
+            },
+        )?;
+        let mut completion_errors = Vec::new();
+        if let Err(error) = self.state.consume_command(&plan.command_id, now_secs()) {
+            completion_errors.push(format!("consume stop command: {error}"));
+        }
         self.sessions.shutdown(&plan.target.session_id);
         self.discard_context_packages(&plan.target.session_id);
         let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
-        self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt)?;
-        self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Stopped)?;
+        if let Err(error) = self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt) {
+            completion_errors.push(format!("enqueue stopped receipt: {error}"));
+        }
+        if let Err(error) =
+            self.publish_metadata(plan.channel_id, &plan.target, SessionStatus::Stopped)
+        {
+            completion_errors.push(format!("enqueue stopped metadata: {error}"));
+        }
         tracing::info!(
             target: "csp",
             command_id = %plan.command_id,
             session_id = %plan.target.session_id,
             "session stopped"
         );
-        Ok(())
+        if completion_errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(completion_errors.join("; ")))
+        }
     }
 
     async fn on_turn(
@@ -2295,10 +2497,12 @@ impl Provider {
                 )?;
             }
             SessionEvent::Exited { session_id, reason } => {
-                self.sessions.forget(&session_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
+                    self.sessions.forget(&session_id);
                     return Ok(());
                 };
+                self.queue_lease(&session_id, CodingSessionLeaseState::Released)?;
+                self.sessions.forget(&session_id);
                 tracing::info!(target: "csp", %session_id, "session ended: {reason:?}");
                 let stopped = self
                     .state
@@ -2425,9 +2629,157 @@ impl Provider {
         record.target(&self.config.instance_id)
     }
 
+    fn queue_lease(
+        &mut self,
+        session_id: &str,
+        state: CodingSessionLeaseState,
+    ) -> anyhow::Result<()> {
+        let Some(publication) = lease::reserve_and_build(
+            &mut self.state,
+            session_id,
+            &self.config.instance_id,
+            &self.config.keys,
+            state,
+        )?
+        else {
+            return Ok(());
+        };
+        if state == CodingSessionLeaseState::Released {
+            self.established_leases.remove(&publication.semantic_key);
+        }
+        self.pending_leases
+            .insert(publication.semantic_key.clone(), publication);
+        Ok(())
+    }
+
+    fn queue_initial_live_leases(&mut self) -> anyhow::Result<()> {
+        let pending_keys = self.outbox.pending_keys();
+        let session_ids: Vec<String> = self
+            .sessions
+            .live_session_ids()
+            .map(str::to_owned)
+            .collect();
+        for session_id in session_ids {
+            let Some(record) = self.state.session(&session_id) else {
+                continue;
+            };
+            if record.closed {
+                continue;
+            }
+            let semantic_key = coding_session_target_key(&self.target_for(record));
+            let Some(prerequisites) = self.first_lease_prerequisites.get(&semantic_key) else {
+                continue;
+            };
+            if prerequisites.iter().any(|key| pending_keys.contains(key)) {
+                continue;
+            }
+            if !self.established_leases.contains(&semantic_key)
+                && !self.pending_leases.contains_key(&semantic_key)
+            {
+                self.queue_lease(&session_id, CodingSessionLeaseState::Live)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn record_first_lease_prerequisites(
+        &mut self,
+        target: &CodingSessionTarget,
+        outbox_before: &HashSet<(u32, String)>,
+    ) {
+        let prerequisites = self
+            .outbox
+            .pending_keys()
+            .difference(outbox_before)
+            .cloned()
+            .collect();
+        self.first_lease_prerequisites
+            .insert(coding_session_target_key(target), prerequisites);
+    }
+
+    fn queue_lease_renewals(&mut self) -> anyhow::Result<()> {
+        let session_ids: Vec<String> = self
+            .sessions
+            .live_session_ids()
+            .map(str::to_owned)
+            .collect();
+        for session_id in session_ids {
+            let Some(record) = self.state.session(&session_id) else {
+                continue;
+            };
+            if record.closed {
+                continue;
+            }
+            let semantic_key = coding_session_target_key(&self.target_for(record));
+            if self.established_leases.contains(&semantic_key) {
+                self.queue_lease(&session_id, CodingSessionLeaseState::Live)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn queue_live_releases(&mut self) -> anyhow::Result<()> {
+        let session_ids: Vec<String> = self
+            .sessions
+            .live_session_ids()
+            .map(str::to_owned)
+            .collect();
+        for session_id in session_ids {
+            let open = self
+                .state
+                .session(&session_id)
+                .is_some_and(|record| !record.closed);
+            if open {
+                self.queue_lease(&session_id, CodingSessionLeaseState::Released)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn flush_pending_leases(
+        &mut self,
+        publisher: &RelayEventPublisher,
+    ) -> anyhow::Result<usize> {
+        let mut semantic_keys: Vec<String> = self.pending_leases.keys().cloned().collect();
+        semantic_keys.sort_unstable();
+        let mut published = 0usize;
+        for semantic_key in semantic_keys {
+            let Some(publication) = self.pending_leases.get(&semantic_key).cloned() else {
+                continue;
+            };
+            publisher
+                .publish_latest_ephemeral(
+                    publication.semantic_key.clone(),
+                    publication.event.clone(),
+                )
+                .await?;
+            if self
+                .pending_leases
+                .get(&semantic_key)
+                .is_some_and(|pending| pending.event.id == publication.event.id)
+            {
+                self.pending_leases.remove(&semantic_key);
+            }
+            match publication.state {
+                CodingSessionLeaseState::Live => {
+                    self.established_leases.insert(semantic_key);
+                }
+                CodingSessionLeaseState::Released => {
+                    self.established_leases.remove(&semantic_key);
+                }
+            }
+            published += 1;
+        }
+        Ok(published)
+    }
+
     /// Drain the outbox into `sink`.
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         Ok(self.outbox.flush(sink).await?)
+    }
+
+    async fn flush_one<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
+        Ok(self.outbox.flush_one(sink).await?)
     }
 
     /// Read-only access to durable state, for tests and diagnostics.
@@ -3192,6 +3544,7 @@ mod tests {
             generation: 1,
             channel_id,
             command_id: "create-governed".into(),
+            generation_command_id: None,
             provider_instance_ref: "claude-primary".into(),
             runtime: "claude".into(),
             driver: "claude-agent-acp".into(),
@@ -3209,6 +3562,7 @@ mod tests {
             title: None,
             created_at_ms: now_ms(),
             next_seq: 1,
+            next_lease_sequence: 1,
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
@@ -3342,9 +3696,30 @@ mod tests {
             .handle_command_event(channel_id, &event)
             .await
             .expect("handle");
+        assert!(
+            provider.pending_leases.is_empty(),
+            "no live lease may precede the durable receipt and metadata"
+        );
 
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
+        assert_eq!(provider.pending_publishes(), 0);
+        provider
+            .queue_initial_live_leases()
+            .expect("initial live lease");
+        let initial = provider
+            .pending_leases
+            .values()
+            .next()
+            .expect("pending live lease");
+        let initial = buzz_core::coding_session_lease::validate_coding_session_lease_envelope(
+            &initial.event,
+            initial.event.created_at.as_secs(),
+        )
+        .expect("valid live lease");
+        assert_eq!(initial.payload.state, CodingSessionLeaseState::Live);
+        assert_eq!(initial.command_id, "create-1");
+        assert_eq!(initial.payload.lease_sequence, 1);
 
         let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
         assert_eq!(receipts.len(), 1);
@@ -3367,6 +3742,228 @@ mod tests {
 
         assert_eq!(provider.state().sessions().count(), 1);
         assert_eq!(provider.sessions.live_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn first_live_waits_for_its_generation_facts_not_unrelated_outbox_rows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let event = create_event(&provider, channel_id, "create-prerequisites");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+        let unrelated = nostr::EventBuilder::new(nostr::Kind::Custom(44225), "unrelated")
+            .sign_with_keys(&provider.config.keys)
+            .expect("sign");
+        provider
+            .outbox
+            .enqueue(44225, "unrelated", Priority::Normal, unrelated)
+            .expect("enqueue unrelated");
+
+        let sink = CollectingSink::new();
+        assert_eq!(provider.flush_one(&sink).await.expect("first ack"), 1);
+        assert_eq!(provider.flush_one(&sink).await.expect("second ack"), 1);
+        provider
+            .queue_initial_live_leases()
+            .expect("prerequisite scan");
+        assert!(provider.pending_leases.is_empty());
+
+        assert_eq!(provider.flush_one(&sink).await.expect("third ack"), 1);
+        assert_eq!(provider.pending_publishes(), 1, "unrelated row remains");
+        provider
+            .queue_initial_live_leases()
+            .expect("prerequisite scan");
+        assert_eq!(provider.pending_leases.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pending_lifecycle_startup_cannot_starve_sixty_second_renewals() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let event = create_event(&provider, channel_id, "create-existing");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("create existing");
+        provider
+            .flush(&CollectingSink::new())
+            .await
+            .expect("accept prerequisites");
+        provider.queue_initial_live_leases().expect("initial lease");
+        let semantic_key = provider
+            .pending_leases
+            .keys()
+            .next()
+            .expect("lease key")
+            .clone();
+        provider.pending_leases.clear();
+        provider.established_leases.insert(semantic_key.clone());
+
+        let (maintenance_tx, mut maintenance_rx) = tokio::sync::mpsc::unbounded_channel();
+        provider
+            .await_with_lease_maintenance_at(
+                async move {
+                    for _ in 0..3 {
+                        maintenance_rx.recv().await.expect("maintenance tick");
+                    }
+                },
+                None,
+                Duration::from_millis(1),
+                || {
+                    maintenance_tx.send(()).expect("startup still pending");
+                },
+            )
+            .await;
+
+        let latest = provider
+            .pending_leases
+            .get(&semantic_key)
+            .expect("renewal retained while startup is pending");
+        let decoded = buzz_core::coding_session_lease::validate_coding_session_lease_envelope(
+            &latest.event,
+            latest.event.created_at.as_secs(),
+        )
+        .expect("lease");
+        assert!(decoded.payload.lease_sequence >= 4);
+        assert_eq!(
+            provider
+                .state()
+                .sessions()
+                .next()
+                .expect("session")
+                .next_lease_sequence,
+            decoded.payload.lease_sequence + 1,
+            "60s, 120s, and 180s renewals each persist and burn a sequence"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_durable_drain_stops_at_its_fixed_bound() {
+        assert_eq!(SHUTDOWN_DURABLE_DRAIN_TIMEOUT, Duration::from_secs(5));
+        let test_bound = Duration::from_millis(10);
+        let started = tokio::time::Instant::now();
+        let result = bounded_drain(test_bound, std::future::pending::<()>()).await;
+
+        assert!(result.is_err(), "an unresponsive relay must time out");
+        assert!(started.elapsed() >= test_bound);
+    }
+
+    #[test]
+    fn a_failed_terminal_persist_never_queues_a_release() {
+        #[derive(Default)]
+        struct StopProbe {
+            release_queued: bool,
+        }
+
+        let mut probe = StopProbe::default();
+        let result = prepare_terminal_stop(
+            &mut probe,
+            |_| Err(anyhow::anyhow!("state disk unavailable")),
+            |probe| {
+                probe.release_queued = true;
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(!probe.release_queued);
+    }
+
+    #[test]
+    fn a_release_construction_failure_after_terminal_persist_is_non_fatal() {
+        #[derive(Default)]
+        struct StopProbe {
+            terminal_persisted: bool,
+        }
+
+        let mut probe = StopProbe::default();
+        let result = prepare_terminal_stop(
+            &mut probe,
+            |probe| {
+                probe.terminal_persisted = true;
+                Ok(())
+            },
+            |_| Err(anyhow::anyhow!("lease sequence disk unavailable")),
+        );
+
+        assert!(
+            result.is_ok(),
+            "terminal completion must fall back to lease TTL"
+        );
+        assert!(probe.terminal_persisted);
+    }
+
+    #[tokio::test]
+    async fn stop_completes_terminal_facts_when_release_sequence_reservation_fails() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(
+                channel_id,
+                &create_event(&provider, channel_id, "create-before-stop-failure"),
+            )
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        provider
+            .state
+            .update_session(&target.session_id, |record| {
+                record.next_lease_sequence =
+                    buzz_core::coding_session_command::MAX_SAFE_GENERATION + 1;
+            })
+            .expect("exhaust lease sequence");
+
+        let stop = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "stop-without-release",
+            "session.stop",
+            &target,
+        );
+        provider
+            .handle_command_event(channel_id, &stop)
+            .await
+            .expect("terminal completion falls back to TTL");
+
+        assert!(provider.state().is_command_consumed("stop-without-release"));
+        assert!(
+            provider
+                .state()
+                .session(&target.session_id)
+                .expect("session")
+                .closed
+        );
+        assert!(provider.sessions.handle(&target.session_id).is_none());
+        assert!(provider.pending_leases.is_empty());
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("terminal facts");
+        assert!(sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .iter()
+            .any(|content| content["commandId"] == "stop-without-release"
+                && content["status"] == "stopped"));
+        assert!(sink
+            .contents_of(KIND_CODING_SESSION_METADATA)
+            .iter()
+            .any(|content| content["status"] == "stopped"));
     }
 
     /// A create that starts with no prior context says so in the transcript.
@@ -5703,6 +6300,13 @@ mod tests {
         let mut restarted =
             Provider::new(config_of(keys, &state_dir, Some(&projects), agent)).expect("provider");
         restarted.recover().expect("recover");
+        restarted
+            .queue_initial_live_leases()
+            .expect("recovery lease scan");
+        assert!(
+            restarted.pending_leases.is_empty(),
+            "durable records without attached actors never recover as live"
+        );
         let sink = CollectingSink::new();
         restarted.flush(&sink).await.expect("flush");
 
@@ -5800,6 +6404,9 @@ mod tests {
             .expect("session")
             .target(&restarted.config.instance_id);
         assert_eq!(current.generation, 2);
+        let current_record = restarted.state().session(&session_id).expect("session");
+        assert_eq!(current_record.generation_command_id(), "resume-1");
+        assert_eq!(current_record.next_lease_sequence, 1);
         assert!(restarted.sessions.handle(&session_id).is_some());
 
         let stale_turn = turn_event(channel_id, "stale-after-resume", &previous);
@@ -5825,6 +6432,19 @@ mod tests {
                 .expect("session")
                 .closed
         );
+        let released = restarted
+            .pending_leases
+            .values()
+            .next()
+            .expect("released lease precedes terminal publication");
+        let released = buzz_core::coding_session_lease::validate_coding_session_lease_envelope(
+            &released.event,
+            released.event.created_at.as_secs(),
+        )
+        .expect("valid released lease");
+        assert_eq!(released.payload.state, CodingSessionLeaseState::Released);
+        assert_eq!(released.command_id, "resume-1");
+        assert_eq!(released.payload.lease_sequence, 1);
 
         drop(restarted);
         let mut after_stop =
@@ -5861,6 +6481,7 @@ mod tests {
                     generation: 1,
                     channel_id,
                     command_id: "create-codex".into(),
+                    generation_command_id: None,
                     provider_instance_ref: "codex-primary".into(),
                     runtime: "codex".into(),
                     driver: "codex-acp".into(),
@@ -5878,6 +6499,7 @@ mod tests {
                     title: None,
                     created_at_ms: now_ms(),
                     next_seq: 3,
+                    next_lease_sequence: 1,
                     bootstrap_transport: None,
                     open_turn: Some(OpenTurn {
                         turn_id: "turn-1".into(),

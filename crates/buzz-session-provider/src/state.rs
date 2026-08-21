@@ -106,6 +106,13 @@ pub struct SessionRecord {
     pub channel_id: Uuid,
     /// The create command that minted this session.
     pub command_id: String,
+    /// Lifecycle command that minted the current exact generation.
+    ///
+    /// `None` is the backward-compatible representation for records written
+    /// before generation commands were persisted; generation one was minted
+    /// by [`SessionRecord::command_id`] in those records.
+    #[serde(default)]
+    pub generation_command_id: Option<String>,
     /// The runtime instance that serves this session. Defaults to the claude
     /// ref for records written before the field existed.
     #[serde(default = "default_provider_instance_ref")]
@@ -174,6 +181,9 @@ pub struct SessionRecord {
     pub created_at_ms: i64,
     /// Next `event_seq` to hand out. Sequences start at 1.
     pub next_seq: u64,
+    /// Next ephemeral lease sequence to reserve for this exact generation.
+    #[serde(default = "default_next_lease_sequence")]
+    pub next_lease_sequence: u64,
     /// How this generation's rehydration continuity bootstrap was delivered, or
     /// `None` when the open needed no bootstrap. Host-local diagnostic: never
     /// published, and defaults to `None` for records written before the field
@@ -198,6 +208,10 @@ fn default_driver() -> String {
     crate::config::DRIVER.to_owned()
 }
 
+fn default_next_lease_sequence() -> u64 {
+    1
+}
+
 impl SessionRecord {
     /// The wire target naming this generation, minted with the persisted driver.
     pub fn target(&self, instance_id: &str) -> CodingSessionTarget {
@@ -207,6 +221,13 @@ impl SessionRecord {
             session_id: self.session_id.clone(),
             generation: self.generation,
         }
+    }
+
+    /// Lifecycle command that minted this exact generation.
+    pub fn generation_command_id(&self) -> &str {
+        self.generation_command_id
+            .as_deref()
+            .unwrap_or(&self.command_id)
     }
 }
 
@@ -302,12 +323,13 @@ impl StateStore {
 
     /// Advance a channel watermark. Never moves backwards.
     pub fn record_watermark(&mut self, channel_id: Uuid, created_at: u64) -> io::Result<()> {
+        let previous = self.snapshot.clone();
         let entry = self.snapshot.watermarks.entry(channel_id).or_insert(0);
         if created_at <= *entry {
             return Ok(());
         }
         *entry = created_at;
-        self.persist()
+        self.persist_or_restore(previous)
     }
 
     /// Whether this command has already been acted on.
@@ -324,19 +346,25 @@ impl StateStore {
             command_id: command_id.to_owned(),
             at,
         };
-        let mut options = OpenOptions::new();
-        options.create(true).append(true);
-        restrict_new_file(&mut options);
-        let path = self.dir.join(COMMANDS_FILE);
-        let mut file = options.open(&path)?;
-        restrict_file(&path)?;
-        // The whole line — payload and newline — goes down in a single
-        // `write` call on an O_APPEND handle, so even a second writer (a bug
-        // the state-dir lock exists to prevent) could not tear it in half.
-        let mut line = serde_json::to_string(&record)?;
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
-        file.sync_all()
+        let result = (|| {
+            let mut options = OpenOptions::new();
+            options.create(true).append(true);
+            restrict_new_file(&mut options);
+            let path = self.dir.join(COMMANDS_FILE);
+            let mut file = options.open(&path)?;
+            restrict_file(&path)?;
+            // The whole line — payload and newline — goes down in a single
+            // `write` call on an O_APPEND handle, so even a second writer (a bug
+            // the state-dir lock exists to prevent) could not tear it in half.
+            let mut line = serde_json::to_string(&record)?;
+            line.push('\n');
+            file.write_all(line.as_bytes())?;
+            file.sync_all()
+        })();
+        if result.is_err() {
+            self.commands.remove(command_id);
+        }
+        result
     }
 
     /// Every session record this provider has ever minted and not pruned.
@@ -360,10 +388,11 @@ impl StateStore {
 
     /// Insert a freshly minted session record.
     pub fn insert_session(&mut self, record: SessionRecord) -> io::Result<()> {
+        let previous = self.snapshot.clone();
         self.snapshot
             .sessions
             .insert(record.session_id.clone(), record);
-        self.persist()
+        self.persist_or_restore(previous)
     }
 
     /// Mutate a session record in place and persist the result.
@@ -375,11 +404,12 @@ impl StateStore {
         session_id: &str,
         mutate: impl FnOnce(&mut SessionRecord),
     ) -> io::Result<bool> {
+        let previous = self.snapshot.clone();
         match self.snapshot.sessions.get_mut(session_id) {
             None => Ok(false),
             Some(record) => {
                 mutate(record);
-                self.persist()?;
+                self.persist_or_restore(previous)?;
                 Ok(true)
             }
         }
@@ -388,13 +418,40 @@ impl StateStore {
     /// Reserve the next `event_seq` for a generation and persist it *before*
     /// returning, so a crash can only ever burn the number, never reuse it.
     pub fn allocate_seq(&mut self, session_id: &str) -> io::Result<Option<u64>> {
+        let previous = self.snapshot.clone();
         let Some(record) = self.snapshot.sessions.get_mut(session_id) else {
             return Ok(None);
         };
         let seq = record.next_seq.max(1);
         record.next_seq = seq + 1;
-        self.persist()?;
+        self.persist_or_restore(previous)?;
         Ok(Some(seq))
+    }
+
+    /// Reserve and persist the next lease sequence for an exact generation.
+    ///
+    /// Persistence completes before the number is returned. A crash may leave
+    /// a harmless gap, but can never reuse a signed lease sequence.
+    pub fn allocate_lease_sequence(&mut self, session_id: &str) -> io::Result<Option<u64>> {
+        let previous = self.snapshot.clone();
+        let Some(record) = self.snapshot.sessions.get_mut(session_id) else {
+            return Ok(None);
+        };
+        let sequence = record.next_lease_sequence.max(1);
+        if sequence > buzz_core::coding_session_command::MAX_SAFE_GENERATION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "coding-session lease sequence is exhausted",
+            ));
+        }
+        record.next_lease_sequence = sequence.checked_add(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "coding-session lease sequence is exhausted",
+            )
+        })?;
+        self.persist_or_restore(previous)?;
+        Ok(Some(sequence))
     }
 
     /// Current catalog advertisement state.
@@ -404,8 +461,9 @@ impl StateStore {
 
     /// Replace the catalog advertisement state.
     pub fn set_catalog(&mut self, catalog: CatalogState) -> io::Result<()> {
+        let previous = self.snapshot.clone();
         self.snapshot.catalog = catalog;
-        self.persist()
+        self.persist_or_restore(previous)
     }
 
     fn load_commands(&mut self, retention_secs: u64) -> io::Result<()> {
@@ -452,6 +510,14 @@ impl StateStore {
     fn persist(&self) -> io::Result<()> {
         let body = serde_json::to_vec_pretty(&self.snapshot)?;
         atomic_write(&self.dir.join(STATE_FILE), &body)
+    }
+
+    fn persist_or_restore(&mut self, previous: Snapshot) -> io::Result<()> {
+        if let Err(error) = self.persist() {
+            self.snapshot = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -573,6 +639,7 @@ mod tests {
             generation: 1,
             channel_id: Uuid::nil(),
             command_id: format!("create-{session_id}"),
+            generation_command_id: None,
             provider_instance_ref: "claude-primary".into(),
             runtime: "claude".into(),
             driver: "claude-agent-acp".into(),
@@ -590,6 +657,7 @@ mod tests {
             title: None,
             created_at_ms: 1_700_000_000_000,
             next_seq: 1,
+            next_lease_sequence: 1,
             bootstrap_transport: None,
             open_turn: None,
             closed: false,
@@ -699,6 +767,45 @@ mod tests {
     }
 
     #[test]
+    fn a_legacy_record_falls_back_to_its_create_and_starts_lease_sequences_at_one() {
+        let mut value = serde_json::to_value(record("s1")).expect("serialize");
+        let object = value.as_object_mut().expect("object");
+        object.remove("generationCommandId");
+        object.remove("nextLeaseSequence");
+
+        let loaded: SessionRecord = serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(loaded.generation_command_id(), "create-s1");
+        assert_eq!(loaded.next_lease_sequence, 1);
+    }
+
+    #[test]
+    fn a_crash_after_reserving_a_lease_sequence_burns_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let mut store = StateStore::open(dir.path(), 3600).expect("open");
+            store.insert_session(record("s1")).expect("insert");
+            assert_eq!(
+                store
+                    .allocate_lease_sequence("s1")
+                    .expect("allocate")
+                    .expect("session"),
+                1
+            );
+        }
+
+        let mut store = StateStore::open(dir.path(), 3600).expect("reopen");
+        assert_eq!(
+            store
+                .allocate_lease_sequence("s1")
+                .expect("allocate")
+                .expect("session"),
+            2,
+            "a persisted reservation must never be reused after a crash"
+        );
+    }
+
+    #[test]
     fn consumed_commands_survive_restart_and_expire_past_retention() {
         let dir = tempfile::tempdir().expect("tempdir");
         let now = now_secs();
@@ -746,6 +853,21 @@ mod tests {
             .update_session("ghost", |record| record.closed = true)
             .expect("update"));
         assert!(store.allocate_seq("ghost").expect("allocate").is_none());
+    }
+
+    #[test]
+    fn a_failed_session_update_rolls_back_the_in_memory_record() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = StateStore::open(dir.path(), 3600).expect("open");
+        store.insert_session(record("s1")).expect("insert");
+
+        let blocker = dir.path().join("not-a-directory");
+        fs::write(&blocker, b"file").expect("blocker");
+        store.dir = blocker;
+        let result = store.update_session("s1", |record| record.closed = true);
+
+        assert!(result.is_err());
+        assert_eq!(store.session("s1").map(|record| record.closed), Some(false));
     }
 
     /// Records written before the umbrella and authority fields existed still

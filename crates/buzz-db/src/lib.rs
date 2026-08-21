@@ -19,6 +19,8 @@ pub mod archived_identities;
 pub mod channel;
 /// Coding-session authority-grant queries (NIP-CSAT ACL projection).
 pub mod coding_session_acl;
+/// Immutable lifecycle command/receipt authority resolution for session generations.
+pub mod coding_session_generation;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.
@@ -671,6 +673,26 @@ pub struct TokenSummary {
 }
 
 impl Db {
+    /// Resolve immutable create/resume authority for an exact leased generation.
+    pub async fn resolve_coding_session_generation_authority(
+        &self,
+        community: CommunityId,
+        channel_id: Uuid,
+        command_id: &str,
+        target: &buzz_core::coding_session_command::CodingSessionTarget,
+        lease_signer: &nostr::PublicKey,
+    ) -> Result<coding_session_generation::GenerationAuthorityProof> {
+        coding_session_generation::resolve_generation_authority(
+            &self.pool,
+            community,
+            channel_id,
+            command_id,
+            target,
+            lease_signer,
+        )
+        .await
+    }
+
     /// Creates a new `Db` by connecting a Postgres pool with the given config.
     ///
     /// When `config.read_database_url` is set, a second pool with the same

@@ -23,6 +23,10 @@ use buzz_core::{
         validate_coding_session_goal_content, validate_coding_session_goal_session_ref,
         CODING_SESSION_GOAL_TAG_VERSION,
     },
+    coding_session_lease::{
+        CodingSessionLease, CODING_SESSION_LEASE_TAG_VERSION,
+        MAX_CODING_SESSION_LEASE_CONTENT_BYTES,
+    },
     coding_session_lifecycle_command::{
         CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
         MAX_LIFECYCLE_CONTENT_BYTES,
@@ -35,16 +39,17 @@ use buzz_core::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
         KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
-        KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-        KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
-        KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION,
-        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
-        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
-        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
-        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
-        KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+        KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_PROVIDER_CATALOG,
+        KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
+        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
+        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
+        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
+        KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -2572,10 +2577,38 @@ pub fn build_coding_session_provider_catalog(
     .tags(tags))
 }
 
+/// Build an ephemeral provider-signed lease for one exact session generation (kind 24223).
+///
+/// `command_id` is the accepted create/resume lifecycle command that minted
+/// `payload.target`. The relay resolves that immutable command/receipt chain
+/// and requires the event signer to equal its `providerAuthorityPubkey`; this
+/// builder only makes the signed target, command, and sequence binding exact.
+pub fn build_coding_session_lease(
+    channel_id: Uuid,
+    command_id: &str,
+    payload: &CodingSessionLease,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    check_identifier(command_id, "csl-command")?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session lease serialization: {error}"))
+    })?;
+    check_content(&content, MAX_CODING_SESSION_LEASE_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cslease-v", CODING_SESSION_LEASE_TAG_VERSION])?,
+        tag(&["cs-target", &coding_session_target_key(&payload.target)])?,
+        tag(&["csl-command", command_id])?,
+        tag(&["cslease-seq", &payload.lease_sequence.to_string()])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_LEASE as u16), content).tags(tags))
+}
+
 /// Build coding-session metadata for one exact generation (kind 44223).
 ///
-/// Immutable per generation: a session's facts are established when it is
-/// created, and a later correction is a new generation, not a rewrite.
+/// Metadata is append-only observation history within a generation. Providers
+/// publish a new event on each observed transition; consumers fold the newest
+/// valid observation by `(created_at, event id)` without rewriting old rows.
 pub fn build_coding_session_metadata(
     channel_id: Uuid,
     target: &CodingSessionTarget,
@@ -5814,6 +5847,70 @@ mod tests {
     }
 
     #[test]
+    fn lease_builder_emits_strict_content_and_ordered_tags() {
+        use buzz_core::coding_session_lease::{
+            CodingSessionLease, CodingSessionLeaseState, CODING_SESSION_LEASE_SCHEMA,
+        };
+
+        let channel = Uuid::parse_str("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10").unwrap();
+        let payload = CodingSessionLease {
+            schema: CODING_SESSION_LEASE_SCHEMA.into(),
+            target: cs_target(),
+            state: CodingSessionLeaseState::Live,
+            lease_sequence: 42,
+        };
+        let event = build_coding_session_lease(channel, "create-1", &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            buzz_core::kind::KIND_CODING_SESSION_LEASE
+        );
+        assert_eq!(
+            serde_json::from_str::<CodingSessionLease>(&event.content).unwrap(),
+            payload
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cslease-v".into(), "cslease1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+                ("csl-command".into(), "create-1".into()),
+                ("cslease-seq".into(), "42".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lease_builder_rejects_invalid_payload_and_command_identifier() {
+        use buzz_core::coding_session_lease::{CodingSessionLease, CodingSessionLeaseState};
+
+        let channel = Uuid::new_v4();
+        let mut payload =
+            CodingSessionLease::new(cs_target(), CodingSessionLeaseState::Released, 1).unwrap();
+        assert!(build_coding_session_lease(channel, " ", &payload).is_err());
+        assert!(build_coding_session_lease(
+            channel,
+            &"x".repeat(MAX_IDENTIFIER_BYTES + 1),
+            &payload
+        )
+        .is_err());
+
+        payload.lease_sequence = 0;
+        assert!(build_coding_session_lease(channel, "create-1", &payload).is_err());
+
+        payload.lease_sequence = 1;
+        payload.target.generation = 0;
+        assert!(build_coding_session_lease(channel, "create-1", &payload).is_err());
+    }
+
+    #[test]
     fn lifecycle_receipt_builder_emits_ordered_tags_keyed_by_command_id() {
         let channel = Uuid::new_v4();
         let event = build_coding_session_lifecycle_receipt(channel, "create-1", "{}")
@@ -5923,10 +6020,17 @@ mod tests {
     fn every_coding_session_builder_emits_the_channel_tag_first() {
         let channel = Uuid::new_v4();
         let target = cs_target();
+        let lease = CodingSessionLease::new(
+            target.clone(),
+            buzz_core::coding_session_lease::CodingSessionLeaseState::Live,
+            1,
+        )
+        .unwrap();
         let builders = [
             build_coding_session_command(channel, &cs_command_payload()).unwrap(),
             build_coding_session_lifecycle_command(channel, &cs_lifecycle_payload(None)).unwrap(),
             build_coding_session_provider_catalog(channel, 1, "{}").unwrap(),
+            build_coding_session_lease(channel, "create-1", &lease).unwrap(),
             build_coding_session_metadata(channel, &target, "{}").unwrap(),
             build_coding_session_lifecycle_receipt(channel, "create-1", "{}").unwrap(),
             build_coding_session_transcript_item(channel, &target, 1, "{}").unwrap(),

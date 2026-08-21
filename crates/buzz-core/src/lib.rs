@@ -24,6 +24,8 @@ pub mod coding_session_context;
 pub mod coding_session_genesis;
 /// NIP-CSG: append-only human-authored session-goal revisions (44227).
 pub mod coding_session_goal;
+/// Ephemeral provider-signed liveness leases for exact coding-session generations.
+pub mod coding_session_lease;
 /// NIP-CSL: Coding-session lifecycle command — session creation payload.
 pub mod coding_session_lifecycle_command;
 /// NIP-CSN: append-only human-authored session-name revisions (44229).

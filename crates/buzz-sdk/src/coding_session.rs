@@ -1,11 +1,12 @@
 //! Coding-session tag versions and semantic-key derivation.
 //!
-//! Every coding-session event carries a *semantic key* tag — a deterministic,
-//! collision-free encoding of the identity the event claims. Consumers use it to
-//! deduplicate and to fence a stale writer; producers use it as the idempotency
-//! key of an outbox row. Because both sides derive the key independently, the
-//! encoding has to agree byte-for-byte across the Rust producer and the
-//! TypeScript consumer.
+//! Durable provider-fact coding-session events carry a *semantic key* tag — a
+//! deterministic, collision-free encoding of the identity the event claims.
+//! Consumers use it to deduplicate and fence stale writers; producers use it as
+//! the idempotency key of an outbox row. Ephemeral kind-24223 leases instead use
+//! an exact target plus a monotonic `cslease-seq` register. Because both sides
+//! derive target and semantic keys independently, the encoding has to agree
+//! byte-for-byte across Rust producers and TypeScript consumers.
 //!
 //! The encoding is length-prefixed, which is the whole point: joining fields
 //! with a separator lets a field containing that separator impersonate a
@@ -80,7 +81,8 @@ pub fn coding_session_target_key(target: &CodingSessionTarget) -> String {
     )
 }
 
-/// The `csm-key` tag value: the immutable identity of one generation's metadata.
+/// The `csm-key` tag value: the grouping identity for one generation's
+/// metadata observations.
 pub fn coding_session_metadata_semantic_key(target: &CodingSessionTarget) -> String {
     encode_structured_key(
         "coding-session-metadata/v1",

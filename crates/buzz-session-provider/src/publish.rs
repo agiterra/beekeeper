@@ -68,8 +68,16 @@ pub struct OutboxEntry {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 enum LedgerRow {
-    Enqueue { entry: Box<OutboxEntry> },
-    Ack { id: String },
+    Enqueue {
+        entry: Box<OutboxEntry>,
+    },
+    Replace {
+        entry: Box<OutboxEntry>,
+        supersedes: Vec<String>,
+    },
+    Ack {
+        id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -93,7 +101,7 @@ pub trait EventSink {
 
 impl EventSink for buzz_acp::relay::RelayEventPublisher {
     async fn publish(&self, event: nostr::Event) -> Result<(), String> {
-        self.publish_event(event)
+        self.publish_event_acknowledged(event)
             .await
             .map_err(|error| error.to_string())
     }
@@ -128,6 +136,10 @@ impl Outbox {
             }
             match serde_json::from_str::<LedgerRow>(line) {
                 Ok(LedgerRow::Enqueue { entry }) => rows.push(*entry),
+                Ok(LedgerRow::Replace { entry, supersedes }) => {
+                    acked.extend(supersedes);
+                    rows.push(*entry);
+                }
                 Ok(LedgerRow::Ack { id }) => {
                     acked.insert(id);
                 }
@@ -138,6 +150,11 @@ impl Outbox {
         }
 
         let mut seen_keys: HashSet<(u32, String)> = HashSet::new();
+        // Newest wins for a semantic key. This is both the recovery rule for
+        // an atomic `Replace` row and the fail-safe rule for a process that
+        // died after durably appending a newer value but before retiring a
+        // legacy row written by an older binary.
+        rows.reverse();
         for entry in rows {
             if acked.contains(&entry.id) {
                 continue;
@@ -156,6 +173,7 @@ impl Outbox {
                 next_attempt_at: None,
             });
         }
+        pending.reverse();
         if fenced_by_signer > 0 {
             tracing::warn!(
                 target: "csp::outbox",
@@ -181,6 +199,15 @@ impl Outbox {
     /// Number of rows still awaiting delivery.
     pub fn pending_len(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Fact identities still awaiting a positive relay OK. Latest-value
+    /// replacement preserves this identity even though its row id changes.
+    pub(crate) fn pending_keys(&self) -> HashSet<(u32, String)> {
+        self.pending
+            .iter()
+            .map(|row| (row.entry.kind, row.entry.semantic_key.clone()))
+            .collect()
     }
 
     /// Whether a row for this `(kind, semantic key)` is already queued.
@@ -238,19 +265,14 @@ impl Outbox {
             );
             return Ok(false);
         }
-        if self.contains(kind, semantic_key) {
-            if !supersede {
-                return Ok(false);
-            }
-            let superseded: Vec<String> = self
-                .pending
-                .iter()
-                .filter(|row| row.entry.kind == kind && row.entry.semantic_key == semantic_key)
-                .map(|row| row.entry.id.clone())
-                .collect();
-            for id in superseded {
-                self.ack(&id)?;
-            }
+        let superseded: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|row| row.entry.kind == kind && row.entry.semantic_key == semantic_key)
+            .map(|row| row.entry.id.clone())
+            .collect();
+        if !superseded.is_empty() && !supersede {
+            return Ok(false);
         }
         let entry = OutboxEntry {
             id: uuid::Uuid::new_v4().to_string(),
@@ -260,9 +282,20 @@ impl Outbox {
             priority,
             event,
         };
-        self.append(&LedgerRow::Enqueue {
-            entry: Box::new(entry.clone()),
-        })?;
+        if superseded.is_empty() {
+            self.append(&LedgerRow::Enqueue {
+                entry: Box::new(entry.clone()),
+            })?;
+        } else {
+            // One fsynced row establishes both sides of the replacement. A
+            // crash can expose the old value or the new value, never neither.
+            self.append(&LedgerRow::Replace {
+                entry: Box::new(entry.clone()),
+                supersedes: superseded.clone(),
+            })?;
+            self.pending
+                .retain(|row| !superseded.iter().any(|id| id == &row.entry.id));
+        }
         self.pending.push(Pending {
             entry,
             attempts: 0,
@@ -276,6 +309,22 @@ impl Outbox {
     /// Rows whose backoff has not elapsed are skipped. Returns the number of
     /// rows successfully delivered.
     pub async fn flush<S: EventSink>(&mut self, sink: &S) -> io::Result<usize> {
+        self.flush_limit(sink, usize::MAX).await
+    }
+
+    /// Attempt at most one eligible delivery.
+    ///
+    /// The provider runtime uses this bounded pass so one slow relay ACK cannot
+    /// multiply across the durable backlog and starve lease renewal work.
+    pub async fn flush_one<S: EventSink>(&mut self, sink: &S) -> io::Result<usize> {
+        self.flush_limit(sink, 1).await
+    }
+
+    async fn flush_limit<S: EventSink>(
+        &mut self,
+        sink: &S,
+        max_attempts: usize,
+    ) -> io::Result<usize> {
         let now = Instant::now();
         let mut order: Vec<usize> = (0..self.pending.len())
             .filter(|index| {
@@ -286,11 +335,22 @@ impl Outbox {
             .collect();
         order.sort_by_key(|index| (self.pending[*index].entry.priority, *index));
 
-        let mut delivered_ids: Vec<String> = Vec::new();
-        for index in order {
+        let ordered_ids: Vec<String> = order
+            .into_iter()
+            .take(max_attempts)
+            .map(|index| self.pending[index].entry.id.clone())
+            .collect();
+        let mut delivered = 0usize;
+        for id in ordered_ids {
+            let Some(index) = self.pending.iter().position(|row| row.entry.id == id) else {
+                continue;
+            };
             let entry = self.pending[index].entry.clone();
             match sink.publish(entry.event.clone()).await {
-                Ok(()) => delivered_ids.push(entry.id),
+                Ok(()) => {
+                    self.ack(&entry.id)?;
+                    delivered = delivered.saturating_add(1);
+                }
                 Err(error) => {
                     let row = &mut self.pending[index];
                     row.attempts = row.attempts.saturating_add(1);
@@ -308,10 +368,6 @@ impl Outbox {
             }
         }
 
-        let delivered = delivered_ids.len();
-        for id in delivered_ids {
-            self.ack(&id)?;
-        }
         if delivered > 0 {
             self.compact_if_idle()?;
         }
@@ -447,6 +503,69 @@ mod tests {
         assert_eq!(reopened.flush(&sink).await.expect("flush"), 1);
     }
 
+    #[tokio::test]
+    async fn a_crash_between_latest_enqueue_and_retirement_replays_the_newest_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keys = Keys::generate();
+        let signer = keys.public_key().to_hex();
+        let mut outbox = Outbox::open(dir.path(), &signer).expect("open");
+        outbox
+            .enqueue_latest(44223, "session-1", Priority::High, signed(&keys, "idle"))
+            .expect("initial metadata");
+
+        // This is the only crash-safe ordering for a replacement: the new row
+        // is durable before the old row is retired. Simulate a process dying in
+        // that window and require replay to choose the later value.
+        let replacement = OutboxEntry {
+            id: "replacement-row".into(),
+            kind: 44223,
+            semantic_key: "session-1".into(),
+            signer: signer.clone(),
+            priority: Priority::High,
+            event: signed(&keys, "running"),
+        };
+        outbox
+            .append(&LedgerRow::Enqueue {
+                entry: Box::new(replacement),
+            })
+            .expect("durable replacement");
+        drop(outbox);
+
+        let mut reopened = Outbox::open(dir.path(), &signer).expect("reopen");
+        let sink = RecordingSink::default();
+        assert_eq!(reopened.flush(&sink).await.expect("flush"), 1);
+        assert_eq!(
+            sink.published.lock().expect("lock")[0].content,
+            "running",
+            "replay must never resurrect the superseded metadata value"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_latest_replace_keeps_the_previous_durable_value() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keys = Keys::generate();
+        let signer = keys.public_key().to_hex();
+        let mut outbox = Outbox::open(dir.path(), &signer).expect("open");
+        outbox
+            .enqueue_latest(44223, "session-1", Priority::High, signed(&keys, "idle"))
+            .expect("initial metadata");
+        let ledger = outbox.path.clone();
+        outbox.path = dir.path().to_path_buf();
+
+        assert!(outbox
+            .enqueue_latest(44223, "session-1", Priority::High, signed(&keys, "running"),)
+            .is_err());
+        assert_eq!(outbox.pending_len(), 1);
+        drop(outbox);
+
+        let mut reopened = Outbox::open(dir.path(), &signer).expect("reopen");
+        assert_eq!(reopened.path, ledger);
+        let sink = RecordingSink::default();
+        assert_eq!(reopened.flush(&sink).await.expect("flush"), 1);
+        assert_eq!(sink.published.lock().expect("lock")[0].content, "idle");
+    }
+
     /// Enqueueing the same fact twice is the normal shape of a retry after a
     /// crash, and must not become two events for the consumer to reconcile.
     #[test]
@@ -507,6 +626,24 @@ mod tests {
         let published = sink.published.lock().expect("lock");
         assert_eq!(published[0].content, "receipt");
         assert_eq!(published[1].content, "chatter");
+    }
+
+    #[tokio::test]
+    async fn a_runtime_delivery_pass_attempts_only_one_eligible_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keys = Keys::generate();
+        let signer = keys.public_key().to_hex();
+        let mut outbox = Outbox::open(dir.path(), &signer).expect("open");
+        for (key, content) in [("key-1", "a"), ("key-2", "b"), ("key-3", "c")] {
+            outbox
+                .enqueue(44225, key, Priority::Normal, signed(&keys, content))
+                .expect("enqueue");
+        }
+
+        let sink = RecordingSink::default();
+        assert_eq!(outbox.flush_one(&sink).await.expect("runtime pass"), 1);
+        assert_eq!(outbox.pending_len(), 2);
+        assert_eq!(sink.published.lock().expect("lock").len(), 1);
     }
 
     #[test]

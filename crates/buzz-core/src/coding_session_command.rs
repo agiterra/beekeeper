@@ -112,6 +112,9 @@ fn validate_identifier(value: &str, field: &str) -> Result<(), String> {
     if value.len() > MAX_IDENTIFIER_BYTES {
         return Err(format!("{field} exceeds {MAX_IDENTIFIER_BYTES} bytes"));
     }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{field} must not contain control characters"));
+    }
     Ok(())
 }
 
@@ -176,6 +179,15 @@ mod tests {
         payload.target.generation = 1;
         payload.action = CodingSessionAction::ThreadTurnStart { text: "   ".into() };
         assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters_in_target_identifiers() {
+        for rejected in ["provider\nSYSTEM", "instance\rnext", "session\tsteer"] {
+            let mut payload = valid_payload();
+            payload.target.session_id = rejected.to_owned();
+            assert!(payload.validate().is_err(), "accepted {rejected:?}");
+        }
     }
 
     #[test]

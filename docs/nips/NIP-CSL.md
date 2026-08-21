@@ -17,7 +17,8 @@ Provider-neutral rendering after creation uses the signed
 >
 > 1. **Native kinds only.** No kind-9 compatibility fallback exists anywhere in
 >    this fork — not for 44221, and not for the 44223/44224 lifecycle facts
->    below. Each fact is published exactly once, in exactly one kind.
+>    below. Every publication uses exactly one native kind; kind-44223 metadata
+>    may publish repeatedly as append-only observations on state transitions.
 > 2. **`projectRef` is optional.** A session may stand alone, owned by the
 >    channel it is published into rather than by a project. See below.
 > 3. **`projectRef` coordinates are `30621:` only.** The donor's example used
@@ -32,6 +33,9 @@ Provider-neutral rendering after creation uses the signed
 >    the provider's opaque ACP cursor; that cursor remains host-private. A
 >    successful reattachment publishes a new generation, while stop is durable
 >    intent that survives provider restart.
+> 6. **Liveness is an ephemeral lease, not metadata freshness.** Kind 24223
+>    proves recent provider reachability for one exact generation. It does not
+>    replace durable metadata and is never written to Postgres.
 
 ## Wire contract
 
@@ -253,8 +257,12 @@ publishes provider-neutral session projections.
 
 ## Lifecycle facts
 
-The provider publishes generation metadata as `kind:44223` and lifecycle
-receipts as `kind:44224` — one event per fact, native kind only.
+The provider publishes generation metadata observations as `kind:44223` and
+lifecycle receipts as `kind:44224`, using only those native kinds. A receipt is
+one immutable outcome for one command. Metadata is append-only observation
+history: the provider publishes a new event on a state transition, and a
+generation may therefore have several events with the same semantic grouping
+key.
 
 Metadata tags, in order: `h`, `csm-v` (`csm1-1`), `cs-target`, `csm-key`.
 Receipt tags, in order: `h`, `cslr-v` (`cslr1-1`), `csl-command`, `csl-key`.
@@ -268,8 +276,10 @@ coding-session-lifecycle-receipt/v1|<commandId>
 
 A receipt is keyed by `commandId` alone: one lifecycle command has exactly one
 outcome, so a second receipt for the same command is a duplicate to drop, never
-a revision to apply. Metadata is immutable per generation — a correction is a
-new generation, not a rewrite.
+a revision to apply. Consumers retain all metadata rows and fold the newest
+valid observation per exact generation by `(created_at, event id)`. A new
+generation fences resume identity; it is not required for an ordinary status
+transition or corrected observation.
 
 The receipt keeps the same exact five-key v1 object. In addition to the create
 statuses, lifecycle continuation uses:
@@ -296,15 +306,86 @@ owner-readable only on platforms that expose filesystem permissions.
 
 Both kinds are provider-authored, so the relay applies scope, `h` scope, strict
 membership, and a size cap (32 KiB metadata, 16 KiB receipt) and nothing more.
-It does not parse them: their content is a provider's account of what its own
-session did, and a relay that validated it would be asserting authority over
-facts it never observed. Consumers verify signature, trusted signer, channel
-visibility, exact tags, target, and semantic key at their own ingress
-boundary.
+It does not parse the **durable 44223/44224 provider-fact content**: that content
+is the provider's account of what its own session did, and a relay that
+validated those observations would be asserting authority over facts it never
+observed. Consumers verify signature, trusted signer, channel visibility,
+exact tags, target, and semantic key at their own ingress boundary. This rule
+does not apply to kind-24223 leases: their deliberately narrow liveness
+envelope is parsed and authority-checked by the relay before it updates the
+ephemeral register.
 
 Provider outboxes fence each publication by semantic key, current provider
 signing pubkey, and exact event kind, so a signing-key rotation cannot reuse an
 event signed by the previous key.
+
+## Ephemeral generation leases
+
+Kind `24223` (`KIND_CODING_SESSION_LEASE`) is a provider-signed, channel-scoped
+ephemeral assertion about one exact generation. It is not durable session state
+and does not prove human attention, current code-area conflict, or continuous
+transport connectivity. A current `live` lease proves only that the authorized
+provider owned a live actor when it most recently renewed.
+
+Strict content has exactly four fields, with no unknown or duplicate keys:
+
+```json
+{
+  "schema": "buzz-coding-session-lease/v1",
+  "target": {
+    "driver": "codex-acp",
+    "instanceId": "provider-instance",
+    "sessionId": "provider-session-id",
+    "generation": 1
+  },
+  "state": "live",
+  "leaseSequence": 42
+}
+```
+
+`state` is exactly `live` or `released`. `leaseSequence` is a positive
+JavaScript-safe integer, monotonically reserved and persisted before signing.
+Gaps are permitted; reuse is forbidden. Signed content is capped at 2 KiB;
+target and lifecycle-command identifiers retain the 256-byte NIP-CSC limit.
+
+Tags are closed, exactly two fields each, and appear in this exact order:
+
+```text
+["h", "<canonical channel UUID>"]
+["cslease-v", "cslease1-1"]
+["cs-target", "<coding_session_target_key(target)>"]
+["csl-command", "<commandId that minted this exact generation>"]
+["cslease-seq", "<canonical decimal leaseSequence>"]
+```
+
+The relay rejects malformed content, tag/content target or sequence mismatch,
+non-canonical values, an event more than 180 seconds old on first acceptance,
+or a timestamp more than 30 seconds ahead of relay time. These timestamp rules
+are replay admission only. The 180-second Redis TTL starts from the relay's
+acceptance time (Redis `TIME`), never the provider timestamp. Providers renew
+eligible `live` actors every 60 seconds and publish a higher-sequence
+`released` tombstone before a clean terminal transition.
+
+Lease signing authority comes from the accepted lifecycle chain, never from
+metadata authorship. For the tagged channel, `csl-command`, and `cs-target`, the
+relay requires exactly one strictly valid accepted kind-44221 create/resume
+command and exactly one successful kind-44224 receipt. The receipt target must
+equal the lease target, and both the receipt signer and lease signer must equal
+the command's `providerAuthorityPubkey`. Missing, conflicting, stop-minted, or
+otherwise ambiguous evidence fails closed.
+
+Leases are WebSocket-published only and are never inserted into Postgres. Redis
+retains the full original signed event plus relay acceptance/expiry and
+command/receipt provenance. Public visibility and the channel expiry index use
+the 180-second lease TTL. The per-target monotonic register is retained out of
+band for 211 seconds (the 180-second replay window plus 30 seconds of allowed
+future skew and a one-second boundary fence), so an expired `released` event
+still rejects every delayed lower-sequence `live` event that could pass replay
+admission. Higher sequence replaces lower; an exact duplicate is idempotent
+without refreshing either lifetime; equal-sequence different-event conflicts
+and lower sequences are rejected. Cold queries require explicit channel scope
+and return the original provider-signed event only while its public lease is
+unexpired.
 
 ## Implementation
 
@@ -312,6 +393,7 @@ event signed by the previous key.
 | --- | --- |
 | Kind constants | `crates/buzz-core/src/kind.rs` |
 | Payload + `projectRef` / `sessionRef` validation | `crates/buzz-core/src/coding_session_lifecycle_command.rs` |
+| Lease payload + strict envelope / replay validation | `crates/buzz-core/src/coding_session_lease.rs` |
 | Envelope validation, membership, size caps | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Builders | `crates/buzz-sdk/src/builders.rs` |
 | Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |

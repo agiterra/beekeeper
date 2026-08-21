@@ -36,6 +36,8 @@ pub mod presence;
 pub mod publisher;
 /// Redis-backed rate limiter (fixed-window INCR + EXPIRE).
 pub mod rate_limiter;
+/// Atomic Redis register for ephemeral coding-session leases.
+pub mod session_lease;
 /// Redis SUBSCRIBE for channel event delivery.
 pub mod subscriber;
 /// Community-scoped Redis event topics.
@@ -326,6 +328,33 @@ impl PubSubManager {
         event: &nostr::Event,
     ) -> Result<i64, PubSubError> {
         publisher::publish_event(&self.pool, ctx, topic, event).await
+    }
+
+    /// Atomically apply a provider-signed coding-session lease register update.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply_session_lease(
+        &self,
+        ctx: &TenantContext,
+        channel_id: uuid::Uuid,
+        target_key: &str,
+        event: &nostr::Event,
+        sequence: u64,
+        state: buzz_core::coding_session_lease::CodingSessionLeaseState,
+        proof: &session_lease::SessionLeaseProof,
+    ) -> Result<session_lease::LeaseApplyOutcome, PubSubError> {
+        session_lease::apply_session_lease(
+            &self.pool, ctx, channel_id, target_key, event, sequence, state, proof,
+        )
+        .await
+    }
+
+    /// Return current signed lease events for one explicitly scoped channel.
+    pub async fn session_lease_snapshot(
+        &self,
+        ctx: &TenantContext,
+        channel_id: uuid::Uuid,
+    ) -> Result<Vec<session_lease::SessionLeaseRecord>, PubSubError> {
+        session_lease::session_lease_snapshot(&self.pool, ctx, channel_id).await
     }
 
     /// Set presence with 180s TTL. Call on connect and every 60s heartbeat.

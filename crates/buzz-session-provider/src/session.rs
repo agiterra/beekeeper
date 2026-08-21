@@ -415,6 +415,15 @@ pub struct SessionManager {
     events: mpsc::Sender<SessionEvent>,
 }
 
+/// A successfully started actor not yet attached to the provider registry.
+///
+/// Keeping startup separate from attachment lets the provider continue its
+/// lease clock while an adapter is still negotiating a new ACP session.
+pub(crate) struct StartedSession {
+    startup: SessionStartup,
+    handle: SessionHandle,
+}
+
 impl SessionManager {
     /// A registry that reports actor events to `events`.
     pub fn new(events: mpsc::Sender<SessionEvent>) -> Self {
@@ -432,6 +441,16 @@ impl SessionManager {
         &mut self,
         request: CreateRequest,
     ) -> Result<SessionStartup, CreateFailure> {
+        let started = Self::start(request, self.events.clone()).await?;
+        Ok(self.attach(started))
+    }
+
+    /// Start an actor without borrowing the live-session registry across the
+    /// potentially long adapter handshake.
+    pub(crate) async fn start(
+        request: CreateRequest,
+        events: mpsc::Sender<SessionEvent>,
+    ) -> Result<StartedSession, CreateFailure> {
         let observer = ObserverHandle::in_process();
         let started = tokio::time::timeout(STARTUP_TIMEOUT, start_agent(&request, &observer)).await;
         let (client, startup) = match started {
@@ -459,7 +478,7 @@ impl SessionManager {
             idle_timeout: request.idle_timeout,
             max_turn_duration: request.max_turn_duration,
             idle_shutdown: request.idle_shutdown,
-            events: self.events.clone(),
+            events,
             observer,
             translator: TranscriptTranslator::new(request.include_thoughts),
             first_turn_preamble: (startup.bootstrap_transport
@@ -473,20 +492,42 @@ impl SessionManager {
             .flatten(),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
-        self.live.insert(
-            session_id.clone(),
-            SessionHandle {
+        Ok(StartedSession {
+            startup,
+            handle: SessionHandle {
                 session_id,
                 tx,
                 shutdown,
             },
-        );
-        Ok(startup)
+        })
+    }
+
+    /// Attach a started actor to the exact-session registry.
+    pub(crate) fn attach(&mut self, started: StartedSession) -> SessionStartup {
+        self.live
+            .insert(started.handle.session_id.clone(), started.handle);
+        started.startup
+    }
+
+    /// Sender cloned by detached startup work.
+    pub(crate) fn event_sender(&self) -> mpsc::Sender<SessionEvent> {
+        self.events.clone()
     }
 
     /// Handle for a live session, if it is still running.
     pub fn handle(&self, session_id: &str) -> Option<&SessionHandle> {
         self.live.get(session_id)
+    }
+
+    /// Exact session ids whose actor channel is still open.
+    ///
+    /// The registry may briefly retain an exited handle until its `Exited`
+    /// report is folded; lease eligibility must follow the actor, not map size.
+    pub fn live_session_ids(&self) -> impl Iterator<Item = &str> {
+        self.live
+            .values()
+            .filter(|handle| handle.is_live())
+            .map(|handle| handle.session_id())
     }
 
     /// Ask a session to retire and forget it.
@@ -2403,5 +2444,34 @@ done
             Err(DeliverError::Gone)
         );
         assert!(!handle.is_live());
+    }
+
+    #[test]
+    fn lease_iteration_exposes_only_handles_whose_actor_is_still_live() {
+        let (events, _event_rx) = mpsc::channel(1);
+        let mut manager = SessionManager::new(events);
+        let (live_tx, _live_rx) = mpsc::channel(1);
+        let (live_shutdown, _live_shutdown_rx) = watch::channel(false);
+        manager.live.insert(
+            "live".into(),
+            SessionHandle {
+                session_id: "live".into(),
+                tx: live_tx,
+                shutdown: live_shutdown,
+            },
+        );
+        let (dead_tx, dead_rx) = mpsc::channel(1);
+        let (dead_shutdown, _dead_shutdown_rx) = watch::channel(false);
+        drop(dead_rx);
+        manager.live.insert(
+            "dead".into(),
+            SessionHandle {
+                session_id: "dead".into(),
+                tx: dead_tx,
+                shutdown: dead_shutdown,
+            },
+        );
+
+        assert_eq!(manager.live_session_ids().collect::<Vec<_>>(), vec!["live"]);
     }
 }

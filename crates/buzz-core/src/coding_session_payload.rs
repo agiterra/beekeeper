@@ -23,12 +23,23 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coding_session_command::CodingSessionTarget;
+use crate::coding_session_command::{
+    CodingSessionAction, CodingSessionCommandPayload, CodingSessionTarget,
+    CODING_SESSION_COMMAND_SCHEMA, MAX_SAFE_GENERATION,
+};
+use crate::coding_session_lifecycle_command::validate_session_ref;
+
+/// Maximum signed content bytes for a lifecycle receipt (kind 44224).
+pub const MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES: usize = 16 * 1024;
 
 /// Schema string on every lifecycle receipt.
 pub const LIFECYCLE_RECEIPT_SCHEMA: &str = "buzz-coding-session-lifecycle-receipt/v1";
 /// Schema string on every metadata event.
 pub const METADATA_SCHEMA: &str = "buzz-coding-session-metadata/v1";
+/// Maximum signed content bytes for coding-session metadata.
+pub const MAX_METADATA_CONTENT_BYTES: usize = 32 * 1024;
+/// Maximum bytes for nullable metadata reference and label fields.
+pub const MAX_METADATA_REFERENCE_BYTES: usize = 2 * 1024;
 /// Schema string on every transcript item.
 pub const TRANSCRIPT_SCHEMA: &str = "buzz-coding-session-transcript/v1";
 
@@ -60,7 +71,7 @@ pub const SESSION_CLOSED: &str = "SESSION_CLOSED";
 
 /// Lifecycle outcome for exactly one create, resume, or stop command (kind 44224).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifecycleReceipt {
     /// Always [`LIFECYCLE_RECEIPT_SCHEMA`].
     pub schema: String,
@@ -99,6 +110,7 @@ pub enum ReceiptStatus {
 
 /// Machine-readable code plus an operator-facing message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiptError {
     /// Stable code; the consumer branches on `INITIAL_TURN_FAILED` specifically.
     pub code: String,
@@ -189,6 +201,86 @@ impl LifecycleReceipt {
             error: None,
         }
     }
+}
+
+/// Strictly decode and validate one immutable lifecycle receipt.
+pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<LifecycleReceipt, String> {
+    if content.len() > MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES {
+        return Err(format!(
+            "coding-session lifecycle receipt exceeds {MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES} bytes"
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(content)
+        .map_err(|_| "malformed coding-session lifecycle receipt".to_owned())?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "coding-session lifecycle receipt must be an object".to_owned())?;
+    const FIELDS: [&str; 5] = ["schema", "commandId", "status", "session", "error"];
+    if object.len() != FIELDS.len()
+        || FIELDS.iter().any(|field| !object.contains_key(*field))
+        || object.keys().any(|field| !FIELDS.contains(&field.as_str()))
+    {
+        return Err("coding-session lifecycle receipt has missing or unsupported fields".into());
+    }
+    let receipt: LifecycleReceipt = serde_json::from_str(content)
+        .map_err(|error| format!("malformed coding-session lifecycle receipt: {error}"))?;
+    validate_lifecycle_receipt(&receipt)?;
+    Ok(receipt)
+}
+
+fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> {
+    use crate::coding_session_command::{
+        CodingSessionAction, CodingSessionCommandPayload, CODING_SESSION_COMMAND_SCHEMA,
+        MAX_IDENTIFIER_BYTES,
+    };
+
+    if receipt.schema != LIFECYCLE_RECEIPT_SCHEMA {
+        return Err("unsupported coding-session lifecycle receipt schema".into());
+    }
+    if receipt.command_id.trim().is_empty() || receipt.command_id.len() > MAX_IDENTIFIER_BYTES {
+        return Err("receipt commandId must be a nonempty bounded identifier".into());
+    }
+    if let Some(target) = &receipt.session {
+        CodingSessionCommandPayload {
+            schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
+            command_id: receipt.command_id.clone(),
+            target: target.clone(),
+            action: CodingSessionAction::ThreadTurnInterrupt,
+        }
+        .validate()?;
+    }
+    if let Some(error) = &receipt.error {
+        if error.code.trim().is_empty() || error.code.len() > MAX_IDENTIFIER_BYTES {
+            return Err("receipt error code must be a nonempty bounded identifier".into());
+        }
+        if error.message.trim().is_empty() || error.message.len() > 1024 + '…'.len_utf8() {
+            return Err("receipt error message must be nonempty and bounded".into());
+        }
+    }
+    let valid_shape = match receipt.status {
+        ReceiptStatus::Created | ReceiptStatus::Resumed | ReceiptStatus::Stopped => {
+            receipt.session.is_some() && receipt.error.is_none()
+        }
+        ReceiptStatus::CreatedWithFailedInitialTurn => {
+            receipt.session.is_some()
+                && receipt
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == INITIAL_TURN_FAILED)
+        }
+        ReceiptStatus::ResumedWithoutContext => {
+            receipt.session.is_some()
+                && receipt
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == CONTEXT_NOT_RECOVERED)
+        }
+        ReceiptStatus::Failed => receipt.session.is_none() && receipt.error.is_some(),
+    };
+    if !valid_shape {
+        return Err("lifecycle receipt status/session/error shape is inconsistent".into());
+    }
+    Ok(())
 }
 
 /// Lifecycle status of one session generation, as the consumer models it.
@@ -419,6 +511,11 @@ const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachab
 /// duplicate-key detection, matching the two-pass pattern used for lifecycle
 /// commands.
 pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, String> {
+    if content.len() > MAX_METADATA_CONTENT_BYTES {
+        return Err(format!(
+            "coding-session metadata exceeds {MAX_METADATA_CONTENT_BYTES} bytes"
+        ));
+    }
     let value: serde_json::Value = serde_json::from_str(content)
         .map_err(|_| "malformed coding-session metadata".to_string())?;
     let object = value
@@ -451,7 +548,53 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
 
     let metadata: SessionMetadata = serde_json::from_str(content)
         .map_err(|_| "malformed coding-session metadata".to_string())?;
+    validate_session_metadata(&metadata)?;
     Ok(metadata)
+}
+
+fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
+    if metadata.schema != METADATA_SCHEMA {
+        return Err("unsupported coding-session metadata schema".to_owned());
+    }
+    CodingSessionCommandPayload {
+        schema: CODING_SESSION_COMMAND_SCHEMA.to_owned(),
+        command_id: "metadata-validation".to_owned(),
+        target: metadata.session.clone(),
+        action: CodingSessionAction::ThreadTurnInterrupt,
+    }
+    .validate()?;
+    for (field, value) in [
+        ("projectRef", &metadata.project_ref),
+        ("repoRef", &metadata.repo_ref),
+        ("title", &metadata.title),
+        ("agentRef", &metadata.agent_ref),
+        ("provider", &metadata.provider),
+        ("runtime", &metadata.runtime),
+        ("model", &metadata.model),
+        ("branch", &metadata.branch),
+        ("observedCommit", &metadata.observed_commit),
+    ] {
+        if let Some(value) = value {
+            if value.trim().is_empty() || value.len() > MAX_METADATA_REFERENCE_BYTES {
+                return Err(format!("metadata {field} must be nonempty and bounded"));
+            }
+        }
+    }
+    if let Some(session_ref) = &metadata.session_ref {
+        validate_session_ref(session_ref)?;
+    }
+    if metadata.relay_reachable.is_none() != metadata.verified_at.is_none() {
+        return Err(
+            "metadata relayReachable and verifiedAt must both be null or present".to_owned(),
+        );
+    }
+    if metadata
+        .verified_at
+        .is_some_and(|value| value.unsigned_abs() > MAX_SAFE_GENERATION)
+    {
+        return Err("metadata verifiedAt must be a safe integer".to_owned());
+    }
+    Ok(())
 }
 
 /// One transcript item's signed envelope (kind 44225).
@@ -809,6 +952,47 @@ mod tests {
             message.len()
         );
         assert!(message.ends_with('…'));
+    }
+
+    #[test]
+    fn strict_receipt_decoder_accepts_successes_and_rejects_ambiguous_shapes() {
+        for receipt in [
+            LifecycleReceipt::created("create-1", &target()),
+            LifecycleReceipt::created_with_failed_initial_turn("create-1", &target(), "boom"),
+            LifecycleReceipt::resumed("resume-1", &target()),
+            LifecycleReceipt::resumed_without_context("resume-2", &target(), "lost"),
+            LifecycleReceipt::stopped("stop-1", &target()),
+            LifecycleReceipt::failed("bad-1", SESSION_LIMIT, "full"),
+        ] {
+            let json = serde_json::to_string(&receipt).unwrap();
+            assert_eq!(
+                decode_coding_session_lifecycle_receipt(&json).unwrap(),
+                receipt
+            );
+        }
+
+        let mut wrong = serde_json::to_value(LifecycleReceipt::created("c", &target())).unwrap();
+        wrong["session"] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err());
+        wrong = serde_json::to_value(LifecycleReceipt::failed("c", SESSION_LIMIT, "x")).unwrap();
+        wrong["session"] = serde_json::to_value(target()).unwrap();
+        assert!(decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err());
+    }
+
+    #[test]
+    fn strict_receipt_decoder_rejects_unknown_missing_and_duplicate_fields() {
+        let valid = serde_json::to_value(LifecycleReceipt::created("c", &target())).unwrap();
+        let mut unknown = valid.clone();
+        unknown["trusted"] = serde_json::json!(true);
+        assert!(decode_coding_session_lifecycle_receipt(&unknown.to_string()).is_err());
+        let mut missing = valid;
+        missing.as_object_mut().unwrap().remove("error");
+        assert!(decode_coding_session_lifecycle_receipt(&missing.to_string()).is_err());
+        let duplicate = format!(
+            r#"{{"schema":"{s}","schema":"{s}","commandId":"c","status":"created","session":{{"driver":"claude-agent-acp","instanceId":"instance-1","sessionId":"11111111-2222-3333-4444-555555555555","generation":1}},"error":null}}"#,
+            s = LIFECYCLE_RECEIPT_SCHEMA
+        );
+        assert!(decode_coding_session_lifecycle_receipt(&duplicate).is_err());
     }
 
     #[test]

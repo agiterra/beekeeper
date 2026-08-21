@@ -467,6 +467,13 @@ pub const KIND_PAIRING: u32 = 24134;
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
+/// Ephemeral provider-signed liveness lease for one exact coding-session generation.
+///
+/// Ordered tags: `h`, `cslease-v`, `cs-target`, `csl-command`, `cslease-seq`.
+/// The relay validates lifecycle authority and holds the original event only in
+/// its expiring Redis register; it is never inserted into Postgres. See
+/// `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LEASE: u32 = 24223;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -574,11 +581,13 @@ pub const KIND_CODING_SESSION_LIFECYCLE_COMMAND: u32 = 44221;
 /// `cspc-revision`, `cspc-key`. See `docs/nips/NIP-CSPC.md`.
 pub const KIND_CODING_SESSION_PROVIDER_CATALOG: u32 = 44222;
 
-/// NIP-CSL: Coding-session metadata — provider-authored immutable facts about one
+/// NIP-CSL: Coding-session metadata — provider-authored observations about one
 /// exact session generation.
 ///
-/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
-/// tags: `h`, `csm-v`, `cs-target`, `csm-key`. See `docs/nips/NIP-CSL.md`.
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Providers
+/// publish on observed transitions; consumers retain history and fold the
+/// newest valid observation per generation. Ordered tags: `h`, `csm-v`,
+/// `cs-target`, `csm-key`. See `docs/nips/NIP-CSL.md`.
 pub const KIND_CODING_SESSION_METADATA: u32 = 44223;
 
 /// NIP-CSL: Coding-session lifecycle receipt — the provider-authored, immutable
@@ -810,6 +819,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_BLOSSOM_AUTH,
     KIND_PAIRING,
     KIND_AGENT_OBSERVER_FRAME,
+    KIND_CODING_SESSION_LEASE,
     KIND_HTTP_AUTH,
     KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
@@ -1008,6 +1018,12 @@ const _: () = assert!(!is_ephemeral(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(!is_parameterized_replaceable(KIND_AGENT_TURN_METRIC));
 const _: () = assert!(KIND_AGENT_TURN_METRIC <= u16::MAX as u32);
+// A session lease is deliberately ephemeral: it is bounded evidence of recent
+// provider reachability, not durable session history or a replaceable head.
+const _: () = assert!(is_ephemeral(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(KIND_CODING_SESSION_LEASE <= u16::MAX as u32);
 // Compile-time: coding-session kinds are regular stored kinds (not ephemeral,
 // not replaceable). Commands, receipts, metadata, and transcript items are all
 // append-only points in a durable record — a replaced command or a replaced
