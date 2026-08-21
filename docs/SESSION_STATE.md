@@ -5,9 +5,10 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-20, adding §2 items 24-27 from the second live-use
-pass (transcript redaction, transcript content clipping, and the two things
-that stayed open) at the `build/2026-08-20.3` ceremony._
+_Last updated: 2026-08-20 night, closing §2 items 4, 5 and 6 and item 1's
+disclosure half with the rehydration-hardening build, and landing the five
+2026-08-19/20 design studies into `docs/` (§4), at the `build/2026-08-20.7`
+ceremony._
 
 ---
 
@@ -17,7 +18,8 @@ that stayed open) at the `build/2026-08-20.3` ceremony._
 | --- | --- |
 | Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
 | Assembly | Andy rebuilt on top of our work; CI gate is now ~7 min (was ~40) and two of three documented flakes have real fixes |
-| Unshipped locally | the `just dev` nokeyring fix, this ledger's newest entries, and three verified-missing session-stability fixes (§3) |
+| Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
+| Latest assembly | `build/2026-08-20.7` — adds the **rehydration-hardening** build (§2 items 4/5/6 and item 1's disclosure half; four commits `02824ea5`…`6f85b431` on `feature/coding-sessions`) and the five design studies in §4. The preceding `build/2026-08-20.5`/`.6` carried the **admin-delete** work that never got its own ledger entry: `buzz projects delete --cascade` with a last-published tombstone, `buzz-admin project-purge` for already-soft-deleted rows, the relay-identity guard, the ghost-Inbox and moderator-delete fixes, and a `buzz-db` test harness that stops the push-matcher tests sharing state (`615637de`…`0b48fc25`) |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -41,9 +43,20 @@ across two machines simultaneously.
    told the operator it could not see the prior work. The refusal is right;
    the duplicate is the bug. Its cause (one provider instance per state
    directory) shipped in this build — **re-test before assuming it is
-   closed.** The disclosure remains useless: the operator sees
+   closed.** ~~The disclosure remains useless: the operator sees
    `session_fresh` while the reason lives only in the provider log. Surface
-   the bail-out reason.
+   the bail-out reason.~~ **Disclosure half fixed 2026-08-20 by `02824ea5`
+   + `6f85b431`** — the bail-out reason is now an enumerated slug carried on
+   the signed status item (`CONTEXT_UNAVAILABLE_REASONS`, eleven of them,
+   `crates/buzz-core/src/coding_session_payload.rs:595`; a slug outside the
+   set is dropped and the key omitted rather than sent as `null`, because
+   "no reason observed" is a different fact from "this item carries no
+   reason"). The desktop transcript renders it as a clause — "Restarted
+   without prior context — <clause>" — and falls back to the generic row for
+   an unrecognised slug rather than leaking a wire token into the UI.
+   **The duplicate itself is NOT fixed by that work**: item 1's cause (one
+   provider instance per state directory) still owes the live re-test above.
+   What changed is that when it does happen, the operator is told why.
 
 2. **"What was attempted" is unstructured for some adapters.** A turn records
    the downstream richly — full tool output, `exit_code`, `isError`, duration,
@@ -61,19 +74,66 @@ across two machines simultaneously.
    its package; Claude gen 2 "did not see that tool available") predate the
    fix. Still owed: a live re-test of resume-with-context, and confirmation
    the fix is in the deployed build (it postdates `build/2026-08-18.7`).
-4. **The package is a start-time snapshot.** Provenance says
+4. **The package is a start-time snapshot.** ~~Provenance says
    `complete: true` meaning "complete when projected", which reads as
    "current". A joined execution never learns what a sibling did afterward
    (observed: Codex reported 16/16 complete while Claude had advanced to 6
-   turns). Fix: time-bound the provenance, then add refresh.
-5. **`session_history` page cap is 20** (`session_context.rs:23-24`). Reading
-   101 items took six calls plus a hard `limit must be between 1 and 20`
-   error. Untenable as sessions grow.
-6. **Provenance has an unexplained delta.** `sourceEventCount` counts the
+   turns). Fix: time-bound the provenance, then add refresh.~~ **Fixed
+   2026-08-20 by `2df636ef` + `bcadafe2`** — both halves of the stated fix
+   landed. *Time-bound:* every response carries `projectedAtMs` and a derived
+   snapshot age (`crates/buzz-dev-mcp/src/session_context.rs:672`, `:685`),
+   and the bootstrap prefix instructs the agent about that age
+   (`session.rs:1999`). *Refresh:* a starting turn — not an interrupt —
+   spawns a bounded re-projection
+   (`crates/buzz-session-provider/src/lib.rs:1411`, `spawn_context_refresh`
+   at `:1950`), floored at `CONTEXT_REFRESH_MIN_INTERVAL_MS` = 60 s (`:106`)
+   and started rather than awaited so the turn never waits on a relay fetch.
+   Each refresh is a new write-once generation, `create_new(true)` at its
+   final path with no `rename(2)` step (`context_store.rs:74-120`) —
+   `rename(2)` replaces its destination and would repeal the write-once
+   guarantee the reader relies on. Only generation 0 may create the package
+   directory, so a refresh that loses the race with `stop_session` fails
+   `NotFound` instead of resurrecting verified private context past an
+   operator's stop. The sidecar serves the newest generation it can fully
+   validate and names that generation in every envelope. **Still owed: a live
+   two-execution re-test** that a sibling's later work now actually arrives.
+5. **`session_history` page cap is 20** ~~(`session_context.rs:23-24`).
+   Reading 101 items took six calls plus a hard `limit must be between 1 and
+   20` error. Untenable as sessions grow.~~ **Fixed 2026-08-20 by
+   `bcadafe2`** — `limit` now defaults to 200 and caps at the package ceiling
+   itself, imported rather than restated so the page cap and package cap
+   cannot drift apart again (`MAX_HISTORY_LIMIT = MAX_CONTEXT_HISTORY_ITEMS`
+   = 4096, `session_context.rs:42`, `coding_session_context.rs:32`). A page
+   also ends at a shared 128 KiB response budget (`MAX_HISTORY_PAGE_BYTES`,
+   `:50`), whichever bound comes first, and `stoppedBy` names which one did
+   (`limit`, `pageBytes`, `end`, `cursorMiss`). Paging is now cursor-first —
+   `since` = the eventId of the last item read — because offsets cannot
+   survive a package refresh and cursors can; a `since` the served package no
+   longer carries returns no items with `cursorResolution=not_in_package`
+   rather than silently restarting at zero. `view="index"` returns metadata
+   only (eventId, a 64-byte preview, a targets-legend index) at roughly 380
+   items per call. The 128 KiB budget was deliberately **not** tuned upward
+   to make "one call" true, because that trades a hard error for a blown
+   context window.
+6. **Provenance has an unexplained delta.** ~~`sourceEventCount` counts the
    proof graph (`1 + authority_links×2 + names + goals + per generation
    (3 + transcript)`, `context_projector.rs:945-955`), not content, so it
    exceeds `totalHistoryItems`. Nothing is missing, but the package never
-   says so and a careful agent had to flag it as unexplained.
+   says so and a careful agent had to flag it as unexplained.~~ **Fixed
+   2026-08-20 by `02824ea5` + `2df636ef`** — the package now ships the
+   arithmetic as a structured note instead of leaving a careful agent to do
+   it: "sourceEventCount N includes M non-content proof events (… genesis, …
+   authority, … name, … goal, … per-generation bookkeeping) in addition to …
+   transcript events; … became history items."
+   (`context_projector.rs:1048-1064`). It is backed by the structured
+   `sourceEventBreakdown` field, is emitted even when the note budget is
+   full — the reconciliation "never fails soft" (`:2226-2243`) — and is
+   omitted only when the numbers already reconcile (`:2169-2177`). The
+   first-turn brief now also prints `sourceEventCount` inside its `snapshot`
+   object beside `sourceEventBreakdown`, because that brief ships standalone
+   as the ACP bootstrap prompt, where the agent was previously handed six
+   breakdown terms and a rule saying they reconcile a field the brief never
+   showed it.
 7. **An execution whose provider identity is gone is a dead row, silently.**
    The provider's `SessionRecord` and opaque resume cursor live in one
    app-instance state directory keyed by provider pubkey. Lose that identity
@@ -335,10 +395,17 @@ than replace them, and it is not started.
    single-provider-instance lock shipped in `build/2026-08-18.12`; nobody has
    yet created a session on it and confirmed one click makes one execution.
    Until that is done, item 1 is suspected-fixed, not fixed.
-2. **Rehydration hardening** — §2 items 4–6 as a single bite (item 3's code
-   half shipped in `b9de9a6d`; re-verify live rather than striking it).
-   Every one came from live use, and together they make the multi-execution
-   story honest instead of subtly misleading.
+2. ~~**Rehydration hardening** — §2 items 4–6 as a single bite.~~ **The code
+   shipped 2026-08-20 in `build/2026-08-20.7`** (§2 items 4, 5, 6 and item
+   1's disclosure half). What is left is live confirmation, not code, and it
+   is three specific runs: (a) a two-execution session where a sibling
+   advances and the joined execution is checked for the *later* work after a
+   turn boundary — refresh is turn-triggered and floored at 60 s, so a
+   too-quick check proves nothing; (b) a resumed execution, confirming it now
+   reports `no_umbrella_context` and not `no_prior_execution` (item 3's code
+   half shipped in `b9de9a6d` and still wants this same run); (c) a
+   >200-item session paged by `since` cursor across a refresh, confirming the
+   cursor survives it and `stoppedBy` reads true.
 3. **Verify Andy's People/roles flow** with a second identity
    (viewer → operator → revoke). It plausibly closes §2 items 7–8; do not
    strike them on commit messages alone.
@@ -441,6 +508,18 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 for querying stored session data (CLI + SQL). Updated 2026-08-19: its kind
 table now covers 44220–44230 plus 44240 (Pulse), with per-kind fold rules and
 query examples.
+
+**Design studies landed 2026-08-20 night** (read-only recon and design work
+from 2026-08-19/20, published so it is not redone — every claim in them
+carries `file:line`):
+
+| Document | The question it answers |
+| --- | --- |
+| `AGENT_PROGRESS_UI_DESIGN_NOTE.md` | What a live agent-progress surface looks like built buzz-natively — what t3code's Agents pipeline actually is (a pure client-side derivation over one WebSocket RPC stream: no polling, no file tailing) and what Buzz should build instead of copying it |
+| `T3_AGENTS_SIDEBAR_CAPABILITY_INVENTORY.md` | The exhaustive capability list behind that note's §3 — every affordance of t3code's Agents sidebar, tab chrome to keyboard shortcuts, with citations |
+| `AGENT_SIDEBAR_SURFACE_PICKER_DESIGN.md` | How a right-panel surface picker works in t3code (finding: **there is no surface registry**), what Buzz already has, and the Buzz design that follows |
+| `T3_LAYOUT_WIDTH_STUDY.md` | Whether Buzz's 48rem transcript measure is wrong. Finding: **it is not** — t3code pins the same 48rem. The real delta is what happens to content that does not fit, which is what `b6032378` fixed |
+| `T3_PROVIDER_NORMALIZATION_STUDY.md` | How t3code normalizes multiple agent providers — one schema-validated event union in a shared contracts package — and which part of that seam is worth taking |
 
 History lives in `docs/archive/` (eight documents, moved 2026-08-18). Their
 load-bearing content is extracted into §2 items 9–14 above; the rest is
