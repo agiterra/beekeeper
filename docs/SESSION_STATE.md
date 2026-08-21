@@ -5,10 +5,12 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-21 morning, recovering the red
-`build/2026-08-20.7` pipeline with an explicit provider state-lock release
-(§2 item 34). The verified-liveness implementation itself is unchanged; the
-recovery candidate is `build/2026-08-21`, pending Woodpecker and autodeploy._
+_Last updated: 2026-08-21, shipping the **fenced-session briefing** as
+`build/2026-08-21.1` (§2 item 35): a coding session is now told, on every
+`session/new`, that its `BUZZ_*`-free environment is deliberate and that its
+session state is published for it. Sits on top of Sol's CI-105 state-lock
+recovery (`build/2026-08-21`, item 34), which had not yet been observed green
+or deployed when this shipped — lightyear still serves `build/2026-08-19.4`._
 
 ---
 
@@ -17,9 +19,9 @@ recovery candidate is `build/2026-08-21`, pending Woodpecker and autodeploy._
 | | |
 | --- | --- |
 | Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
-| Assembly | Recovery candidate `build/2026-08-21`: `build/2026-08-20.7` plus the explicit provider state-lock release in `6d8ec48d2`. Both exact Woodpecker Rust commands passed locally against fresh isolated Postgres 17, Redis 7 and MinIO; push, CI and autodeploy remain to be observed. |
+| Assembly | `build/2026-08-21.1`: the CI-105 recovery candidate `build/2026-08-21` plus the fenced-session briefing (item 35). Neither has been observed green on Woodpecker or deployed; push, CI and autodeploy remain to be observed for both. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
-| Latest assembly | `build/2026-08-21` — carries the complete verified-liveness stack from `build/2026-08-20.7` (§2 items 28-33), plus only the state-lock recovery in item 34 and this ledger update. `.7` reached both remotes but CI #105 failed, so it never deployed; no live observation made against lightyear measured the lease implementation. |
+| Latest assembly | `build/2026-08-21.1` — `build/2026-08-21` (the complete verified-liveness stack from `build/2026-08-20.7`, §2 items 28-33, plus the state-lock recovery in item 34) **plus** the fenced-session briefing in item 35: `agent_fence::FENCED_SESSION_BRIEFING` on `feature/coding-sessions` (`e3cb42c5a`), the `base_prompt.md` corrections on `feature/project-pulse` (`d6e56bb8e`), and this ledger entry on `integration/glue`. Equivalence evidence: `git diff 8e3c22e3d integrated-build` is exactly the four product files of the tested `wip/prompt-fence-fix` tree (+218/−28) and nothing else, and all four blobs are byte-identical to `24d8f24d6`. `.7` reached both remotes but CI #105 failed, so it never deployed; no live observation against lightyear has yet measured either the lease implementation or the briefing. |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -514,6 +516,116 @@ repo records findings the day they happen.
    selected mesh-demo test. Clippy, rustfmt and `git diff --check` are green.
    Deployment and the first meaningful live lease observation remain pending
    until this recovery build's Woodpecker pipeline and autodeploy are green.
+
+### Found 2026-08-21 in Brian's first live turn — the prompt fence
+
+35. **A fenced coding session had no way to know its fence was deliberate, so
+   it reported the design as a broken install.** Asked to read its Project
+   Pulse context and post an entry, a coding session answered: *"Project
+   Pulse: unavailable — no `BUZZ_PRIVATE_KEY`/`BUZZ_RELAY_URL` is configured
+   in this session's environment (checked `.env`, shell env, and the
+   per-agent key files under `~/.config/buzz/`; all are empty placeholders),
+   so I can't run `buzz pulse digest` or `buzz pulse update` at all."* It
+   then chose **consult** rather than fabricating. The agent's behaviour was
+   ideal; the product was wrong.
+   - **What forbids it.** `crates/buzz-session-provider/src/agent_fence.rs`
+     scrubs the entire `BUZZ_*` namespace from every adapter this provider
+     spawns (`session.rs:558`, `spawn_with_env_fence`). Its own doc comment
+     says the consequence is intended: the CLI "no longer authenticates from
+     inside a coding-session agent's shell". So the session was right, and
+     right for the designed reason — the empty key files were a red herring.
+   - **The first diagnosis was wrong, and the correction is the finding.** It
+     was believed that `crates/buzz-acp/src/base_prompt.md` was instructing
+     the fenced adapter to run `buzz pulse update`. A trace disproved that:
+     `base_prompt.md` reaches only *managed* ACP agents, through
+     `buzz-acp/src/lib.rs:2193-2198` → `PromptContext.base_prompt` →
+     `pool.rs:966 framed_system_prompt`, and those agents are spawned
+     `EnvFence::OPEN` (`acp.rs:557`) and can genuinely authenticate. The
+     fenced adapter (`claude-agent-acp` via `buzz-session-provider`, spawned
+     with `agent_fence::FENCE` at `session.rs:558`) received **no** Pulse
+     instruction at all, and no `[Project Pulse]` digest either — that
+     injection is `pool.rs:1663-1697`, buzz-acp only. The session was not
+     mis-instructed, it was **un**-instructed: it hit a deliberate fence, had
+     no way to know it was deliberate, and reported credentials as missing.
+     Same dishonesty, better disguise.
+   - **What the plan said.**
+     `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md` §5.5,
+     verbatim: *"Do not tell a fenced coding-session adapter to run `buzz
+     pulse update`."* — never violated, as it turns out — and *"Tell the
+     adapter that its session state is visible automatically and that it need
+     not post routine progress."* That second half is what was never built,
+     and is what ships here.
+   - **The fix.** `agent_fence::FENCED_SESSION_BRIEFING` (`agent_fence.rs:110`)
+     states only facts about that process: `buzz` cannot authenticate here and
+     the absence is the design, not a misconfiguration; the provider itself
+     observes and publishes branch, `HEAD` commit, dirty state and verified
+     liveness, so routine progress needs no post; no digest arrives here, and
+     the way to learn what others are doing is to ask the operator
+     in-conversation. It is delivered **unconditionally** on `session/new` via
+     `_meta.systemPrompt.append` — fresh, rehydrated and restarted alike,
+     because the fence applies to all of them — with the existing first-turn
+     preamble as the fallback for adapters that have no `session/new`
+     transport. A native `session/resume`/`session/load` reattachment takes
+     neither: the conversation it restores already contains the briefing.
+   - **Two false claims in the same paragraph of `base_prompt.md`, for the
+     audience that *does* get it.** (a) It described the injected section as
+     carrying *"entries only, never session state"* — true when written
+     (`42f0443f2`, 2026-08-19) and false the next day, when `render_digest`
+     grew provider-reachable / unverified / closed session groups
+     (`60d7de756`, `pulse_fetch.rs:344-396`). An agent was being taught to
+     discount evidence that was in front of it. (b) It asserted
+     *"`BUZZ_PULSE_PROJECT` holds your current project's coordinate when one
+     is in scope"* — the coordinate rides only on **MCP-server** env
+     (`pool.rs:1104-1146 mcp_servers_with_git_origin`), never on the agent
+     subprocess's own env, which is fixed at pool spawn and identical for
+     every channel. An agent following that line runs `buzz pulse update`
+     with no `--project` and gets a usage error
+     (`buzz-cli/src/commands/pulse.rs:397-422`). Both rewritten, and the
+     prompt-injection guard widened to cover session text as well as entry
+     text.
+   - **Pinned by test.** `agent_fence::tests::the_fenced_briefing_never_tells
+     _a_session_to_write_the_pulse` asserts both halves in one place — the
+     fenced briefing contains no `buzz pulse *` command and no
+     `BUZZ_PULSE_PROJECT`, while `buzz_acp::BASE_PROMPT` still carries the
+     write instruction its credentialed audience needs. Plus
+     `session::tests::a_fresh_session_is_told_its_shell_is_fenced` and
+     `shared_base_prompt_describes_the_pulse_section_it_actually_receives`.
+   - **Also still unbuilt from the same §5.5 list.** Its first bullet — *"Add
+     the same bounded digest to the context package"*, so a coding session can
+     **read** the Pulse through the read-only context sidecar without any
+     credential — has not landed: `buzz-dev-mcp`'s session-context tools serve
+     the first-turn brief and history only. The briefing shipped here says
+     "you will not receive a Project Pulse digest", which is true today and
+     must be revised in the same change that lands that bullet.
+   - **Open, deliberately not built today.** The fence's doc comment names
+     the real answer — *"a coding-session execution that should speak to Buzz
+     gets its **own** identity through `agent_ref`"* — and item 17 already
+     tracks that convergence. Until it exists, a coding session cannot write
+     the Pulse at all, and the honest prompt says so and points at the
+     operator.
+   - **Evidence, and its limit.** An independent verifier re-ran the gates on
+     the delta: `cargo test -p buzz-acp -p buzz-session-provider` 1094 passed
+     / 0 failed; `cargo clippy --workspace --all-targets -- -D warnings` exit
+     0; `cargo fmt --all --check` exit 0; `just conformance-check` 47/47;
+     `just file-size-check` exit 0. It also read the assembled prompt text and
+     confirmed every claim the briefing makes is true of that environment
+     (`EXEMPT` is empty and `PREFIXES` is `["BUZZ_"]` at
+     `agent_fence.rs:70,52`; no digest path reaches it). **Unproven end to
+     end:** lightyear still serves `build/2026-08-19.4`; Sol's CI-105 recovery
+     (`build/2026-08-21`, item 34) had not been observed green or deployed
+     when this shipped, so **no live coding session has been observed
+     receiving the briefing.** That observation is the next thing to do here.
+   - **How it was split.** `crates/buzz-session-provider/src/{agent_fence,
+     session}.rs` plus `buzz-acp`'s new `pub const BASE_PROMPT` went to
+     `feature/coding-sessions` (`e3cb42c5a`); the `base_prompt.md` rewrite and
+     its test went to `feature/project-pulse` (`d6e56bb8e`), because the
+     `## Project Pulse` section exists on no other branch. That leaves a
+     **new, deliberate impurity**: the fence test reads a string introduced by
+     `feature/project-pulse`, so it is red on `feature/coding-sessions`
+     standalone and green on the assembly. Recorded in
+     `docs/INTEGRATION.md`. Keeping the test whole was chosen over splitting
+     six lines into glue; move it to glue if upstreaming that branch ever
+     needs it.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
