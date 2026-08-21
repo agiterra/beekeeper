@@ -3,7 +3,11 @@ import * as React from "react";
 import { isInboxThreadContextEvent } from "@/features/home/lib/inboxViewHelpers";
 import { relayEventFromFeedItem } from "@/features/home/lib/inbox";
 import { fetchStructuralAuxForMessages } from "@/features/messages/lib/auxBackfill";
-import { getThreadReference } from "@/features/messages/lib/threading";
+import { isCodingSessionLaneMessageHiddenFromChannel } from "@/features/messages/lib/codingSessionLaneVisibility";
+import {
+  getChannelIdFromTags,
+  getThreadReference,
+} from "@/features/messages/lib/threading";
 import { relayClient } from "@/shared/api/relayClient";
 import { buildChannelReactionAuxFilter } from "@/shared/api/relayChannelFilters";
 import { getEventById } from "@/shared/api/tauri";
@@ -179,7 +183,18 @@ export function useInboxThreadContext(
           dedupeEvents(
             [...ancestorResult.events, ...descendantResult.events].filter(
               (event): event is RelayEvent =>
-                event !== null && isInboxThreadContextEvent(event, selection),
+                event !== null &&
+                isInboxThreadContextEvent(event, selection) &&
+                // The descendant hydration queries HOME_MENTION_EVENT_KINDS,
+                // so it can pull coding-session lane chat into the Inbox
+                // thread view even though the channel timeline hides it. The
+                // selected event itself is always kept — the user opened it,
+                // so it must still render.
+                (event.id === selection.selectedEventId ||
+                  !isCodingSessionLaneMessageHiddenFromChannel(
+                    getChannelIdFromTags(event.tags),
+                    event,
+                  )),
             ),
           ),
         );

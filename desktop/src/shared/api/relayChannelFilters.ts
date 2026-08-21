@@ -162,6 +162,15 @@ export function buildGlobalStreamFilter(
   };
 }
 
+/**
+ * Live `#p` mention subscription for one channel.
+ *
+ * Kind + `#p` cannot distinguish a channel mention from a mention inside a
+ * coding-session conversation lane, so the delivered events are gated per
+ * event by `isCodingSessionLaneMessageHiddenFromChannel` where they are
+ * consumed (`handleMentionEvent` in useLiveChannelUpdates). Keep that gate in
+ * step with any new consumer of this filter.
+ */
 export function buildChannelMentionFilter(
   channelId: string,
   pubkey: string,

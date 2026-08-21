@@ -21,6 +21,10 @@ pub(crate) fn shut_down_app(app: &tauri::AppHandle, shutdown_done: &std::sync::a
         prevent_sleep::release(&app.state::<AppState>().prevent_sleep);
         app.state::<crate::terminal_runtime::TerminalSessions>()
             .shutdown_all();
+        // Before the managed-agent fan-out: the provider is stopped with SIGINT
+        // so its durable outbox flushes, which needs the relay connection the
+        // agent teardown does not touch but a hurried exit would.
+        crate::session_provider::shutdown_coding_session_provider(app);
         if let Err(error) = shutdown_managed_agents(app) {
             eprintln!("buzz-desktop: failed to stop managed agents: {error}");
         }
@@ -44,6 +48,7 @@ pub(crate) fn install_signal_handler(
         if !shutdown_done.swap(true, Ordering::SeqCst) {
             app.state::<crate::terminal_runtime::TerminalSessions>()
                 .shutdown_all();
+            crate::session_provider::shutdown_coding_session_provider(&app);
             let _ = shutdown_managed_agents(&app);
             #[cfg(feature = "mesh-llm")]
             shutdown_mesh_runtime(&app);

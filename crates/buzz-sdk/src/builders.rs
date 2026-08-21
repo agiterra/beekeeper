@@ -4,15 +4,52 @@
 //! The caller signs: `builder.sign_with_keys(&keys)?`.
 
 use buzz_core::{
+    coding_session_authority_transition::{
+        CodingSessionAuthorityTransitionPayload, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+        MAX_AUTHORITY_TRANSITION_CONTENT_BYTES,
+    },
+    coding_session_closure::{
+        CodingSessionClosurePayload, CODING_SESSION_CLOSURE_TAG_VERSION,
+        MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES,
+    },
+    coding_session_command::{
+        coding_session_target_key, CodingSessionCommandPayload, CodingSessionTarget,
+        CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
+    },
+    coding_session_genesis::{
+        CodingSessionGenesisPayload, CODING_SESSION_GENESIS_TAG_VERSION, MAX_GENESIS_CONTENT_BYTES,
+    },
+    coding_session_goal::{
+        validate_coding_session_goal_content, validate_coding_session_goal_session_ref,
+        CODING_SESSION_GOAL_TAG_VERSION,
+    },
+    coding_session_lease::{
+        CodingSessionLease, CODING_SESSION_LEASE_TAG_VERSION,
+        MAX_CODING_SESSION_LEASE_CONTENT_BYTES,
+    },
+    coding_session_lifecycle_command::{
+        CodingSessionLifecycleCommandPayload, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
+        MAX_LIFECYCLE_CONTENT_BYTES,
+    },
+    coding_session_name::{
+        validate_coding_session_name_content, validate_coding_session_name_session_ref,
+        CODING_SESSION_NAME_TAG_VERSION,
+    },
     kind::{
-        KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_DELETION,
-        KIND_DM_ADD_MEMBER, KIND_DM_OPEN, KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-        KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT,
-        KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
-        KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
-        KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_PROJECT,
-        KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+        KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
+        KIND_CODING_SESSION_NAME, KIND_CODING_SESSION_PROVIDER_CATALOG,
+        KIND_CODING_SESSION_TRANSCRIPT, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_OPEN,
+        KIND_EMOJI_SET, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+        KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+        KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST,
+        KIND_IA_UNARCHIVE_REQUEST, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
+        KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT,
+        KIND_PRESENCE_UPDATE, KIND_PROJECT, KIND_PULSE_ENTRY, KIND_USER_STATUS, KIND_WORKFLOW_DEF,
+        KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -23,6 +60,14 @@ use buzz_core::{
 use nostr::{EventBuilder, Kind, Tag};
 use uuid::Uuid;
 
+use crate::coding_session::{
+    coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
+    coding_session_provider_catalog_semantic_key, coding_session_transcript_semantic_key,
+    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION, CODING_SESSION_METADATA_TAG_VERSION,
+    CODING_SESSION_PROVIDER_CATALOG_TAG_VERSION, CODING_SESSION_TRANSCRIPT_TAG_VERSION,
+    MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES, MAX_METADATA_CONTENT_BYTES,
+    MAX_PROVIDER_CATALOG_CONTENT_BYTES, MAX_TRANSCRIPT_CONTENT_BYTES,
+};
 use crate::{
     ChannelKind, CustomEmoji, DiffMeta, MemberRole, SdkError, ThreadRef, Visibility, VoteDirection,
 };
@@ -2508,6 +2553,387 @@ fn pulse_entry_probe(tags: &[Tag], content: &str) -> Result<nostr::Event, SdkErr
         content,
         signature,
     ))
+}
+
+// ---- Coding sessions (NIP-CSC / NIP-CSL / NIP-CSPC / NIP-CST) --------------
+//
+// Six builders covering both halves of the contract: the two operator-authored
+// commands a provider consumes, and the four provider-authored facts a consumer
+// projects. Every tag list is ordered and derived from the payload — a tag and
+// the content it addresses can never disagree, because the caller never supplies
+// the tag.
+
+/// Build a coding-session genesis event (kind 44226).
+///
+/// The **human operator** signs the returned builder — never a provider, never
+/// an agent. That signature is the founder record for the umbrella session, and
+/// nothing downstream can substitute for it, so a caller that signs this with a
+/// service key has silently made that service the founder.
+///
+/// `payload` is either a fresh founding
+/// ([`CodingSessionGenesisPayload::new`]) or an explicit legacy adoption
+/// ([`CodingSessionGenesisPayload::new_adoption`]) — the envelope (three
+/// tags) is identical either way; only the content differs. See the module
+/// doc on [`buzz_core::coding_session_genesis`] for what the relay verifies
+/// against an adoption reference.
+///
+/// The `csg-session` tag is re-derived from the payload here and re-derived
+/// again by the relay, so the filterable reference and the signed reference are
+/// the same string by construction.
+pub fn build_coding_session_genesis(
+    channel_id: Uuid,
+    payload: &CodingSessionGenesisPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session genesis serialization: {error}"))
+    })?;
+    check_content(&content, MAX_GENESIS_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csg-v", CODING_SESSION_GENESIS_TAG_VERSION])?,
+        tag(&["csg-session", &payload.session_ref])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_GENESIS as u16), content).tags(tags))
+}
+
+/// Build one append-only coding-session goal revision (kind 44227).
+///
+/// The human operator signs this builder. `d=sessionRef` groups revisions but
+/// does not replace them; consumers fold the regular events by `(created_at,
+/// event id)` so every earlier goal remains queryable.
+pub fn build_coding_session_goal(
+    channel_id: Uuid,
+    session_ref: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    validate_coding_session_goal_session_ref(session_ref).map_err(SdkError::InvalidInput)?;
+    validate_coding_session_goal_content(content).map_err(SdkError::InvalidInput)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", session_ref])?,
+        tag(&["csgl-v", CODING_SESSION_GOAL_TAG_VERSION])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_GOAL as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one append-only coding-session name revision (kind 44229).
+///
+/// The human operator signs this builder. `d=sessionRef` groups revisions but
+/// does not replace them; consumers fold the regular events by `(created_at,
+/// event id)` so every earlier name remains queryable.
+pub fn build_coding_session_name(
+    channel_id: Uuid,
+    session_ref: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    validate_coding_session_name_session_ref(session_ref).map_err(SdkError::InvalidInput)?;
+    validate_coding_session_name_content(content).map_err(SdkError::InvalidInput)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", session_ref])?,
+        tag(&["csnm-v", CODING_SESSION_NAME_TAG_VERSION])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_NAME as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one append-only coding-session closure revision (kind 44230).
+///
+/// The caller signs the returned builder. The relay resolves the explicit
+/// `genesisRef` before applying action-specific authority: only the founder may
+/// close; a current project member may reopen a project session, while a
+/// standalone session remains founder-only.
+pub fn build_coding_session_closure(
+    channel_id: Uuid,
+    payload: &CodingSessionClosurePayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session closure serialization: {error}"))
+    })?;
+    check_content(&content, MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["d", &payload.session_ref])?,
+        tag(&["cscl-v", CODING_SESSION_CLOSURE_TAG_VERSION])?,
+        tag(&["cscl-genesis", &payload.genesis_ref])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_CLOSURE as u16), content).tags(tags))
+}
+
+/// Build a provider-neutral coding-session command (kind 44220).
+///
+/// The operator signs the returned builder. The relay validates the exact
+/// payload and tags, including active channel membership, before storing it.
+pub fn build_coding_session_command(
+    channel_id: Uuid,
+    payload: &CodingSessionCommandPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|e| {
+        SdkError::InvalidInput(format!("coding-session payload serialization: {e}"))
+    })?;
+    let target_key = coding_session_target_key(&payload.target);
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cs-v", CODING_SESSION_COMMAND_TAG_VERSION])?,
+        tag(&["cs-target", &target_key])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_COMMAND as u16), content).tags(tags))
+}
+
+/// Build a provider-neutral coding-session lifecycle command (kind 44221).
+///
+/// The operator signs the returned builder. The relay validates the exact
+/// payload, ordered tags, and active channel membership before storing it.
+/// Provider adapters remain responsible for resolving references into
+/// host-local execution state — notably the working directory, which is
+/// machine-local and never appears in signed content.
+///
+/// The payload's `projectRef` may be `None` for a standalone session; when
+/// present it must be a `30621:` project coordinate, which
+/// [`CodingSessionLifecycleCommandPayload::validate`] enforces.
+pub fn build_coding_session_lifecycle_command(
+    channel_id: Uuid,
+    payload: &CodingSessionLifecycleCommandPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!(
+            "coding-session lifecycle payload serialization: {error}"
+        ))
+    })?;
+    check_content(&content, MAX_LIFECYCLE_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csl-v", CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION])?,
+        tag(&["csl-command", &payload.command_id])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_COMMAND as u16),
+        content,
+    )
+    .tags(tags))
+}
+
+/// Build a coding-session provider catalog (kind 44222).
+///
+/// `content` is the exact canonical catalog JSON the provider will sign; it is
+/// passed through byte-for-byte because `cspc-key` digests it, so any
+/// re-serialization here would break the consumer's key check. `revision` is
+/// the provider's own monotonic counter and must match the `revision` inside
+/// `content` — the caller owns that agreement, since this builder does not
+/// parse provider-authored content.
+pub fn build_coding_session_provider_catalog(
+    channel_id: Uuid,
+    revision: u64,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    if revision == 0 || revision > MAX_SAFE_GENERATION {
+        return Err(SdkError::InvalidInput(
+            "catalog revision must be a positive safe integer".into(),
+        ));
+    }
+    check_content(content, MAX_PROVIDER_CATALOG_CONTENT_BYTES)?;
+    let channel = channel_id.to_string();
+    let key = coding_session_provider_catalog_semantic_key(&channel, revision, content);
+    let tags = vec![
+        tag(&["h", &channel])?,
+        tag(&["cspc-v", CODING_SESSION_PROVIDER_CATALOG_TAG_VERSION])?,
+        tag(&["cspc-revision", &revision.to_string()])?,
+        tag(&["cspc-key", &key])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_PROVIDER_CATALOG as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build an ephemeral provider-signed lease for one exact session generation (kind 24223).
+///
+/// `command_id` is the accepted create/resume lifecycle command that minted
+/// `payload.target`. The relay resolves that immutable command/receipt chain
+/// and requires the event signer to equal its `providerAuthorityPubkey`; this
+/// builder only makes the signed target, command, and sequence binding exact.
+pub fn build_coding_session_lease(
+    channel_id: Uuid,
+    command_id: &str,
+    payload: &CodingSessionLease,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    check_identifier(command_id, "csl-command")?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!("coding-session lease serialization: {error}"))
+    })?;
+    check_content(&content, MAX_CODING_SESSION_LEASE_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cslease-v", CODING_SESSION_LEASE_TAG_VERSION])?,
+        tag(&["cs-target", &coding_session_target_key(&payload.target)])?,
+        tag(&["csl-command", command_id])?,
+        tag(&["cslease-seq", &payload.lease_sequence.to_string()])?,
+    ];
+    Ok(EventBuilder::new(Kind::Custom(KIND_CODING_SESSION_LEASE as u16), content).tags(tags))
+}
+
+/// Build coding-session metadata for one exact generation (kind 44223).
+///
+/// Metadata is append-only observation history within a generation. Providers
+/// publish a new event on each observed transition; consumers fold the newest
+/// valid observation by `(created_at, event id)` without rewriting old rows.
+pub fn build_coding_session_metadata(
+    channel_id: Uuid,
+    target: &CodingSessionTarget,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_target(target)?;
+    check_content(content, MAX_METADATA_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csm-v", CODING_SESSION_METADATA_TAG_VERSION])?,
+        tag(&["cs-target", &coding_session_target_key(target)])?,
+        tag(&["csm-key", &coding_session_metadata_semantic_key(target)])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_METADATA as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build a coding-session lifecycle receipt (kind 44224).
+///
+/// One lifecycle command has exactly one outcome, so `command_id` alone keys
+/// the receipt: a second receipt for the same command is a duplicate to drop,
+/// never a revision to apply.
+pub fn build_coding_session_lifecycle_receipt(
+    channel_id: Uuid,
+    command_id: &str,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_identifier(command_id, "commandId")?;
+    check_content(content, MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION])?,
+        tag(&["csl-command", command_id])?,
+        tag(&[
+            "csl-key",
+            &coding_session_lifecycle_receipt_semantic_key(command_id),
+        ])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one coding-session transcript item (kind 44225).
+///
+/// `event_seq` is the producer's per-(session, generation) monotonic counter,
+/// persisted before publish. Gaps are permitted — a crashed producer resumes
+/// past whatever it had already reserved — but duplicates are not, which is
+/// exactly what `cst-key` lets a consumer enforce.
+pub fn build_coding_session_transcript_item(
+    channel_id: Uuid,
+    target: &CodingSessionTarget,
+    event_seq: u64,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_target(target)?;
+    if event_seq == 0 || event_seq > MAX_SAFE_GENERATION {
+        return Err(SdkError::InvalidInput(
+            "transcript eventSeq must be a positive safe integer".into(),
+        ));
+    }
+    check_content(content, MAX_TRANSCRIPT_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cst-v", CODING_SESSION_TRANSCRIPT_TAG_VERSION])?,
+        tag(&["cs-target", &coding_session_target_key(target)])?,
+        tag(&["cst-seq", &event_seq.to_string()])?,
+        tag(&[
+            "cst-key",
+            &coding_session_transcript_semantic_key(target, event_seq),
+        ])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_TRANSCRIPT as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// Build one coding-session authority-chain transition (kind 44228).
+///
+/// The **current session owner** signs the returned builder — today, always
+/// the genesis signer (see the module doc on
+/// [`buzz_core::coding_session_authority_transition`]). The relay validates
+/// the chain linkage (`prevAccepted`/`seq` against the current accepted
+/// head) and the signer's standing atomically at ingest; this builder only
+/// enforces the payload's own self-consistency before signing.
+///
+/// The `csat-genesis` tag is re-derived from the payload here and re-derived
+/// again by the relay, so the filterable reference and the signed reference
+/// are the same string by construction.
+pub fn build_coding_session_authority_transition(
+    channel_id: Uuid,
+    payload: &CodingSessionAuthorityTransitionPayload,
+) -> Result<EventBuilder, SdkError> {
+    payload.validate().map_err(SdkError::InvalidInput)?;
+    let content = serde_json::to_string(payload).map_err(|error| {
+        SdkError::InvalidInput(format!(
+            "coding-session authority-transition serialization: {error}"
+        ))
+    })?;
+    check_content(&content, MAX_AUTHORITY_TRANSITION_CONTENT_BYTES)?;
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["csat-v", CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION])?,
+        tag(&["csat-genesis", &payload.genesis_ref])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_AUTHORITY_TRANSITION as u16),
+        content,
+    )
+    .tags(tags))
+}
+
+/// Validate a coding-session target the same way `buzz-core` validates the one
+/// inside a 44220 payload, so provider-authored events cannot name a target no
+/// command could ever have addressed.
+fn check_target(target: &CodingSessionTarget) -> Result<(), SdkError> {
+    check_identifier(&target.driver, "target.driver")?;
+    check_identifier(&target.instance_id, "target.instanceId")?;
+    check_identifier(&target.session_id, "target.sessionId")?;
+    if target.generation == 0 || target.generation > MAX_SAFE_GENERATION {
+        return Err(SdkError::InvalidInput(
+            "target.generation must be a positive safe integer".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn check_identifier(value: &str, field: &str) -> Result<(), SdkError> {
+    if value.trim().is_empty() {
+        return Err(SdkError::InvalidInput(format!("{field} must not be empty")));
+    }
+    if value.len() > MAX_IDENTIFIER_BYTES {
+        return Err(SdkError::InvalidInput(format!(
+            "{field} exceeds {MAX_IDENTIFIER_BYTES} bytes"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -5215,6 +5641,758 @@ mod tests {
             assert_eq!(
                 tag_values(&event, "pu-type"),
                 vec![entry_type.as_str().to_string()]
+            );
+        }
+    }
+
+    // ---- Coding sessions ---------------------------------------------------
+
+    fn cs_target() -> CodingSessionTarget {
+        CodingSessionTarget {
+            driver: "provider-a".into(),
+            instance_id: "instance-1".into(),
+            session_id: "session-1".into(),
+            generation: 1,
+        }
+    }
+
+    /// Flatten an event's tags into `(name, value)` pairs in signed order.
+    /// Order is load-bearing for four of the six kinds: the relay's 44221
+    /// validator and the consumer's ingress both read tags positionally.
+    fn ordered_tags(event: &nostr::Event) -> Vec<(String, String)> {
+        event
+            .tags
+            .iter()
+            .map(|t| {
+                let s = t.as_slice();
+                (
+                    s.first().cloned().unwrap_or_default(),
+                    s.get(1).cloned().unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    fn cs_command_payload() -> CodingSessionCommandPayload {
+        CodingSessionCommandPayload {
+            schema: buzz_core::coding_session_command::CODING_SESSION_COMMAND_SCHEMA.into(),
+            command_id: "cmd-1".into(),
+            target: cs_target(),
+            action: buzz_core::coding_session_command::CodingSessionAction::ThreadTurnStart {
+                text: "Ship it".into(),
+            },
+        }
+    }
+
+    fn cs_lifecycle_payload(project_ref: Option<String>) -> CodingSessionLifecycleCommandPayload {
+        use buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction;
+        CodingSessionLifecycleCommandPayload {
+            schema:
+                buzz_core::coding_session_lifecycle_command::CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA
+                    .into(),
+            command_id: "create-1".into(),
+            action: CodingSessionLifecycleAction::SessionCreate {
+                project_ref,
+                repo_ref: None,
+                session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into()),
+                genesis_ref: None,
+                provider_instance_ref: "claude-primary".into(),
+                provider_authority_pubkey: "ab".repeat(32),
+                model: None,
+                title: Some("Advance Buzz live sessions".into()),
+                initial_turn: None,
+            },
+        }
+    }
+
+    /// The founder record: three ordered tags, and a `csg-session` tag that is
+    /// the payload's own reference so a filter lookup and the signed content can
+    /// never name different umbrellas.
+    #[test]
+    fn coding_session_genesis_builder_emits_ordered_payload_derived_tags() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let payload = CodingSessionGenesisPayload::new(session_ref);
+        let event = build_coding_session_genesis(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GENESIS);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csg-v".into(), "csg1-1".into()),
+                ("csg-session".into(), session_ref.into()),
+            ]
+        );
+        assert_eq!(
+            buzz_core::coding_session_genesis::decode_coding_session_genesis(&event.content)
+                .unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn coding_session_genesis_builder_rejects_invalid_payloads() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_genesis(
+            channel,
+            &CodingSessionGenesisPayload::new("umbrella")
+        )
+        .is_err());
+
+        let mut payload = CodingSessionGenesisPayload::new("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        payload.v = 2;
+        assert!(build_coding_session_genesis(channel, &payload).is_err());
+    }
+
+    #[test]
+    fn coding_session_goal_builder_emits_regular_revision_envelope() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = build_coding_session_goal(channel, session_ref, "Make authority visible")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GOAL);
+        assert_eq!(event.content, "Make authority visible");
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("csgl-v".into(), "csgl1-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_goal_builder_rejects_invalid_and_blank_inputs() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_goal(channel, "umbrella", "goal").is_err());
+        assert!(
+            build_coding_session_goal(channel, "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10", "goal")
+                .is_err()
+        );
+        assert!(
+            build_coding_session_goal(channel, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10", "  \n")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn coding_session_name_builder_emits_regular_revision_envelope() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let event = build_coding_session_name(channel, session_ref, "Authority phase")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_NAME);
+        assert_eq!(event.content, "Authority phase");
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("csnm-v".into(), "csnm1-1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_name_builder_rejects_invalid_blank_and_multiline_inputs() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_name(channel, "umbrella", "name").is_err());
+        assert!(
+            build_coding_session_name(channel, "5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10", "name")
+                .is_err()
+        );
+        assert!(
+            build_coding_session_name(channel, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10", "  \n")
+                .is_err()
+        );
+        assert!(build_coding_session_name(
+            channel,
+            "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "first\nsecond"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn coding_session_closure_builder_emits_exact_regular_revision_envelope() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis_ref = "ab".repeat(32);
+        let payload = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            &genesis_ref,
+            session_ref,
+        );
+        let event = build_coding_session_closure(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_CLOSURE);
+        assert_eq!(
+            event.content,
+            format!(
+                r#"{{"action":"closed","genesisRef":"{genesis_ref}","sessionRef":"{session_ref}","v":1}}"#
+            )
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("d".into(), session_ref.into()),
+                ("cscl-v".into(), "cscl1-1".into()),
+                ("cscl-genesis".into(), genesis_ref),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_builder_rejects_invalid_references_and_version() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        assert!(build_coding_session_closure(
+            channel,
+            &CodingSessionClosurePayload::new(
+                CodingSessionClosureAction::Open,
+                "AB".repeat(32),
+                session_ref,
+            )
+        )
+        .is_err());
+        assert!(build_coding_session_closure(
+            channel,
+            &CodingSessionClosurePayload::new(
+                CodingSessionClosureAction::Open,
+                "ab".repeat(32),
+                "umbrella",
+            )
+        )
+        .is_err());
+
+        let mut wrong_version = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Open,
+            "ab".repeat(32),
+            session_ref,
+        );
+        wrong_version.v = 2;
+        assert!(build_coding_session_closure(channel, &wrong_version).is_err());
+    }
+
+    /// The adoption form emits the same three-tag envelope as a fresh
+    /// founding — only the content differs — and the `csg-session` tag still
+    /// tracks the payload's own `sessionRef`, not anything inside `adopts`.
+    #[test]
+    fn coding_session_genesis_builder_supports_the_adoption_form() {
+        let channel = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let payload = CodingSessionGenesisPayload::new_adoption(
+            session_ref,
+            "ab".repeat(32),
+            "cd".repeat(32),
+        );
+        let event = build_coding_session_genesis(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_GENESIS);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csg-v".into(), "csg1-1".into()),
+                ("csg-session".into(), session_ref.into()),
+            ],
+            "the adoption form's envelope must be indistinguishable from a fresh founding"
+        );
+        assert_eq!(
+            buzz_core::coding_session_genesis::decode_coding_session_genesis(&event.content)
+                .unwrap(),
+            payload
+        );
+    }
+
+    /// The chain's first link: three ordered tags, and a `csat-genesis` tag
+    /// that is the payload's own reference so a filter lookup and the signed
+    /// content can never disagree on which genesis this transition anchors
+    /// to.
+    #[test]
+    fn coding_session_authority_transition_builder_emits_ordered_payload_derived_tags() {
+        let channel = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let grantee = "cd".repeat(32);
+        let payload = CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            genesis_ref.clone(),
+            None,
+            1,
+            grantee.clone(),
+        );
+        let event = build_coding_session_authority_transition(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csat-v".into(), "csat1-1".into()),
+                ("csat-genesis".into(), genesis_ref.clone()),
+            ]
+        );
+        assert_eq!(
+            buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition(
+                &event.content
+            )
+            .unwrap(),
+            payload
+        );
+    }
+
+    /// A second, chained transition emits the same envelope shape with the
+    /// predecessor's id carried in content only — the tag still names the
+    /// genesis, not the predecessor.
+    #[test]
+    fn coding_session_authority_transition_builder_supports_a_chained_grant() {
+        let channel = Uuid::new_v4();
+        let genesis_ref = "ab".repeat(32);
+        let prev = "11".repeat(32);
+        let grantee = "cd".repeat(32);
+        let payload = CodingSessionAuthorityTransitionPayload::new_grant_operator(
+            genesis_ref.clone(),
+            Some(prev),
+            2,
+            grantee,
+        );
+        let event = build_coding_session_authority_transition(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csat-v".into(), "csat1-1".into()),
+                ("csat-genesis".into(), genesis_ref),
+            ]
+        );
+    }
+
+    #[test]
+    fn coding_session_authority_transition_builder_rejects_invalid_payloads() {
+        let channel = Uuid::new_v4();
+        // seq = 0 is never valid.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "ab".repeat(32),
+                None,
+                0,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
+        // seq/prevAccepted disagreement.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "ab".repeat(32),
+                Some("11".repeat(32)),
+                1,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
+        // Malformed genesisRef.
+        assert!(build_coding_session_authority_transition(
+            channel,
+            &CodingSessionAuthorityTransitionPayload::new_grant_operator(
+                "not-hex",
+                None,
+                1,
+                "cd".repeat(32),
+            )
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn coding_session_command_builder_emits_ordered_payload_derived_tags() {
+        let channel = Uuid::new_v4();
+        let payload = cs_command_payload();
+        let event = build_coding_session_command(channel, &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_COMMAND);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cs-v".into(), "csc1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+            ]
+        );
+        // Content round-trips through the same contract the relay decodes with.
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(&event.content).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn coding_session_command_builder_rejects_invalid_payloads() {
+        let channel = Uuid::new_v4();
+        let mut payload = cs_command_payload();
+        payload.target.generation = 0;
+        assert!(build_coding_session_command(channel, &payload).is_err());
+    }
+
+    /// Both arms of the fork amendment: a project-bound session and a
+    /// standalone one produce identically shaped envelopes, because no tag
+    /// carries the project reference.
+    #[test]
+    fn coding_session_lifecycle_builder_handles_optional_project_ref() {
+        let channel = Uuid::new_v4();
+        let project = format!("30621:{}:amas-redux", "cd".repeat(32));
+        for project_ref in [Some(project), None] {
+            let payload = cs_lifecycle_payload(project_ref.clone());
+            let event = build_coding_session_lifecycle_command(channel, &payload)
+                .unwrap()
+                .sign_with_keys(&keys())
+                .unwrap();
+            assert_eq!(
+                event.kind.as_u16() as u32,
+                KIND_CODING_SESSION_LIFECYCLE_COMMAND
+            );
+            assert_eq!(
+                ordered_tags(&event),
+                vec![
+                    ("h".into(), channel.to_string()),
+                    ("csl-v".into(), "csl1-1".into()),
+                    ("csl-command".into(), "create-1".into()),
+                ]
+            );
+            // Even a standalone session writes `projectRef` explicitly, so a
+            // truncated payload can never be read as a deliberate one — and a
+            // new producer always writes `sessionRef`, umbrella claimed or not.
+            assert!(event.content.contains("\"projectRef\":"));
+            assert!(event.content.contains("\"sessionRef\":"));
+            assert_eq!(
+                buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                    &event.content
+                )
+                .unwrap(),
+                payload
+            );
+        }
+    }
+
+    #[test]
+    fn coding_session_lifecycle_builder_rejects_non_project_refs() {
+        let channel = Uuid::new_v4();
+        let owner = "cd".repeat(32);
+        for rejected in [format!("30178:{owner}:x"), "amas-redux".to_string()] {
+            assert!(
+                build_coding_session_lifecycle_command(
+                    channel,
+                    &cs_lifecycle_payload(Some(rejected.clone()))
+                )
+                .is_err(),
+                "should reject {rejected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_catalog_builder_emits_ordered_tags_and_digests_exact_content() {
+        let channel = Uuid::new_v4();
+        let content =
+            r#"{"schema":"buzz-coding-session-provider-catalog/v1","revision":3,"providers":[]}"#;
+        let event = build_coding_session_provider_catalog(channel, 3, content)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            KIND_CODING_SESSION_PROVIDER_CATALOG
+        );
+        // Content is passed through byte-for-byte: cspc-key digests it, so any
+        // re-serialization here would break the consumer's key check.
+        assert_eq!(event.content, content);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cspc-v".into(), "cspc1-1".into()),
+                ("cspc-revision".into(), "3".into()),
+                (
+                    "cspc-key".into(),
+                    crate::coding_session::coding_session_provider_catalog_semantic_key(
+                        &channel.to_string(),
+                        3,
+                        content
+                    )
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_catalog_builder_enforces_revision_and_size() {
+        let channel = Uuid::new_v4();
+        assert!(build_coding_session_provider_catalog(channel, 0, "{}").is_err());
+        let oversize = "a".repeat(MAX_PROVIDER_CATALOG_CONTENT_BYTES + 1);
+        assert!(matches!(
+            build_coding_session_provider_catalog(channel, 1, &oversize),
+            Err(SdkError::ContentTooLarge { .. })
+        ));
+        let at_limit = "a".repeat(MAX_PROVIDER_CATALOG_CONTENT_BYTES);
+        assert!(build_coding_session_provider_catalog(channel, 1, &at_limit).is_ok());
+    }
+
+    #[test]
+    fn metadata_builder_emits_ordered_tags() {
+        let channel = Uuid::new_v4();
+        let target = cs_target();
+        let event = build_coding_session_metadata(channel, &target, "{}")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_METADATA);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("csm-v".into(), "csm1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+                (
+                    "csm-key".into(),
+                    "coding-session-metadata/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn lease_builder_emits_strict_content_and_ordered_tags() {
+        use buzz_core::coding_session_lease::{
+            CodingSessionLease, CodingSessionLeaseState, CODING_SESSION_LEASE_SCHEMA,
+        };
+
+        let channel = Uuid::parse_str("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10").unwrap();
+        let payload = CodingSessionLease {
+            schema: CODING_SESSION_LEASE_SCHEMA.into(),
+            target: cs_target(),
+            state: CodingSessionLeaseState::Live,
+            lease_sequence: 42,
+        };
+        let event = build_coding_session_lease(channel, "create-1", &payload)
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            buzz_core::kind::KIND_CODING_SESSION_LEASE
+        );
+        assert_eq!(
+            serde_json::from_str::<CodingSessionLease>(&event.content).unwrap(),
+            payload
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cslease-v".into(), "cslease1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+                ("csl-command".into(), "create-1".into()),
+                ("cslease-seq".into(), "42".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn lease_builder_rejects_invalid_payload_and_command_identifier() {
+        use buzz_core::coding_session_lease::{CodingSessionLease, CodingSessionLeaseState};
+
+        let channel = Uuid::new_v4();
+        let mut payload =
+            CodingSessionLease::new(cs_target(), CodingSessionLeaseState::Released, 1).unwrap();
+        assert!(build_coding_session_lease(channel, " ", &payload).is_err());
+        assert!(build_coding_session_lease(
+            channel,
+            &"x".repeat(MAX_IDENTIFIER_BYTES + 1),
+            &payload
+        )
+        .is_err());
+
+        payload.lease_sequence = 0;
+        assert!(build_coding_session_lease(channel, "create-1", &payload).is_err());
+
+        payload.lease_sequence = 1;
+        payload.target.generation = 0;
+        assert!(build_coding_session_lease(channel, "create-1", &payload).is_err());
+    }
+
+    #[test]
+    fn lifecycle_receipt_builder_emits_ordered_tags_keyed_by_command_id() {
+        let channel = Uuid::new_v4();
+        let event = build_coding_session_lifecycle_receipt(channel, "create-1", "{}")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(
+            event.kind.as_u16() as u32,
+            KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+        );
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cslr-v".into(), "cslr1-1".into()),
+                ("csl-command".into(), "create-1".into()),
+                (
+                    "csl-key".into(),
+                    "coding-session-lifecycle-receipt/v1|8:create-1".into()
+                ),
+            ]
+        );
+        assert!(build_coding_session_lifecycle_receipt(channel, "  ", "{}").is_err());
+    }
+
+    #[test]
+    fn transcript_builder_emits_ordered_tags_with_sequence() {
+        let channel = Uuid::new_v4();
+        let target = cs_target();
+        let event = build_coding_session_transcript_item(channel, &target, 7, "{}")
+            .unwrap()
+            .sign_with_keys(&keys())
+            .unwrap();
+
+        assert_eq!(event.kind.as_u16() as u32, KIND_CODING_SESSION_TRANSCRIPT);
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cst-v".into(), "cst1-1".into()),
+                (
+                    "cs-target".into(),
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:1".into()
+                ),
+                ("cst-seq".into(), "7".into()),
+                (
+                    "cst-key".into(),
+                    "coding-session-transcript/v1|10:provider-a10:instance-19:session-11:11:7"
+                        .into()
+                ),
+            ]
+        );
+        // Sequence numbers start at 1; a zero would collide with "unset".
+        assert!(build_coding_session_transcript_item(channel, &target, 0, "{}").is_err());
+    }
+
+    /// Provider-authored events must not be able to name a target no command
+    /// could ever have addressed.
+    #[test]
+    fn provider_authored_builders_validate_the_target() {
+        let channel = Uuid::new_v4();
+        let mut target = cs_target();
+        target.generation = 0;
+        assert!(build_coding_session_metadata(channel, &target, "{}").is_err());
+        assert!(build_coding_session_transcript_item(channel, &target, 1, "{}").is_err());
+
+        target = cs_target();
+        target.session_id = "  ".into();
+        assert!(build_coding_session_metadata(channel, &target, "{}").is_err());
+    }
+
+    #[test]
+    fn provider_authored_builders_enforce_their_size_caps() {
+        let channel = Uuid::new_v4();
+        let target = cs_target();
+        assert!(matches!(
+            build_coding_session_metadata(
+                channel,
+                &target,
+                &"a".repeat(MAX_METADATA_CONTENT_BYTES + 1)
+            ),
+            Err(SdkError::ContentTooLarge { .. })
+        ));
+        assert!(matches!(
+            build_coding_session_lifecycle_receipt(
+                channel,
+                "create-1",
+                &"a".repeat(MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES + 1)
+            ),
+            Err(SdkError::ContentTooLarge { .. })
+        ));
+        assert!(matches!(
+            build_coding_session_transcript_item(
+                channel,
+                &target,
+                1,
+                &"a".repeat(MAX_TRANSCRIPT_CONTENT_BYTES + 1)
+            ),
+            Err(SdkError::ContentTooLarge { .. })
+        ));
+    }
+
+    /// The `h` tag is what makes a coding-session event inherit the channel
+    /// ACL. The relay requires it; every builder must therefore emit it first.
+    #[test]
+    fn every_coding_session_builder_emits_the_channel_tag_first() {
+        let channel = Uuid::new_v4();
+        let target = cs_target();
+        let lease = CodingSessionLease::new(
+            target.clone(),
+            buzz_core::coding_session_lease::CodingSessionLeaseState::Live,
+            1,
+        )
+        .unwrap();
+        let builders = [
+            build_coding_session_command(channel, &cs_command_payload()).unwrap(),
+            build_coding_session_lifecycle_command(channel, &cs_lifecycle_payload(None)).unwrap(),
+            build_coding_session_provider_catalog(channel, 1, "{}").unwrap(),
+            build_coding_session_lease(channel, "create-1", &lease).unwrap(),
+            build_coding_session_metadata(channel, &target, "{}").unwrap(),
+            build_coding_session_lifecycle_receipt(channel, "create-1", "{}").unwrap(),
+            build_coding_session_transcript_item(channel, &target, 1, "{}").unwrap(),
+        ];
+        for builder in builders {
+            let event = builder.sign_with_keys(&keys()).unwrap();
+            assert_eq!(
+                ordered_tags(&event).first(),
+                Some(&("h".to_string(), channel.to_string())),
+                "kind {} must tag its channel first",
+                event.kind.as_u16()
             );
         }
     }

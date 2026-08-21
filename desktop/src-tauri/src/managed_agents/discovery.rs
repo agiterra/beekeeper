@@ -1005,7 +1005,7 @@ pub(crate) fn is_npm_global_install(cmd: &str) -> bool {
 /// background threads to prevent pipe-buffer deadlock. On timeout the child is
 /// killed and `Unknown` is returned; no orphaned threads or processes are left
 /// behind. Returns `Unknown` on timeout.
-fn probe_auth_status(binary_path: &Path, probe_args: &[&str]) -> AuthStatus {
+pub(crate) fn probe_auth_status(binary_path: &Path, probe_args: &[&str]) -> AuthStatus {
     use crate::managed_agents::readiness::cli_probe;
 
     let augmented_path = cli_probe::augmented_path();

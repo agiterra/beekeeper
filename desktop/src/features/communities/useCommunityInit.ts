@@ -20,6 +20,7 @@ import {
   clearAllDrafts,
   initDraftStore,
 } from "@/features/messages/lib/useDrafts";
+import { resetCodingSessionLaneVisibility } from "@/features/messages/lib/codingSessionLaneVisibility";
 import { resetRenderScopedReactionHydration } from "@/features/messages/lib/renderScopedReactions";
 import { resetBackgroundMediaUploads } from "@/features/messages/lib/backgroundMediaUploadStore";
 import { resetLinkPreviewPreparations } from "@/features/messages/lib/linkPreviewPreparationStore";
@@ -34,6 +35,8 @@ import { resetAvatarPresentations } from "@/features/profile/avatarPresentationS
 import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
 import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
+import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessions/lib/codingSessionBootstrap";
+import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
 import { resetProjectPulseState } from "@/features/project-pulse";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 
@@ -78,6 +81,16 @@ async function resetCommunityState({
   resetLinkPreviewPreparations();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
+  resetCodingSessionPopoutBootstrapCache();
+  // Pending create/stop overlays are relay-scoped commands; carrying them
+  // across a community switch would synthesize rows for sessions the new
+  // relay never saw.
+  resetPendingCodingSessionLifecycle();
+  // Which coding-session conversation lanes are openable is per-relay: keeping
+  // the old community's refs would hide chat in the new one (channel ids are
+  // UUIDs, but a hidden message with no lane to render in is the one outcome
+  // the rule must never produce).
+  resetCodingSessionLaneVisibility();
   // Folded Pulse digests are keyed by project coordinate, and a coordinate
   // names no relay: carrying them across a switch would paint one community's
   // claims and observed commits under another community's project.

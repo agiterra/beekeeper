@@ -14,20 +14,24 @@ use buzz_core::kind::{
     event_kind_u32, is_identity_archive_request_kind, is_parameterized_replaceable,
     is_relay_admin_kind, KIND_AGENT_ENGRAM, KIND_AGENT_PROFILE, KIND_AGENT_TURN_METRIC,
     KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT, KIND_AUTH, KIND_BOOKMARK_LIST, KIND_BOOKMARK_SET,
-    KIND_CANVAS, KIND_CONTACT_LIST, KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN,
-    KIND_EMOJI_LIST, KIND_EMOJI_SET, KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT,
-    KIND_FORUM_POST, KIND_FORUM_VOTE, KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH,
-    KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST, KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE,
-    KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN,
-    KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES, KIND_HUDDLE_PARTICIPANT_JOINED,
-    KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED, KIND_IA_ARCHIVE_REQUEST,
-    KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT, KIND_MEMBER_ADDED_NOTIFICATION,
-    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT,
-    KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST,
-    KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT, KIND_NIP29_DELETE_GROUP,
-    KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST, KIND_NIP29_LEAVE_REQUEST,
-    KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER, KIND_NIP43_LEAVE_REQUEST,
-    KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST, KIND_PRESENCE_UPDATE,
+    KIND_CANVAS, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_PROVIDER_CATALOG, KIND_CODING_SESSION_TRANSCRIPT, KIND_CONTACT_LIST,
+    KIND_DELETION, KIND_DM_ADD_MEMBER, KIND_DM_HIDE, KIND_DM_OPEN, KIND_EMOJI_LIST, KIND_EMOJI_SET,
+    KIND_EVENT_REMINDER, KIND_FOLLOW_SET, KIND_FORUM_COMMENT, KIND_FORUM_POST, KIND_FORUM_VOTE,
+    KIND_GIFT_WRAP, KIND_GIT_ISSUE, KIND_GIT_PATCH, KIND_GIT_PR_UPDATE, KIND_GIT_PULL_REQUEST,
+    KIND_GIT_REPO_ANNOUNCEMENT, KIND_GIT_REPO_STATE, KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT,
+    KIND_GIT_STATUS_MERGED, KIND_GIT_STATUS_OPEN, KIND_HUDDLE_ENDED, KIND_HUDDLE_GUIDELINES,
+    KIND_HUDDLE_PARTICIPANT_JOINED, KIND_HUDDLE_PARTICIPANT_LEFT, KIND_HUDDLE_STARTED,
+    KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST, KIND_LONG_FORM, KIND_MANAGED_AGENT,
+    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_MODERATION_BAN,
+    KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT, KIND_MODERATION_UNBAN,
+    KIND_MODERATION_UNTIMEOUT, KIND_MUTE_LIST, KIND_NIP29_CREATE_GROUP, KIND_NIP29_DELETE_EVENT,
+    KIND_NIP29_DELETE_GROUP, KIND_NIP29_EDIT_METADATA, KIND_NIP29_JOIN_REQUEST,
+    KIND_NIP29_LEAVE_REQUEST, KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER,
+    KIND_NIP43_LEAVE_REQUEST, KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST,
     KIND_PRIVATE_MANAGED_AGENT, KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION,
     KIND_READ_STATE, KIND_REPORT, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED,
     KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED,
@@ -353,6 +357,26 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         }
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
+        // Coding sessions: the operator-signed session origin, goal/name
+        // revisions, authority-chain transitions, and closure facts
+        // (44226–44230),
+        // the operator-authored commands (44220/44221), and the
+        // provider-authored facts they produce (44222-44225). All are
+        // durable, channel-scoped writes consumed by an out-of-relay
+        // provider adapter — the relay validates and stores them, and
+        // deliberately never executes them. See docs/nips/NIP-CSC.md,
+        // NIP-CSL.md, NIP-CSPC.md, NIP-CST.md, NIP-CSG.md.
+        KIND_CODING_SESSION_COMMAND
+        | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+        | KIND_CODING_SESSION_GENESIS
+        | KIND_CODING_SESSION_GOAL
+        | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+        | KIND_CODING_SESSION_NAME
+        | KIND_CODING_SESSION_CLOSURE
+        | KIND_CODING_SESSION_PROVIDER_CATALOG
+        | KIND_CODING_SESSION_METADATA
+        | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+        | KIND_CODING_SESSION_TRANSCRIPT => Ok(Scope::MessagesWrite),
         // NIP-56 reports are ordinary member writes into the mod-only queue.
         // Ingest persists them to `moderation_reports` and suppresses public
         // storage/fanout; reports are signals, never enforcement triggers.
@@ -690,7 +714,189 @@ pub(crate) fn requires_h_channel_scope(kind: u32) -> bool {
             | KIND_HUDDLE_PARTICIPANT_LEFT
             | KIND_HUDDLE_ENDED
             | KIND_HUDDLE_GUIDELINES
+            // Coding sessions live inside a channel: the channel's ACL is the
+            // *only* thing standing between a session transcript and anyone on
+            // the relay, and h-scoped events inherit private-project access
+            // through `get_accessible_channel_ids`. Require `h` so a command or
+            // a transcript item can never become a stray global event readable
+            // by every authenticated pubkey. Genesis is scoped for a second
+            // reason on top of that one: the channel is what makes a session
+            // reference unique, so a genesis without an `h` tag would found an
+            // umbrella in no particular room.
+            | KIND_CODING_SESSION_COMMAND
+            | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+            | KIND_CODING_SESSION_PROVIDER_CATALOG
+            | KIND_CODING_SESSION_METADATA
+            | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            | KIND_CODING_SESSION_TRANSCRIPT
+            | KIND_CODING_SESSION_GENESIS
+            | KIND_CODING_SESSION_GOAL
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_CLOSURE
     )
+}
+
+/// Returns `true` for the eleven coding-session kinds (44220–44230).
+///
+/// One predicate for the strict-membership gate and the tests, so a new
+/// kind cannot be added to one gate and forgotten by another.
+pub(crate) fn is_coding_session_kind(kind: u32) -> bool {
+    matches!(
+        kind,
+        KIND_CODING_SESSION_COMMAND
+            | KIND_CODING_SESSION_LIFECYCLE_COMMAND
+            | KIND_CODING_SESSION_PROVIDER_CATALOG
+            | KIND_CODING_SESSION_METADATA
+            | KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            | KIND_CODING_SESSION_TRANSCRIPT
+            | KIND_CODING_SESSION_GENESIS
+            | KIND_CODING_SESSION_GOAL
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | KIND_CODING_SESSION_NAME
+            | KIND_CODING_SESSION_CLOSURE
+    )
+}
+
+/// Whether an event uses the strict coding-session membership/project-write
+/// gate rather than conversational open-channel admission.
+pub(crate) fn requires_strict_coding_session_membership(kind: u32) -> bool {
+    kind == KIND_CODING_SESSION_LEASE || is_coding_session_kind(kind)
+}
+
+/// Maximum signed content size for each coding-session kind, in bytes.
+///
+/// 44220, 44221, and 44226–44230 are bounded by their payload
+/// contracts in `buzz-core` instead (12 KiB of turn text, 16 KiB of signed
+/// content, 1 KiB of genesis, 4 KiB of goal prose, 512 B of an authority
+/// transition, 256 B of session-name text, and 512 B of closure JSON), so they are
+/// absent here — and those bounds are the stricter ones,
+/// since their envelope validators run *before* this table is consulted. The
+/// four provider-authored kinds carry no envelope validator — the
+/// relay does not parse a provider's facts — so a size cap is the whole of
+/// their bound, and each one is sized to its job: a catalog enumerates every
+/// provider and model an instance offers, a transcript item carries one
+/// coalesced chunk of agent output, a receipt carries a status and a code.
+fn coding_session_content_cap(kind: u32) -> Option<usize> {
+    match kind {
+        KIND_CODING_SESSION_PROVIDER_CATALOG => Some(256 * 1024),
+        KIND_CODING_SESSION_METADATA => Some(32 * 1024),
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT => Some(16 * 1024),
+        KIND_CODING_SESSION_TRANSCRIPT => Some(32 * 1024),
+        _ => None,
+    }
+}
+
+/// Require active membership without the open-channel fallback used for normal
+/// conversational writes, plus — for the steer kinds — NIP-CSAT authority.
+///
+/// [`check_channel_membership`] admits any authenticated pubkey in an *open*
+/// channel. That is the right rule for talking, and the wrong rule here in both
+/// directions: on the command side, permission to read a room is not authority
+/// to steer an agent that runs shell commands against someone's checkout; on
+/// the provider side, it is not authority to write transcripts and receipts
+/// that consumers treat as the session's record of what happened.
+///
+/// Per-kind rules on top of the base membership gate:
+///
+/// - **44220 (turn command)**: when the channel holds genesis-rooted
+///   sessions, the signer must be a founder or hold a live operator grant on
+///   one — channel grain, because a command addresses a provider-minted
+///   execution id the relay cannot map to a genesis; the session provider
+///   enforces the exact per-session rule on top (verified acceptance
+///   receipts). Standing alone suffices: an externally-granted operator
+///   steers without being a channel member. Channels with no genesis
+///   (legacy) keep the base rule, matching the provider's own treatment of
+///   no-genesis records.
+/// - **44227 (goal)**: resolved exactly via its `d` = sessionRef tag — the
+///   named session's founder or operators only; an unclaimed label keeps the
+///   base rule.
+/// - **Everything else** (lifecycle, genesis, provider kinds, 44228): the
+///   base rule. Lifecycle stop/resume founder-onlyness is enforced by the
+///   provider (`operator_owns_session`), and 44228 owner-signing by the
+///   storage transaction.
+pub(crate) async fn check_coding_session_membership(
+    tenant: &TenantContext,
+    state: &AppState,
+    channel_id: Uuid,
+    pubkey_bytes: &[u8],
+    kind: u32,
+    event: &nostr::Event,
+) -> Result<(), String> {
+    debug_assert!(requires_strict_coding_session_membership(kind));
+    match kind {
+        KIND_CODING_SESSION_COMMAND => {
+            match state
+                .db
+                .channel_has_genesis_sessions(tenant.community(), channel_id)
+                .await
+            {
+                Ok(true) => {
+                    return match state
+                        .session_steer_standing_cached(tenant.community(), channel_id, pubkey_bytes)
+                        .await
+                    {
+                        Ok(true) => Ok(()),
+                        Ok(false) => Err(
+                            "restricted: only a session founder or a granted operator may steer"
+                                .into(),
+                        ),
+                        Err(error) => Err(format!("error: database error: {error}")),
+                    };
+                }
+                Ok(false) => {}
+                Err(error) => return Err(format!("error: database error: {error}")),
+            }
+        }
+        KIND_CODING_SESSION_GOAL => {
+            let session_ref = event.tags.iter().find_map(|t| {
+                let parts = t.as_slice();
+                if parts.first().map(|s| s.as_str()) == Some("d") {
+                    parts.get(1).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            });
+            if let Some(session_ref) = session_ref {
+                match state
+                    .db
+                    .session_authority_by_ref(tenant.community(), channel_id, &session_ref)
+                    .await
+                {
+                    Ok(Some(authority)) => {
+                        return if authority.may_steer(pubkey_bytes) {
+                            Ok(())
+                        } else {
+                            Err(
+                                "restricted: only the session founder or a granted operator may \
+                                 edit its goal"
+                                    .into(),
+                            )
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(error) => return Err(format!("error: database error: {error}")),
+                }
+            }
+        }
+        _ => {}
+    }
+
+    match state
+        .is_member_cached(tenant.community(), channel_id, pubkey_bytes)
+        .await
+    {
+        Ok(is_member) => coding_session_membership_verdict(is_member),
+        Err(error) => Err(format!("error: database error: {error}")),
+    }
+}
+
+fn coding_session_membership_verdict(is_member: bool) -> Result<(), String> {
+    if is_member {
+        Ok(())
+    } else {
+        Err("restricted: coding-session events require channel membership".into())
+    }
 }
 
 /// Check channel membership: member OR open-visibility channel.
@@ -2310,6 +2516,427 @@ fn validate_agent_turn_metric_envelope(event: &nostr::Event) -> Result<(), Strin
     Ok(())
 }
 
+/// Validate the exact public envelope for a coding-session genesis (44226).
+///
+/// The signed event pubkey is the session's founder, and this envelope is the
+/// only place that fact is ever established, so the shape is the narrowest of
+/// any coding-session kind: three ordered two-field tags and a two-field
+/// payload. The `csg-session` tag is re-derived from the decoded content rather
+/// than trusted, so a genesis cannot be enforced under one umbrella reference
+/// and read as another: the storage layer's uniqueness probe matches on the
+/// tag, so a disagreement between the two would let a genesis be stored without
+/// contending for the reference its content actually claims.
+///
+/// The tag is for that probe and for operator diagnostics. It is not a
+/// consumer-facing founder lookup — authority resolves only through an explicit
+/// genesis event id. See the module doc on
+/// [`buzz_core::coding_session_genesis`].
+///
+/// # Not enforced here: one genesis per `sessionRef`
+///
+/// This validator is pure, like every other coding-session check, and so it
+/// cannot reject a *second* genesis claiming a `sessionRef` some earlier event
+/// already founded. That rule needs a lookup, and ingest validation runs
+/// hundreds of lines and several round-trips before the insert it would need to
+/// be atomic with (`ingest_event_inner` holds no transaction; `state.db` is a
+/// pool handle). A `SELECT` here would therefore be a check-then-insert race
+/// across relay processes — competing genesis events would both be stored, and
+/// the property at stake is *which pubkey is the founder*. A dedupe that fails
+/// under exactly the concurrency an attacker controls is worse than a known
+/// gap, so this is deliberately left open rather than approximated. Closing it
+/// means moving the check into the storage transaction in `buzz-db`, alongside
+/// `replace_addressable_event`'s advisory-lock-then-probe-then-insert.
+fn validate_coding_session_genesis_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_genesis::{
+        decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_genesis(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err("coding-session genesis requires exactly three two-field tags".into());
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err("coding-session genesis first tag must be a channel UUID h tag".into());
+    }
+    if tags[1][0] != "csg-v" || tags[1][1] != CODING_SESSION_GENESIS_TAG_VERSION {
+        return Err("unsupported coding-session genesis tag version".into());
+    }
+    if tags[2][0] != "csg-session" || tags[2][1] != payload.session_ref {
+        return Err("coding-session genesis csg-session does not match payload sessionRef".into());
+    }
+    Ok(())
+}
+
+/// The wire answer to a genesis that lost the race for its `sessionRef`.
+///
+/// Deliberately `accepted: false` and nothing else. A rejected duplicate gets
+/// no acceptance receipt of any kind — it is a refusal, and naming the winner
+/// is the whole of what the loser is owed, so the founder it must resolve to
+/// instead is identifiable from the message without a second round trip.
+fn coding_session_genesis_duplicate_result(
+    event_id_hex: String,
+    existing_event_id: &[u8],
+) -> IngestResult {
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message: format!(
+            "duplicate: coding-session already founded by event {}",
+            hex::encode(existing_event_id)
+        ),
+    }
+}
+
+/// The wire answer to a genesis whose adoption could not be verified — either
+/// it carried no `adopts` reference over `sessionRef` history that requires
+/// one, or the reference it gave did not check out (R15, R16).
+///
+/// `invalid:` rather than `duplicate:`: nothing was duplicated. The reference is
+/// in use by history, not by a rival genesis, and telling those apart is the
+/// difference between "adopt it explicitly" and "this session has no genesis
+/// yet and may never get one from you".
+fn coding_session_genesis_adoption_refusal_result(
+    event_id_hex: String,
+    refusal: &buzz_db::GenesisAdoptionRefusal,
+) -> IngestResult {
+    let message = match refusal {
+        buzz_db::GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+            existing_create_event_id,
+        } => format!(
+            "invalid: this coding session was founded before genesis (create {}) — \
+             resubmit with an explicit adopts reference to that founding create and \
+             its joining receipt",
+            hex::encode(existing_create_event_id)
+        ),
+        buzz_db::GenesisAdoptionRefusal::ReferencedCreateNotFound => {
+            "invalid: adopts.createEventId does not name a session.create this relay has stored"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::ReferencedReceiptNotFound => {
+            "invalid: adopts.receiptEventId does not name a lifecycle receipt this relay has stored"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate => {
+            "invalid: the referenced receipt does not genuinely join the referenced create"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::SessionRefMismatch => {
+            "invalid: the referenced create claims a different sessionRef than this genesis"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::SignerMismatch { founder_pubkey } => format!(
+            "invalid: this genesis's signer is not the referenced create's signer ({})",
+            hex::encode(founder_pubkey)
+        ),
+        buzz_db::GenesisAdoptionRefusal::WrongChannel => {
+            "invalid: the referenced create or receipt was not published in this genesis's channel"
+                .to_string()
+        }
+        buzz_db::GenesisAdoptionRefusal::CommandIdAmbiguous { reason } => format!(
+            "invalid: other session.create events share the founding commandId and disagree \
+             with it ({reason})"
+        ),
+    };
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message,
+    }
+}
+
+/// Validate the exact public envelope for a coding-session authority
+/// transition (44228).
+///
+/// Three ordered two-field tags — `h`, `csat-v`, `csat-genesis` — mirroring
+/// genesis's own envelope shape. `csat-genesis` is re-derived from the
+/// decoded content rather than trusted, for the same reason `csg-session` is:
+/// the storage transaction's chain lookup matches on the tag, so a
+/// disagreement between tag and content would let a transition be stored
+/// under one genesis while filed under another.
+///
+/// # Not enforced here: chain linkage and owner standing
+///
+/// Like genesis's envelope validator, this is pure and cannot check whether
+/// `prevAccepted`/`seq` actually extend the chain, or whether the signer is
+/// the session's current owner — both require the current accepted head,
+/// which only the storage transaction can answer atomically. See
+/// `buzz_db::event::insert_coding_session_authority_transition_event`.
+fn validate_coding_session_authority_transition_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_authority_transition::{
+        decode_coding_session_authority_transition, CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_authority_transition(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err(
+            "coding-session authority transition requires exactly three two-field tags".into(),
+        );
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err(
+            "coding-session authority transition first tag must be a channel UUID h tag".into(),
+        );
+    }
+    if tags[1][0] != "csat-v" || tags[1][1] != CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION {
+        return Err("unsupported coding-session authority transition tag version".into());
+    }
+    if tags[2][0] != "csat-genesis" || tags[2][1] != payload.genesis_ref {
+        return Err(
+            "coding-session authority transition csat-genesis does not match payload genesisRef"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Apply the action-specific authority rule for one already-resolved closure.
+///
+/// Closing is an owner act regardless of channel type. Reopening may be
+/// broader when a deployment wires in a project-authority source: the caller
+/// precomputes whether that authority admits the signer. `None` means this
+/// channel has no project authority source, so reopening remains
+/// founder-only.
+fn coding_session_closure_authority_verdict(
+    action: buzz_core::coding_session_closure::CodingSessionClosureAction,
+    signer: &[u8],
+    founder: &[u8],
+    project_reopen_admits: Option<bool>,
+) -> Result<(), String> {
+    use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+    match action {
+        CodingSessionClosureAction::Closed if signer == founder => Ok(()),
+        CodingSessionClosureAction::Closed => {
+            Err("restricted: only the session founder may close this session".into())
+        }
+        CodingSessionClosureAction::Open => match project_reopen_admits {
+            Some(true) => Ok(()),
+            Some(false) => {
+                Err("restricted: only a current project member may reopen this session".into())
+            }
+            None if signer == founder => Ok(()),
+            None => {
+                Err("restricted: only the session founder may reopen a standalone session".into())
+            }
+        },
+    }
+}
+
+/// Verify that a directly looked-up event is the exact genesis the closure
+/// claims, and return its founder pubkey.
+fn coding_session_closure_founder(
+    genesis_event: &Event,
+    genesis_channel: Option<Uuid>,
+    closure_channel: Uuid,
+    payload: &buzz_core::coding_session_closure::CodingSessionClosurePayload,
+) -> Result<[u8; 32], String> {
+    if event_kind_u32(genesis_event) != KIND_CODING_SESSION_GENESIS {
+        return Err("genesisRef does not name a coding-session genesis".into());
+    }
+    if genesis_channel != Some(closure_channel) {
+        return Err("the referenced genesis was not published in this closure's channel".into());
+    }
+    validate_coding_session_genesis_envelope(genesis_event)
+        .map_err(|error| format!("referenced genesis is malformed: {error}"))?;
+    let genesis_payload =
+        buzz_core::coding_session_genesis::decode_coding_session_genesis(&genesis_event.content)
+            .map_err(|error| format!("referenced genesis is malformed: {error}"))?;
+    if genesis_payload.session_ref != payload.session_ref {
+        return Err("closure sessionRef does not match the referenced genesis".into());
+    }
+    Ok(genesis_event.pubkey.to_bytes())
+}
+
+/// Resolve a closure's explicit genesis authority root and enforce the action
+/// against current project membership.
+async fn validate_coding_session_closure_authority(
+    tenant: &TenantContext,
+    state: &AppState,
+    event: &Event,
+    channel_id: Uuid,
+    payload: &buzz_core::coding_session_closure::CodingSessionClosurePayload,
+) -> Result<(), IngestError> {
+    let genesis_id = hex::decode(&payload.genesis_ref).map_err(|_| {
+        IngestError::Rejected("invalid: malformed coding-session closure genesisRef".into())
+    })?;
+    let genesis = state
+        .db
+        .get_event_by_id_including_deleted(tenant.community(), &genesis_id)
+        .await
+        .map_err(|error| {
+            IngestError::Internal(format!(
+                "error: looking up coding-session closure genesis: {error}"
+            ))
+        })?
+        .ok_or_else(|| {
+            IngestError::Rejected(
+                "invalid: genesisRef does not name a coding-session genesis this relay has stored"
+                    .into(),
+            )
+        })?;
+
+    let founder =
+        coding_session_closure_founder(&genesis.event, genesis.channel_id, channel_id, payload)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+
+    // This build has no project-authority source for reopen: standalone
+    // semantics (founder-only) apply. A deployment that wires one in
+    // precomputes the membership verdict here.
+    coding_session_closure_authority_verdict(
+        payload.action,
+        event.pubkey.as_bytes(),
+        &founder,
+        None,
+    )
+    .map_err(IngestError::AuthFailed)
+}
+
+/// The wire answer to an authority transition the chain refused.
+///
+/// Each variant of [`buzz_db::AuthorityTransitionRefusal`] gets a distinct,
+/// specific message — the publisher needs to know *which* invariant it
+/// missed (an unknown genesis is a very different bug from a stale head) to
+/// have any hope of resubmitting correctly.
+fn coding_session_authority_transition_refusal_result(
+    event_id_hex: String,
+    refusal: &buzz_db::AuthorityTransitionRefusal,
+) -> IngestResult {
+    let message = match refusal {
+        buzz_db::AuthorityTransitionRefusal::GenesisNotFound => {
+            "invalid: genesisRef does not name a coding-session genesis this relay has stored"
+                .to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::WrongChannel => {
+            "invalid: the referenced genesis was not published in this transition's channel, or \
+             its stored envelope does not agree with itself"
+                .to_string()
+        }
+        buzz_db::AuthorityTransitionRefusal::StaleHead {
+            expected_prev_accepted,
+        } => match expected_prev_accepted {
+            Some(expected) => format!(
+                "invalid: prevAccepted does not match the chain's current head (expected {})",
+                hex::encode(expected)
+            ),
+            None => "invalid: prevAccepted must be null — this chain has no accepted \
+                      transitions yet"
+                .to_string(),
+        },
+        buzz_db::AuthorityTransitionRefusal::SeqMismatch { expected_seq } => {
+            format!("invalid: seq does not extend the chain (expected {expected_seq})")
+        }
+        buzz_db::AuthorityTransitionRefusal::SignerNotOwner { owner_pubkey } => format!(
+            "invalid: signer is not the session's current owner ({})",
+            hex::encode(owner_pubkey)
+        ),
+        buzz_db::AuthorityTransitionRefusal::NoSuchGrant => {
+            "invalid: revoke names a pubkey with no live grant on this session".to_string()
+        }
+    };
+    IngestResult {
+        event_id: event_id_hex,
+        accepted: false,
+        message,
+    }
+}
+
+/// Validate the exact public envelope for a coding-session command (44220).
+///
+/// The signed event pubkey is the operator authority. The payload deliberately
+/// carries no actor attribution and the relay does not execute this kind. The
+/// `cs-target` tag is re-derived from the decoded payload rather than trusted,
+/// so a command cannot be addressed to one session generation in its tag and
+/// another in its content — the tag is what adapters route on.
+fn validate_coding_session_command_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_command::{
+        coding_session_target_key, CodingSessionCommandPayload, CODING_SESSION_COMMAND_TAG_VERSION,
+    };
+
+    let payload: CodingSessionCommandPayload = serde_json::from_str(&event.content)
+        .map_err(|_| "malformed coding-session command payload".to_string())?;
+    payload.validate()?;
+    let expected_target = coding_session_target_key(&payload.target);
+    let mut h_count = 0_u8;
+    let mut version_count = 0_u8;
+    let mut target_count = 0_u8;
+
+    for tag in event.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.len() != 2 {
+            return Err("coding-session command tags must have exactly two fields".into());
+        }
+        match parts[0].as_str() {
+            "h" => {
+                h_count = h_count.saturating_add(1);
+                if parts[1].parse::<Uuid>().is_err() {
+                    return Err("coding-session command h tag must be a channel UUID".into());
+                }
+            }
+            "cs-v" => {
+                version_count = version_count.saturating_add(1);
+                if parts[1] != CODING_SESSION_COMMAND_TAG_VERSION {
+                    return Err("unsupported coding-session command tag version".into());
+                }
+            }
+            "cs-target" => {
+                target_count = target_count.saturating_add(1);
+                if parts[1] != expected_target {
+                    return Err(
+                        "coding-session command cs-target does not match payload target".into(),
+                    );
+                }
+            }
+            _ => return Err("unsupported coding-session command tag".into()),
+        }
+    }
+
+    if h_count != 1 || version_count != 1 || target_count != 1 {
+        return Err(
+            "coding-session command requires exactly one h, cs-v, and cs-target tag".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate the exact public envelope for a coding-session lifecycle command (44221).
+///
+/// The signed event pubkey is the operator authority. Tags are ordered and
+/// payload-derived so adapters can reject ambiguous or substituted commands.
+///
+/// Fork amendment: the decoded payload's `projectRef` may be absent
+/// (standalone session). No tag carries the project reference, so nothing here
+/// changes shape — `decode_coding_session_lifecycle_command` owns the rule that
+/// a *present* reference must be a `30621:` project coordinate.
+fn validate_coding_session_lifecycle_command_envelope(event: &Event) -> Result<(), String> {
+    use buzz_core::coding_session_lifecycle_command::{
+        decode_coding_session_lifecycle_command, CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION,
+    };
+
+    let payload = decode_coding_session_lifecycle_command(&event.content)?;
+    let tags: Vec<&[String]> = event.tags.iter().map(|tag| tag.as_slice()).collect();
+    if tags.len() != 3 || tags.iter().any(|parts| parts.len() != 2) {
+        return Err(
+            "coding-session lifecycle command requires exactly three two-field tags".into(),
+        );
+    }
+    if tags[0][0] != "h" || tags[0][1].parse::<Uuid>().is_err() {
+        return Err(
+            "coding-session lifecycle command first tag must be a channel UUID h tag".into(),
+        );
+    }
+    if tags[1][0] != "csl-v" || tags[1][1] != CODING_SESSION_LIFECYCLE_COMMAND_TAG_VERSION {
+        return Err("unsupported coding-session lifecycle command tag version".into());
+    }
+    if tags[2][0] != "csl-command" || tags[2][1] != payload.command_id {
+        return Err(
+            "coding-session lifecycle command csl-command does not match payload commandId".into(),
+        );
+    }
+    Ok(())
+}
+
 /// Parse a NIP-ER `not_before` tag value into a Unix timestamp.
 ///
 /// The value MUST be a decimal integer string containing only ASCII digits, with
@@ -2554,7 +3181,7 @@ async fn ingest_event_inner(
         ));
     }
 
-    if auth.is_http() && (kind_u32 == KIND_GIFT_WRAP || kind_u32 == KIND_PRESENCE_UPDATE) {
+    if auth.is_http() && websocket_only_ingest_kind(kind_u32) {
         return Err(IngestError::Rejected(format!(
             "invalid: kind {kind_u32} is only accepted via WebSocket"
         )));
@@ -2913,6 +3540,14 @@ async fn ingest_event_inner(
             );
             auth_result.map_err(IngestError::Rejected)?;
         }
+        // Coding sessions take a strictly stronger gate than the one above:
+        // active membership, with no open-channel fallback. Visibility is not
+        // authority to steer a session, nor to author its record.
+        if is_coding_session_kind(kind_u32) {
+            check_coding_session_membership(tenant, state, ch_id, &pubkey_bytes, kind_u32, &event)
+                .await
+                .map_err(IngestError::Rejected)?;
+        }
     }
 
     // Handled directly — these mutate relay_members and do NOT get stored.
@@ -3144,6 +3779,63 @@ async fn ingest_event_inner(
                 "restricted: agent-turn-metric `p` tag must be the registered owner of this agent"
                     .into(),
             ));
+        }
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_COMMAND {
+        validate_coding_session_command_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_LIFECYCLE_COMMAND {
+        validate_coding_session_lifecycle_command_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_GENESIS {
+        validate_coding_session_genesis_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_GOAL {
+        buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_AUTHORITY_TRANSITION {
+        validate_coding_session_authority_transition_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_NAME {
+        buzz_core::coding_session_name::validate_coding_session_name_envelope(&event)
+            .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+    }
+
+    if kind_u32 == KIND_CODING_SESSION_CLOSURE {
+        let payload =
+            buzz_core::coding_session_closure::validate_coding_session_closure_envelope(&event)
+                .map_err(|error| IngestError::Rejected(format!("invalid: {error}")))?;
+        let Some(closure_channel) = channel_id else {
+            return Err(IngestError::Rejected(
+                "invalid: coding-session closure requires a channel".into(),
+            ));
+        };
+        validate_coding_session_closure_authority(tenant, state, &event, closure_channel, &payload)
+            .await?;
+    }
+
+    // The four provider-authored coding-session kinds get no envelope
+    // validator: their content is the provider's own account of what a session
+    // did, and a relay that parsed it would be asserting authority over facts
+    // it did not observe. Consumers verify signatures and shapes at their own
+    // trusted-ingress boundary. What the relay owes them is a bound on storage.
+    if let Some(max) = coding_session_content_cap(kind_u32) {
+        let got = event.content.len();
+        if got > max {
+            return Err(IngestError::Rejected(format!(
+                "invalid: coding-session kind {kind_u32} content exceeds {max} bytes (got {got})"
+            )));
         }
     }
 
@@ -3707,6 +4399,83 @@ async fn ingest_event_inner(
             .replace_parameterized_event(tenant.community(), &event, &d_tag, channel_id)
             .await
             .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+    } else if kind_u32 == KIND_CODING_SESSION_GENESIS {
+        // Genesis is a regular event, but storing it also decides a question no
+        // pure validator can: whether this pubkey is the founder of this
+        // umbrella, or merely the second to ask. That check has to be atomic
+        // with the insert, so it lives in the storage transaction — see
+        // `buzz_db::event::insert_coding_session_genesis_event`.
+        let Some(genesis_channel) = channel_id else {
+            // `requires_h_channel_scope` already refused a genesis without a
+            // resolvable `h` channel. Failing closed rather than falling
+            // through keeps an unscoped genesis from being stored *without*
+            // the uniqueness check that only a channel makes meaningful.
+            return Err(IngestError::Rejected(
+                "invalid: coding-session genesis requires a channel".into(),
+            ));
+        };
+        let thread_params = thread_meta.as_ref().map(|m| m.as_params());
+        match state
+            .db
+            .insert_coding_session_genesis_event(
+                tenant.community(),
+                &event,
+                genesis_channel,
+                thread_params,
+            )
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        {
+            buzz_db::CodingSessionGenesisInsertOutcome::Founded {
+                stored_event,
+                was_inserted,
+            } => (*stored_event, was_inserted),
+            buzz_db::CodingSessionGenesisInsertOutcome::AlreadyFounded { existing_event_id } => {
+                return Ok(coding_session_genesis_duplicate_result(
+                    event_id_hex,
+                    &existing_event_id,
+                ));
+            }
+            buzz_db::CodingSessionGenesisInsertOutcome::AdoptionRefused { refusal } => {
+                return Ok(coding_session_genesis_adoption_refusal_result(
+                    event_id_hex,
+                    &refusal,
+                ));
+            }
+        }
+    } else if kind_u32 == KIND_CODING_SESSION_AUTHORITY_TRANSITION {
+        // Same shape as genesis just above: "does this transition extend the
+        // chain" is a question the storage transaction alone can answer
+        // atomically — see
+        // `buzz_db::event::insert_coding_session_authority_transition_event`.
+        let Some(transition_channel) = channel_id else {
+            return Err(IngestError::Rejected(
+                "invalid: coding-session authority transition requires a channel".into(),
+            ));
+        };
+        let thread_params = thread_meta.as_ref().map(|m| m.as_params());
+        match state
+            .db
+            .insert_coding_session_authority_transition_event(
+                tenant.community(),
+                &event,
+                transition_channel,
+                thread_params,
+            )
+            .await
+            .map_err(|e| IngestError::Internal(format!("error: {e}")))?
+        {
+            buzz_db::CodingSessionAuthorityTransitionInsertOutcome::Accepted {
+                stored_event,
+                was_inserted,
+            } => (*stored_event, was_inserted),
+            buzz_db::CodingSessionAuthorityTransitionInsertOutcome::Refused { refusal } => {
+                return Ok(coding_session_authority_transition_refusal_result(
+                    event_id_hex,
+                    &refusal,
+                ));
+            }
+        }
     } else {
         let thread_params = thread_meta.as_ref().map(|m| m.as_params());
         match state
@@ -3840,6 +4609,10 @@ async fn ingest_event_inner(
         accepted: true,
         message: String::new(),
     })
+}
+
+fn websocket_only_ingest_kind(kind: u32) -> bool {
+    kind == KIND_GIFT_WRAP || buzz_core::kind::is_ephemeral(kind)
 }
 
 #[cfg(test)]
@@ -4594,6 +5367,14 @@ mod tests {
             required_scope_for_kind(KIND_PRESENCE_UPDATE, &dummy).is_err(),
             "KIND_PRESENCE_UPDATE should not be in the scope allowlist"
         );
+    }
+
+    #[test]
+    fn gift_wrap_presence_and_session_lease_are_websocket_only_for_ingest() {
+        assert!(websocket_only_ingest_kind(KIND_GIFT_WRAP));
+        assert!(websocket_only_ingest_kind(KIND_PRESENCE_UPDATE));
+        assert!(websocket_only_ingest_kind(KIND_CODING_SESSION_LEASE));
+        assert!(!websocket_only_ingest_kind(KIND_TEXT_NOTE));
     }
 
     #[test]
@@ -6546,5 +7327,1064 @@ mod tests {
             pulse_write_admitted(None, false, &owner),
             Err("restricted: unknown project coordinate")
         );
+    }
+
+    // ---- Coding sessions (44220–44230) -------------------------------------
+
+    /// Every coding-session kind, in kind order. Kept next to the tests that
+    /// sweep it so the next kind lands in the sweep the moment it exists.
+    const CODING_SESSION_TEST_KINDS: [u32; 11] = [
+        KIND_CODING_SESSION_COMMAND,
+        KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        KIND_CODING_SESSION_PROVIDER_CATALOG,
+        KIND_CODING_SESSION_METADATA,
+        KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        KIND_CODING_SESSION_TRANSCRIPT,
+        KIND_CODING_SESSION_GENESIS,
+        KIND_CODING_SESSION_GOAL,
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+        KIND_CODING_SESSION_NAME,
+        KIND_CODING_SESSION_CLOSURE,
+    ];
+
+    #[test]
+    fn coding_session_predicate_covers_exactly_44220_to_44230() {
+        for kind in 0..=u16::MAX as u32 {
+            assert_eq!(
+                is_coding_session_kind(kind),
+                (44220..=44230).contains(&kind),
+                "is_coding_session_kind disagrees at kind {kind}"
+            );
+        }
+        for kind in CODING_SESSION_TEST_KINDS {
+            assert!(is_coding_session_kind(kind));
+        }
+    }
+
+    /// All eleven are channel-scoped message writes, and none is global-only —
+    /// their whole containment story is the channel ACL, which only applies to
+    /// h-scoped events.
+    #[test]
+    fn coding_session_kinds_are_channel_scoped_message_writes() {
+        let dummy = make_dummy_event();
+        for kind in CODING_SESSION_TEST_KINDS {
+            assert_eq!(
+                required_scope_for_kind(kind, &dummy).unwrap(),
+                Scope::MessagesWrite,
+                "kind {kind} must be a message write",
+            );
+            assert!(
+                requires_h_channel_scope(kind),
+                "kind {kind} must require an h tag",
+            );
+            assert!(
+                !is_global_only_kind(kind),
+                "kind {kind} must never be global-only",
+            );
+        }
+    }
+
+    /// Unlike `check_channel_membership`, this verdict has no visibility
+    /// fallback: an outsider in an *open* channel is still denied. Reading a
+    /// room is not authority to steer an agent inside it, nor to author the
+    /// record of what that agent did.
+    #[test]
+    fn coding_session_membership_rejects_open_channel_outsider() {
+        assert!(coding_session_membership_verdict(true).is_ok());
+        let denial = coding_session_membership_verdict(false).unwrap_err();
+        assert!(denial.starts_with("restricted:"), "got {denial:?}");
+    }
+
+    #[test]
+    fn session_lease_requires_the_strict_gate_even_when_channel_visibility_is_open() {
+        assert!(requires_strict_coding_session_membership(
+            KIND_CODING_SESSION_LEASE
+        ));
+        let denial = coding_session_membership_verdict(false).unwrap_err();
+        assert_eq!(
+            denial,
+            "restricted: coding-session events require channel membership"
+        );
+    }
+
+    #[test]
+    fn coding_session_command_requires_exact_content_and_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-command/v1",
+            "commandId": "cmd-1",
+            "target": {
+                "driver": "provider-a",
+                "instanceId": "instance-1",
+                "sessionId": "session-1",
+                "generation": 2,
+            },
+            "action": { "type": "thread.turn.start", "text": "Steer" },
+        })
+        .to_string();
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let event = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&event).is_ok());
+
+        // Interrupt is the other operator action; the Stop button publishes it
+        // natively, so the envelope validator must accept it.
+        let interrupt_content = serde_json::json!({
+            "schema": "buzz-coding-session-command/v1",
+            "commandId": "cmd-2",
+            "target": {
+                "driver": "provider-a",
+                "instanceId": "instance-1",
+                "sessionId": "session-1",
+                "generation": 2,
+            },
+            "action": { "type": "thread.turn.interrupt" },
+        })
+        .to_string();
+        let interrupt = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &interrupt_content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&interrupt).is_ok());
+
+        // The tag is what adapters route on, so it must be re-derivable from
+        // the content it claims to address.
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", "coding-session/v1|wrong"],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&mismatched).is_err());
+
+        // A generation swap in the tag alone would steer a different session.
+        let wrong_generation = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &[
+                    "cs-target",
+                    "coding-session/v1|10:provider-a10:instance-19:session-11:3",
+                ],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&wrong_generation).is_err());
+
+        let extra_tag = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-1"],
+                &["cs-target", target],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&extra_tag).is_err());
+
+        let missing_target = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[&["h", &channel], &["cs-v", "csc1-1"]],
+        );
+        assert!(validate_coding_session_command_envelope(&missing_target).is_err());
+
+        let bad_version = make_event_with_tags(
+            KIND_CODING_SESSION_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["cs-v", "csc1-0"],
+                &["cs-target", target],
+            ],
+        );
+        assert!(validate_coding_session_command_envelope(&bad_version).is_err());
+    }
+
+    fn lifecycle_content(project_ref: serde_json::Value) -> String {
+        serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.create",
+                "projectRef": project_ref,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+                "model": null,
+                "title": "Advance Buzz live sessions",
+                "initialTurn": null,
+            },
+        })
+        .to_string()
+    }
+
+    fn lifecycle_event(content: &str, channel: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            content,
+            &[
+                &["h", channel],
+                &["csl-v", "csl1-1"],
+                &["csl-command", "create-1"],
+            ],
+        )
+    }
+
+    #[test]
+    fn coding_session_lifecycle_command_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let project = format!("30621:{}:amas-redux", "cd".repeat(32));
+        let content = lifecycle_content(serde_json::Value::String(project));
+        let event = lifecycle_event(&content, &channel);
+        assert!(validate_coding_session_lifecycle_command_envelope(&event).is_ok());
+
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            &content,
+            &[
+                &["h", &channel],
+                &["csl-v", "csl1-1"],
+                &["csl-command", "create-2"],
+            ],
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&mismatched).is_err());
+
+        // Ordered, not merely present: adapters read tags positionally.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            &content,
+            &[
+                &["csl-v", "csl1-1"],
+                &["h", &channel],
+                &["csl-command", "create-1"],
+            ],
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&reordered).is_err());
+    }
+
+    /// Fork amendment: a standalone session (no project) is a first-class,
+    /// accepted shape — the relay must not require a project binding.
+    #[test]
+    fn coding_session_lifecycle_command_accepts_a_null_project_ref() {
+        let channel = Uuid::new_v4().to_string();
+        let content = lifecycle_content(serde_json::Value::Null);
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                &content, &channel
+            ))
+            .is_ok()
+        );
+    }
+
+    /// Optional is not unvalidated. A present reference must be a NIP-MP
+    /// project coordinate; the donor-era `30178:` team-catalog form and a bare
+    /// slug are both rejected, so a project-bound session cannot be quietly
+    /// pointed at something that is not a project.
+    #[test]
+    fn coding_session_lifecycle_command_rejects_non_project_refs() {
+        let channel = Uuid::new_v4().to_string();
+        let owner = "cd".repeat(32);
+        for rejected in [
+            format!("30178:{owner}:amas-redux"),
+            format!("30617:{owner}:amas-redux"),
+            "amas-redux".to_string(),
+        ] {
+            let content = lifecycle_content(serde_json::Value::String(rejected.clone()));
+            assert!(
+                validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                    &content, &channel
+                ))
+                .is_err(),
+                "should reject projectRef {rejected:?}"
+            );
+        }
+    }
+
+    /// A host filesystem path must never ride along inside signed content —
+    /// the working directory is machine-local state, resolved by the producer.
+    #[test]
+    fn coding_session_lifecycle_command_rejects_unknown_payload_fields() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": "abababababababababababababababababababababababababababababababab",
+                "model": null,
+                "title": null,
+                "initialTurn": null,
+                "cwd": "/Users/someone/checkout",
+            },
+        })
+        .to_string();
+        assert!(
+            validate_coding_session_lifecycle_command_envelope(&lifecycle_event(
+                &content, &channel
+            ))
+            .is_err()
+        );
+    }
+
+    /// The canonical umbrella reference used by the genesis tests.
+    const GENESIS_SESSION_REF: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+    fn genesis_event(content: &str, channel: &str, session_tag: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            content,
+            &[
+                &["h", channel],
+                &["csg-v", "csg1-1"],
+                &["csg-session", session_tag],
+            ],
+        )
+    }
+
+    fn genesis_content(session_ref: &str) -> String {
+        serde_json::json!({ "sessionRef": session_ref, "v": 1 }).to_string()
+    }
+
+    #[test]
+    fn coding_session_genesis_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = genesis_content(GENESIS_SESSION_REF);
+        assert!(validate_coding_session_genesis_envelope(&genesis_event(
+            &content,
+            &channel,
+            GENESIS_SESSION_REF
+        ))
+        .is_ok());
+
+        // Ordered, not merely present: consumers read tags positionally.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            &content,
+            &[
+                &["csg-v", "csg1-1"],
+                &["h", &channel],
+                &["csg-session", GENESIS_SESSION_REF],
+            ],
+        );
+        assert!(validate_coding_session_genesis_envelope(&reordered).is_err());
+
+        // Three tags exactly — no room for a smuggled fourth.
+        let extra = make_event_with_tags(
+            KIND_CODING_SESSION_GENESIS,
+            &content,
+            &[
+                &["h", &channel],
+                &["csg-v", "csg1-1"],
+                &["csg-session", GENESIS_SESSION_REF],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_genesis_envelope(&extra).is_err());
+
+        for bad_tags in [
+            vec![
+                vec!["h".to_owned(), "not-a-uuid".to_owned()],
+                vec!["csg-v".to_owned(), "csg1-1".to_owned()],
+                vec!["csg-session".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+            vec![
+                vec!["h".to_owned(), channel.clone()],
+                vec!["csg-v".to_owned(), "csg1-0".to_owned()],
+                vec!["csg-session".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+            vec![
+                vec!["h".to_owned(), channel.clone()],
+                vec!["csg-v".to_owned(), "csg1-1".to_owned()],
+                vec!["csg-ref".to_owned(), GENESIS_SESSION_REF.to_owned()],
+            ],
+        ] {
+            let borrowed: Vec<Vec<&str>> = bad_tags
+                .iter()
+                .map(|parts| parts.iter().map(String::as_str).collect())
+                .collect();
+            let slices: Vec<&[&str]> = borrowed.iter().map(Vec::as_slice).collect();
+            let event = make_event_with_tags(KIND_CODING_SESSION_GENESIS, &content, &slices);
+            assert!(
+                validate_coding_session_genesis_envelope(&event).is_err(),
+                "should reject tags {bad_tags:?}"
+            );
+        }
+    }
+
+    /// The tag is what a consumer filters on and the content is what it reads.
+    /// If those two could name different umbrellas, a genesis would be
+    /// discoverable as the founder of a session it never founded.
+    #[test]
+    fn coding_session_genesis_rejects_a_tag_that_disagrees_with_content() {
+        let channel = Uuid::new_v4().to_string();
+        let content = genesis_content(GENESIS_SESSION_REF);
+        let substituted = genesis_event(&content, &channel, "0000000a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        assert!(validate_coding_session_genesis_envelope(&substituted).is_err());
+    }
+
+    /// A genesis that loses the race for its reference is refused outright.
+    /// The `accepted: false` here is the whole of the contract: a duplicate
+    /// gets no acceptance receipt, and the message names the founder it must
+    /// resolve to instead.
+    #[test]
+    fn coding_session_genesis_duplicate_is_rejected_without_a_receipt() {
+        let loser = "cd".repeat(32);
+        let winner = hex::decode("ab".repeat(32)).expect("winner id");
+        let result = coding_session_genesis_duplicate_result(loser.clone(), &winner);
+
+        assert_eq!(result.event_id, loser);
+        assert!(
+            !result.accepted,
+            "a rival claim must be refused, not accepted-with-a-note"
+        );
+        assert!(
+            result.message.starts_with("duplicate:"),
+            "duplicates keep the established `duplicate:` wire prefix, got {:?}",
+            result.message
+        );
+        assert!(
+            result.message.contains(&"ab".repeat(32)),
+            "the refusal must name the winning genesis, got {:?}",
+            result.message
+        );
+    }
+
+    /// A genesis over a session that predates the kind is refused, and every
+    /// refusal reads as `invalid:`, never `duplicate:` — nothing was
+    /// duplicated, and a client that saw `duplicate:` would look for a rival
+    /// genesis that does not exist. R15 replaced the old two-refusal
+    /// (`NotTheFounder`/`FounderAmbiguous`) shape with an explicit-reference
+    /// contract; this sweeps every `GenesisAdoptionRefusal` variant's wire
+    /// message.
+    #[test]
+    fn coding_session_genesis_adoption_refusals_are_reported_as_invalid_never_duplicate() {
+        let create = "cd".repeat(32);
+        let founder = "ab".repeat(32);
+
+        let cases: Vec<(buzz_db::GenesisAdoptionRefusal, &str)> = vec![
+            (
+                buzz_db::GenesisAdoptionRefusal::LegacyHistoryRequiresAdoption {
+                    existing_create_event_id: hex::decode(&create).expect("create"),
+                },
+                "adopts",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReferencedCreateNotFound,
+                "createEventId",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReferencedReceiptNotFound,
+                "receiptEventId",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::ReceiptDoesNotJoinCreate,
+                "join",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::SessionRefMismatch,
+                "sessionRef",
+            ),
+            (
+                buzz_db::GenesisAdoptionRefusal::SignerMismatch {
+                    founder_pubkey: hex::decode(&founder).expect("founder"),
+                },
+                "signer",
+            ),
+            (buzz_db::GenesisAdoptionRefusal::WrongChannel, "channel"),
+            (
+                buzz_db::GenesisAdoptionRefusal::CommandIdAmbiguous {
+                    reason: "two sessionRefs claim the founding command",
+                },
+                "commandId",
+            ),
+        ];
+
+        for (refusal, expect_substring) in cases {
+            let result = coding_session_genesis_adoption_refusal_result("ef".repeat(32), &refusal);
+            assert!(!result.accepted, "{refusal:?} must be refused");
+            assert!(
+                result.message.starts_with("invalid:"),
+                "{refusal:?}: legacy-history refusals are not duplicates, got {:?}",
+                result.message
+            );
+            assert!(
+                result.message.contains(expect_substring),
+                "{refusal:?}: expected {expect_substring:?} in {:?}",
+                result.message
+            );
+        }
+    }
+
+    /// Genesis content is two fields and nothing else. A restated founder
+    /// pubkey is the dangerous case: the signature already settles authorship,
+    /// so a content field claiming it is a second answer to a settled question.
+    #[test]
+    fn coding_session_genesis_rejects_off_contract_content() {
+        let channel = Uuid::new_v4().to_string();
+        for rejected in [
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF }).to_string(),
+            serde_json::json!({ "v": 1 }).to_string(),
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF, "v": 2 }).to_string(),
+            serde_json::json!({
+                "sessionRef": GENESIS_SESSION_REF,
+                "v": 1,
+                "founder": "ab".repeat(32),
+            })
+            .to_string(),
+            serde_json::json!({ "sessionRef": GENESIS_SESSION_REF.to_uppercase(), "v": 1 })
+                .to_string(),
+            String::new(),
+        ] {
+            let event = genesis_event(&rejected, &channel, GENESIS_SESSION_REF);
+            assert!(
+                validate_coding_session_genesis_envelope(&event).is_err(),
+                "should reject content {rejected:?}"
+            );
+        }
+    }
+
+    /// R15: the envelope (three tags, `csg-session` mirroring `sessionRef`)
+    /// is identical for both payload forms — only the content's optional
+    /// `adopts` key differs, and the DB-transactional adoption verification
+    /// (event.rs) is a separate concern from this pure envelope check.
+    #[test]
+    fn coding_session_genesis_envelope_accepts_the_adoption_form() {
+        let channel = Uuid::new_v4().to_string();
+        let content = serde_json::json!({
+            "sessionRef": GENESIS_SESSION_REF,
+            "v": 1,
+            "adopts": {
+                "createEventId": "ab".repeat(32),
+                "receiptEventId": "cd".repeat(32),
+            },
+        })
+        .to_string();
+        assert!(validate_coding_session_genesis_envelope(&genesis_event(
+            &content,
+            &channel,
+            GENESIS_SESSION_REF
+        ))
+        .is_ok());
+    }
+
+    fn goal_event(content: &str, channel: &str, session_ref: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_GOAL,
+            content,
+            &[&["h", channel], &["d", session_ref], &["csgl-v", "csgl1-1"]],
+        )
+    }
+
+    #[test]
+    fn coding_session_goal_requires_exact_regular_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        assert!(
+            buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&goal_event(
+                "Make authority visible",
+                &channel,
+                GENESIS_SESSION_REF
+            ))
+            .is_ok()
+        );
+
+        let smuggled = make_event_with_tags(
+            KIND_CODING_SESSION_GOAL,
+            "Make authority visible",
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["csgl-v", "csgl1-1"],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&smuggled)
+                .is_err()
+        );
+
+        for event in [
+            goal_event("", &channel, GENESIS_SESSION_REF),
+            goal_event("goal", &channel, &GENESIS_SESSION_REF.to_uppercase()),
+            make_event_with_tags(
+                KIND_CODING_SESSION_GOAL,
+                "goal",
+                &[
+                    &["d", GENESIS_SESSION_REF],
+                    &["h", &channel],
+                    &["csgl-v", "csgl1-1"],
+                ],
+            ),
+        ] {
+            assert!(
+                buzz_core::coding_session_goal::validate_coding_session_goal_envelope(&event)
+                    .is_err()
+            );
+        }
+    }
+
+    fn name_event(content: &str, channel: &str, session_ref: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_NAME,
+            content,
+            &[&["h", channel], &["d", session_ref], &["csnm-v", "csnm1-1"]],
+        )
+    }
+
+    #[test]
+    fn coding_session_name_requires_exact_regular_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        assert!(
+            buzz_core::coding_session_name::validate_coding_session_name_envelope(&name_event(
+                "Authority phase",
+                &channel,
+                GENESIS_SESSION_REF
+            ))
+            .is_ok()
+        );
+
+        let smuggled = make_event_with_tags(
+            KIND_CODING_SESSION_NAME,
+            "Authority phase",
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["csnm-v", "csnm1-1"],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_name::validate_coding_session_name_envelope(&smuggled)
+                .is_err()
+        );
+
+        for event in [
+            name_event("", &channel, GENESIS_SESSION_REF),
+            name_event("first\nsecond", &channel, GENESIS_SESSION_REF),
+            name_event("name", &channel, &GENESIS_SESSION_REF.to_uppercase()),
+            make_event_with_tags(
+                KIND_CODING_SESSION_NAME,
+                "name",
+                &[
+                    &["d", GENESIS_SESSION_REF],
+                    &["h", &channel],
+                    &["csnm-v", "csnm1-1"],
+                ],
+            ),
+        ] {
+            assert!(
+                buzz_core::coding_session_name::validate_coding_session_name_envelope(&event)
+                    .is_err()
+            );
+        }
+    }
+
+    fn closure_event(action: &str, channel: &str, session_ref: &str, genesis_ref: &str) -> Event {
+        let content = format!(
+            r#"{{"action":"{action}","genesisRef":"{genesis_ref}","sessionRef":"{session_ref}","v":1}}"#
+        );
+        make_event_with_tags(
+            KIND_CODING_SESSION_CLOSURE,
+            &content,
+            &[
+                &["h", channel],
+                &["d", session_ref],
+                &["cscl-v", "cscl1-1"],
+                &["cscl-genesis", genesis_ref],
+            ],
+        )
+    }
+
+    #[test]
+    fn coding_session_closure_requires_exact_rooted_revision_envelope() {
+        let channel = Uuid::new_v4().to_string();
+        let genesis_ref = "ab".repeat(32);
+        for action in ["closed", "open"] {
+            assert!(
+                buzz_core::coding_session_closure::validate_coding_session_closure_envelope(
+                    &closure_event(action, &channel, GENESIS_SESSION_REF, &genesis_ref)
+                )
+                .is_ok()
+            );
+        }
+
+        let mismatched = closure_event("closed", &channel, GENESIS_SESSION_REF, &genesis_ref);
+        let mismatched = make_event_with_tags(
+            KIND_CODING_SESSION_CLOSURE,
+            &mismatched.content,
+            &[
+                &["h", &channel],
+                &["d", GENESIS_SESSION_REF],
+                &["cscl-v", "cscl1-1"],
+                &["cscl-genesis", &"cd".repeat(32)],
+            ],
+        );
+        assert!(
+            buzz_core::coding_session_closure::validate_coding_session_closure_envelope(
+                &mismatched
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_genesis_root_must_match_kind_channel_and_session() {
+        use buzz_core::coding_session_closure::{
+            CodingSessionClosureAction, CodingSessionClosurePayload,
+        };
+
+        let channel = Uuid::new_v4();
+        let genesis = genesis_event(
+            &genesis_content(GENESIS_SESSION_REF),
+            &channel.to_string(),
+            GENESIS_SESSION_REF,
+        );
+        let payload = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            genesis.id.to_hex(),
+            GENESIS_SESSION_REF,
+        );
+        assert_eq!(
+            coding_session_closure_founder(&genesis, Some(channel), channel, &payload).unwrap(),
+            genesis.pubkey.to_bytes()
+        );
+        assert!(
+            coding_session_closure_founder(&genesis, Some(Uuid::new_v4()), channel, &payload,)
+                .is_err()
+        );
+
+        let wrong_session = CodingSessionClosurePayload::new(
+            CodingSessionClosureAction::Closed,
+            genesis.id.to_hex(),
+            "11111111-1111-4111-8111-111111111111",
+        );
+        assert!(
+            coding_session_closure_founder(&genesis, Some(channel), channel, &wrong_session,)
+                .is_err()
+        );
+
+        let not_genesis = name_event("not a genesis", &channel.to_string(), GENESIS_SESSION_REF);
+        assert!(
+            coding_session_closure_founder(&not_genesis, Some(channel), channel, &payload,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn coding_session_closure_authority_is_action_and_container_specific() {
+        use buzz_core::coding_session_closure::CodingSessionClosureAction;
+
+        let founder = vec![1; 32];
+        let project_member = vec![3; 32];
+        let outsider = vec![4; 32];
+
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Closed,
+            &founder,
+            &founder,
+            Some(true),
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Closed,
+            &project_member,
+            &founder,
+            Some(true),
+        )
+        .is_err());
+
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &project_member,
+            &founder,
+            Some(true),
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &outsider,
+            &founder,
+            Some(false),
+        )
+        .is_err());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &founder,
+            &founder,
+            None,
+        )
+        .is_ok());
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Open,
+            &project_member,
+            &founder,
+            None,
+        )
+        .is_err());
+    }
+
+    /// The canonical genesis and grantee ids used by the authority-transition
+    /// envelope tests.
+    const AUTHORITY_TRANSITION_GENESIS_REF: &str =
+        "abababababababababababababababababababababababababababababababab";
+    const AUTHORITY_TRANSITION_GRANTEE: &str =
+        "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
+    fn authority_transition_event(content: &str, channel: &str, genesis_tag: &str) -> Event {
+        make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            content,
+            &[
+                &["h", channel],
+                &["csat-v", "csat1-1"],
+                &["csat-genesis", genesis_tag],
+            ],
+        )
+    }
+
+    fn authority_transition_content(
+        genesis_ref: &str,
+        prev: &str,
+        seq: u32,
+        grantee: &str,
+    ) -> String {
+        format!(
+            r#"{{"genesisRef":"{genesis_ref}","prevAccepted":{prev},"seq":{seq},"type":"grant-operator","granteePubkey":"{grantee}"}}"#
+        )
+    }
+
+    #[test]
+    fn coding_session_authority_transition_requires_exact_content_and_ordered_tags() {
+        let channel = Uuid::new_v4().to_string();
+        let content = authority_transition_content(
+            AUTHORITY_TRANSITION_GENESIS_REF,
+            "null",
+            1,
+            AUTHORITY_TRANSITION_GRANTEE,
+        );
+        assert!(validate_coding_session_authority_transition_envelope(
+            &authority_transition_event(&content, &channel, AUTHORITY_TRANSITION_GENESIS_REF)
+        )
+        .is_ok());
+
+        // Ordered, not merely present.
+        let reordered = make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            &content,
+            &[
+                &["csat-v", "csat1-1"],
+                &["h", &channel],
+                &["csat-genesis", AUTHORITY_TRANSITION_GENESIS_REF],
+            ],
+        );
+        assert!(validate_coding_session_authority_transition_envelope(&reordered).is_err());
+
+        // A smuggled fourth tag.
+        let extra = make_event_with_tags(
+            KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+            &content,
+            &[
+                &["h", &channel],
+                &["csat-v", "csat1-1"],
+                &["csat-genesis", AUTHORITY_TRANSITION_GENESIS_REF],
+                &["p", &"ab".repeat(32)],
+            ],
+        );
+        assert!(validate_coding_session_authority_transition_envelope(&extra).is_err());
+    }
+
+    /// The tag is what the storage transaction's chain lookup routes on, so
+    /// it must be re-derivable from the content it claims to address — a
+    /// disagreement must never be silently stored.
+    #[test]
+    fn coding_session_authority_transition_rejects_a_tag_that_disagrees_with_content() {
+        let channel = Uuid::new_v4().to_string();
+        let content = authority_transition_content(
+            AUTHORITY_TRANSITION_GENESIS_REF,
+            "null",
+            1,
+            AUTHORITY_TRANSITION_GRANTEE,
+        );
+        let other_genesis = "11".repeat(32);
+        let substituted = authority_transition_event(&content, &channel, &other_genesis);
+        assert!(validate_coding_session_authority_transition_envelope(&substituted).is_err());
+    }
+
+    #[test]
+    fn coding_session_authority_transition_rejects_off_contract_content() {
+        let channel = Uuid::new_v4().to_string();
+        for rejected in [
+            // Missing granteePubkey.
+            serde_json::json!({
+                "genesisRef": AUTHORITY_TRANSITION_GENESIS_REF,
+                "prevAccepted": null,
+                "seq": 1,
+                "type": "grant-operator",
+            })
+            .to_string(),
+            // Unknown transition type.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                "null",
+                1,
+                AUTHORITY_TRANSITION_GRANTEE,
+            )
+            .replace("grant-operator", "takeover"),
+            // seq = 0.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                "null",
+                0,
+                AUTHORITY_TRANSITION_GRANTEE,
+            ),
+            // seq/prevAccepted disagreement.
+            authority_transition_content(
+                AUTHORITY_TRANSITION_GENESIS_REF,
+                &format!("\"{}\"", "11".repeat(32)),
+                1,
+                AUTHORITY_TRANSITION_GRANTEE,
+            ),
+            String::new(),
+        ] {
+            let event =
+                authority_transition_event(&rejected, &channel, AUTHORITY_TRANSITION_GENESIS_REF);
+            assert!(
+                validate_coding_session_authority_transition_envelope(&event).is_err(),
+                "should reject content {rejected:?}"
+            );
+        }
+    }
+
+    /// Every [`buzz_db::AuthorityTransitionRefusal`] variant must map to a
+    /// distinct, specific wire message — mirroring the genesis adoption
+    /// refusal sweep.
+    #[test]
+    fn coding_session_authority_transition_refusals_are_reported_as_invalid() {
+        let event_id_hex = "ef".repeat(32);
+        let owner = vec![0xabu8; 32];
+        let stale_head = vec![0xcdu8; 32];
+
+        let cases: Vec<(buzz_db::AuthorityTransitionRefusal, &str)> = vec![
+            (
+                buzz_db::AuthorityTransitionRefusal::GenesisNotFound,
+                "genesisRef",
+            ),
+            (buzz_db::AuthorityTransitionRefusal::WrongChannel, "channel"),
+            (
+                buzz_db::AuthorityTransitionRefusal::StaleHead {
+                    expected_prev_accepted: Some(stale_head.clone()),
+                },
+                "current head",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::StaleHead {
+                    expected_prev_accepted: None,
+                },
+                "no accepted",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SeqMismatch { expected_seq: 3 },
+                "seq",
+            ),
+            (
+                buzz_db::AuthorityTransitionRefusal::SignerNotOwner {
+                    owner_pubkey: owner.clone(),
+                },
+                "current owner",
+            ),
+        ];
+
+        let mut seen_messages = std::collections::HashSet::new();
+        for (refusal, expected_substring) in cases {
+            let result =
+                coding_session_authority_transition_refusal_result(event_id_hex.clone(), &refusal);
+            assert!(!result.accepted, "refusal must set accepted=false");
+            assert!(
+                result.message.starts_with("invalid:"),
+                "got {:?}",
+                result.message
+            );
+            assert!(
+                result.message.contains(expected_substring),
+                "expected {:?} to mention {expected_substring:?}",
+                result.message
+            );
+            assert!(
+                seen_messages.insert(result.message.clone()),
+                "duplicate wire message across refusal variants: {:?}",
+                result.message
+            );
+        }
+    }
+
+    /// The four provider-authored kinds are bounded by size alone — the relay
+    /// does not parse a provider's account of its own session. These are the
+    /// exact caps the producer writes against.
+    #[test]
+    fn provider_authored_coding_session_kinds_have_size_caps() {
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_PROVIDER_CATALOG),
+            Some(256 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_METADATA),
+            Some(32 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_LIFECYCLE_RECEIPT),
+            Some(16 * 1024)
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_TRANSCRIPT),
+            Some(32 * 1024)
+        );
+        // The four operator-authored kinds are bounded by their payload
+        // contracts in buzz-core instead, so they must not also carry a cap
+        // here. Their envelope validators run first, and each one rejects
+        // oversized content before parsing it.
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_COMMAND),
+            None
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_LIFECYCLE_COMMAND),
+            None
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_GENESIS),
+            None
+        );
+        assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_GOAL), None);
+        assert_eq!(coding_session_content_cap(KIND_CODING_SESSION_NAME), None);
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_CLOSURE),
+            None
+        );
+        assert_eq!(
+            coding_session_content_cap(KIND_CODING_SESSION_AUTHORITY_TRANSITION),
+            None
+        );
+        // And no other kind is bounded by this table.
+        assert_eq!(coding_session_content_cap(KIND_STREAM_MESSAGE), None);
     }
 }

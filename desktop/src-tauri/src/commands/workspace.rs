@@ -316,5 +316,17 @@ pub async fn apply_workspace(
         });
     }
 
+    // Bind the coding-session provider to the workspace relay. This runs here
+    // rather than in `setup` for the same reason managed-agent restore does:
+    // during setup the relay override is not yet installed, so the provider
+    // would attach to the fallback relay and answer commands for the wrong
+    // community. Off the command path because stopping a previously bound
+    // provider escalates through a signal timeout.
+    let provider_app = restore_app.clone();
+    let provider_relay = crate::relay::relay_ws_url_with_override(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::session_provider::start_provider_if_provisioned(&provider_app, &provider_relay);
+    });
+
     Ok(())
 }

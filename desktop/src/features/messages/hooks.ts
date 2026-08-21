@@ -86,6 +86,11 @@ import {
   KIND_STREAM_MESSAGE,
   KIND_SYSTEM_MESSAGE,
 } from "@/shared/constants/kinds";
+import {
+  codingSessionLaneRenderableRefs,
+  isCodingSessionLaneMessageHiddenFromChannel,
+  observeCodingSessionLaneRefs,
+} from "@/features/messages/lib/codingSessionLaneVisibility";
 
 type MessageQueryContext = {
   optimisticId: string;
@@ -264,13 +269,18 @@ export function reconcileFetchedChannelWindow(
   // canceled request commit its stale page into the authoritative window.
   signal.throwIfAborted();
   const windowKey = channelWindowKey(channelId);
-  const page = parseChannelWindowResponse(events, channelId, null);
+  // Seeing a lane ref makes this channel worth resolving; it never makes the
+  // ref renderable on its own. Parse and reconcile against the same resolved
+  // set so cache-only rows cannot reintroduce a hidden lane message.
+  observeCodingSessionLaneRefs(channelId, events);
+  const laneRefs = codingSessionLaneRenderableRefs(channelId);
+  const page = parseChannelWindowResponse(events, channelId, null, laneRefs);
   const current =
     queryClient.getQueryData<ChannelWindowStore>(windowKey) ??
     emptyChannelWindowStore();
   const next = replaceNewestChannelWindow(current, page);
   queryClient.setQueryData(windowKey, next);
-  return reconcileChannelWindowMessages(next, previousMessages);
+  return reconcileChannelWindowMessages(next, previousMessages, laneRefs);
 }
 
 export function useChannelMessagesQuery(channel: Channel | null) {
@@ -322,7 +332,14 @@ export function useChannelSubscription(channel: Channel | null) {
       if (next !== current) queryClient.setQueryData(windowKey, next);
       return;
     }
-    const isTimelineRow = CHANNEL_TIMELINE_KINDS.has(event.kind);
+    // Live-path twin of the window parse: a session-lane message never becomes
+    // a channel timeline row *when this client can open its lane*; otherwise it
+    // is ordinary chat. Observing the ref first lets the visibility hook
+    // resolve it and re-project the window.
+    observeCodingSessionLaneRefs(channelId, [event]);
+    const isTimelineRow =
+      CHANNEL_TIMELINE_KINDS.has(event.kind) &&
+      !isCodingSessionLaneMessageHiddenFromChannel(channelId, event);
     const threadReference = isTimelineRow
       ? getThreadReference(event.tags)
       : null;

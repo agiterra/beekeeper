@@ -241,6 +241,31 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goCodingSession = React.useCallback(
+    (channelId: string, generationId: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/coding-sessions/$channelId/$generationId",
+          params: { channelId, generationId },
+          search: {},
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
+  const goNewCodingSession = React.useCallback(
+    (channelId?: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/coding-sessions/new",
+          search: channelId ? { channelId } : {},
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goNewMessage = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -349,8 +374,10 @@ export function useAppNavigation() {
     closeWorkflowDetail,
     goAgents,
     goChannel,
+    goCodingSession,
     goForumPost,
     goHome,
+    goNewCodingSession,
     goNewMessage,
     goProject,
     goProjectRepo,

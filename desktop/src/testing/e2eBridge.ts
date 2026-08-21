@@ -59,6 +59,7 @@ import type {
   RawAcpAuthMethodsResult,
   RawConnectAcpRuntimeResult,
 } from "@/shared/api/tauriAgentAuth";
+import type { CodingSessionProviderRuntime as RawCodingSessionProviderRuntime } from "@/shared/api/tauriSessionProvider";
 import type {
   RawAcpRuntimeCatalogEntry,
   RawInstallRuntimeResult,
@@ -249,6 +250,21 @@ type E2eConfig = {
     connectAcpRuntimeError?: string;
     /** Catalog returned after a successful mocked connect (sign-in). */
     acpRuntimesCatalogAfterConnect?: RawAcpRuntimeCatalogEntry[];
+    /**
+     * Coding-session provider host state for the create flow. Absent means
+     * the provider commands stay unmocked and throw, like any other
+     * unsupported command — existing specs keep their failure-path behavior.
+     */
+    codingSessionProviderStatus?: {
+      provisioned: boolean;
+      running: boolean;
+      providerPubkey?: string;
+      instanceId?: string;
+    };
+    /** Host runtime table for `coding_session_provider_runtimes`. */
+    codingSessionProviderRuntimes?: RawCodingSessionProviderRuntime[];
+    /** Runtime table once a mocked connect (sign-in) has completed. */
+    codingSessionProviderRuntimesAfterConnect?: RawCodingSessionProviderRuntime[];
     activePersonaIds?: string[];
     installAcpRuntimeDelayMs?: number;
     /** Live output lines the mocked install emits before it settles. */
@@ -519,6 +535,8 @@ type E2eConfig = {
       provider: string | null;
       model: string | null;
       preferred_runtime?: string | null;
+      /** Coding-session ingress authority. Absent means fail-closed. */
+      "allowed-bridge-pubkeys"?: Array<{ pubkey: string; label: string }>;
     };
     /** Explicit owner-only agent-access capability; independent of baked defaults. */
     ownerOnlyAccessBuild?: boolean;
@@ -12562,6 +12580,43 @@ export function maybeInstallE2eTauriMocks() {
           payload as { runtimeId?: string },
           activeConfig,
         );
+      // The coding-session provider host commands are mocked only when a spec
+      // opts in with `codingSessionProviderStatus` — unconfigured, they throw
+      // like any unsupported command so failure-path specs keep working.
+      case "coding_session_provider_status":
+      case "provision_coding_session_provider":
+      case "ensure_coding_session_provider_running": {
+        const status = activeConfig?.mock?.codingSessionProviderStatus;
+        if (!status) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return status;
+      }
+      case "coding_session_provider_runtimes": {
+        const mock = activeConfig?.mock;
+        if (!mock?.codingSessionProviderStatus) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        if (
+          mockConnectCompleted &&
+          mock.codingSessionProviderRuntimesAfterConnect
+        ) {
+          return mock.codingSessionProviderRuntimesAfterConnect;
+        }
+        return mock.codingSessionProviderRuntimes ?? [];
+      }
+      case "coding_session_provider_models": {
+        if (!activeConfig?.mock?.codingSessionProviderStatus) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return {
+          instanceRef:
+            (payload as { instanceRef?: string } | null)?.instanceRef ??
+            "claude-primary",
+          defaultModel: "default",
+          allowedModels: [],
+        };
+      }
       case "discover_backend_providers":
         return activeConfig?.mock?.backendProviders ?? [];
       case "probe_backend_provider": {

@@ -1,5 +1,11 @@
+import { isCodingSessionPopoutLocation } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { isThreadReply } from "@/features/messages/lib/threading";
 import type { DesktopNotificationTarget } from "@/features/notifications/lib/desktop";
+import {
+  DEFAULT_SETTINGS_SECTION,
+  isSettingsSection,
+  type SettingsSection,
+} from "@/features/settings/ui/SettingsPanels";
 import type { ChannelVisibility, SearchHit } from "@/shared/api/types";
 
 /** Form payload for the create-channel/forum dialogs and browse-create flow. */
@@ -163,6 +169,22 @@ export function deriveShellRoute(pathname: string): {
     };
   }
 
+  // The create screen has no channel of its own yet — the picker inside it is
+  // what chooses one — so the shell keeps no channel selected.
+  if (pathname === "/coding-sessions/new") {
+    return { selectedChannelId: null, selectedView: "home" };
+  }
+
+  // A coding session belongs to the channel that carries its signed events, so
+  // the shell keeps that channel selected while the workspace is open.
+  if (pathname.startsWith("/coding-sessions/")) {
+    const [, , rawChannelId] = pathname.split("/");
+    return {
+      selectedChannelId: rawChannelId ? decodeURIComponent(rawChannelId) : null,
+      selectedView: "channel",
+    };
+  }
+
   if (pathname === "/messages/new") {
     return {
       selectedChannelId: null,
@@ -201,5 +223,34 @@ export function deriveShellRoute(pathname: string): {
   return {
     selectedChannelId: null,
     selectedView: "home",
+  };
+}
+
+/**
+ * The chrome-level reading of the current location.
+ *
+ * Settings lives in history so back returns to the previous app entry, and a
+ * coding-session pop-out is a whole different shell — both join the selected
+ * view here so `AppShell` reads one value instead of re-deriving route trivia
+ * inline.
+ */
+export function deriveAppSurface(location: {
+  pathname: string;
+  search: Record<string, unknown>;
+}): {
+  isCodingSessionPopout: boolean;
+  selectedChannelId: string | null;
+  selectedView: AppView;
+  settingsOpen: boolean;
+  settingsSection: SettingsSection;
+} {
+  const section = location.search.section;
+  return {
+    ...deriveShellRoute(location.pathname),
+    isCodingSessionPopout: isCodingSessionPopoutLocation(location),
+    settingsOpen: location.pathname === "/settings",
+    settingsSection: isSettingsSection(section)
+      ? section
+      : DEFAULT_SETTINGS_SECTION,
   };
 }

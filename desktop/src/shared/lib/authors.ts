@@ -41,9 +41,29 @@ type AuthorResolutionEvent = {
   sig: string;
 };
 
-function hasValidSignature(event: AuthorResolutionEvent) {
+/**
+ * Verify an event's signature, projecting the exact seven signed fields.
+ *
+ * Callers hand in richer objects — relay rows, cached events, projections —
+ * that carry extra local bookkeeping. `verifyEvent` recomputes the id from the
+ * object it is given, so passing one of those through unprojected makes
+ * verification depend on properties that were never signed. Naming the seven
+ * fields keeps the check on the wire event and nothing else.
+ *
+ * Exported because the coding-session trusted-ingress path needs the same
+ * signature gate before it will accept a provider-authored event.
+ */
+export function hasValidSignature(event: AuthorResolutionEvent) {
   try {
-    return verifyEvent(event);
+    return verifyEvent({
+      id: event.id,
+      pubkey: event.pubkey,
+      created_at: event.created_at,
+      kind: event.kind,
+      tags: event.tags,
+      content: event.content,
+      sig: event.sig,
+    });
   } catch {
     return false;
   }

@@ -16,9 +16,11 @@ import { Route as workflowsDotworkflowIdRouteImport } from "./routes/workflows.$
 import { Route as shellDotsessionIdRouteImport } from "./routes/shell.$sessionId";
 import { Route as projectsDotprojectIdRouteImport } from "./routes/projects.$projectId";
 import { Route as messagesDotnewRouteImport } from "./routes/messages.new";
+import { Route as codingSessionsDotnewRouteImport } from "./routes/coding-sessions.new";
 import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$channelId";
 import { Route as projectsDotprojectIdDotindexRouteImport } from "./routes/projects.$projectId.index";
 import { Route as observeDotownerDotsessionIdRouteImport } from "./routes/observe.$owner.$sessionId";
+import { Route as codingSessionsDotchannelIdDotgenerationIdRouteImport } from "./routes/coding-sessions.$channelId.$generationId";
 import { Route as projectsDotprojectIdDotcodeDotrepoIdRouteImport } from "./routes/projects.$projectId.code.$repoId";
 import { Route as channelsDotchannelIdDotpostsDotpostIdRouteImport } from "./routes/channels.$channelId.posts.$postId";
 
@@ -77,6 +79,11 @@ const messagesDotnewRoute = messagesDotnewRouteImport.update({
   path: "/messages/new",
   getParentRoute: () => rootRouteImport,
 } as any);
+const codingSessionsDotnewRoute = codingSessionsDotnewRouteImport.update({
+  id: "/coding-sessions/new",
+  path: "/coding-sessions/new",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const channelsDotchannelIdRoute = channelsDotchannelIdRouteImport.update({
   id: "/channels/$channelId",
   path: "/channels/$channelId",
@@ -92,6 +99,12 @@ const observeDotownerDotsessionIdRoute =
   observeDotownerDotsessionIdRouteImport.update({
     id: "/observe/$owner/$sessionId",
     path: "/observe/$owner/$sessionId",
+    getParentRoute: () => rootRouteImport,
+  } as any);
+const codingSessionsDotchannelIdDotgenerationIdRoute =
+  codingSessionsDotchannelIdDotgenerationIdRouteImport.update({
+    id: "/coding-sessions/$channelId/$generationId",
+    path: "/coding-sessions/$channelId/$generationId",
     getParentRoute: () => rootRouteImport,
   } as any);
 const projectsDotprojectIdDotcodeDotrepoIdRoute =
@@ -116,10 +129,12 @@ export interface FileRoutesByFullPath {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/coding-sessions/new": typeof codingSessionsDotnewRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -134,9 +149,11 @@ export interface FileRoutesByTo {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/coding-sessions/new": typeof codingSessionsDotnewRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -152,10 +169,12 @@ export interface FileRoutesById {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/coding-sessions/new": typeof codingSessionsDotnewRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRouteWithChildren;
   "/shell/$sessionId": typeof shellDotsessionIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
+  "/coding-sessions/$channelId/$generationId": typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   "/observe/$owner/$sessionId": typeof observeDotownerDotsessionIdRoute;
   "/projects/$projectId/": typeof projectsDotprojectIdDotindexRoute;
   "/channels/$channelId/posts/$postId": typeof channelsDotchannelIdDotpostsDotpostIdRoute;
@@ -172,10 +191,12 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/coding-sessions/new"
     | "/messages/new"
     | "/projects/$projectId"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -190,9 +211,11 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/coding-sessions/new"
     | "/messages/new"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId"
     | "/channels/$channelId/posts/$postId"
@@ -207,10 +230,12 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/coding-sessions/new"
     | "/messages/new"
     | "/projects/$projectId"
     | "/shell/$sessionId"
     | "/workflows/$workflowId"
+    | "/coding-sessions/$channelId/$generationId"
     | "/observe/$owner/$sessionId"
     | "/projects/$projectId/"
     | "/channels/$channelId/posts/$postId"
@@ -226,10 +251,12 @@ export interface RootRouteChildren {
   settingsRoute: typeof settingsRoute;
   workflowsRoute: typeof workflowsRoute;
   channelsDotchannelIdRoute: typeof channelsDotchannelIdRoute;
+  codingSessionsDotnewRoute: typeof codingSessionsDotnewRoute;
   messagesDotnewRoute: typeof messagesDotnewRoute;
   projectsDotprojectIdRoute: typeof projectsDotprojectIdRouteWithChildren;
   shellDotsessionIdRoute: typeof shellDotsessionIdRoute;
   workflowsDotworkflowIdRoute: typeof workflowsDotworkflowIdRoute;
+  codingSessionsDotchannelIdDotgenerationIdRoute: typeof codingSessionsDotchannelIdDotgenerationIdRoute;
   observeDotownerDotsessionIdRoute: typeof observeDotownerDotsessionIdRoute;
   channelsDotchannelIdDotpostsDotpostIdRoute: typeof channelsDotchannelIdDotpostsDotpostIdRoute;
 }
@@ -313,6 +340,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof messagesDotnewRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/coding-sessions/new": {
+      id: "/coding-sessions/new";
+      path: "/coding-sessions/new";
+      fullPath: "/coding-sessions/new";
+      preLoaderRoute: typeof codingSessionsDotnewRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/channels/$channelId": {
       id: "/channels/$channelId";
       path: "/channels/$channelId";
@@ -332,6 +366,13 @@ declare module "@tanstack/react-router" {
       path: "/observe/$owner/$sessionId";
       fullPath: "/observe/$owner/$sessionId";
       preLoaderRoute: typeof observeDotownerDotsessionIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/coding-sessions/$channelId/$generationId": {
+      id: "/coding-sessions/$channelId/$generationId";
+      path: "/coding-sessions/$channelId/$generationId";
+      fullPath: "/coding-sessions/$channelId/$generationId";
+      preLoaderRoute: typeof codingSessionsDotchannelIdDotgenerationIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/projects/$projectId/code/$repoId": {
@@ -374,10 +415,13 @@ const rootRouteChildren: RootRouteChildren = {
   settingsRoute: settingsRoute,
   workflowsRoute: workflowsRoute,
   channelsDotchannelIdRoute: channelsDotchannelIdRoute,
+  codingSessionsDotnewRoute: codingSessionsDotnewRoute,
   messagesDotnewRoute: messagesDotnewRoute,
   projectsDotprojectIdRoute: projectsDotprojectIdRouteWithChildren,
   shellDotsessionIdRoute: shellDotsessionIdRoute,
   workflowsDotworkflowIdRoute: workflowsDotworkflowIdRoute,
+  codingSessionsDotchannelIdDotgenerationIdRoute:
+    codingSessionsDotchannelIdDotgenerationIdRoute,
   observeDotownerDotsessionIdRoute: observeDotownerDotsessionIdRoute,
   channelsDotchannelIdDotpostsDotpostIdRoute:
     channelsDotchannelIdDotpostsDotpostIdRoute,

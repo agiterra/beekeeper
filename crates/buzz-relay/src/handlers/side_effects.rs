@@ -6,12 +6,15 @@ use nostr::{Event, EventBuilder, Kind, Tag};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use buzz_core::coding_session_authority_transition::decode_coding_session_authority_transition;
 use buzz_core::kind::{
-    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE, KIND_DM_VISIBILITY,
-    KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
-    KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
-    KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
-    KIND_REACTION, KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
+    event_kind_u32, is_parameterized_replaceable, KIND_AGENT_PROFILE,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
+    KIND_CODING_SESSION_GENESIS, KIND_DM_VISIBILITY, KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED,
+    KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED, KIND_MEMBER_ADDED_NOTIFICATION,
+    KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS, KIND_NIP29_GROUP_MEMBERS,
+    KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT, KIND_REACTION,
+    KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -37,8 +40,17 @@ pub fn is_admin_kind(kind: u32) -> bool {
 /// handled in `ingest_event()` before storage so we can short-circuit on
 /// duplicates without storing the event at all.
 pub fn is_side_effect_kind(kind: u32) -> bool {
-    matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | KIND_PROJECT | 41001..=41003 | 40099)
-        || kind == buzz_core::kind::KIND_SHELL_SESSION
+    matches!(
+        kind,
+        0 | 5
+            | 9000..=9022
+            | KIND_GIT_REPO_ANNOUNCEMENT
+            | KIND_AGENT_PROFILE
+            | KIND_PROJECT
+            | KIND_CODING_SESSION_AUTHORITY_TRANSITION
+            | 41001..=41003
+            | 40099
+    ) || kind == buzz_core::kind::KIND_SHELL_SESSION
 }
 
 async fn evict_live_channel_subscriptions(
@@ -236,9 +248,46 @@ pub async fn handle_side_effects(
         buzz_core::kind::KIND_SHELL_SESSION => {
             handle_shell_session_acl_projection(tenant, event, state).await
         }
+        KIND_CODING_SESSION_AUTHORITY_TRANSITION => {
+            handle_coding_session_authority_transition_accepted(tenant, event, state).await
+        }
         // kind:7 (reaction) handled inline in ingest_event() before storage.
         _ => Ok(()),
     }
+}
+
+/// Refuse deletion of coding-session facts whose history is permanent.
+///
+/// A coding-session genesis (44226) *is* the answer to "who founded this
+/// umbrella". Its `sessionRef` is claimed for good: the storage layer's
+/// uniqueness probe deliberately counts soft-deleted geneses so a reference is
+/// never released, and this gate is the front half of that rule — the relay
+/// refuses the deletion rather than accepting one whose only visible effect is
+/// to hide a row that still binds. Allowing it would advertise "delete your
+/// genesis" as a way to re-found a session and then silently not do that.
+///
+/// Closure revisions (44230) are likewise append-only facts: deleting the
+/// newest `closed` or `open` revision would silently roll shared state back to
+/// an older action without authoring a counter-revision. Sessions change state
+/// only through another closure revision.
+///
+/// Applies to both deletion paths — NIP-09 `kind:5` and the NIP-29 moderator
+/// `kind:9005` — because a moderator is no more able to reassign foundership
+/// than an author is.
+fn refuse_permanent_identity_deletion(target_kind: u32) -> anyhow::Result<()> {
+    if target_kind == KIND_CODING_SESSION_GENESIS {
+        return Err(anyhow::anyhow!(
+            "coding-session genesis events cannot be deleted — a session's founder is permanent; \
+             close the session with a closure revision instead"
+        ));
+    }
+    if target_kind == KIND_CODING_SESSION_CLOSURE {
+        return Err(anyhow::anyhow!(
+            "coding-session closure events cannot be deleted — reopen or close the session with \
+             another closure revision instead"
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a standard NIP-09 deletion event before it is stored.
@@ -285,6 +334,11 @@ pub async fn validate_standard_deletion_event(
             .get_event_by_id_including_deleted(tenant.community(), &target_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("target event not found"))?;
+
+        // Checked before authorship: being the founder is not permission to
+        // stop being the founder, so this refusal must not be reachable by
+        // simply having signed the target.
+        refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
 
         let target_author =
             effective_message_author(&target_event.event, &state.relay_keypair.public_key());
@@ -725,6 +779,10 @@ pub async fn validate_admin_event(
                 .map_err(|e| anyhow::anyhow!("db error looking up target: {e}"))?
                 .ok_or_else(|| anyhow::anyhow!("target event not found"))?;
 
+            // Before the owner/admin branch: a moderator cannot reassign a
+            // session's foundership any more than its author can.
+            refuse_permanent_identity_deletion(event_kind_u32(&target_event.event))?;
+
             match target_event.channel_id {
                 Some(target_ch) if target_ch != channel_id => {
                     return Err(anyhow::anyhow!(
@@ -903,6 +961,49 @@ pub async fn emit_system_message(
     }
 
     Ok(())
+}
+
+/// Publish the relay-signed acceptance receipt for a just-accepted
+/// coding-session authority transition (kind 44228).
+///
+/// Runs only when [`super::event::dispatch_persistent_event`]'s caller has
+/// already confirmed the transition was newly inserted — `ingest_event_inner`
+/// short-circuits a replayed event with `duplicate:` before side effects ever
+/// fire, so a resubmission of an already-accepted transition does not mint a
+/// second receipt. The receipt is a `kind:40099` system message (the
+/// existing relay-signed-emission pattern) naming exactly the facts a
+/// consumer needs to establish the new canonical head: the genesis, the
+/// accepted transition, its sequence number, its type, and the grantee.
+async fn handle_coding_session_authority_transition_accepted(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let channel_id = extract_h_tag_channel(event)
+        .ok_or_else(|| anyhow::anyhow!("coding-session authority transition missing h tag"))?;
+    let payload = decode_coding_session_authority_transition(&event.content)
+        .map_err(|e| anyhow::anyhow!("undecodable accepted authority transition: {e}"))?;
+
+    // A grant/revoke changes who may steer and who may read the transport
+    // channel: flush the authority caches and every reader's
+    // accessible-channel set so the change lands now, not after the TTL.
+    state.invalidate_session_authority_caches();
+    state.invalidate_all_accessible_channels(tenant);
+
+    emit_system_message(
+        tenant,
+        state,
+        channel_id,
+        serde_json::json!({
+            "type": "coding_session_authority_transition_accepted",
+            "genesisRef": payload.genesis_ref,
+            "acceptedEventId": event.id.to_hex(),
+            "seq": payload.seq,
+            "transitionType": payload.transition_type,
+            "granteePubkey": payload.grantee_pubkey,
+        }),
+    )
+    .await
 }
 
 /// Sign and fan out a fresh relay-signed `kind:39005` thread-summary overlay
@@ -3905,6 +4006,59 @@ mod tests {
                 && fields[1] == late_pubkey
                 && fields[3] == "owner"
         }));
+    }
+
+    /// A genesis is refused by *both* deletion paths, and refused on the kind
+    /// alone — no authorship, membership, or moderator role can reach past it.
+    #[test]
+    fn coding_session_genesis_cannot_be_deleted() {
+        let refusal = refuse_permanent_identity_deletion(KIND_CODING_SESSION_GENESIS)
+            .expect_err("deleting a genesis must be refused");
+        let message = refusal.to_string();
+        assert!(
+            message.contains("cannot be deleted"),
+            "the refusal must say plainly that the deletion did not happen, got {message:?}"
+        );
+        assert!(
+            message.contains("closure"),
+            "the refusal must point at the supported way to end a session, got {message:?}"
+        );
+    }
+
+    /// Deleting a closure revision would make the fold fall back to older
+    /// state without an attributable counter-revision, so both NIP-09 and
+    /// moderator deletion paths refuse it by kind.
+    #[test]
+    fn coding_session_closure_cannot_be_deleted() {
+        let refusal = refuse_permanent_identity_deletion(KIND_CODING_SESSION_CLOSURE)
+            .expect_err("deleting a closure revision must be refused");
+        let message = refusal.to_string();
+        assert!(message.contains("cannot be deleted"), "got {message:?}");
+        assert!(
+            message.contains("another closure revision"),
+            "got {message:?}"
+        );
+    }
+
+    /// The gate is narrow on purpose. Commands and provider-authored receipts,
+    /// metadata, and transcript remain ordinary content; only the genesis
+    /// identity anchor and append-only closure state are permanent.
+    #[test]
+    fn ordinary_coding_session_events_stay_deletable() {
+        for kind in [
+            buzz_core::kind::KIND_CODING_SESSION_COMMAND,
+            buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            buzz_core::kind::KIND_CODING_SESSION_PROVIDER_CATALOG,
+            buzz_core::kind::KIND_CODING_SESSION_METADATA,
+            buzz_core::kind::KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            buzz_core::kind::KIND_CODING_SESSION_TRANSCRIPT,
+            buzz_core::kind::KIND_STREAM_MESSAGE,
+        ] {
+            assert!(
+                refuse_permanent_identity_deletion(kind).is_ok(),
+                "kind {kind} must keep its ordinary deletion rules"
+            );
+        }
     }
 
     #[test]

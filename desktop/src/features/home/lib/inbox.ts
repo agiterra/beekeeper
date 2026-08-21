@@ -439,6 +439,42 @@ export function relayEventFromFeedItem(item: FeedItem): RelayEvent {
   };
 }
 
+/**
+ * Drop feed items this client renders somewhere other than the channel —
+ * today that is only coding-session lane chat, which lives inside a session's
+ * umbrella surface. The relay's Home feed has no way to know which lanes a
+ * given client can open, so the rule is applied here.
+ *
+ * `isHidden` is injected rather than imported so this stays a pure projection
+ * over the feed shape; the caller supplies the resolved visibility rule.
+ */
+export function excludeHiddenFeedItems(
+  response: HomeFeedResponse,
+  isHidden: (item: FeedItem) => boolean,
+): HomeFeedResponse {
+  const keep = (items: FeedItem[]) => items.filter((item) => !isHidden(item));
+  const feed = {
+    mentions: keep(response.feed.mentions),
+    needsAction: keep(response.feed.needsAction),
+    activity: keep(response.feed.activity),
+    agentActivity: keep(response.feed.agentActivity),
+  };
+  const removed =
+    response.feed.mentions.length -
+    feed.mentions.length +
+    (response.feed.needsAction.length - feed.needsAction.length) +
+    (response.feed.activity.length - feed.activity.length) +
+    (response.feed.agentActivity.length - feed.agentActivity.length);
+  if (removed === 0) return response;
+  return {
+    feed,
+    meta: {
+      ...response.meta,
+      total: Math.max(response.meta.total - removed, 0),
+    },
+  };
+}
+
 export function groupInboxItems(
   items: InboxItem[],
   nowSeconds = Date.now() / 1_000,

@@ -1031,6 +1031,12 @@ async fn query_events_authed(
         .map_err(|e| api_error(StatusCode::BAD_REQUEST, &format!("invalid filters: {e}")))?;
     crate::handlers::req::extract_channel_ids_from_filters_limited(&filters)
         .map_err(|()| api_error(StatusCode::BAD_REQUEST, "too many explicit channels"))?;
+    if crate::handlers::req::session_lease_filter_missing_explicit_channel(&filters) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "coding-session lease queries require explicit #h",
+        ));
+    }
     // NIP-MP Pulse request shape (400 level, not the authorization boundary).
     let pulse_coordinates = pulse_coordinates_by_filter(&filters)?;
 
@@ -1069,6 +1075,15 @@ async fn query_events_authed(
         &mut accessible_channels,
     )
     .await?;
+    if crate::handlers::req::session_lease_filter_has_inaccessible_channel(
+        &filters,
+        &accessible_channels,
+    ) {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "coding-session lease channel is not accessible",
+        ));
+    }
 
     // NIP-MP access extension phase 2: the reader's hidden-repo set, resolved
     // once per request (10s cache) when any filter could match a git-gated
@@ -1108,9 +1123,11 @@ async fn query_events_authed(
     if let Some(presence_events) = synthesize_presence(state, tenant, &filters).await {
         return Ok(Json(Value::Array(presence_events)));
     }
+    let (lease_events, lease_filters_handled, lease_snapshot_counts) =
+        synthesize_session_leases(state, tenant, &filters, &accessible_channels).await?;
 
-    let mut events: Vec<Value> = Vec::new();
-    let mut handled: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut events = lease_events;
+    let mut handled = lease_filters_handled;
 
     // Channel-window filters (`top_level: true`) — the GUI read-model surface.
     // Dispatched first: a window filter is never a feed/thread/catchall query.
@@ -1336,6 +1353,12 @@ async fn query_events_authed(
             tenant.community(),
         )
         .await;
+        if let Some(limit) = query.limit.as_mut() {
+            *limit =
+                limit.saturating_sub(
+                    lease_snapshot_counts.get(&idx).copied().unwrap_or_default() as i64
+                );
+        }
         crate::handlers::req::apply_channel_scope_to_query(
             &mut query,
             filter,
@@ -2412,6 +2435,81 @@ async fn synthesize_presence(
     }
 
     Some(events)
+}
+
+/// Serve kind-24223 filter branches from Redis, preserving provider signatures.
+async fn synthesize_session_leases(
+    state: &AppState,
+    tenant: &buzz_core::tenant::TenantContext,
+    filters: &[nostr::Filter],
+    accessible_channels: &[uuid::Uuid],
+) -> Result<
+    (
+        Vec<Value>,
+        std::collections::HashSet<usize>,
+        std::collections::HashMap<usize, usize>,
+    ),
+    (StatusCode, Json<Value>),
+> {
+    use buzz_core::filter::filters_match;
+    use buzz_core::kind::KIND_CODING_SESSION_LEASE;
+
+    let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
+    let mut events = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut handled = std::collections::HashSet::new();
+    let mut counts = std::collections::HashMap::new();
+    for (index, filter) in filters.iter().enumerate() {
+        let Some(kinds) = filter.kinds.as_ref() else {
+            continue;
+        };
+        if !kinds
+            .iter()
+            .any(|kind| kind.as_u16() as u32 == KIND_CODING_SESSION_LEASE)
+        {
+            continue;
+        }
+        if kinds.len() == 1 {
+            handled.insert(index);
+        }
+        let Some(channel_values) = filter.generic_tags.get(&h) else {
+            continue;
+        };
+        let mut filter_count = 0usize;
+        let limit = filter.limit.unwrap_or(usize::MAX);
+        for channel_id in channel_values
+            .iter()
+            .filter_map(|value| value.parse::<uuid::Uuid>().ok())
+            .filter(|channel_id| accessible_channels.contains(channel_id))
+        {
+            let snapshot = state
+                .pubsub
+                .session_lease_snapshot(tenant, channel_id)
+                .await
+                .map_err(|error| internal_error(&format!("session lease snapshot: {error}")))?;
+            for record in snapshot {
+                if filter_count >= limit {
+                    break;
+                }
+                let event = crate::handlers::req::validate_session_lease_snapshot_record(
+                    &record, channel_id,
+                )
+                .map_err(|error| {
+                    internal_error(&format!("invalid session lease snapshot record: {error}"))
+                })?;
+                let stored = buzz_core::event::StoredEvent::new(event.clone(), Some(channel_id));
+                if !filters_match(std::slice::from_ref(filter), &stored) || !seen.insert(event.id) {
+                    continue;
+                }
+                events.push(serde_json::to_value(event).map_err(|error| {
+                    internal_error(&format!("session lease serialization: {error}"))
+                })?);
+                filter_count += 1;
+                *counts.entry(index).or_insert(0) += 1;
+            }
+        }
+    }
+    Ok((events, handled, counts))
 }
 
 // ── Moderation queue reads (L6 — Quinn) ───────────────────────────────────────

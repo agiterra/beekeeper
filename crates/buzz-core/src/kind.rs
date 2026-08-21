@@ -518,6 +518,13 @@ pub const KIND_SHELL_FRAME: u32 = 24311;
 /// it only to the owner's connections — never mere project members, never
 /// viewers. Never stored. See `docs/nips/NIP-ST.md` §Input.
 pub const KIND_SHELL_INPUT: u32 = 24312;
+/// Ephemeral provider-signed liveness lease for one exact coding-session generation.
+///
+/// Ordered tags: `h`, `cslease-v`, `cs-target`, `csl-command`, `cslease-seq`.
+/// The relay validates lifecycle authority and holds the original event only in
+/// its expiring Redis register; it is never inserted into Postgres. See
+/// `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LEASE: u32 = 24223;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral
 /// huddle channel with an `h` tag; never stored in the timeline.
 pub const KIND_HUDDLE_REACTION: u32 = 24810;
@@ -610,6 +617,120 @@ pub const KIND_AGENT_TURN_METRIC: u32 = 44200;
 /// claim is honored (same author only). A replaceable Pulse would let one
 /// author's write erase the record another author's advisory was built on.
 pub const KIND_PULSE_ENTRY: u32 = 44240;
+
+/// NIP-CSC: Coding-session command — an operator-authored, provider-neutral turn
+/// request.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON [`crate::coding_session_command::CodingSessionCommandPayload`];
+/// event authorship is the only actor authority. Consumed by an out-of-relay
+/// provider adapter — the relay deliberately never executes this kind, it only
+/// validates the envelope and stores it. Tags: exactly one `h`, `cs-v`, and
+/// `cs-target`. See `docs/nips/NIP-CSC.md`.
+pub const KIND_CODING_SESSION_COMMAND: u32 = 44220;
+
+/// NIP-CSL: Coding-session lifecycle command — a session creation request.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON
+/// [`crate::coding_session_lifecycle_command::CodingSessionLifecycleCommandPayload`].
+/// Ordered tags: `h`, `csl-v`, `csl-command`. The optional `projectRef` binds a
+/// session to a NIP-MP project (kind 30621); standalone sessions omit it.
+/// See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LIFECYCLE_COMMAND: u32 = 44221;
+
+/// NIP-CSPC: Coding-session provider catalog — a provider-authored advertisement
+/// of the session drivers, models, and capabilities it can serve.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON catalog carrying a monotonic `revision`; consumers keep the
+/// highest revision per (channel, signer). Ordered tags: `h`, `cspc-v`,
+/// `cspc-revision`, `cspc-key`. See `docs/nips/NIP-CSPC.md`.
+pub const KIND_CODING_SESSION_PROVIDER_CATALOG: u32 = 44222;
+
+/// NIP-CSL: Coding-session metadata — provider-authored observations about one
+/// exact session generation.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Providers
+/// publish on observed transitions; consumers retain history and fold the
+/// newest valid observation per generation. Ordered tags: `h`, `csm-v`,
+/// `cs-target`, `csm-key`. See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_METADATA: u32 = 44223;
+
+/// NIP-CSL: Coding-session lifecycle receipt — the provider-authored, immutable
+/// result of one lifecycle command.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
+/// tags: `h`, `cslr-v`, `csl-command`, `csl-key`. See `docs/nips/NIP-CSL.md`.
+pub const KIND_CODING_SESSION_LIFECYCLE_RECEIPT: u32 = 44224;
+
+/// NIP-CST: Coding-session transcript item — one provider-authored, sequenced
+/// step of one exact session generation.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Ordered
+/// tags: `h`, `cst-v`, `cs-target`, `cst-seq`, `cst-key`. Sequence numbers are
+/// monotonic per (session, generation); gaps are permitted, duplicates are not.
+/// See `docs/nips/NIP-CST.md`.
+pub const KIND_CODING_SESSION_TRANSCRIPT: u32 = 44225;
+
+/// NIP-CSG: Coding-session genesis — the operator-signed origin of one umbrella
+/// session.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag. Content is
+/// a public JSON [`crate::coding_session_genesis::CodingSessionGenesisPayload`]
+/// carrying only a `sessionRef` and a schema version. Ordered tags: `h`,
+/// `csg-v`, `csg-session`. The signer is the session's founder — the authority
+/// every later session operation resolves back to — so this kind is signed by
+/// the human operator, never by a provider. Canonical identity is this event's
+/// **id**, not the `csg-session` tag: the tag exists for the relay's uniqueness
+/// probe and for diagnostics, and consumers must never select a founder by it.
+/// See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_GENESIS: u32 = 44226;
+
+/// NIP-CSG: Coding-session goal — one human-authored revision of the umbrella
+/// session's durable goal.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Content is raw prose. Ordered tags:
+/// `h`, `d`, `csgl-v`. Consumers retain every revision and fold latest by
+/// `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_GOAL: u32 = 44227;
+
+/// NIP-CSAT (draft): Coding-session authority transition — one append-only
+/// step of a session's authority chain.
+///
+/// Regular stored event (append-only), channel-scoped via an `h` tag.
+/// Content is a public JSON
+/// [`crate::coding_session_authority_transition::CodingSessionAuthorityTransitionPayload`]
+/// naming the session's genesis by event id, the previous accepted
+/// transition (or `null` for the chain's first link), a sequence number
+/// starting at 1, exactly one transition type (`grant-operator` today, the
+/// only type this build accepts), and the grantee pubkey. Ordered tags: `h`,
+/// `csat-v`, `csat-genesis`. The relay validates linkage against the chain
+/// and the signer's standing (the session's owner — today the genesis
+/// signer) at ingest, atomically with storage, and publishes a relay-signed
+/// acceptance receipt (kind 40099) naming the new canonical head. See
+/// `docs/nips/NIP-CSG.md` for the genesis this chain roots at; the
+/// transition's own spec text is drafted here and finalized after A6 per the
+/// sessions execution plan.
+pub const KIND_CODING_SESSION_AUTHORITY_TRANSITION: u32 = 44228;
+
+/// NIP-CSN: Coding-session name — one human-authored revision of the umbrella
+/// session's short navigation label.
+///
+/// Regular stored event (append-only), channel-scoped via `h`, with
+/// `d=sessionRef` for lookup and grouping. Content is single-line text.
+/// Ordered tags: `h`, `d`, `csnm-v`. Consumers retain every revision and fold
+/// latest by `(created_at, event id)`. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_NAME: u32 = 44229;
+
+/// Coding-session closure — one append-only shared close/reopen revision of an
+/// umbrella session, explicitly rooted at its genesis event.
+///
+/// Regular stored event, channel-scoped via `h`, with `d=sessionRef` for
+/// grouping. Content is strict public JSON naming `closed` or `open` and the
+/// canonical genesis event id. See `docs/nips/NIP-CSG.md`.
+pub const KIND_CODING_SESSION_CLOSURE: u32 = 44230;
 
 // Forum / social (45000–45999)
 // V1 used addressable range (30001–30003) — wrong.
@@ -1234,6 +1355,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_BLOSSOM_AUTH,
     KIND_PAIRING,
     KIND_AGENT_OBSERVER_FRAME,
+    KIND_CODING_SESSION_LEASE,
     KIND_HTTP_AUTH,
     KIND_STREAM_MESSAGE,
     KIND_STREAM_MESSAGE_V2,
@@ -1262,6 +1384,17 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,
     KIND_PULSE_ENTRY,
+    KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_PROVIDER_CATALOG,
+    KIND_CODING_SESSION_METADATA,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_TRANSCRIPT,
+    KIND_CODING_SESSION_GENESIS,
+    KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+    KIND_CODING_SESSION_NAME,
+    KIND_CODING_SESSION_CLOSURE,
     KIND_WORKFLOW_DEF,
     KIND_LONG_FORM,
     KIND_USER_STATUS,
@@ -1437,6 +1570,81 @@ const _: () = assert!(!is_ephemeral(KIND_PULSE_ENTRY));
 const _: () = assert!(!is_replaceable(KIND_PULSE_ENTRY));
 const _: () = assert!(!is_parameterized_replaceable(KIND_PULSE_ENTRY));
 const _: () = assert!(KIND_PULSE_ENTRY <= u16::MAX as u32);
+// A session lease is deliberately ephemeral: it is bounded evidence of recent
+// provider reachability, not durable session history or a replaceable head.
+const _: () = assert!(is_ephemeral(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_LEASE));
+const _: () = assert!(KIND_CODING_SESSION_LEASE <= u16::MAX as u32);
+// Compile-time: coding-session kinds are regular stored kinds (not ephemeral,
+// not replaceable). Commands, receipts, metadata, and transcript items are all
+// append-only points in a durable record — a replaced command or a replaced
+// transcript item would silently rewrite history a provider already acted on.
+// The catalog carries its own monotonic `revision` instead of being replaceable
+// so that every advertisement stays auditable.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_COMMAND));
+const _: () = assert!(KIND_CODING_SESSION_COMMAND <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_LIFECYCLE_COMMAND));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LIFECYCLE_COMMAND));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND
+));
+const _: () = assert!(KIND_CODING_SESSION_LIFECYCLE_COMMAND <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_PROVIDER_CATALOG));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_PROVIDER_CATALOG));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_PROVIDER_CATALOG
+));
+const _: () = assert!(KIND_CODING_SESSION_PROVIDER_CATALOG <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_METADATA));
+const _: () = assert!(KIND_CODING_SESSION_METADATA <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_LIFECYCLE_RECEIPT));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_LIFECYCLE_RECEIPT));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+));
+const _: () = assert!(KIND_CODING_SESSION_LIFECYCLE_RECEIPT <= u16::MAX as u32);
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_TRANSCRIPT));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_TRANSCRIPT));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_TRANSCRIPT
+));
+const _: () = assert!(KIND_CODING_SESSION_TRANSCRIPT <= u16::MAX as u32);
+// Genesis is the strictest case of the rule above: it is the founder record an
+// entire session's authority hangs from, so a replaceable genesis would let a
+// founder be swapped out after the fact.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GENESIS));
+const _: () = assert!(KIND_CODING_SESSION_GENESIS <= u16::MAX as u32);
+// Goal revisions must remain regular events: the d tag groups history but does
+// not opt the kind into NIP-33 replacement, so older revisions stay queryable.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_GOAL));
+const _: () = assert!(KIND_CODING_SESSION_GOAL <= u16::MAX as u32);
+
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_AUTHORITY_TRANSITION));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_AUTHORITY_TRANSITION));
+const _: () = assert!(!is_parameterized_replaceable(
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION
+));
+const _: () = assert!(KIND_CODING_SESSION_AUTHORITY_TRANSITION <= u16::MAX as u32);
+// Name revisions use the same append-only history discipline as goal
+// revisions; the d tag groups revisions without invoking NIP-33 replacement.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_NAME));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_NAME));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_NAME));
+const _: () = assert!(KIND_CODING_SESSION_NAME <= u16::MAX as u32);
+// Closure revisions are append-only history, never a NIP-16/NIP-33 head.
+const _: () = assert!(!is_ephemeral(KIND_CODING_SESSION_CLOSURE));
+const _: () = assert!(!is_replaceable(KIND_CODING_SESSION_CLOSURE));
+const _: () = assert!(!is_parameterized_replaceable(KIND_CODING_SESSION_CLOSURE));
+const _: () = assert!(KIND_CODING_SESSION_CLOSURE <= u16::MAX as u32);
 // Moderation kinds fit u16 and are neither replaceable nor ephemeral:
 // 1984 is a regular event (persisted to the queue, never fanned out);
 // 9040–9044 are direct commands (executed, never stored).

@@ -23,20 +23,34 @@ import {
   useForcedUnreadActions,
 } from "@/features/channels/forcedUnreadStore";
 import {
+  isCodingSessionLaneMessageHiddenFromChannel,
+  observeCodingSessionLaneRefs,
+} from "@/features/messages/lib/codingSessionLaneVisibility";
+import {
   getThreadReference,
   isBroadcastReply,
 } from "@/features/messages/lib/threading";
+import { useCodingSessionLaneVisibility } from "@/features/messages/useCodingSessionLaneVisibility";
 import {
   hasMentionForEvent,
   isHighPriorityEventForUser,
-  shouldNotifyForEvent,
 } from "@/features/notifications/lib/shouldNotify";
 import type { RelayClient } from "@/shared/api/relayClientSession";
 import type { Channel, RelayEvent } from "@/shared/api/types";
-import { CHANNEL_MESSAGE_EVENT_KINDS } from "@/shared/constants/kinds";
 import { useStableMap, useStableSet } from "@/shared/hooks/useStableReference";
 import { normalizeRelayUrl } from "@/features/profile/lib/selfProfileStorage";
-import { DM_NOTIFIABLE_EVENT_KINDS } from "./isDmNotifiableKind";
+import {
+  CATCH_UP_LIMIT,
+  channelCatchUpEventKinds,
+  resolveObservedUnreadRootId,
+  scanChannelCatchUpEvents,
+  type ChannelCatchUpScan,
+} from "@/features/channels/unreadCatchUpScan";
+// Re-exported so the catch-up seam stays a single import for callers/tests.
+export {
+  channelCatchUpEventKinds,
+  resolveObservedUnreadRootId,
+} from "@/features/channels/unreadCatchUpScan";
 import {
   addThreadActivityItems,
   projectActivityForScope,
@@ -60,21 +74,6 @@ type UseUnreadChannelsOptions = UseLiveChannelUpdatesOptions & {
   relayUrl?: string;
   mutedChannelIds?: ReadonlySet<string>;
 };
-
-// Per-channel cap on the catch-up REQ. We only consume the *max matching*
-// event per channel, but the relay can return self-authored / non-trigger
-// events that we discard client-side, so we need enough head-room for the
-// filter to find one external trigger message. 1000 matches the live sub's
-// per-channel limit elsewhere in the app.
-const CATCH_UP_LIMIT = 1000;
-
-export function channelCatchUpEventKinds(
-  channelType: Channel["channelType"] | undefined,
-) {
-  return channelType === "dm"
-    ? DM_NOTIFIABLE_EVENT_KINDS
-    : CHANNEL_MESSAGE_EVENT_KINDS;
-}
 
 const participationStore = makeRootIdStore("buzz-thread-participation.v1");
 const authoredStore = makeRootIdStore("buzz-thread-authored.v1");
@@ -122,10 +121,6 @@ export function resolveChannelReadMarker(
   };
 }
 
-export function resolveObservedUnreadRootId(tags: string[][]): string | null {
-  return isBroadcastReply(tags) ? null : getThreadReference(tags).rootId;
-}
-
 export function useUnreadChannels(
   channels: Channel[],
   activeChannel: Channel | null,
@@ -140,6 +135,11 @@ export function useUnreadChannels(
   } = options;
   const activeChannelId = activeChannel?.id ?? null;
   const normalizedPubkey = pubkey?.toLowerCase() ?? null;
+  // Resolves which session-lane messages are renderable in a lane the user can
+  // open. Mounted here because the unread trigger set spans every channel, not
+  // only the visible one — a lane message that stays in the channel timeline
+  // must keep counting, and one that leaves it must stop.
+  useCodingSessionLaneVisibility();
   // Scoped relay key for activity storage; empty string when relay not yet known
   // so rows from an unknown relay never load into the wrong community.
   const normalizedRelayUrl = relayUrlOption
@@ -382,6 +382,12 @@ export function useUnreadChannels(
   );
   const handleChannelMessage = React.useCallback(
     (channelId: string, event: RelayEvent) => {
+      // A session-lane message that this client hides from the channel
+      // timeline must not bump the badge, fire a notification, or seed a
+      // mention — it is not visible content here. The rule is exactly the
+      // timeline's: an unresolvable ref stays ordinary chat and counts.
+      observeCodingSessionLaneRefs(channelId, [event]);
+      if (isCodingSessionLaneMessageHiddenFromChannel(channelId, event)) return;
       const channel = channelsRef.current.find((ch) => ch.id === channelId);
       const isHighPriority =
         channel?.channelType === "dm" ||
@@ -591,13 +597,7 @@ export function useUnreadChannels(
     const mentionedSizeBefore = mentionedRootIdsRef.current.size;
 
     type CatchUpResult =
-      | {
-          channelId: string;
-          ok: true;
-          maxExternal: number;
-          unreadEvents: ObservedUnreadEvent[];
-          threadReplies: ThreadActivityItem[];
-        }
+      | ({ channelId: string; ok: true } & ChannelCatchUpScan)
       | { channelId: string; ok: false };
 
     void Promise.all(
@@ -617,24 +617,21 @@ export function useUnreadChannels(
             limit: CATCH_UP_LIMIT,
           });
 
-          // Pass 1: build participation from self-authored thread replies,
-          // track self-authored top-level messages for author notifications,
-          // and capture external mentions so their threads gate a badge.
-          for (const event of events) {
-            const isSelf =
-              normalizedPubkey !== null &&
-              event.pubkey.toLowerCase() === normalizedPubkey;
-            if (isSelf) {
-              const ref = getThreadReference(event.tags);
-              if (ref.rootId !== null) {
-                participatedRootIdsRef.current.add(ref.rootId);
-              } else {
-                authoredRootIdsRef.current.add(event.id);
-              }
-            } else {
-              recordMentionedRoot(event);
-            }
-          }
+          const scan = scanChannelCatchUpEvents(events, {
+            channelId,
+            channelName: channel?.name ?? "",
+            channelType: channel?.channelType,
+            readAt,
+            normalizedPubkey,
+            // Pass 1 grows these in place; persisting them stays here so the
+            // scan itself has no storage side effects.
+            participatedRootIds: participatedRootIdsRef.current,
+            authoredRootIds: authoredRootIdsRef.current,
+            followedRootIds: options.followedRootIds ?? EMPTY_SET,
+            mutedRootIds: mutedRootIdsRef.current,
+            mutedChannelIds: mutedChannelIdsRef.current,
+            recordMentionedRoot,
+          });
 
           if (normalizedPubkey !== null) {
             participationStore.write(
@@ -644,76 +641,7 @@ export function useUnreadChannels(
             authoredStore.write(normalizedPubkey, authoredRootIdsRef.current);
           }
 
-          // Pass 2: compute maxExternal and collect thread reply activity,
-          // applying the notification filter to both.
-          let maxExternal = 0;
-          const unreadEvents: ObservedUnreadEvent[] = [];
-          const threadReplies: ThreadActivityItem[] = [];
-          const chType = channel?.channelType;
-          const chName = channel?.name ?? "";
-          for (const event of events) {
-            if (
-              normalizedPubkey !== null &&
-              event.pubkey.toLowerCase() === normalizedPubkey
-            ) {
-              continue;
-            }
-            if (readAt !== null && event.created_at <= readAt) continue;
-            const eventChannelId =
-              event.tags.find((t) => t[0] === "h")?.[1] ?? null;
-            if (
-              !shouldNotifyForEvent(event, normalizedPubkey ?? "", {
-                participatedRootIds: participatedRootIdsRef.current,
-                followedRootIds: options.followedRootIds ?? EMPTY_SET,
-                authoredRootIds: authoredRootIdsRef.current,
-                mutedRootIds: mutedRootIdsRef.current,
-                mutedChannelIds: mutedChannelIdsRef.current,
-                channelId: eventChannelId,
-              })
-            ) {
-              continue;
-            }
-            const evtRef = getThreadReference(event.tags);
-            const isThreadedReply =
-              evtRef.parentId !== null && !isBroadcastReply(event.tags);
-            if (event.created_at > maxExternal) {
-              maxExternal = event.created_at;
-            }
-            const isHighPriority =
-              chType === "dm" ||
-              (normalizedPubkey !== null &&
-                isHighPriorityEventForUser(event, normalizedPubkey));
-            unreadEvents.push(
-              makeObservedUnreadEvent({
-                id: event.id,
-                createdAt: event.created_at,
-                rootId: resolveObservedUnreadRootId(event.tags),
-                highPriority: isHighPriority,
-                channelType: chType,
-                isThreadedReply,
-              }),
-            );
-            if (isThreadedReply) {
-              threadReplies.push({
-                id: event.id,
-                kind: event.kind,
-                pubkey: event.pubkey,
-                content: event.content,
-                createdAt: event.created_at,
-                channelId,
-                channelName: chName,
-                tags: [...event.tags],
-              });
-            }
-          }
-
-          return {
-            channelId,
-            ok: true,
-            maxExternal,
-            unreadEvents,
-            threadReplies,
-          };
+          return { channelId, ok: true, ...scan };
         } catch {
           // Transient relay failure for this channel — release the claim
           // so we retry on the next effect run instead of staying stuck

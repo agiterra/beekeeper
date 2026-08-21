@@ -17,6 +17,10 @@ pub mod api_token;
 pub mod archived_identities;
 /// Channel and membership persistence.
 pub mod channel;
+/// Coding-session authority-grant queries (NIP-CSAT ACL projection).
+pub mod coding_session_acl;
+/// Immutable lifecycle command/receipt authority resolution for session generations.
+pub mod coding_session_generation;
 /// Durable whole-community deletion lifecycle and PostgreSQL adapter.
 pub mod deletion;
 /// Direct message channel persistence.
@@ -60,7 +64,11 @@ pub mod user;
 pub mod workflow;
 
 pub use error::{DbError, Result};
-pub use event::{EventQuery, ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT};
+pub use event::{
+    AuthorityTransitionRefusal, CodingSessionAuthorityTransitionInsertOutcome,
+    CodingSessionGenesisInsertOutcome, EventQuery, GenesisAdoptionRefusal,
+    ReactionEventInsertOutcome, DEFAULT_MAX_PAGE_LIMIT,
+};
 
 use buzz_datastore_tracing::datastore_span;
 use chrono::{DateTime, Utc};
@@ -668,6 +676,26 @@ pub struct TokenSummary {
 }
 
 impl Db {
+    /// Resolve immutable create/resume authority for an exact leased generation.
+    pub async fn resolve_coding_session_generation_authority(
+        &self,
+        community: CommunityId,
+        channel_id: Uuid,
+        command_id: &str,
+        target: &buzz_core::coding_session_command::CodingSessionTarget,
+        lease_signer: &nostr::PublicKey,
+    ) -> Result<coding_session_generation::GenerationAuthorityProof> {
+        coding_session_generation::resolve_generation_authority(
+            &self.pool,
+            community,
+            channel_id,
+            command_id,
+            target,
+            lease_signer,
+        )
+        .await
+    }
+
     /// Creates a new `Db` by connecting a Postgres pool with the given config.
     ///
     /// When `config.read_database_url` is set, a second pool with the same
@@ -2304,6 +2332,109 @@ impl Db {
             }
         }
         Ok(outcome)
+    }
+
+    /// Atomically enforce one coding-session genesis (kind 44226) per
+    /// `(channel, sessionRef)`, refuse a claim over pre-genesis create
+    /// history, and store the event.
+    ///
+    /// See [`event::insert_coding_session_genesis_event`] for the serialization
+    /// argument. No mention rows are written: the genesis envelope permits
+    /// exactly three tags — `h`, `csg-v`, `csg-session` — so a genesis can never
+    /// carry a `p` tag to extract.
+    #[datastore_span(name = "insert_coding_session_genesis_event", system = "postgresql")]
+    pub async fn insert_coding_session_genesis_event(
+        &self,
+        community_id: CommunityId,
+        event: &nostr::Event,
+        channel_id: Uuid,
+        thread_meta: Option<event::ThreadMetadataParams<'_>>,
+    ) -> Result<event::CodingSessionGenesisInsertOutcome> {
+        event::insert_coding_session_genesis_event(
+            &self.pool,
+            community_id,
+            event,
+            channel_id,
+            thread_meta,
+        )
+        .await
+    }
+
+    /// Atomically validate one coding-session authority-transition (kind
+    /// 44228) against the chain and the current owner's standing, and store
+    /// it.
+    ///
+    /// See [`event::insert_coding_session_authority_transition_event`] for
+    /// the serialization argument. No mention rows are written: the
+    /// transition envelope permits exactly three tags — `h`, `csat-v`,
+    /// `csat-genesis` — so a transition can never carry a `p` tag to extract.
+    #[datastore_span(
+        name = "insert_coding_session_authority_transition_event",
+        system = "postgresql"
+    )]
+    pub async fn insert_coding_session_authority_transition_event(
+        &self,
+        community_id: CommunityId,
+        event: &nostr::Event,
+        channel_id: Uuid,
+        thread_meta: Option<event::ThreadMetadataParams<'_>>,
+    ) -> Result<event::CodingSessionAuthorityTransitionInsertOutcome> {
+        event::insert_coding_session_authority_transition_event(
+            &self.pool,
+            community_id,
+            event,
+            channel_id,
+            thread_meta,
+        )
+        .await
+    }
+
+    /// Returns whether the channel holds at least one coding-session
+    /// genesis (kind 44226).
+    pub async fn channel_has_genesis_sessions(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+    ) -> Result<bool> {
+        coding_session_acl::channel_has_genesis_sessions(&self.pool, community, channel_id).await
+    }
+
+    /// Returns whether `pubkey` founded a genesis-rooted session in the
+    /// channel or holds a live operator grant on one (the relay-grain
+    /// steering requirement).
+    pub async fn has_steer_standing_in_channel(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        coding_session_acl::has_steer_standing_in_channel(&self.pool, community, channel_id, pubkey)
+            .await
+    }
+
+    /// Returns whether `pubkey` holds any live session grant (operator or
+    /// viewer) in the channel.
+    pub async fn has_session_grant_in_channel(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool> {
+        coding_session_acl::has_session_grant_in_channel(&self.pool, community, channel_id, pubkey)
+            .await
+    }
+
+    /// Resolve the exact authority (founder + live grants) of the session
+    /// labelled `session_ref` in `channel_id`, or `None` when no genesis
+    /// claims the label.
+    pub async fn session_authority_by_ref(
+        &self,
+        community: CommunityId,
+        channel_id: uuid::Uuid,
+        session_ref: &str,
+    ) -> Result<Option<coding_session_acl::SessionAuthority>> {
+        coding_session_acl::session_authority_by_ref(&self.pool, community, channel_id, session_ref)
+            .await
     }
 
     /// Creates a new channel, bootstraps the creator as owner, and returns the record.

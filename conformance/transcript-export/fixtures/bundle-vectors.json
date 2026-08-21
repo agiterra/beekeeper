@@ -1,0 +1,66 @@
+{
+  "schema": "buzz.conformance.hive/transcript-export-bundle@1",
+  "donor": {
+    "repo": "hive",
+    "pin": "e0b8198bd14438d94e3198862a9c0835904ee1b5",
+    "path": "src/server/standalone-export.ts",
+    "authority": "writeStandaloneTranscriptExport / prepareStandaloneMessages / rewriteLocalPathsForShare"
+  },
+  "law": "Bundle version 1; localPath is always the /workspace placeholder; the real workspace path appears nowhere in the serialized bundle; only user_prompt attachments are rewritten, per the mode matrix; bundle mode falls back to the metadata rewrite when the source file is absent.",
+  "bundle_constants": {
+    "version": 1,
+    "sharePath": "/workspace"
+  },
+  "attachment_cases": [
+    {
+      "name": "metadata mode empties all three reference fields even when the file exists",
+      "mode": "metadata",
+      "attachment": { "id": "att-1", "displayName": "mock.png", "absolutePath": "/ws/.hive/uploads/mock.png", "sourceExists": true },
+      "expected": { "absolutePath": "", "relativePath": "", "contentUrl": "", "bundled": false }
+    },
+    {
+      "name": "bundle mode rewrites all three fields to the same sanitized attachments path",
+      "mode": "bundle",
+      "attachment": { "id": "att 1!", "displayName": "shot (final).png", "absolutePath": "/ws/.hive/uploads/shot.png", "sourceExists": true },
+      "expected": { "absolutePath": "./attachments/att-1-shot-final-.png", "relativePath": "./attachments/att-1-shot-final-.png", "contentUrl": "./attachments/att-1-shot-final-.png", "bundled": true }
+    },
+    {
+      "name": "bundle mode with a missing source file falls back to the metadata rewrite",
+      "mode": "bundle",
+      "attachment": { "id": "att-2", "displayName": "gone.pdf", "absolutePath": "/ws/.hive/uploads/gone.pdf", "sourceExists": false },
+      "expected": { "absolutePath": "", "relativePath": "", "contentUrl": "", "bundled": false }
+    },
+    {
+      "name": "bundle mode with an empty absolutePath falls back to the metadata rewrite",
+      "mode": "bundle",
+      "attachment": { "id": "att-3", "displayName": "pasted.txt", "absolutePath": "", "sourceExists": false },
+      "expected": { "absolutePath": "", "relativePath": "", "contentUrl": "", "bundled": false }
+    },
+    {
+      "name": "bundle mode derives the copied name from absolutePath when displayName is empty",
+      "mode": "bundle",
+      "attachment": { "id": "att-4", "displayName": "", "absolutePath": "/ws/.hive/uploads/raw name.bin", "sourceExists": true },
+      "expected": { "absolutePath": "./attachments/att-4-raw-name.bin", "relativePath": "./attachments/att-4-raw-name.bin", "contentUrl": "./attachments/att-4-raw-name.bin", "bundled": true }
+    }
+  ],
+  "path_rewrite_cases": [
+    {
+      "name": "assistant text mentioning the workspace path is rewritten",
+      "workspacePath": "/Users/dev/proj x",
+      "input": { "kind": "assistant_text", "text": "Wrote /Users/dev/proj x/src/a.ts and /Users/dev/proj x/b.ts" },
+      "expected": { "kind": "assistant_text", "text": "Wrote /workspace/src/a.ts and /workspace/b.ts" }
+    },
+    {
+      "name": "nested arrays and objects are traversed; non-strings pass through",
+      "workspacePath": "/home/op/work",
+      "input": { "steps": [ { "cmd": "ls /home/op/work" }, 42, null, [ "/home/op/work/x" ] ], "count": 2 },
+      "expected": { "steps": [ { "cmd": "ls /workspace" }, 42, null, [ "/workspace/x" ] ], "count": 2 }
+    },
+    {
+      "name": "an empty workspace path rewrites nothing",
+      "workspacePath": "",
+      "input": { "text": "untouched /anything" },
+      "expected": { "text": "untouched /anything" }
+    }
+  ]
+}

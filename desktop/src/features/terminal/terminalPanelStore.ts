@@ -41,6 +41,9 @@ export function useTerminalPanel() {
       return () => listeners.delete(listener);
     },
     () => snapshot,
+    // Server/static renders (tests use renderToStaticMarkup) need an
+    // explicit server snapshot or React throws.
+    () => snapshot,
   );
 }
 

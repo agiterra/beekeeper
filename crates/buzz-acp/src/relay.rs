@@ -51,6 +51,13 @@ const PONG_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for individual ws.send() calls. Prevents a stalled socket from
 /// wedging the background task indefinitely.
 const WS_SEND_TIMEOUT_SECS: u64 = 10;
+/// Maximum time a durable publication waits for the relay's matching `OK`.
+const PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum distinct exact targets retained for reconnect-safe ephemerals.
+const LATEST_EPHEMERAL_PENDING_CAPACITY: usize = 256;
+/// Latest-state handoff is local to the background task and should complete
+/// quickly even while that task reconnects.
+const LATEST_EPHEMERAL_HANDOFF_TIMEOUT: Duration = Duration::from_secs(5);
 /// Diagnostic threshold: log when a connection has been stable for this long.
 /// The stability block resets `BgState::backoff_step` to 0 here so the next
 /// drop after a long healthy run retries at the short end of the ladder again.
@@ -123,7 +130,7 @@ use buzz_core::kind::{
 use futures_util::{SinkExt, StreamExt};
 use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
@@ -454,6 +461,84 @@ impl RestClient {
             .map_err(|e| RelayError::Http(e.to_string()))
     }
 
+    /// Resolve one signed event by its exact id and expected kind.
+    ///
+    /// The explicit kind keeps the bridge query within the relay's p-gate;
+    /// callers must still validate any domain-specific payload and tags.
+    pub async fn query_event_by_id(
+        &self,
+        event_id: &str,
+        expected_kind: Kind,
+    ) -> Result<Option<Event>, RelayError> {
+        let id = nostr::EventId::from_hex(event_id)
+            .map_err(|error| RelayError::Http(format!("invalid event id: {error}")))?;
+        let value = self
+            .query(&[nostr::Filter::new().id(id).kind(expected_kind)])
+            .await?;
+        let rows = value
+            .as_array()
+            .ok_or_else(|| RelayError::Http("expected JSON array from /query (event id)".into()))?;
+        if rows.len() > 1 {
+            return Err(RelayError::Http(format!(
+                "event-id query returned {} rows",
+                rows.len()
+            )));
+        }
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let event: Event = serde_json::from_value(row.clone())?;
+        event.verify().map_err(|error| {
+            RelayError::Http(format!("queried event failed verification: {error}"))
+        })?;
+        if event.id != id || event.kind != expected_kind {
+            return Err(RelayError::Http(
+                "event-id query returned a mismatched event".into(),
+            ));
+        }
+        Ok(Some(event))
+    }
+
+    /// Fetch the relay's own signing pubkey from its NIP-11 information
+    /// document (`self` field, lowercase 64-hex).
+    ///
+    /// This is the documented trust root for relay-signed events: NIP-11
+    /// defines `self` as the relay's identity key, NIP-29/NIP-43 direct
+    /// clients to verify relay-authored events against it, and Buzz serves
+    /// it from the same origin the caller already trusts for its entire
+    /// authenticated command stream. `Ok(None)` means the relay advertises
+    /// no stable signing key — callers must then treat every relay-signed
+    /// artifact as unverifiable (fail closed), never guess a key another way.
+    pub async fn fetch_relay_self_verified(&self) -> Result<Option<String>, RelayError> {
+        let url = format!("{}/", self.base_url);
+        let response = self
+            .http
+            .get(&url)
+            .header("Accept", "application/nostr+json")
+            .send()
+            .await
+            .map_err(|e| RelayError::Http(format!("NIP-11 fetch failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "NIP-11 fetch returned HTTP {}",
+                response.status()
+            )));
+        }
+        let document: Value = response
+            .json()
+            .await
+            .map_err(|e| RelayError::Http(format!("NIP-11 document is not JSON: {e}")))?;
+        let Some(self_hex) = document.get("self").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        if self_hex.len() != 64 || !self_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(RelayError::Http(format!(
+                "NIP-11 'self' field is not a 64-hex pubkey: {self_hex:?}"
+            )));
+        }
+        Ok(Some(self_hex.to_ascii_lowercase()))
+    }
+
     /// Count events via the HTTP bridge: `POST /count` with NIP-98 auth.
     ///
     /// Accepts a slice of `nostr::Filter` (serialized as JSON array).
@@ -483,6 +568,184 @@ impl RestClient {
         }
         serde_json::from_str(&text).map_err(|e| RelayError::Http(e.to_string()))
     }
+
+    /// Check whether `oid` is present in the relay's git storage for
+    /// `repo_ref` (a NIP-MP repository coordinate,
+    /// `30617:<owner-hex>:<repo-d>`) — the narrow reachability primitive
+    /// B1/D4a needs to tell "recorded" apart from "recoverable."
+    ///
+    /// # Signing contract (R4/R10)
+    ///
+    /// This reproduces the **git credential helper's repo-root NIP-98
+    /// signing** (`crates/git-credential-nostr/src/lib.rs`), not the
+    /// exact-path binding `RestClient::bridge_post` uses for the `/query`,
+    /// `/count`, and `/events` bridge. The relay's git routes
+    /// (`crates/buzz-relay/src/api/git/transport.rs`) verify the signed `u`
+    /// tag against the *repo-root* URL (`{base}/git/{owner}/{repo}`,
+    /// stripped of `/info/refs`, its query string, and the pack-endpoint
+    /// suffixes) regardless of which of the three routes the token
+    /// authorizes — the credential helper signs once and git reuses the
+    /// token across GET and POST. Signing the exact request URL here (as
+    /// `bridge_post` does) would be rejected: `u` would carry a path the
+    /// relay's `git_expected_url` never produces.
+    ///
+    /// # What this actually checks
+    ///
+    /// A single `GET .../info/refs?service=git-upload-pack` — the same
+    /// advertisement a `git fetch` reads first — checked for `oid` among the
+    /// advertised ref tips. This is a conservative, cheap approximation of
+    /// "reachable": a commit that was pushed and is still a ref tip matches
+    /// directly; older, superseded ancestors of a ref that has since moved
+    /// on are not distinguished from genuinely absent commits, because
+    /// telling them apart needs a full pack negotiation this narrow check
+    /// deliberately does not attempt (documented debt, see R10). In this
+    /// crate's actual call pattern that gap does not bite: the provider
+    /// always checks its own *current* `HEAD`, which — when pushed at all —
+    /// is exactly the tip the checkout most recently advanced to.
+    ///
+    /// # Honesty contract
+    ///
+    /// `Ok(true)`/`Ok(false)` are both *confirmed* answers: the advertisement
+    /// was read successfully and `oid` was, or was not, among the tips.
+    /// Every failure mode this method cannot resolve unambiguously —
+    /// malformed `repo_ref`/`oid`, a network or auth failure, a non-success
+    /// status, a response too large or malformed to parse — is `Err`, and
+    /// callers must treat `Err` as "not checked," never as "confirmed not
+    /// reachable" — see the caller in `buzz-session-provider`'s
+    /// `reachability` module, which applies exactly that mapping.
+    pub async fn git_object_reachable(
+        &self,
+        repo_ref: &str,
+        oid: &str,
+    ) -> Result<bool, RelayError> {
+        let (owner, repo) = parse_git_repo_ref(repo_ref)
+            .ok_or_else(|| RelayError::Http(format!("not a git repo coordinate: {repo_ref:?}")))?;
+        if !is_git_oid(oid) {
+            return Err(RelayError::Http(format!("not a git object id: {oid:?}")));
+        }
+
+        let repo_root = format!("{}/git/{owner}/{repo}", self.base_url);
+        let auth = self.nip98_header("GET", &repo_root, None)?;
+        let url = format!("{repo_root}/info/refs?service=git-upload-pack");
+
+        let response = self
+            .http
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(|e| RelayError::Http(format!("git reachability request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(RelayError::Http(format!(
+                "git reachability check returned HTTP {}",
+                response.status()
+            )));
+        }
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| RelayError::Http(format!("git reachability body read failed: {e}")))?;
+        if body.len() > GIT_REACHABILITY_MAX_RESPONSE_BYTES {
+            return Err(RelayError::Http(format!(
+                "git reachability response exceeded {GIT_REACHABILITY_MAX_RESPONSE_BYTES} bytes"
+            )));
+        }
+        let advertised = parse_advertised_oids(&body)
+            .ok_or_else(|| RelayError::Http("malformed git ref advertisement".to_string()))?;
+        Ok(advertised.contains(oid))
+    }
+}
+
+/// Firm cap on a reachability check's response body. The relay's own
+/// `info/refs` handler caps its advertisement at 4 MiB
+/// (`INFO_REFS_MAX_OUTPUT_BYTES`); this is a client-side backstop set
+/// comfortably above that so a well-behaved relay never trips it, while
+/// still bounding memory for whatever answered on the other end of the URL.
+const GIT_REACHABILITY_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Whether `value` is a well-formed lowercase-hex git object id (SHA-1 or
+/// SHA-256 length).
+fn is_git_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Split a NIP-MP repository coordinate (`30617:<owner-hex>:<repo-d>`) into
+/// the `(owner, repo)` path segments `buzz-relay`'s git routes expect.
+///
+/// Mirrors the grammar `validate_repo_id` enforces server-side
+/// (`crates/buzz-relay/src/api/git/transport.rs`): a 64-lowercase-hex owner
+/// pubkey and a non-empty repo `d`-tag. Returns `None` on anything that
+/// doesn't match, which `git_object_reachable` turns into "not checked"
+/// rather than guessing at a URL.
+fn parse_git_repo_ref(repo_ref: &str) -> Option<(String, String)> {
+    let mut segments = repo_ref.splitn(3, ':');
+    let (Some(kind), Some(owner), Some(repo)) = (segments.next(), segments.next(), segments.next())
+    else {
+        return None;
+    };
+    if kind.parse::<u32>() != Ok(buzz_core::kind::KIND_GIT_REPO_ANNOUNCEMENT) {
+        return None;
+    }
+    if owner.len() != 64
+        || !owner
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return None;
+    }
+    if repo.is_empty() || repo.len() > 64 {
+        return None;
+    }
+    Some((owner.to_owned(), repo.to_owned()))
+}
+
+/// Parse a git smart-HTTP `info/refs` advertisement body into the set of
+/// advertised ref-tip object ids.
+///
+/// Reads only the pkt-line envelope well enough to extract `<oid> <ref>`
+/// lines (skipping the leading `# service=...` header line and any flush
+/// packets, and trimming the first ref line's NUL-delimited capability
+/// list). `None` on any framing this minimal parser cannot make sense of —
+/// a length prefix that isn't 4 hex digits, or a length that runs past the
+/// end of the body — rather than silently returning a partial (and
+/// therefore misleadingly small) set.
+fn parse_advertised_oids(body: &[u8]) -> Option<HashSet<String>> {
+    let mut oids = HashSet::new();
+    let mut i = 0usize;
+    while i < body.len() {
+        if i + 4 > body.len() {
+            return None;
+        }
+        let len_hex = std::str::from_utf8(&body[i..i + 4]).ok()?;
+        let len = usize::from_str_radix(len_hex, 16).ok()?;
+        if len == 0 {
+            // flush-pkt
+            i += 4;
+            continue;
+        }
+        if len < 4 || len > body.len() - i {
+            return None;
+        }
+        let payload = &body[i + 4..i + len];
+        i += len;
+        let Ok(line) = std::str::from_utf8(payload) else {
+            continue;
+        };
+        let line = line.trim_end_matches('\n');
+        if line.starts_with('#') {
+            continue;
+        }
+        // The first ref line carries `<oid> <ref>\0<capabilities>`; later
+        // lines are plain `<oid> <ref>`. Splitting on NUL is a no-op for the
+        // lines that don't have one.
+        let line = line.split('\0').next().unwrap_or(line);
+        if let Some((oid, _rest)) = line.split_once(' ') {
+            if is_git_oid(oid) {
+                oids.insert(oid.to_ascii_lowercase());
+            }
+        }
+    }
+    Some(oids)
 }
 
 /// Events the harness cares about.
@@ -580,6 +843,17 @@ enum RelayCommand {
     SubscribeObserverControls,
     /// Publish a signed event to the relay (for typing indicators, etc.).
     PublishEvent { event: Box<Event> },
+    /// Publish a signed durable event and resolve only from its matching relay `OK`.
+    PublishEventAcknowledged {
+        event: Box<Event>,
+        response: oneshot::Sender<Result<(), String>>,
+    },
+    /// Publish coalesced ephemeral state whose newest value survives outages.
+    PublishLatestEphemeral {
+        semantic_key: String,
+        event: Box<Event>,
+        response: oneshot::Sender<Result<(), String>>,
+    },
     /// Floor `since` for membership notification replay; events before startup are never re-delivered.
     SetStartupWatermark { ts: u64 },
 }
@@ -629,6 +903,61 @@ impl RelayEventPublisher {
             })
             .await
             .map_err(|_| RelayError::ConnectionClosed)
+    }
+
+    /// Publish a signed durable event and wait for the relay's matching positive
+    /// NIP-01 `OK` response.
+    ///
+    /// Socket enqueue and frame delivery are not acceptance. A negative `OK`,
+    /// connection loss, rate gate, background shutdown, or bounded timeout is
+    /// returned as an error so a durable caller can retain and retry its intent.
+    pub async fn publish_event_acknowledged(&self, event: Event) -> Result<(), RelayError> {
+        let (response, accepted) = oneshot::channel();
+        self.cmd_tx
+            .send(RelayCommand::PublishEventAcknowledged {
+                event: Box::new(event),
+                response,
+            })
+            .await
+            .map_err(|_| RelayError::ConnectionClosed)?;
+        match timeout(PUBLISH_ACK_TIMEOUT, accepted).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(message))) => Err(RelayError::UnexpectedMessage(message)),
+            Ok(Err(_)) => Err(RelayError::ConnectionClosed),
+            Err(_) => Err(RelayError::Timeout),
+        }
+    }
+
+    /// Publish the newest ephemeral state for one exact semantic target.
+    ///
+    /// Unlike typing indicators, this intent is retained across connection
+    /// loss and rate gating. A newer event with the same key replaces the
+    /// older pending event; distinct keys remain independent.
+    pub async fn publish_latest_ephemeral(
+        &self,
+        semantic_key: String,
+        event: Event,
+    ) -> Result<(), RelayError> {
+        if semantic_key.trim().is_empty() {
+            return Err(RelayError::UnexpectedMessage(
+                "latest ephemeral semantic key must not be empty".into(),
+            ));
+        }
+        let (response, retained) = oneshot::channel();
+        self.cmd_tx
+            .send(RelayCommand::PublishLatestEphemeral {
+                semantic_key,
+                event: Box::new(event),
+                response,
+            })
+            .await
+            .map_err(|_| RelayError::ConnectionClosed)?;
+        match timeout(LATEST_EPHEMERAL_HANDOFF_TIMEOUT, retained).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(message))) => Err(RelayError::UnexpectedMessage(message)),
+            Ok(Err(_)) => Err(RelayError::ConnectionClosed),
+            Err(_) => Err(RelayError::Timeout),
+        }
     }
 
     /// Test-only publisher pair: published events are forwarded to the
@@ -953,6 +1282,17 @@ impl HarnessRelay {
             .map_err(|_| RelayError::ConnectionClosed)?;
         Ok(())
     }
+
+    /// Resolve one signed event through the authenticated HTTP bridge.
+    pub async fn query_event_by_id(
+        &self,
+        event_id: &str,
+        expected_kind: Kind,
+    ) -> Result<Option<Event>, RelayError> {
+        self.rest_client()
+            .query_event_by_id(event_id, expected_kind)
+            .await
+    }
 }
 
 impl HarnessRelay {
@@ -1119,6 +1459,34 @@ struct BgState {
     /// the elevated rung it earned. Reset to 0 by the stability block once the
     /// connection has been up for `STABLE_CONNECTION_SECS`.
     backoff_step: usize,
+    /// Connection-drop sentinels (`None` on the event channel) sent to the
+    /// caller and not yet echoed back as a `Reconnect` command.
+    ///
+    /// Every drop this task reports is also repaired by this task, inline,
+    /// before the main select loop runs again — so by the time the caller's
+    /// echoing `Reconnect` arrives, the connection it complains about has
+    /// already been replaced. Without this count each stale echo tears down
+    /// the healthy socket and runs a full reconnect + AUTH + resubscribe
+    /// cycle again, one per queued echo — the "reconnect attempts multiply
+    /// across an outage" failure. A `Reconnect` that arrives with no
+    /// outstanding sentinel is honored as a genuine caller request.
+    pending_drop_notices: u32,
+    /// Durable EVENT writes awaiting their matching relay `OK`, keyed by event id.
+    acknowledged_publishes: HashMap<String, PendingAcknowledgedPublish>,
+    /// Newest reconnect-safe ephemeral event per exact semantic target.
+    latest_ephemeral_pending: HashMap<String, Box<Event>>,
+    /// Latest ephemeral frames written but not yet accepted, keyed by target.
+    latest_ephemeral_in_flight: HashMap<String, PendingLatestEphemeral>,
+}
+
+struct PendingAcknowledgedPublish {
+    response: oneshot::Sender<Result<(), String>>,
+    deadline: tokio::time::Instant,
+}
+
+struct PendingLatestEphemeral {
+    event_id: String,
+    deadline: tokio::time::Instant,
 }
 
 impl BgState {
@@ -1145,7 +1513,174 @@ impl BgState {
             gated_observer_dropped: 0,
             resubscribe_retry: HashSet::new(),
             backoff_step: 0,
+            pending_drop_notices: 0,
+            acknowledged_publishes: HashMap::new(),
+            latest_ephemeral_pending: HashMap::new(),
+            latest_ephemeral_in_flight: HashMap::new(),
         }
+    }
+
+    fn retain_latest_ephemeral(
+        &mut self,
+        semantic_key: String,
+        event: Box<Event>,
+    ) -> Result<(), String> {
+        if !self.latest_ephemeral_pending.contains_key(&semantic_key)
+            && self.latest_ephemeral_pending.len() >= LATEST_EPHEMERAL_PENDING_CAPACITY
+        {
+            warn!(
+                capacity = LATEST_EPHEMERAL_PENDING_CAPACITY,
+                %semantic_key,
+                "latest-ephemeral retention capacity exhausted; refusing a new target"
+            );
+            return Err(format!(
+                "latest-ephemeral retention capacity {LATEST_EPHEMERAL_PENDING_CAPACITY} exhausted"
+            ));
+        }
+        let replaces_in_flight = self
+            .latest_ephemeral_pending
+            .get(&semantic_key)
+            .is_some_and(|current| current.id != event.id);
+        if replaces_in_flight {
+            self.latest_ephemeral_in_flight.remove(&semantic_key);
+        }
+        self.latest_ephemeral_pending.insert(semantic_key, event);
+        Ok(())
+    }
+
+    fn mark_latest_ephemeral_in_flight(&mut self, semantic_key: String, event_id: String) {
+        self.latest_ephemeral_in_flight.insert(
+            semantic_key,
+            PendingLatestEphemeral {
+                event_id,
+                deadline: tokio::time::Instant::now() + PUBLISH_ACK_TIMEOUT,
+            },
+        );
+    }
+
+    fn resolve_latest_ephemeral(&mut self, event_id: &str, accepted: bool, _message: &str) {
+        let semantic_key =
+            self.latest_ephemeral_in_flight
+                .iter()
+                .find_map(|(semantic_key, pending)| {
+                    (pending.event_id == event_id).then(|| semantic_key.clone())
+                });
+        let Some(semantic_key) = semantic_key else {
+            return;
+        };
+        self.latest_ephemeral_in_flight.remove(&semantic_key);
+        if accepted
+            && self
+                .latest_ephemeral_pending
+                .get(&semantic_key)
+                .is_some_and(|event| event.id.to_hex() == event_id)
+        {
+            self.latest_ephemeral_pending.remove(&semantic_key);
+        }
+    }
+
+    fn requeue_latest_ephemeral_in_flight(&mut self) {
+        self.latest_ephemeral_in_flight.clear();
+    }
+
+    fn expire_latest_ephemeral_in_flight(&mut self) {
+        let now = tokio::time::Instant::now();
+        self.latest_ephemeral_in_flight
+            .retain(|_, pending| pending.deadline > now);
+    }
+
+    fn next_latest_ephemeral_deadline(&self) -> Option<tokio::time::Instant> {
+        self.latest_ephemeral_in_flight
+            .values()
+            .map(|pending| pending.deadline)
+            .min()
+    }
+
+    fn has_resendable_latest_ephemeral(&self) -> bool {
+        self.latest_ephemeral_pending
+            .keys()
+            .any(|key| !self.latest_ephemeral_in_flight.contains_key(key))
+    }
+
+    fn register_acknowledged_publish(
+        &mut self,
+        event_id: String,
+        response: oneshot::Sender<Result<(), String>>,
+    ) {
+        if response.is_closed() {
+            return;
+        }
+        let pending = PendingAcknowledgedPublish {
+            response,
+            deadline: tokio::time::Instant::now() + PUBLISH_ACK_TIMEOUT,
+        };
+        if let Some(previous) = self.acknowledged_publishes.insert(event_id, pending) {
+            let _ = previous.response.send(Err(
+                "duplicate acknowledged publication is already in flight".into(),
+            ));
+        }
+    }
+
+    fn resolve_acknowledged_publish(&mut self, event_id: &str, accepted: bool, message: &str) {
+        let Some(pending) = self.acknowledged_publishes.remove(event_id) else {
+            return;
+        };
+        let result = if accepted {
+            Ok(())
+        } else if message.is_empty() {
+            Err("relay rejected durable event".into())
+        } else {
+            Err(format!("relay rejected durable event: {message}"))
+        };
+        let _ = pending.response.send(result);
+    }
+
+    fn fail_acknowledged_publishes(&mut self, message: &str) {
+        for (_, pending) in self.acknowledged_publishes.drain() {
+            let _ = pending.response.send(Err(message.to_owned()));
+        }
+    }
+
+    fn expire_acknowledged_publishes(&mut self) {
+        let now = tokio::time::Instant::now();
+        let expired: Vec<String> = self
+            .acknowledged_publishes
+            .iter()
+            .filter(|(_, pending)| pending.deadline <= now || pending.response.is_closed())
+            .map(|(event_id, _)| event_id.clone())
+            .collect();
+        for event_id in expired {
+            if let Some(pending) = self.acknowledged_publishes.remove(&event_id) {
+                let _ = pending.response.send(Err(
+                    "timed out waiting for relay publication acceptance".into(),
+                ));
+            }
+        }
+    }
+
+    fn next_acknowledged_publish_deadline(&self) -> Option<tokio::time::Instant> {
+        self.acknowledged_publishes
+            .values()
+            .map(|pending| pending.deadline)
+            .min()
+    }
+
+    /// Note that a drop sentinel reached the caller; its `Reconnect` echo (if
+    /// the caller sends one) is stale by construction. See
+    /// [`BgState::pending_drop_notices`].
+    fn record_drop_notice(&mut self) {
+        self.pending_drop_notices = self.pending_drop_notices.saturating_add(1);
+    }
+
+    /// Consume one outstanding drop notice, if any. Returns `true` when the
+    /// `Reconnect` command being processed was a stale echo of a drop this
+    /// task already repaired.
+    fn consume_drop_notice(&mut self) -> bool {
+        if self.pending_drop_notices == 0 {
+            return false;
+        }
+        self.pending_drop_notices -= 1;
+        true
     }
 
     /// Record a received event for dedup and `since` tracking.
@@ -1348,8 +1883,24 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
                 state.park_gated_observer_frame(event);
             }
         }
-        // Already reconnecting — redundant.
-        RelayCommand::Reconnect => {}
+        RelayCommand::PublishEventAcknowledged { response, .. } => {
+            let _ = response.send(Err(
+                "relay connection is unavailable for acknowledged publication".into(),
+            ));
+        }
+        RelayCommand::PublishLatestEphemeral {
+            semantic_key,
+            event,
+            response,
+        } => {
+            let result = state.retain_latest_ephemeral(semantic_key, event);
+            let _ = response.send(result);
+        }
+        // Already reconnecting — redundant. Still consumes its drop notice so
+        // the sentinel/echo accounting stays balanced.
+        RelayCommand::Reconnect => {
+            state.consume_drop_notice();
+        }
         // Callers MUST handle Shutdown before calling this function.
         RelayCommand::Shutdown => {
             debug_assert!(
@@ -1374,6 +1925,19 @@ fn retain_failed_command_intent(state: &mut BgState, cmd: RelayCommand) {
             state.park_gated_observer_frame(event);
         }
         RelayCommand::PublishEvent { .. } => {}
+        RelayCommand::PublishEventAcknowledged { response, .. } => {
+            let _ = response.send(Err(
+                "relay send failed before acknowledged publication completed".into(),
+            ));
+        }
+        RelayCommand::PublishLatestEphemeral {
+            semantic_key,
+            event,
+            response,
+        } => {
+            let result = state.retain_latest_ephemeral(semantic_key, event);
+            let _ = response.send(result);
+        }
         cmd => apply_command_to_state(state, cmd),
     }
 }
@@ -1569,6 +2133,51 @@ async fn execute_connected_command(
             }
             true
         }
+        RelayCommand::PublishEventAcknowledged { event, response } => {
+            if response.is_closed() {
+                return true;
+            }
+            if state.check_rate_gate().is_some() {
+                let _ = response.send(Err(
+                    "relay rate gate blocked acknowledged publication".into()
+                ));
+                return true;
+            }
+            let event_id = event.id.to_hex();
+            if !send_publish_event_frame(ws, &event).await {
+                let _ = response.send(Err(
+                    "relay socket send failed during acknowledged publication".into(),
+                ));
+                return false;
+            }
+            state.register_acknowledged_publish(event_id, response);
+            true
+        }
+        RelayCommand::PublishLatestEphemeral {
+            semantic_key,
+            event,
+            response,
+        } => {
+            let retained = state.retain_latest_ephemeral(semantic_key.clone(), event);
+            if let Err(error) = retained {
+                let _ = response.send(Err(error));
+                return true;
+            }
+            let _ = response.send(Ok(()));
+            if state.check_rate_gate().is_some()
+                || state.latest_ephemeral_in_flight.contains_key(&semantic_key)
+            {
+                return true;
+            }
+            let Some(event) = state.latest_ephemeral_pending.get(&semantic_key).cloned() else {
+                return true;
+            };
+            if !send_publish_event_frame(ws, &event).await {
+                return false;
+            }
+            state.mark_latest_ephemeral_in_flight(semantic_key, event.id.to_hex());
+            true
+        }
         RelayCommand::SetStartupWatermark { ts } => {
             state.startup_watermark = Some(ts);
             if state.membership_last_seen.is_none() {
@@ -1591,6 +2200,17 @@ async fn execute_connected_command(
 /// The main background task loop.
 ///
 /// Owns the WebSocket stream, responds to Pings, forwards events, and handles
+/// Report a connection drop to the caller without blocking, remembering the
+/// sentinel so the caller's echoing `Reconnect` command is recognized as a
+/// stale reference to a drop this task repairs itself.
+fn notify_connection_lost(event_tx: &mpsc::Sender<Option<BuzzEvent>>, state: &mut BgState) {
+    state.fail_acknowledged_publishes("relay connection was lost before publication acceptance");
+    state.requeue_latest_ephemeral_in_flight();
+    if event_tx.try_send(None).is_ok() {
+        state.record_drop_notice();
+    }
+}
+
 /// reconnection.
 #[allow(clippy::too_many_arguments)]
 async fn run_background_task(
@@ -1622,7 +2242,7 @@ async fn run_background_task(
         warn!("handshake buffer contained a drop signal — attempting autonomous reconnect");
         // Don't wait for a caller-driven Reconnect command — the caller was
         // never notified (no sentinel sent). Go straight to reconnect loop.
-        let _ = event_tx.try_send(None);
+        notify_connection_lost(&event_tx, &mut state);
         match try_autonomous_reconnect(
             &mut ws,
             &mut cmd_rx,
@@ -1687,6 +2307,8 @@ async fn run_background_task(
     let mut drain_pacing_next: Option<tokio::time::Instant> = None;
 
     loop {
+        state.expire_acknowledged_publishes();
+        state.expire_latest_ephemeral_in_flight();
         if state.proactive_resubscribe_needed {
             state.proactive_resubscribe_needed = false;
             info!("proactive resubscribe triggered by backpressure event loss");
@@ -1705,7 +2327,7 @@ async fn run_background_task(
                 ResubscribeResult::Shutdown => return,
                 ResubscribeResult::RetryConnection => {
                     warn!("proactive resubscribe had failures — triggering reconnect");
-                    let _ = event_tx.try_send(None);
+                    notify_connection_lost(&event_tx, &mut state);
                     match try_autonomous_reconnect(
                         &mut ws,
                         &mut cmd_rx,
@@ -1826,6 +2448,14 @@ async fn run_background_task(
 
             if budget > 0 && !state.gated_observer_pending.is_empty() {
                 let sent = drain_gated_observer_pending(&mut ws, &mut state, budget).await;
+                budget = budget.saturating_sub(sent);
+                if sent > 0 {
+                    any_sent = true;
+                }
+            }
+
+            if budget > 0 && state.has_resendable_latest_ephemeral() {
+                let sent = drain_latest_ephemeral_pending(&mut ws, &mut state, budget).await;
                 if sent > 0 {
                     any_sent = true;
                 }
@@ -1833,7 +2463,9 @@ async fn run_background_task(
 
             if any_sent {
                 drain_pacing_next = Some(tokio::time::Instant::now() + REQ_PACING_INTERVAL);
-            } else if !state.gated_observer_pending.is_empty() {
+            } else if !state.gated_observer_pending.is_empty()
+                || state.has_resendable_latest_ephemeral()
+            {
                 // Nothing sent because the gate is still armed. Arm the pacing
                 // timer to the gate deadline so parked observer frames drain
                 // promptly even when no other traffic wakes the select loop.
@@ -1843,6 +2475,11 @@ async fn run_background_task(
             }
         }
 
+        let publication_ack_deadline = state
+            .next_acknowledged_publish_deadline()
+            .into_iter()
+            .chain(state.next_latest_ephemeral_deadline())
+            .min();
         tokio::select! {
                    raw = ws.next() => {
                        // Determine if the socket is lost.
@@ -1879,9 +2516,9 @@ async fn run_background_task(
 
                        if socket_lost {
                            // Signal the caller, then attempt autonomous reconnect.
-                           // Use try_send to avoid blocking on backpressure — recovery
-                           // must not stall when the event channel is full.
-                           let _ = event_tx.try_send(None);
+                           // The notification never blocks — recovery must not
+                           // stall when the event channel is full.
+                           notify_connection_lost(&event_tx, &mut state);
                            let outcome = try_autonomous_reconnect(
                                &mut ws,
                                &mut cmd_rx,
@@ -1928,6 +2565,19 @@ async fn run_background_task(
                    cmd = cmd_rx.recv() => {
                        match cmd {
                            Some(RelayCommand::Reconnect) => {
+                               // A `Reconnect` echoing a drop sentinel refers to a
+                               // connection this task already replaced inline —
+                               // honoring it would tear down the healthy socket and
+                               // run the whole reconnect + resubscribe cycle once
+                               // per queued echo. Reconnect must replace the prior
+                               // connection, never multiply cycles over it.
+                               if state.consume_drop_notice() {
+                                   debug!("dropping stale Reconnect — the drop it echoes was already repaired");
+                               } else {
+                               state.fail_acknowledged_publishes(
+                                   "relay reconnect began before publication acceptance",
+                               );
+                               state.requeue_latest_ephemeral_in_flight();
                                if matches!(
                                    wait_for_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
@@ -1940,6 +2590,7 @@ async fn run_background_task(
                                last_pong = Instant::now();
                                connected_since = Instant::now();
                                stable_logged = false;
+                               }
                            }
                            Some(RelayCommand::Shutdown) | None => {
                                debug!("background task shutting down — sending close frame");
@@ -1962,7 +2613,7 @@ async fn run_background_task(
                                if !ok {
                                    // Send failed — socket is likely dead. Trigger reconnect.
                                    warn!("command send failed — triggering reconnect");
-                                   let _ = event_tx.try_send(None);
+                                   notify_connection_lost(&event_tx, &mut state);
                                    match try_autonomous_reconnect(
                                        &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -2000,8 +2651,8 @@ async fn run_background_task(
                        if ping_sent && last_pong.elapsed() > PONG_TIMEOUT {
                            // No pong received after our last ping — connection is dead.
                            warn!("no pong received within {:?} — connection dead, reconnecting", PONG_TIMEOUT);
-                           // Use try_send to avoid blocking on backpressure during recovery.
-                           let _ = event_tx.try_send(None);
+                           // Never blocks — recovery must not stall on backpressure.
+                           notify_connection_lost(&event_tx, &mut state);
                            match try_autonomous_reconnect(
                                &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -2033,8 +2684,8 @@ async fn run_background_task(
                        } else if !ping_sent {
                            if let Err(e) = ws_send_timeout(&mut ws, Message::Ping(vec![].into()), WS_SEND_TIMEOUT_SECS).await {
                                warn!("failed to send ping: {e} — triggering reconnect");
-                               // Use try_send to avoid blocking on backpressure during recovery.
-                               let _ = event_tx.try_send(None);
+                               // Never blocks — recovery must not stall on backpressure.
+                               notify_connection_lost(&event_tx, &mut state);
                                match try_autonomous_reconnect(
                                    &mut ws, &mut cmd_rx, &mut state, &keys, &relay_url,
         &agent_pubkey_hex, &event_tx,
@@ -2080,6 +2731,15 @@ async fn run_background_task(
                        }
                    } => {
                        drain_pacing_next = None;
+                   }
+                   _ = async {
+                       match publication_ack_deadline {
+                           Some(deadline) => tokio::time::sleep_until(deadline).await,
+                           None => std::future::pending::<()>().await,
+                       }
+                   } => {
+                       state.expire_acknowledged_publishes();
+                       state.expire_latest_ephemeral_in_flight();
                    }
                }
 
@@ -2256,10 +2916,7 @@ async fn handle_ws_message(
                     // Fix 4: NOTICE at warn level.
                     tracing::warn!("relay NOTICE: {message}");
                     // The relay sends NOTICE for rate-limited EVENT/COUNT frames.
-                    if message.starts_with("rate-limited:") {
-                        let secs = parse_rate_limit_retry_secs(&message).unwrap_or(0);
-                        let deadline = state.set_rate_limit_gate(secs);
-                        state.requeue_observer_in_flight();
+                    if let Some(deadline) = handle_rate_limit_notice(state, &message) {
                         warn!(
                             "rate-limit gate armed via NOTICE until ~{:.1}s from now",
                             deadline
@@ -2418,6 +3075,11 @@ async fn handle_ws_message(
                     accepted,
                     message,
                 } => {
+                    state.resolve_acknowledged_publish(&event_id, accepted, &message);
+                    if !accepted && message.starts_with("rate-limited:") {
+                        let _ = handle_rate_limit_notice(state, &message);
+                    }
+                    state.resolve_latest_ephemeral(&event_id, accepted, &message);
                     if !accepted && message.starts_with("auth") {
                         // AUTH OK with accepted=false means auth was rejected.
                         warn!("mid-session AUTH rejected (event {event_id}): {message} — triggering reconnect");
@@ -2443,6 +3105,18 @@ async fn handle_ws_message(
         // Binary, Pong, Frame — ignore
         _ => true,
     }
+}
+
+fn handle_rate_limit_notice(state: &mut BgState, message: &str) -> Option<tokio::time::Instant> {
+    if !message.starts_with("rate-limited:") {
+        return None;
+    }
+    let secs = parse_rate_limit_retry_secs(message).unwrap_or(0);
+    let deadline = state.set_rate_limit_gate(secs);
+    state.requeue_observer_in_flight();
+    state.fail_acknowledged_publishes("relay rate limited acknowledged publication");
+    state.requeue_latest_ephemeral_in_flight();
+    Some(deadline)
 }
 
 /// Process messages buffered during the NIP-42 auth handshake.
@@ -2720,6 +3394,41 @@ async fn drain_gated_observer_pending(
     sent
 }
 
+/// Send at most `budget` coalesced ephemeral states on the live socket.
+///
+/// Entries remain retained after their EVENT frame is written and become
+/// in-flight. Only a matching positive relay `OK` retires them; a send failure
+/// leaves that event and every unsent target available for reconnect.
+async fn drain_latest_ephemeral_pending(
+    ws: &mut WsStream,
+    state: &mut BgState,
+    budget: usize,
+) -> usize {
+    if budget == 0 || state.check_rate_gate().is_some() {
+        return 0;
+    }
+    let mut keys: Vec<String> = state
+        .latest_ephemeral_pending
+        .keys()
+        .filter(|key| !state.latest_ephemeral_in_flight.contains_key(*key))
+        .cloned()
+        .collect();
+    keys.sort_unstable();
+    let mut sent = 0usize;
+    for semantic_key in keys.into_iter().take(budget) {
+        let Some(event) = state.latest_ephemeral_pending.get(&semantic_key).cloned() else {
+            continue;
+        };
+        if send_publish_event_frame(ws, &event).await {
+            state.mark_latest_ephemeral_in_flight(semantic_key, event.id.to_hex());
+            sent += 1;
+        } else {
+            break;
+        }
+    }
+    sent
+}
+
 /// Drain `rate_limited_pending` channels whose retry deadline has passed.
 ///
 /// Called by the main loop pacing timer. Sends at most `budget` REQs without
@@ -2878,7 +3587,9 @@ async fn drain_commands(
                     let _ = ws_send_timeout(ws, Message::Close(None), WS_SEND_TIMEOUT_SECS).await;
                     return ReconnectOutcome::Shutdown;
                 }
-                RelayCommand::Reconnect => {}
+                RelayCommand::Reconnect => {
+                    state.consume_drop_notice();
+                }
                 cmd => retain_failed_command_intent(state, cmd),
             }
             continue;
@@ -2886,6 +3597,7 @@ async fn drain_commands(
 
         match cmd {
             RelayCommand::Reconnect => {
+                state.consume_drop_notice();
                 debug!("drained stale Reconnect after reconnect");
             }
             RelayCommand::Shutdown => {
@@ -2964,6 +3676,7 @@ async fn try_autonomous_reconnect(
     auth_tag: Option<&nostr::Tag>,
 ) -> ReconnectOutcome {
     state.requeue_observer_in_flight();
+    state.requeue_latest_ephemeral_in_flight();
     // 5 attempts, up to 16s base backoff. Shares delay values with the
     // initial-connect retry in `HarnessRelay::connect()` (STARTUP_CONNECT_BACKOFFS) —
     // see its doc comment for how the two loops consume the array differently.
@@ -3094,12 +3807,16 @@ async fn wait_for_reconnect(
     auth_tag: Option<&nostr::Tag>,
 ) -> ReconnectOutcome {
     state.requeue_observer_in_flight();
+    state.requeue_latest_ephemeral_in_flight();
     if !skip_drain {
         // Drain commands until we get Reconnect (or Shutdown).
         // Other commands update state so reconnect reflects latest intent.
         loop {
             match cmd_rx.recv().await {
-                Some(RelayCommand::Reconnect) => break,
+                Some(RelayCommand::Reconnect) => {
+                    state.consume_drop_notice();
+                    break;
+                }
                 Some(RelayCommand::Shutdown) | None => return ReconnectOutcome::Shutdown,
                 Some(cmd) => apply_command_to_state(state, cmd),
             }
@@ -4636,6 +5353,488 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn acknowledged_publish_resolves_only_after_matching_positive_ok() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        let (response_tx, mut response_rx) = tokio::sync::oneshot::channel();
+
+        let sent = execute_connected_command(
+            &mut client,
+            &mut state,
+            "agent-pubkey",
+            RelayCommand::PublishEventAcknowledged {
+                event: Box::new(event),
+                response: response_tx,
+            },
+        )
+        .await;
+        assert!(sent);
+        let publish = next_test_frame(&mut server).await;
+        assert_eq!(publish[0], "EVENT");
+        assert_eq!(publish[1]["id"], event_id);
+        assert!(
+            matches!(
+                response_rx.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ),
+            "writing the EVENT frame is not relay acceptance"
+        );
+
+        state.resolve_acknowledged_publish(&event_id, true, "");
+        assert_eq!(
+            response_rx.await.expect("background response"),
+            Ok(()),
+            "only the relay's matching positive OK acknowledges publication"
+        );
+    }
+
+    #[tokio::test]
+    async fn acknowledged_publish_reports_negative_ok_as_an_error() {
+        let mut state = BgState::new();
+        let event_id = "ab".repeat(32);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        state.register_acknowledged_publish(event_id.clone(), response_tx);
+
+        state.resolve_acknowledged_publish(&event_id, false, "blocked: policy");
+
+        let error = response_rx
+            .await
+            .expect("background response")
+            .expect_err("negative OK must reject");
+        assert!(error.contains("blocked: policy"));
+        assert!(state.acknowledged_publishes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn connection_loss_fails_every_unacknowledged_publish() {
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        let mut state = BgState::new();
+        let (first_tx, first_rx) = tokio::sync::oneshot::channel();
+        let (second_tx, second_rx) = tokio::sync::oneshot::channel();
+        state.register_acknowledged_publish("first".into(), first_tx);
+        state.register_acknowledged_publish("second".into(), second_tx);
+
+        notify_connection_lost(&event_tx, &mut state);
+
+        for response in [first_rx, second_rx] {
+            let error = response
+                .await
+                .expect("background response")
+                .expect_err("connection loss must reject");
+            assert!(error.contains("connection was lost"));
+        }
+        assert!(state.acknowledged_publishes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rate_gate_rejects_acknowledged_publish_without_writing_a_frame() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        state.rate_limit_gate = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        assert!(
+            execute_connected_command(
+                &mut client,
+                &mut state,
+                "agent-pubkey",
+                RelayCommand::PublishEventAcknowledged {
+                    event: Box::new(event),
+                    response: response_tx,
+                },
+            )
+            .await
+        );
+
+        let error = response_rx
+            .await
+            .expect("background response")
+            .expect_err("rate gate must reject");
+        assert!(error.contains("rate gate"));
+        assert!(
+            timeout(Duration::from_millis(50), server.next())
+                .await
+                .is_err(),
+            "a gated durable event must not be written and mistaken for accepted"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn acknowledged_publisher_has_a_bounded_response_timeout() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        let publisher = RelayEventPublisher { cmd_tx };
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let task = tokio::spawn(async move { publisher.publish_event_acknowledged(event).await });
+        tokio::task::yield_now().await;
+
+        tokio::time::advance(PUBLISH_ACK_TIMEOUT + Duration::from_secs(2)).await;
+
+        assert!(matches!(
+            task.await.expect("publisher task"),
+            Err(RelayError::Timeout)
+        ));
+    }
+
+    #[test]
+    fn latest_ephemeral_replaces_older_state_for_its_exact_key_while_disconnected() {
+        let mut state = BgState::new();
+        let keys = nostr::Keys::generate();
+        let live = make_test_event(&keys, 2_000);
+        let released = make_test_event(&keys, 2_001);
+
+        apply_command_to_state(
+            &mut state,
+            RelayCommand::PublishLatestEphemeral {
+                semantic_key: "coding-session/v1|generation-1".into(),
+                event: Box::new(live),
+                response: oneshot::channel().0,
+            },
+        );
+        apply_command_to_state(
+            &mut state,
+            RelayCommand::PublishLatestEphemeral {
+                semantic_key: "coding-session/v1|generation-1".into(),
+                event: Box::new(released.clone()),
+                response: oneshot::channel().0,
+            },
+        );
+
+        assert_eq!(state.latest_ephemeral_pending.len(), 1);
+        assert_eq!(
+            state
+                .latest_ephemeral_pending
+                .get("coding-session/v1|generation-1")
+                .map(|event| event.id),
+            Some(released.id),
+            "a release must fence an older retained live lease"
+        );
+    }
+
+    #[tokio::test]
+    async fn socket_write_keeps_latest_ephemeral_retained_until_acceptance() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id;
+        let (response, retained) = oneshot::channel();
+
+        assert!(
+            execute_connected_command(
+                &mut client,
+                &mut state,
+                "agent-pubkey",
+                RelayCommand::PublishLatestEphemeral {
+                    semantic_key: "generation-1".into(),
+                    event: Box::new(event),
+                    response,
+                },
+            )
+            .await
+        );
+        assert_eq!(retained.await.expect("retention response"), Ok(()));
+        let frame = next_test_frame(&mut server).await;
+        assert_eq!(frame[1]["id"], event_id.to_hex());
+        assert_eq!(
+            state
+                .latest_ephemeral_pending
+                .get("generation-1")
+                .map(|event| event.id),
+            Some(event_id),
+        );
+        assert_eq!(
+            state
+                .latest_ephemeral_in_flight
+                .get("generation-1")
+                .map(|pending| pending.event_id.as_str()),
+            Some(event_id.to_hex().as_str()),
+        );
+    }
+
+    #[test]
+    fn only_matching_positive_ok_clears_latest_ephemeral_state() {
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(event))
+            .expect("retain");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id.clone());
+
+        state.resolve_latest_ephemeral("unrelated", true, "");
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        state.resolve_latest_ephemeral(&event_id, false, "error: retry later");
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id.clone());
+        state.resolve_latest_ephemeral(&event_id, true, "");
+        assert!(!state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert!(!state
+            .latest_ephemeral_in_flight
+            .contains_key("generation-1"));
+    }
+
+    #[tokio::test]
+    async fn retryable_negative_ok_makes_latest_ephemeral_resendable() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(event))
+            .expect("retain");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id.clone());
+
+        state.resolve_latest_ephemeral(&event_id, false, "error: retry later");
+        assert_eq!(
+            drain_latest_ephemeral_pending(&mut client, &mut state, 1).await,
+            1
+        );
+        let frame = next_test_frame(&mut server).await;
+        assert_eq!(frame[1]["id"], event_id);
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert!(state
+            .latest_ephemeral_in_flight
+            .contains_key("generation-1"));
+    }
+
+    #[test]
+    fn connection_loss_makes_unaccepted_latest_ephemeral_resendable() {
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(event))
+            .expect("retain");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id);
+        let (event_tx, _event_rx) = mpsc::channel(1);
+
+        notify_connection_lost(&event_tx, &mut state);
+
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert!(state.latest_ephemeral_in_flight.is_empty());
+    }
+
+    #[test]
+    fn rate_limit_notice_requeues_unaccepted_latest_ephemeral_state() {
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(event))
+            .expect("retain");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id);
+
+        assert!(handle_rate_limit_notice(&mut state, "rate-limited: retry in 1s").is_some());
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert!(state.latest_ephemeral_in_flight.is_empty());
+        assert!(state.rate_limit_gate.is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn latest_ephemeral_acceptance_timeout_makes_state_resendable() {
+        let mut state = BgState::new();
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id.to_hex();
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(event))
+            .expect("retain");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), event_id);
+
+        tokio::time::advance(PUBLISH_ACK_TIMEOUT + Duration::from_secs(1)).await;
+        state.expire_latest_ephemeral_in_flight();
+
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert!(state.latest_ephemeral_in_flight.is_empty());
+    }
+
+    #[tokio::test]
+    async fn newer_target_state_supersedes_in_flight_and_old_ok_cannot_clear_it() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        let keys = nostr::Keys::generate();
+        let old = make_test_event(&keys, 2_000);
+        let newer = make_test_event(&keys, 2_001);
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(old.clone()))
+            .expect("retain old");
+        state.mark_latest_ephemeral_in_flight("generation-1".into(), old.id.to_hex());
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(newer.clone()))
+            .expect("supersede");
+
+        state.resolve_latest_ephemeral(&old.id.to_hex(), true, "");
+        assert_eq!(
+            state
+                .latest_ephemeral_pending
+                .get("generation-1")
+                .map(|event| event.id),
+            Some(newer.id),
+        );
+        assert_eq!(
+            drain_latest_ephemeral_pending(&mut client, &mut state, 1).await,
+            1
+        );
+        let frame = next_test_frame(&mut server).await;
+        assert_eq!(frame[1]["id"], newer.id.to_hex());
+        assert!(state.latest_ephemeral_pending.contains_key("generation-1"));
+        assert_eq!(
+            state
+                .latest_ephemeral_in_flight
+                .get("generation-1")
+                .map(|pending| pending.event_id.as_str()),
+            Some(newer.id.to_hex().as_str()),
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_drain_retains_each_latest_ephemeral_target_until_positive_ok() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        let keys = nostr::Keys::generate();
+        let first_old = make_test_event(&keys, 2_000);
+        let first_new = make_test_event(&keys, 2_001);
+        let second = make_test_event(&keys, 2_002);
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(first_old))
+            .expect("retain");
+        state
+            .retain_latest_ephemeral("generation-1".into(), Box::new(first_new.clone()))
+            .expect("replace");
+        state
+            .retain_latest_ephemeral("generation-2".into(), Box::new(second.clone()))
+            .expect("retain");
+
+        assert_eq!(
+            drain_latest_ephemeral_pending(&mut client, &mut state, 8).await,
+            2
+        );
+
+        let mut sent_ids = HashSet::new();
+        for _ in 0..2 {
+            let frame = next_test_frame(&mut server).await;
+            assert_eq!(frame[0], "EVENT");
+            sent_ids.insert(frame[1]["id"].as_str().expect("event id").to_owned());
+        }
+        assert_eq!(
+            sent_ids,
+            HashSet::from([first_new.id.to_hex(), second.id.to_hex()])
+        );
+        assert_eq!(state.latest_ephemeral_pending.len(), 2);
+        assert_eq!(state.latest_ephemeral_in_flight.len(), 2);
+        state.resolve_latest_ephemeral(&first_new.id.to_hex(), true, "");
+        assert!(state.latest_ephemeral_pending.contains_key("generation-2"));
+        state.resolve_latest_ephemeral(&second.id.to_hex(), true, "");
+        assert!(state.latest_ephemeral_pending.is_empty());
+        assert!(state.latest_ephemeral_in_flight.is_empty());
+    }
+
+    #[test]
+    fn latest_ephemeral_capacity_rejects_a_new_target_without_evicting_releases() {
+        let mut state = BgState::new();
+        let keys = nostr::Keys::generate();
+        for index in 0..LATEST_EPHEMERAL_PENDING_CAPACITY {
+            assert!(state
+                .retain_latest_ephemeral(
+                    format!("generation-{index}"),
+                    Box::new(make_test_event(&keys, 2_000 + index as u64)),
+                )
+                .is_ok());
+        }
+        let protected = make_test_event(&keys, 3_000);
+        assert!(state
+            .retain_latest_ephemeral("generation-0".into(), Box::new(protected.clone()))
+            .is_ok());
+        assert!(state
+            .retain_latest_ephemeral(
+                "generation-overflow".into(),
+                Box::new(make_test_event(&keys, 4_000)),
+            )
+            .is_err());
+
+        assert_eq!(
+            state.latest_ephemeral_pending.len(),
+            LATEST_EPHEMERAL_PENDING_CAPACITY
+        );
+        assert_eq!(
+            state
+                .latest_ephemeral_pending
+                .get("generation-0")
+                .map(|event| event.id),
+            Some(protected.id),
+            "capacity pressure must never evict the newest state of an existing target"
+        );
+    }
+
+    #[tokio::test]
+    async fn latest_ephemeral_publication_reports_background_retention() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let publisher = RelayEventPublisher { cmd_tx };
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let expected_id = event.id;
+        let publishing = tokio::spawn(async move {
+            publisher
+                .publish_latest_ephemeral("generation-1".into(), event)
+                .await
+        });
+
+        let command = cmd_rx.recv().await.expect("publish command");
+        let RelayCommand::PublishLatestEphemeral {
+            semantic_key,
+            event,
+            response,
+        } = command
+        else {
+            panic!("latest-state command");
+        };
+        assert_eq!(semantic_key, "generation-1");
+        assert_eq!(event.id, expected_id);
+        response.send(Ok(())).expect("handoff response");
+        publishing
+            .await
+            .expect("publisher task")
+            .expect("published");
+    }
+
+    #[tokio::test]
+    async fn rate_gate_retains_latest_ephemeral_without_writing_a_frame() {
+        let (mut client, mut server) = test_ws_pair().await;
+        let mut state = BgState::new();
+        state.rate_limit_gate = Some(tokio::time::Instant::now() + Duration::from_secs(30));
+        let event = make_test_event(&nostr::Keys::generate(), 2_000);
+        let event_id = event.id;
+        let (response, retained) = oneshot::channel();
+
+        assert!(
+            execute_connected_command(
+                &mut client,
+                &mut state,
+                "agent-pubkey",
+                RelayCommand::PublishLatestEphemeral {
+                    semantic_key: "generation-1".into(),
+                    event: Box::new(event),
+                    response,
+                },
+            )
+            .await
+        );
+
+        assert_eq!(retained.await.expect("handoff response"), Ok(()));
+        assert_eq!(
+            state
+                .latest_ephemeral_pending
+                .get("generation-1")
+                .map(|event| event.id),
+            Some(event_id)
+        );
+        assert!(timeout(Duration::from_millis(50), server.next())
+            .await
+            .is_err());
+    }
+
     #[test]
     fn failed_replay_retains_deferred_subscription_intent_in_fifo_order() {
         let mut state = BgState::new();
@@ -4662,6 +5861,55 @@ mod tests {
         assert!(deferred.is_empty());
         assert!(state.active_subscriptions.contains_key(&kept_channel));
         assert!(!state.active_subscriptions.contains_key(&removed_channel));
+    }
+
+    /// Each drop sentinel reserves exactly one stale `Reconnect` echo. During
+    /// an outage the caller echoes every sentinel back as a `Reconnect`, but
+    /// the background task repairs every reported drop inline — honoring the
+    /// echoes would run one extra full reconnect cycle per echo against an
+    /// already-healthy connection (the "autonomous reconnect multiplies"
+    /// failure). A `Reconnect` beyond the outstanding sentinels is genuine.
+    #[test]
+    fn drop_notices_pair_each_sentinel_with_exactly_one_stale_echo() {
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let mut state = BgState::new();
+
+        notify_connection_lost(&event_tx, &mut state);
+        notify_connection_lost(&event_tx, &mut state);
+        assert!(event_rx.try_recv().expect("first sentinel").is_none());
+        assert!(event_rx.try_recv().expect("second sentinel").is_none());
+        assert_eq!(state.pending_drop_notices, 2);
+
+        assert!(state.consume_drop_notice(), "first echo is stale");
+        assert!(state.consume_drop_notice(), "second echo is stale");
+        assert!(
+            !state.consume_drop_notice(),
+            "a Reconnect with no outstanding sentinel is a genuine request"
+        );
+    }
+
+    /// When the event channel is full the sentinel never reaches the caller,
+    /// so no echo can come back for it — it must not reserve one.
+    #[test]
+    fn an_unreported_drop_reserves_no_stale_echo() {
+        let (event_tx, _event_rx) = mpsc::channel(1);
+        let mut state = BgState::new();
+        notify_connection_lost(&event_tx, &mut state); // delivered
+        notify_connection_lost(&event_tx, &mut state); // channel full, dropped
+        assert_eq!(state.pending_drop_notices, 1);
+    }
+
+    /// Reconnect commands consumed while a reconnect is already in progress
+    /// (via `apply_command_to_state` during backoff sleeps) settle their
+    /// sentinel too, keeping the pairing balanced across an outage.
+    #[test]
+    fn a_reconnect_absorbed_mid_reconnect_settles_its_sentinel() {
+        let (event_tx, _event_rx) = mpsc::channel(4);
+        let mut state = BgState::new();
+        notify_connection_lost(&event_tx, &mut state);
+        apply_command_to_state(&mut state, RelayCommand::Reconnect);
+        assert_eq!(state.pending_drop_notices, 0);
+        assert!(!state.consume_drop_notice());
     }
 
     #[test]
@@ -6331,5 +7579,267 @@ mod tests {
             !state.channel_dropped_since.contains_key(&channel_id),
             "channel_dropped_since must be cleared on successful drain"
         );
+    }
+
+    // ---- git_object_reachable (B1/D4a) ----
+
+    fn test_rest_client(base_url: &str) -> RestClient {
+        RestClient {
+            http: reqwest::Client::new(),
+            base_url: base_url.to_owned(),
+            keys: nostr::Keys::generate(),
+            auth_tag_json: None,
+        }
+    }
+
+    fn pkt_line(payload: &str) -> Vec<u8> {
+        format!("{:04x}{payload}", payload.len() + 4).into_bytes()
+    }
+
+    const FLUSH_PKT: &[u8] = b"0000";
+
+    /// Build a well-formed `info/refs` advertisement body advertising exactly
+    /// the given ref tips, all under made-up ref names.
+    fn info_refs_body(tip_oids: &[&str]) -> Vec<u8> {
+        let mut body = pkt_line("# service=git-upload-pack\n");
+        body.extend_from_slice(FLUSH_PKT);
+        for (index, oid) in tip_oids.iter().enumerate() {
+            let line = if index == 0 {
+                format!("{oid} refs/heads/ref-{index}\0multi_ack thin-pack\n")
+            } else {
+                format!("{oid} refs/heads/ref-{index}\n")
+            };
+            body.extend(pkt_line(&line));
+        }
+        body.extend_from_slice(FLUSH_PKT);
+        body
+    }
+
+    /// One captured HTTP request, for asserting method/path/headers.
+    struct MockRequest {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+    }
+
+    /// Bind an ephemeral listener, accept exactly one HTTP/1.1 request,
+    /// capture its request line and headers, and reply with `status` and
+    /// `body`. Returns the base URL to point a [`RestClient`] at and a
+    /// receiver for the captured request.
+    async fn mock_http_once(
+        status: &str,
+        body: Vec<u8>,
+    ) -> (String, tokio::sync::oneshot::Receiver<MockRequest>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock http listener");
+        let addr = listener.local_addr().expect("mock http local addr");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let status = status.to_owned();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.expect("accept mock http conn");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).await.expect("read mock http req");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            let mut lines = text.split("\r\n");
+            let request_line = lines.next().unwrap_or_default();
+            let mut parts = request_line.split_whitespace();
+            let method = parts.next().unwrap_or_default().to_owned();
+            let path = parts.next().unwrap_or_default().to_owned();
+            let mut headers = HashMap::new();
+            for line in lines {
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    headers.insert(key.trim().to_ascii_lowercase(), value.trim().to_owned());
+                }
+            }
+            let _ = tx.send(MockRequest {
+                method,
+                path,
+                headers,
+            });
+            let mut response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            response.extend(body);
+            stream
+                .write_all(&response)
+                .await
+                .expect("write mock http response");
+            let _ = stream.shutdown().await;
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    fn decode_nip98_u_tag(authorization: &str) -> String {
+        use base64::Engine;
+        let token = authorization
+            .strip_prefix("Nostr ")
+            .expect("Authorization: Nostr <base64>");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(token)
+            .expect("valid base64 credential");
+        let event: nostr::Event =
+            serde_json::from_slice(&bytes).expect("credential decodes to a nostr event");
+        event
+            .tags
+            .iter()
+            .find(|tag| tag.as_slice().first().map(String::as_str) == Some("u"))
+            .and_then(|tag| tag.as_slice().get(1))
+            .expect("NIP-98 event carries a u tag")
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_confirms_a_tip_oid() {
+        let oid = "a".repeat(40);
+        let (base_url, rx) = mock_http_once("200 OK", info_refs_body(&[&oid])).await;
+        let client = test_rest_client(&base_url);
+        let owner = "b".repeat(64);
+        let repo_ref = format!("30617:{owner}:my-repo");
+
+        let reachable = client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+        assert!(reachable);
+
+        let request = rx.await.expect("request captured");
+        assert_eq!(request.method, "GET");
+        assert_eq!(
+            request.path,
+            format!("/git/{owner}/my-repo/info/refs?service=git-upload-pack")
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_confirms_absence_when_advertisement_lacks_the_oid() {
+        let oid = "a".repeat(40);
+        let other = "c".repeat(40);
+        let (base_url, _rx) = mock_http_once("200 OK", info_refs_body(&[&other])).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let reachable = client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+        assert!(!reachable, "the oid was never advertised");
+    }
+
+    /// R4: the signed `u` tag must be the *repo-root* URL — no `/info/refs`,
+    /// no query string — reproducing the git credential helper's contract,
+    /// not `bridge_post`'s exact-path binding. The relay's `GitAuth`
+    /// extractor (`crates/buzz-relay/src/api/git/transport.rs`) verifies
+    /// against exactly that root, regardless of which git route the token
+    /// authorizes.
+    #[tokio::test]
+    async fn git_object_reachable_signs_the_repo_root_url_not_the_request_path() {
+        let oid = "a".repeat(40);
+        let (base_url, rx) = mock_http_once("200 OK", info_refs_body(&[&oid])).await;
+        let client = test_rest_client(&base_url);
+        let owner = "b".repeat(64);
+        let repo_ref = format!("30617:{owner}:my-repo");
+
+        client
+            .git_object_reachable(&repo_ref, &oid)
+            .await
+            .expect("reachability check");
+
+        let request = rx.await.expect("request captured");
+        let authorization = request
+            .headers
+            .get("authorization")
+            .expect("Authorization header present");
+        let signed_url = decode_nip98_u_tag(authorization);
+        assert_eq!(signed_url, format!("{base_url}/git/{owner}/my-repo"));
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_treats_a_non_success_status_as_not_checked() {
+        let oid = "a".repeat(40);
+        let (base_url, _rx) = mock_http_once("404 Not Found", Vec::new()).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let result = client.git_object_reachable(&repo_ref, &oid).await;
+        assert!(
+            result.is_err(),
+            "a 404 must not be read as confirmed absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_treats_a_malformed_response_as_not_checked() {
+        let oid = "a".repeat(40);
+        let (base_url, _rx) = mock_http_once("200 OK", b"not a pkt-line body".to_vec()).await;
+        let client = test_rest_client(&base_url);
+        let repo_ref = format!("30617:{}:my-repo", "b".repeat(64));
+
+        let result = client.git_object_reachable(&repo_ref, &oid).await;
+        assert!(
+            result.is_err(),
+            "a response this parser cannot make sense of must not be read as confirmed absence"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_object_reachable_rejects_a_malformed_coordinate_without_a_request() {
+        let client = test_rest_client("http://127.0.0.1:1");
+        let result = client
+            .git_object_reachable("not-a-coordinate", &"a".repeat(40))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_git_repo_ref_accepts_the_nip_mp_grammar() {
+        let owner = "b".repeat(64);
+        let (parsed_owner, parsed_repo) =
+            parse_git_repo_ref(&format!("30617:{owner}:my-repo")).expect("valid coordinate");
+        assert_eq!(parsed_owner, owner);
+        assert_eq!(parsed_repo, "my-repo");
+    }
+
+    #[test]
+    fn parse_git_repo_ref_rejects_wrong_kind_and_malformed_owner() {
+        let owner = "b".repeat(64);
+        assert!(parse_git_repo_ref(&format!("30621:{owner}:my-repo")).is_none());
+        assert!(parse_git_repo_ref("30617:short:my-repo").is_none());
+        assert!(parse_git_repo_ref(&format!("30617:{}:", "b".repeat(64))).is_none());
+        assert!(parse_git_repo_ref("garbage").is_none());
+    }
+
+    #[test]
+    fn parse_advertised_oids_skips_the_service_header_and_reads_ref_tips() {
+        let oid_a = "a".repeat(40);
+        let oid_b = "c".repeat(40);
+        let body = info_refs_body(&[&oid_a, &oid_b]);
+        let oids = parse_advertised_oids(&body).expect("well-formed advertisement");
+        assert!(oids.contains(&oid_a));
+        assert!(oids.contains(&oid_b));
+        assert_eq!(oids.len(), 2);
+    }
+
+    #[test]
+    fn parse_advertised_oids_rejects_truncated_framing() {
+        let mut body = info_refs_body(&["a".repeat(40).as_str()]);
+        body.truncate(body.len() - 2); // cut a pkt-line length prefix in half
+        assert!(parse_advertised_oids(&body).is_none());
     }
 }

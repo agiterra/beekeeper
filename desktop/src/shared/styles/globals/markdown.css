@@ -330,3 +330,29 @@
 .dark .code-line-diff-remove {
   background-color: hsl(0 60% 50% / 0.12);
 }
+
+/* ── Code block wrap toggle ───────────────────────────────────────────
+ * A fenced block owns its horizontal overflow: by default a long line
+ * scrolls inside the `pre` rather than pushing past the reading column and
+ * getting clipped by an ancestor. The per-block toggle in
+ * `shared/ui/markdown/CodeBlock.tsx` flips `data-wrap`, and these rules beat
+ * the `whitespace-pre` utility on `.code-block-lines` because this sheet is
+ * unlayered while Tailwind utilities live in `@layer utilities`.
+ */
+[data-code-block][data-wrap="true"] pre,
+[data-code-block][data-wrap="true"] .code-block-lines {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The scroll affordance for code blocks and tables. A scroller that still has
+ * content to its right fades at that edge, because the platform's overlay
+ * scrollbar paints nothing until the user is already scrolling — leaving a
+ * hard cut indistinguishable from clipped, truncated text. `data-overflow` is
+ * recomputed on resize and on scroll, so the fade retracts once the last
+ * column is genuinely on screen. */
+[data-code-block][data-overflow="true"] > pre,
+[data-table-block][data-overflow="true"] {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 2.5rem);
+  mask-image: linear-gradient(to left, transparent 0, #000 2.5rem);
+}

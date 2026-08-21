@@ -30,9 +30,9 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::acp::{
-    extract_model_config_options, extract_model_state, model_in_catalog,
-    resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod,
-    StopReason, SystemPromptTransport,
+    extract_model_config_options, extract_model_state, has_system_prompt_support, model_in_catalog,
+    resolve_model_switch_method, session_new_system_prompt, AcpClient, AcpError, EnvVar, McpServer,
+    ModelSwitchMethod, StopReason,
 };
 use crate::config::{compose_session_title, DedupMode, PermissionMode};
 use crate::observer;
@@ -222,42 +222,6 @@ pub struct OwnedAgent {
     pub goose_system_prompt_supported: Option<bool>,
     /// Protocol version reported by the agent in its initialize response.
     pub protocol_version: u32,
-}
-
-/// Package name reported by `claude-agent-acp` in its `initialize` response.
-/// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
-/// on `session/new` — the feature landed in v0.6.0 (Oct 2025), before the
-/// `@zed-industries/claude-code-acp` → `@agentclientprotocol/claude-agent-acp`
-/// rename, so the new name is a reliable capability gate.
-const CLAUDE_AGENT_ACP_NAME: &str = "@agentclientprotocol/claude-agent-acp";
-
-fn has_system_prompt_support(
-    protocol_version: u32,
-    agent_name: &str,
-    goose_system_prompt_supported: Option<bool>,
-) -> bool {
-    if agent_name == "goose" {
-        goose_system_prompt_supported == Some(true)
-    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
-        true
-    } else {
-        protocol_version >= 2
-    }
-}
-
-fn session_new_system_prompt<'a>(
-    is_goose: bool,
-    protocol_version: u32,
-    agent_name: &str,
-    prompt: Option<&'a str>,
-) -> Option<SystemPromptTransport<'a>> {
-    if is_goose || (protocol_version < 2 && agent_name != CLAUDE_AGENT_ACP_NAME) {
-        None
-    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
-        prompt.map(SystemPromptTransport::ClaudeMeta)
-    } else {
-        prompt.map(SystemPromptTransport::Field)
-    }
 }
 
 impl OwnedAgent {
@@ -4508,6 +4472,7 @@ async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::{SystemPromptTransport, CLAUDE_AGENT_ACP_NAME};
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;
 

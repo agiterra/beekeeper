@@ -5,6 +5,10 @@ import {
   parseLiveThreadSummary,
 } from "./channelWindowResponse.ts";
 
+// No lane of any session is openable unless a test says so; that is the
+// production default too, and it keeps every lane-tagged message visible.
+const NO_LANES = new Set();
+
 function event(id, kind, createdAt, content = "", tags = []) {
   return {
     id: id.padEnd(64, "0"),
@@ -49,6 +53,7 @@ test("partitions flat rows, summaries, aux, and authoritative bounds", () => {
     [summary, aux, bounds, root],
     "channel",
     null,
+    NO_LANES,
   );
   assert.equal(page.rows.length, 1);
   assert.equal(page.rows[0].thread.replyCount, 2);
@@ -69,7 +74,12 @@ test("metadata timestamps never influence row cursor math", () => {
     JSON.stringify({ has_more: false, next_cursor: null }),
     [["d", "channel:head"]],
   );
-  const page = parseChannelWindowResponse([bounds, root], "channel", null);
+  const page = parseChannelWindowResponse(
+    [bounds, root],
+    "channel",
+    null,
+    NO_LANES,
+  );
   assert.equal(page.nextCursor, null);
   assert.deepEqual(
     page.rows.map((row) => row.event.id),
@@ -89,7 +99,8 @@ test("rejects bounds signed for a different request cursor", () => {
   );
 
   assert.throws(
-    () => parseChannelWindowResponse([root, bounds], "channel", cursor),
+    () =>
+      parseChannelWindowResponse([root, bounds], "channel", cursor, NO_LANES),
     /do not match the request cursor/,
   );
 });
@@ -106,14 +117,14 @@ test("accepts canonical composite request cursor binding", () => {
   );
 
   assert.doesNotThrow(() =>
-    parseChannelWindowResponse([root, bounds], "CHANNEL", cursor),
+    parseChannelWindowResponse([root, bounds], "CHANNEL", cursor, NO_LANES),
   );
 });
 
 test("rejects absent or contradictory signed bounds", () => {
   const root = event("a", 9, 100);
   assert.throws(
-    () => parseChannelWindowResponse([root], "channel", null),
+    () => parseChannelWindowResponse([root], "channel", null, NO_LANES),
     /exactly one bounds/,
   );
   const bad = event(
@@ -124,7 +135,7 @@ test("rejects absent or contradictory signed bounds", () => {
     [["d", "channel:head"]],
   );
   assert.throws(
-    () => parseChannelWindowResponse([root, bad], "channel", null),
+    () => parseChannelWindowResponse([root, bad], "channel", null, NO_LANES),
     /disagree/,
   );
 });
@@ -167,5 +178,47 @@ test("drops malformed or mistargeted live thread summaries", () => {
   assert.equal(
     parseLiveThreadSummary(event("s", 39005, 700, "not json", [["e", rootId]])),
     null,
+  );
+});
+
+test("only a lane this client can open suppresses its kind:9 from timeline rows", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const unknownRef = "6c8f2d3b-a1e5-4c1f-b2a4-8d3e9f7a5b21";
+  const chat = event("a", 9, 100, "ordinary chat");
+  const lane = event("l", 9, 110, "session-scoped chat", [
+    ["cs-session", sessionRef],
+  ]);
+  // A ref this client cannot scope must degrade to visible chat, not vanish.
+  const malformedLane = event("m", 9, 120, "degraded chat", [
+    ["cs-session", "NOT-A-UUID"],
+  ]);
+  // A well-formed ref naming no lane we can open is the injection case: any
+  // member could otherwise hide a channel message behind a random UUID.
+  const unknownLane = event("u", 9, 130, "not really a lane", [
+    ["cs-session", unknownRef],
+  ]);
+  const bounds = event(
+    "b",
+    39006,
+    400,
+    JSON.stringify({ has_more: false, next_cursor: null }),
+    [["d", "channel:head"]],
+  );
+  const events = [chat, lane, malformedLane, unknownLane, bounds];
+
+  assert.deepEqual(
+    parseChannelWindowResponse(events, "channel", null, NO_LANES).rows.map(
+      (row) => row.event.id,
+    ),
+    [chat.id, lane.id, malformedLane.id, unknownLane.id],
+  );
+  assert.deepEqual(
+    parseChannelWindowResponse(
+      events,
+      "channel",
+      null,
+      new Set([sessionRef]),
+    ).rows.map((row) => row.event.id),
+    [chat.id, malformedLane.id, unknownLane.id],
   );
 });

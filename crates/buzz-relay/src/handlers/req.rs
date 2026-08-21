@@ -8,7 +8,8 @@ use tracing::{debug, warn};
 use buzz_core::filter::filters_match;
 use buzz_core::kind::{
     is_unshared_gated_event, AUTHOR_ONLY_KINDS, KIND_AGENT_ENGRAM, KIND_AGENT_TURN_METRIC,
-    KIND_DM_VISIBILITY, KIND_PROJECT, P_GATED_KINDS, RESULT_GATED_KINDS, SHARED_GATED_KINDS,
+    KIND_CODING_SESSION_LEASE, KIND_DM_VISIBILITY, KIND_PROJECT, P_GATED_KINDS, RESULT_GATED_KINDS,
+    SHARED_GATED_KINDS,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_db::EventQuery;
@@ -104,6 +105,13 @@ pub async fn handle_req(
             return;
         }
     };
+    if session_lease_filter_missing_explicit_channel(&filters) {
+        conn.send(RelayMessage::closed(
+            &sub_id,
+            "restricted: coding-session lease queries require explicit #h",
+        ));
+        return;
+    }
 
     let mut accessible_channels = if filters_are_nip43_membership_only(&filters) {
         metrics::counter!("buzz_req_global_access_resolution_skips_total", "kind" => "13534")
@@ -184,6 +192,14 @@ pub async fn handle_req(
                 db_is_member,
             );
         }
+    }
+
+    if session_lease_filter_has_inaccessible_channel(&filters, &accessible_channels) {
+        conn.send(RelayMessage::closed(
+            &sub_id,
+            "restricted: coding-session lease channel is not accessible",
+        ));
+        return;
     }
 
     let authorized_requested_channels = requested_channel_ids.as_ref().map(|requested| {
@@ -339,6 +355,29 @@ pub async fn handle_req(
     let mut seen_ids: HashSet<nostr::EventId> = HashSet::new();
     let mut total_sent: usize = 0;
 
+    let lease_snapshot_counts = match send_session_lease_snapshots(
+        &sub_id,
+        &filters,
+        &accessible_channels,
+        &conn,
+        &state,
+        &mut seen_ids,
+        &mut total_sent,
+    )
+    .await
+    {
+        Ok(counts) => counts,
+        Err(error) => {
+            warn!(conn_id = %conn_id, sub_id = %sub_id, "Lease snapshot failed: {error}");
+            conn.subscriptions.lock().await.remove(&sub_id);
+            if let Some(removed) = state.sub_registry.remove_subscription(conn_id, &sub_id) {
+                release_subscription_topics(&state, &conn.tenant, &removed.scope).await;
+            }
+            conn.send(session_lease_snapshot_failure_frame(&sub_id));
+            return;
+        }
+    };
+
     // Phase 1 — pure query construction, in filter order.
     let filter_queries: Vec<(usize, Option<uuid::Uuid>, EventQuery)> = filters
         .iter()
@@ -364,6 +403,9 @@ pub async fn handle_req(
             };
             let mut params =
                 filter_to_query_params(filter, per_filter_channel, conn.tenant.community());
+            if let Some(limit) = params.limit.as_mut() {
+                *limit = limit.saturating_sub(lease_snapshot_counts[idx] as i64);
+            }
             apply_channel_scope_to_query(
                 &mut params,
                 filter,
@@ -512,6 +554,153 @@ pub async fn handle_req(
         count = total_sent,
         "EOSE sent after historical delivery"
     );
+}
+
+fn filter_requests_session_lease(filter: &Filter) -> bool {
+    filter.kinds.as_ref().is_some_and(|kinds| {
+        kinds
+            .iter()
+            .any(|kind| kind.as_u16() as u32 == KIND_CODING_SESSION_LEASE)
+    })
+}
+
+fn session_lease_snapshot_failure_frame(sub_id: &str) -> String {
+    RelayMessage::closed(sub_id, "error: coding-session lease snapshot unavailable")
+}
+
+pub(crate) fn session_lease_filter_missing_explicit_channel(filters: &[Filter]) -> bool {
+    let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
+    filters.iter().any(|filter| {
+        if !filter_requests_session_lease(filter) {
+            return false;
+        }
+        filter.generic_tags.get(&h).is_none_or(|values| {
+            values.is_empty()
+                || values.iter().any(|value| {
+                    value
+                        .parse::<uuid::Uuid>()
+                        .map_or(true, |channel_id| channel_id.to_string() != *value)
+                })
+        })
+    })
+}
+
+pub(crate) fn session_lease_filter_has_inaccessible_channel(
+    filters: &[Filter],
+    accessible_channels: &[uuid::Uuid],
+) -> bool {
+    let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
+    filters.iter().any(|filter| {
+        filter_requests_session_lease(filter)
+            && filter.generic_tags.get(&h).is_none_or(|values| {
+                values.iter().any(|value| {
+                    value.parse::<uuid::Uuid>().map_or(true, |channel_id| {
+                        !accessible_channels.contains(&channel_id)
+                    })
+                })
+            })
+    })
+}
+
+async fn send_session_lease_snapshots(
+    sub_id: &str,
+    filters: &[Filter],
+    accessible_channels: &[uuid::Uuid],
+    conn: &ConnectionState,
+    state: &AppState,
+    seen_ids: &mut HashSet<nostr::EventId>,
+    total_sent: &mut usize,
+) -> Result<Vec<usize>, String> {
+    let h = nostr::SingleLetterTag::lowercase(nostr::Alphabet::H);
+    let mut counts = vec![0; filters.len()];
+    for (index, filter) in filters
+        .iter()
+        .enumerate()
+        .filter(|(_, filter)| filter_requests_session_lease(filter))
+    {
+        let Some(channel_values) = filter.generic_tags.get(&h) else {
+            continue;
+        };
+        let mut filter_sent = 0usize;
+        let limit = filter.limit.unwrap_or(usize::MAX);
+        for channel_id in channel_values
+            .iter()
+            .filter_map(|value| value.parse::<uuid::Uuid>().ok())
+            .filter(|channel_id| accessible_channels.contains(channel_id))
+        {
+            for record in state
+                .pubsub
+                .session_lease_snapshot(&conn.tenant, channel_id)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                if filter_sent >= limit {
+                    break;
+                }
+                let event = validate_session_lease_snapshot_record(&record, channel_id)?;
+                let stored = buzz_core::event::StoredEvent::new(event.clone(), Some(channel_id));
+                if !filters_match(std::slice::from_ref(filter), &stored)
+                    || !seen_ids.insert(event.id)
+                {
+                    continue;
+                }
+                if !conn.send(RelayMessage::event(sub_id, &event)) {
+                    return Ok(counts);
+                }
+                *total_sent += 1;
+                filter_sent += 1;
+                counts[index] += 1;
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// Revalidate one Redis-backed lease record before returning its provider event.
+///
+/// Redis is an ephemeral register, not a signature or authority oracle. A
+/// malformed or internally inconsistent value is a source failure; callers
+/// must not skip it and certify an empty snapshot.
+pub(crate) fn validate_session_lease_snapshot_record(
+    record: &buzz_pubsub::session_lease::SessionLeaseRecord,
+    expected_channel_id: uuid::Uuid,
+) -> Result<nostr::Event, String> {
+    if record.channel_id != expected_channel_id {
+        return Err("session lease record channel does not match snapshot scope".into());
+    }
+    let expected_expiry = record
+        .accepted_at
+        .checked_add(buzz_pubsub::session_lease::SESSION_LEASE_TTL_SECS)
+        .ok_or_else(|| "session lease record expiry overflows".to_owned())?;
+    if record.expires_at != expected_expiry {
+        return Err("session lease record expiry does not match relay TTL".into());
+    }
+    nostr::EventId::from_hex(&record.proof.authority_command_event_id)
+        .map_err(|_| "session lease record command proof id is invalid".to_owned())?;
+    nostr::EventId::from_hex(&record.proof.authority_receipt_event_id)
+        .map_err(|_| "session lease record receipt proof id is invalid".to_owned())?;
+
+    let event: nostr::Event = serde_json::from_str(&record.event_json)
+        .map_err(|error| format!("invalid session lease event in Redis: {error}"))?;
+    buzz_core::verification::verify_event(&event)
+        .map_err(|error| format!("session lease event signature is invalid: {error}"))?;
+    if event.id.to_hex() != record.event_id {
+        return Err("session lease record event id does not match signed event".into());
+    }
+    let lease = buzz_core::coding_session_lease::validate_coding_session_lease_envelope(
+        &event,
+        event.created_at.as_secs(),
+    )
+    .map_err(|error| format!("invalid session lease envelope in Redis: {error}"))?;
+    if lease.channel_id != expected_channel_id
+        || buzz_core::coding_session_command::coding_session_target_key(&lease.payload.target)
+            != record.target_key
+        || lease.payload.lease_sequence != record.sequence
+        || lease.payload.state != record.state
+    {
+        return Err("session lease record fields do not match signed event".into());
+    }
+    Ok(event)
 }
 
 /// FTS candidate hits fetched per page. Pages are always full regardless of
@@ -1596,7 +1785,7 @@ pub(crate) fn author_only_filters_authorized(filters: &[Filter], authed_pubkey_h
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr::{Alphabet, Filter, SingleLetterTag};
+    use nostr::{Alphabet, Filter, Keys, SingleLetterTag};
 
     /// An explicitly empty `kinds` array deserializes to `Some(∅)`, not
     /// `None`, and `.any()` over an empty set is `false` — so a naive
@@ -1861,6 +2050,150 @@ mod tests {
         assert!(!filters_are_nip43_membership_only(&[
             Filter::new().kinds([nostr::Kind::Custom(13_534), nostr::Kind::TextNote]),
         ]));
+    }
+
+    #[test]
+    fn lease_filters_require_an_explicit_channel() {
+        let channel = uuid::Uuid::new_v4();
+        let unscoped = Filter::new().kind(nostr::Kind::Custom(
+            buzz_core::kind::KIND_CODING_SESSION_LEASE as u16,
+        ));
+        let scoped: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE],
+            "#h": [channel.to_string()]
+        }))
+        .unwrap();
+        let malformed: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE],
+            "#h": ["not-a-channel"]
+        }))
+        .unwrap();
+        let noncanonical: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE],
+            "#h": ["5B7E1C2A-90D4-4B0E-A1F3-7C2D8E6F4A10"]
+        }))
+        .unwrap();
+        assert!(session_lease_filter_missing_explicit_channel(&[unscoped]));
+        assert!(!session_lease_filter_missing_explicit_channel(&[scoped]));
+        assert!(session_lease_filter_missing_explicit_channel(&[malformed]));
+        assert!(session_lease_filter_missing_explicit_channel(&[
+            noncanonical
+        ]));
+    }
+
+    #[test]
+    fn lease_filters_fail_when_any_explicit_channel_is_inaccessible() {
+        let allowed = uuid::Uuid::new_v4();
+        let denied = uuid::Uuid::new_v4();
+        let lease_only: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE],
+            "#h": [allowed.to_string(), denied.to_string()]
+        }))
+        .unwrap();
+        let mixed: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [buzz_core::kind::KIND_CODING_SESSION_LEASE, 1],
+            "#h": [denied.to_string()]
+        }))
+        .unwrap();
+        let durable_only: Filter = serde_json::from_value(serde_json::json!({
+            "kinds": [1],
+            "#h": [denied.to_string()]
+        }))
+        .unwrap();
+
+        assert!(session_lease_filter_has_inaccessible_channel(
+            &[lease_only],
+            &[allowed]
+        ));
+        assert!(session_lease_filter_has_inaccessible_channel(
+            &[mixed],
+            &[allowed]
+        ));
+        assert!(!session_lease_filter_has_inaccessible_channel(
+            &[durable_only],
+            &[allowed]
+        ));
+    }
+
+    #[test]
+    fn lease_snapshot_source_failure_closes_instead_of_certifying_an_empty_snapshot() {
+        let frame: serde_json::Value =
+            serde_json::from_str(&session_lease_snapshot_failure_frame("lease-sub"))
+                .expect("relay frame parses");
+        assert_eq!(
+            frame,
+            serde_json::json!([
+                "CLOSED",
+                "lease-sub",
+                "error: coding-session lease snapshot unavailable"
+            ])
+        );
+        assert_ne!(frame[0], "EOSE");
+    }
+
+    #[test]
+    fn cold_lease_record_requires_intact_provider_event_and_matching_relay_facts() {
+        use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
+        use buzz_core::coding_session_lease::{CodingSessionLease, CodingSessionLeaseState};
+        use buzz_pubsub::session_lease::{SessionLeaseProof, SessionLeaseRecord};
+
+        let channel = uuid::Uuid::new_v4();
+        let payload = CodingSessionLease::new(
+            CodingSessionTarget {
+                driver: "codex-acp".into(),
+                instance_id: "provider-1".into(),
+                session_id: "session-1".into(),
+                generation: 1,
+            },
+            CodingSessionLeaseState::Live,
+            7,
+        )
+        .expect("lease payload");
+        let event = buzz_sdk::builders::build_coding_session_lease(channel, "create-1", &payload)
+            .expect("lease builder")
+            .sign_with_keys(&Keys::generate())
+            .expect("sign lease");
+        let record = SessionLeaseRecord {
+            target_key: coding_session_target_key(&payload.target),
+            channel_id: channel,
+            sequence: 7,
+            state: CodingSessionLeaseState::Live,
+            event_id: event.id.to_hex(),
+            event_json: serde_json::to_string(&event).expect("serialize event"),
+            accepted_at: event.created_at.as_secs(),
+            expires_at: event.created_at.as_secs() + 180,
+            proof: SessionLeaseProof {
+                authority_command_event_id: "11".repeat(32),
+                authority_receipt_event_id: "22".repeat(32),
+            },
+        };
+
+        assert_eq!(
+            validate_session_lease_snapshot_record(&record, channel).expect("valid record"),
+            event
+        );
+
+        let mut wrong_id = record.clone();
+        wrong_id.event_id = "33".repeat(32);
+        assert!(validate_session_lease_snapshot_record(&wrong_id, channel).is_err());
+
+        let mut wrong_channel = record.clone();
+        wrong_channel.channel_id = uuid::Uuid::new_v4();
+        assert!(validate_session_lease_snapshot_record(&wrong_channel, channel).is_err());
+
+        let mut wrong_sequence = record.clone();
+        wrong_sequence.sequence = 8;
+        assert!(validate_session_lease_snapshot_record(&wrong_sequence, channel).is_err());
+
+        let mut invalid_signature = record.clone();
+        let mut event_json = serde_json::to_value(&event).expect("event value");
+        event_json["content"] = serde_json::json!("tampered");
+        invalid_signature.event_json = event_json.to_string();
+        assert!(validate_session_lease_snapshot_record(&invalid_signature, channel).is_err());
+
+        let mut invalid_proof = record;
+        invalid_proof.proof.authority_receipt_event_id = "not-an-event-id".into();
+        assert!(validate_session_lease_snapshot_record(&invalid_proof, channel).is_err());
     }
 
     #[test]

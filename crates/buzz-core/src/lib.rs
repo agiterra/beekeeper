@@ -9,6 +9,33 @@
 pub mod agent_turn_metric;
 /// Channel and membership enums shared across crates.
 pub mod channel;
+/// NIP-CSAT (draft): append-only coding-session authority-chain transitions
+/// (44228) — one `grant-operator` step at a time today.
+pub mod coding_session_authority_transition;
+/// Append-only coding-session closure revisions (44230): provider-independent
+/// shared close/reopen state rooted at the session genesis.
+pub mod coding_session_closure;
+/// NIP-CSC: Coding-session command — provider-neutral turn request payload.
+pub mod coding_session_command;
+/// Private, bounded package for verified cross-machine session rehydration.
+pub mod coding_session_context;
+/// NIP-CSG: Coding-session genesis — the operator-signed origin of an umbrella
+/// session, and the founder every later operation resolves back to.
+pub mod coding_session_genesis;
+/// NIP-CSG: append-only human-authored session-goal revisions (44227).
+pub mod coding_session_goal;
+/// Ephemeral provider-signed liveness leases for exact coding-session generations.
+pub mod coding_session_lease;
+/// NIP-CSL: Coding-session lifecycle command — session creation payload.
+pub mod coding_session_lifecycle_command;
+/// NIP-CSN: append-only human-authored session-name revisions (44229).
+pub mod coding_session_name;
+/// Provider-authored coding-session facts: receipts (44224), metadata (44223),
+/// and transcript envelopes (44225).
+pub mod coding_session_payload;
+/// Runtime descriptors shared by the desktop host and the coding-session
+/// provider sidecar (`BUZZ_CSP_RUNTIMES`).
+pub mod coding_session_runtime;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,
 /// body parse/serialize, envelope build/validate, head selection.
 pub mod engram;

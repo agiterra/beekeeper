@@ -108,11 +108,86 @@ export const KIND_PROJECT_MEMBERS = 39010;
 // observed fact — worktree state stays in the coding-session kinds.
 export const KIND_PULSE_ENTRY = 44240;
 
+// ── Coding sessions (44220–44230) ────────────────────────────────────────────
+//
+// Provider-neutral kinds for driving a coding agent against a working
+// directory. All twelve, including the ephemeral 24223 lease, are
+// channel-scoped (`h` tag) and never enter
+// CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
+// its own workspace surface, not to the chat timeline. Names mirror
+// crates/buzz-core/src/kind.rs — keep them in sync.
+
+// NIP-CSC: operator-authored durable turn command (`csc1-1`).
+export const KIND_CODING_SESSION_COMMAND = 44220;
+// NIP-CSL: operator-authored request to create a session (`csl1-1`). Kept
+// separate from the turn command because an exact generation target does not
+// exist until the provider creates it.
+export const KIND_CODING_SESSION_LIFECYCLE_COMMAND = 44221;
+// NIP-CSPC: provider-authored availability catalog (`cspc1-1`). Queried
+// separately from chat so message volume cannot age discovery out of a bounded
+// history window.
+export const KIND_CODING_SESSION_PROVIDER_CATALOG = 44222;
+// NIP-CSL: ephemeral provider-signed liveness lease for one exact generation.
+// Stored only in Redis with TTL; cold REQ reads return the current snapshot.
+export const KIND_CODING_SESSION_LEASE = 24223;
+// NIP-CSL: provider-authored immutable facts about one exact generation
+// (`csm1-1`).
+export const KIND_CODING_SESSION_METADATA = 44223;
+// NIP-CSL: provider-authored result of one lifecycle command (`cslr1-1`).
+export const KIND_CODING_SESSION_LIFECYCLE_RECEIPT = 44224;
+// NIP-CST: one provider-authored, sequenced transcript step (`cst1-1`).
+export const KIND_CODING_SESSION_TRANSCRIPT = 44225;
+// NIP-CSG: the operator-signed origin of one umbrella session (`csg1-1`). The
+// signer is the founder. Consumers resolve it only by the explicit event id in
+// a receipt-joined create; `csg-session` is relay enforcement/diagnostics only.
+export const KIND_CODING_SESSION_GENESIS = 44226;
+// NIP-CSGL: operator-authored append-only goal revision (`csgl1-1`). Regular
+// events preserve every revision; consumers fold the latest per (h, d).
+export const KIND_CODING_SESSION_GOAL = 44227;
+// NIP-CSAT (draft): one append-only authority-chain transition (`csat1-1`).
+// Types: `grant-operator` (steer), `grant-viewer` (read-only), `revoke`; the
+// relay validates chain linkage (prevAccepted/seq against the current
+// accepted head) and owner standing at ingest and publishes a relay-signed
+// acceptance receipt (kind 40099).
+export const KIND_CODING_SESSION_AUTHORITY_TRANSITION = 44228;
+// NIP-CSN: operator-authored append-only short session-name revision
+// (`csnm1-1`). Regular events preserve every rename.
+export const KIND_CODING_SESSION_NAME = 44229;
+// NIP-CSCL: member-authored append-only session-closure revision (`cscl1-1`).
+// Closing is founder-only; any relay-accepted member may reopen.
+export const KIND_CODING_SESSION_CLOSURE = 44230;
+
+// Every coding-session kind, in one place, so the regression guard keeping them
+// out of the chat timeline cannot silently miss a newly added member.
+export const CODING_SESSION_EVENT_KINDS = [
+  KIND_CODING_SESSION_LEASE,
+  KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_PROVIDER_CATALOG,
+  KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_TRANSCRIPT,
+  KIND_CODING_SESSION_GENESIS,
+  KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_CLOSURE,
+] as const;
+
 // Human-visible "new content" message kinds. Used as the unread trigger set
 // (sidebar badges, catch-up queries) and as the Home-feed mention query.
 // Reactions, edits, diffs, deletions, and system messages are deliberately
 // excluded: they can land after the last human-visible message and would
 // otherwise create phantom unreads.
+//
+// One member of this set is not decidable by kind alone: a kind:9 carrying a
+// `cs-session` tag is a coding-session lane message *if* this client can open
+// that lane, in which case it is invisible in the channel timeline and must
+// not trigger unread either. That is filtered per event, with the same rule the
+// timeline uses — `isCodingSessionLaneMessageHiddenFromChannel` in
+// features/messages/lib/codingSessionLaneVisibility.ts. Any new consumer of
+// this kind set that drives badges, notifications, or the mention feed must
+// apply it too.
 export const CHANNEL_MESSAGE_EVENT_KINDS = [
   KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_V2,

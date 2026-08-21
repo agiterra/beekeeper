@@ -201,6 +201,17 @@ type MockBridgeOptions = {
   connectAcpRuntimeResult?: { launched: boolean };
   connectAcpRuntimeDelayMs?: number;
   connectAcpRuntimeError?: string;
+  /** Coding-session provider host state; absent = provider commands throw. */
+  codingSessionProviderStatus?: {
+    provisioned: boolean;
+    running: boolean;
+    providerPubkey?: string;
+    instanceId?: string;
+  };
+  /** Host runtime table for the coding-session create flow. */
+  codingSessionProviderRuntimes?: Record<string, unknown>[];
+  /** Runtime table once a mocked connect (sign-in) has completed. */
+  codingSessionProviderRuntimesAfterConnect?: Record<string, unknown>[];
   installAcpRuntimeDelayMs?: number;
   /** Live output lines the mocked install emits before it settles, in order.
    *  Each arrives as an `acp-install-output` event, preceded by the clear

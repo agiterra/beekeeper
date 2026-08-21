@@ -5,7 +5,9 @@
       "id": "workflows",
       "name": "Workflows",
       "description": "YAML-defined automations with approval gates",
-      "platforms": ["desktop"]
+      "platforms": [
+        "desktop"
+      ]
     },
     {
       "id": "projects",
@@ -17,13 +19,17 @@
       "id": "pulse",
       "name": "Pulse",
       "description": "Activity feed with notes, social posts, and agent activity",
-      "platforms": ["desktop"]
+      "platforms": [
+        "desktop"
+      ]
     },
     {
       "id": "forum",
       "name": "Forum Channels",
       "description": "Forum-style threaded channels for long-form discussions",
-      "platforms": ["desktop"]
+      "platforms": [
+        "desktop"
+      ]
     },
     {
       "id": "agentManagedProfiles",
@@ -41,6 +47,12 @@
       "id": "project-pulse",
       "name": "Project Pulse",
       "description": "Per-project coordination view: explicit member claims beside observed coding-session state",
+      "platforms": ["desktop"]
+    },
+    {
+      "id": "coding-session-export",
+      "name": "Coding-session transcript export",
+      "description": "Export a coding session as a static, redacted, self-contained transcript bundle with an offline viewer",
       "platforms": ["desktop"]
     }
   ]

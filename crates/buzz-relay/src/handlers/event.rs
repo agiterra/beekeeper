@@ -1113,6 +1113,19 @@ pub async fn handle_event(event: Event, conn: Arc<ConnectionState>, state: Arc<A
                 return;
             }
         }
+        if kind_u32 == buzz_core::kind::KIND_CODING_SESSION_LEASE {
+            super::session_lease::handle_session_lease_event(
+                event,
+                conn_id,
+                pubkey_bytes,
+                channel_ids,
+                &event_id_hex,
+                conn,
+                state,
+            )
+            .await;
+            return;
+        }
         match handle_ephemeral_event(
             event,
             conn_id,
@@ -1286,6 +1299,30 @@ async fn handle_ephemeral_event(
     }
 
     Ok(())
+}
+
+/// Publish one already-admitted channel ephemeral event and fan it out locally.
+pub(crate) async fn fan_out_admitted_channel_ephemeral(
+    event: Event,
+    channel_id: uuid::Uuid,
+    conn_id: uuid::Uuid,
+    state: &Arc<AppState>,
+    tenant: &TenantContext,
+) {
+    let event_id = event.id.to_hex();
+    state.mark_local_event(tenant.community(), &event.id);
+    if let Err(error) = state
+        .pubsub
+        .publish_event(tenant, EventTopic::Channel(channel_id), &event)
+        .await
+    {
+        state
+            .local_event_ids
+            .invalidate(&(tenant.community(), event.id.to_bytes()));
+        warn!(conn_id = %conn_id, event_id = %event_id, "Ephemeral publish failed: {error}");
+    }
+    let stored = StoredEvent::new(event, Some(channel_id));
+    fan_out_event_to_local_subscribers(state, tenant.community(), &stored).await;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

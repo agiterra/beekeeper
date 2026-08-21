@@ -22,7 +22,7 @@
 //! `<app-data>/agents/global-agent-config.json`, written `0o600` via
 //! `atomic_write_json_restricted` (same as the agent store).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -32,6 +32,27 @@ use crate::managed_agents::env_vars::{
 };
 use crate::managed_agents::storage::{atomic_write_json_restricted, managed_agents_base_dir};
 use crate::managed_agents::types::{AgentDefinition, ManagedAgentRecord};
+
+/// Upper bound on a bridge label, which is display metadata only.
+const MAX_BRIDGE_LABEL_BYTES: usize = 80;
+
+/// A governed bridge identity trusted to author coding-session events
+/// (kinds 44220–44225) that this desktop will render.
+///
+/// The consumer side is deliberately fail-closed: an empty allowlist means no
+/// bridge is trusted and nothing renders. Entries are appended by the
+/// coding-session provider host when it provisions a local provider identity
+/// (see `crate::session_provider`), and — in a later slice — by an explicit
+/// settings surface.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AllowedBridgePubkey {
+    /// 64-character lowercase hex Nostr pubkey. Normalized at save time.
+    pub pubkey: String,
+
+    /// Bounded display metadata only. Never used for authority decisions.
+    #[serde(default)]
+    pub label: String,
+}
 
 /// The global agent configuration record.
 ///
@@ -70,6 +91,17 @@ pub struct GlobalAgentConfig {
     /// Preferred ACP runtime for definitions without an explicit runtime.
     #[serde(default)]
     pub preferred_runtime: Option<String>,
+
+    /// Explicit governed allowlist for coding-session bridge signers. Missing
+    /// or empty means the consumer renders nothing — the trust decision is
+    /// never inferred from an event's own claims.
+    ///
+    /// Additive: `#[serde(default)]` keeps every pre-existing
+    /// `global-agent-config.json` loading unchanged, and the kebab-case name
+    /// matches the donor wire shape so a config written by either side reads
+    /// on the other.
+    #[serde(default, rename = "allowed-bridge-pubkeys")]
+    pub allowed_bridge_pubkeys: Vec<AllowedBridgePubkey>,
 }
 
 /// Validate a `GlobalAgentConfig` before persisting it.
@@ -140,7 +172,49 @@ pub fn validate_global_config(config: &GlobalAgentConfig) -> Result<(), String> 
         }
     }
 
+    // The bridge allowlist is an authority list: a malformed or duplicated
+    // entry must never reach disk, because every consumer read treats
+    // membership as proof.
+    let mut seen_bridge_pubkeys = BTreeSet::new();
+    for entry in &config.allowed_bridge_pubkeys {
+        if !is_lowercase_hex_pubkey(&entry.pubkey) {
+            return Err(
+                "global config `allowed-bridge-pubkeys` entries must use 64-character lowercase hex pubkeys"
+                    .to_string(),
+            );
+        }
+        if !seen_bridge_pubkeys.insert(entry.pubkey.as_str()) {
+            return Err(
+                "global config `allowed-bridge-pubkeys` must not contain duplicate pubkeys"
+                    .to_string(),
+            );
+        }
+        if entry.label.contains('\0') {
+            return Err(
+                "global config `allowed-bridge-pubkeys` labels must not contain NUL bytes"
+                    .to_string(),
+            );
+        }
+        if entry.label.len() > MAX_BRIDGE_LABEL_BYTES {
+            return Err(format!(
+                "global config `allowed-bridge-pubkeys` labels exceed the maximum allowed length ({MAX_BRIDGE_LABEL_BYTES} bytes)"
+            ));
+        }
+    }
+
     Ok(())
+}
+
+/// Return `true` when `value` is a 64-character lowercase hex pubkey.
+///
+/// Deliberately stricter than a case-insensitive parse: the allowlist is
+/// compared byte-for-byte against event pubkeys, so a mixed-case entry would
+/// silently never match.
+pub(crate) fn is_lowercase_hex_pubkey(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Strip empty values from `env_vars`.
@@ -171,6 +245,10 @@ pub fn normalize_global_config_fields(config: &mut GlobalAgentConfig) {
         if v.trim().is_empty() {
             config.model = None;
         }
+    }
+    for entry in &mut config.allowed_bridge_pubkeys {
+        entry.pubkey = entry.pubkey.trim().to_ascii_lowercase();
+        entry.label = entry.label.trim().to_string();
     }
 }
 

@@ -6,6 +6,10 @@ import {
 } from "@/features/messages/lib/channelWindowStore";
 import { projectChannelWindowMessages } from "@/features/messages/lib/projectChannelWindow";
 import { parseChannelWindowResponse } from "@/features/messages/lib/channelWindowResponse";
+import {
+  codingSessionLaneRenderableRefs,
+  observeCodingSessionLaneRefs,
+} from "@/features/messages/lib/codingSessionLaneVisibility";
 import { channelWindowKey } from "@/features/messages/lib/messageQueryKeys";
 import { getChannelWindowEvents } from "@/shared/api/channelWindow";
 
@@ -48,7 +52,13 @@ async function runPage(
     CHANNEL_WINDOW_PAGE_SIZE,
   );
   if (!shouldContinue()) return { hasOlderMessages: true };
-  const page = parseChannelWindowResponse(events, channelId, requestCursor);
+  observeCodingSessionLaneRefs(channelId, events);
+  const page = parseChannelWindowResponse(
+    events,
+    channelId,
+    requestCursor,
+    codingSessionLaneRenderableRefs(channelId),
+  );
   const retained = queryClient.getQueryData<ChannelWindowStore>(
     channelWindowKey(channelId),
   );

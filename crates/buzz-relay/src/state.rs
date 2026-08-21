@@ -751,6 +751,18 @@ pub struct AppState {
             Option<Arc<buzz_db::shell_session_acl::ShellRoster>>,
         >,
     >,
+    /// Per-(channel, pubkey) coding-session steer standing (NIP-CSAT):
+    /// whether the pubkey founded a genesis-rooted session in the channel or
+    /// holds a live operator grant on one. Backs the relay-grain 44220 gate.
+    /// Same TTL/flush discipline as [`Self::membership_cache`]; flushed on
+    /// every accepted 44228 transition.
+    #[allow(clippy::type_complexity)]
+    pub session_steer_cache: Arc<moka::sync::Cache<(CommunityId, Uuid, Vec<u8>), bool>>,
+    /// Per-(channel, pubkey) coding-session grant presence (any role):
+    /// whether the pubkey holds a live operator or viewer grant in the
+    /// channel. Same TTL/flush discipline as [`Self::session_steer_cache`].
+    #[allow(clippy::type_complexity)]
+    pub session_grant_cache: Arc<moka::sync::Cache<(CommunityId, Uuid, Vec<u8>), bool>>,
 
     /// Bounded channel for audit logging, absent when audit logging is disabled.
     pub audit_tx: Option<mpsc::Sender<buzz_audit::NewAuditEntry>>,
@@ -1015,6 +1027,20 @@ impl AppState {
                     .support_invalidation_closures()
                     .build(),
             ),
+            session_steer_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
+            session_grant_cache: Arc::new(
+                moka::sync::Cache::builder()
+                    .max_capacity(10_000)
+                    .time_to_live(std::time::Duration::from_secs(10))
+                    .support_invalidation_closures()
+                    .build(),
+            ),
             audit_tx: audit_enabled.then_some(audit_tx),
             media_storage: Arc::new(media_storage),
             storage_sweep: Arc::new(tokio::sync::Mutex::new(
@@ -1245,6 +1271,54 @@ impl AppState {
             .map(Arc::new);
         self.coordinate_gate_cache.insert(key, gate.clone());
         Ok(gate)
+    }
+
+    /// Resolve `pubkey`'s coding-session steer standing in a channel with a
+    /// 10-second cache — see [`Self::session_steer_cache`].
+    pub async fn session_steer_standing_cached(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool, buzz_db::DbError> {
+        let key = (community_id, channel_id, pubkey.to_vec());
+        if let Some(cached) = self.session_steer_cache.get(&key) {
+            return Ok(cached);
+        }
+        let standing = self
+            .db
+            .has_steer_standing_in_channel(community_id, channel_id, pubkey)
+            .await?;
+        self.session_steer_cache.insert(key, standing);
+        Ok(standing)
+    }
+
+    /// Resolve whether `pubkey` holds any live session grant in a channel
+    /// with a 10-second cache — see [`Self::session_grant_cache`].
+    pub async fn session_grant_cached(
+        &self,
+        community_id: CommunityId,
+        channel_id: Uuid,
+        pubkey: &[u8],
+    ) -> Result<bool, buzz_db::DbError> {
+        let key = (community_id, channel_id, pubkey.to_vec());
+        if let Some(cached) = self.session_grant_cache.get(&key) {
+            return Ok(cached);
+        }
+        let granted = self
+            .db
+            .has_session_grant_in_channel(community_id, channel_id, pubkey)
+            .await?;
+        self.session_grant_cache.insert(key, granted);
+        Ok(granted)
+    }
+
+    /// Flush the coding-session authority caches — called on every accepted
+    /// 44228 transition so grants/revokes take effect immediately instead of
+    /// riding out the TTL.
+    pub fn invalidate_session_authority_caches(&self) {
+        self.session_steer_cache.invalidate_all();
+        self.session_grant_cache.invalidate_all();
     }
 
     /// Invalidate caches after a membership change (add/remove member).

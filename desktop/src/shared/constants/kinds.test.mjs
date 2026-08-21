@@ -2,7 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CHANNEL_EVENT_KINDS,
+  CHANNEL_MESSAGE_EVENT_KINDS,
+  CHANNEL_TIMELINE_CONTENT_KINDS,
+  CODING_SESSION_EVENT_KINDS,
   isConversationalUnreadKind,
+  KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+  KIND_CODING_SESSION_COMMAND,
+  KIND_CODING_SESSION_CLOSURE,
+  KIND_CODING_SESSION_GENESIS,
+  KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_LEASE,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+  KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_NAME,
+  KIND_CODING_SESSION_PROVIDER_CATALOG,
+  KIND_CODING_SESSION_TRANSCRIPT,
   KIND_STREAM_MESSAGE,
   KIND_STREAM_MESSAGE_V2,
   KIND_STREAM_MESSAGE_DIFF,
@@ -71,4 +87,73 @@ test("isConversationalUnreadKind_unknownKind_countsAsConversational", () => {
   // An exclude-list, not an include-list: anything not explicitly excluded
   // (e.g. a future conversational kind) is kept.
   assert.equal(isConversationalUnreadKind(12345), true);
+});
+
+test("codingSessionKinds_matchBuzzCoreValues", () => {
+  // Mirror of crates/buzz-core/src/kind.rs. A drift here is a wire break that
+  // no type checker catches — the events simply stop matching.
+  assert.deepEqual(
+    {
+      command: KIND_CODING_SESSION_COMMAND,
+      closure: KIND_CODING_SESSION_CLOSURE,
+      lifecycleCommand: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+      lease: KIND_CODING_SESSION_LEASE,
+      providerCatalog: KIND_CODING_SESSION_PROVIDER_CATALOG,
+      metadata: KIND_CODING_SESSION_METADATA,
+      lifecycleReceipt: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      transcript: KIND_CODING_SESSION_TRANSCRIPT,
+      genesis: KIND_CODING_SESSION_GENESIS,
+      goal: KIND_CODING_SESSION_GOAL,
+      authorityTransition: KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+      name: KIND_CODING_SESSION_NAME,
+    },
+    {
+      command: 44220,
+      closure: 44230,
+      lifecycleCommand: 44221,
+      lease: 24223,
+      providerCatalog: 44222,
+      metadata: 44223,
+      lifecycleReceipt: 44224,
+      transcript: 44225,
+      genesis: 44226,
+      goal: 44227,
+      authorityTransition: 44228,
+      name: 44229,
+    },
+  );
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 12);
+  assert.equal(
+    KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
+    true,
+    "the session lease must remain in Nostr's ephemeral kind range",
+  );
+});
+
+test("codingSessionKinds_neverEnterTheChatTimeline", () => {
+  // Coding sessions render in their own workspace, never as chat rows. Adding
+  // any of these to the timeline set would interleave raw transcript items and
+  // turn commands into the message list — and, via CHANNEL_EVENT_KINDS, into
+  // the live subscription and unread tallies too.
+  //
+  // This is a regression guard, not a preference: the coding-session consumer
+  // is built on the assumption that 442xx events reach it only through its own
+  // trusted-ingress path.
+  for (const kind of CODING_SESSION_EVENT_KINDS) {
+    assert.equal(
+      CHANNEL_TIMELINE_CONTENT_KINDS.includes(kind),
+      false,
+      `kind ${kind} must not be a timeline content kind`,
+    );
+    assert.equal(
+      CHANNEL_MESSAGE_EVENT_KINDS.includes(kind),
+      false,
+      `kind ${kind} must not be a message kind`,
+    );
+    assert.equal(
+      CHANNEL_EVENT_KINDS.includes(kind),
+      false,
+      `kind ${kind} must not be a channel event kind`,
+    );
+  }
 });

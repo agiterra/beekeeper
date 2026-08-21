@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildInboxItems,
+  excludeHiddenFeedItems,
   findInboxItemByEventId,
   getInboxConversationId,
   getInboxTypeLabel,
@@ -593,4 +594,49 @@ test("nested-anchor: old selected event stays resolvable by conversationId after
 
   // The new representative is the latest reply.
   assert.equal(inboxItem.id, LATEST_EVENT_ID);
+});
+
+test("excludeHiddenFeedItems drops hidden items and adjusts the total", () => {
+  const item = (id, channelId = CHANNEL_ID) => ({
+    id,
+    kind: 9,
+    pubkey: "b".repeat(64),
+    content: id,
+    createdAt: 10,
+    channelId,
+    channelName: "buzz-bugs",
+    tags: [["h", channelId]],
+    category: "mention",
+  });
+  const response = {
+    feed: {
+      mentions: [item("keep"), item("hide")],
+      needsAction: [item("hide")],
+      activity: [item("keep")],
+      agentActivity: [],
+    },
+    meta: { since: 0, total: 4, generatedAt: 0 },
+  };
+
+  const filtered = excludeHiddenFeedItems(
+    response,
+    (candidate) => candidate.id === "hide",
+  );
+  assert.deepEqual(
+    filtered.feed.mentions.map((m) => m.id),
+    ["keep"],
+  );
+  assert.deepEqual(filtered.feed.needsAction, []);
+  assert.deepEqual(
+    filtered.feed.activity.map((m) => m.id),
+    ["keep"],
+  );
+  assert.equal(filtered.meta.total, 2);
+
+  // Nothing hidden → the original response object is returned untouched, so
+  // React Query keeps a stable reference across refetch-identical payloads.
+  assert.equal(
+    excludeHiddenFeedItems(response, () => false),
+    response,
+  );
 });

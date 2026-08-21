@@ -1,0 +1,41 @@
+{
+  "schema": "buzz.conformance.hive/transcript-export-release-manifest@1",
+  "donor": {
+    "repo": "hive",
+    "pin": "e0b8198bd14438d94e3198862a9c0835904ee1b5",
+    "path": "scripts/prepare-export-viewer-release-assets.ts",
+    "authority": "toReleaseAssetName / cache-control split / CONTENT_TYPES_BY_EXTENSION / releaseTag derivation (the donor ships no test for this file — this corpus is its first gate)"
+  },
+  "law": "Assets flatten to export-viewer__<path with slashes as double-underscores>; .html gets the short public cache, everything else immutable-for-a-year; content types come from a closed case-insensitive extension table with an application/octet-stream fallback; releaseTag is v + version with one leading v stripped first.",
+  "asset_name_cases": [
+    { "input": "index.html", "expected": "export-viewer__index.html" },
+    { "input": "assets/viewer.js", "expected": "export-viewer__assets__viewer.js" },
+    { "input": "assets/fonts/brand.woff2", "expected": "export-viewer__assets__fonts__brand.woff2" }
+  ],
+  "cache_control_cases": [
+    { "input": "index.html", "expected": "public, max-age=300" },
+    { "input": "nested/page.html", "expected": "public, max-age=300" },
+    { "input": "assets/viewer.js", "expected": "public, max-age=31536000, immutable" },
+    { "input": "manifest.webmanifest", "expected": "public, max-age=31536000, immutable" }
+  ],
+  "content_type_cases": [
+    { "input": "assets/viewer.js", "expected": "text/javascript; charset=utf-8" },
+    { "input": "styles/app.css", "expected": "text/css; charset=utf-8" },
+    { "input": "index.html", "expected": "text/html; charset=utf-8" },
+    { "input": "icons/app.png", "expected": "image/png" },
+    { "input": "fonts/brand.woff2", "expected": "font/woff2" },
+    { "input": "app.webmanifest", "expected": "application/manifest+json; charset=utf-8" },
+    { "input": "shouty/APP.JS", "expected": "text/javascript; charset=utf-8" },
+    { "input": "module.wasm", "expected": "application/octet-stream" },
+    { "input": "LICENSE", "expected": "application/octet-stream" }
+  ],
+  "release_tag_cases": [
+    { "input": "1.2.3", "expected": "v1.2.3" },
+    { "input": "v1.2.3", "expected": "v1.2.3" }
+  ],
+  "manifest_shape": {
+    "top_level_keys": ["viewerVersion", "releaseTag", "generatedAt", "files"],
+    "per_file_keys": ["assetName", "cacheControl", "contentType"],
+    "manifest_asset_name": "export-viewer-manifest.json"
+  }
+}

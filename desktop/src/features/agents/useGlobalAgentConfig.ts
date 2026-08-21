@@ -9,7 +9,7 @@
  * On fetch error the query falls back to EMPTY_CONFIG (safe — the absence of
  * a global config is never an error state for callers).
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 
 import { getGlobalAgentConfig } from "@/shared/api/tauriGlobalAgentConfig";
 import type { GlobalAgentConfig } from "@/shared/api/types";
@@ -19,6 +19,8 @@ const EMPTY_CONFIG: GlobalAgentConfig = {
   provider: null,
   model: null,
   preferred_runtime: null,
+  // Fail-closed: with no persisted config, no signer is trusted.
+  "allowed-bridge-pubkeys": [],
 };
 
 export const globalAgentConfigQueryKey = ["globalAgentConfig"] as const;
@@ -31,7 +33,7 @@ export function useGlobalAgentConfig(): {
     queryKey: globalAgentConfigQueryKey,
     queryFn: getGlobalAgentConfig,
     // Config is only mutated via setGlobalAgentConfig — treat as stable until
-    // explicitly invalidated by AgentDefaultsSettingsCard after a save.
+    // `publishSavedGlobalAgentConfig` (below) invalidates it after a save.
     staleTime: Number.POSITIVE_INFINITY,
     // Never show a stale empty flash while a background refetch runs.
     placeholderData: EMPTY_CONFIG,
@@ -41,4 +43,54 @@ export function useGlobalAgentConfig(): {
     globalConfig: data ?? EMPTY_CONFIG,
     isLoading: isPending,
   };
+}
+
+/** The two cache operations a save needs. Satisfied by a real `QueryClient`. */
+export type GlobalAgentConfigCache = Pick<
+  QueryClient,
+  "setQueryData" | "invalidateQueries"
+>;
+
+/**
+ * Publish a just-saved global config to every reader of the shared query.
+ *
+ * Two steps, and both are load-bearing:
+ *
+ * 1. `setQueryData` hands mounted consumers the backend's canonical config
+ *    synchronously, so no dialog has to wait out a second IPC round-trip.
+ * 2. `invalidateQueries` is what makes the on-disk file authoritative again.
+ *    `staleTime` is `Infinity`, so without it this cache entry is fresh
+ *    forever and the query function never runs a second time in the app's
+ *    lifetime. That matters here because the desktop writes this same file
+ *    from Rust behind the UI's back — `session_provider/trust.rs` appends the
+ *    local provider to `allowed-bridge-pubkeys` on every provider start. A
+ *    seed-only save would leave the settings surface showing a trust list that
+ *    disagrees with the one the consumer actually enforces, and the
+ *    disagreement would survive until the app restarted.
+ */
+export function publishSavedGlobalAgentConfig(
+  cache: GlobalAgentConfigCache,
+  config: GlobalAgentConfig,
+): void {
+  cache.setQueryData(globalAgentConfigQueryKey, config);
+  void cache.invalidateQueries({ queryKey: globalAgentConfigQueryKey });
+}
+
+/**
+ * Refetch the shared config after Rust rewrote the file behind the UI's back.
+ *
+ * Provisioning the local coding-session provider (and every provider start)
+ * appends the provider's pubkey to `allowed-bridge-pubkeys` from Rust
+ * (`session_provider/trust.rs`), and no `setGlobalAgentConfig` save happens on
+ * that path — so nothing calls `publishSavedGlobalAgentConfig`. With
+ * `staleTime: Infinity`, the cached (possibly empty) trust list would then be
+ * final for the app's lifetime: the fail-closed ingress consumer keeps
+ * admitting nothing, and a first-ever session create spins forever waiting for
+ * a receipt the subscription cannot see. Invalidate-only (no seed) because the
+ * provisioning IPC returns a provider status, not the canonical config.
+ */
+export function refreshGlobalAgentConfig(
+  cache: Pick<QueryClient, "invalidateQueries">,
+): void {
+  void cache.invalidateQueries({ queryKey: globalAgentConfigQueryKey });
 }

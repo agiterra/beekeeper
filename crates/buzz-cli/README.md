@@ -157,6 +157,10 @@ stored rules in `validation_error` so an owner can remove and repair them.
 | | `protect list` | List branch and tag protection rules |
 | | `protect set` | Create or replace a protection rule |
 | | `protect remove` | Remove a protection rule |
+| `sessions` | `list` | List recorded coding-session generations in a channel |
+| | `transcript` | Print one generation's transcript (`--format md\|jsonl`) |
+| | `tools` | Tool call counts and error rates across transcripts |
+| | `export` | Write raw events per generation plus a manifest |
 | `upload` | `file` | Upload a file to the Blossom store |
 | `pack` | `validate` | Validate a persona pack (local, no relay) |
 | | `inspect` | Inspect a persona pack (local, no relay) |

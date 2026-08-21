@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buzz transcript</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --fg: #1a1a1f;
+        --muted: #6b6b76;
+        --card: #f4f4f6;
+        --border: #dcdce2;
+        --accent: #4c6ef5;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #131317;
+        --fg: #ececf1;
+        --muted: #9a9aa6;
+        --card: #1e1e25;
+        --border: #32323c;
+        --accent: #91a7ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.55 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        max-width: 46rem;
+        margin: 0 auto;
+        padding: 2.5rem 1.25rem 5rem;
+      }
+      header.bundle {
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 1.75rem;
+        padding-bottom: 1.25rem;
+      }
+      header.bundle h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.45rem;
+      }
+      header.bundle p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      article {
+        margin: 0 0 1.1rem;
+        border: 1px solid var(--border);
+        border-radius: 0.6rem;
+        background: var(--card);
+        padding: 0.85rem 1rem;
+      }
+      article[data-kind="user_prompt"] {
+        border-left: 3px solid var(--accent);
+        background: transparent;
+      }
+      article[data-kind="assistant_text"] {
+        background: transparent;
+      }
+      article[data-kind="thought"],
+      article[data-kind="lifecycle"] {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      article h2 {
+        margin: 0 0 0.3rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+      article pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: inherit;
+      }
+      article[data-kind="tool_call"] pre,
+      article[data-kind="thought"] pre {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.85rem;
+      }
+      article[data-error="true"] {
+        border-color: #d64545;
+      }
+      ul.attachments {
+        list-style: none;
+        margin: 0.6rem 0 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      ul.attachments li {
+        border: 1px solid var(--border);
+        border-radius: 0.4rem;
+        padding: 0.25rem 0.6rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      ul.attachments a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      ul.attachments img {
+        max-width: 100%;
+        max-height: 18rem;
+        display: block;
+        border-radius: 0.35rem;
+        margin-top: 0.35rem;
+      }
+      p.failure {
+        color: #d64545;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="bundle">
+        <h1 id="title">Buzz transcript</h1>
+        <p id="meta"></p>
+      </header>
+      <section id="messages"></section>
+      <noscript><p class="failure">This viewer needs JavaScript enabled.</p></noscript>
+    </main>
+    <script>
+      // Static, self-contained viewer for a Buzz transcript-export bundle.
+      // Reads ./transcript.json relative to document.baseURI — the banked
+      // consumption contract — and renders every message with textContent
+      // only. No network requests beyond the bundle's own files.
+      "use strict";
+
+      function chip(attachment) {
+        const item = document.createElement("li");
+        const label = document.createElement("span");
+        label.textContent = [
+          attachment.displayName || attachment.id,
+          attachment.mimeType,
+          typeof attachment.size === "number" ? attachment.size + " B" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        if (attachment.contentUrl) {
+          const link = document.createElement("a");
+          link.href = attachment.contentUrl;
+          link.append(label);
+          item.append(link);
+          if ((attachment.mimeType || "").startsWith("image/")) {
+            const img = document.createElement("img");
+            img.src = attachment.contentUrl;
+            img.alt = attachment.displayName || attachment.id;
+            item.append(img);
+          }
+        } else {
+          item.append(label);
+        }
+        return item;
+      }
+
+      function heading(message) {
+        if (message.kind === "user_prompt") return "You";
+        if (message.kind === "assistant_text") return "Assistant";
+        if (message.kind === "tool_call") {
+          return (message.toolName || message.title || "Tool") +
+            " · " + (message.status || "");
+        }
+        return message.title || message.kind;
+      }
+
+      function render(bundle) {
+        if (bundle.theme === "dark") {
+          document.documentElement.dataset.theme = "dark";
+        }
+        document.getElementById("title").textContent =
+          bundle.title || "Buzz transcript";
+        document.title = bundle.title || "Buzz transcript";
+        document.getElementById("meta").textContent = [
+          "Exported " + bundle.exportedAt,
+          "Buzz " + bundle.viewerVersion,
+          bundle.chatId,
+        ].join(" · ");
+
+        const container = document.getElementById("messages");
+        for (const message of bundle.messages || []) {
+          const article = document.createElement("article");
+          article.dataset.kind = message.kind;
+          if (message.isError === true) article.dataset.error = "true";
+          const head = document.createElement("h2");
+          head.textContent = heading(message);
+          article.append(head);
+          const body = document.createElement("pre");
+          body.textContent = message.text || "";
+          article.append(body);
+          if (
+            message.kind === "user_prompt" &&
+            Array.isArray(message.attachments) &&
+            message.attachments.length > 0
+          ) {
+            const list = document.createElement("ul");
+            list.className = "attachments";
+            for (const attachment of message.attachments) {
+              list.append(chip(attachment));
+            }
+            article.append(list);
+          }
+          container.append(article);
+        }
+      }
+
+      fetch("./transcript.json")
+        .then((response) => {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.json();
+        })
+        .then(render)
+        .catch((error) => {
+          const failure = document.createElement("p");
+          failure.className = "failure";
+          failure.textContent =
+            "Could not load transcript.json beside this page (" +
+            error +
+            "). Open the export folder directly or serve it locally.";
+          document.getElementById("messages").append(failure);
+        });
+    </script>
+  </body>
+</html>

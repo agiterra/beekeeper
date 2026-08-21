@@ -119,6 +119,18 @@ clippy:
 desktop-install:
     pnpm install
 
+# Re-derive every banked conformance corpus against this repo's own
+# implementation. Deliberately not wired into `just ci` here — CI wiring is
+# the glue phase's call, and a corpus that gates the build before its owner
+# has agreed to that is a surprise, not a guarantee.
+conformance-check:
+    node --test "conformance/**/*.test.mjs"
+
+# The export-viewer release manifest script, checked on its own because the
+# conformance corpus binds it and nothing else runs it.
+export-viewer-manifest-test:
+    node --test "scripts/export-viewer-release-manifest.test.mjs"
+
 # Install JS dependencies reproducibly for CI (pnpm workspace)
 desktop-install-ci:
     pnpm install --frozen-lockfile
@@ -300,8 +312,47 @@ ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
 # Run all tests (unit + integration)
-test:
+test: test-genesis
     ./scripts/run-tests.sh all
+
+# Genesis uniqueness proofs (kind 44226) and authority-chain proofs (kind
+# 44228) against a throwaway database.
+#
+# These prove security properties — that two rival claims on one session
+# reference cannot both be accepted (genesis), and that two rival authority
+# transitions for one chain cannot both be accepted (authority transitions) —
+# so they may not sit unexecuted. They are `#[ignore]`d because they need
+# Postgres, and `run-tests.sh` deliberately runs `cargo test -p buzz-db`
+# *without* `--ignored`, so nothing else in this repo ever runs them.
+#
+# The filter is two substrings — `genesis` and `authority_transition` — passed
+# as separate libtest filter arguments, which libtest ORs together (this is
+# NOT cargo's own single-TESTNAME positional; both go after `--`). Extend this
+# list, not the DB name, the next time a Postgres-gated proof needs to join it.
+#
+# They cannot simply be pointed at the dev database. Each Postgres-backed
+# buzz-db test drops and rebuilds the schema from the *invoking worktree's*
+# migrations, so running them from a feature branch silently downgrades a shared
+# dev database and deletes any schema newer than that branch. They also deadlock
+# against each other under the default parallel harness. Hence: a database
+# created for this run, serial execution, and a drop on the way out.
+test-genesis: _ensure-services
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Unique per run: a fixed name collides when two worktrees run the gate
+    # at once (ruling R18), and both would drop each other's database.
+    db="buzz_genesis_gate_$$_$(date +%s)"
+    pg() { docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -q "$@"; }
+    cleanup() { pg -d postgres -c "DROP DATABASE IF EXISTS ${db};" >/dev/null 2>&1 || true; }
+    trap cleanup EXIT
+    cleanup
+    pg -d postgres -c "CREATE DATABASE ${db};" >/dev/null
+    scratch="postgres://buzz:buzz_dev@localhost:5432/${db}" # sadscan:disable np.postgres.1
+    # The event tests expect a migrated schema; they do not build one themselves.
+    DATABASE_URL="${scratch}" cargo run -q -p buzz-admin -- migrate
+    echo "==> genesis + authority-chain proofs against ${db} (serial, isolated)"
+    DATABASE_URL="${scratch}" BUZZ_TEST_DATABASE_URL="${scratch}" \
+        cargo test -p buzz-db --lib -- genesis authority_transition --ignored --test-threads=1
 
 # Run unit tests only (no infra needed)
 test-unit:

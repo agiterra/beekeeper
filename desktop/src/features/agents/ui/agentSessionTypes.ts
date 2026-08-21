@@ -66,6 +66,19 @@ export type TranscriptItemIdentity = {
   turnId?: string | null;
   sessionId?: string | null;
   channelId?: string | null;
+  /**
+   * The bridge identity that authored this item, when it did not come from a
+   * locally observed ACP stream.
+   *
+   * Coding-session transcripts arrive as signed relay events from a provider,
+   * so the renderer needs to say whose claim it is showing. `label` is display
+   * metadata resolved from the trust allowlist; authority always comes from
+   * `pubkey`.
+   */
+  bridgeSource?: {
+    pubkey: string;
+    label: string;
+  } | null;
 };
 
 export type TranscriptItem =
@@ -80,6 +93,17 @@ export type TranscriptItem =
       messageId?: string | null;
       acpSource?: TranscriptAcpSource;
       authorPubkey?: string | null;
+      /**
+       * The operator whose verified command drove this turn, for `role: "user"`
+       * messages that carry the attribution.
+       *
+       * Coding sessions are multi-operator — a founder plus granted operators
+       * can each steer the same execution — so a user message is not
+       * necessarily the viewer's own. Absent on items published before the
+       * provider stamped attribution, which stay unattributed rather than
+       * being assigned to anyone.
+       */
+      operatorPubkey?: string | null;
     } & TranscriptItemIdentity)
   | ({
       id: string;
@@ -109,6 +133,10 @@ export type TranscriptItem =
       text: string;
       /** Resolved outcome for permission items (e.g. "Approved (allow_once)", "Denied (reject_once)", "Cancelled"). */
       outcome?: string;
+      /** Structured turn duration for coding-session "Turn result" items. */
+      durationMs?: number | null;
+      /** Structured turn cost (USD) for coding-session "Turn result" items. */
+      costUsd?: number | null;
       timestamp: string;
       descriptor?: AgentActivityDescriptor;
       acpSource?: TranscriptAcpSource;

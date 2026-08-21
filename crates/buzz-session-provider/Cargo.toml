@@ -1,0 +1,54 @@
+[package]
+name = "buzz-session-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Coding-session provider adapter: drives Claude Code over ACP from signed Buzz commands"
+
+[lib]
+name = "buzz_session_provider"
+path = "src/lib.rs"
+
+[[bin]]
+name = "buzz-session-provider"
+path = "src/main.rs"
+
+[dependencies]
+# Internal
+buzz-core = { workspace = true }
+buzz-sdk = { workspace = true }
+buzz-acp = { path = "../buzz-acp" }
+
+# Nostr
+nostr = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# IDs and time
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Digests
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }
+tempfile = "3"
+reqwest = { workspace = true }

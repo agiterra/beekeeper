@@ -160,6 +160,23 @@ impl std::fmt::Display for PresenceStatus {
     }
 }
 
+/// Output format for `sessions transcript`.
+///
+/// Distinct from [`OutputFormat`] because a transcript has two useful shapes
+/// and neither is "the same JSON with fewer fields": `jsonl` is the archival
+/// one (whole signed events, one per line, verifiable offline) and `md` is the
+/// one a person reads.
+#[derive(Clone, Copy, clap::ValueEnum, Default)]
+pub enum TranscriptFormat {
+    /// Rendered turns, tool calls, and results as markdown (default)
+    #[default]
+    #[value(name = "md")]
+    Md,
+    /// One raw signed event per line, signature included
+    #[value(name = "jsonl")]
+    Jsonl,
+}
+
 /// Output format for read commands.
 #[derive(Clone, clap::ValueEnum, Default)]
 pub enum OutputFormat {
@@ -244,6 +261,9 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// Read and analyze recorded coding sessions (NIP-CSL/CSM/CST)
+    #[command(subcommand)]
+    Sessions(SessionsCmd),
     /// List, share, and drive shared terminals (NIP-ST)
     #[command(subcommand)]
     Terminals(TerminalsCmd),
@@ -1309,6 +1329,26 @@ impl ProjectRoleArg {
     }
 }
 
+/// Grant tier for coding-session authority grants and shared-terminal
+/// rosters: collaborator (may steer / type) or viewer (read-only).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum GrantRoleArg {
+    /// May steer the session / type into the terminal.
+    Collaborator,
+    /// Read-only access.
+    Viewer,
+}
+
+impl GrantRoleArg {
+    /// The roster role string this variant serializes to.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GrantRoleArg::Collaborator => "collaborator",
+            GrantRoleArg::Viewer => "viewer",
+        }
+    }
+}
+
 /// Shared-terminal roster role (NIP-ST): collaborator (watch + type) or
 /// viewer (watch only).
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -1515,68 +1555,6 @@ pub enum ProjectsCmd {
         /// Project owner pubkey (64-char hex). Defaults to the current identity.
         #[arg(long)]
         owner: Option<String>,
-    },
-}
-
-/// Shared-terminal commands (NIP-ST kind 30623 announces + kind 24312 input).
-#[derive(Subcommand)]
-pub enum TerminalsCmd {
-    /// List shared-terminal session announces (kind 30623)
-    List {
-        /// Restrict to one project: a `30621:<owner>:<dtag>` coordinate, or
-        /// a bare slug (expanded with your own pubkey as owner).
-        #[arg(long)]
-        project: Option<String>,
-    },
-    /// Add a pubkey to your own session's roster, or change their role.
-    ///
-    /// Read-modify-writes your own kind:30623 announce; errors if you have
-    /// no announce for the session id. The owner host independently
-    /// re-verifies roster membership before input reaches the PTY.
-    Invite {
-        /// Session id (`d` tag of your announce)
-        session_id: String,
-        /// Invitee pubkey (64-char lowercase hex)
-        #[arg(long)]
-        pubkey: String,
-        /// Roster role: collaborator (watch + type) or viewer (watch only)
-        #[arg(long, value_enum)]
-        role: ShellRoleArg,
-    },
-    /// Remove a pubkey from your own session's roster
-    Revoke {
-        /// Session id (`d` tag of your announce)
-        session_id: String,
-        /// Pubkey to remove (64-char lowercase hex)
-        #[arg(long)]
-        pubkey: String,
-    },
-    /// Print a session announce's roster as `[{pubkey, role}]`
-    Roster {
-        /// Session id (`d` tag of the announce)
-        session_id: String,
-        /// Session owner pubkey (64-char hex). Defaults to the current identity.
-        #[arg(long)]
-        owner: Option<String>,
-    },
-    /// Send raw input bytes to a shared terminal (kind 24312, ephemeral).
-    ///
-    /// Accepted by the relay only from the session owner or a roster
-    /// collaborator; delivered only to the owner. Content is chunked when
-    /// it exceeds 6 KiB raw.
-    #[command(name = "send-input")]
-    SendInput {
-        /// Session id (`d` tag of the owner's announce)
-        session_id: String,
-        /// Session owner pubkey (64-char hex)
-        #[arg(long)]
-        owner: String,
-        /// Input text to send. Use --stdin to send raw stdin bytes instead.
-        #[arg(long, conflicts_with = "stdin", required_unless_present = "stdin")]
-        text: Option<String>,
-        /// Read the input bytes from stdin
-        #[arg(long, default_value_t = false)]
-        stdin: bool,
     },
 }
 
@@ -2162,6 +2140,174 @@ pub enum ModerationCmd {
     },
 }
 
+/// Read-side analysis over recorded coding sessions.
+///
+/// The relay's stored 442xx rows are the analysis database; these commands are
+/// the shortest path into them. `docs/coding-session-analysis.md` covers the
+/// direct-SQL equivalents for questions this surface does not answer.
+#[derive(Subcommand)]
+pub enum SessionsCmd {
+    /// List the coding-session generations recorded in a channel
+    #[command(
+        after_help = "Examples:\n  buzz sessions list --channel <uuid>\n  buzz --format compact sessions list --channel <uuid>"
+    )]
+    List {
+        /// Channel UUID the sessions were published into
+        #[arg(long)]
+        channel: String,
+    },
+    /// Print one generation's transcript in sequence order
+    #[command(
+        after_help = "Examples:\n  buzz sessions transcript --channel <uuid> --session <session-id>\n  buzz sessions transcript --channel <uuid> --target '<cs-target>' --format jsonl"
+    )]
+    Transcript {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Exact `cs-target` key (from `sessions list`)
+        #[arg(long, conflicts_with = "session", required_unless_present = "session")]
+        target: Option<String>,
+        /// Provider-minted session id; resolved through `sessions list`
+        #[arg(long)]
+        session: Option<String>,
+        /// Transcript shape: 'md' (default, rendered) or 'jsonl' (raw signed events)
+        #[arg(long, value_enum, default_value = "md")]
+        format: TranscriptFormat,
+    },
+    /// Aggregate tool usage and error rates across transcripts
+    #[command(
+        after_help = "Examples:\n  buzz sessions tools --channel <uuid>\n  buzz sessions tools --channel <uuid> --target '<cs-target>'"
+    )]
+    Tools {
+        /// Channel UUID to aggregate over
+        #[arg(long)]
+        channel: String,
+        /// Restrict the aggregate to one generation's `cs-target` key
+        #[arg(long)]
+        target: Option<String>,
+    },
+    /// Write every generation's raw events to a directory, with a manifest
+    #[command(
+        after_help = "Examples:\n  buzz sessions export --channel <uuid> --out ./session-archive\n\nThe directory must be absent or empty — an export never overwrites."
+    )]
+    Export {
+        /// Channel UUID to export
+        #[arg(long)]
+        channel: String,
+        /// Destination directory; created if absent, refused if non-empty
+        #[arg(long)]
+        out: String,
+    },
+    /// Grant a pubkey authority over a coding session (NIP-CSAT kind 44228).
+    ///
+    /// `collaborator` maps to a `grant-operator` transition (may steer);
+    /// `viewer` maps to `grant-viewer` (read-only). Only the session owner
+    /// (the genesis signer) may extend the chain.
+    Grant {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Grantee pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Grant tier
+        #[arg(long, value_enum)]
+        role: GrantRoleArg,
+    },
+    /// Revoke a pubkey's live coding-session grant (NIP-CSAT kind 44228).
+    ///
+    /// The relay refuses a revoke naming a pubkey with no live grant.
+    Revoke {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+        /// Pubkey losing its grant (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+    },
+    /// Print a session's folded grant map plus pending transitions.
+    ///
+    /// Grants are folded from relay acceptance receipts (kind 40099) in
+    /// sequence order; transitions with no matching receipt are listed as
+    /// pending.
+    Roster {
+        /// Channel UUID the session's authority chain lives in
+        #[arg(long)]
+        channel: String,
+        /// Genesis event id (64-char hex) the chain roots at
+        #[arg(long)]
+        genesis: String,
+    },
+}
+
+/// Shared-terminal commands (NIP-ST kind 30623 announces + kind 24312 input).
+#[derive(Subcommand)]
+pub enum TerminalsCmd {
+    /// List shared-terminal session announces (kind 30623)
+    List {
+        /// Restrict to one project: a `30621:<owner>:<dtag>` coordinate, or
+        /// a bare slug (expanded with your own pubkey as owner).
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Add a pubkey to your own session's roster, or change their role.
+    ///
+    /// Read-modify-writes your own kind:30623 announce; errors if you have
+    /// no announce for the session id. The owner host independently
+    /// re-verifies roster membership before input reaches the PTY.
+    Invite {
+        /// Session id (`d` tag of your announce)
+        session_id: String,
+        /// Invitee pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Roster role: collaborator (watch + type) or viewer (watch only)
+        #[arg(long, value_enum)]
+        role: ShellRoleArg,
+    },
+    /// Remove a pubkey from your own session's roster
+    Revoke {
+        /// Session id (`d` tag of your announce)
+        session_id: String,
+        /// Pubkey to remove (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+    },
+    /// Print a session announce's roster as `[{pubkey, role}]`
+    Roster {
+        /// Session id (`d` tag of the announce)
+        session_id: String,
+        /// Session owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Send raw input bytes to a shared terminal (kind 24312, ephemeral).
+    ///
+    /// Accepted by the relay only from the session owner or a roster
+    /// collaborator; delivered only to the owner. Content is chunked when
+    /// it exceeds 6 KiB raw.
+    #[command(name = "send-input")]
+    SendInput {
+        /// Session id (`d` tag of the owner's announce)
+        session_id: String,
+        /// Session owner pubkey (64-char hex)
+        #[arg(long)]
+        owner: String,
+        /// Input text to send. Use --stdin to send raw stdin bytes instead.
+        #[arg(long, conflicts_with = "stdin", required_unless_present = "stdin")]
+        text: Option<String>,
+        /// Read the input bytes from stdin
+        #[arg(long, default_value_t = false)]
+        stdin: bool,
+    },
+}
+
 /// The claim a Pulse entry makes — the `pu-type` tag and the content `type`,
 /// which are always the same value.
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -2379,6 +2525,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::Sessions(sub) => commands::sessions::dispatch(sub, &client, &cli.format).await,
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
@@ -2489,6 +2636,7 @@ mod tests {
             "reactions",
             "repos",
             "session",
+            "sessions",
             "social",
             "terminals",
             "upload",
@@ -2668,6 +2816,18 @@ mod tests {
             vec!["assign", "create", "get", "list", "status", "unassign"]
         );
         assert_eq!(
+            names(&cmd, "sessions"),
+            vec![
+                "export",
+                "grant",
+                "list",
+                "revoke",
+                "roster",
+                "tools",
+                "transcript"
+            ]
+        );
+        assert_eq!(
             names(&cmd, "terminals"),
             vec!["invite", "list", "revoke", "roster", "send-input"]
         );
@@ -2708,6 +2868,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
+            ("sessions", 7),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

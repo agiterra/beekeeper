@@ -64,6 +64,11 @@ impl StopReason {
     ///
     /// Matching is case-insensitive so agents that send `"END_TURN"` or
     /// `"Cancelled"` are handled correctly without a protocol error.
+    // Deliberately not `FromStr`: an unrecognized stop reason is a normal wire
+    // condition to be tolerated, not an error to be constructed and reported,
+    // so `Option` is the honest return type. (The lint only became visible when
+    // this module went public; the signature predates it and callers rely on it.)
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "end_turn" => Some(Self::EndTurn),
@@ -200,6 +205,12 @@ pub struct AcpClient {
     /// a JSON-RPC *success*, not `-32601` — which the main loop would read as
     /// a delivered steer and drop the user's message from the queue.
     steering_supported: bool,
+    /// Whether the agent advertised the stable top-level `loadSession`
+    /// capability during initialization.
+    session_load_supported: bool,
+    /// Whether the agent advertised `sessionCapabilities.resume` during
+    /// initialization.
+    session_resume_supported: bool,
     /// Per-turn channel for receiving goose-native non-cancelling steer
     /// requests from the main loop. Installed by
     /// [`install_steer_rx`](Self::install_steer_rx) at dispatch and
@@ -214,6 +225,13 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// Normalized adapter identity from `initialize` (`agentInfo.name`, else
+    /// `serverInfo.name`). `"unknown"` until `initialize` answers.
+    agent_name: String,
+    /// ACP protocol version reported by the adapter at `initialize`. `1` until
+    /// `initialize` answers, matching the pool's own default for adapters that
+    /// omit the field.
+    protocol_version: u32,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -413,6 +431,78 @@ fn build_client_capabilities() -> serde_json::Value {
     })
 }
 
+/// Environment variables an agent subprocess must not receive.
+///
+/// A spawn inherits the parent environment wholesale — that is correct for the
+/// managed-agent harness, where the agent is a Buzz participant meant to act as
+/// itself, and wrong for a host that merely supervises an agent it does not
+/// want speaking in its name. This type is how such a host says so.
+///
+/// Policy lives with the caller: the fence carries no defaults, and
+/// [`OPEN`](Self::OPEN) — the fence that stops nothing — is what every existing
+/// call site gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnvFence {
+    /// Exact variable names, removed whether or not this process has them set.
+    /// Removing an absent key is a no-op, so an enumerated fence does not
+    /// depend on how the host happened to be launched.
+    pub keys: &'static [&'static str],
+    /// Name prefixes. Every variable under one is removed, *including names
+    /// nobody has invented yet* — the property an enumerated list cannot
+    /// offer, and the reason a fence over a namespace the caller owns is worth
+    /// more than a list of the credentials it currently holds.
+    pub prefixes: &'static [&'static str],
+    /// Names that survive a matching prefix. Adding one should be a
+    /// one-line, reviewable exception, not a reason to weaken a prefix.
+    pub exempt: &'static [&'static str],
+}
+
+impl EnvFence {
+    /// The fence that stops nothing — full environment inheritance.
+    pub const OPEN: Self = Self {
+        keys: &[],
+        prefixes: &[],
+        exempt: &[],
+    };
+
+    /// Whether `key` is fenced.
+    pub fn covers(&self, key: &str) -> bool {
+        if self.exempt.contains(&key) {
+            return false;
+        }
+        self.keys.contains(&key) || self.prefixes.iter().any(|prefix| key.starts_with(*prefix))
+    }
+
+    /// Whether this fence stops anything at all.
+    pub fn is_open(&self) -> bool {
+        self.keys.is_empty() && self.prefixes.is_empty()
+    }
+
+    /// Remove every fenced variable from `cmd`'s child environment.
+    ///
+    /// The enumerated keys go unconditionally; the prefix rules are resolved
+    /// against this process's own environment, because those are the values
+    /// the child would otherwise inherit.
+    fn apply(&self, cmd: &mut tokio::process::Command) {
+        if self.is_open() {
+            return;
+        }
+        for key in self.keys {
+            if !self.exempt.contains(key) {
+                cmd.env_remove(key);
+            }
+        }
+        if self.prefixes.is_empty() {
+            return;
+        }
+        for (key, _) in std::env::vars_os() {
+            if self.covers(&key.to_string_lossy()) {
+                cmd.env_remove(&key);
+            }
+        }
+    }
+}
+
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
@@ -450,6 +540,10 @@ impl AcpClient {
     /// trigger the recursive merge + forced `network_access=true` in
     /// `build_codex_config_env`.  Pass `false` for test spawns and non-Codex agents.
     ///
+    /// The child inherits this process's entire environment; callers that hold
+    /// credentials the agent must not see want
+    /// [`spawn_with_env_fence`](Self::spawn_with_env_fence) instead.
+    ///
     /// After spawning, call [`initialize`](Self::initialize) before any other method.
     pub async fn spawn(
         command: &str,
@@ -457,6 +551,94 @@ impl AcpClient {
         extra_env: &[(String, String)],
         has_generated_codex_config: bool,
     ) -> Result<Self, AcpError> {
+        // The open fence: the managed-agent harness *wants* its agent to
+        // inherit `BUZZ_PRIVATE_KEY` and friends, because a managed agent is a
+        // Buzz participant acting as itself.
+        Self::spawn_with_env_fence(
+            command,
+            args,
+            extra_env,
+            has_generated_codex_config,
+            &EnvFence::OPEN,
+        )
+        .await
+    }
+
+    /// Like [`spawn`](Self::spawn), but with `fence` applied to the child's
+    /// environment.
+    ///
+    /// Opt-in by design. Inheriting the parent environment is right for the
+    /// managed-agent harness and wrong for hosts that merely *supervise* an
+    /// agent — a coding-session sidecar signs provider-authoritative events
+    /// with a key its agent has no business holding. Rather than guess which
+    /// caller is which, the fence is a parameter and the default is unchanged.
+    pub async fn spawn_with_env_fence(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+    ) -> Result<Self, AcpError> {
+        let mut cmd =
+            Self::build_agent_command(command, args, extra_env, has_generated_codex_config, fence)?;
+
+        let standard_adapter =
+            match crate::config::normalize_agent_command_identity(command).as_str() {
+                "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
+                    Some(StandardAdapterKind::Claude)
+                }
+                "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
+                _ => None,
+            };
+        let mut child = cmd.spawn()?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AcpError::Protocol("failed to open agent stdin".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
+
+        Ok(Self {
+            child,
+            stdin,
+            reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
+            next_id: 0,
+            pending_permission_id: None,
+            permission_responded: false,
+            last_prompt_id: None,
+            current_hard_deadline: None,
+            observer: None,
+            observer_agent_index: None,
+            observer_context: ObserverContext::default(),
+            active_run_id: None,
+            steering_supported: false,
+            session_load_supported: false,
+            session_resume_supported: false,
+            steer_rx: None,
+            goose_usage: UsageTracker::default(),
+            standard_usage: StandardUsageTracker::default(),
+            standard_adapter,
+            agent_name: "unknown".to_owned(),
+            protocol_version: 1,
+        })
+    }
+
+    /// Assemble the child `Command` without spawning it.
+    ///
+    /// Split out from the spawn so the environment it hands the child is
+    /// inspectable by tests: `Command::get_envs` reports both the keys we set
+    /// and the keys we removed, which is the only way to assert the fence
+    /// without running an adapter.
+    fn build_agent_command(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+    ) -> Result<tokio::process::Command, AcpError> {
         use std::process::Stdio;
 
         let mut cmd = tokio::process::Command::new(command);
@@ -498,6 +680,9 @@ impl AcpClient {
         // key replacement) and inherited parent env (via the parent-presence
         // check) override them.
         for &(key, value) in crate::config::default_agent_env(command) {
+            if fence.covers(key) {
+                continue;
+            }
             if std::env::var_os(key).is_none() {
                 cmd.env(key, value);
             }
@@ -508,12 +693,20 @@ impl AcpClient {
                 // Handled by build_codex_config_env; skip here to avoid double-setting.
                 continue;
             }
+            // The fence outranks an explicit value. A fenced key appearing in
+            // `extra_env` is a configuration mistake, and failing closed is the
+            // only reading of it that cannot leak.
+            if fence.covers(key) {
+                continue;
+            }
             if std::env::var_os(key).is_none() {
                 cmd.env(key, value);
             }
         }
         if let Some(merged) = codex_config_value {
-            cmd.env("CODEX_CONFIG", merged);
+            if !fence.covers("CODEX_CONFIG") {
+                cmd.env("CODEX_CONFIG", merged);
+            }
         }
 
         // Spawn the agent in its own process group so SIGKILL doesn't propagate
@@ -526,44 +719,13 @@ impl AcpClient {
         // console-subsystem child process spawned from a GUI/non-console parent.
         configure_no_window(&mut cmd);
 
-        let standard_adapter =
-            match crate::config::normalize_agent_command_identity(command).as_str() {
-                "claude-agent-acp" | "claude-code-acp" | "claude-code" | "claudecode" => {
-                    Some(StandardAdapterKind::Claude)
-                }
-                "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
-                _ => None,
-            };
-        let mut child = cmd.spawn()?;
+        // The fence, last. Skipping injection above is not enough on its own:
+        // the parent-presence checks deliberately leave *inherited* values
+        // alone, and inheritance is the whole leak. `env_remove` is what
+        // reaches those.
+        fence.apply(&mut cmd);
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| AcpError::Protocol("failed to open agent stdin".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
-
-        Ok(Self {
-            child,
-            stdin,
-            reader: FramedRead::new(stdout, LinesCodec::new_with_max_length(MAX_LINE_SIZE)),
-            next_id: 0,
-            pending_permission_id: None,
-            permission_responded: false,
-            last_prompt_id: None,
-            current_hard_deadline: None,
-            observer: None,
-            observer_agent_index: None,
-            observer_context: ObserverContext::default(),
-            active_run_id: None,
-            steering_supported: false,
-            steer_rx: None,
-            goose_usage: UsageTracker::default(),
-            standard_usage: StandardUsageTracker::default(),
-            standard_adapter,
-        })
+        Ok(cmd)
     }
 
     /// Attach a local observer feed to this ACP client.
@@ -608,6 +770,11 @@ impl AcpClient {
     /// [`steering_supported`](Self::steering_supported) so the read loop's steer
     /// arm can choose [`ACP_STEER_METHOD`] for adapters that implement it.
     /// Parsed here rather than at each call site so no caller can forget it.
+    ///
+    /// The adapter's identity and protocol version are recorded the same way,
+    /// into [`agent_name`](Self::agent_name) and
+    /// [`protocol_version`](Self::protocol_version), so any caller can reach the
+    /// system-prompt capability gates without re-parsing the response.
     pub async fn initialize(&mut self) -> Result<serde_json::Value, AcpError> {
         // Requesting version 2 is an intentional temporary pin — we are squatting
         // on ACP v2 ahead of the upstream ACP RFD. Revisit when that RFD merges.
@@ -617,6 +784,15 @@ impl AcpClient {
             .pointer("/_meta/steering/supported")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        self.session_load_supported = result
+            .pointer("/agentCapabilities/loadSession")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.session_resume_supported = result
+            .pointer("/agentCapabilities/sessionCapabilities/resume")
+            .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false));
+        self.agent_name = normalized_agent_name(&result);
+        self.protocol_version = result["protocolVersion"].as_u64().unwrap_or(1) as u32;
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
     }
@@ -678,9 +854,65 @@ impl AcpClient {
             .as_str()
             .ok_or_else(|| AcpError::Protocol("session/new response missing sessionId".into()))?
             .to_owned();
-        tracing::info!(target: "acp::session", "session created: {session_id}");
+        tracing::info!(target: "acp::session", "session created");
         Ok(SessionNewResponse {
             session_id,
+            raw: result,
+        })
+    }
+
+    /// Resume an existing ACP session without requesting transcript replay.
+    ///
+    /// Callers must gate this on [`session_resume_supported`](Self::session_resume_supported).
+    /// The returned session id is the opaque cursor supplied by the caller;
+    /// ACP resume responses do not repeat it.
+    pub async fn session_resume_full(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let result = self
+            .send_request(
+                "session/resume",
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "cwd": cwd,
+                    "mcpServers": mcp_servers,
+                }),
+            )
+            .await?;
+        tracing::info!(target: "acp::session", "session resumed");
+        Ok(SessionNewResponse {
+            session_id: session_id.to_owned(),
+            raw: result,
+        })
+    }
+
+    /// Load an existing ACP session, allowing the adapter to replay its history.
+    ///
+    /// Callers must gate this on [`session_load_supported`](Self::session_load_supported).
+    /// Observer consumers should subscribe only after this call if replayed
+    /// updates are already represented in their own durable transcript.
+    pub async fn session_load_full(
+        &mut self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<SessionNewResponse, AcpError> {
+        let result = self
+            .send_request(
+                "session/load",
+                serde_json::json!({
+                    "sessionId": session_id,
+                    "cwd": cwd,
+                    "mcpServers": mcp_servers,
+                }),
+            )
+            .await?;
+        tracing::info!(target: "acp::session", "session loaded");
+        Ok(SessionNewResponse {
+            session_id: session_id.to_owned(),
             raw: result,
         })
     }
@@ -879,6 +1111,30 @@ impl AcpClient {
     /// for the supervisor's post-initialize log line.
     pub fn steering_supported(&self) -> bool {
         self.steering_supported
+    }
+
+    /// Whether initialization advertised `loadSession: true`.
+    pub fn session_load_supported(&self) -> bool {
+        self.session_load_supported
+    }
+
+    /// Whether initialization advertised `sessionCapabilities.resume`.
+    pub fn session_resume_supported(&self) -> bool {
+        self.session_resume_supported
+    }
+
+    /// Normalized adapter identity recorded at `initialize`.
+    ///
+    /// `"unknown"` before `initialize` answers, or when the adapter reported no
+    /// name. Feed this to [`session_new_system_prompt`] rather than a display
+    /// name — the capability gates key on the package identity.
+    pub fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+
+    /// ACP protocol version recorded at `initialize` (`1` when unreported).
+    pub fn protocol_version(&self) -> u32 {
+        self.protocol_version
     }
 
     /// Consume per-turn usage for NIP-AM publishing. Goose/buzz-agent is an
@@ -1108,7 +1364,11 @@ impl AcpClient {
             "params": params,
         });
 
-        tracing::debug!(target: "acp::wire", "→ {}", &serde_json::to_string(&msg).unwrap_or_default());
+        if let Some(payload) = acp_request_log_payload(method, &msg) {
+            tracing::debug!(target: "acp::wire", "→ {payload}");
+        } else {
+            tracing::debug!(target: "acp::wire", id, method, "→ ACP request (session details redacted)");
+        }
 
         // Wrap write + read in a single timeout so a hung agent can't block forever.
         // We cannot use an async block that borrows `self` mutably across two awaits
@@ -2102,6 +2362,20 @@ fn steer_prompt_blocks(prompt_blocks: &[&str]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Serialize a request for debug logging unless it opens a session.
+///
+/// Session-open parameters carry host-private cursors, working directories,
+/// and MCP environment such as `BUZZ_SESSION_CONTEXT_PACKAGE`. The wire still
+/// receives the full request; debug logs receive only the method and id at the
+/// call site.
+fn acp_request_log_payload(method: &str, message: &serde_json::Value) -> Option<String> {
+    if matches!(method, "session/new" | "session/resume" | "session/load") {
+        None
+    } else {
+        Some(serde_json::to_string(message).unwrap_or_default())
+    }
+}
+
 /// Build a JSON-RPC permission response with `outcome: "selected"`.
 fn permission_response_selected(id: &serde_json::Value, option_id: &str) -> serde_json::Value {
     serde_json::json!({
@@ -2143,6 +2417,77 @@ pub enum SystemPromptTransport<'a> {
     Field(&'a str),
     /// Deliver as `_meta.systemPrompt: {"append": text}`.
     ClaudeMeta(&'a str),
+}
+
+/// Package name reported by `claude-agent-acp` in its `initialize` response.
+///
+/// Any adapter reporting this name supports `_meta.systemPrompt: {append: ...}`
+/// on `session/new` — the feature landed in v0.6.0 (Oct 2025), before the
+/// `@zed-industries/claude-code-acp` → `@agentclientprotocol/claude-agent-acp`
+/// rename, so the new name is a reliable capability gate.
+pub const CLAUDE_AGENT_ACP_NAME: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// Whether an adapter can receive a system prompt through *any* supported
+/// transport (`session/new` for standard adapters, the custom post-`session/new`
+/// request for goose).
+///
+/// `agent_name` is the normalized identity from `initialize` — see
+/// [`normalized_agent_name`]. `goose_system_prompt_supported` is goose's probe
+/// result (`None` before the first probe, i.e. "not known to work").
+///
+/// Callers that cannot use goose's custom request — anything that only speaks
+/// `session/new` — must gate on [`session_new_system_prompt`] instead, which
+/// reports `None` for goose.
+pub fn has_system_prompt_support(
+    protocol_version: u32,
+    agent_name: &str,
+    goose_system_prompt_supported: Option<bool>,
+) -> bool {
+    if agent_name == "goose" {
+        goose_system_prompt_supported == Some(true)
+    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
+        true
+    } else {
+        protocol_version >= 2
+    }
+}
+
+/// Pick the `session/new` system-prompt transport for an adapter, if it has one.
+///
+/// `None` means the adapter has no supported `session/new` transport and the
+/// caller must fall back to its own framing (a user-message section for the
+/// harness, a first-turn preamble for the session provider). Goose is always
+/// `None` here: it takes its system prompt through
+/// [`AcpClient::session_set_goose_system_prompt`] after the session exists.
+pub fn session_new_system_prompt<'a>(
+    is_goose: bool,
+    protocol_version: u32,
+    agent_name: &str,
+    prompt: Option<&'a str>,
+) -> Option<SystemPromptTransport<'a>> {
+    if is_goose || (protocol_version < 2 && agent_name != CLAUDE_AGENT_ACP_NAME) {
+        None
+    } else if agent_name == CLAUDE_AGENT_ACP_NAME {
+        prompt.map(SystemPromptTransport::ClaudeMeta)
+    } else {
+        prompt.map(SystemPromptTransport::Field)
+    }
+}
+
+/// Normalized adapter identity from an `initialize` response.
+///
+/// Reads `agentInfo.name`, falling back to `serverInfo.name`, and lowercases it
+/// so capability gates like [`CLAUDE_AGENT_ACP_NAME`] compare reliably.
+/// `"unknown"` when the adapter reported no name at all.
+pub fn normalized_agent_name(init_result: &serde_json::Value) -> String {
+    init_result
+        .get("agentInfo")
+        .or_else(|| init_result.get("serverInfo"))
+        .and_then(|info| info.get("name"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 /// How to switch to a particular model on a session.
@@ -2329,6 +2674,122 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The child's env plan as `(key, Some(value) | None)`, where `None` is an
+    /// explicit removal from the inherited environment.
+    fn env_plan(cmd: &tokio::process::Command) -> Vec<(String, Option<String>)> {
+        cmd.as_std()
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    }
+
+    /// A fence shaped like the coding-session provider's, without depending on
+    /// that crate.
+    const TEST_FENCE: EnvFence = EnvFence {
+        keys: &["TYPESENSE_API_KEY", "NOSTR_PRIVATE_KEY"],
+        prefixes: &["BUZZ_TEST_FENCED_"],
+        exempt: &["BUZZ_TEST_FENCED_BUT_EXEMPT"],
+    };
+
+    /// The managed-agent path. A managed agent is a Buzz participant and is
+    /// supposed to inherit `BUZZ_PRIVATE_KEY` from the harness, so the open
+    /// fence must remove nothing at all — this is the assertion that the
+    /// coding-session fix left the harness alone.
+    #[test]
+    fn the_default_spawn_removes_nothing_from_the_inherited_environment() {
+        let extra = vec![("GOOSE_PROVIDER".to_string(), "anthropic".to_string())];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        assert!(
+            plan.iter().all(|(_, value)| value.is_some()),
+            "the open fence removed a key: {plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .any(|(key, _)| key == "GOOSE_PROVIDER" || std::env::var_os(key).is_some()),
+            "per-persona env did not reach the child: {plan:?}"
+        );
+    }
+
+    /// An enumerated key is removed whether or not this process has it set:
+    /// the parent-presence checks in the injection loops deliberately leave
+    /// inherited values alone, so `env_remove` is the only thing standing
+    /// between a host's secrets and its adapter.
+    #[test]
+    fn an_enumerated_key_is_removed_from_the_child() {
+        let extra = vec![(
+            "CLAUDE_CODE_EXECUTABLE".to_string(),
+            "/opt/claude".to_string(),
+        )];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        for key in TEST_FENCE.keys {
+            assert_eq!(
+                plan.iter()
+                    .find(|(planned, _)| planned == key)
+                    .map(|(_, value)| value.clone()),
+                Some(None),
+                "{key} was not removed from the child environment: {plan:?}"
+            );
+        }
+        assert!(
+            plan.iter()
+                .any(|(key, value)| key == "CLAUDE_CODE_EXECUTABLE" && value.is_some()),
+            "the fence dropped a per-runtime variable it should have kept: {plan:?}"
+        );
+    }
+
+    /// The fence outranks an explicit `extra_env` entry. Anything else would
+    /// let a runtime descriptor re-open the hole from the far side of a wire
+    /// format.
+    #[test]
+    fn the_fence_outranks_an_explicit_value_for_the_same_key() {
+        let extra = vec![
+            (
+                "BUZZ_TEST_FENCED_SECRET".to_string(),
+                "nsec1leak".to_string(),
+            ),
+            ("NOSTR_PRIVATE_KEY".to_string(), "nsec1leak".to_string()),
+            (
+                "BUZZ_TEST_FENCED_BUT_EXEMPT".to_string(),
+                "kept".to_string(),
+            ),
+        ];
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+            .expect("build command");
+        let plan = env_plan(&cmd);
+
+        for key in ["BUZZ_TEST_FENCED_SECRET", "NOSTR_PRIVATE_KEY"] {
+            assert!(
+                !plan
+                    .iter()
+                    .any(|(planned, value)| planned == key && value.is_some()),
+                "{key} was injected despite the fence: {plan:?}"
+            );
+        }
+        assert!(
+            plan.iter()
+                .any(|(key, value)| key == "BUZZ_TEST_FENCED_BUT_EXEMPT"
+                    && value.as_deref() == Some("kept")),
+            "the exemption did not survive its own prefix: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn the_open_fence_covers_nothing() {
+        assert!(EnvFence::OPEN.is_open());
+        assert!(!EnvFence::OPEN.covers("BUZZ_PRIVATE_KEY"));
+    }
 
     #[test]
     fn stop_reason_parses_all_known_values() {
@@ -2531,6 +2992,36 @@ mod tests {
             serialized["env"][0]["name"].as_str(),
             Some("BUZZ_RELAY_URL")
         );
+    }
+
+    #[test]
+    fn session_open_debug_logging_never_serializes_private_parameters() {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "session/new",
+            "params": {
+                "cwd": "/private/checkout",
+                "mcpServers": [{
+                    "name": "buzz-session-context",
+                    "command": "/private/buzz-session-context",
+                    "args": [],
+                    "env": [{
+                        "name": "BUZZ_SESSION_CONTEXT_PACKAGE",
+                        "value": "/private/verified-package.json",
+                    }],
+                }],
+            },
+        });
+
+        for method in ["session/new", "session/resume", "session/load"] {
+            assert!(
+                acp_request_log_payload(method, &message).is_none(),
+                "{method} must redact its full parameter object"
+            );
+        }
+        let visible = acp_request_log_payload("initialize", &message).expect("ordinary request");
+        assert!(visible.contains("verified-package.json"));
     }
 
     #[test]
@@ -4091,6 +4582,29 @@ mod tests {
             !supported,
             "_meta.steering.supported: false must leave steering_supported false"
         );
+    }
+
+    #[tokio::test]
+    async fn initialize_records_load_and_resume_capabilities() {
+        let script = r#"
+read -r _init
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{}}}}}'
+sleep 5
+"#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        assert!(client.session_load_supported());
+        assert!(client.session_resume_supported());
+
+        let script = r#"
+read -r _init
+printf '%s\n' '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":2,"agentCapabilities":{"loadSession":false,"sessionCapabilities":{"resume":null}}}}'
+sleep 5
+"#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        assert!(!client.session_load_supported());
+        assert!(!client.session_resume_supported());
     }
 
     /// Test 2: no `active_run_id` + capability advertised → the bytes on the

@@ -21,6 +21,7 @@ members = [
     "crates/buzz-cli",
     "crates/buzz-pairing-cli",
     "crates/buzz-sdk",
+    "crates/buzz-session-provider",
     "crates/buzz-persona",
     "crates/git-credential-nostr",
     "crates/git-sign-nostr",
@@ -39,7 +40,10 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.88.0"
+# 1.89 is required for std file locking (File::try_lock), used by the
+# coding-session provider's single-instance state-dir lock. The repo toolchain
+# is pinned well above this (rust-toolchain.toml).
+rust-version = "1.89.0"
 license = "Apache-2.0"
 repository = "https://github.com/block/sprout"
 
