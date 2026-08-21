@@ -94,19 +94,37 @@ export function useAppNavigation() {
   );
 
   const goProjects = React.useCallback(
-    (behavior?: NavigationBehavior) =>
+    (behavior?: NavigationBehavior & { filter?: "projects" }) =>
       commitNavigation(
         {
           to: "/projects",
+          search: behavior?.filter ? { filter: behavior.filter } : {},
         },
         behavior,
       ),
     [commitNavigation],
   );
 
+  /** Open a project container's home screen. */
   const goProject = React.useCallback(
+    (projectId: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/projects/$projectId",
+          params: {
+            projectId,
+          },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
+  /** Open a repo (Code) detail screen inside a project container. */
+  const goProjectRepo = React.useCallback(
     (
       projectId: string,
+      repoId: string,
       behavior?: NavigationBehavior & {
         commitHash?: string;
         pullRequestId?: string;
@@ -121,9 +139,10 @@ export function useAppNavigation() {
     ) =>
       commitNavigation(
         {
-          to: "/projects/$projectId",
+          to: "/projects/$projectId/code/$repoId",
           params: {
             projectId,
+            repoId,
           },
           search: {
             ...(behavior?.commitHash
@@ -334,6 +353,7 @@ export function useAppNavigation() {
     goHome,
     goNewMessage,
     goProject,
+    goProjectRepo,
     goProjects,
     goPulse,
     goProfile,

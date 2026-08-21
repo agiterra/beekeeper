@@ -53,6 +53,7 @@ import {
   CODE_BLOCK_CLASS,
   extractLanguage,
   MarkdownCodeBlock,
+  StaticCodeBlock,
   SyntaxHighlightedCode,
 } from "./markdown/CodeBlock";
 import {
@@ -150,7 +151,6 @@ type ImageBlockProps = {
   src: string | undefined;
   thumbSrc?: string;
 };
-
 type WebKitGestureLikeEvent = Event & {
   scale?: number;
 };
@@ -1567,7 +1567,7 @@ export function createMarkdownComponents(
       return <p>{children}</p>;
     },
     pre: ({ children }) => {
-      if (!interactive) return <span>{children}</span>;
+      if (!interactive) return <StaticCodeBlock>{children}</StaticCodeBlock>;
       let language = "";
       React.Children.forEach(children, (child) => {
         if (

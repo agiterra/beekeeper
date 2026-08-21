@@ -1,6 +1,16 @@
 import { isThreadReply } from "@/features/messages/lib/threading";
 import type { DesktopNotificationTarget } from "@/features/notifications/lib/desktop";
-import type { SearchHit } from "@/shared/api/types";
+import type { ChannelVisibility, SearchHit } from "@/shared/api/types";
+
+/** Form payload for the create-channel/forum dialogs and browse-create flow. */
+export type ChannelCreateFormInput = {
+  name: string;
+  description?: string;
+  visibility: ChannelVisibility;
+  ttlSeconds?: number;
+  templateId?: string;
+  projectRef?: string;
+};
 
 export type AppView =
   | "home"

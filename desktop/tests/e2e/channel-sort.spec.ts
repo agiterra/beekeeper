@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 const SHOTS = "test-results/channel-sort";
 
@@ -46,6 +47,12 @@ function streamNames(page: Page) {
 }
 
 test.describe("per-group channel sort", () => {
+  // Per-group sort chrome lives on the global channel sections, which only
+  // exist with the Projects experiment off. Registered before each test's
+  // installMockBridge — the pin is merged by the bridge's seeding.
+  test.beforeEach(async ({ page }) => {
+    await overridePreviewFeatures(page, { projects: false });
+  });
   test("01 — Channels group defaults to A–Z", async ({ page }) => {
     await installMockBridge(page);
     await openApp(page);

@@ -66,27 +66,9 @@ test("top-level project lists align dates and overflow actions", async ({
     };
   }
 
-  await page.getByTestId("projects-section-projects").click();
-  await page.getByRole("button", { name: "Filter projects" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "My Projects" }),
-  ).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Local" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  const projectRow = page.locator('[data-testid^="project-row-"]').first();
-  const projectPositions = await trailingPositions(projectRow, {
-    summaryTestId: "projects-row-summary",
-  });
-  // Project rows show the activity bar alone — counts stay in its tooltips.
-  await expect(
-    projectRow
-      .getByTestId("projects-row-summary")
-      .getByTestId("project-activity-bar"),
-  ).toBeVisible();
-  await expect(
-    projectRow.getByTestId("projects-row-summary"),
-  ).not.toContainText("commits");
-
+  // The flat top-level project list is gone — the Projects tab is the
+  // container-management panel — so the Repositories list is the alignment
+  // reference for the PR/issue lists below.
   await page.getByTestId("projects-section-repositories").click();
   await page.getByRole("button", { name: "Filter repositories" }).click();
   await expect(
@@ -109,18 +91,6 @@ test("top-level project lists align dates and overflow actions", async ({
     dateTestId: "repositories-row-date",
     summaryTestId: "repositories-row-summary",
   });
-  // No summaryX comparison: repository rows carry text stats next to the bar
-  // while project rows show the bar alone, so the columns differ in width by
-  // design. The right-anchored date and menu still align across the lists.
-  expect(
-    Math.abs(repositoryPositions.rowHeight - projectPositions.rowHeight),
-  ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
-  expect(
-    Math.abs(repositoryPositions.dateX - projectPositions.dateX),
-  ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
-  expect(
-    Math.abs(repositoryPositions.menuX - projectPositions.menuX),
-  ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
   await waitForAnimations(page);
   await page.screenshot({
     path: `${SHOTS}/05-project-repositories-list.png`,
@@ -142,6 +112,16 @@ test("top-level project lists align dates and overflow actions", async ({
     page.getByRole("menuitem", { name: "My Pull Requests" }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  // Creates need a concrete target project — under "All Projects" the menu
+  // offers only "Project". Scope to General (the mock repos' home) first.
+  await page.getByTestId("projects-create-menu").hover();
+  await expect(
+    page.getByRole("menuitem", { name: "Project", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Issue" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Filter by project" }).click();
+  await page.getByRole("menuitem", { name: "General" }).click();
   await page.getByTestId("projects-create-menu").hover();
   await expect(page.getByRole("menuitem", { name: "Project" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Issue" })).toBeVisible();
@@ -177,31 +157,31 @@ test("top-level project lists align dates and overflow actions", async ({
   const issuePositions = await trailingPositions(issueRow);
 
   expect(
-    Math.abs(pullRequestPositions.dateX - projectPositions.dateX),
+    Math.abs(pullRequestPositions.dateX - repositoryPositions.dateX),
   ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
   expect(
-    Math.abs(pullRequestPositions.menuX - projectPositions.menuX),
+    Math.abs(pullRequestPositions.menuX - repositoryPositions.menuX),
   ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
   expect(
-    Math.abs(issuePositions.dateX - projectPositions.dateX),
+    Math.abs(issuePositions.dateX - repositoryPositions.dateX),
   ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
   expect(
-    Math.abs(issuePositions.menuX - projectPositions.menuX),
+    Math.abs(issuePositions.menuX - repositoryPositions.menuX),
   ).toBeLessThanOrEqual(ALIGNMENT_TOLERANCE_PX);
 
   await page.setViewportSize({ height: 720, width: 900 });
-  await page.getByTestId("projects-section-projects").click();
+  await page.getByTestId("projects-section-repositories").click();
   const responsiveRepositoryRow = page
-    .locator('[data-testid^="project-row-"]')
+    .locator('[data-testid^="repository-row-"]')
     .first();
   await expect(
-    responsiveRepositoryRow.getByTestId("projects-row-summary"),
+    responsiveRepositoryRow.getByTestId("repositories-row-summary"),
   ).toBeHidden();
   await expect(
-    responsiveRepositoryRow.getByTestId("projects-row-people"),
+    responsiveRepositoryRow.getByTestId("repositories-row-people"),
   ).toBeHidden();
   await expect(
-    responsiveRepositoryRow.getByTestId("projects-row-date"),
+    responsiveRepositoryRow.getByTestId("repositories-row-date"),
   ).toBeVisible();
   await expect(
     responsiveRepositoryRow.getByRole("button", { name: /More options for/ }),
@@ -213,29 +193,32 @@ test("top-level project lists align dates and overflow actions", async ({
   ).toBe(true);
 });
 
-test("creating a project publishes its initial repository grouping", async ({
+test("creating a repository publishes only the repo announcement into the project", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // Repo creation needs a concrete target project — scope to General first
+  // ("Project" creates a container; "Repository" opens the repo-only dialog,
+  // which publishes a single 30617 carrying the container back-ref).
+  await page.getByRole("button", { name: "Filter by project" }).click();
+  await page.getByRole("menuitem", { name: "General" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Project" }).click();
-  await page.getByTestId("create-project-name").fill("multi-repo-demo");
+  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
   await page
-    .getByTestId("create-project-description")
-    .fill("A grouped project created through the desktop app.");
-  await page
-    .getByTestId("create-project-clone-url")
+    .getByTestId("create-project-repo-clone-url")
     .fill("https://relay.example.com/git/owner/multi-repo-demo.git");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
+  await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
       .locator(
-        '[data-testid="project-card-multi-repo-demo"], [data-testid="project-row-multi-repo-demo"]',
+        '[data-testid="repository-card-multi-repo-demo"], [data-testid="repository-row-multi-repo-demo"]',
       )
       .first(),
   ).toBeVisible();
@@ -248,23 +231,25 @@ test("creating a project publishes its initial repository grouping", async ({
         ),
       ) ?? [],
   );
-  expect(createdEvents.map((event) => event.kind).sort()).toEqual([
-    30617, 30621,
-  ]);
-  const projectEvent = createdEvents.find((event) => event.kind === 30621);
-  expect(projectEvent?.tags).toContainEqual([
-    "a",
-    `30617:${"deadbeef".repeat(8)}:multi-repo-demo`,
-  ]);
-  expect(projectEvent?.content).toBe("");
+  // Regression: the repo-only flow must not publish a sibling kind:30621
+  // project container for the repo.
+  expect(createdEvents.map((event) => event.kind)).toEqual([30617]);
+  expect(
+    createdEvents[0]?.tags.some(
+      (tag) =>
+        tag[0] === "project" &&
+        /^30621:[0-9a-f]{64}:general$/.test(tag[1] ?? ""),
+    ),
+  ).toBe(true);
 
+  // Still scoped to General — a duplicate name is rejected by the guard.
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Project" }).click();
-  await page.getByTestId("create-project-name").fill("multi-repo-demo");
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByTestId("create-project-repo-name").fill("multi-repo-demo");
+  await page.getByTestId("create-project-repo-submit").click();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
   await expect(
-    page.getByText('You already have a project named "multi-repo-demo".'),
+    page.getByText(/A repository named "multi-repo-demo" already exists/),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -277,30 +262,50 @@ test("creating a project publishes its initial repository grouping", async ({
           ).length ?? 0,
       ),
     )
-    .toBe(2);
+    .toBe(1);
 });
 
-test("unsupported relays keep the initial repository accessible", async ({
-  page,
-}) => {
+test("unsupported relays keep the repository accessible", async ({ page }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
     window.__BUZZ_E2E_UNSUPPORTED_PROJECT_ANNOUNCEMENTS__ = true;
+    // A real target container: creating into the local General placeholder
+    // would first publish General itself (a 30621), which this relay flag
+    // would reject before the repo flow under test even runs.
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      {
+        id: "workbenchseed".padEnd(64, "0"),
+        kind: 30621,
+        pubkey: "deadbeef".repeat(8),
+        created_at: Math.floor(Date.now() / 1000) - 3600,
+        content: "",
+        tags: [
+          ["d", "workbench"],
+          ["name", "Workbench"],
+        ],
+      },
+    ];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // Repo creation needs a concrete target project — scope to the seeded
+  // real container (see the init script above for why not General).
+  await page.getByRole("button", { name: "Filter by project" }).click();
+  await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Project" }).click();
-  await page.getByTestId("create-project-name").fill("legacy-fallback");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByTestId("create-project-repo-name").fill("legacy-fallback");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
-  await expect(page.getByText("Created as a standalone project")).toBeVisible();
+  // The repo publish (30617) succeeds; the owner-curated forward ref on the
+  // container (30621) is best-effort and its rejection stays silent.
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
   await waitForAnimations(page);
+  await page.getByTestId("projects-section-repositories").click();
   const projectEntry = page
     .locator(
-      '[data-testid="project-card-legacy-fallback"], [data-testid="project-row-legacy-fallback"]',
+      '[data-testid="repository-card-legacy-fallback"], [data-testid="repository-row-legacy-fallback"]',
     )
     .first();
   await expect(projectEntry).toBeVisible();
@@ -328,61 +333,101 @@ test("unsupported relays keep the initial repository accessible", async ({
   expect(acceptedKinds).toEqual([30617]);
 });
 
-test("project creation can retry after its repository publication fails", async ({
+test("repository creation can retry after its publication fails", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30621];
+    // The one-shot 30617 rejection can be armed at boot: nothing else in the
+    // boot path publishes a repo announcement (the General sweep is a 30621).
+    window.__BUZZ_E2E_REJECT_PROJECT_EVENT_KINDS__ = [30617];
+    // A real target container keeps ensureRealProject from publishing a
+    // General head mid-flow.
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      {
+        id: "workbenchseed".padEnd(64, "0"),
+        kind: 30621,
+        pubkey: "deadbeef".repeat(8),
+        created_at: Math.floor(Date.now() / 1000) - 3600,
+        content: "",
+        tags: [
+          ["d", "workbench"],
+          ["name", "Workbench"],
+        ],
+      },
+    ];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // Repo creation needs a concrete target project — scope to the seeded
+  // real container (see the init script above for why not General).
+  await page.getByRole("button", { name: "Filter by project" }).click();
+  await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Project" }).click();
-  await page.getByTestId("create-project-name").fill("retry-project");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByTestId("create-project-repo-name").fill("retry-project");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeVisible();
   await expect(page.getByText("mock project event rejection")).toBeVisible();
 
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  await page.getByTestId("create-project-repo-submit").click();
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
+  await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
       .locator(
-        '[data-testid="project-card-retry-project"], [data-testid="project-row-retry-project"]',
+        '[data-testid="repository-card-retry-project"], [data-testid="repository-row-retry-project"]',
       )
       .first(),
   ).toBeVisible();
 });
 
-test("project creation is idempotent after a lost publish acknowledgement", async ({
+test("repository creation recovers from a lost publish acknowledgement", async ({
   page,
 }) => {
   await enableProjectsFeature(page);
   await page.addInitScript(() => {
-    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30621];
+    // The one-shot 30617 lost-ack can be armed at boot: nothing else in the
+    // boot path publishes a repo announcement (the General sweep is a 30621).
+    window.__BUZZ_E2E_FAIL_PROJECT_EVENT_ACK_KINDS__ = [30617];
+    // A real target container keeps ensureRealProject from publishing a
+    // General head mid-flow.
+    window.__BUZZ_E2E_EXTRA_PROJECT_EVENTS__ = [
+      {
+        id: "workbenchseed".padEnd(64, "0"),
+        kind: 30621,
+        pubkey: "deadbeef".repeat(8),
+        created_at: Math.floor(Date.now() / 1000) - 3600,
+        content: "",
+        tags: [
+          ["d", "workbench"],
+          ["name", "Workbench"],
+        ],
+      },
+    ];
   });
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // Repo creation needs a concrete target project — scope to the seeded
+  // real container (see the init script above for why not General).
+  await page.getByRole("button", { name: "Filter by project" }).click();
+  await page.getByRole("menuitem", { name: "Workbench" }).click();
   await page.getByTestId("projects-create-menu").hover();
-  await page.getByRole("menuitem", { name: "Project" }).click();
-  await page.getByTestId("create-project-name").fill("lost-ack-project");
-  await page.getByTestId("create-project-submit").click();
+  await page.getByRole("menuitem", { name: "Repository" }).click();
+  await page.getByTestId("create-project-repo-name").fill("lost-ack-project");
+  await page.getByTestId("create-project-repo-submit").click();
 
-  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
-  await expect(
-    page.getByText("mock lost project acknowledgement"),
-  ).toBeVisible();
-
-  await page.getByTestId("create-project-submit").click();
-  await expect(page.getByTestId("create-project-dialog")).toBeHidden();
+  // The relay stored the event but the ACK was lost — the id-keyed recovery
+  // query treats the write as a success on the first submit.
+  await expect(page.getByTestId("create-project-repo-dialog")).toBeHidden();
+  await page.getByTestId("projects-section-repositories").click();
   await expect(
     page
       .locator(
-        '[data-testid="project-card-lost-ack-project"], [data-testid="project-row-lost-ack-project"]',
+        '[data-testid="repository-card-lost-ack-project"], [data-testid="repository-row-lost-ack-project"]',
       )
       .first(),
   ).toBeVisible();
@@ -397,7 +442,7 @@ test("project creation is idempotent after a lost publish acknowledgement", asyn
           ).length ?? 0,
       ),
     )
-    .toBe(2);
+    .toBe(1);
 });
 
 test("multi-repository projects switch the active repository", async ({
@@ -407,10 +452,12 @@ test("multi-repository projects switch the active repository", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel); a tile opens the same repo detail screen.
+  await page.getByTestId("projects-section-repositories").click();
   await page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first()
     .click();
@@ -496,14 +543,14 @@ test("commit detail opens from the commits feed with a diff", async ({
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
 
-  // The overview no longer lists repository cards — switch to the
-  // Projects filter reveals the complete project cards/rows list.
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel).
+  await page.getByTestId("projects-section-repositories").click();
 
-  // Open the first mock project (dtag "buzz" from the e2e bridge fixture).
+  // Open the first mock repo (dtag "buzz" from the e2e bridge fixture).
   const projectEntry = page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
@@ -607,13 +654,13 @@ test("pull request and issue feeds share the commit row structure", async ({
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
 
-  // The overview no longer lists repository cards — switch to the
-  // Projects filter reveals the complete project cards/rows list.
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel).
+  await page.getByTestId("projects-section-repositories").click();
 
   const projectEntry = page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
@@ -669,10 +716,12 @@ test("adding a repository retries and reports an error when the 30617 publicatio
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel); a tile opens the same repo detail screen.
+  await page.getByTestId("projects-section-repositories").click();
   await page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first()
     .click();
@@ -736,10 +785,12 @@ test("adding a repository treats a lost 30617 acknowledgement as success", async
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel); a tile opens the same repo detail screen.
+  await page.getByTestId("projects-section-repositories").click();
   await page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first()
     .click();
@@ -804,10 +855,12 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // Repo tiles live on the Repositories tab (the Projects tab is the
+  // container-management panel); a tile opens the same repo detail screen.
+  await page.getByTestId("projects-section-repositories").click();
   await page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first()
     .click();
@@ -831,13 +884,21 @@ test("adding a repository blocks when a standalone 30617 already exists at that 
   // Neither a 30621 (project update) nor a 30617 (new repo) must have been published.
   const publishedForStandalone = await page.evaluate(
     ({ dtag }) =>
-      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some(
-        (event) =>
+      window.__BUZZ_E2E_ACCEPTED_PROJECT_EVENTS__?.some((event) => {
+        // The General-container sweep legitimately claims unowned repos by
+        // `a`-ref on the General 30621 — only a new 30617 at the coordinate
+        // or a non-General project update means the clobber guard failed.
+        const isGeneralContainer =
+          event.kind === 30621 &&
+          event.tags.some((tag) => tag[0] === "d" && tag[1] === "general");
+        if (isGeneralContainer) return false;
+        return (
           event.tags.some((tag) => tag[0] === "d" && tag[1] === dtag) ||
           event.tags.some(
             (tag) => tag[0] === "a" && tag[1]?.endsWith(`:${dtag}`),
-          ),
-      ) ?? false,
+          )
+        );
+      }) ?? false,
     { dtag: STANDALONE_DTAG },
   );
   expect(
@@ -895,8 +956,11 @@ test("navigating via a 30617 entity-link route opens the correct non-primary rep
   // TanStack Router's param extractor receives the raw decoded segment, and
   // %3A would be passed through literally (as the string "30617%3A…") rather
   // than decoded to "30617:…", causing the project lookup to fail.
+  // With project containers, the repo detail lives on the code child route:
+  // /projects/<containerId>/code/<repo entity address>. Unclaimed mock repos
+  // belong to the local General placeholder container.
   await page.goto(
-    `/#/projects/${RELAY_TOOLS_ADDRESS}?pullRequestId=${KNOWN_PR_ID}`,
+    `/#/projects/local:general/code/${RELAY_TOOLS_ADDRESS}?pullRequestId=${KNOWN_PR_ID}`,
     { waitUntil: "domcontentloaded" },
   );
 

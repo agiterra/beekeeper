@@ -412,6 +412,7 @@ fn starter_match_requires_open_unarchived_stream_by_normalized_name() {
         is_member: true,
         ttl_seconds: None,
         ttl_deadline: None,
+        project_ref: None,
     };
 
     assert!(is_matching_starter_channel(&channel, spec));

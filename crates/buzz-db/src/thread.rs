@@ -973,6 +973,7 @@ mod tests {
             None,
             author.public_key().to_bytes().as_slice(),
             None,
+            None,
         )
         .await
         .expect("create community A channel");
@@ -985,6 +986,7 @@ mod tests {
             ChannelVisibility::Open,
             None,
             author.public_key().to_bytes().as_slice(),
+            None,
             None,
         )
         .await

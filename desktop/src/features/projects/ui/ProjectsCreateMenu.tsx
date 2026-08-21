@@ -1,4 +1,14 @@
-import { CircleDot, FolderGit2, GitPullRequest, Plus } from "lucide-react";
+import {
+  CircleDot,
+  FileText,
+  FolderGit2,
+  FolderInput,
+  FolderKanban,
+  GitPullRequest,
+  Hash,
+  Plus,
+  Zap,
+} from "lucide-react";
 import * as React from "react";
 
 import { Button } from "@/shared/ui/button";
@@ -10,14 +20,34 @@ import {
 const MENU_ITEM_CLASS =
   "flex min-h-9 w-full items-center gap-2 rounded-lg py-2 pl-2 pr-4 text-left text-sm outline-hidden transition-colors hover:bg-muted/50 focus:bg-muted/50 focus:text-foreground focus-visible:ring-1 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0";
 
+type MenuEntry = {
+  label: string;
+  icon: React.ComponentType;
+  action: () => void;
+  testId?: string;
+};
+
 export function ProjectsCreateMenu({
   onCreateIssue,
-  onCreateProject,
   onCreatePullRequest,
+  onCreateRepository,
+  onImportRepository,
+  onCreateChannel,
+  onCreateForum,
+  onCreateWorkflow,
+  onCreateProject,
 }: {
-  onCreateIssue: () => void;
-  onCreateProject: () => void;
-  onCreatePullRequest: () => void;
+  /** Every entry is optional — absent callbacks don't render, so callers can
+   * narrow the menu (e.g. only "Project" while no target project is selected,
+   * or no channel/forum/workflow/project entries with the experiment off). */
+  onCreateIssue?: () => void;
+  onCreatePullRequest?: () => void;
+  onCreateRepository?: () => void;
+  onImportRepository?: () => void;
+  onCreateChannel?: () => void;
+  onCreateForum?: () => void;
+  onCreateWorkflow?: () => void;
+  onCreateProject?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
   const containerRef = React.useRef<HTMLElement>(null);
@@ -46,6 +76,60 @@ export function ProjectsCreateMenu({
     setOpen(false);
     action();
   }
+
+  const rawGroups: Array<Array<MenuEntry | undefined>> = [
+    [
+      onCreateIssue && {
+        label: "Issue",
+        icon: CircleDot,
+        action: onCreateIssue,
+      },
+      onCreatePullRequest && {
+        label: "Pull Request",
+        icon: GitPullRequest,
+        action: onCreatePullRequest,
+      },
+    ],
+    [
+      onCreateRepository && {
+        label: "Repository",
+        icon: FolderGit2,
+        action: onCreateRepository,
+      },
+      onImportRepository && {
+        label: "Import local repository",
+        icon: FolderInput,
+        action: onImportRepository,
+        testId: "projects-create-menu-import-repo",
+      },
+      onCreateChannel && {
+        label: "Channel",
+        icon: Hash,
+        action: onCreateChannel,
+      },
+      onCreateForum && {
+        label: "Forum",
+        icon: FileText,
+        action: onCreateForum,
+      },
+      onCreateWorkflow && {
+        label: "Workflow",
+        icon: Zap,
+        action: onCreateWorkflow,
+      },
+    ],
+    [
+      onCreateProject && {
+        label: "Project",
+        icon: FolderKanban,
+        action: onCreateProject,
+        testId: "projects-create-menu-project",
+      },
+    ],
+  ];
+  const groups = rawGroups
+    .map((group) => group.filter((entry): entry is MenuEntry => Boolean(entry)))
+    .filter((group) => group.length > 0);
 
   return (
     <nav
@@ -86,33 +170,26 @@ export function ProjectsCreateMenu({
             role="menu"
             style={POPOVER_SHADOW_STYLE}
           >
-            <button
-              className={MENU_ITEM_CLASS}
-              onClick={() => select(onCreateProject)}
-              role="menuitem"
-              type="button"
-            >
-              <FolderGit2 />
-              Project
-            </button>
-            <button
-              className={MENU_ITEM_CLASS}
-              onClick={() => select(onCreateIssue)}
-              role="menuitem"
-              type="button"
-            >
-              <CircleDot />
-              Issue
-            </button>
-            <button
-              className={MENU_ITEM_CLASS}
-              onClick={() => select(onCreatePullRequest)}
-              role="menuitem"
-              type="button"
-            >
-              <GitPullRequest />
-              Pull Request
-            </button>
+            {groups.map((group, groupIndex) => (
+              <React.Fragment key={group[0].label}>
+                {groupIndex > 0 ? (
+                  <div aria-hidden="true" className="my-1 h-px bg-border/60" />
+                ) : null}
+                {group.map((entry) => (
+                  <button
+                    className={MENU_ITEM_CLASS}
+                    data-testid={entry.testId}
+                    key={entry.label}
+                    onClick={() => select(entry.action)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <entry.icon />
+                    {entry.label}
+                  </button>
+                ))}
+              </React.Fragment>
+            ))}
           </div>
         </div>
       ) : null}

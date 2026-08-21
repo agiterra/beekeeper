@@ -157,7 +157,6 @@ pub fn channel_info_from_event(
     // Ephemeral channel TTL — relay emits ["ttl", "<seconds>"] and ["ttl_deadline", "<iso>"].
     let ttl_seconds = first_tag_value(event, "ttl").and_then(|v| v.parse::<i32>().ok());
     let ttl_deadline = first_tag_value(event, "ttl_deadline").map(str::to_string);
-
     Ok(ChannelInfo {
         id,
         name,
@@ -175,6 +174,7 @@ pub fn channel_info_from_event(
         is_member: is_member.unwrap_or(true),
         ttl_seconds,
         ttl_deadline,
+        project_ref: first_tag_value(event, "project").map(str::to_string),
     })
 }
 

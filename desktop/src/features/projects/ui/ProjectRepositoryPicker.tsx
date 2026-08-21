@@ -3,6 +3,7 @@ import {
   ChevronDown,
   FolderGit2,
   FolderPlus,
+  FolderSymlink,
   Link,
   Plus,
 } from "lucide-react";
@@ -27,12 +28,14 @@ export function ProjectRepositoryPicker({
   onAttach,
   onChange,
   onCreate,
+  onLinkLocal,
   project,
   repository,
 }: {
   onAttach?: () => void;
   onChange: (repositoryId: string) => void;
   onCreate?: () => void;
+  onLinkLocal?: () => void;
   project: Project;
   repository: Repository;
 }) {
@@ -87,7 +90,7 @@ export function ProjectRepositoryPicker({
             </span>
           </DropdownMenuItem>
         ))}
-        {onCreate && onAttach ? (
+        {(onCreate && onAttach) || onLinkLocal ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuSub>
@@ -96,20 +99,33 @@ export function ProjectRepositoryPicker({
                 Add repository
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                <DropdownMenuItem
-                  data-testid="create-project-repository"
-                  onSelect={onCreate}
-                >
-                  <FolderPlus className="h-4 w-4" />
-                  Create new repository
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-testid="attach-project-repository"
-                  onSelect={onAttach}
-                >
-                  <Link className="h-4 w-4" />
-                  Select existing repository
-                </DropdownMenuItem>
+                {onCreate ? (
+                  <DropdownMenuItem
+                    data-testid="create-project-repository"
+                    onSelect={onCreate}
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                    Create new repository
+                  </DropdownMenuItem>
+                ) : null}
+                {onAttach ? (
+                  <DropdownMenuItem
+                    data-testid="attach-project-repository"
+                    onSelect={onAttach}
+                  >
+                    <Link className="h-4 w-4" />
+                    Select existing repository
+                  </DropdownMenuItem>
+                ) : null}
+                {onLinkLocal ? (
+                  <DropdownMenuItem
+                    data-testid="link-project-repository"
+                    onSelect={onLinkLocal}
+                  >
+                    <FolderSymlink className="h-4 w-4" />
+                    Link local checkout
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           </>

@@ -2,6 +2,14 @@ import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
+
+// Shot 6 reorders custom channel sections in the flat sidebar, which only
+// exists with the Projects experiment off (projects fold channels into
+// per-project groups). Order-safe: the bridge merges the pin.
+test.beforeEach(async ({ page }) => {
+  await overridePreviewFeatures(page, { projects: false });
+});
 
 const WATERCOOLER_CHANNEL_ID = "a27e1ee9-76a6-5bdf-a5d5-1d85610dad11";
 const FORUM_THREAD_ID = "mock-forum-release-thread";

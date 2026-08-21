@@ -32,6 +32,7 @@ import type {
   SetChannelTopicInput,
   UpdateChannelInput,
 } from "@/shared/api/types";
+import { isSessionTransportChannel } from "@/shared/api/channelTypes";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useFocusedRefetchInterval } from "@/shared/lib/useDocumentVisible";
 import { useCommunities } from "@/features/communities/useCommunities";
@@ -66,6 +67,10 @@ const channelTypeOrder = {
   stream: 0,
   forum: 1,
   dm: 2,
+  // Hidden session transports sort last in the full (unfiltered) list; they
+  // are filtered from the default query view but the cache keeps them, and a
+  // missing entry here would make sortChannels compare NaN.
+  transport: 3,
 } as const;
 
 function sortChannels(channels: Channel[]) {
@@ -312,7 +317,17 @@ export function requireFullChannelList(channels: Channel[] | null): Channel[] {
   return channels;
 }
 
-export function useChannelsQuery(options?: { enabled?: boolean }) {
+export function useChannelsQuery(options?: {
+  enabled?: boolean;
+  /**
+   * Include hidden session-transport channels in the returned list. Default
+   * false — the transport-aware call sites (projects/session surfaces) opt
+   * in; every other consumer (sidebar, pickers, mentions, search) inherits
+   * the hiding from this single chokepoint. The query cache and persisted
+   * snapshot always hold the full list; only the returned view is filtered.
+   */
+  includeSessionTransports?: boolean;
+}) {
   const { activeCommunity } = useCommunities();
   const relayUrl = activeCommunity?.relayUrl ?? null;
   // CommunityQueryProvider remounts its QueryClient for every community. Only
@@ -448,7 +463,15 @@ export function useChannelsQuery(options?: { enabled?: boolean }) {
     relayUrl,
   ]);
 
-  return query;
+  const includeSessionTransports = options?.includeSessionTransports ?? false;
+  const visibleData = React.useMemo(
+    () =>
+      includeSessionTransports || !query.data
+        ? query.data
+        : query.data.filter((channel) => !isSessionTransportChannel(channel)),
+    [includeSessionTransports, query.data],
+  );
+  return { ...query, data: visibleData };
 }
 
 export function useCreateChannelMutation() {

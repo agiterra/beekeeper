@@ -70,6 +70,13 @@ import {
   fetchProjectEventsExhaustively,
 } from "./projectEnumeration";
 import { projectMatchesRouteId } from "./projectRoutes";
+import {
+  projectsSnapshotKey,
+  readProjectsSnapshot,
+  writeProjectsSnapshot,
+} from "./projectsSnapshot";
+import { useCommunities } from "@/features/communities/useCommunities";
+import { useIdentityQuery } from "@/shared/api/hooks";
 
 export type {
   Project,
@@ -637,22 +644,43 @@ async function deleteProject(project: Project): Promise<void> {
 
 export const projectsQueryKey = ["projects"] as const;
 
-export function useProjectsQuery() {
-  return useQuery({
+/**
+ * The repository enumeration, served from a per-relay+viewer localStorage
+ * snapshot on the very first frame (see projectsSnapshot.ts) and revalidated
+ * by the live relay enumeration. The snapshot is only a placeholder: it never
+ * enters the cache, so live data always wins the moment it lands.
+ */
+function useProjectsQueryConfig() {
+  const { activeCommunity } = useCommunities();
+  const relayUrl = activeCommunity?.relayUrl;
+  const identityQuery = useIdentityQuery();
+  const viewerPubkey = identityQuery.data?.pubkey?.toLowerCase();
+  // No placeholder until the viewer identity is known — showing a snapshot
+  // before that would risk leaking a private repo list across identity
+  // switches (same rationale as the project-container snapshot).
+  const snapshotKey = projectsSnapshotKey(relayUrl, viewerPubkey);
+  return {
     queryKey: projectsQueryKey,
-    queryFn: () => fetchProjects(),
+    queryFn: async () => {
+      const projects = await fetchProjects();
+      writeProjectsSnapshot(snapshotKey, projects);
+      return projects;
+    },
+    placeholderData: () => readProjectsSnapshot(snapshotKey),
     staleTime: 60_000,
-  });
+  };
+}
+
+export function useProjectsQuery() {
+  return useQuery(useProjectsQueryConfig());
 }
 
 export function useProjectQuery(projectId: string) {
   return useQuery({
-    queryKey: projectsQueryKey,
-    queryFn: () => fetchProjects(),
-    select: (projects) =>
+    ...useProjectsQueryConfig(),
+    select: (projects: Project[]) =>
       projects.find((project) => projectMatchesRouteId(project, projectId)) ??
       null,
-    staleTime: 60_000,
   });
 }
 

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 import { openSettings } from "../helpers/settings";
 
 const ENGINEERING_CHANNEL_ID = "1c7e1c02-87bb-5e88-b2da-5a7a9432d0c9";
@@ -10,6 +11,9 @@ const FORUM_REPLY_ID = "mock-forum-release-reply";
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
+  // Navigation via the global Workflows menu item requires the Projects
+  // experiment off (with it on, workflows live inside project groups).
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 async function navigateToWorkflows(page: import("@playwright/test").Page) {

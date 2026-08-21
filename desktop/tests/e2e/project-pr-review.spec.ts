@@ -22,10 +22,13 @@ async function enableProjectsFeature(page: import("@playwright/test").Page) {
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // The Projects tab is the container-management panel now; repo tiles live
+  // on the Repositories tab (repository-card/-row testids). Clicking one
+  // opens the same repo detail screen as before.
+  await page.getByTestId("projects-section-repositories").click();
   const projectEntry = page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });
@@ -961,6 +964,9 @@ test("project overview reports aggregate work-item failures", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // The heading lands on the management tab; the aggregate-failure banner
+  // lives on the Activity (overview) tab.
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
 
   await expect(
     page.getByText("Could not load project activity."),
@@ -983,6 +989,9 @@ test("project overview does not paint a background behind its cards", async ({
   await installMockBridge(page);
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
+  // The heading lands on the management tab; the overview panel lives on
+  // the Activity tab.
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
 
   await expect(page.getByTestId("projects-overview-panel")).toHaveCSS(
     "background-color",

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 import { openSettings } from "../helpers/settings";
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "buzz-sidebar-width";
@@ -10,6 +11,9 @@ const DEFAULT_SIDEBAR_WIDTH = 300;
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
+  // This suite exercises the global channel sections, which only exist
+  // with the Projects experiment off (projects fold channels into groups).
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 async function sidebarWidth(page: Page) {

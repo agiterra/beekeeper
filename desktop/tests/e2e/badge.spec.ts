@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { TEST_IDENTITIES, installMockBridge } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const SHOTS = "test-results/channel-row-decoration-pr";
@@ -140,6 +141,10 @@ test("primary navigation rows share the same inactive emphasis", async ({
 });
 
 test("hovering a channel keeps its text color", async ({ page }) => {
+  // This case reads the flat channel sections, which only exist with the
+  // Projects experiment off (the offscreen-arrow cases below are tuned to
+  // the folded flag-on layout, so the pin stays test-local).
+  await overridePreviewFeatures(page, { projects: false });
   await page.goto("/");
   const channel = page.getByTestId("channel-engineering");
   const initialColor = await channel.evaluate(

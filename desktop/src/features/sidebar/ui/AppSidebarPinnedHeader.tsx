@@ -1,4 +1,4 @@
-import { Activity, Bot, FolderGit2, Inbox, Zap } from "lucide-react";
+import { Activity, Bot, Inbox, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -41,10 +41,12 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
-  onSelectProjects: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   selectedView: SidebarSelectedView;
+  /** With the Projects experiment on, workflows live inside each project's
+   * sidebar group and the global menu item is hidden. */
+  showWorkflows: boolean;
 };
 
 export function AppSidebarPinnedHeader({
@@ -90,10 +92,10 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
-  onSelectProjects,
   onSelectPulse,
   onSelectWorkflows,
   selectedView,
+  showWorkflows,
 }: AppSidebarPrimaryMenuProps) {
   return (
     <SidebarHeader
@@ -136,20 +138,6 @@ export function AppSidebarPrimaryMenu({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>
-        <FeatureGate feature="projects">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              data-testid="open-projects-view"
-              isActive={selectedView === "projects"}
-              onClick={onSelectProjects}
-              tooltip="Projects"
-              type="button"
-            >
-              <FolderGit2 className="h-4 w-4" />
-              <SidebarMenuLabel>Projects</SidebarMenuLabel>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </FeatureGate>
         <SidebarMenuItem>
           <SidebarMenuButton
             className="data-[active=true]:font-normal"
@@ -163,20 +151,22 @@ export function AppSidebarPrimaryMenu({
             <SidebarMenuLabel>Agents</SidebarMenuLabel>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <FeatureGate feature="workflows">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              data-testid="open-workflows-view"
-              isActive={selectedView === "workflows"}
-              onClick={onSelectWorkflows}
-              tooltip="Workflows"
-              type="button"
-            >
-              <Zap className="h-4 w-4" />
-              <SidebarMenuLabel>Workflows</SidebarMenuLabel>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </FeatureGate>
+        {showWorkflows ? (
+          <FeatureGate feature="workflows">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                data-testid="open-workflows-view"
+                isActive={selectedView === "workflows"}
+                onClick={onSelectWorkflows}
+                tooltip="Workflows"
+                type="button"
+              >
+                <Zap className="h-4 w-4" />
+                <SidebarMenuLabel>Workflows</SidebarMenuLabel>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </FeatureGate>
+        ) : null}
       </SidebarMenu>
     </SidebarHeader>
   );

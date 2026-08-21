@@ -131,6 +131,11 @@ pub struct ChannelInfo {
     pub is_member: bool,
     pub ttl_seconds: Option<i32>,
     pub ttl_deadline: Option<String>,
+    /// The `30621:<owner>:<slug>` coordinate of the project container this
+    /// channel belongs to, if any. Sourced from the relay's `["project", ...]`
+    /// tag on the kind:39000 metadata event.
+    #[serde(default)]
+    pub project_ref: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

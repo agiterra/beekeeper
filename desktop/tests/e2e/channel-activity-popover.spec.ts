@@ -2,6 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
+
+// The activity popover hangs off the flat-sidebar channel rows, which only
+// exist with the Projects experiment off (projects fold channels into
+// per-project groups). Order-safe: the bridge merges the pin.
+test.beforeEach(async ({ page }) => {
+  await overridePreviewFeatures(page, { projects: false });
+});
 
 const SELF_PUBKEY = "deadbeef".repeat(8);
 const CHANNEL_GENERAL = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";

@@ -6,6 +6,14 @@ import {
 } from "../../src/shared/constants/kinds";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
+
+// Huddle navigation asserts flat-sidebar channel rows (data-channel-id),
+// which only exist with the Projects experiment off (projects fold channels
+// into per-project groups). Order-safe: the bridge merges the pin.
+test.beforeEach(async ({ page }) => {
+  await overridePreviewFeatures(page, { projects: false });
+});
 
 const HUDDLE_CHANNEL_ID = "11111111-1111-4111-8111-111111111111";
 const HUDDLE_PARENT_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";

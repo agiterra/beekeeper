@@ -35,3 +35,33 @@ export const PREVIEW_FEATURE_IDS: string[] = manifest.features
  * version bump flows through to E2E seeding without manual updates.
  */
 export const FEATURE_OVERRIDES_STORAGE_KEY = `buzz-feature-overrides-v${manifest.version}`;
+
+/** Pin key the bridge's feature seeding merges last — lets a suite flip
+ * specific features regardless of init-script registration order. */
+export const FEATURE_OVERRIDE_PIN_KEY = "buzz-e2e-feature-override-pin";
+
+/**
+ * Re-seed the preview-feature overrides with specific features flipped,
+ * keeping every other feature enabled (the bridge default). Order-safe:
+ * works whether it's registered before or after `installMockBridge` (the
+ * bridge's seeding merges the pin key written here).
+ */
+export async function overridePreviewFeatures(
+  page: import("@playwright/test").Page,
+  overrides: Record<string, boolean>,
+): Promise<void> {
+  await page.addInitScript(
+    ({ key, pinKey, ids, flips }) => {
+      window.localStorage.setItem(pinKey, JSON.stringify(flips));
+      const seeded: Record<string, boolean> = {};
+      for (const id of ids) seeded[id] = true;
+      window.localStorage.setItem(key, JSON.stringify({ ...seeded, ...flips }));
+    },
+    {
+      key: FEATURE_OVERRIDES_STORAGE_KEY,
+      pinKey: FEATURE_OVERRIDE_PIN_KEY,
+      ids: PREVIEW_FEATURE_IDS,
+      flips: overrides,
+    },
+  );
+}

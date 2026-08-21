@@ -101,6 +101,9 @@ CREATE TABLE channels (
     participant_hash BYTEA,
     ttl_seconds     INT,
     ttl_deadline    TIMESTAMPTZ,
+    -- Optional project-container coordinate `30621:<64-hex-pubkey>:<slug>`.
+    -- Plain TEXT, no FK — see migrations/0029_channel_project_ref.sql.
+    project_ref     TEXT,
     PRIMARY KEY (community_id, id),
     CONSTRAINT chk_channels_id_not_nil CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid)
 );

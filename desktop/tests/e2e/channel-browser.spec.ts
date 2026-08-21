@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { installMockBridge, openChannelBrowser } from "../helpers/bridge";
+import { overridePreviewFeatures } from "../helpers/features";
 
 const MOCK_PUBKEY = "deadbeef".repeat(8);
 const CUSTOM_SECTION = { id: "sec-projects", name: "Projects", order: 0 };
@@ -24,6 +25,9 @@ test.beforeEach(async ({ page }, testInfo) => {
       ? { createChannelErrors: ["Create failed"] }
       : undefined,
   );
+  // This suite exercises the global channel sections and custom-section
+  // quick-create, which only exist with the Projects experiment off.
+  await overridePreviewFeatures(page, { projects: false });
 });
 
 test("keyboard shortcut opens the channel browser dialog", async ({ page }) => {

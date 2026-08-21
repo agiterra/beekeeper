@@ -12,10 +12,12 @@ const ISSUE_COMMENTS = [
 async function openBuzzProject(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
-  await page.getByTestId("projects-section-projects").click();
+  // The Projects tab is the container-management panel now; repo tiles live
+  // on the Repositories tab and open the same repo detail screen.
+  await page.getByTestId("projects-section-repositories").click();
   const projectEntry = page
     .locator(
-      '[data-testid="project-card-buzz"], [data-testid="project-row-buzz"]',
+      '[data-testid="repository-card-buzz"], [data-testid="repository-row-buzz"]',
     )
     .first();
   await expect(projectEntry).toBeVisible({ timeout: 10_000 });

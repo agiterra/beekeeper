@@ -131,10 +131,10 @@ pub async fn open_project_terminal(
             find_local_repo_dir(repos_dir.as_deref(), &project_dtag, clone_url.as_deref())
                 .ok()
                 .flatten();
-        if let Some(repo_dir) = local_dir {
-            launch_terminal_at(&repo_dir)?;
+        if let Some(checkout) = local_dir {
+            launch_terminal_at(&checkout.path)?;
             return Ok(ProjectTerminalResult {
-                path: repo_dir.display().to_string(),
+                path: checkout.path.display().to_string(),
                 cloned: false,
             });
         }
@@ -188,8 +188,8 @@ pub async fn open_project_merge_recovery_terminal(
         )
         .ok()
         .flatten();
-        let (repo_dir, cloned) = if let Some(repo_dir) = existing_dir {
-            (repo_dir, false)
+        let (repo_dir, cloned) = if let Some(checkout) = existing_dir {
+            (checkout.path, false)
         } else {
             let clone_result = clone_project_repository_blocking(
                 input.repos_dir.as_deref(),

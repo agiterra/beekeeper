@@ -504,6 +504,7 @@ pub async fn validate_admin_event(
                 "purpose",
                 "visibility",
                 "ttl",
+                "project",
             ];
             let has_recognized = event
                 .tags
@@ -511,7 +512,7 @@ pub async fn validate_admin_event(
                 .any(|t| RECOGNIZED_TAGS.contains(&t.kind().to_string().as_str()));
             if !has_recognized {
                 return Err(anyhow::anyhow!(
-                    "kind:9002 must include at least one metadata tag (name, about, archived, topic, purpose, visibility, ttl)"
+                    "kind:9002 must include at least one metadata tag (name, about, archived, topic, purpose, visibility, ttl, project)"
                 ));
             }
 
@@ -590,11 +591,37 @@ pub async fn validate_admin_event(
                 }
             }
 
-            // name/about/archived/visibility/ttl require owner/admin;
+            // Validate the project tag before storage. Empty string clears the
+            // project association (removes the channel from any project); any
+            // other value must be a well-formed `30621:pubkey:slug` coordinate.
+            // Shares its shape validator with the kind:9007 create-time check.
+            for t in event.tags.iter() {
+                if t.kind().to_string() == "project" {
+                    match t.content() {
+                        Some("") => {}
+                        Some(v) => {
+                            super::ingest::validate_project_ref_tag(v)
+                                .map_err(|e| anyhow::anyhow!("invalid project tag: {e}"))?;
+                        }
+                        None => {
+                            return Err(anyhow::anyhow!(
+                                "project tag must have a value (coordinate, or empty string to clear)"
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // name/about/archived/visibility/ttl/project require owner/admin;
             // topic/purpose allow any member.
             let has_privileged_tag = event.tags.iter().any(|t| {
                 let k = t.kind().to_string();
-                k == "name" || k == "about" || k == "archived" || k == "visibility" || k == "ttl"
+                k == "name"
+                    || k == "about"
+                    || k == "archived"
+                    || k == "visibility"
+                    || k == "ttl"
+                    || k == "project"
             });
             if has_privileged_tag {
                 let members = state.db.get_members(tenant.community(), channel_id).await?;
@@ -616,7 +643,7 @@ pub async fn validate_admin_event(
                             return Ok(());
                         }
                         Err(anyhow::anyhow!(
-                            "actor not authorized for name/about/archived/visibility/ttl changes"
+                            "actor not authorized for name/about/archived/visibility/ttl/project changes"
                         ))
                     }
                 }
@@ -1157,6 +1184,13 @@ pub async fn emit_group_discovery_events(
                 tags.push(Tag::parse(["purpose", purpose])?);
             }
         }
+        // Optional project-container coordinate — lets clients group channels by
+        // project without a separate per-channel query.
+        if let Some(ref project_ref) = channel.project_ref {
+            if !project_ref.is_empty() {
+                tags.push(Tag::parse(["project", project_ref])?);
+            }
+        }
         // Archived state — clients use this to hide channels from the sidebar.
         if channel.archived_at.is_some() {
             tags.push(Tag::parse(["archived", "true"])?);
@@ -1594,6 +1628,36 @@ async fn handle_edit_metadata(
                     )
                     .await?;
                 }
+                "project" => {
+                    // Empty string clears the project association; otherwise
+                    // the value is a `30621:pubkey:slug` coordinate, already
+                    // shape-validated pre-storage in validate_admin_event.
+                    let project_change: Option<String> = if val.is_empty() {
+                        None
+                    } else {
+                        Some(val.to_string())
+                    };
+                    state
+                        .db
+                        .update_channel(
+                            tenant.community(),
+                            channel_id,
+                            buzz_db::channel::ChannelUpdate {
+                                project_ref: Some(project_change.clone()),
+                                ..Default::default()
+                            },
+                        )
+                        .await?;
+                    emit_system_message(
+                        tenant,
+                        state,
+                        channel_id,
+                        serde_json::json!({
+                            "type": "project_changed", "actor": actor_hex, "project_ref": project_change
+                        }),
+                    )
+                    .await?;
+                }
                 "ttl" => {
                     // Empty string clears the TTL (permanent); otherwise it is a
                     // positive integer of seconds, validated during authorization.
@@ -1832,6 +1896,9 @@ async fn handle_create_group(
     let actor_bytes = event.pubkey.to_bytes().to_vec();
     let description = extract_tag_value(event, "about");
     let ttl_seconds = super::resolve_ttl(event, state.config.ephemeral_ttl_override);
+    // Already shape-validated in ingest.rs (validate_project_ref_tag) before this
+    // event was persisted; just carry the raw coordinate through here.
+    let project_ref = extract_tag_value(event, "project");
 
     // If the event has an h-tag UUID, ingest_event() already created the channel
     // via create_channel_with_id(). Fetch it rather than creating a duplicate.
@@ -1860,6 +1927,7 @@ async fn handle_create_group(
                         description.as_deref(),
                         &actor_bytes,
                         ttl_seconds,
+                        project_ref.as_deref(),
                     )
                     .await?;
                 metrics::counter!(
@@ -1882,6 +1950,7 @@ async fn handle_create_group(
                 description.as_deref(),
                 &actor_bytes,
                 ttl_seconds,
+                project_ref.as_deref(),
             )
             .await?;
         metrics::counter!(

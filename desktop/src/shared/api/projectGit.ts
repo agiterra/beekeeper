@@ -657,3 +657,80 @@ export async function publishProjectPullRequestMergedStatus(input: {
     input,
   });
 }
+
+type RawImportRepoFolderInfo = {
+  path: string;
+  name: string;
+  is_git_repo: boolean;
+  current_branch: string | null;
+  origin_url: string | null;
+  has_commits: boolean;
+};
+
+export type ImportRepoFolderInfo = {
+  path: string;
+  name: string;
+  isGitRepo: boolean;
+  currentBranch: string | null;
+  originUrl: string | null;
+  hasCommits: boolean;
+};
+
+export type RepoRemoteStrategy = "set-origin" | "add-buzz-remote";
+
+/** Native folder picker + git inspection for the import/link dialogs. */
+export async function pickProjectImportFolder(): Promise<ImportRepoFolderInfo | null> {
+  const info = await invokeTauri<RawImportRepoFolderInfo | null>(
+    "pick_project_import_folder",
+  );
+  if (!info) return null;
+  return {
+    path: info.path,
+    name: info.name,
+    isGitRepo: info.is_git_repo,
+    currentBranch: info.current_branch,
+    originUrl: info.origin_url,
+    hasCommits: info.has_commits,
+  };
+}
+
+type RawImportProjectRepoResult = {
+  path: string;
+  remote: string;
+  branch: string;
+};
+
+/** Remote setup + first push + registry entry for an imported checkout. */
+export async function importProjectLocalRepository(input: {
+  path: string;
+  cloneUrl: string;
+  owner: string;
+  dtag: string;
+  remoteStrategy: RepoRemoteStrategy;
+}): Promise<{ path: string; remote: string; branch: string }> {
+  const result = await invokeTauri<RawImportProjectRepoResult>(
+    "import_project_local_repository",
+    { input },
+  );
+  return { path: result.path, remote: result.remote, branch: result.branch };
+}
+
+type RawLinkProjectRepoResult = {
+  path: string;
+  remote: string;
+};
+
+/** Remote setup + reachability check + registry entry — no push. */
+export async function linkProjectLocalRepository(input: {
+  path: string;
+  cloneUrl: string;
+  owner: string;
+  dtag: string;
+  remoteStrategy: RepoRemoteStrategy;
+}): Promise<{ path: string; remote: string }> {
+  const result = await invokeTauri<RawLinkProjectRepoResult>(
+    "link_project_local_repository",
+    { input },
+  );
+  return { path: result.path, remote: result.remote };
+}

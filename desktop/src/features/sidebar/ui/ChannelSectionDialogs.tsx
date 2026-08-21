@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { X } from "lucide-react";
+import { toast } from "sonner";
 
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
 import {
@@ -330,7 +331,16 @@ export function useLeaveChannelDialog() {
       channelName={target?.name ?? ""}
       onConfirm={() => {
         if (target) {
-          leaveChannel.mutate();
+          // The dialog closes immediately, so failures (e.g. the last owner
+          // can't leave) surface as a toast rather than vanishing.
+          leaveChannel.mutate(undefined, {
+            onError: (error) =>
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to leave the channel.",
+              ),
+          });
         }
         setTarget(null);
       }}

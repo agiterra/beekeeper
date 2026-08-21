@@ -647,6 +647,7 @@ mod integration_tests {
                 None,
                 &author.public_key().to_bytes(),
                 None,
+                None,
             )
             .await
             .expect("create channel");

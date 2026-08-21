@@ -649,6 +649,7 @@ pub async fn create_channel(
     visibility: String,
     description: Option<String>,
     ttl_seconds: Option<i32>,
+    project_ref: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ChannelInfo, String> {
     let channel_uuid = uuid::Uuid::new_v4();
@@ -657,8 +658,11 @@ pub async fn create_channel(
         "open" | "private" => visibility.as_str(),
         other => return Err(format!("invalid visibility: {other}")),
     };
+    // "transport" is machine-created only (hidden per-project session
+    // transport) — the channel-creation UI offers stream/forum, and the
+    // session flow is the sole transport caller.
     let ct = match channel_type.as_str() {
-        "stream" | "forum" => channel_type.as_str(),
+        "stream" | "forum" | "transport" => channel_type.as_str(),
         other => return Err(format!("invalid channel_type: {other}")),
     };
 
@@ -669,6 +673,7 @@ pub async fn create_channel(
         ct,
         description.as_deref(),
         ttl_seconds,
+        project_ref.as_deref(),
     )?;
 
     // Capture the signing identity before submission so the pending-owner
@@ -736,6 +741,7 @@ pub async fn ensure_starter_channels(
             "stream",
             Some(spec.description),
             None,
+            None,
         )?;
 
         match submit_event_with_keys(builder, &state, &creator_keys, None).await {
@@ -794,6 +800,10 @@ pub struct UpdateChannelInput {
     /// Absent = leave unchanged, `null` = clear (permanent), seconds = set.
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub ttl_seconds: Option<Option<i32>>,
+    /// Project container coordinate (`30621:<owner>:<slug>`). Absent = leave
+    /// unchanged, `null` = clear the association, coordinate = move.
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub project: Option<Option<String>>,
 }
 
 #[tauri::command]
@@ -808,6 +818,7 @@ pub async fn update_channel(
         input.description.as_deref(),
         input.visibility.as_deref(),
         input.ttl_seconds,
+        input.project.as_ref().map(|p| p.as_deref()),
     )?;
     submit_event(builder, &state).await?;
 

@@ -1,7 +1,11 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation } from "@tanstack/react-router";
-import { deriveShellRoute, markAllReadSources } from "@/app/AppShell.helpers";
+import {
+  deriveShellRoute,
+  markAllReadSources,
+  type ChannelCreateFormInput,
+} from "@/app/AppShell.helpers";
 import { useTerminalContext } from "@/app/useTerminalContext";
 import { AppShellProvider } from "@/app/AppShellContext";
 import { AppShellOverlays, TerminalBootstrap } from "@/app/AppShellOverlays";
@@ -140,7 +144,6 @@ export function AppShell() {
     goChannel,
     goHome,
     goNewMessage,
-    goProjects,
     goPulse,
     goSettings,
     goWorkflows,
@@ -517,13 +520,8 @@ export function AppShell() {
         visibility,
         ttlSeconds,
         templateId,
-      }: {
-        name: string;
-        description?: string;
-        visibility: ChannelVisibility;
-        ttlSeconds?: number;
-        templateId?: string;
-      },
+        projectRef,
+      }: ChannelCreateFormInput,
       onCreated?: (channelId: string) => void,
     ) => {
       const createdChannel = await createChannelMutation.mutateAsync({
@@ -532,12 +530,14 @@ export function AppShell() {
         channelType: "stream",
         visibility,
         ttlSeconds,
+        projectRef,
       });
 
       await applyCanvas(templateId, createdChannel.id, name);
       await goChannel(createdChannel.id);
       onCreated?.(createdChannel.id);
       void applyAgents(templateId, createdChannel.id);
+      return createdChannel.id;
     },
     [applyAgents, applyCanvas, createChannelMutation, goChannel],
   );
@@ -548,24 +548,21 @@ export function AppShell() {
       visibility,
       ttlSeconds,
       templateId,
-    }: {
-      name: string;
-      description?: string;
-      visibility: ChannelVisibility;
-      ttlSeconds?: number;
-      templateId?: string;
-    }) => {
+      projectRef,
+    }: ChannelCreateFormInput) => {
       const createdForum = await createForumMutation.mutateAsync({
         name,
         description,
         channelType: "forum",
         visibility,
         ttlSeconds,
+        projectRef,
       });
 
       await applyCanvas(templateId, createdForum.id, name);
       await goChannel(createdForum.id);
       void applyAgents(templateId, createdForum.id);
+      return createdForum.id;
     },
     [applyAgents, applyCanvas, createForumMutation, goChannel],
   );
@@ -856,7 +853,6 @@ export function AppShell() {
                           scopeSearchFocusRequest,
                         ]}
                         onSelectHome={() => void goHome()}
-                        onSelectProjects={() => void goProjects()}
                         onSelectPulse={() => void goPulse()}
                         onSelectSettings={handleOpenSettings}
                         onSelectWorkflows={() => void goWorkflows()}

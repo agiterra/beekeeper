@@ -1,0 +1,266 @@
+import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FolderGit2, Plus } from "lucide-react";
+import { toast } from "sonner";
+
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import {
+  useManagedAgentsQuery,
+  usePersonasQuery,
+} from "@/features/agents/hooks";
+import { channelsQueryKey, useChannelsQuery } from "@/features/channels/hooks";
+import type { Channel } from "@/shared/api/types";
+import type { Repository as CodeRepo } from "@/features/projects/hooks";
+import {
+  SidebarGroup,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/shared/ui/sidebar";
+import { SidebarMenuLabel } from "@/shared/ui/sidebar-menu-label";
+
+import { useFeatureEnabled } from "@/shared/features";
+import { joinChannel } from "@/shared/api/tauriChannels";
+
+import { useProjectWorkflowBuckets, type ProjectContainer } from "../hooks";
+import {
+  GENERAL_PROJECT_DTAG,
+  LOCAL_GENERAL_ID,
+  displayProjectsWithGeneral,
+} from "../lib/projectContainerModel";
+import { useProjectCollapse } from "../lib/projectCollapseStorage";
+import { useCreateProjectContainerMutation } from "../useCreateProjectContainer";
+import { useGeneralProjectMigration } from "../useGeneralProjectMigration";
+import { projectAgentRows } from "../lib/projectChildren";
+import { CreateProjectContainerDialog } from "./CreateProjectContainerDialog";
+import {
+  ProjectsScreenCreateDialogs,
+  type ProjectsScreenCreateKind,
+} from "./ProjectsScreenCreateDialogs";
+import {
+  ProjectSidebarGroup,
+  type ProjectChannelHandlers,
+} from "./ProjectSidebarGroup";
+
+/**
+ * The per-project collapsible sidebar groups (Projects experiment). Renders
+ * one `ProjectSidebarGroup` per project container; repos and forums that no
+ * project claims yet are shown under General — the real General project once
+ * the owner has published it, or a local placeholder until then — so nothing
+ * disappears when the experiment is enabled.
+ */
+export function ProjectSidebarSections({
+  projects,
+  reposByProject,
+  unclaimedRepos,
+  channelsByProject,
+  forumsByProject,
+  unclaimedForums,
+  globalChannels,
+  currentPubkey,
+  relayUrl,
+  onOpenAgents,
+  ...channelHandlers
+}: ProjectChannelHandlers & {
+  projects: ProjectContainer[];
+  reposByProject: ReadonlyMap<string, CodeRepo[]>;
+  unclaimedRepos: CodeRepo[];
+  channelsByProject: ReadonlyMap<string, Channel[]>;
+  forumsByProject: ReadonlyMap<string, Channel[]>;
+  unclaimedForums: Channel[];
+  /** Streams no project claims yet. Channels must belong to a project, so
+   * these display under General until they're claimed or moved. */
+  globalChannels: Channel[];
+  currentPubkey?: string;
+  relayUrl?: string;
+  onOpenAgents: () => void;
+}) {
+  const { goProject, goProjectRepo, goProjects, goWorkflow } =
+    useAppNavigation();
+  const collapse = useProjectCollapse(currentPubkey, relayUrl);
+  // This component only mounts while the Projects experiment is enabled, so
+  // the one-shot General migration is anchored here.
+  useGeneralProjectMigration(true, relayUrl);
+  const personas = usePersonasQuery();
+  const managedAgents = useManagedAgentsQuery();
+  const createContainerMutation = useCreateProjectContainerMutation();
+  const channelsQuery = useChannelsQuery();
+  const forumEnabled = useFeatureEnabled("forum");
+
+  // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
+  // derived from the channel's project; unclaimed channels' workflows show
+  // under General.
+  const workflowBuckets = useProjectWorkflowBuckets(
+    channelsQuery.data,
+    channelsByProject,
+    forumsByProject,
+  );
+
+  const queryClient = useQueryClient();
+  const [createContainerOpen, setCreateContainerOpen] = React.useState(false);
+  // One dialog instance serves every group's "+" menu; the request carries
+  // the target project so new channels/forums land inside it.
+  const [createRequest, setCreateRequest] = React.useState<{
+    kind: ProjectsScreenCreateKind;
+    project: ProjectContainer;
+  } | null>(null);
+
+  const personasById = React.useMemo(
+    () =>
+      new Map(
+        (personas.data ?? []).map((persona) => [
+          persona.id,
+          persona.displayName,
+        ]),
+      ),
+    [personas.data],
+  );
+  const managedAgentsByPubkey = React.useMemo(
+    () =>
+      new Map(
+        (managedAgents.data ?? []).map((agent) => [
+          agent.pubkey.toLowerCase(),
+          agent.name,
+        ]),
+      ),
+    [managedAgents.data],
+  );
+
+  const displayProjects = React.useMemo(
+    () => displayProjectsWithGeneral(projects),
+    [projects],
+  );
+
+  const handleOpenProject = React.useCallback(
+    (project: ProjectContainer) => {
+      void goProject(project.id);
+    },
+    [goProject],
+  );
+
+  // Project groups list every open channel (browse surface), so a row can
+  // name a channel the identity hasn't joined yet — join on first open, and
+  // only navigate once membership is real (the channel screen assumes it).
+  const { onSelectChannel } = channelHandlers;
+  const handleSelectChannel = React.useCallback(
+    (channelId: string) => {
+      const channel = (channelsQuery.data ?? []).find(
+        (candidate) => candidate.id === channelId,
+      );
+      if (channel && !channel.isMember) {
+        void joinChannel(channelId)
+          .then(() => {
+            void queryClient.invalidateQueries({ queryKey: channelsQueryKey });
+            onSelectChannel(channelId);
+          })
+          .catch((error) => {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Failed to join the channel.",
+            );
+          });
+        return;
+      }
+      onSelectChannel(channelId);
+    },
+    [channelsQuery.data, queryClient, onSelectChannel],
+  );
+  const groupChannelHandlers = {
+    ...channelHandlers,
+    onSelectChannel: handleSelectChannel,
+  };
+
+  return (
+    <>
+      {/* Pull the Projects heading up against the primary menu above it —
+          the scroll column's gap plus the menu's own bottom padding would
+          otherwise read as a break between Agents and Projects. */}
+      <SidebarGroup className="-mt-3 py-0">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              data-testid="open-projects-view"
+              onClick={() => void goProjects({ filter: "projects" })}
+              tooltip="Projects"
+              type="button"
+            >
+              <FolderGit2 className="h-4 w-4" />
+              <SidebarMenuLabel>Projects</SidebarMenuLabel>
+            </SidebarMenuButton>
+            <SidebarMenuAction
+              aria-label="New project"
+              data-testid="project-container-new"
+              onClick={() => setCreateContainerOpen(true)}
+              showOnHover
+            >
+              <Plus />
+            </SidebarMenuAction>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+      {displayProjects.map((project) => {
+        const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
+        const isFallback = project.id === LOCAL_GENERAL_ID;
+        // Unclaimed repos/forums always land in General — they must belong
+        // to a project, and General is the sweep target.
+        const repos = [
+          ...(reposByProject.get(project.id) ?? []),
+          ...(isGeneral ? unclaimedRepos : []),
+        ];
+        const forums = forumEnabled
+          ? [
+              ...(forumsByProject.get(project.id) ?? []),
+              ...(isGeneral ? unclaimedForums : []),
+            ]
+          : [];
+        return (
+          <ProjectSidebarGroup
+            key={project.id}
+            project={project}
+            isFallback={isFallback}
+            agents={projectAgentRows(
+              project,
+              personasById,
+              managedAgentsByPubkey,
+            )}
+            streamChannels={[
+              ...(channelsByProject.get(project.id) ?? []),
+              ...(isGeneral ? globalChannels : []),
+            ]}
+            forumChannels={forums}
+            repos={repos}
+            channelHandlers={groupChannelHandlers}
+            collapsed={collapse.isProjectCollapsed(project.id)}
+            onToggleCollapsed={() => collapse.toggleProject(project.id)}
+            onOpenAgents={onOpenAgents}
+            onOpenProject={() => handleOpenProject(project)}
+            onOpenRepo={(repo) => void goProjectRepo(project.id, repo.id)}
+            workflows={[
+              ...(workflowBuckets.byProject.get(project.id) ?? []),
+              ...(isGeneral ? workflowBuckets.unclaimed : []),
+            ]}
+            onOpenWorkflow={(workflow) => void goWorkflow(workflow.id)}
+            onRequestCreate={(kind) => setCreateRequest({ kind, project })}
+          />
+        );
+      })}
+
+      <ProjectsScreenCreateDialogs
+        kind={createRequest?.kind ?? null}
+        targetProject={createRequest?.project ?? null}
+        onClose={() => setCreateRequest(null)}
+      />
+
+      <CreateProjectContainerDialog
+        isCreating={createContainerMutation.isPending}
+        onCreate={async (input) => {
+          await createContainerMutation.mutateAsync(input);
+        }}
+        onOpenChange={setCreateContainerOpen}
+        open={createContainerOpen}
+      />
+    </>
+  );
+}

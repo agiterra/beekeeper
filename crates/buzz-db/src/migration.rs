@@ -1036,6 +1036,14 @@ mod tests {
         assert_eq!(migrations[29].version, 30);
         let deletion_recovery = migrations[29].sql.as_str();
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
+
+        // Optional project-container association on channels (kind 30621
+        // NIP-MP coordinate): additive migration, its own version, never
+        // folded into 0001 — same brownfield checksum rule.
+        assert_eq!(migrations[30].version, 31);
+        let project_ref = migrations[30].sql.as_str();
+        assert!(project_ref.contains("ALTER TABLE channels ADD COLUMN project_ref"));
+        assert!(!migrations[0].sql.as_str().contains("project_ref"));
     }
 
     #[test]

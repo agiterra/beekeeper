@@ -3,6 +3,7 @@ use super::project_git_exec::{run_git, GitAuthConfig};
 
 pub(crate) fn push_project_local_repository_blocking(
     repo_dir: &std::path::Path,
+    remote: &str,
     clone_url: String,
     branch_name: Option<String>,
     base_branch: Option<String>,
@@ -10,6 +11,7 @@ pub(crate) fn push_project_local_repository_blocking(
 ) -> Result<ProjectRepoPushResult, String> {
     let status = compare_local_remote_status(
         repo_dir,
+        remote,
         &clone_url,
         branch_name.as_deref(),
         base_branch.as_deref(),
@@ -39,7 +41,7 @@ pub(crate) fn push_project_local_repository_blocking(
         &[
             "push",
             "--end-of-options",
-            "origin",
+            remote,
             format!("HEAD:{branch}").as_str(),
         ],
         Some(repo_dir),
@@ -102,11 +104,19 @@ mod tests {
         )
         .expect("add remote");
 
-        let status = compare_local_remote_status(&checkout, remote_path, Some("main"), None, &auth);
+        let status = compare_local_remote_status(
+            &checkout,
+            "origin",
+            remote_path,
+            Some("main"),
+            None,
+            &auth,
+        );
         assert_eq!(status.local_branches, ["master", "space"]);
 
         let result = push_project_local_repository_blocking(
             &checkout,
+            "origin",
             remote_path.to_string(),
             Some("main".to_string()),
             None,
@@ -124,6 +134,92 @@ mod tests {
         assert!(run_git(
             &[
                 format!("--git-dir={remote_path}").as_str(),
+                "show-ref",
+                "--verify",
+                "refs/heads/main",
+            ],
+            None,
+            &auth,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn buzz_remote_checkout_pushes_without_touching_origin() {
+        let auth = build_test_git_auth_config().expect("build test git config");
+        let root = tempfile::tempdir().expect("create test directory");
+        let buzz_remote = root.path().join("buzz-remote.git");
+        let checkout = root.path().join("checkout");
+        let buzz_remote_path = buzz_remote.to_str().expect("buzz remote path");
+        let checkout_path = checkout.to_str().expect("checkout path");
+        let foreign_origin = "https://github.com/example/widget.git";
+
+        run_git(&["init", "--bare", "--", buzz_remote_path], None, &auth)
+            .expect("initialize buzz remote");
+        run_git(&["init", "-b", "main", "--", checkout_path], None, &auth)
+            .expect("initialize checkout");
+        std::fs::write(checkout.join("README.md"), "first commit\n").expect("write fixture");
+        run_git(&["add", "README.md"], Some(&checkout), &auth).expect("stage fixture");
+        run_git(
+            &[
+                "-c",
+                "user.name=Buzz Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "Initial commit",
+            ],
+            Some(&checkout),
+            &auth,
+        )
+        .expect("commit fixture");
+        // The user's origin points somewhere else entirely — the registered
+        // `buzz` remote must carry the whole interaction.
+        run_git(
+            &["remote", "add", "origin", foreign_origin],
+            Some(&checkout),
+            &auth,
+        )
+        .expect("add foreign origin");
+        run_git(
+            &["remote", "add", "buzz", buzz_remote_path],
+            Some(&checkout),
+            &auth,
+        )
+        .expect("add buzz remote");
+
+        let status = compare_local_remote_status(
+            &checkout,
+            "buzz",
+            buzz_remote_path,
+            Some("main"),
+            None,
+            &auth,
+        );
+        assert!(status.can_push, "{:?}", status.push_block_reason);
+
+        let result = push_project_local_repository_blocking(
+            &checkout,
+            "buzz",
+            buzz_remote_path.to_string(),
+            Some("main".to_string()),
+            None,
+            &auth,
+        )
+        .expect("push via buzz remote");
+        assert_eq!(result.branch, "main");
+
+        // The foreign origin URL was never rewritten.
+        assert_eq!(
+            run_git(&["remote", "get-url", "origin"], Some(&checkout), &auth)
+                .expect("read origin url")
+                .trim(),
+            foreign_origin
+        );
+        assert!(run_git(
+            &[
+                format!("--git-dir={buzz_remote_path}").as_str(),
                 "show-ref",
                 "--verify",
                 "refs/heads/main",

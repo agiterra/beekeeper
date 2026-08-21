@@ -39,13 +39,10 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
-  SidebarMenuItem,
 } from "@/shared/ui/sidebar";
-import { ChannelMenuButton } from "@/features/sidebar/ui/SidebarSection";
-import { ChannelContextMenuItems } from "@/features/sidebar/ui/ChannelContextMenu";
+import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import {
-  DraggableChannelRow,
   DroppableSectionBody,
   DroppableUngroupedBody,
   SortableSectionShell,
@@ -53,6 +50,9 @@ import {
 import {
   SECTION_ACTION_VISIBILITY_CLASS,
   SECTION_ICON_BUTTON_CLASS,
+  SECTION_LABEL_BUTTON_CLASS,
+  SECTION_LABEL_CHEVRON_CLASS,
+  SECTION_LABEL_CHEVRON_ICON_CLASS,
 } from "@/features/sidebar/ui/sidebarSectionStyles";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
 import type { ChannelSection } from "@/features/sidebar/lib/useChannelSections";
@@ -61,13 +61,6 @@ import { cn } from "@/shared/lib/cn";
 import { getPlatformKeysById } from "@/shared/lib/keyboard-shortcuts";
 import { HashSearch } from "@/shared/ui/icons";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
-
-const SECTION_LABEL_BUTTON_CLASS =
-  "group/section-label flex w-fit max-w-[calc(100%-3rem)] cursor-pointer appearance-none items-center gap-1 text-left transition-colors hover:text-sidebar-foreground focus-visible:text-sidebar-foreground";
-const SECTION_LABEL_CHEVRON_CLASS =
-  "relative size-2.5 shrink-0 text-current opacity-0 transition-[color,opacity] group-hover/sidebar-section:opacity-100 group-hover/section-label:opacity-100 group-focus-within/sidebar-section:opacity-100 group-focus-visible/section-label:opacity-100 group-data-[section-actions-open=true]/sidebar-section:opacity-100";
-const SECTION_LABEL_CHEVRON_ICON_CLASS =
-  "absolute left-1/2 top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2";
 
 const SORT_OPTIONS: { value: ChannelSortMode; label: string }[] = [
   { value: "recent", label: "Recent" },
@@ -337,6 +330,7 @@ export function ChannelGroupSection({
   createLabel,
   draggable,
   groupClassName,
+  contentClassName,
   hasUnread,
   isCollapsed,
   isActiveChannel,
@@ -378,6 +372,8 @@ export function ChannelGroupSection({
   createLabel?: string;
   draggable?: boolean;
   groupClassName?: string;
+  /** Extra classes on the list container (e.g. `pl-4` for nested indent). */
+  contentClassName?: string;
   isCollapsed: boolean;
   isActiveChannel: boolean;
   activeWorkingByChannelId?: ReadonlyMap<string, ActiveChannelTurnSummary>;
@@ -431,60 +427,32 @@ export function ChannelGroupSection({
     items.length > 0 ? (
       <SidebarMenu data-testid={listTestId}>
         {items.map((channel) => (
-          <ContextMenu key={channel.id}>
-            <ContextMenuTrigger asChild>
-              <SidebarMenuItem className="content-visibility-auto-row">
-                {draggable ? (
-                  <DraggableChannelRow channelId={channel.id}>
-                    <ChannelMenuButton
-                      channel={channel}
-                      activeWorking={activeWorkingByChannelId?.get(channel.id)}
-                      hasUnread={unreadChannelIds.has(channel.id)}
-                      unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
-                      isMuted={mutedChannelIds?.has(channel.id)}
-                      isActive={
-                        isActiveChannel && selectedChannelId === channel.id
-                      }
-                      onSelectChannel={onSelectChannel}
-                    />
-                  </DraggableChannelRow>
-                ) : (
-                  <ChannelMenuButton
-                    channel={channel}
-                    activeWorking={activeWorkingByChannelId?.get(channel.id)}
-                    hasUnread={unreadChannelIds.has(channel.id)}
-                    unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
-                    isMuted={mutedChannelIds?.has(channel.id)}
-                    isActive={
-                      isActiveChannel && selectedChannelId === channel.id
-                    }
-                    onSelectChannel={onSelectChannel}
-                  />
-                )}
-              </SidebarMenuItem>
-            </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ChannelContextMenuItems
-                channel={channel}
-                hasUnread={unreadChannelIds.has(channel.id)}
-                isMuted={mutedChannelIds?.has(channel.id)}
-                isStarred={starredChannelIds?.has(channel.id)}
-                sections={sections}
-                assignments={assignments}
-                onMarkChannelRead={onMarkChannelRead}
-                onMarkChannelUnread={onMarkChannelUnread}
-                onMuteChannel={onMuteChannel}
-                onUnmuteChannel={onUnmuteChannel}
-                onStarChannel={onStarChannel}
-                onUnstarChannel={onUnstarChannel}
-                onAssignChannel={onAssignChannel}
-                onUnassignChannel={onUnassignChannel}
-                onCreateSectionForChannel={onCreateSectionForChannel}
-                onDeleteChannel={onDeleteChannel}
-                onLeaveChannel={onLeaveChannel}
-              />
-            </ContextMenuContent>
-          </ContextMenu>
+          <ChannelSidebarRow
+            key={channel.id}
+            channel={channel}
+            itemClassName="content-visibility-auto-row"
+            draggable={draggable}
+            activeWorking={activeWorkingByChannelId?.get(channel.id)}
+            hasUnread={unreadChannelIds.has(channel.id)}
+            unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
+            isMuted={mutedChannelIds?.has(channel.id)}
+            isStarred={starredChannelIds?.has(channel.id)}
+            isActive={isActiveChannel && selectedChannelId === channel.id}
+            onSelectChannel={onSelectChannel}
+            onMarkChannelRead={onMarkChannelRead}
+            onMarkChannelUnread={onMarkChannelUnread}
+            onMuteChannel={onMuteChannel}
+            onUnmuteChannel={onUnmuteChannel}
+            onStarChannel={onStarChannel}
+            onUnstarChannel={onUnstarChannel}
+            sections={sections}
+            assignments={assignments}
+            onAssignChannel={onAssignChannel}
+            onUnassignChannel={onUnassignChannel}
+            onCreateSectionForChannel={onCreateSectionForChannel}
+            onDeleteChannel={onDeleteChannel}
+            onLeaveChannel={onLeaveChannel}
+          />
         ))}
       </SidebarMenu>
     ) : null;
@@ -528,7 +496,9 @@ export function ChannelGroupSection({
         }
       />
       {!isCollapsed ? (
-        <SidebarGroupContent id={contentId}>{channelList}</SidebarGroupContent>
+        <SidebarGroupContent className={contentClassName} id={contentId}>
+          {channelList}
+        </SidebarGroupContent>
       ) : null}
     </SidebarGroup>
   );
@@ -734,53 +704,35 @@ export function CustomChannelSection({
                 {channels.length > 0 ? (
                   <SidebarMenu>
                     {channels.map((channel) => (
-                      <ContextMenu key={channel.id}>
-                        <ContextMenuTrigger asChild>
-                          <SidebarMenuItem>
-                            <DraggableChannelRow channelId={channel.id}>
-                              <ChannelMenuButton
-                                channel={channel}
-                                activeWorking={activeWorkingByChannelId?.get(
-                                  channel.id,
-                                )}
-                                hasUnread={unreadChannelIds.has(channel.id)}
-                                unreadCount={
-                                  unreadChannelCounts.get(channel.id) ?? 0
-                                }
-                                isMuted={mutedChannelIds?.has(channel.id)}
-                                isActive={
-                                  isActiveChannel &&
-                                  selectedChannelId === channel.id
-                                }
-                                onSelectChannel={onSelectChannel}
-                              />
-                            </DraggableChannelRow>
-                          </SidebarMenuItem>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent>
-                          <ChannelContextMenuItems
-                            channel={channel}
-                            hasUnread={unreadChannelIds.has(channel.id)}
-                            isMuted={mutedChannelIds?.has(channel.id)}
-                            isStarred={starredChannelIds?.has(channel.id)}
-                            sections={sections}
-                            assignments={assignments}
-                            onMarkChannelRead={onMarkChannelRead}
-                            onMarkChannelUnread={onMarkChannelUnread}
-                            onMuteChannel={onMuteChannel}
-                            onUnmuteChannel={onUnmuteChannel}
-                            onStarChannel={onStarChannel}
-                            onUnstarChannel={onUnstarChannel}
-                            onAssignChannel={onAssignChannel}
-                            onUnassignChannel={onUnassignChannel}
-                            onCreateSectionForChannel={
-                              onCreateSectionForChannel
-                            }
-                            onDeleteChannel={onDeleteChannel}
-                            onLeaveChannel={onLeaveChannel}
-                          />
-                        </ContextMenuContent>
-                      </ContextMenu>
+                      <ChannelSidebarRow
+                        key={channel.id}
+                        channel={channel}
+                        draggable
+                        activeWorking={activeWorkingByChannelId?.get(
+                          channel.id,
+                        )}
+                        hasUnread={unreadChannelIds.has(channel.id)}
+                        unreadCount={unreadChannelCounts.get(channel.id) ?? 0}
+                        isMuted={mutedChannelIds?.has(channel.id)}
+                        isStarred={starredChannelIds?.has(channel.id)}
+                        isActive={
+                          isActiveChannel && selectedChannelId === channel.id
+                        }
+                        onSelectChannel={onSelectChannel}
+                        onMarkChannelRead={onMarkChannelRead}
+                        onMarkChannelUnread={onMarkChannelUnread}
+                        onMuteChannel={onMuteChannel}
+                        onUnmuteChannel={onUnmuteChannel}
+                        onStarChannel={onStarChannel}
+                        onUnstarChannel={onUnstarChannel}
+                        sections={sections}
+                        assignments={assignments}
+                        onAssignChannel={onAssignChannel}
+                        onUnassignChannel={onUnassignChannel}
+                        onCreateSectionForChannel={onCreateSectionForChannel}
+                        onDeleteChannel={onDeleteChannel}
+                        onLeaveChannel={onLeaveChannel}
+                      />
                     ))}
                   </SidebarMenu>
                 ) : null}

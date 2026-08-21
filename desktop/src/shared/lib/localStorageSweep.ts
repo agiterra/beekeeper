@@ -65,8 +65,19 @@ export const LOCAL_STORAGE_SWEEP_RULES: readonly LocalStorageSweepRule[] = [
   // expired first, a long-lived session still holding those ids in memory could
   // write them back and resurrect the ghost rows.
   { keyPrefix: "buzz-thread-activity-absent.v1:", maxAgeMs: 30 * DAY_MS },
+  // Project-container first-paint snapshots, keyed per relay+viewer
+  // (features/projects-container/hooks.ts). Repaintable cache: sweeping only
+  // costs one initial sidebar layout paint on the next visit.
+  { keyPrefix: "buzz.projects.containers.v1:", maxAgeMs: 14 * DAY_MS },
+  // Repository-enumeration first-paint snapshots, keyed per relay+viewer
+  // (features/projects/projectsSnapshot.ts). Repaintable cache: sweeping only
+  // costs one initial Repositories paint on the next visit.
+  { keyPrefix: "buzz.projects.repos.v1:", maxAgeMs: 14 * DAY_MS },
   // Do not add buzz-self-profile.v1: here. It is the load-bearing offline
   // identity fallback when the relay is unreachable, not a repaintable cache.
+  // buzz.projects.collapsed.v1 stays unregistered by the bounded-store audit:
+  // it is a small per-identity UI preference (collapse state), not a
+  // repaintable cache — sweeping it would silently reset user intent.
 ];
 
 function updatedAtFromJson(value: string): number | null {
