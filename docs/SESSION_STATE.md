@@ -5,14 +5,10 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-20 night, shipping **verified session liveness** —
-the ephemeral kind-24223 provider lease and the Pulse v2 digest built on it
-(§2 items 28-33, closing item 20 for Pulse and resolving item 27) — on top of
-the rehydration-hardening build (§2 items 4, 5, 6 and item 1's disclosure
-half) and the five 2026-08-19/20 design studies (§4), at the
-`build/2026-08-20.7` ceremony. This entry also records a ceremony collision
-that destroyed an uncommitted edit to this file (item 30); nothing was
-pushed._
+_Last updated: 2026-08-21 morning, recovering the red
+`build/2026-08-20.7` pipeline with an explicit provider state-lock release
+(§2 item 34). The verified-liveness implementation itself is unchanged; the
+recovery candidate is `build/2026-08-21`, pending Woodpecker and autodeploy._
 
 ---
 
@@ -21,9 +17,9 @@ pushed._
 | | |
 | --- | --- |
 | Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
-| Assembly | Andy rebuilt on top of our work; CI gate is now ~7 min (was ~40) and two of three documented flakes have real fixes |
+| Assembly | Recovery candidate `build/2026-08-21`: `build/2026-08-20.7` plus the explicit provider state-lock release in `6d8ec48d2`. Both exact Woodpecker Rust commands passed locally against fresh isolated Postgres 17, Redis 7 and MinIO; push, CI and autodeploy remain to be observed. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
-| Latest assembly | `build/2026-08-20.7` — adds **verified session liveness**: the ephemeral kind-24223 provider lease (authority-bound, relay-clocked TTL, Lua sequence fencing, released tombstone) on `feature/coding-sessions`, the Pulse v2 digest and shared `buzz_core::pulse_fold` on `feature/project-pulse`, the `build_create_channel` arity fix on `feature/project-containers`, and `CONTEXT.md` + the lease implementation plan on `integration/glue` (§2 items 28-33). Gate evidence is three independent runs, not one: the lease stack's own (3239 Rust, 5896 desktop, 47 conformance incl. 21 Pulse fold vectors, clippy `-D warnings`, fmt), the branch-chip regression fix, and the rehydration lane's. This build is the first to reach `origin` since `build/2026-08-20.3`: the rehydration-hardening ceremony called itself `build/2026-08-20.7` in this table but was never tagged and never pushed, so its work ships here, under the number it had already claimed. `.4`, `.5` and `.6` are Andy's tags on `upstream` — taking one of those names would have overwritten his build — which is why this is `.7` on both remotes and not the next free number on `origin`. It also carries the rehydration-hardening work (§2 items 4/5/6 and item 1's disclosure half; four commits `02824ea5`…`6f85b431` on `feature/coding-sessions`) and the five design studies in §4. Andy's `build/2026-08-20.5`/`.6` carried the **admin-delete** work that never got its own ledger entry: `buzz projects delete --cascade` with a last-published tombstone, `buzz-admin project-purge` for already-soft-deleted rows, the relay-identity guard, the ghost-Inbox and moderator-delete fixes, and a `buzz-db` test harness that stops the push-matcher tests sharing state (`615637de`…`0b48fc25`) |
+| Latest assembly | `build/2026-08-21` — carries the complete verified-liveness stack from `build/2026-08-20.7` (§2 items 28-33), plus only the state-lock recovery in item 34 and this ledger update. `.7` reached both remotes but CI #105 failed, so it never deployed; no live observation made against lightyear measured the lease implementation. |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -495,6 +491,29 @@ repo records findings the day they happen.
    while `feature/project-containers` and `feature/project-access` are not.
    Left alone deliberately: moving it now would collide with builtin-shell
    during the assembly merge for no product gain. Recorded in §3.
+
+34. **`build/2026-08-20.7` never deployed: CI #105 exposed a provider
+   state-lock release race.** The failing Rust step was not Redis Lua,
+   Postgres, lease admission, or Pulse. Of 239 provider unit tests, the only
+   failure was
+   `state::tests::the_state_dir_lock_admits_exactly_one_holder`: immediately
+   after dropping the first `StateDirLock`, the same process still received
+   `WouldBlock` while reacquiring the temporary directory. The build escaped
+   local ceremony because that run used `--skip-gate`; Woodpecker's exact
+   workspace command caught it, and red pipelines do not autodeploy. This is
+   why the subsequent lightyear read still returned zero provider-reachable
+   sessions: lightyear was still serving the pre-24223 relay, so that read did
+   not exercise lease behavior at all.
+
+   `feature/coding-sessions` commit `6d8ec48d2` now gives `StateDirLock` an
+   explicit `Drop` implementation that unlocks before the file descriptor is
+   closed. The existing failing test was the regression seam; it passed 50
+   consecutive focused runs after the fix. Both Woodpecker Rust commands then
+   passed locally against fresh isolated Postgres 17, Redis 7 and MinIO,
+   including the full workspace, all 239 provider tests and the separately
+   selected mesh-demo test. Clippy, rustfmt and `git diff --check` are green.
+   Deployment and the first meaningful live lease observation remain pending
+   until this recovery build's Woodpecker pipeline and autodeploy are green.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
