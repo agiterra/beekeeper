@@ -20,6 +20,18 @@ mod usage;
 pub use config::ChannelFilter;
 pub use usage::TurnUsage;
 
+/// The compiled-in `[Base]` platform-context prompt prepended to every managed
+/// ACP agent's system prompt.
+///
+/// Public because its audience is load-bearing and asymmetric: this text is
+/// written for agents the harness spawns with `EnvFence::OPEN`, which inherit
+/// `BUZZ_PRIVATE_KEY`/`BUZZ_RELAY_URL` from the harness and can therefore
+/// actually run the `buzz` commands it teaches. Coding sessions launched by
+/// `buzz-session-provider` are fenced out of that namespace and never receive
+/// this prompt; that crate asserts the difference against this constant rather
+/// than against a copy of the string.
+pub const BASE_PROMPT: &str = include_str!("base_prompt.md");
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -2194,7 +2206,7 @@ async fn tokio_main() -> Result<()> {
         } else if let Some(content) = base_prompt_content {
             Some(Box::leak(content.into_boxed_str()))
         } else {
-            Some(include_str!("base_prompt.md"))
+            Some(BASE_PROMPT)
         },
         heartbeat_prompt: config.heartbeat_prompt.clone(),
         cwd: std::env::current_dir()

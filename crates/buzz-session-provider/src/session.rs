@@ -173,6 +173,9 @@ pub struct SessionStartup {
     /// How the rehydration continuity bootstrap was delivered, or `None` when
     /// this open needed no bootstrap.
     pub bootstrap_transport: Option<BootstrapTransport>,
+    /// Briefing text no `session/new` system prompt could carry — the actor
+    /// prepends it to the first user turn. See [`OpenedSession`].
+    pub pending_briefing: Option<String>,
 }
 
 /// How the rehydration continuity bootstrap reached the agent.
@@ -481,15 +484,7 @@ impl SessionManager {
             events,
             observer,
             translator: TranscriptTranslator::new(request.include_thoughts),
-            first_turn_preamble: (startup.bootstrap_transport
-                == Some(BootstrapTransport::FirstTurn))
-            .then(|| {
-                request
-                    .rehydration_mcp
-                    .as_ref()
-                    .map(|descriptor| rehydrated_bootstrap(&descriptor.first_turn_brief))
-            })
-            .flatten(),
+            first_turn_preamble: startup.pending_briefing.clone(),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -596,6 +591,7 @@ async fn start_agent(
         response,
         continuity,
         bootstrap_transport,
+        pending_briefing,
     } = opened;
     tracing::info!(
         target: "csp::session",
@@ -614,6 +610,7 @@ async fn start_agent(
             model,
             continuity,
             bootstrap_transport,
+            pending_briefing,
         },
     ))
 }
@@ -624,24 +621,29 @@ struct OpenedSession {
     response: buzz_acp::acp::SessionNewResponse,
     continuity: SessionContinuity,
     bootstrap_transport: Option<BootstrapTransport>,
+    /// Briefing text the `session/new` system prompt could not carry, to be
+    /// prepended to the first user turn instead. `None` when it was delivered
+    /// on `session/new`, or when this open reattached an ACP conversation that
+    /// already received it.
+    pending_briefing: Option<String>,
 }
 
-/// The `session/new` system-prompt transport for a rehydrated open, if the
-/// adapter has one.
+/// The `session/new` system-prompt transport for this open, if the adapter has
+/// one.
 ///
 /// Delegates to the shared capability rules in `buzz-acp` rather than restating
 /// them: `None` means this adapter has no supported `session/new` transport (or
 /// is goose, whose own transport is a post-`session/new` request this provider
 /// does not speak), so the first-turn preamble is the only way in.
-fn rehydration_system_prompt<'a>(
+fn session_new_briefing_transport<'a>(
     client: &AcpClient,
-    bootstrap: &'a str,
+    briefing: &'a str,
 ) -> Option<SystemPromptTransport<'a>> {
     buzz_acp::acp::session_new_system_prompt(
         client.agent_name() == "goose",
         client.protocol_version(),
         client.agent_name(),
-        Some(bootstrap),
+        Some(briefing),
     )
 }
 
@@ -651,6 +653,25 @@ fn rehydrated_bootstrap(first_turn_brief: &str) -> String {
     )
 }
 
+/// Everything this open must tell the adapter about itself, in one string.
+///
+/// The fence briefing is unconditional: every execution this provider spawns is
+/// fenced out of the `BUZZ_*` namespace, whether or not it is rehydrated, so
+/// every execution has to be told what its shell cannot do
+/// ([`crate::agent_fence::FENCED_SESSION_BRIEFING`]). The rehydration bootstrap
+/// is appended after it only when there is prior context to declare.
+fn session_briefing(bootstrap: Option<&str>) -> String {
+    match bootstrap {
+        Some(bootstrap) => {
+            format!(
+                "{}\n\n{bootstrap}",
+                crate::agent_fence::FENCED_SESSION_BRIEFING
+            )
+        }
+        None => crate::agent_fence::FENCED_SESSION_BRIEFING.to_owned(),
+    }
+}
+
 async fn open_agent_session(
     client: &mut AcpClient,
     request: &CreateRequest,
@@ -658,20 +679,20 @@ async fn open_agent_session(
 ) -> Result<OpenedSession, AcpError> {
     let mcp_servers = rehydration_mcp_servers(request)?;
     let rehydrated = !mcp_servers.is_empty();
-    let bootstrap = request
-        .rehydration_mcp
-        .as_ref()
-        .map(|descriptor| rehydrated_bootstrap(&descriptor.first_turn_brief));
-    // A rehydrated execution must be told what it is before it answers anyone.
-    // The system prompt is the required transport when the adapter has one; the
-    // first-turn preamble exists only for adapters that do not.
-    let system_prompt = rehydrated
+    let bootstrap = rehydrated
         .then(|| {
-            bootstrap
-                .as_deref()
-                .and_then(|bootstrap| rehydration_system_prompt(client, bootstrap))
+            request
+                .rehydration_mcp
+                .as_ref()
+                .map(|descriptor| rehydrated_bootstrap(&descriptor.first_turn_brief))
         })
         .flatten();
+    // Every execution must be told that its shell is fenced, and a rehydrated
+    // one must additionally be told what it is, before either answers anyone.
+    // The system prompt is the required transport when the adapter has one; the
+    // first-turn preamble exists only for adapters that do not.
+    let briefing = session_briefing(bootstrap.as_deref());
+    let system_prompt = session_new_briefing_transport(client, &briefing);
     let bootstrap_transport = rehydrated.then(|| {
         if system_prompt.is_some() {
             BootstrapTransport::SystemPrompt
@@ -679,6 +700,11 @@ async fn open_agent_session(
             BootstrapTransport::FirstTurn
         }
     });
+    // What `session/new` could not carry falls to the first turn. A native
+    // reattachment takes neither: `session/resume` and `session/load` have no
+    // system-prompt slot, and the conversation they restore already contains
+    // the briefing from the open that created it.
+    let pending_briefing = system_prompt.is_none().then(|| briefing.clone());
     let Some(cursor) = request.resume_cursor.as_deref() else {
         let response = client
             .session_new_full(cwd, mcp_servers, system_prompt, request.title.as_deref())
@@ -692,6 +718,7 @@ async fn open_agent_session(
             response,
             continuity,
             bootstrap_transport,
+            pending_briefing,
         });
     };
 
@@ -707,6 +734,7 @@ async fn open_agent_session(
                     response,
                     continuity: SessionContinuity::Resumed,
                     bootstrap_transport: None,
+                    pending_briefing: None,
                 });
             }
             Err(_) => {
@@ -727,6 +755,7 @@ async fn open_agent_session(
                     response,
                     continuity: SessionContinuity::Loaded,
                     bootstrap_transport: None,
+                    pending_briefing: None,
                 });
             }
             Err(_) => {
@@ -749,6 +778,7 @@ async fn open_agent_session(
             response,
             continuity: SessionContinuity::Rehydrated,
             bootstrap_transport,
+            pending_briefing,
         });
     }
     Ok(OpenedSession {
@@ -757,6 +787,7 @@ async fn open_agent_session(
             reason: fallback_reason,
         },
         bootstrap_transport,
+        pending_briefing,
     })
 }
 
@@ -1995,6 +2026,60 @@ done
             Some("Review the prior decision"),
             "the preamble must never reach the durable transcript"
         );
+    }
+
+    /// The fence is invisible from inside the adapter — it sees a `BUZZ_*`-free
+    /// environment and no reason for it — so *every* execution is told, not
+    /// only the rehydrated ones that also need a continuity bootstrap.
+    #[tokio::test]
+    async fn a_fresh_session_is_told_its_shell_is_fenced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log_path = dir.path().join("fresh-briefing.requests");
+        let agent = fake_agent(dir.path(), "fresh-briefing-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+            ("MCP_TEST_MODE".to_owned(), "fresh".to_owned()),
+            ("MCP_TEST_PROTOCOL".to_owned(), "1".to_owned()),
+            (
+                "MCP_TEST_AGENT_NAME".to_owned(),
+                buzz_acp::acp::CLAUDE_AGENT_ACP_NAME.to_owned(),
+            ),
+        ];
+
+        let startup = manager.create(create).await.expect("fresh create");
+        assert_eq!(startup.continuity, SessionContinuity::Fresh);
+        assert_eq!(
+            startup.bootstrap_transport, None,
+            "a fresh open needs no continuity bootstrap"
+        );
+        assert_eq!(
+            startup.pending_briefing, None,
+            "the system prompt carried the briefing, so no first turn should"
+        );
+
+        let open = request_by_method(&log_path, "session/new");
+        let appended = open["params"]["_meta"]["systemPrompt"]["append"]
+            .as_str()
+            .expect("_meta.systemPrompt.append");
+        assert!(
+            appended.contains("cannot authenticate"),
+            "a fenced session must be told why `buzz` will not work"
+        );
+        assert!(
+            !appended.contains("buzz pulse update"),
+            "a fenced session must never be told to write the Pulse"
+        );
+        assert!(
+            !appended.contains("continuity mode is Rehydrated"),
+            "a fresh open must not claim reconstructed context"
+        );
+        manager.shutdown("s1");
     }
 
     /// A native reattachment carries its own context, so it is never given a

@@ -79,6 +79,35 @@ pub(crate) const FENCE: EnvFence = EnvFence {
     exempt: EXEMPT,
 };
 
+/// What a fenced adapter is told about the consequence above, in its own words.
+///
+/// The fence is invisible from inside the adapter: it sees an environment with
+/// no `BUZZ_*` in it and no explanation, so an operator who asks it about Buzz
+/// coordination gets "unavailable — nothing is configured", which reads as a
+/// broken install rather than a deliberate boundary. That is exactly what
+/// happened on 2026-08-21: a session asked to read its Project Pulse reported
+/// the empty key files as a misconfiguration.
+///
+/// So the provider says it. Every rule here is a fact about this process, not
+/// an aspiration:
+///
+/// - It cannot authenticate `buzz` — [`FENCE`] removes the whole namespace
+///   before the adapter is spawned (`session.rs`, `spawn_with_env_fence`).
+/// - Its session state *is* published: the provider observes branch, `HEAD`
+///   commit and dirty state itself ([`crate::git_probe`]) and publishes them
+///   as kind:44223 session metadata, which is what the Project Pulse digest
+///   folds into its session groups (`buzz-acp/src/pulse_fetch.rs`).
+/// - It receives no `[Project Pulse]` injection — that is composed in the ACP
+///   harness's pool for managed agents (`buzz-acp/src/pool.rs`), a path a
+///   coding session never takes.
+///
+/// Consequently this text must never instruct the adapter to run a relay
+/// command, and `buzz-acp`'s base prompt — written for the *unfenced* managed
+/// agents, which do inherit the harness's credentials — must keep instructing
+/// exactly that. `the_fenced_briefing_never_tells_a_session_to_write_the_pulse`
+/// pins both halves.
+pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `buzz` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `buzz` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Buzz Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +138,43 @@ mod tests {
     #[test]
     fn an_unknown_buzz_variable_is_fenced_on_its_prefix_alone() {
         assert!(FENCE.covers("BUZZ_SOME_FUTURE_CREDENTIAL"));
+    }
+
+    /// The rule the 2026-08-21 finding cost us: never instruct an agent to do
+    /// something its own environment forbids.
+    ///
+    /// Both halves are asserted together, in one test, because the defect was
+    /// the *pair* drifting apart — a write instruction that is correct for the
+    /// unfenced managed agents leaking into the fenced coding-session path.
+    #[test]
+    fn the_fenced_briefing_never_tells_a_session_to_write_the_pulse() {
+        for forbidden in [
+            "buzz pulse update",
+            "buzz pulse digest",
+            "buzz pulse list",
+            "buzz pulse sessions",
+            "BUZZ_PULSE_PROJECT",
+        ] {
+            assert!(
+                !FENCED_SESSION_BRIEFING.contains(forbidden),
+                "the fenced briefing tells a credential-less session to run `{forbidden}`"
+            );
+        }
+        assert!(
+            FENCED_SESSION_BRIEFING.contains("cannot authenticate"),
+            "the fenced briefing must say why `buzz` will not work here"
+        );
+        assert!(
+            FENCED_SESSION_BRIEFING.contains("ask your operator"),
+            "the fenced briefing must name the path that does work"
+        );
+
+        // The unfenced audience keeps the instruction: a managed ACP agent
+        // inherits the harness's credentials and is the only writer Pulse has.
+        assert!(
+            buzz_acp::BASE_PROMPT.contains("post it yourself with `buzz pulse update`"),
+            "the managed-agent base prompt lost its Pulse write instruction"
+        );
     }
 
     /// Over-fencing is the other failure mode: an agent that cannot find its
