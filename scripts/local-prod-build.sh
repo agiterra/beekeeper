@@ -119,7 +119,12 @@ if $NO_INSTALL; then
   echo "==> --no-install: skipping /Applications install"
   exit 0
 fi
-if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/Bee Keeper" >/dev/null; then
+# Match the executable, not the product name: Tauri leaves CFBundleExecutable
+# as the Cargo binary (`buzz-desktop`), so a productName-based pattern never
+# matches and this guard silently passes over a running app. The pre-rename
+# version had exactly that bug — it looked for `MacOS/Buzz` against a process
+# whose real path is `MacOS/buzz-desktop`.
+if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/buzz-desktop" >/dev/null; then
   echo "Bee Keeper.app is running — quit it, then re-run the install" >&2
   exit 1
 fi

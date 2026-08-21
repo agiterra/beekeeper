@@ -1,14 +1,18 @@
 use super::*;
 
 /// Binary names for the Bee Keeper desktop/Tauri process. Used by
-/// dead-instance detection to confirm the owning desktop is still alive.
+/// dead-instance detection to narrow the PID scan before the identifier check
+/// below, which is what actually decides ownership.
 ///
-/// macOS names the process after `productName`, Linux/Windows after the Cargo
-/// binary (`buzz-desktop`, which deliberately did not get renamed). Stock Buzz
-/// is NOT listed: the two apps now coexist, and reaping on a shared name would
-/// let one of them kill the other's agents.
+/// These are all spellings of the **Cargo binary name**, not the product name:
+/// `CFBundleExecutable` stays `buzz-desktop` through a Tauri rename, so
+/// `productName` never appears as a process name on any platform. Stock Buzz
+/// therefore shares every name here — which is fine, and is precisely why
+/// [`desktop_is_alive_for_instance`] additionally requires the bundle
+/// identifier to appear in the process's argv/environ. That identifier
+/// (`io.agiterra.beekeeper` vs `xyz.block.buzz.app`) is the only thing keeping
+/// two coexisting installs from reaping each other's agents.
 const DESKTOP_BINARY_NAMES: &[&str] = &[
-    "Bee Keeper",
     "buzz-desktop",
     "buzz_desktop",
     // Linux limits /proc/<pid>/comm to 15 visible bytes, truncating the
@@ -111,7 +115,7 @@ fn extract_buzz_marker_value(_pid: u32) -> Option<String> {
 }
 
 /// Check if a Buzz desktop process is still alive for the given instance ID.
-/// Scans all user-owned processes named "Bee Keeper" or "buzz-desktop" and checks
+/// Scans all user-owned processes named "buzz-desktop" and checks
 /// whether any has the identifier in its command-line args (KERN_PROCARGS2 buffer
 /// includes both argv and environ — the `--config` JSON from `tauri dev` contains
 /// the identifier string).
