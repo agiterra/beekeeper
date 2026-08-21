@@ -5,12 +5,12 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated at every ceremony and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
-_Last updated: 2026-08-21, shipping the **fenced-session briefing** as
-`build/2026-08-21.1` (§2 item 35): a coding session is now told, on every
-`session/new`, that its `BUZZ_*`-free environment is deliberate and that its
-session state is published for it. Sits on top of Sol's CI-105 state-lock
-recovery (`build/2026-08-21`, item 34), which had not yet been observed green
-or deployed when this shipped — lightyear still serves `build/2026-08-19.4`._
+_Last updated: 2026-08-21, preparing the lease-backed **Agent Progress**
+surface for the next build (§2 item 36). `build/2026-08-21.1` is no longer a
+candidate: Woodpecker #109 passed at `04a087e4a`, and the first live digest
+proved the deployed lease end to end — one provider-reachable session whose
+last durable observation was 9,119 seconds old. The same read was honestly
+partial because several session channels were inaccessible._
 
 ---
 
@@ -18,10 +18,10 @@ or deployed when this shipped — lightyear still serves `build/2026-08-19.4`._
 
 | | |
 | --- | --- |
-| Deployed | `build/2026-08-19.4` (`246dfa1b`) on lightyear — auto-deployed by `buzz-autodeploy.timer` after CI #91 went green 2026-08-20T03:55Z; relay verified from outside 2026-08-20 by a member-key probe: a kind-44240 write was rejected `restricted: unknown project coordinate`, which is the new build's discriminator (the old build says `unknown event kind`) |
-| Assembly | `build/2026-08-21.1`: the CI-105 recovery candidate `build/2026-08-21` plus the fenced-session briefing (item 35). Neither has been observed green on Woodpecker or deployed; push, CI and autodeploy remain to be observed for both. |
+| Deployed | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
+| Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
-| Latest assembly | `build/2026-08-21.1` — `build/2026-08-21` (the complete verified-liveness stack from `build/2026-08-20.7`, §2 items 28-33, plus the state-lock recovery in item 34) **plus** the fenced-session briefing in item 35: `agent_fence::FENCED_SESSION_BRIEFING` on `feature/coding-sessions` (`e3cb42c5a`), the `base_prompt.md` corrections on `feature/project-pulse` (`d6e56bb8e`), and this ledger entry on `integration/glue`. Equivalence evidence: `git diff 8e3c22e3d integrated-build` is exactly the four product files of the tested `wip/prompt-fence-fix` tree (+218/−28) and nothing else, and all four blobs are byte-identical to `24d8f24d6`. `.7` reached both remotes but CI #105 failed, so it never deployed; no live observation against lightyear has yet measured either the lease implementation or the briefing. |
+| Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md`. Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -610,11 +610,11 @@ repo records findings the day they happen.
      `just file-size-check` exit 0. It also read the assembled prompt text and
      confirmed every claim the briefing makes is true of that environment
      (`EXEMPT` is empty and `PREFIXES` is `["BUZZ_"]` at
-     `agent_fence.rs:70,52`; no digest path reaches it). **Unproven end to
-     end:** lightyear still serves `build/2026-08-19.4`; Sol's CI-105 recovery
-     (`build/2026-08-21`, item 34) had not been observed green or deployed
-     when this shipped, so **no live coding session has been observed
-     receiving the briefing.** That observation is the next thing to do here.
+     `agent_fence.rs:70,52`; no digest path reaches it). **Still unproven end
+     to end:** `build/2026-08-21.1` subsequently passed Woodpecker #109 and the
+     deployed relay accepted leases, but **no live coding session has yet been
+     observed receiving the briefing.** That provider/adapter observation is
+     distinct from the relay proof and remains owed.
    - **How it was split.** `crates/buzz-session-provider/src/{agent_fence,
      session}.rs` plus `buzz-acp`'s new `pub const BASE_PROMPT` went to
      `feature/coding-sessions` (`e3cb42c5a`); the `base_prompt.md` rewrite and
@@ -626,6 +626,50 @@ repo records findings the day they happen.
      `docs/INTEGRATION.md`. Keeping the test whole was chosen over splitting
      six lines into glue; move it to glue if upstreaming that branch ever
      needs it.
+
+36. **Agent Progress uses the lease; there is no second liveness clock.** The
+   preserved sidebar work originally copied Pulse's deleted 30-minute
+   freshness heuristic, so the same session could read `Working` there and
+   `Open · liveness unverified` in Pulse. The rebuilt global
+   `/agent-progress` preview route now consumes the same deep coordination
+   fold as Pulse. That fold alone owns lifecycle authority, generation
+   continuity, exact-generation lease selection, conservative expiry,
+   closure, ambiguity and read completeness. The two surfaces are adapters
+   over one result, not parallel implementations.
+
+   The compact register is exactly `Reachable` / `Unverified` / `Closed`;
+   reported provider status is a separate historical line and cannot establish
+   reachability. Rows have fixed height, one row represents one umbrella
+   session, and the footer counts distinct `executionKey` identities rather
+   than resumed generations. It deliberately carries no token total because
+   no source fact proves one. A partial read never says there are no agents and
+   every nonzero count becomes an `at least` floor.
+
+   The project shelf no longer makes a competing liveness claim: it says
+   `Open sessions` and labels metadata as `Reported working` / `Reported idle`
+   in neutral styling. Pulse and Agent Progress share the full status mapper,
+   the coordination vocabulary, and the completeness envelope. The surface
+   remains global rather than becoming a coding-session host tab because it
+   coordinates across sessions; the separate N-tabs host decision does not
+   block it.
+
+   **Evidence before ceremony:** 6,009 desktop unit tests, 47/47 conformance,
+   Agent Progress Playwright 2/2, TypeScript, Biome, px-text and file-size
+   gates passed. Six inspected state screenshots were pairwise hash-distinct;
+   they include reachable, unverified, closed, multi-execution and partial
+   reads. Adversarial Standards and Spec re-review ended with no blocker or
+   major.
+
+   **The live 403s are an honest, coarse failure mode, not an authorization
+   mismatch.** Durable session facts and lease snapshots use the same
+   per-channel membership/access predicate; project ownership does not widen
+   it. Their response semantics differ deliberately: durable multi-channel
+   queries omit inaccessible branches, while an explicitly scoped lease
+   snapshot fails if any requested `#h` is inaccessible, forcing the caller to
+   mark the result partial. That prevents a falsely complete digest, but one
+   revoked channel can make an entire 128-channel lease chunk unavailable and
+   lower the observed floor. Adaptive split-on-403 is a recovery optimization,
+   not permission to widen access.
 
 ### Recovered 2026-08-18 from superseded handoffs (verified still true)
 
@@ -706,11 +750,12 @@ than replace them, and it is not started.
 3. **Verify Andy's People/roles flow** with a second identity
    (viewer → operator → revoke). It plausibly closes §2 items 7–8; do not
    strike them on commit messages alone.
-4. **Teach the coding-session surfaces to read the lease** (§2 item 20's
-   open half). The session card, project shelf and sidebar still infer status
-   from metadata transitions; Pulse no longer does. Two surfaces telling two
-   liveness stories over the same events is the bug class this build was
-   built to remove, so this is the next honesty item, not a polish item.
+4. **Finish removing metadata-derived liveness from coding-session detail**
+   (§2 items 20 and 36). Agent Progress now reads the lease, and the project
+   shelf was reduced to neutral `Reported …` history, so neither competes with
+   Pulse. Audit the remaining coding-session detail/workspace surface and
+   either give it the shared coordination result or make every status claim
+   explicitly historical. Do not build a third fold.
 5. **Move `ChannelInfo`'s `project_ref: None` to its owning branch** (§2 item
    33). It is on `feature/builtin-shell`; it belongs on
    `feature/project-containers`. The assembly is green either way, but two

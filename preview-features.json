@@ -50,6 +50,12 @@
       "platforms": ["desktop"]
     },
     {
+      "id": "agent-progress",
+      "name": "Agent progress",
+      "description": "Live per-session progress for every coding session you can read, folded from events that already exist",
+      "platforms": ["desktop"]
+    },
+    {
       "id": "coding-session-export",
       "name": "Coding-session transcript export",
       "description": "Export a coding session as a static, redacted, self-contained transcript bundle with an offline viewer",

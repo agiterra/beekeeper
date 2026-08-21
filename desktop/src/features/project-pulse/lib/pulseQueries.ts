@@ -42,7 +42,8 @@ import {
   type PulseDigestError,
 } from "./pulseFold.ts";
 import type { PulseEvent } from "./pulseEntry.ts";
-import { isStrictMetadataContent } from "./pulseFoldStrictJson.ts";
+import { isStrictMetadataContent } from "@/shared/coordination/sessionCoordinationStrictJson";
+import { sessionLeaseExpiryDelayMs } from "@/shared/coordination/sessionCoordinationFold";
 
 /** Upper bound on entries fetched in one read; a truncated page is a partial read. */
 export const PULSE_ENTRY_QUERY_LIMIT = 500;
@@ -66,25 +67,18 @@ function channelChunks(channelIds: readonly string[]): string[][] {
   return chunks;
 }
 
-/** Milliseconds until the earliest currently reachable lease expires. */
+/**
+ * Milliseconds until the earliest currently reachable lease expires.
+ *
+ * Delegated to the shared coordination module: Agent Progress schedules its
+ * own re-read on the same instant, and two surfaces disagreeing about when a
+ * lease lapses is two surfaces disagreeing about liveness.
+ */
 export function pulseLeaseExpiryDelayMs(
   digest: Pick<ProjectPulseDigest, "sessions">,
   nowMs = Date.now(),
 ): number | null {
-  const expiries = digest.sessions.flatMap((session) =>
-    session.coordinationState !== "provider_reachable"
-      ? []
-      : session.generations
-          .filter(
-            (generation) =>
-              generation.current &&
-              generation.reachability === "provider_reachable" &&
-              generation.leaseExpiresAt !== null,
-          )
-          .map((generation) => generation.leaseExpiresAt as number),
-  );
-  if (expiries.length === 0) return null;
-  return Math.max(0, Math.min(...expiries) * 1_000 - nowMs);
+  return sessionLeaseExpiryDelayMs(digest.sessions, nowMs);
 }
 
 /** Whether a channel list is only a floor rather than an authoritative set. */

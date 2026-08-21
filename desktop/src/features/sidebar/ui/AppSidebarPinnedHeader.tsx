@@ -1,4 +1,5 @@
-import { Activity, Bot, Inbox, Zap } from "lucide-react";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { Activity, Bot, Gauge, Inbox, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -88,6 +89,38 @@ export function AppSidebarPinnedHeader({
   );
 }
 
+/**
+ * The Agent-progress preview entry.
+ *
+ * Self-navigating rather than prop-driven: the surface is a preview flag that
+ * may never graduate, and threading one more `onSelect*` callback through
+ * AppSidebar and AppShell would spread its footprint across files another
+ * branch is editing. When it graduates, it moves onto the same callback shape
+ * as its neighbours.
+ */
+function AgentProgressMenuItem() {
+  const navigate = useNavigate();
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  return (
+    <FeatureGate feature="agent-progress">
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          data-testid="open-agent-progress-view"
+          isActive={pathname.startsWith("/agent-progress")}
+          onClick={() => void navigate({ to: "/agent-progress" })}
+          tooltip="Agent progress"
+          type="button"
+        >
+          <Gauge className="h-4 w-4" />
+          <SidebarMenuLabel>Agent progress</SidebarMenuLabel>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </FeatureGate>
+  );
+}
+
 export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
@@ -138,6 +171,7 @@ export function AppSidebarPrimaryMenu({
             </SidebarMenuButton>
           </SidebarMenuItem>
         </FeatureGate>
+        <AgentProgressMenuItem />
         <SidebarMenuItem>
           <SidebarMenuButton
             className="data-[active=true]:font-normal"

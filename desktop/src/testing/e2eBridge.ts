@@ -9,7 +9,10 @@ import {
   handleSaveCustomHarness,
   handleDeleteCustomHarness,
 } from "./e2eBridgeCustomHarnesses.ts";
-
+import {
+  respondToMockMultiChannelSessionFacts,
+  type MockFilter,
+} from "./e2eBridgeSessionFacts.ts";
 import { relayClient } from "@/shared/api/relayClient";
 import { activateRateLimit } from "@/shared/api/relayRateLimitGate";
 import { resolveAgentParallelism } from "@/features/agents/lib/agentParallelism";
@@ -1033,20 +1036,6 @@ type MockSubscription = {
    *  owner-scoped live subscription (e.g. the observer-archive `24200`
    *  reconciliation gate) independently of channel-scoped ones. */
   ownerPubkeys: string[];
-};
-
-type MockFilter = {
-  "#a"?: string[];
-  "#d"?: string[];
-  "#e"?: string[];
-  "#h"?: string[];
-  "#p"?: string[];
-  authors?: string[];
-  ids?: string[];
-  kinds?: number[];
-  limit?: number;
-  since?: number;
-  until?: number;
 };
 
 type MockSocket = {
@@ -10206,6 +10195,17 @@ function sendToMockSocket(args: {
         sendWsText(socket.handler, ["EVENT", subId, event]);
       }
       sendWsText(socket.handler, ["EOSE", subId]);
+      return;
+    }
+
+    if (
+      respondToMockMultiChannelSessionFacts(
+        filter,
+        subId,
+        getMockMessageStore,
+        (message) => sendWsText(socket.handler, message),
+      )
+    ) {
       return;
     }
 

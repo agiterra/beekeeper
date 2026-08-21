@@ -1,7 +1,6 @@
 import {
   Activity,
   Bot,
-  Circle,
   Eye,
   FolderGit2,
   LoaderCircle,
@@ -34,6 +33,7 @@ import {
   projectChildLabel,
   type ProjectChildRow,
 } from "../lib/projectChildren";
+import { projectSessionObservationLabel } from "../lib/projectSessionObservation";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
 /**
@@ -163,20 +163,13 @@ export function ProjectChildRowItem({
               </span>
             ) : null}
           </span>
-          <span
-            className={cn(
-              "ml-1 flex shrink-0 items-center gap-1 text-2xs",
-              !pending && entry.status.kind === "working"
-                ? "text-emerald-500"
-                : "text-sidebar-foreground/45",
-            )}
-          >
-            {!pending && entry.status.kind === "working" ? (
-              <Circle className="size-1.5 fill-current" aria-hidden />
-            ) : null}
-            {/* A pending row's Working/Idle is only a prediction — say what
-                is actually happening instead. */}
-            {pending ? "Starting…" : settled ? "Closed" : entry.status.label}
+          <span className="ml-1 flex shrink-0 items-center gap-1 text-2xs text-sidebar-foreground/45">
+            {/* A pending row has not produced a provider observation yet. */}
+            {pending
+              ? "Starting…"
+              : settled
+                ? "Closed"
+                : projectSessionObservationLabel(entry.status)}
           </span>
         </SidebarMenuButton>
       );

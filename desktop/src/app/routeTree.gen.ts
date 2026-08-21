@@ -11,6 +11,7 @@ import { Route as remindersRouteImport } from "./routes/reminders";
 import { Route as pulseRouteImport } from "./routes/pulse";
 import { Route as projectsRouteImport } from "./routes/projects";
 import { Route as agentsRouteImport } from "./routes/agents";
+import { Route as agentProgressRouteImport } from "./routes/agent-progress";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as workflowsDotworkflowIdRouteImport } from "./routes/workflows.$workflowId";
 import { Route as shellDotsessionIdRouteImport } from "./routes/shell.$sessionId";
@@ -54,6 +55,11 @@ const projectsRoute = projectsRouteImport.update({
 const agentsRoute = agentsRouteImport.update({
   id: "/agents",
   path: "/agents",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const agentProgressRoute = agentProgressRouteImport.update({
+  id: "/agent-progress",
+  path: "/agent-progress",
   getParentRoute: () => rootRouteImport,
 } as any);
 const indexRoute = indexRouteImport.update({
@@ -136,6 +142,7 @@ const channelsDotchannelIdDotpostsDotpostIdRoute =
 
 export interface FileRoutesByFullPath {
   "/": typeof indexRoute;
+  "/agent-progress": typeof agentProgressRoute;
   "/agents": typeof agentsRoute;
   "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
@@ -158,6 +165,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
+  "/agent-progress": typeof agentProgressRoute;
   "/agents": typeof agentsRoute;
   "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
@@ -180,6 +188,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof indexRoute;
+  "/agent-progress": typeof agentProgressRoute;
   "/agents": typeof agentsRoute;
   "/projects": typeof projectsRoute;
   "/pulse": typeof pulseRoute;
@@ -204,6 +213,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
     | "/"
+    | "/agent-progress"
     | "/agents"
     | "/projects"
     | "/pulse"
@@ -226,6 +236,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
+    | "/agent-progress"
     | "/agents"
     | "/projects"
     | "/pulse"
@@ -247,6 +258,7 @@ export interface FileRouteTypes {
   id:
     | "__root__"
     | "/"
+    | "/agent-progress"
     | "/agents"
     | "/projects"
     | "/pulse"
@@ -270,6 +282,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   indexRoute: typeof indexRoute;
+  agentProgressRoute: typeof agentProgressRoute;
   agentsRoute: typeof agentsRoute;
   projectsRoute: typeof projectsRoute;
   pulseRoute: typeof pulseRoute;
@@ -329,6 +342,13 @@ declare module "@tanstack/react-router" {
       path: "/agents";
       fullPath: "/agents";
       preLoaderRoute: typeof agentsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/agent-progress": {
+      id: "/agent-progress";
+      path: "/agent-progress";
+      fullPath: "/agent-progress";
+      preLoaderRoute: typeof agentProgressRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/": {
@@ -453,6 +473,7 @@ const projectsDotprojectIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   indexRoute: indexRoute,
+  agentProgressRoute: agentProgressRoute,
   agentsRoute: agentsRoute,
   projectsRoute: projectsRoute,
   pulseRoute: pulseRoute,

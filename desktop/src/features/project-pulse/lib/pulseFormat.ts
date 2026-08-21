@@ -7,45 +7,45 @@
  * relay-signed kind 39011 would then carry a sentence that ages while the
  * digest sits in a client cache.
  */
-import { codingSessionWireWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
-import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
+import {
+  coordinationDisplayGeneration,
+  coordinationReportedStatus,
+  coordinationStateFullLabel,
+  formatCoordinationAge,
+} from "@/shared/coordination/sessionCoordinationFormat";
 
 import {
   PULSE_COMMIT_NOT_CHECKED,
   type ProjectPulseDigest,
+  type PulseCoordinationState,
   type PulseDigestEntry,
   type PulseDigestGeneration,
   type PulseDigestSession,
 } from "./pulseFold.ts";
 
-/** Current generation with the newest observation, then the newest fallback. */
-export function pulseSessionDisplayGeneration(
-  session: PulseDigestSession,
-): PulseDigestGeneration | null {
-  const current = session.generations.filter(
-    (generation) => generation.current,
-  );
-  const candidates = current.length > 0 ? current : session.generations;
-  return (
-    [...candidates].sort((left, right) => {
-      if (left.statusAt === null) return right.statusAt === null ? 0 : 1;
-      if (right.statusAt === null) return -1;
-      return right.statusAt - left.statusAt;
-    })[0] ?? null
-  );
+/** Pulse's group-heading register, derived from the shared coordination words. */
+export function pulseSessionGroupHeading(
+  state: PulseCoordinationState,
+): string {
+  const label = coordinationStateFullLabel(state);
+  if (state === "provider_reachable") return `${label} sessions`;
+  if (state === "closed") return `${label}/history`;
+  return label;
 }
 
+/**
+ * Current generation with the newest observation, then the newest fallback.
+ *
+ * Shared with Agent Progress: which generation a row *speaks for* is part of
+ * the coordination answer, not a Pulse styling choice.
+ */
+export const pulseSessionDisplayGeneration: (
+  session: PulseDigestSession,
+) => PulseDigestGeneration | null = coordinationDisplayGeneration;
+
 /** Compact age for a duration in seconds — `4m`, `3h`, `2d`, `just now`. */
-export function formatPulseAge(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "unknown";
-  // A negative age means the observation's clock ran ahead of ours. Saying
-  // "in 4 minutes" about an observation is worse than admitting the skew.
-  if (seconds < 0) return "just now";
-  if (seconds < 60) return "just now";
-  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`;
-  return `${Math.floor(seconds / 86_400)}d`;
-}
+export const formatPulseAge: (seconds: number) => string =
+  formatCoordinationAge;
 
 /** `observed 4m ago` — the age of the session's newest 44223 observation. */
 export function formatObservedAge(session: PulseDigestSession): string {
@@ -97,9 +97,7 @@ export function formatObservedCommit(commit: string | null): string {
  */
 export function pulseSessionStatusLabel(session: PulseDigestSession): string {
   const status = pulseSessionDisplayGeneration(session)?.status ?? undefined;
-  return codingSessionWireWorkspaceStatus(
-    status as CodingSessionStatus | undefined,
-  ).label;
+  return coordinationReportedStatus(status).label;
 }
 
 /** Reachability wording appears only when the chosen generation proves it. */
@@ -303,7 +301,7 @@ export function formatPulseSessionCount(count: number): string {
   return `${count} ${count === 1 ? "session" : "sessions"}`;
 }
 
-/** `3 executions` — the umbrella disclosure counts every generation. */
+/** `3 executions` — callers count distinct execution identities. */
 export function formatPulseExecutionCount(count: number): string {
   return `${count} ${count === 1 ? "execution" : "executions"}`;
 }
@@ -315,7 +313,6 @@ export function pulseSessionClosedIsRestated(
   const status = pulseSessionDisplayGeneration(session)?.status ?? undefined;
   return (
     session.lifecycle === "closed" &&
-    codingSessionWireWorkspaceStatus(status as CodingSessionStatus | undefined)
-      .kind === "ended"
+    coordinationReportedStatus(status).label === "Ended"
   );
 }

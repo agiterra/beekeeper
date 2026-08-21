@@ -122,6 +122,7 @@ export default defineConfig({
         "**/projects-sidebar.spec.ts",
         "**/project-container-screen.spec.ts",
         "**/projectPulse.spec.ts",
+        "**/agentProgress.spec.ts",
         "**/persona-model-combobox-screenshots.spec.ts",
         "**/drafts-screenshots.spec.ts",
         "**/drafts-all-fix-screenshots.spec.ts",

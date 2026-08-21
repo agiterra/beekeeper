@@ -505,6 +505,22 @@ test("provider-reachable, open-unverified, and closed sessions render as separat
   );
 });
 
+test("Pulse group headings use the shared coordination vocabulary", async () => {
+  const { pulseSessionGroupHeading } = await import(
+    "@/features/project-pulse/lib/pulseFormat"
+  );
+  assert.deepEqual(
+    ["provider_reachable", "open_unverified", "closed"].map((state) =>
+      pulseSessionGroupHeading(state),
+    ),
+    [
+      "Provider-reachable sessions",
+      "Open · liveness unverified",
+      "Closed/history",
+    ],
+  );
+});
+
 test("the three commit-confirmation strings render verbatim", async () => {
   const cases = [
     [true, NOW - 120, "Commit confirmed on relay · 2m ago"],
@@ -961,12 +977,14 @@ test("generations of one umbrella collapse into one disclosed session card", asy
     observedCommit: "50dee7a75a99abcd",
   }).generations[0];
   generation2.current = false;
+  generation2.executionKey = newest.executionKey;
   const generation1 = session({
     targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
     status: "stopped",
     statusAt: NOW - 10_800,
   }).generations[0];
   generation1.current = false;
+  generation1.executionKey = newest.executionKey;
 
   const { getAllByTestId, getByTestId, queryByTestId } = await renderView(
     {
@@ -987,14 +1005,14 @@ test("generations of one umbrella collapse into one disclosed session card", asy
   assert.equal(getAllByTestId("pulse-session-card").length, 1);
   assert.equal(
     getByTestId("pulse-session-card").getAttribute("data-execution-count"),
-    "3",
+    "1",
   );
   assert.ok(getByTestId("pulse-provider-reachable"));
   assert.equal(queryByTestId("pulse-open-unverified"), null);
   assert.equal(queryByTestId("pulse-closed"), null);
 
   const toggle = getByTestId("pulse-session-executions-toggle");
-  assert.match(toggle.textContent, /3 executions/);
+  assert.match(toggle.textContent, /1 execution · 3 generations/);
   assert.equal(queryByTestId("pulse-session-execution-list"), null);
   const { act } = await import("react");
   await act(async () => {
@@ -1002,7 +1020,7 @@ test("generations of one umbrella collapse into one disclosed session card", asy
   });
   const history = getAllByTestId("pulse-session-execution");
   assert.equal(history.length, 2);
-  assert.match(history[0].textContent, /Ended · last observed 2h ago/);
+  assert.match(history[0].textContent, /Stopped · last observed 2h ago/);
   assert.match(history[0].textContent, /50dee7a75a99/);
 
   await act(async () => {
@@ -1204,7 +1222,7 @@ test("commit confirmation stays inline with the commit observation", async () =>
   assert.match(confirmation.className, /\btext-xs\b/);
 });
 
-test("Closed is suppressed only when the status already says Ended", async () => {
+test("durable closure remains visible beside a provider terminal report", async () => {
   const ended = await renderView({
     kind: "ready",
     digest: digest({
@@ -1221,9 +1239,9 @@ test("Closed is suppressed only when the status already says Ended", async () =>
   });
   assert.match(
     ended.getByTestId("pulse-session-status").textContent,
-    /^Ended · last observed 30m ago$/,
+    /^Stopped · last observed 30m ago$/,
   );
-  assert.equal(ended.queryByTestId("pulse-session-closed"), null);
+  assert.equal(ended.getByTestId("pulse-session-closed").textContent, "Closed");
   ended.unmount();
 
   const disconnected = await renderView({

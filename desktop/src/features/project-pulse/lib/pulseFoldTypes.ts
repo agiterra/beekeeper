@@ -1,26 +1,35 @@
-/** Public schema and value types for the byte-exact Project Pulse fold. */
+/**
+ * Public schema and value types for the byte-exact Project Pulse fold.
+ *
+ * The session half of this vocabulary now lives in
+ * `shared/coordination/sessionCoordinationTypes.ts`, because Project Pulse is
+ * no longer its only reader. The Pulse names below are aliases of the shared
+ * ones — same values, same fields, same wire bytes — kept so the digest's
+ * published vocabulary and the Rust twin's field names do not move.
+ */
 
 import type { PulseEntryType, PulseEvent } from "./pulseEntry.ts";
+import type {
+  CoordinatedGeneration,
+  CoordinatedSession,
+  SessionCoordinationState,
+  SessionLifecycle,
+  SessionReachability,
+} from "../../../shared/coordination/sessionCoordinationTypes.ts";
+
+export {
+  SESSION_COMMIT_CONFIRMED as PULSE_COMMIT_CONFIRMED,
+  SESSION_COMMIT_NOT_CHECKED as PULSE_COMMIT_NOT_CHECKED,
+  SESSION_COMMIT_NOT_FOUND as PULSE_COMMIT_NOT_FOUND,
+  SESSION_COORDINATION_KINDS as PULSE_SESSION_KINDS,
+  SESSION_LEASE_TTL_SECONDS as PULSE_LEASE_TTL_SECONDS,
+} from "../../../shared/coordination/sessionCoordinationTypes.ts";
 
 /** Exact `schema` value of the digest envelope (kind 39011's content). */
 export const PULSE_DIGEST_SCHEMA = "buzz-project-pulse-digest/v2";
 
 /** The digest's session reach: the project's own channels, never wider. */
 export const PULSE_SESSIONS_SCOPE = "project channels";
-
-/** Conservative client-side lease lifetime derived from signed issue time. */
-/** Conservative client expiry; relay-authoritative accepted-time expiry is 180s. */
-export const PULSE_LEASE_TTL_SECONDS = 150;
-
-/** Kinds the session half of the fold consumes, in wire order. */
-export const PULSE_SESSION_KINDS = [
-  24223, 44221, 44223, 44224, 44227, 44229, 44230,
-] as const;
-
-/** The fixed tri-state commit-confirmation strings every surface emits. */
-export const PULSE_COMMIT_CONFIRMED = "Commit confirmed on relay";
-export const PULSE_COMMIT_NOT_FOUND = "Commit not found on relay";
-export const PULSE_COMMIT_NOT_CHECKED = "Commit not checked";
 
 /** Why a `supersedes` claim was not honored; `null` on an honored claim. */
 export type PulseSupersessionReason =
@@ -53,60 +62,19 @@ export type PulseDigestEntry = {
 };
 
 /** Reachability evidence for one exact session generation. */
-export type PulseGenerationReachability =
-  | "provider_reachable"
-  | "unverified"
-  | "terminal";
+export type PulseGenerationReachability = SessionReachability;
 
 /** One authority-proven exact execution generation. */
-export type PulseDigestGeneration = {
-  targetKey: string;
-  executionKey: string;
-  providerAuthorityPubkey: string;
-  current: boolean;
-  reachability: PulseGenerationReachability;
-  status: string | null;
-  statusAt: number | null;
-  branch: string | null;
-  observedCommit: string | null;
-  dirty: boolean | null;
-  relayReachable: boolean | null;
-  verifiedAt: number | null;
-  commitConfirmation: string;
-  leaseState: "live" | "released" | null;
-  leaseIssuedAt: number | null;
-  leaseAcceptedAt: number | null;
-  leaseExpiresAt: number | null;
-  leaseSigner: string | null;
-  leaseSourceEventId: string | null;
-  leaseSequence: number | null;
-  lifecycleCommandEventId: string;
-  lifecycleReceiptEventId: string;
-  sourceEventIds: string[];
-};
+export type PulseDigestGeneration = CoordinatedGeneration;
 
 /** Durable lifecycle state for an umbrella session. */
-export type PulseSessionLifecycle = "open" | "closed";
+export type PulseSessionLifecycle = SessionLifecycle;
 
 /** Coordination state derived independently from lifecycle and reachability. */
-export type PulseCoordinationState =
-  | "provider_reachable"
-  | "open_unverified"
-  | "closed";
+export type PulseCoordinationState = SessionCoordinationState;
 
 /** One durable umbrella session with its authority-proven generations. */
-export type PulseDigestSession = {
-  sessionKey: string;
-  sessionRef: string | null;
-  name: string | null;
-  goal: string | null;
-  lifecycle: PulseSessionLifecycle;
-  coordinationState: PulseCoordinationState;
-  latestObservationAt: number | null;
-  observedAgeSeconds: number | null;
-  generations: PulseDigestGeneration[];
-  sourceEventIds: string[];
-};
+export type PulseDigestSession = CoordinatedSession;
 
 /** One source query that failed, was truncated, or yielded a bad event. */
 export type PulseDigestError = { scope: string; message: string };

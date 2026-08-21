@@ -1,4 +1,11 @@
-/** Closed-shape and duplicate-key checks shared by strict Pulse fact readers. */
+/**
+ * Closed-shape and duplicate-key checks for the signed coding-session facts.
+ *
+ * Shared, not Pulse's: every surface that reads a 44221/44223/44224/24223/44230
+ * decodes it through these, so "this event is well-formed" has exactly one
+ * answer in the app. Deliberately dependency-free and erasable-syntax-only —
+ * the conformance binder loads this file under plain `node --test`.
+ */
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

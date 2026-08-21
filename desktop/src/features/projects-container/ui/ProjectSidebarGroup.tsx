@@ -411,7 +411,7 @@ export function ProjectSidebarGroup({
             {pulseRows.map(renderRow)}
             {sessionRows.length > 0 || terminalRows.length > 0 ? (
               <ProjectChildSection
-                label="Active Sessions"
+                label="Open Sessions"
                 storageKey={`buzz-project-sidebar:${project.id}:sessions`}
               >
                 {activeSessionRows.map(renderRow)}

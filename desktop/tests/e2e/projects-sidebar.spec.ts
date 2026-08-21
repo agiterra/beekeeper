@@ -26,7 +26,7 @@ test("project groups separate channels from tools", async ({ page }) => {
   await expect(repoRow).toBeVisible();
 
   await expect(
-    group.getByRole("region", { name: "Active Sessions" }),
+    group.getByRole("region", { name: "Open Sessions" }),
   ).toHaveCount(0);
   await expect(group.getByRole("region", { name: "Channels" })).toBeVisible();
   await expect(

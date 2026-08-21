@@ -24,6 +24,7 @@ import {
   groupPulseSessions,
   matchesBranchFilter,
   pulseSessionDisplayGeneration,
+  pulseSessionGroupHeading,
   pulseSessionMatchesBranch,
   sortPulseEntriesByConsequence,
 } from "../lib/pulseFormat";
@@ -604,7 +605,9 @@ export function ProjectPulseView({
       <section data-testid="pulse-sessions">
         {visibleSessions.providerReachable.length > 0 ? (
           <div className="mb-3" data-testid="pulse-provider-reachable">
-            <GroupHeading>Provider-reachable sessions</GroupHeading>
+            <GroupHeading>
+              {pulseSessionGroupHeading("provider_reachable")}
+            </GroupHeading>
             <ul className="flex flex-col gap-2">
               {visibleSessions.providerReachable.map(sessionCard)}
             </ul>
@@ -613,7 +616,9 @@ export function ProjectPulseView({
 
         {visibleSessions.openUnverified.length > 0 ? (
           <div className="mb-3" data-testid="pulse-open-unverified">
-            <GroupHeading>Open · liveness unverified</GroupHeading>
+            <GroupHeading>
+              {pulseSessionGroupHeading("open_unverified")}
+            </GroupHeading>
             <ul className="flex flex-col gap-2">
               {visibleSessions.openUnverified.map(sessionCard)}
             </ul>
@@ -622,7 +627,7 @@ export function ProjectPulseView({
 
         {visibleSessions.closed.length > 0 ? (
           <div className="mb-3" data-testid="pulse-closed">
-            <GroupHeading>Closed/history</GroupHeading>
+            <GroupHeading>{pulseSessionGroupHeading("closed")}</GroupHeading>
             <ul className="flex flex-col gap-2">
               {visibleSessions.closed.map(sessionCard)}
             </ul>

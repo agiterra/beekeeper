@@ -39,9 +39,9 @@ mod reset;
 mod secret_store;
 #[cfg(unix)]
 mod session_broker;
+mod session_provider;
 #[cfg(unix)]
 mod shell_sessions;
-mod session_provider;
 mod shutdown;
 mod templates;
 mod terminal_runtime;

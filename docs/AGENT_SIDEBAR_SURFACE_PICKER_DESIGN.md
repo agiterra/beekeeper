@@ -4,6 +4,16 @@ _Read-only study, 2026-08-20. t3code paths relative to `/Users/brian/Projects/t3
 Buzz paths to `/Users/brian/Projects/buzz`. Every claim carries `file:line`. Things I could **not**
 find evidence for are marked **NOT FOUND** rather than guessed._
 
+> **Implementation decision, 2026-08-21.** Agent Progress remains a global
+> `/agent-progress` route. Its question spans every coding session the viewer
+> can read, while `CodingSessionSurfaceHost` is scoped to one session; placing
+> the global list inside that host would make its scope depend on an unrelated
+> active session. This decision does not choose between one or N open
+> session-host tabs. The registry study below remains useful for session-local
+> surfaces, but its C1 recommendation does not govern the global Agent Progress
+> screen. Liveness also no longer uses the 30-minute metadata rule; see C3's
+> lease-backed correction.
+
 ---
 
 ## Part A — how t3code actually does it
@@ -329,12 +339,16 @@ type SurfaceBadge =
 
 Per surface, the signed fact behind it:
 
-- **`agents` / `progress`** — count = lanes in `working` per `agentProgressFold.ts:53-55,114-117`,
-  which already demands a *positive* freshness signal: a signed 44223 status in `PULSE_ACTIVE_STATUSES`
-  within `PULSE_ACTIVE_WINDOW_SECONDS = 1800` (`project-pulse/lib/pulseFold.ts:67-70,297-311`). A lane
-  whose last signed fact says `working` but falls outside the window is `stale`, flagged
-  `staleFromWorking` (`agentProgressFold.ts:94-95,242`), and **must not count**. This is the one place
-  Buzz must not copy t3code, which has no freshness gate at all (A3).
+- **`agents` / `progress`** — count = sessions in the shared coordination
+  fold's `provider_reachable` state. That state requires a current,
+  authority-bound kind-24223 lease; kind-44223 metadata is retained only as a
+  historical report and its age never decides liveness. An open session with
+  no valid lease is `open_unverified`, not absent and not working. Agent
+  Progress's compact `Reachable` / `Unverified` / `Closed` words map 1:1 to
+  Pulse's full register through
+  `shared/coordination/sessionCoordinationFormat.ts`. This is the one place
+  Buzz must not copy t3code, which has no independently verified liveness
+  signal at all (A3).
 - **`changes`** — count = `deriveCodingSessionChangedFiles` over the transcript
   (`CodingSessionUmbrellaWorkspace.tsx:113-125`), backed by signed 44225 items. Honest today.
 - **`plan`** — count of *incomplete* tasks, not `tasks.length` (today's `taskCount`,

@@ -6,6 +6,30 @@ memory. §3 folds in the full t3code Agents-sidebar capability inventory —
 t3code paths are relative to `apps/web/src/components/` and
 `packages/client-runtime/src/state/` unless shown otherwise._
 
+> **Superseded on 2026-08-21 — read this first.**
+>
+> This note's freshness prescription (§5.3, and every mention below of
+> `PULSE_ACTIVE_WINDOW_SECONDS = 1800`, a "fourth dot state: stale", or
+> "44223 staleness") is **withdrawn**. It was written against a Project Pulse
+> that decided liveness from how recently a session's metadata was signed.
+> Pulse no longer does: metadata recency is *history* — a machine that dies
+> mid-turn keeps its last signed fact saying `running` forever — and liveness
+> now comes only from an unexpired kind-24223 lease.
+>
+> Agent Progress follows the same rule, through the same code. The complete
+> session-coordination fold lives in
+> `desktop/src/shared/coordination/sessionCoordinationFold.ts`; Project Pulse
+> and Agent Progress are both adapters over it, so the app has exactly one
+> answer to "is this alive?". The panel's row vocabulary is `Reachable` /
+> `Unverified` / `Closed` (Pulse's `Provider-reachable` / `Open · liveness
+> unverified` / `Closed`, mapped 1:1 in `sessionCoordinationFormat.ts`), and
+> reported provider status is a **separate axis** beside it — never a
+> substitute for it. `Working`/`Stale`/`Ended` are not coordination states.
+>
+> Everything else here — the t3code inventory (§3), the fixed-height row, the
+> single activity line, the session-versus-execution distinction, and the
+> deliberate omission of token totals — stands in the implementation.
+
 ## 1. What t3code's pipeline actually is
 
 t3code's Agents panel is a **pure client-side derivation over one WebSocket RPC

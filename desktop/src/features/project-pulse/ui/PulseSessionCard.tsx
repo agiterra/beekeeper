@@ -1,8 +1,7 @@
 import * as React from "react";
 import { ChevronDown, ChevronRight, GitBranch, Terminal } from "lucide-react";
 
-import { codingSessionWireWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
-import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { coordinationReportedStatus } from "@/shared/coordination/sessionCoordinationFormat";
 
 import {
   branchChipLabel,
@@ -25,9 +24,7 @@ function generationObservationLabel(
   generation: PulseDigestGeneration,
   nowSeconds: number,
 ): string {
-  const status = codingSessionWireWorkspaceStatus(
-    generation.status as CodingSessionStatus | undefined,
-  ).label;
+  const status = coordinationReportedStatus(generation.status).label;
   return generation.statusAt === null
     ? `${status} · observation time unknown`
     : `${status} · last observed ${formatPulseAge(nowSeconds - generation.statusAt)} ago`;
@@ -47,6 +44,9 @@ export function PulseSessionCard({
 }) {
   const [showExecutions, setShowExecutions] = React.useState(false);
   const generation = pulseSessionDisplayGeneration(session);
+  const executionCount = new Set(
+    session.generations.map((candidate) => candidate.executionKey),
+  ).size;
   const olderGenerations = session.generations
     .filter((candidate) => candidate.targetKey !== generation?.targetKey)
     .sort((left, right) => {
@@ -62,7 +62,7 @@ export function PulseSessionCard({
   return (
     <li
       className="rounded-md border border-border/60 bg-background/40 p-3"
-      data-execution-count={session.generations.length}
+      data-execution-count={executionCount}
       data-session-coordination={session.coordinationState}
       data-session-lifecycle={session.lifecycle}
       data-testid="pulse-session-card"
@@ -141,7 +141,8 @@ export function PulseSessionCard({
             ) : (
               <ChevronRight className="size-3" aria-hidden />
             )}
-            {formatPulseExecutionCount(session.generations.length)}
+            {formatPulseExecutionCount(executionCount)} ·{" "}
+            {session.generations.length} generations
           </button>
           {showExecutions ? (
             <ul
