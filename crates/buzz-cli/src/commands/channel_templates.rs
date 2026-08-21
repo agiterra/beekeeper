@@ -1,4 +1,4 @@
-//! Desktop-local channel template loading for `buzz channels create --template`.
+//! Desktop-local channel template loading for `bee channels create --template`.
 //!
 //! Templates live in a JSON file the desktop app owns
 //! (`<app-data>/templates/channel-templates.json`); this module duplicates the
@@ -15,7 +15,7 @@ use crate::error::CliError;
 /// Tauri bundle identifier for the production desktop app. `dirs::data_dir()`
 /// joined with this segment matches `app.path().app_data_dir()` exactly
 /// (Tauri resolves app-data as the platform data dir plus the identifier).
-const PROD_BUNDLE_IDENTIFIER: &str = "xyz.block.buzz.app";
+const PROD_BUNDLE_IDENTIFIER: &str = "io.agiterra.beekeeper";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChannelTemplateRecord {
@@ -65,7 +65,7 @@ fn default_visibility() -> String {
 ///
 /// `override_path` (from `--templates-file`) always wins — useful for the dev
 /// store or tests. Otherwise defaults to the prod bundle's app-data dir:
-/// `<platform-data-dir>/xyz.block.buzz.app/templates/channel-templates.json`.
+/// `<platform-data-dir>/io.agiterra.beekeeper/templates/channel-templates.json`.
 pub fn resolve_templates_path(override_path: Option<&str>) -> Result<PathBuf, CliError> {
     if let Some(p) = override_path {
         return Ok(PathBuf::from(p));
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn resolve_templates_path_defaults_to_prod_bundle() {
         let path = resolve_templates_path(None).unwrap();
-        assert!(path.ends_with("xyz.block.buzz.app/templates/channel-templates.json"));
+        assert!(path.ends_with("io.agiterra.beekeeper/templates/channel-templates.json"));
     }
 
     #[test]

@@ -1,12 +1,12 @@
-//! `buzz mem` — agent-side engram management (NIP-AE).
+//! `bee mem` — agent-side engram management (NIP-AE).
 //!
 //! Subcommands:
-//! - `buzz mem ls`                   — list non-tombstoned memories
-//! - `buzz mem get <slug>`            — print the value to stdout
-//! - `buzz mem hash <slug>`           — print sha256(value) hex
-//! - `buzz mem set <slug> <value|-> ` — write a value (use `-` for stdin)
-//! - `buzz mem patch <slug>`          — apply a unified diff to the current value
-//! - `buzz mem rm <slug>`             — publish a tombstone
+//! - `bee mem ls`                   — list non-tombstoned memories
+//! - `bee mem get <slug>`            — print the value to stdout
+//! - `bee mem hash <slug>`           — print sha256(value) hex
+//! - `bee mem set <slug> <value|-> ` — write a value (use `-` for stdin)
+//! - `bee mem patch <slug>`          — apply a unified diff to the current value
+//! - `bee mem rm <slug>`             — publish a tombstone
 //!
 //! By default, the caller's `BUZZ_PRIVATE_KEY` is the agent's nsec. The
 //! agent's owner pubkey is resolved from `BUZZ_AUTH_TAG` (NIP-OA attestation)
@@ -185,7 +185,7 @@ async fn fetch_head(
     Ok((Some(head), body))
 }
 
-/// `buzz mem ls` — list non-tombstoned memory entries.
+/// `bee mem ls` — list non-tombstoned memory entries.
 pub async fn cmd_ls(
     client: &BuzzClient,
     owner_flag: Option<&str>,
@@ -271,7 +271,7 @@ pub async fn cmd_ls(
     Ok(())
 }
 
-/// `buzz mem get <slug>` — print value (memory) or profile (core) to stdout.
+/// `bee mem get <slug>` — print value (memory) or profile (core) to stdout.
 ///
 /// Exit codes: 0 on found, 1 on absent or tombstoned.
 pub async fn cmd_get(
@@ -291,7 +291,7 @@ pub async fn cmd_get(
             Err(CliError::NotFound(format!("tombstoned: {slug}")))
         }
         Some(Body::Memory { value: Some(v), .. }) => {
-            // Raw stdout, no trailing newline — round-trips with `buzz mem set foo -`.
+            // Raw stdout, no trailing newline — round-trips with `bee mem set foo -`.
             std::io::stdout()
                 .write_all(v.as_bytes())
                 .map_err(|e| CliError::Other(e.to_string()))
@@ -302,7 +302,7 @@ pub async fn cmd_get(
     }
 }
 
-/// `buzz mem set <slug> <value|->` — write a value or core profile.
+/// `bee mem set <slug> <value|->` — write a value or core profile.
 ///
 /// Pass `-` to read the value from stdin.
 ///
@@ -339,7 +339,7 @@ pub async fn cmd_set(
         if buf.is_empty() && !allow_empty {
             return Err(CliError::Usage(
                 "refusing to write empty value from stdin (an upstream pipeline step likely \
-                 failed). Pass --allow-empty to confirm, or use `buzz mem rm <slug>` to \
+                 failed). Pass --allow-empty to confirm, or use `bee mem rm <slug>` to \
                  tombstone."
                     .into(),
             ));
@@ -499,11 +499,11 @@ async fn fetch_value(
     }
 }
 
-/// `buzz mem hash <slug>` — print sha256(value) in hex to stdout.
+/// `bee mem hash <slug>` — print sha256(value) in hex to stdout.
 ///
 /// The output is a 64-character hex digest followed by a newline (line-
 /// oriented for shell use). Use this to capture a base-hash before editing,
-/// then pass it to `buzz mem patch --base-hash <hex>` to make the edit
+/// then pass it to `bee mem patch --base-hash <hex>` to make the edit
 /// safe against concurrent writes.
 pub async fn cmd_hash(
     client: &BuzzClient,
@@ -519,7 +519,7 @@ pub async fn cmd_hash(
     Ok(())
 }
 
-/// `buzz mem patch <slug>` — apply a unified diff to the current value.
+/// `bee mem patch <slug>` — apply a unified diff to the current value.
 ///
 /// Reads a unified diff from stdin (or `--patch-file <path>`), fetches the
 /// current head, applies the diff with **strict context matching** (no
@@ -558,7 +558,7 @@ pub async fn cmd_patch(
         }
         (None, false) => {
             return Err(CliError::Usage(
-                "missing --base-hash <hex> (run `buzz mem hash <slug>` to get it). \
+                "missing --base-hash <hex> (run `bee mem hash <slug>` to get it). \
                  Pass --no-base-hash to skip this check at your own risk."
                     .into(),
             ));
@@ -659,7 +659,7 @@ pub async fn cmd_patch(
     if new_value.is_empty() && !allow_empty {
         return Err(CliError::Usage(
             "refusing to write empty value (patch result is empty). \
-             Pass --allow-empty to confirm, or use `buzz mem rm <slug>` to tombstone."
+             Pass --allow-empty to confirm, or use `bee mem rm <slug>` to tombstone."
                 .into(),
         ));
     }
@@ -697,7 +697,7 @@ pub async fn cmd_patch(
     Ok(())
 }
 
-/// `buzz mem rm <slug>` — publish a tombstone (`value: null`).
+/// `bee mem rm <slug>` — publish a tombstone (`value: null`).
 ///
 /// `rm core` writes a tombstone-shaped body, but a core tombstone has no
 /// well-defined semantics in NIP-AE (the spec only defines tombstones for
@@ -712,7 +712,7 @@ pub async fn cmd_rm(
         normalize_slug(raw_slug).map_err(|e| CliError::Usage(format!("invalid slug: {e}")))?;
     if slug == engram::CORE_SLUG {
         return Err(CliError::Usage(
-            "core cannot be tombstoned; overwrite it with `buzz mem set core ''` instead".into(),
+            "core cannot be tombstoned; overwrite it with `bee mem set core ''` instead".into(),
         ));
     }
     let owner = resolve_owner(client, owner_flag)?;

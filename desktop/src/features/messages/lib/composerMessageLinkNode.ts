@@ -30,8 +30,20 @@ export type ComposerMessageLinkAttributes = {
   href: string;
 };
 
-const BARE_BUZZ_LINK_AT_START =
-  /^buzz:\/\/(?:message\?|channel\/|(?:pr|issue|repo|project)\?)[^\s<>"')\]}*]+/i;
+/** The deep-link scheme, without the `://`. */
+const SCHEME = "beekeeper";
+/**
+ * markdown-it's text rule stops at `:`, so a bare link arrives split: the
+ * scheme lands in `state.pending` and the rule below sees only `://…`. It
+ * re-joins the two, which means every offset here is scheme-length-dependent —
+ * hence the constant rather than a literal, which is what broke when the
+ * scheme stopped being four characters long.
+ */
+const SCHEME_AT_END = new RegExp(`${SCHEME}$`, "i");
+const BARE_BUZZ_LINK_AT_START = new RegExp(
+  `^${SCHEME}://(?:message\\?|channel/|(?:pr|issue|repo|project)\\?)[^\\s<>"')\\]}*]+`,
+  "i",
+);
 const BUZZ_LINK_SUFFIX_AT_START =
   /^:\/\/(?:message\?|channel\/|(?:pr|issue|repo|project)\?)[^\s<>"')\]}*]+/i;
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
@@ -179,9 +191,10 @@ export function registerComposerMessageLinkMarkdownIt(
     const fullMatch = BARE_BUZZ_LINK_AT_START.exec(remaining);
     const suffixMatch = BUZZ_LINK_SUFFIX_AT_START.exec(remaining);
     const resumesTextToken =
-      !fullMatch && suffixMatch && /buzz$/i.test(state.pending ?? "");
+      !fullMatch && suffixMatch && SCHEME_AT_END.test(state.pending ?? "");
     const rawHref =
-      fullMatch?.[0] ?? (resumesTextToken ? `buzz${suffixMatch[0]}` : null);
+      fullMatch?.[0] ??
+      (resumesTextToken ? `${SCHEME}${suffixMatch[0]}` : null);
     if (!rawHref) return false;
     const href = trimBareBuzzLink(rawHref);
     const attrs = resolveComposerMessageLinkAttributes(
@@ -190,11 +203,12 @@ export function registerComposerMessageLinkMarkdownIt(
     );
     if (!attrs) return false;
     if (!silent) {
-      if (resumesTextToken) state.pending = state.pending.slice(0, -4);
+      if (resumesTextToken)
+        state.pending = state.pending.slice(0, -SCHEME.length);
       const token = state.push(tokenType, "span", 0);
       token.meta = attrs;
     }
-    state.pos += href.length - (resumesTextToken ? 4 : 0);
+    state.pos += href.length - (resumesTextToken ? SCHEME.length : 0);
     return true;
   };
 

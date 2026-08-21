@@ -41,7 +41,7 @@ V1 is built from two sources only:
 ```text
 explicit project entries (new kind 44240) ─┐
 existing coding-session facts              ├─> project pulse digest
-  44223 metadata                            │      ├─> buzz pulse
+  44223 metadata                            │      ├─> bee pulse
   44227 goal                                │      ├─> Desktop
   44229 name                                │      └─> agent context
   44230 closure                            ─┘
@@ -155,7 +155,7 @@ These are not open questions for the implementing agent:
     — the same value carried in the `d` tag of 44227/44229/44230 and in the
     `sessionRef` field of 44223's `cs-target`, so the fold joins on it with no
     lookup.
-17. **The digest envelope ships in Slice 1.** `buzz pulse digest` emits the §6
+17. **The digest envelope ships in Slice 1.** `bee pulse digest` emits the §6
     kind-39011 content object verbatim from day one, plus `source`. Slice 2
     changes who computes it, never its shape.
 18. **Authorization for 44240 reads lives in the per-event visibility gate**
@@ -547,14 +547,14 @@ the top-level `Cmd::Pulse` variant, dispatch, and command-inventory coverage so
 `subcommand_names_are_stable` (`:2564`) keep working like every other group.
 
 ```text
-buzz pulse update   --project <ref> --kind plan|milestone|note|handoff|blocker
+bee pulse update   --project <ref> --kind plan|milestone|note|handoff|blocker
                     [--areas <p1,p2,...>] [--branch <b>]
                     [--session <session-ref-uuid>] [--supersedes <event-id>]
                     --content <TEXT|->
-buzz pulse list     --project <ref> [--since <unix-seconds>] [--kind <kind>]
+bee pulse list     --project <ref> [--since <unix-seconds>] [--kind <kind>]
                     [--branch <b|->] [--limit N]
-buzz pulse sessions --project <ref>
-buzz pulse digest   --project <ref> [--branch <b|->] [--limit N]
+bee pulse sessions --project <ref>
+bee pulse digest   --project <ref> [--branch <b|->] [--limit N]
 ```
 
 **Project resolution.** Precedence is explicit `--project`, then the
@@ -599,7 +599,7 @@ relay 403 is exit **3**, not 1):
 (`crates/buzz-cli/src/validate.rs:168`), so inline text is taken verbatim and
 `-` reads stdin to EOF. Do **not** use `read_file_or_stdin`, which treats a
 non-`-` value as a file path and would make
-`buzz pulse update --content "Refactoring pool.rs"` fail with "failed to read
+`bee pulse update --content "Refactoring pool.rs"` fail with "failed to read
 file". Input exceeding `MAX_PULSE_TEXT_BYTES` is `CliError::Usage` before any
 signing; a missing `--content` is a clap-level usage error (exit 1). Build the
 event through `buzz_sdk::builders::build_pulse_entry`. Print
@@ -649,7 +649,7 @@ channels"` and must not present its Active-work list as exhaustive.
 
 #### Digest output — the §6 envelope, from day one
 
-`buzz pulse digest` prints **exactly** the kind-39011 content object of §6 and
+`bee pulse digest` prints **exactly** the kind-39011 content object of §6 and
 nothing else, plus `source`. Slice 2 changes who computes it, never its shape;
 without this, §6's "run common fixtures through both folds and assert semantic
 equality" is unimplementable and fixing it later is a breaking change to a
@@ -841,7 +841,7 @@ one thing, and the wrong choice silently breaks the feature:
   is fixed once at pool-process spawn via `EnvFence::OPEN`
   (`crates/buzz-acp/src/acp.rs:530-546`) and is identical for every channel
   session that process ever serves, so it cannot carry a per-session
-  coordinate. An agent invoking `buzz pulse update` through its own shell would
+  coordinate. An agent invoking `bee pulse update` through its own shell would
   see nothing, hit the §5.4 exit-1 error, and silently stop posting.
 
 **Digest bounds.** The injected section is capped at **4000 bytes**, at most
@@ -858,12 +858,12 @@ does (`pool.rs:1558-1583`), so heartbeats and subsequent turns never re-fetch.
 - **confirmed empty:** inject exactly —
 
   > `[Project Pulse] no entries yet for this project. If you start non-trivial
-  > work, post your plan with \`buzz pulse update --project <coordinate>
+  > work, post your plan with \`bee pulse update --project <coordinate>
   > --kind plan\` so parallel workers can see it.`
 - **fetch error:** inject exactly this, and log the error —
 
   > `[Project Pulse] unavailable — the digest could not be read (<error
-  > class>). Do not treat this project as quiet. Run `buzz pulse digest
+  > class>). Do not treat this project as quiet. Run `bee pulse digest
   > --project <coordinate>` before any refactor touching shared modules; if it
   > also fails, say so in your first message rather than assuming no one else
   > is working here.`
@@ -908,7 +908,7 @@ The Slice 1 text must say:
 > The pulse shows explicit plan/milestone/note/handoff/blocker entries plus
 > provider-observed session state (branch, commit, dirty, relay confirmation).
 > There is no automatic summarization — if your plan or scope changes, post it
-> yourself with `buzz pulse update`.
+> yourself with `bee pulse update`.
 
 Keep the wait|consult|proceed triggers and the handoff's staleness rule
 verbatim ("never invent a conflict from a stale entry: an entry hours old with
@@ -925,7 +925,7 @@ For coding sessions:
 - Keep the context sidecar read-only.
 - Tell the adapter that its session state is visible automatically and that it
   need not post routine progress.
-- Do not tell a fenced coding-session adapter to run `buzz pulse update`. This
+- Do not tell a fenced coding-session adapter to run `bee pulse update`. This
   is belt-and-braces: the fence already removes the credential
   (`crates/buzz-session-provider/src/agent_fence.rs:37-44`), so the prompt rule
   exists to avoid instructing an agent to attempt something that cannot work.
@@ -1155,7 +1155,7 @@ real desktop app as applicable, and two identities.
 Prove:
 
 1. Identity A posts a project plan.
-2. Identity B sees it through `buzz pulse digest`.
+2. Identity B sees it through `bee pulse digest`.
 3. A non-member's query for the private project's Pulse returns an empty
    result, and the non-member cannot tell from the response that the project
    exists.

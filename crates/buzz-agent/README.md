@@ -214,7 +214,7 @@ JSON to the model, louder feedback than a reminder.
 
 **Known limits**, both deliberate. A command assembled at runtime (`$CMD`) or
 buried in a wrapper script is missed, so that turn is reminded despite having
-posted. Text that merely quotes a send (`echo "buzz messages send"`) matches, so
+posted. Text that merely quotes a send (`echo "bee messages send"`) matches, so
 that turn is not reminded. Missing a real post is the expensive direction, and
 substring matching is the forgiving one there. Neither edge is pinned by a test;
 the matcher is free to improve.

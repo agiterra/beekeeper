@@ -129,7 +129,7 @@ Because only the owner can replace the event, head-carried invitations are owner
 Two additional rules complete the access grammar:
 
 - **The `general` project is always public** (`access-general-forced-public`). The community's shared default project — `d` = `general` — can never carry `["buzz-access", "private"]`: it is the container everything falls back into, so a hand-built head must not be able to hide it. Ingest rejects the combination outright.
-- **Clients SHOULD default new projects to private.** An access decision is easy to loosen and painful to walk back: content published into a public project has already been delivered. Buzz's own clients (and `buzz projects create`) default to `private` and require an explicit choice to create a public project.
+- **Clients SHOULD default new projects to private.** An access decision is easy to loosen and painful to walk back: content published into a public project has already been delivered. Buzz's own clients (and `bee projects create`) default to `private` and require an explicit choice to create a public project.
 
 Invites target **agents exactly like users**: an invited member is a pubkey, and whether that pubkey belongs to a person or an agent is invisible to this grammar. An agent invited into a project reads and writes under the same role rules as any member. Agent-side consent — an agent acknowledging or declining an invitation before acting inside a project — is future work; today an invite is effective the moment the roster carries it.
 

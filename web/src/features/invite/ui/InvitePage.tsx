@@ -110,7 +110,7 @@ export function InvitePage({ code }: { code: string }) {
       const receipt = await acceptPolicy();
       const query = new URLSearchParams({ relay, code });
       if (receipt) query.set("policy_receipt", receipt);
-      window.location.href = `buzz://join?${query.toString()}`;
+      window.location.href = `beekeeper://join?${query.toString()}`;
     } finally {
       setOpening(false);
     }
@@ -245,7 +245,7 @@ export function InvitePage({ code }: { code: string }) {
                 }`}
               >
                 <a
-                  href={`buzz://join?relay=${encodeURIComponent(relay)}&code=${encodeURIComponent(code)}`}
+                  href={`beekeeper://join?relay=${encodeURIComponent(relay)}&code=${encodeURIComponent(code)}`}
                 >
                   Accept invite in Buzz
                 </a>

@@ -307,7 +307,7 @@ test("the screen names the project it describes and offers a way back", async ()
 test("the empty state teaches the CLI first action and admits it is read-only", async () => {
   const { getByTestId } = await renderView({ kind: "ready", digest: digest() });
   const hint = getByTestId("pulse-write-hint");
-  assert.match(hint.textContent, /buzz pulse update --project/);
+  assert.match(hint.textContent, /bee pulse update --project/);
   assert.match(hint.textContent, /cannot post one for you yet/);
 });
 

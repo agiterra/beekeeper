@@ -386,7 +386,7 @@ pub struct CliArgs {
     /// Memory injection is on by default. When enabled, the harness
     /// fetches the agent's per-session core engram and renders it as an
     /// `[Agent Memory — core]` prompt section (or renders the onboarding nudge
-    /// when the relay confirms no core engram exists). The `buzz mem` CLI
+    /// when the relay confirms no core engram exists). The `bee mem` CLI
     /// and the relay's acceptance of kind:30174 engrams are unaffected — this
     /// flag controls prompt-time injection in the ACP harness only.
     /// Pass `--no-memory` / `BUZZ_ACP_NO_MEMORY=true` to disable.

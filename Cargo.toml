@@ -45,7 +45,7 @@ edition = "2021"
 # is pinned well above this (rust-toolchain.toml).
 rust-version = "1.89.0"
 license = "Apache-2.0"
-repository = "https://github.com/block/sprout"
+repository = "https://github.com/agiterra/beekeeper"
 
 [workspace.dependencies]
 # Runtime

@@ -1,4 +1,4 @@
-"""Thin subprocess wrapper over the ``buzz`` CLI — the production client path."""
+"""Thin subprocess wrapper over the ``bee`` CLI — the production client path."""
 
 from __future__ import annotations
 

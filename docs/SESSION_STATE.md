@@ -36,7 +36,7 @@ partial because several session channels were inaccessible._
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
 | Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
-| Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `buzz pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md` (since deleted
+| Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `bee pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md` (since deleted
 along with the ceremony — recover from git history if ever needed). Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
 
 Shipped in this arc: durable names (R26), closure/stop separation (R27),
@@ -540,7 +540,7 @@ repo records findings the day they happen.
    Pulse: unavailable — no `BUZZ_PRIVATE_KEY`/`BUZZ_RELAY_URL` is configured
    in this session's environment (checked `.env`, shell env, and the
    per-agent key files under `~/.config/buzz/`; all are empty placeholders),
-   so I can't run `buzz pulse digest` or `buzz pulse update` at all."* It
+   so I can't run `bee pulse digest` or `bee pulse update` at all."* It
    then chose **consult** rather than fabricating. The agent's behaviour was
    ideal; the product was wrong.
    - **What forbids it.** `crates/buzz-session-provider/src/agent_fence.rs`
@@ -551,7 +551,7 @@ repo records findings the day they happen.
      right for the designed reason — the empty key files were a red herring.
    - **The first diagnosis was wrong, and the correction is the finding.** It
      was believed that `crates/buzz-acp/src/base_prompt.md` was instructing
-     the fenced adapter to run `buzz pulse update`. A trace disproved that:
+     the fenced adapter to run `bee pulse update`. A trace disproved that:
      `base_prompt.md` reaches only *managed* ACP agents, through
      `buzz-acp/src/lib.rs:2193-2198` → `PromptContext.base_prompt` →
      `pool.rs:966 framed_system_prompt`, and those agents are spawned
@@ -565,7 +565,7 @@ repo records findings the day they happen.
      Same dishonesty, better disguise.
    - **What the plan said.**
      `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md` §5.5,
-     verbatim: *"Do not tell a fenced coding-session adapter to run `buzz
+     verbatim: *"Do not tell a fenced coding-session adapter to run `bee
      pulse update`."* — never violated, as it turns out — and *"Tell the
      adapter that its session state is visible automatically and that it need
      not post routine progress."* That second half is what was never built,
@@ -593,14 +593,14 @@ repo records findings the day they happen.
      is in scope"* — the coordinate rides only on **MCP-server** env
      (`pool.rs:1104-1146 mcp_servers_with_git_origin`), never on the agent
      subprocess's own env, which is fixed at pool spawn and identical for
-     every channel. An agent following that line runs `buzz pulse update`
+     every channel. An agent following that line runs `bee pulse update`
      with no `--project` and gets a usage error
      (`buzz-cli/src/commands/pulse.rs:397-422`). Both rewritten, and the
      prompt-injection guard widened to cover session text as well as entry
      text.
    - **Pinned by test.** `agent_fence::tests::the_fenced_briefing_never_tells
      _a_session_to_write_the_pulse` asserts both halves in one place — the
-     fenced briefing contains no `buzz pulse *` command and no
+     fenced briefing contains no `bee pulse *` command and no
      `BUZZ_PULSE_PROJECT`, while `buzz_acp::BASE_PROMPT` still carries the
      write instruction its credentialed audience needs. Plus
      `session::tests::a_fresh_session_is_told_its_shell_is_fenced` and
@@ -872,7 +872,7 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   `typeprobe`, `turn`, `stopcmd`): non-mutating checks for whether a
   deployed relay knows a kind or transition type.
 - **Which build a relay is running can be read off a rejection message.**
-  Run a member-key `buzz pulse update` against a deliberately bogus project
+  Run a member-key `bee pulse update` against a deliberately bogus project
   coordinate: a relay carrying the Pulse code rejects it `restricted: unknown
   project coordinate`, while an older build rejects it `unknown event kind`.
   The write never lands, so nothing is stored — this is the cheapest way to

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# local-prod-build.sh — build the local production Buzz.app from a build/* tag
-# and install it to /Applications.
+# local-prod-build.sh — build the local production Bee Keeper.app from any
+# commit-ish and install it to /Applications.
 #
-# The bundle is the stock Buzz identity (productName "Buzz", identifier
-# xyz.block.buzz.app, release-profile keyring service "buzz-desktop"), so it
-# coexists with `just desktop-standalone` dev instances (identifier
-# xyz.block.buzz.app.dev*). It is unsigned (linker ad-hoc), exactly like
+# The bundle is the release Bee Keeper identity (productName "Bee Keeper",
+# identifier io.agiterra.beekeeper, release-profile keyring service
+# "beekeeper-desktop"), so it coexists both with `just desktop-standalone` dev
+# instances (identifier io.agiterra.beekeeper.dev*) and with a stock Buzz.app. It is unsigned (linker ad-hoc), exactly like
 # `just desktop-release-build` — macOS will ask for the login keychain once on
 # the first launch after every update; that is expected and accepted.
 #
@@ -13,8 +13,8 @@
 # main worktree named `<clone>-prod` (override with BUZZ_PROD_WORKTREE) — so
 # they never contend with the working checkout or a running dev instance. It is
 # derived from the main worktree rather than the invoking directory, so every
-# worktree of a clone shares one prod tree; /Applications/Buzz.app is a single
-# destination, so a second one would only fight over it. The bundle
+# worktree of a clone shares one prod tree; "/Applications/Bee Keeper.app" is a
+# single destination, so a second one would only fight over it. The bundle
 # additionally carries buzz-session-provider as a sidecar, via the tracked
 # delta config desktop/src-tauri/tauri.local-prod.conf.json.
 #
@@ -60,7 +60,7 @@ if [[ -z "$REV" ]]; then
 fi
 SHA="$(git -C "$SRC_ROOT" rev-parse -q --verify "${REV}^{commit}" 2>/dev/null || true)"
 [[ -n "$SHA" ]] || { echo "not a commit: $REV" >&2; exit 1; }
-echo "==> building Buzz.app from $REV ($(git -C "$SRC_ROOT" rev-parse --short "$SHA"))"
+echo "==> building Bee Keeper.app from $REV ($(git -C "$SRC_ROOT" rev-parse --short "$SHA"))"
 
 # ── worktree, detached at the requested commit ───────────────────────────────
 # Objects live in *this* clone. A prod tree belonging to a different clone
@@ -99,7 +99,7 @@ pnpm install
 (cd desktop && pnpm tauri build --target "$TARGET" --features mesh-llm --bundles app \
   --config "$PROD_ROOT/desktop/src-tauri/tauri.local-prod.conf.json")
 
-APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Buzz.app"
+APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Bee Keeper.app"
 
 # ── seal + verify ────────────────────────────────────────────────────────────
 [[ -d "$APP" ]] || { echo "bundle missing: $APP" >&2; exit 1; }
@@ -119,11 +119,11 @@ if $NO_INSTALL; then
   echo "==> --no-install: skipping /Applications install"
   exit 0
 fi
-if pgrep -f "/Applications/Buzz.app/Contents/MacOS/Buzz" >/dev/null; then
-  echo "Buzz.app is running — quit it, then re-run the install" >&2
+if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/Bee Keeper" >/dev/null; then
+  echo "Bee Keeper.app is running — quit it, then re-run the install" >&2
   exit 1
 fi
-rm -rf /Applications/Buzz.app
-ditto "$APP" /Applications/Buzz.app
-echo "==> installed $REV -> /Applications/Buzz.app"
+rm -rf "/Applications/Bee Keeper.app"
+ditto "$APP" "/Applications/Bee Keeper.app"
+echo "==> installed $REV -> /Applications/Bee Keeper.app"
 echo "    First launch will ask for the login keychain once — expected after every update."

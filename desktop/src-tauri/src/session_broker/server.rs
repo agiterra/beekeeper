@@ -1,4 +1,4 @@
-//! The local session broker: an owner-only Unix socket the `buzz session` CLI
+//! The local session broker: an owner-only Unix socket the `bee session` CLI
 //! calls to act on sessions on behalf of an agent. It is the single enforcement
 //! point for agent access — every write is gated on the session's invite
 //! roster (a collaborator entry for the calling agent's pubkey) — so an agent
@@ -22,7 +22,7 @@ const SOCKET_PATH_ENV: &str = "BUZZ_SESSION_BROKER_SOCK";
 /// Resolve the broker socket path: `$BUZZ_SESSION_BROKER_SOCK`, else
 /// `<state_dir>/session-broker.sock` (`~/.local/state/buzz` in production,
 /// `…/buzz-dev` for dev builds — so two instances on one machine don't steal
-/// each other's bind). The `buzz session` CLI defaults to the production
+/// each other's bind). The `bee session` CLI defaults to the production
 /// path (`crates/buzz-cli/src/commands/session.rs` — keep in lockstep);
 /// reaching a dev instance requires the env override.
 pub fn socket_path() -> Result<PathBuf, String> {
@@ -495,7 +495,7 @@ async fn request_access(
 fn not_permitted(workspace_id: &str) -> BrokerResponse {
     BrokerResponse::err(format!(
         "not permitted: you are not a collaborator on session {workspace_id}. \
-         Ask the owner with `buzz session request-access {workspace_id}` \
+         Ask the owner with `bee session request-access {workspace_id}` \
          (optionally --command to run one command), or have them invite your \
          pubkey as a collaborator from the session's screen."
     ))

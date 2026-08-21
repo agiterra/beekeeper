@@ -12,7 +12,7 @@ import {
 
 /**
  * The queue of pending agent access requests for built-in shell sessions.
- * Agents call `buzz session request-access` when a session's "Agents" consent
+ * Agents call `bee session request-access` when a session's "Agents" consent
  * is off; the backend blocks that call and emits `shell-access-request`, which
  * this hook turns into an in-app approval prompt. Resolving wakes the agent.
  */

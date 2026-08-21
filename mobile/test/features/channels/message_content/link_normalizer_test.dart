@@ -2,7 +2,7 @@ import 'package:buzz/features/channels/message_content/link_normalizer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  const url = 'buzz://message?channel=channel-1&id=message-1';
+  const url = 'beekeeper://message?channel=channel-1&id=message-1';
 
   test('normalizes supported bare and autolinked Buzz URLs', () {
     expect(
@@ -90,9 +90,9 @@ void main() {
     final owner = 'ab' * 32;
     final id = 'cd' * 32;
     final links = [
-      'buzz://repo?owner=$owner&d=buzz',
-      'buzz://pr?id=$id&owner=$owner&d=buzz',
-      'buzz://issue?id=$id&owner=$owner&d=buzz',
+      'beekeeper://repo?owner=$owner&d=buzz',
+      'beekeeper://pr?id=$id&owner=$owner&d=buzz',
+      'beekeeper://issue?id=$id&owner=$owner&d=buzz',
     ];
     for (final link in links) {
       expect(normalizeBareLinks('$link.'), '[$link]($link).');

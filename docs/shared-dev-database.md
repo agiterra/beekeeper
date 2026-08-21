@@ -107,7 +107,7 @@ just migrate                         # applies the full set, reseeds local hosts
 
 Do **not** reach for `scripts/dev-reset.sh` for a database problem. Despite the
 name it also runs `reset-desktop-dev-state.sh`, which deletes every
-`xyz.block.buzz.app.dev*` application-support directory and the
+`io.agiterra.beekeeper.dev*` application-support directory and the
 `buzz-desktop-dev` keychain item — i.e. provider state, session history, and dev
 agent keys. During this phase those directories held the only local copy of the
 orphaned Hallway session records the phase used as a test case.
@@ -121,9 +121,9 @@ docker exec -e PGPASSWORD=buzz_dev buzz-postgres psql -U buzz -d buzz \
   -tAc "SELECT count(*) FROM pg_tables WHERE tablename='project_acl';"  # expect 1
 ```
 
-## Unrelated but adjacent: `buzz sessions export` filters kinds
+## Unrelated but adjacent: `bee sessions export` filters kinds
 
-`buzz sessions export` writes provider-authored kinds (44223/44224/44225) and
+`bee sessions export` writes provider-authored kinds (44223/44224/44225) and
 **omits operator-signed 44221 creates**. A channel whose sessions have full
 create history will look like it has none. Query the relay directly
 (`POST /query` with `kinds:[44221]`) when auditing session authorship.

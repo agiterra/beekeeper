@@ -14,7 +14,7 @@ import 'package:buzz/shared/crypto/nip44.dart';
 import 'package:buzz/shared/relay/relay.dart';
 import 'package:buzz/shared/security/sensitive_action_authorizer.dart';
 
-/// Tests for [PairingNotifier]'s legacy `buzz://` payload parsing and
+/// Tests for [PairingNotifier]'s legacy `beekeeper://` payload parsing and
 /// SSRF-prevention validation.
 ///
 /// The pairing flow used to validate by calling `GET /api/users/me/profile`
@@ -25,7 +25,7 @@ import 'package:buzz/shared/security/sensitive_action_authorizer.dart';
 ///
 /// What we still cover here:
 ///   - Initial state.
-///   - Parsing every documented payload format (raw base64, `buzz://`
+///   - Parsing every documented payload format (raw base64, `beekeeper://`
 ///     prefix, whitespace).
 ///   - Failure modes that return BEFORE any network call: invalid base64,
 ///     wrong shape (non-object, missing fields, missing nsec), and SSRF
@@ -99,7 +99,7 @@ void main() {
     test('accepts buzz scheme prefix', () async {
       container = createContainer();
 
-      final code = 'buzz://${_encodePairingCode()}';
+      final code = 'beekeeper://${_encodePairingCode()}';
       await container.read(pairingProvider.notifier).pair(code);
 
       final state = container.read(pairingProvider);

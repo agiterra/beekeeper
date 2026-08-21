@@ -36,7 +36,7 @@
 //!
 //! # Consequence, intended
 //!
-//! The `buzz` CLI no longer authenticates from inside a coding-session agent's
+//! The `bee` CLI no longer authenticates from inside a coding-session agent's
 //! shell. It used to work by accident, by reading the provider's key out of
 //! the inherited environment — which made every session's agent
 //! indistinguishable from the provider itself on the wire. A coding-session
@@ -91,7 +91,7 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// So the provider says it. Every rule here is a fact about this process, not
 /// an aspiration:
 ///
-/// - It cannot authenticate `buzz` — [`FENCE`] removes the whole namespace
+/// - It cannot authenticate `bee` — [`FENCE`] removes the whole namespace
 ///   before the adapter is spawned (`session.rs`, `spawn_with_env_fence`).
 /// - Its session state *is* published: the provider observes branch, `HEAD`
 ///   commit and dirty state itself ([`crate::git_probe`]) and publishes them
@@ -106,7 +106,7 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// agents, which do inherit the harness's credentials — must keep instructing
 /// exactly that. `the_fenced_briefing_never_tells_a_session_to_write_the_pulse`
 /// pins both halves.
-pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `buzz` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `buzz` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Buzz Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf.";
+pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Buzz Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf.";
 
 #[cfg(test)]
 mod tests {
@@ -149,10 +149,10 @@ mod tests {
     #[test]
     fn the_fenced_briefing_never_tells_a_session_to_write_the_pulse() {
         for forbidden in [
-            "buzz pulse update",
-            "buzz pulse digest",
-            "buzz pulse list",
-            "buzz pulse sessions",
+            "bee pulse update",
+            "bee pulse digest",
+            "bee pulse list",
+            "bee pulse sessions",
             "BUZZ_PULSE_PROJECT",
         ] {
             assert!(
@@ -162,7 +162,7 @@ mod tests {
         }
         assert!(
             FENCED_SESSION_BRIEFING.contains("cannot authenticate"),
-            "the fenced briefing must say why `buzz` will not work here"
+            "the fenced briefing must say why `bee` will not work here"
         );
         assert!(
             FENCED_SESSION_BRIEFING.contains("ask your operator"),
@@ -172,7 +172,7 @@ mod tests {
         // The unfenced audience keeps the instruction: a managed ACP agent
         // inherits the harness's credentials and is the only writer Pulse has.
         assert!(
-            buzz_acp::BASE_PROMPT.contains("post it yourself with `buzz pulse update`"),
+            buzz_acp::BASE_PROMPT.contains("post it yourself with `bee pulse update`"),
             "the managed-agent base prompt lost its Pulse write instruction"
         );
     }

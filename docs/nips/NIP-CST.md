@@ -116,7 +116,7 @@ pop-out surfaces all read the same record.
 Storing these facts is the point: the relay's `events` table is the analysis
 database, and no export step stands between a finished session and a query about
 it. See [Analyzing recorded coding sessions](../coding-session-analysis.md) for
-the `buzz sessions` command surface and direct-SQL recipes (tool frequency,
+the `bee sessions` command surface and direct-SQL recipes (tool frequency,
 error rate by tool, sessions per project, whole-transcript dump).
 
 Two things a reader must get right: order by `cst-seq` **numerically** — it is a

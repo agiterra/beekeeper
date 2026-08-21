@@ -7,7 +7,7 @@
       "binaries/buzz-backend-kubernetes",
       "binaries/buzz-dev-mcp",
       "binaries/git-credential-nostr",
-      "binaries/buzz",
+      "binaries/bee",
       "binaries/buzz-shell-host",
       "binaries/buzz-session-provider"
     ]

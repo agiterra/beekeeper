@@ -1209,7 +1209,7 @@ research model's training; everything below is from the primary changelogs:
   polling, mid-flight input) — the shape to reach for if `search_session`
   or projection-on-demand ever becomes slow at weeks scale.
 - **URL-mode elicitation** (2025-11-25) — a plausible future transport for
-  consent/approval ceremonies (bounce to a `buzz://` approval surface);
+  consent/approval ceremonies (bounce to a `beekeeper://` approval surface);
   unrelated to continuity today.
 - **`experimental-ext-interceptors`** — name suggests middleware hooks;
   if it matures, interception is a candidate home for transcript

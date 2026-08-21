@@ -87,7 +87,7 @@ test("parseEntityLink round-trips built links", () => {
 
 test("parseEntityLink lowercase-normalizes hex identifiers", () => {
   const parsed = parseEntityLink(
-    `buzz://issue?id=${EVENT_ID.toUpperCase()}&owner=${OWNER.toUpperCase()}&d=buzz-world`,
+    `beekeeper://issue?id=${EVENT_ID.toUpperCase()}&owner=${OWNER.toUpperCase()}&d=buzz-world`,
   );
   assert.deepEqual(parsed, {
     ok: true,
@@ -99,12 +99,12 @@ test("parseEntityLink rejects malformed links", () => {
   const cases = [
     ["not a url at all", "invalid-url"],
     [`https://pr?id=${EVENT_ID}&owner=${OWNER}&d=repo`, "wrong-scheme"],
-    [`buzz://message?channel=x&id=${EVENT_ID}`, "wrong-host"],
-    [`buzz://pr?id=${EVENT_ID}&owner=nope&d=repo`, "invalid-owner"],
-    [`buzz://pr?id=${EVENT_ID}&owner=${OWNER}&d=.hidden`, "invalid-dtag"],
-    [`buzz://pr?id=${EVENT_ID}&owner=${OWNER}`, "invalid-dtag"],
-    [`buzz://pr?owner=${OWNER}&d=repo`, "invalid-id"],
-    [`buzz://issue?id=short&owner=${OWNER}&d=repo`, "invalid-id"],
+    [`beekeeper://message?channel=x&id=${EVENT_ID}`, "wrong-host"],
+    [`beekeeper://pr?id=${EVENT_ID}&owner=nope&d=repo`, "invalid-owner"],
+    [`beekeeper://pr?id=${EVENT_ID}&owner=${OWNER}&d=.hidden`, "invalid-dtag"],
+    [`beekeeper://pr?id=${EVENT_ID}&owner=${OWNER}`, "invalid-dtag"],
+    [`beekeeper://pr?owner=${OWNER}&d=repo`, "invalid-id"],
+    [`beekeeper://issue?id=short&owner=${OWNER}&d=repo`, "invalid-id"],
   ];
   for (const [href, reason] of cases) {
     assert.deepEqual(parseEntityLink(href), { ok: false, reason }, href);
@@ -112,11 +112,11 @@ test("parseEntityLink rejects malformed links", () => {
 });
 
 test("isEntityLink matches entity hosts and excludes message links", () => {
-  assert.equal(isEntityLink(`buzz://pr?id=${EVENT_ID}`), true);
-  assert.equal(isEntityLink(`buzz://issue?id=${EVENT_ID}`), true);
-  assert.equal(isEntityLink(`buzz://repo?owner=${OWNER}`), true);
-  assert.equal(isEntityLink(`buzz://project?owner=${OWNER}`), true);
-  assert.equal(isEntityLink("buzz://message?channel=x&id=y"), false);
+  assert.equal(isEntityLink(`beekeeper://pr?id=${EVENT_ID}`), true);
+  assert.equal(isEntityLink(`beekeeper://issue?id=${EVENT_ID}`), true);
+  assert.equal(isEntityLink(`beekeeper://repo?owner=${OWNER}`), true);
+  assert.equal(isEntityLink(`beekeeper://project?owner=${OWNER}`), true);
+  assert.equal(isEntityLink("beekeeper://message?channel=x&id=y"), false);
   assert.equal(isEntityLink("https://github.com/block/buzz"), false);
   assert.equal(isEntityLink(null), false);
 });
@@ -149,7 +149,7 @@ test("coordinate links carry an optional workspace tab", () => {
     dtag: "buzz-world",
     tab: "prs",
   });
-  assert.equal(link, `buzz://project?owner=${OWNER}&d=buzz-world&tab=prs`);
+  assert.equal(link, `beekeeper://project?owner=${OWNER}&d=buzz-world&tab=prs`);
   assert.deepEqual(parseEntityLink(link), {
     ok: true,
     value: { type: "project", owner: OWNER, dtag: "buzz-world", tab: "prs" },
@@ -171,16 +171,18 @@ test("coordinate links carry an optional workspace tab", () => {
     buildRepoLink({ owner: OWNER, dtag: "buzz-world", tab: "overview" }),
   );
   assert.deepEqual(
-    parseEntityLink(`buzz://repo?owner=${OWNER}&d=buzz-world&tab=overview`),
+    parseEntityLink(
+      `beekeeper://repo?owner=${OWNER}&d=buzz-world&tab=overview`,
+    ),
     { ok: false, reason: "invalid-tab" },
   );
   assert.deepEqual(
-    parseEntityLink(`buzz://repo?owner=${OWNER}&d=buzz-world&tab=`),
+    parseEntityLink(`beekeeper://repo?owner=${OWNER}&d=buzz-world&tab=`),
     { ok: false, reason: "invalid-tab" },
   );
   assert.deepEqual(
     parseEntityLink(
-      `buzz://pr?id=${EVENT_ID}&owner=${OWNER}&d=buzz-world&tab=prs`,
+      `beekeeper://pr?id=${EVENT_ID}&owner=${OWNER}&d=buzz-world&tab=prs`,
     ),
     { ok: false, reason: "unknown-param" },
   );
@@ -200,25 +202,27 @@ test("parseEntityLink rejects noncanonical extras", () => {
   // Unexpected path segments — reserved for future versioning.
   assert.deepEqual(
     parseEntityLink(
-      `buzz://pr/ignored?id=${EVENT_ID}&owner=${OWNER}&d=buzz-world`,
+      `beekeeper://pr/ignored?id=${EVENT_ID}&owner=${OWNER}&d=buzz-world`,
     ),
     { ok: false, reason: "unexpected-path" },
   );
   // Fragment — not part of the canonical format.
   assert.deepEqual(
-    parseEntityLink(`buzz://repo?owner=${OWNER}&d=buzz-world#section`),
+    parseEntityLink(`beekeeper://repo?owner=${OWNER}&d=buzz-world#section`),
     { ok: false, reason: "unexpected-fragment" },
   );
   // Unknown query parameter — reject to preserve forward-compat posture.
   assert.deepEqual(
     parseEntityLink(
-      `buzz://repo?owner=${OWNER}&d=buzz-world&relay=wss%3A%2F%2Frelay.example`,
+      `beekeeper://repo?owner=${OWNER}&d=buzz-world&relay=wss%3A%2F%2Frelay.example`,
     ),
     { ok: false, reason: "unknown-param" },
   );
   // Duplicate required parameter — reject.
   assert.deepEqual(
-    parseEntityLink(`buzz://repo?owner=${OWNER}&d=buzz-world&owner=${OWNER}`),
+    parseEntityLink(
+      `beekeeper://repo?owner=${OWNER}&d=buzz-world&owner=${OWNER}`,
+    ),
     { ok: false, reason: "duplicate-param" },
   );
 });

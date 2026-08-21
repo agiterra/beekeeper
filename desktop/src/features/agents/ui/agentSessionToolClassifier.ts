@@ -560,7 +560,7 @@ export function tokenizeShellCommand(command: string): string[] {
 }
 
 function isBuzzExecutable(token: string) {
-  return token === "buzz" || token.split(/[\\/]/).pop() === "buzz";
+  return token === "bee" || token.split(/[\\/]/).pop() === "bee";
 }
 
 function isCommandSeparator(token: string) {

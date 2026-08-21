@@ -456,7 +456,7 @@ impl From<bool> for DeleteAuthority {
 /// Build the delete event for `authority`, picking kind:5 or kind:9005.
 ///
 /// The kind:9005 branch delegates to `buzz-sdk` so the tag shape stays
-/// identical to the one `buzz messages delete` publishes.
+/// identical to the one `bee messages delete` publishes.
 pub fn build_delete_for_authority(
     channel_id: Uuid,
     target_event_id: EventId,

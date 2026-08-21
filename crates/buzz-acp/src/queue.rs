@@ -1192,7 +1192,7 @@ pub(crate) fn format_event_block(
 fn append_reply_instruction(s: &mut String, event_id: &str) {
     s.push_str(&format!(
         "\nIMPORTANT: For ordinary replies in this turn, use `--reply-to {event_id}` \
-         on `buzz messages send` so the conversation stays threaded. \
+         on `bee messages send` so the conversation stays threaded. \
          If the human explicitly asks for a channel-root, top-level, \
          or broadcast post, send that message without `--reply-to`. \
          If the requested destination is ambiguous, ask before sending."
@@ -1207,7 +1207,7 @@ fn append_reply_instruction(s: &mut String, event_id: &str) {
 fn append_new_thread_reply_instruction(s: &mut String, event_id: &str) {
     s.push_str(&format!(
         "\nIMPORTANT: This is a new top-level message. For ordinary replies in \
-         this turn, use `--reply-to {event_id}` on `buzz messages send` — the \
+         this turn, use `--reply-to {event_id}` on `bee messages send` — the \
          triggering message is the thread root. Do NOT reply into any other \
          (older) thread. If the human explicitly asks for a channel-root, \
          top-level, or broadcast post, send that message without `--reply-to`."
@@ -1336,17 +1336,17 @@ fn format_context_hints(
         // DM replies use thread command because /messages excludes thread replies.
         // DM non-replies use get for recent conversation.
         let ctx_hint = if has_conversation_context && is_reply {
-            "Thread context included below. Use `buzz messages thread --channel <UUID> --event <ID>` for full history if truncated."
+            "Thread context included below. Use `bee messages thread --channel <UUID> --event <ID>` for full history if truncated."
         } else if has_conversation_context {
-            "Conversation context included below. Use `buzz messages get --channel <UUID>` for full history if truncated."
+            "Conversation context included below. Use `bee messages get --channel <UUID>` for full history if truncated."
         } else if conversation_context_had_delivered_events && is_reply {
-            "Earlier thread context was already delivered in this session. Use `buzz messages thread --channel <UUID> --event <ID>` to re-read the reply chain."
+            "Earlier thread context was already delivered in this session. Use `bee messages thread --channel <UUID> --event <ID>` to re-read the reply chain."
         } else if conversation_context_had_delivered_events {
-            "Earlier conversation context was already delivered in this session. Use `buzz messages get --channel <UUID>` to re-read it."
+            "Earlier conversation context was already delivered in this session. Use `bee messages get --channel <UUID>` to re-read it."
         } else if is_reply {
-            "Use `buzz messages thread --channel <UUID> --event <ID>` to fetch the reply chain."
+            "Use `bee messages thread --channel <UUID> --event <ID>` to fetch the reply chain."
         } else {
-            "Use `buzz messages get --channel <UUID>` for conversation context."
+            "Use `bee messages get --channel <UUID>` for conversation context."
         };
         let mut s = format!(
             "[Context]\n\
@@ -1369,11 +1369,11 @@ fn format_context_hints(
         s
     } else if let Some(ref root) = thread_tags.root_event_id {
         let ctx_hint = if has_conversation_context {
-            "Thread context included below. Use `buzz messages thread --channel <UUID> --event <ID>` for full history if truncated."
+            "Thread context included below. Use `bee messages thread --channel <UUID> --event <ID>` for full history if truncated."
         } else if conversation_context_had_delivered_events {
-            "Earlier thread context was already delivered in this session. Use `buzz messages thread --channel <UUID> --event <ID>` to re-read it."
+            "Earlier thread context was already delivered in this session. Use `bee messages thread --channel <UUID> --event <ID>` to re-read it."
         } else {
-            "Use `buzz messages thread --channel <UUID> --event <ID>` to fetch thread context."
+            "Use `bee messages thread --channel <UUID> --event <ID>` to fetch thread context."
         };
         let mut s = format!(
             "[Context]\n\
@@ -1400,7 +1400,7 @@ fn format_context_hints(
         );
         append_channel_description(&mut s, channel_info);
         s.push_str(
-            "\nHint: Use `buzz messages get --channel <UUID>` for recent messages if needed.",
+            "\nHint: Use `bee messages get --channel <UUID>` for recent messages if needed.",
         );
         if let Some(event_id) = reply_anchor {
             append_new_thread_reply_instruction(&mut s, event_id);
@@ -3693,8 +3693,8 @@ mod tests {
         );
         // Hint should point to the thread command, not get.
         assert!(
-            prompt.contains("buzz messages thread"),
-            "DM reply hint should mention `buzz messages thread`, got:\n{prompt}"
+            prompt.contains("bee messages thread"),
+            "DM reply hint should mention `bee messages thread`, got:\n{prompt}"
         );
         // Thread structural info should be present.
         assert!(
@@ -3742,7 +3742,7 @@ mod tests {
         .join("\n\n");
 
         assert!(prompt.contains("Earlier thread context was already delivered in this session"));
-        assert!(prompt.contains("buzz messages thread"));
+        assert!(prompt.contains("bee messages thread"));
         assert!(!prompt.contains("Thread context included below"));
         assert!(!prompt.contains("[Thread Context"));
     }
@@ -3790,7 +3790,7 @@ mod tests {
         assert!(
             prompt.contains("Earlier conversation context was already delivered in this session")
         );
-        assert!(prompt.contains("buzz messages get"));
+        assert!(prompt.contains("bee messages get"));
         assert!(!prompt.contains("Conversation context included below"));
         assert!(!prompt.contains("[Conversation Context"));
     }
@@ -3826,12 +3826,12 @@ mod tests {
         .join("\n\n");
         assert!(prompt.contains("Scope: dm"));
         assert!(
-            prompt.contains("buzz messages get"),
-            "DM non-reply hint should mention `buzz messages get`"
+            prompt.contains("bee messages get"),
+            "DM non-reply hint should mention `bee messages get`"
         );
         assert!(
-            !prompt.contains("buzz messages thread"),
-            "DM non-reply should NOT mention `buzz messages thread`"
+            !prompt.contains("bee messages thread"),
+            "DM non-reply should NOT mention `bee messages thread`"
         );
     }
 
@@ -4459,7 +4459,7 @@ mod tests {
             "instruction should tell agents to honor explicit root/top-level requests"
         );
         assert!(
-            !prompt.contains("on EVERY `buzz messages send` call"),
+            !prompt.contains("on EVERY `bee messages send` call"),
             "instruction should not make reply-to absolute for every send"
         );
     }
@@ -4835,7 +4835,7 @@ mod tests {
 
     #[test]
     fn test_format_prompt_canvas_injected_for_legacy_agent() {
-        let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: buzz canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
+        let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: bee canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
             channel_id: ch,
@@ -4864,7 +4864,7 @@ mod tests {
 
     #[test]
     fn test_format_prompt_canvas_omitted_for_modern_agent() {
-        let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: buzz canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
+        let canvas = "[Channel Canvas]\nCanvas revision (event ID): abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234\nLast modified: 2024-01-15T10:30:00+00:00\nFetch current content with: bee canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae";
         let ch = Uuid::new_v4();
         let batch = FlushBatch {
             channel_id: ch,

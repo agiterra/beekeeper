@@ -522,7 +522,7 @@ pub async fn cmd_issue_status(
         }
     };
 
-    // Mirrors `buzz patches status`: default a `p` tag to the repo owner
+    // Mirrors `bee patches status`: default a `p` tag to the repo owner
     // for discoverability, plus a `--to` escape hatch for the issue author
     // or anyone else who should be notified of the status change.
     let mut recipients = Vec::new();

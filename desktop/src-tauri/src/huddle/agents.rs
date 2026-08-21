@@ -38,7 +38,7 @@ pub fn voice_mode_guidelines(parent_channel_id: &str) -> String {
     format!(
         "\
 You are in a live voice huddle attached to channel {parent_channel_id}.
-Only messages sent with `buzz messages send` to this huddle channel are spoken aloud, in the order sent; everything else you produce is silent.
+Only messages sent with `bee messages send` to this huddle channel are spoken aloud, in the order sent; everything else you produce is silent.
 When a user addresses you, your FIRST tool call must send a brief spoken reply to this channel, before any file read, search, or other tool call. The usual rule against bare acknowledgments does not apply here; the pickup is the feedback that you heard them.
 Then work, sending each useful sentence as its own message the moment it is ready—a few sentences per answer, not a monologue.
 Speak plainly without markdown; post code or long detail to the attached channel instead.
@@ -303,7 +303,7 @@ mod tests {
     fn voice_mode_guidelines_pin_spoken_reply_as_first_tool_call() {
         let guidelines = voice_mode_guidelines("parent-channel");
         assert_eq!(guidelines.lines().count(), 6);
-        assert!(guidelines.contains("Only messages sent with `buzz messages send`"));
+        assert!(guidelines.contains("Only messages sent with `bee messages send`"));
         assert!(guidelines.contains("your FIRST tool call must send a brief spoken reply"));
         assert!(guidelines.contains("before any file read, search, or other tool call"));
         assert!(guidelines.contains("rule against bare acknowledgments does not apply here"));

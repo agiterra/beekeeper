@@ -551,7 +551,7 @@ async fn authorize_git_read(
                 return Err((
                     StatusCode::NOT_FOUND,
                     format!(
-                        "run: buzz repos bind --id {repo_name} --channel <channel-uuid> — repository {repo_name:?} has no channel binding, so the relay cannot authorize access"
+                        "run: bee repos bind --id {repo_name} --channel <channel-uuid> — repository {repo_name:?} has no channel binding, so the relay cannot authorize access"
                     ),
                 )
                     .into_response());
@@ -3494,7 +3494,7 @@ mod sec005_read_gate_tests {
             .expect("read remediation body");
         let body = String::from_utf8(bytes.to_vec()).expect("utf-8 body");
         assert!(
-            body.starts_with(&format!("run: buzz repos bind --id {}", f.repo)),
+            body.starts_with(&format!("run: bee repos bind --id {}", f.repo)),
             "remediation must lead with the actionable command (got {body:?})"
         );
         assert_ne!(body, GENERIC_DENIAL);

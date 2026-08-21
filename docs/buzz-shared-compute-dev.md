@@ -18,8 +18,8 @@ just mesh-dev-fresh
 ```
 
 This removes development app data, the development keyring entry,
-`~/.buzz-dev`, and local Docker volumes; it preserves the installed Buzz app's
-data, production keyring, and `~/.buzz`. The first dev page load also clears
+`~/.beekeeper-dev`, and local Docker volumes; it preserves the installed Buzz app's
+data, production keyring, and `~/.beekeeper`. The first dev page load also clears
 only that dev server origin's WebKit storage, so saved fields from an earlier
 run cannot leak into the fresh state. It then seeds local channels and starts
 the mesh-enabled desktop with the repository's public Tyler test identity.

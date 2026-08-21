@@ -313,7 +313,7 @@ class _MarkdownEditingController extends TextEditingController {
     TextStyle style,
   ) {
     final expression = RegExp(
-      r'''buzz://(?:message\?|channel/|(?:repo|pr|issue)\?)[^\s<>"']+''',
+      r'''beekeeper://(?:message\?|channel/|(?:repo|pr|issue)\?)[^\s<>"']+''',
       caseSensitive: false,
     );
     final matches = expression.allMatches(source).toList();

@@ -20,8 +20,8 @@ import {
  * privacy model shipped in the rich-link-previews work: recipients never
  * contact external sites.
  *
- * `buzz://pr|issue|repo` entity links (and relay clone URLs, which normalize
- * onto `buzz://repo`) are the exception and are rendered recipient-side:
+ * `beekeeper://pr|issue|repo` entity links (and relay clone URLs, which normalize
+ * onto `beekeeper://repo`) are the exception and are rendered recipient-side:
  * their metadata comes from the community relay itself via the entity metadata
  * loader, so the sender-snapshot privacy model does not apply — and senders
  * (CLI, agents, mobile) attach no snapshot tags for them. Recognized entity

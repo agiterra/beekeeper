@@ -27,7 +27,7 @@ pub use usage::TurnUsage;
 /// Public because its audience is load-bearing and asymmetric: this text is
 /// written for agents the harness spawns with `EnvFence::OPEN`, which inherit
 /// `BUZZ_PRIVATE_KEY`/`BUZZ_RELAY_URL` from the harness and can therefore
-/// actually run the `buzz` commands it teaches. Coding sessions launched by
+/// actually run the `bee` commands it teaches. Coding sessions launched by
 /// `buzz-session-provider` are fenced out of that namespace and never receive
 /// this prompt; that crate asserts the difference against this constant rather
 /// than against a copy of the string.
@@ -4557,7 +4557,7 @@ mod agent_draft_prompt_tests {
     #[test]
     fn shared_base_prompt_teaches_portable_agent_drafts() {
         let prompt = include_str!("base_prompt.md");
-        assert!(prompt.contains("buzz agents draft-create"));
+        assert!(prompt.contains("bee agents draft-create"));
         assert!(prompt.contains("ask for at most two things"));
         assert!(prompt.contains("what it should do day-to-day"));
         assert!(prompt.contains("owner saves it"));
@@ -4569,7 +4569,7 @@ mod agent_draft_prompt_tests {
         let prompt = include_str!("base_prompt.md");
         assert!(prompt.contains("pass real newline bytes through stdin"));
         assert!(prompt.contains("single-quoted shell strings preserve `\\n` literally"));
-        assert!(prompt.contains("buzz messages send ... --content -"));
+        assert!(prompt.contains("bee messages send ... --content -"));
     }
 
     /// The read-side promise has to match what the harness actually injects.
@@ -4596,7 +4596,7 @@ mod agent_draft_prompt_tests {
         // The write instruction is correct for *this* audience: managed agents
         // inherit the harness's credentials. `buzz-session-provider` pins the
         // other half — its fenced adapters must never be told the same thing.
-        assert!(BASE_PROMPT.contains("post it yourself with `buzz pulse update`"));
+        assert!(BASE_PROMPT.contains("post it yourself with `bee pulse update`"));
     }
 
     #[test]
@@ -4627,7 +4627,7 @@ mod agent_draft_prompt_tests {
         assert!(prompt.contains("no follow-up verification command is needed"));
         assert!(prompt.contains("stops before sending"));
         assert!(prompt
-            .contains("add them explicitly with `buzz channels add-member` only when authorized"));
+            .contains("add them explicitly with `bee channels add-member` only when authorized"));
         assert!(prompt.contains("never changes membership automatically"));
     }
 }
@@ -4639,14 +4639,14 @@ fn default_heartbeat_prompt() -> String {
          You have been awakened for a routine heartbeat. You have NO incoming messages or\n\
          active channel context for this turn.\n\n\
          Your tasks:\n\
-         1. Run `buzz feed get --types needs_action` to check for pending workflow approvals or\n\
+         1. Run `bee feed get --types needs_action` to check for pending workflow approvals or\n\
             high-priority requests addressed to you.\n\
-         2. Run `buzz feed get --types mentions` to check for unanswered @mentions.\n\
+         2. Run `bee feed get --types mentions` to check for unanswered @mentions.\n\
          3. If you find actionable items, address them using the appropriate CLI commands\n\
-            (e.g., `buzz workflows approve --token <UUID>`, `buzz messages send`,\n\
-            `buzz messages send --reply-to <event-id>`).\n\
+            (e.g., `bee workflows approve --token <UUID>`, `bee messages send`,\n\
+            `bee messages send --reply-to <event-id>`).\n\
          4. If there are no pending actions or mentions, end your turn immediately.\n\n\
-         Do not run `buzz channels list` or `buzz messages search` unless you have a specific reason.\n\
+         Do not run `bee channels list` or `bee messages search` unless you have a specific reason.\n\
          Do not invent work — only act on items surfaced by the feed commands."
     )
 }

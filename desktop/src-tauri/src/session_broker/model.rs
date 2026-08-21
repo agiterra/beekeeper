@@ -1,9 +1,9 @@
-//! The broker's session wire shapes, as `buzz session list` serializes them.
+//! The broker's session wire shapes, as `bee session list` serializes them.
 //!
 //! Extracted from the cmux integration this broker originally multiplexed
 //! (buzz-old `cmux/model.rs`); built-in shells are the only backend here, but
 //! the **camelCase JSON is a wire contract** — the CLI's `SessionSummary` and
-//! agents parsing `buzz session list` depend on these exact field names, so
+//! agents parsing `bee session list` depend on these exact field names, so
 //! keep them stable even though the "workspace" vocabulary is historical.
 
 use serde::Serialize;
@@ -22,7 +22,7 @@ pub enum SessionActivity {
     Active,
 }
 
-/// A session surfaced to `buzz session list`.
+/// A session surfaced to `bee session list`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrokerSession {

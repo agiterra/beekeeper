@@ -39,7 +39,7 @@ Code references are to the `feature/coding-sessions` worktree
    store.
 5. **Handoff v1 is operator-mediated and adds no wire schema.** "Send to
    ⟨execution B⟩" on any item of execution A prefills a 44220 to B with a
-   quoted excerpt and a `buzz://` provenance link to A's signed 44225 fact.
+   quoted excerpt and a `beekeeper://` provenance link to A's signed 44225 fact.
    The lane renders it as a structured handoff chip; if recognition fails it
    degrades to a plain quoted prompt. Agent-initiated handoffs are explicitly
    deferred.
@@ -356,7 +356,7 @@ making the exchange fully visible and attributable.
    editable provenance block:
 
    ```
-   > From Claude · opus-4-1 (this session) — buzz://coding-session?channel=<uuid>&target=<cs-target-key>&seq=<eventSeq>
+   > From Claude · opus-4-1 (this session) — beekeeper://coding-session?channel=<uuid>&target=<cs-target-key>&seq=<eventSeq>
    > The failing test is fixtures/relay.rs:88; the fixture predates the
    > membership gate. Recommend regenerating it rather than patching.
 
@@ -365,8 +365,8 @@ making the exchange fully visible and attributable.
 
 3. Send publishes an ordinary **44220 `thread.turn.start` to B, signed by
    the operator**. No schema change; the 44220 contract is byte-identical to
-   today's. The `buzz://coding-session` deep link (a client-side convention
-   like the existing `buzz://message` link, resolved through the trusted
+   today's. The `beekeeper://coding-session` deep link (a client-side convention
+   like the existing `beekeeper://message` link, resolved through the trusted
    ingress store — never a fetch-and-trust) pins the provenance to A's exact
    signed 44225 fact.
 4. **Rendering:** the umbrella timeline shows the resulting turn block on

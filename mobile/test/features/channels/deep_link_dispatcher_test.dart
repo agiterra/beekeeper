@@ -31,8 +31,8 @@ void main() {
     final firstId = 'aa' * 32;
     final secondId = 'bb' * 32;
     controller
-      ..add(Uri.parse('buzz://message?channel=$channelId&id=$firstId'))
-      ..add(Uri.parse('buzz://message?channel=$channelId&id=$secondId'));
+      ..add(Uri.parse('beekeeper://message?channel=$channelId&id=$firstId'))
+      ..add(Uri.parse('beekeeper://message?channel=$channelId&id=$secondId'));
     await tester.pump();
 
     expect(

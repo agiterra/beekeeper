@@ -1894,7 +1894,7 @@ fn openai_shell_send(id: &str) -> Value {
     openai_tool_call(
         id,
         "fake__shell",
-        json!({ "command": "buzz messages send --channel c --content hi" }),
+        json!({ "command": "bee messages send --channel c --content hi" }),
     )
 }
 
@@ -2012,7 +2012,7 @@ async fn reply_guard_nags_twice_then_lets_the_turn_end() {
         .expect("reminder body");
     let text = nag["text"].as_str().unwrap_or("");
     assert!(
-        text.contains("buzz messages send"),
+        text.contains("bee messages send"),
         "reminder should name the command: {text}"
     );
     assert!(
@@ -2118,7 +2118,7 @@ async fn reply_guard_ignores_calls_lost_to_the_turn_cap() {
         "type": "function",
         "function": {
             "name": "fake__shell",
-            "arguments": json!({ "command": "buzz messages send --channel c --content hi" })
+            "arguments": json!({ "command": "bee messages send --channel c --content hi" })
                 .to_string(),
         },
     }));

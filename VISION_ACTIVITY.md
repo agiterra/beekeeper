@@ -38,7 +38,7 @@ These are not a wish list. They are the complete taxonomy: every event the agent
 
 ## Design Principles
 
-- **Semantics over transport.** Render *what the agent did*, not *which API it used*. A message sent through an MCP tool and the same message sent through a shell `buzz` command render as the identical card. How the agent reached the relay is plumbing; what it did is the contract.
+- **Semantics over transport.** Render *what the agent did*, not *which API it used*. A message sent through an MCP tool and the same message sent through a shell `bee` command render as the identical card. How the agent reached the relay is plumbing; what it did is the contract.
 
 - **Outcome-first.** Lead with success, failure, or result. The reader decides in under a second whether to expand. The raw dump is the fallback, never the headline.
 

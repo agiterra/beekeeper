@@ -183,7 +183,7 @@ _ensure-sidecar-stubs:
     set -euo pipefail
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     mkdir -p desktop/src-tauri/binaries
-    SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr buzz buzz-shell-host)
+    SIDECARS=(buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr bee buzz-shell-host)
     if [[ "$TARGET" != *windows* ]]; then
         SIDECARS+=(buzz-backend-kubernetes)
     fi
@@ -290,7 +290,7 @@ desktop-release-build target="aarch64-apple-darwin":
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
 
-# Build the local production Buzz.app from any commit-ish (default: newest
+# Build the local production Bee Keeper.app from any commit-ish (default: newest
 # build/* tag, else the tracked upstream, else HEAD) and install it to
 # /Applications. See docs/local-desktop-instances.md.
 prod-desktop rev="":
@@ -639,7 +639,7 @@ staging *ARGS: bootstrap _ensure-sidecar-stubs
     # tauri dev copies next to the exe would hide the provider from "Run on".
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    STAGING_SIDECARS=(buzz)
+    STAGING_SIDECARS=(bee)
     if [[ "$TARGET" != *windows* ]]; then
         STAGING_SIDECARS+=(buzz-backend-kubernetes)
     fi
@@ -674,7 +674,7 @@ production *ARGS: bootstrap _ensure-sidecar-stubs
     # tauri dev copies next to the exe would hide the provider from "Run on".
     TARGET=$(rustc -vV | sed -n 's|host: ||p')
     TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).target_directory")
-    PRODUCTION_SIDECARS=(buzz)
+    PRODUCTION_SIDECARS=(bee)
     if [[ "$TARGET" != *windows* ]]; then
         PRODUCTION_SIDECARS+=(buzz-backend-kubernetes)
     fi

@@ -1,4 +1,4 @@
-//! `buzz terminals` — NIP-ST shared terminals: list announces (kind 30623),
+//! `bee terminals` — NIP-ST shared terminals: list announces (kind 30623),
 //! manage a session's roster, and send remote input (kind 24312).
 //!
 //! Roster mutations are read-modify-writes of the caller's **own** announce
@@ -174,7 +174,7 @@ async fn fetch_announce_json(
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-/// `buzz terminals list` — announces visible to the caller, optionally
+/// `bee terminals list` — announces visible to the caller, optionally
 /// scoped to one project coordinate.
 pub async fn cmd_list(client: &BuzzClient, project: Option<&str>) -> Result<(), CliError> {
     let caller = client.keys().public_key().to_hex();
@@ -245,7 +245,7 @@ async fn fetch_own_announce(client: &BuzzClient, session_id: &str) -> Result<Eve
         })
 }
 
-/// `buzz terminals invite` — add a pubkey to the caller's own announce
+/// `bee terminals invite` — add a pubkey to the caller's own announce
 /// roster, or change their role.
 pub async fn cmd_invite(
     client: &BuzzClient,
@@ -284,7 +284,7 @@ pub async fn cmd_invite(
     Ok(())
 }
 
-/// `buzz terminals revoke` — remove a pubkey from the caller's own announce
+/// `bee terminals revoke` — remove a pubkey from the caller's own announce
 /// roster.
 pub async fn cmd_revoke(
     client: &BuzzClient,
@@ -323,7 +323,7 @@ pub async fn cmd_revoke(
     Ok(())
 }
 
-/// `buzz terminals roster` — print an announce's roster as
+/// `bee terminals roster` — print an announce's roster as
 /// `[{pubkey, role}]`.
 pub async fn cmd_roster(
     client: &BuzzClient,
@@ -362,7 +362,7 @@ fn chunk_input_bytes(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// `buzz terminals send-input` — send raw bytes to a shared terminal.
+/// `bee terminals send-input` — send raw bytes to a shared terminal.
 ///
 /// The announce is fetched first: its `a` coordinate is what the relay binds
 /// input to, and a closed session is refused locally with a clearer message

@@ -90,7 +90,7 @@ class App extends HookConsumerWidget {
       hasUnreadInbox = ref.watch(_unreadInboxItemCountProvider) > 0;
     }
 
-    // Start listening for buzz:// links immediately (even pre-auth) so a
+    // Start listening for beekeeper:// links immediately (even pre-auth) so a
     // cold-start link survives until the authenticated UI can dispatch it.
     ref.watch(pendingDeepLinkProvider);
 
@@ -113,7 +113,7 @@ class App extends HookConsumerWidget {
     });
 
     return MaterialApp(
-      title: 'Buzz',
+      title: 'Bee Keeper',
       theme: AppTheme.light(
         colorScheme: lightScheme,
         topSectionGradient: buzzLightGradient,

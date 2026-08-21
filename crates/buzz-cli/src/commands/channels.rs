@@ -642,7 +642,7 @@ async fn build_roster_resolution(
     finalize_roster_resolution(&slugs, found, archived_result, &mut std::io::stderr())
 }
 
-/// `buzz channels create --template <name>`: load a desktop-local channel
+/// `bee channels create --template <name>`: load a desktop-local channel
 /// template, resolve its agent roster against the relay, create the
 /// channel, apply the canvas template, and add resolved agents as members.
 ///
@@ -1026,7 +1026,7 @@ pub async fn cmd_set_add_policy(client: &BuzzClient, policy: &str) -> Result<(),
     }
 
     // Check if this policy is allowed by the deployment.
-    // NOTE: This gate covers only the `buzz channels set-add-policy` CLI path.
+    // NOTE: This gate covers only the `bee channels set-add-policy` CLI path.
     // A client that submits a kind:10100 event directly to the relay bypasses
     // this check. Full enforcement requires relay-side validation, which is
     // intentionally out of scope for this change (see team decision: no

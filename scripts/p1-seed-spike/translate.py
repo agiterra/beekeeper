@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """P1 seed-quality spike: 44225 transcript -> provenance-keeping seed package.
 
-Takes a `buzz sessions export` directory (manifest.json + <session>-g<N>.jsonl
+Takes a `bee sessions export` directory (manifest.json + <session>-g<N>.jsonl
 of raw signed events) or a single JSONL file, folds the kind-44225 transcript
 by eventSeq, and produces:
 
@@ -477,7 +477,7 @@ def render_prompt(package, instruction):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("source", help="export directory (from `buzz sessions export`) or a single .jsonl file")
+    parser.add_argument("source", help="export directory (from `bee sessions export`) or a single .jsonl file")
     parser.add_argument("--target", help="cs-target key when the export holds several generations")
     parser.add_argument("--budget-bytes", type=int, default=96 * 1024, help="items budget for the package (default 96 KiB)")
     parser.add_argument(

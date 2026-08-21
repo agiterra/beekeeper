@@ -23,7 +23,7 @@ function renderBlock() {
       React.createElement(
         MarkdownCodeBlock,
         { language: "bash" },
-        "buzz --format compact messages thread --channel 00000000-0000-0000-0000-000000000000\n",
+        "bee --format compact messages thread --channel 00000000-0000-0000-0000-000000000000\n",
       ),
     ),
   );

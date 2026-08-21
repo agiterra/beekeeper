@@ -13,7 +13,7 @@
  * creator is the project owner, and even then it is explicitly best-effort.
  * The CLI resolves the same set from the kind:39000 `project` tag, which the
  * relay emits for transports too, so without the back-reference pass Desktop
- * would render "the project is quiet" over sessions `buzz pulse sessions`
+ * would render "the project is quiet" over sessions `bee pulse sessions`
  * lists.
  */
 import type { Channel } from "@/shared/api/channelTypes";

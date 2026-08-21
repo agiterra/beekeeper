@@ -803,7 +803,7 @@ test("an empty project qualifies absence, never presenting it as a verdict", asy
   );
   // The empty state teaches the first action and admits the screen is read-only.
   await expect(page.getByTestId("pulse-write-hint")).toContainText(
-    "buzz pulse update --project",
+    "bee pulse update --project",
   );
   await expect(page.getByTestId("pulse-unavailable")).toHaveCount(0);
   await expect(page.getByTestId("pulse-entry-row")).toHaveCount(0);

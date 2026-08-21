@@ -1,4 +1,4 @@
-//! `buzz sessions` — read-side analysis over the stored coding-session record.
+//! `bee sessions` — read-side analysis over the stored coding-session record.
 //!
 //! Coding sessions are already an analysis database: every turn, tool call, and
 //! result is a signed, h-scoped event sitting in the relay's `events` table
@@ -1359,7 +1359,7 @@ async fn submit_authority_transition(
     unreachable!("loop returns on the second attempt")
 }
 
-/// `buzz sessions grant` — role→type mapping: collaborator ⇒ grant-operator,
+/// `bee sessions grant` — role→type mapping: collaborator ⇒ grant-operator,
 /// viewer ⇒ grant-viewer.
 async fn cmd_grant(
     client: &BuzzClient,
@@ -1375,7 +1375,7 @@ async fn cmd_grant(
     submit_authority_transition(client, channel_id, genesis, transition_type, pubkey).await
 }
 
-/// `buzz sessions revoke`
+/// `bee sessions revoke`
 async fn cmd_revoke(
     client: &BuzzClient,
     channel_id: &str,
@@ -1392,7 +1392,7 @@ async fn cmd_revoke(
     .await
 }
 
-/// `buzz sessions roster` — the folded grant map plus pending (un-receipted)
+/// `bee sessions roster` — the folded grant map plus pending (un-receipted)
 /// transitions.
 async fn cmd_authority_roster(
     client: &BuzzClient,

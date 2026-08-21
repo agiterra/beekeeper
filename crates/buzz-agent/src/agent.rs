@@ -79,7 +79,7 @@ const REPLY_GUARD_SERVER: &str = "buzz-agent";
 /// Explicitly licenses silence. The base prompt tells agents that publishing is
 /// optional and "silence is usually correct"; a reminder that argued otherwise
 /// would fight that instruction and make agents chattier.
-const REPLY_GUARD_NAG: &str = "You are about to end this turn without calling `buzz messages send`. \
+const REPLY_GUARD_NAG: &str = "You are about to end this turn without calling `bee messages send`. \
 Your assistant text and reasoning are never shown to anyone — if you did work, found an answer, \
 or hit a blocker that someone is waiting on, it exists only if you publish it. \
 If you already posted, or if silence is genuinely correct for this turn, ignore this and end your turn.";
@@ -117,7 +117,7 @@ fn is_buzz_reply_call(call: &ToolCall, mcp: &McpRegistry) -> bool {
 /// cannot suppress the guard, and a non-string `command` is rejected rather than
 /// coerced. Known limits, both accepted: a command assembled at runtime (`$CMD`)
 /// or hidden in a wrapper script is missed, and text that merely quotes a send
-/// (`echo "buzz messages send"`) matches. Missing a real post is the expensive
+/// (`echo "bee messages send"`) matches. Missing a real post is the expensive
 /// direction, and substring matching is the more forgiving one there.
 fn is_reply_shaped(name: &str, arguments: &serde_json::Value) -> bool {
     name.ends_with("__shell")
@@ -1314,14 +1314,14 @@ mod tests {
     #[test]
     fn reply_shape_matches_documented_send_forms() {
         for cmd in [
-            "buzz messages send --channel X --content Y",
-            "buzz --relay wss://r messages send --channel X --content Y",
-            "/abs/path/buzz messages send",
-            "printf 'hi' | buzz messages send --content -",
-            "buzz messages send-diff --diff -",
-            "buzz reactions add --event E --emoji +",
+            "bee messages send --channel X --content Y",
+            "bee --relay wss://r messages send --channel X --content Y",
+            "/abs/path/bee messages send",
+            "printf 'hi' | bee messages send --content -",
+            "bee messages send-diff --diff -",
+            "bee reactions add --event E --emoji +",
             // Assembled through another shell: rev 3's tokenizer missed this.
-            r#"sh -c "buzz messages send --channel X""#,
+            r#"sh -c "bee messages send --channel X""#,
         ] {
             assert!(
                 is_reply_shaped("dev__shell", &json!({ "command": cmd })),
@@ -1335,12 +1335,12 @@ mod tests {
     #[test]
     fn reply_shape_rejects_non_reply_commands() {
         for cmd in [
-            "buzz messages get --channel X",
-            "buzz channels list",
-            "buzz reactions remove --event E",
-            "buzz pr open --title T",
-            "buzz social publish --content hi",
-            "buzz notes set --name n",
+            "bee messages get --channel X",
+            "bee channels list",
+            "bee reactions remove --event E",
+            "bee pr open --title T",
+            "bee social publish --content hi",
+            "bee notes set --name n",
             "cargo test -p buzz-agent",
         ] {
             assert!(
@@ -1355,7 +1355,7 @@ mod tests {
     /// `has()` proves registration, not the bare name.
     #[test]
     fn reply_shape_requires_the_qname_separator() {
-        let args = json!({ "command": "buzz messages send --channel X" });
+        let args = json!({ "command": "bee messages send --channel X" });
         for name in [
             "dev__powershell",
             "dev__noshell",
@@ -1378,11 +1378,11 @@ mod tests {
     fn reply_shape_reads_only_the_command_field() {
         assert!(!is_reply_shaped(
             "dev__shell",
-            &json!({ "description": "buzz messages send --channel X" })
+            &json!({ "description": "bee messages send --channel X" })
         ));
         assert!(!is_reply_shaped(
             "dev__shell",
-            &json!({ "workdir": "buzz messages send" })
+            &json!({ "workdir": "bee messages send" })
         ));
         // Malformed `command` is rejected, not coerced — and must not panic.
         assert!(!is_reply_shaped("dev__shell", &json!({ "command": 42 })));

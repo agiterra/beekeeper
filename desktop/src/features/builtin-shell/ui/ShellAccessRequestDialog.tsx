@@ -14,7 +14,7 @@ import { useShellAccessRequests } from "../hooks/useShellAccessRequests";
 
 /**
  * App-wide approval prompt for agent access to a built-in shell session. When
- * an agent runs `buzz session request-access` on a session it isn't a
+ * an agent runs `bee session request-access` on a session it isn't a
  * collaborator on, its call blocks and this dialog surfaces the ask. The
  * owner can allow the single command once, enable full control (which adds
  * the agent's pubkey to the session's invite roster as collaborator), or

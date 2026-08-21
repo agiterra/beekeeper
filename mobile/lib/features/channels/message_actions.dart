@@ -394,7 +394,7 @@ Future<void> _shareImage(
   }
 }
 
-/// Canonical `buzz://message` link for a timeline message, including thread
+/// Canonical `beekeeper://message` link for a timeline message, including thread
 /// context when the message is a reply.
 String messageLinkFor({
   required TimelineMessage message,
@@ -486,7 +486,7 @@ class _FollowThreadTile extends ConsumerWidget {
 }
 
 /// Promoted actions for the three dominant mobile jobs: respond now (Reply),
-/// hand off context (Copy link — the `buzz://message` link is the workspace's
+/// hand off context (Copy link — the `beekeeper://message` link is the workspace's
 /// context-transfer primitive), and defer (Remind me).
 class _FastActionsRow extends ConsumerWidget {
   final TimelineMessage message;

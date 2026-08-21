@@ -1,7 +1,7 @@
 //! Named-key → PTY byte-sequence mapping for the built-in shell.
 //!
 //! Mirrors the key names the cmux integration accepts (`enter`, `escape`,
-//! `ctrl+c`, arrow keys, …) so `buzz session send-key` behaves identically
+//! `ctrl+c`, arrow keys, …) so `bee session send-key` behaves identically
 //! against either backend.
 
 /// Translate a named key into the bytes to write to the PTY. Returns `None`

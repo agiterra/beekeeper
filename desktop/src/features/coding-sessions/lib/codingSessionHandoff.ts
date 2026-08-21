@@ -1,7 +1,7 @@
 /**
  * Operator-mediated handoff v1 (design §D): "Send to ⟨execution B⟩" prefills
  * an ordinary 44220 to B with an editable provenance block quoting execution
- * A's signed fact and a `buzz://coding-session` deep link to it.
+ * A's signed fact and a `beekeeper://coding-session` deep link to it.
  *
  * Nothing here is wire schema. The provenance block is plain prompt text
  * signed by the operator; recognition is presentation-only. If parsing fails
@@ -13,7 +13,7 @@ import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import type { CodingSessionUmbrellaTurnBlock } from "./codingSessionUmbrellaTimeline";
 
 /** Client-side deep-link convention pinning a quoted signed transcript fact. */
-export const CODING_SESSION_HANDOFF_LINK_PREFIX = "buzz://coding-session";
+export const CODING_SESSION_HANDOFF_LINK_PREFIX = "beekeeper://coding-session";
 
 /** Coordinates of one exact signed 44225 fact, as the deep link carries them. */
 export type CodingSessionHandoffLink = {
@@ -36,7 +36,7 @@ export type CodingSessionHandoffProvenance = {
   instruction: string;
 };
 
-/** Build the `buzz://coding-session?channel=…&target=…&seq=…` deep link. */
+/** Build the `beekeeper://coding-session?channel=…&target=…&seq=…` deep link. */
 export function buildCodingSessionHandoffLink(
   link: CodingSessionHandoffLink,
 ): string {
@@ -85,7 +85,7 @@ export function buildCodingSessionHandoffPrefill(input: {
 }
 
 const HANDOFF_HEADER_PATTERN =
-  /^> From (.+) \(this session\) — (buzz:\/\/coding-session\?\S+)$/;
+  /^> From (.+) \(this session\) — (beekeeper:\/\/coding-session\?\S+)$/;
 
 /**
  * Recognize a handoff provenance block at the head of an operator-signed
@@ -128,7 +128,7 @@ export type CodingSessionHandoffFactCandidate = {
  * Locate a handoff link's quoted fact among the blocks this view has already
  * ingested.
  *
- * The `buzz://coding-session` link is a client-side convention, not a scheme
+ * The `beekeeper://coding-session` link is a client-side convention, not a scheme
  * anything registers: nothing in the app (or the OS) resolves it, so a bare
  * anchor is a dead control. Resolution is therefore local and total — the fact
  * is either already in the rendered timeline, in which case the chip can

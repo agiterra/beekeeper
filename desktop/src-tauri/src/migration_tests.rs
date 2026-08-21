@@ -2,44 +2,6 @@ use super::test_support::*;
 use super::*;
 
 #[test]
-fn canonical_dev_data_dir_replaces_last_component() {
-    let current =
-        PathBuf::from("/Users/me/Library/Application Support/xyz.block.buzz.app.dev.my-branch");
-    let canonical = canonical_dev_data_dir(&current).unwrap();
-    assert_eq!(
-        canonical,
-        PathBuf::from("/Users/me/Library/Application Support/xyz.block.buzz.app.dev")
-    );
-}
-
-#[test]
-fn canonical_dev_data_dir_returns_none_for_root() {
-    // A root path has no parent — should return None.
-    assert!(canonical_dev_data_dir(Path::new("/")).is_none());
-}
-
-#[test]
-fn legacy_app_data_dir_maps_release_identifier() {
-    let current = PathBuf::from("/Users/me/Library/Application Support/xyz.block.buzz.app");
-    let legacy = legacy_app_data_dir(&current).unwrap();
-    assert_eq!(
-        legacy,
-        PathBuf::from("/Users/me/Library/Application Support/xyz.block.sprout.app")
-    );
-}
-
-#[test]
-fn legacy_app_data_dir_maps_dev_worktree_identifier() {
-    let current =
-        PathBuf::from("/Users/me/Library/Application Support/xyz.block.buzz.app.dev.my-branch");
-    let legacy = legacy_app_data_dir(&current).unwrap();
-    assert_eq!(
-        legacy,
-        PathBuf::from("/Users/me/Library/Application Support/xyz.block.sprout.app.dev.my-branch",)
-    );
-}
-
-#[test]
 fn copy_dir_all_preserves_nested_files_without_overwriting() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("old");
@@ -438,23 +400,6 @@ fn seed_up_ignores_sibling_symlink_as_source() {
     assert!(!canonical.join(rel).exists());
 }
 
-#[test]
-fn canonical_dev_data_dir_returns_self_for_canonical_instance() {
-    // When the current app data dir IS the canonical dev identifier,
-    // canonical_dev_data_dir returns the exact same path — the caller
-    // (sync_shared_agent_data) uses this equality to skip the sync.
-    // The env-var guards (BUZZ_SHARE_IDENTITY, BUZZ_PRIVATE_KEY)
-    // require a live Tauri AppHandle and are covered by integration
-    // testing only.
-    let current = PathBuf::from("/Users/me/Library/Application Support/xyz.block.buzz.app.dev");
-    assert_eq!(canonical_dev_data_dir(&current).unwrap(), current);
-
-    // Also verify with a temp dir on the real filesystem.
-    let parent = tempfile::tempdir().unwrap();
-    let canonical = parent.path().join(CANONICAL_DEV_IDENTIFIER);
-    assert_eq!(canonical_dev_data_dir(&canonical).unwrap(), canonical);
-}
-
 #[cfg(unix)]
 #[test]
 fn sync_creates_teams_directory_symlink() {
@@ -840,7 +785,7 @@ fn reconcile_mcp_commands_skips_record_without_agent_command() {
 fn migrate_legacy_nest_carries_knowledge_and_skips_repos() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     // Knowledge: a top-level file plus a nested dir.
     std::fs::create_dir_all(legacy.join("RESEARCH")).unwrap();
@@ -871,7 +816,7 @@ fn migrate_legacy_nest_carries_knowledge_and_skips_repos() {
 fn migrate_legacy_nest_does_not_clobber_existing_destination() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     std::fs::create_dir_all(legacy.join("RESEARCH")).unwrap();
     std::fs::write(legacy.join("AGENTS.md"), "legacy-agents").unwrap();
@@ -899,7 +844,7 @@ fn migrate_legacy_nest_does_not_clobber_existing_destination() {
 fn migrate_legacy_nest_is_idempotent_on_rerun() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     std::fs::create_dir_all(legacy.join("PLANS")).unwrap();
     std::fs::write(legacy.join("PLANS/PLAN.md"), "plan").unwrap();
@@ -917,7 +862,7 @@ fn migrate_legacy_nest_is_idempotent_on_rerun() {
 fn migrate_legacy_nest_noops_when_legacy_absent() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     let migrated = super::migrate_legacy_nest_at(&legacy, &current);
 
@@ -932,7 +877,7 @@ fn migrate_legacy_nest_noops_when_legacy_absent() {
 fn migrate_legacy_nest_respects_deliberate_dev_reset() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz-dev");
+    let current = dir.path().join(".beekeeper-dev");
 
     std::fs::create_dir_all(legacy.join("RESEARCH")).unwrap();
     std::fs::write(legacy.join("RESEARCH/NOTES.md"), "legacy-notes").unwrap();
@@ -949,13 +894,13 @@ fn migrate_legacy_nest_respects_deliberate_dev_reset() {
 fn migrate_legacy_nest_overwrites_generated_default_agents_md() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     std::fs::create_dir_all(&legacy).unwrap();
     std::fs::write(legacy.join("AGENTS.md"), "legacy team instructions").unwrap();
 
     // First-time launch order: ensure_nest writes the generated default into
-    // ~/.buzz/AGENTS.md, then migration runs.
+    // ~/.beekeeper/AGENTS.md, then migration runs.
     crate::managed_agents::ensure_nest_at(&current).unwrap();
     assert_eq!(
         std::fs::read_to_string(current.join("AGENTS.md")).unwrap(),
@@ -976,7 +921,7 @@ fn migrate_legacy_nest_overwrites_generated_default_agents_md() {
 fn migrate_legacy_nest_preserves_user_edited_agents_md() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");
-    let current = dir.path().join(".buzz");
+    let current = dir.path().join(".beekeeper");
 
     std::fs::create_dir_all(&legacy).unwrap();
     std::fs::write(legacy.join("AGENTS.md"), "legacy team instructions").unwrap();

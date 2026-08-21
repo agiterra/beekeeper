@@ -452,7 +452,7 @@ mod tests {
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
-            "---\nname: buzz-cli\ndescription: CLI reference for Buzz managed agents\n---\nUse `buzz` to manage agents.\n",
+            "---\nname: buzz-cli\ndescription: CLI reference for Buzz managed agents\n---\nUse `bee` to manage agents.\n",
         )
         .unwrap();
 
@@ -477,7 +477,7 @@ mod tests {
         );
         // Body must NOT be inlined — lazy loading only.
         assert!(
-            !result.contains("Use `buzz` to manage agents."),
+            !result.contains("Use `bee` to manage agents."),
             "skill body must not be inlined in system prompt"
         );
         // The load_skill instruction must be present.

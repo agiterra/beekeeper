@@ -271,9 +271,9 @@ buzz owns the machinery already, and shipping without them copies a limitation.
    `result`/`error` (`bounded()`, `subagentRuntime.ts:123-125`) with **no way to
    see the full output** — `runHandles.transcriptDir`/`sessionUrl` exist in the
    model, rendered nowhere. Buzz's full transcript is already on the wire and
-   readable: 44225 items, `buzz sessions` over the stored record
+   readable: 44225 items, `bee sessions` over the stored record
    (`crates/buzz-cli/src/commands/sessions.rs:1-7`), the desktop transcript views
-   (`CodingSessionTranscriptParts.tsx:149-254`), `buzz://` deep links
+   (`CodingSessionTranscriptParts.tsx:149-254`), `beekeeper://` deep links
    (`desktop/src/app/AppShell.tsx:637`). Every settled lane links to its
    transcript; a bounded preview that cannot be opened is a dead end.
 3. **A cross-project aggregate view.** t3code's surface is **thread-scoped only** —

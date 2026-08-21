@@ -164,6 +164,6 @@ pushes stop deploying silently. That is host-side work, not a repo change.
 `build/*` tags remain the pins for reproducing or manually rolling to a known
 build. Desktop dev runs `just desktop-standalone`.
 
-Running a daily-driver Buzz.app and a dev instance side by side on macOS
+Running a daily-driver Bee Keeper.app and a dev instance side by side on macOS
 (distinct icons, no repeated keychain prompts):
 [local-desktop-instances.md](local-desktop-instances.md).

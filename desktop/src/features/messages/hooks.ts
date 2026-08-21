@@ -842,7 +842,7 @@ export type MessageModeration = {
  * community `owner`/`admin` from `relay_members`, **or** channel
  * `owner`/`admin` from `channel_members` within that channel. Implementing only
  * the first left a channel owner with no `relay_members` row unable to moderate
- * their own channel from the app while `buzz messages delete` worked.
+ * their own channel from the app while `bee messages delete` worked.
  *
  * DMs are excluded ahead of both: kind:9005 is channel-scoped moderation, and
  * neither a community admin nor a DM's own channel role holds authority over a

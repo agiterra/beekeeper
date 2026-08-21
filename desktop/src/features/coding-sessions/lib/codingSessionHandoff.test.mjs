@@ -50,25 +50,30 @@ function turnResultItem() {
 
 test("handoff deep link round-trips through URL encoding", () => {
   const url = buildCodingSessionHandoffLink(LINK);
-  assert.match(url, /^buzz:\/\/coding-session\?/);
+  assert.match(url, /^beekeeper:\/\/coding-session\?/);
   assert.deepEqual(parseCodingSessionHandoffLink(url), LINK);
 });
 
 test("malformed deep links parse to null", () => {
-  assert.equal(parseCodingSessionHandoffLink("buzz://message?id=abc"), null);
   assert.equal(
-    parseCodingSessionHandoffLink("buzz://coding-session?channel=x&target=y"),
+    parseCodingSessionHandoffLink("beekeeper://message?id=abc"),
     null,
   );
   assert.equal(
     parseCodingSessionHandoffLink(
-      "buzz://coding-session?channel=x&target=y&seq=-4",
+      "beekeeper://coding-session?channel=x&target=y",
     ),
     null,
   );
   assert.equal(
     parseCodingSessionHandoffLink(
-      "buzz://coding-session?channel=x&target=y&seq=nope",
+      "beekeeper://coding-session?channel=x&target=y&seq=-4",
+    ),
+    null,
+  );
+  assert.equal(
+    parseCodingSessionHandoffLink(
+      "beekeeper://coding-session?channel=x&target=y&seq=nope",
     ),
     null,
   );
@@ -82,7 +87,7 @@ test("prefill builds the provenance block and parses back to its parts", () => {
   });
   assert.match(
     prefill,
-    /^> From Claude · claude-opus-5 \(this session\) — buzz:/,
+    /^> From Claude · claude-opus-5 \(this session\) — beekeeper:/,
   );
   assert.match(prefill, /\n> Regenerate the fixture\.\n\n$/);
 
@@ -121,7 +126,7 @@ test("edited or plain prompts degrade: recognition returns null, never a guess",
 
 test("a link-less provenance header still parses with link null (degraded chip)", () => {
   const parsed = parseCodingSessionHandoffPrefill(
-    "> From Claude (this session) — buzz://coding-session?broken\n> quote\n\nGo.",
+    "> From Claude (this session) — beekeeper://coding-session?broken\n> quote\n\nGo.",
   );
   assert.ok(parsed);
   assert.equal(parsed.link, null);

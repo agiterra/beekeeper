@@ -135,7 +135,7 @@ class _PairingWelcomeView extends StatelessWidget {
                                           alpha: 0.7,
                                         ),
                                         hintText:
-                                            'nostrpair://... or buzz://...',
+                                            'nostrpair://... or beekeeper://...',
                                         hintStyle: context.textTheme.bodyMedium
                                             ?.copyWith(
                                               color: _onboardingMutedInk,

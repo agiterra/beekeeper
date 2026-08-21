@@ -433,7 +433,7 @@ export function resolveLinkPreview(
       : "none";
   return {
     ...preview,
-    snapshotReady: !preview.href.startsWith("buzz://"),
+    snapshotReady: !preview.href.startsWith("beekeeper://"),
     title: shouldResolveTitle(preview) ? metadata.title : preview.title,
     description: metadata.description,
     faviconDataUrl: metadata.faviconDataUrl,
@@ -458,7 +458,7 @@ export function isBuzzEntityPreview(preview: SupportedLinkPreview): boolean {
 }
 
 /**
- * Recipient-side `buzz://` entity cards must render even when the relay
+ * Recipient-side `beekeeper://` entity cards must render even when the relay
  * lookup yields no metadata: `useResolvedLinkPreviews` drops null-metadata
  * previews (correct for external links — no metadata means no card), but
  * entity links always carry a usable fallback title (the repo d-tag, or
@@ -537,7 +537,7 @@ export function useResolvedLinkPreviews(
     if (refetchNewNegatives) {
       // Invalidate first, before the peek/load loop below reads the cache, so a
       // newly-present href loads fresh instead of resolving to its stale miss.
-      // buzz:// entity links resolve off the relay, not this cache — skip them.
+      // beekeeper:// entity links resolve off the relay, not this cache — skip them.
       // Newness is judged against the live href set when supplied (so a
       // debounce-swallowed leave/re-entry still counts), else against previews.
       const seen = seenHrefsRef.current;
@@ -563,7 +563,7 @@ export function useResolvedLinkPreviews(
         if (
           alreadyHandled ||
           !liveNow.includes(preview.href) ||
-          preview.href.startsWith("buzz://")
+          preview.href.startsWith("beekeeper://")
         ) {
           continue;
         }
@@ -629,7 +629,7 @@ export function useResolvedLinkPreviews(
 
     const cancelScheduledLoads: Array<() => void> = [];
     for (const preview of previews) {
-      const loader = preview.href.startsWith("buzz://")
+      const loader = preview.href.startsWith("beekeeper://")
         ? entityMetadataLoader
         : metadataLoader;
       const cached = loader.peek(preview.href);

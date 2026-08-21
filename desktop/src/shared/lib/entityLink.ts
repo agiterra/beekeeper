@@ -1,12 +1,12 @@
 /**
- * `buzz://` deep links for Buzz-hosted git entities, mirroring
- * `features/messages/lib/messageLink.ts` for `buzz://message`.
+ * `beekeeper://` deep links for Buzz-hosted git entities, mirroring
+ * `features/messages/lib/messageLink.ts` for `beekeeper://message`.
  *
  * Formats:
- *   buzz://repo?owner=<owner-pubkey>&d=<repo-dtag>[&tab=<tab>]
- *   buzz://project?owner=<owner-pubkey>&d=<project-dtag>[&tab=<tab>]
- *   buzz://pr?id=<event-id>&owner=<owner-pubkey>&d=<repo-dtag>
- *   buzz://issue?id=<event-id>&owner=<owner-pubkey>&d=<repo-dtag>
+ *   beekeeper://repo?owner=<owner-pubkey>&d=<repo-dtag>[&tab=<tab>]
+ *   beekeeper://project?owner=<owner-pubkey>&d=<project-dtag>[&tab=<tab>]
+ *   beekeeper://pr?id=<event-id>&owner=<owner-pubkey>&d=<repo-dtag>
+ *   beekeeper://issue?id=<event-id>&owner=<owner-pubkey>&d=<repo-dtag>
  *
  * `owner` + `d` identify the NIP-34 repository coordinate
  * (`30617:<owner>:<d>`) or the NIP-MP project coordinate
@@ -18,7 +18,7 @@
  * on both sides).
  */
 
-const ENTITY_LINK_SCHEME = "buzz:";
+const ENTITY_LINK_SCHEME = "beekeeper:";
 
 /**
  * Workspace tabs addressable by a coordinate link. The default overview
@@ -92,27 +92,27 @@ function tabSuffix(tab: EntityLinkTab | undefined): string {
   return `&tab=${tab}`;
 }
 
-/** Build a `buzz://repo` link for a repository announcement (kind 30617). */
+/** Build a `beekeeper://repo` link for a repository announcement (kind 30617). */
 export function buildRepoLink(input: {
   owner: string;
   dtag: string;
   tab?: EntityLinkTab;
 }): string {
   checkCoordinate(input.owner, input.dtag);
-  return `buzz://repo?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
+  return `beekeeper://repo?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
 }
 
-/** Build a `buzz://project` link for a project announcement (kind 30621). */
+/** Build a `beekeeper://project` link for a project announcement (kind 30621). */
 export function buildProjectLink(input: {
   owner: string;
   dtag: string;
   tab?: EntityLinkTab;
 }): string {
   checkCoordinate(input.owner, input.dtag);
-  return `buzz://project?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
+  return `beekeeper://project?owner=${input.owner.toLowerCase()}&d=${input.dtag}${tabSuffix(input.tab)}`;
 }
 
-/** Build a `buzz://pr` link for a pull request event (kind 1618). */
+/** Build a `beekeeper://pr` link for a pull request event (kind 1618). */
 export function buildPullRequestLink(input: {
   id: string;
   owner: string;
@@ -120,10 +120,10 @@ export function buildPullRequestLink(input: {
 }): string {
   checkEventId(input.id);
   checkCoordinate(input.owner, input.dtag);
-  return `buzz://pr?id=${input.id.toLowerCase()}&owner=${input.owner.toLowerCase()}&d=${input.dtag}`;
+  return `beekeeper://pr?id=${input.id.toLowerCase()}&owner=${input.owner.toLowerCase()}&d=${input.dtag}`;
 }
 
-/** Build a `buzz://issue` link for an issue event (kind 1621). */
+/** Build a `beekeeper://issue` link for an issue event (kind 1621). */
 export function buildIssueLink(input: {
   id: string;
   owner: string;
@@ -131,26 +131,26 @@ export function buildIssueLink(input: {
 }): string {
   checkEventId(input.id);
   checkCoordinate(input.owner, input.dtag);
-  return `buzz://issue?id=${input.id.toLowerCase()}&owner=${input.owner.toLowerCase()}&d=${input.dtag}`;
+  return `beekeeper://issue?id=${input.id.toLowerCase()}&owner=${input.owner.toLowerCase()}&d=${input.dtag}`;
 }
 
 /**
  * Cheap pre-check used by the markdown renderer and preview extraction
- * before parsing. `buzz://message` is intentionally excluded — it has its
+ * before parsing. `beekeeper://message` is intentionally excluded — it has its
  * own pill rendering path.
  */
 export function isEntityLink(href: string | undefined | null): boolean {
   if (!href) return false;
   return (
-    href.startsWith("buzz://pr?") ||
-    href.startsWith("buzz://issue?") ||
-    href.startsWith("buzz://repo?") ||
-    href.startsWith("buzz://project?")
+    href.startsWith("beekeeper://pr?") ||
+    href.startsWith("beekeeper://issue?") ||
+    href.startsWith("beekeeper://repo?") ||
+    href.startsWith("beekeeper://project?")
   );
 }
 
 /**
- * Parse a `buzz://pr|issue|repo?…` URL. Returns a discriminated result so
+ * Parse a `beekeeper://pr|issue|repo?…` URL. Returns a discriminated result so
  * callers can fall back to plain-link rendering without throwing. All
  * identifiers are validated; hex values are lowercase-normalized.
  *
