@@ -15,7 +15,10 @@ import {
 import type { ProjectContainer } from "@/features/projects-container/lib/projectContainerModel";
 
 import { projectPulseChannelIds } from "../lib/pulseChannelSet";
-import { useProjectPulseDigest } from "../lib/pulseQueries";
+import {
+  projectPulseChannelSetUnresolved,
+  useProjectPulseDigest,
+} from "../lib/pulseQueries";
 import {
   ProjectPulseView,
   type ProjectPulseViewState,
@@ -45,7 +48,10 @@ export function useProjectPulseChannelIds(
 ): ProjectPulseChannelSet {
   const channelsQuery = useChannelsQuery({ includeSessionTransports: true });
   const { projects } = useProjectContainers();
-  const unresolved = channelsQuery.isPending || channelsQuery.isError;
+  // `initialDataUpdatedAt: 0` makes a persisted channel snapshot immediately
+  // visible but explicitly stale. Until its authoritative hash revalidation
+  // settles, that list is a floor and Pulse must remain partial.
+  const unresolved = projectPulseChannelSetUnresolved(channelsQuery);
   return React.useMemo(() => {
     if (!project) return { channelIds: [], unresolved };
     const channels = channelsQuery.data ?? [];

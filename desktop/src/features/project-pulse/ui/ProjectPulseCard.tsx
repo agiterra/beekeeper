@@ -21,13 +21,22 @@ import { useProjectPulseChannelIds } from "./ProjectPulseScreen";
 import { PulseWriteHint } from "./PulseWriteHint";
 import { usePulseAuthorNames } from "./usePulseAuthorNames";
 
+/** Honest absence copy for a settled result or a read still refreshing. */
+export function projectPulseCardReachabilityAbsence(
+  refreshing: boolean,
+): string {
+  return refreshing
+    ? "The last completed read contained no provider-reachable sessions; refreshing now…"
+    : "No sessions are currently verified live.";
+}
+
 /**
- * The project home's Pulse summary: how many people are actively working and
- * what the newest explicit claims say.
+ * The project home's Pulse summary: recent session observations and the newest
+ * explicit coordination claims.
  *
  * The card never guesses. A read that has not finished says so, a partial read
- * says so, and a completed read with nothing in it says the project is quiet —
- * three different sentences, because they are three different facts.
+ * says so, and a completed read with nothing in it reports only that no session
+ * is verified live — three different sentences for three different facts.
  *
  * Every line names its author. Without that, one person's "picking pool.rs back
  * up" stacked on another's "do not touch pool.rs" reads as the project arguing
@@ -51,17 +60,23 @@ export function ProjectPulseCard({
   // ten minutes older, not frozen at the second it was read.
   const nowSeconds = Math.floor(Date.now() / 1_000);
 
-  // Umbrella sessions, not executions: a session restarted three times is one
-  // session working, and the count on this card must not read as three.
-  const sessions = digest ? groupPulseSessions(digest.sessions) : null;
+  // The v2 digest already contains one row per umbrella, with its executions
+  // nested as generations, so this count cannot outrun the cards it describes.
+  const sessions = digest ? groupPulseSessions(digest) : null;
   const entries = digest ? groupPulseEntries(digest) : null;
-  const count =
-    (sessions?.activeWork.length ?? 0) + (entries?.active.length ?? 0);
+  const sessionObservationCount =
+    (sessions?.providerReachable.length ?? 0) +
+    (sessions?.openUnverified.length ?? 0);
+  const count = sessionObservationCount + (entries?.active.length ?? 0);
   // Blockers first, so a standing "do not touch" is never the third of three
   // lines the card has room for.
   const topEntries = entries
     ? sortPulseEntriesByConsequence(entries.active).slice(0, 3)
     : [];
+  const reachabilityAbsence =
+    pulse.kind === "ready"
+      ? projectPulseCardReachabilityAbsence(pulse.refreshing === true)
+      : null;
 
   return (
     <SectionCard
@@ -93,24 +108,25 @@ export function ProjectPulseCard({
 
       {digest && count === 0 && pulse.kind === "ready" ? (
         <>
-          <EmptyHint>
-            No active work and no open claims. This read completed.
-          </EmptyHint>
+          <EmptyHint>{reachabilityAbsence}</EmptyHint>
           <PulseWriteHint />
         </>
       ) : null}
 
-      {sessions && sessions.activeWork.length > 0 ? (
+      {sessions && sessionObservationCount > 0 ? (
         <p
           className="text-sm text-foreground"
-          data-testid="project-pulse-card-active"
+          data-testid="project-pulse-card-session-observations"
         >
-          {sessions.activeWork.length} session
-          {sessions.activeWork.length === 1 ? "" : "s"} observed working
-          {sessions.lastSeen.length > 0
-            ? `, ${sessions.lastSeen.length} last seen earlier`
+          {sessions.providerReachable.length > 0
+            ? `${sessions.providerReachable.length} provider-reachable session${sessions.providerReachable.length === 1 ? "" : "s"}. `
             : ""}
-          .
+          {sessions.openUnverified.length > 0
+            ? `${sessions.openUnverified.length} open session${sessions.openUnverified.length === 1 ? "" : "s"} with liveness unverified. `
+            : ""}
+          {sessions.providerReachable.length === 0
+            ? (reachabilityAbsence ?? "")
+            : ""}
         </p>
       ) : null}
 

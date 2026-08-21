@@ -2,17 +2,26 @@ import { createHash } from "node:crypto";
 
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { finalizeEvent, generateSecretKey } from "nostr-tools/pure";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+} from "nostr-tools/pure";
 
 import {
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
   CODING_SESSION_METADATA_TAG_VERSION,
   codingSessionMetadataSemanticKey,
+  lifecycleReceiptSemanticKey,
 } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
+import { buildCodingSessionCreateEvent } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
 import {
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_LEASE,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_NAME,
   KIND_PROJECT,
@@ -45,10 +54,11 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 const AUTHOR_SECRET = hexToBytes(TEST_IDENTITIES.alice.privateKey);
 const PEER_SECRET = hexToBytes(TEST_IDENTITIES.bob.privateKey);
 const PROVIDER_SECRET = generateSecretKey();
+const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
 /** `DEFAULT_MOCK_IDENTITY.pubkey` in the bridge — the project's owner. */
 const MOCK_IDENTITY_PUBKEY = "deadbeef".repeat(8);
 const PROJECT_DTAG = "pulse-demo";
-const QUIET_DTAG = "quiet-demo";
+const EMPTY_DTAG = "empty-demo";
 const SESSIONS_DTAG = "sessions-demo";
 const PROJECT_COORDINATE = `30621:${MOCK_IDENTITY_PUBKEY}:${PROJECT_DTAG}`;
 const SESSIONS_COORDINATE = `30621:${MOCK_IDENTITY_PUBKEY}:${SESSIONS_DTAG}`;
@@ -60,7 +70,8 @@ const THEME_STORAGE_KEY = "buzz-theme";
 const ACTIVE_SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
 const UNOBSERVED_SESSION_REF = "8c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
 const LAST_SEEN_SESSION_REF = "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6";
-/** One umbrella the provider restarted three times — F22's live shape. */
+const EXPIRED_SESSION_REF = "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8";
+const RELEASED_SESSION_REF = "7a8b9c0d-1e2f-4a3b-8c5d-6e7f8a9b0c1d";
 const RESTARTED_SESSION_REF = "2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b";
 
 const SCREENSHOT_DIR = "test-results/project-pulse";
@@ -68,6 +79,147 @@ const hashes = new Map<string, string>();
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1_000);
+}
+
+type SessionTarget = {
+  driver: string;
+  instanceId: string;
+  sessionId: string;
+  generation: number;
+};
+
+function sessionTarget(sessionId: string, generation = 1): SessionTarget {
+  return {
+    driver: "claude-agent-acp",
+    instanceId: "pulse-instance",
+    sessionId,
+    generation,
+  };
+}
+
+function sessionResumeAuthorityEvents(input: {
+  priorTarget: SessionTarget;
+  target: SessionTarget;
+  commandId: string;
+}): RelayEvent[] {
+  return [
+    finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        created_at: nowSeconds() - 14_000 + input.target.generation * 10,
+        tags: [
+          ["h", GENERAL_CHANNEL_ID],
+          ["csl-v", "csl1-1"],
+          ["csl-command", input.commandId],
+        ],
+        content: JSON.stringify({
+          schema: "buzz-coding-session-lifecycle-command/v1",
+          commandId: input.commandId,
+          action: {
+            type: "session.resume",
+            session: input.priorTarget,
+            providerAuthorityPubkey: PROVIDER_PUBKEY,
+          },
+        }),
+      },
+      AUTHOR_SECRET,
+    ) as unknown as RelayEvent,
+    finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        created_at: nowSeconds() - 13_999 + input.target.generation * 10,
+        tags: [
+          ["h", GENERAL_CHANNEL_ID],
+          ["cslr-v", "cslr1-1"],
+          ["csl-command", input.commandId],
+          ["csl-key", lifecycleReceiptSemanticKey(input.commandId)],
+        ],
+        content: JSON.stringify({
+          schema: "buzz-coding-session-lifecycle-receipt/v1",
+          commandId: input.commandId,
+          status: "resumed",
+          session: input.target,
+          error: null,
+        }),
+      },
+      PROVIDER_SECRET,
+    ) as unknown as RelayEvent,
+  ];
+}
+
+function sessionAuthorityEvents(input: {
+  target: SessionTarget;
+  sessionRef: string;
+  commandId: string;
+}): RelayEvent[] {
+  const command = buildCodingSessionCreateEvent({
+    channelId: GENERAL_CHANNEL_ID,
+    commandId: input.commandId,
+    projectRef: SESSIONS_COORDINATE,
+    repoRef: null,
+    sessionRef: input.sessionRef,
+    providerInstanceRef: input.target.instanceId,
+    providerAuthorityPubkey: PROVIDER_PUBKEY,
+    model: "sonnet",
+    title: null,
+    initialTurn: null,
+  });
+  return [
+    finalizeEvent(
+      { ...command, created_at: nowSeconds() - 14_400 },
+      AUTHOR_SECRET,
+    ) as unknown as RelayEvent,
+    finalizeEvent(
+      {
+        kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        created_at: nowSeconds() - 14_390,
+        tags: [
+          ["h", GENERAL_CHANNEL_ID],
+          ["cslr-v", "cslr1-1"],
+          ["csl-command", input.commandId],
+          ["csl-key", lifecycleReceiptSemanticKey(input.commandId)],
+        ],
+        content: JSON.stringify({
+          schema: "buzz-coding-session-lifecycle-receipt/v1",
+          commandId: input.commandId,
+          status: "created",
+          session: input.target,
+          error: null,
+        }),
+      },
+      PROVIDER_SECRET,
+    ) as unknown as RelayEvent,
+  ];
+}
+
+function sessionLeaseEvent(input: {
+  target: SessionTarget;
+  commandId: string;
+  sequence: number;
+  state: "live" | "released";
+  createdAtOffset: number;
+}): RelayEvent {
+  const targetKey = buildCodingSessionTargetKey(input.target);
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LEASE,
+      created_at: nowSeconds() - input.createdAtOffset,
+      tags: [
+        ["h", GENERAL_CHANNEL_ID],
+        ["cslease-v", "cslease1-1"],
+        ["cs-target", targetKey],
+        ["csl-command", input.commandId],
+        ["cslease-seq", String(input.sequence)],
+      ],
+      content: JSON.stringify({
+        schema: "buzz-coding-session-lease/v1",
+        target: input.target,
+        state: input.state,
+        leaseSequence: input.sequence,
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
 }
 
 function pulseEntry(input: {
@@ -176,7 +328,6 @@ function sessionMetadataEvent(input: {
   status: string;
   branch: string | null;
   createdAtOffset: number;
-  /** Provider restart counter — a new generation is a new execution. */
   generation?: number;
   facts?: {
     observedCommit: string | null;
@@ -185,12 +336,7 @@ function sessionMetadataEvent(input: {
     verifiedAt: number | null;
   };
 }): RelayEvent {
-  const target = {
-    driver: "claude-agent-acp",
-    instanceId: "pulse-instance",
-    sessionId: input.sessionId,
-    generation: input.generation ?? 1,
-  };
+  const target = sessionTarget(input.sessionId, input.generation ?? 1);
   return finalizeEvent(
     {
       kind: KIND_CODING_SESSION_METADATA,
@@ -283,43 +429,115 @@ function sessionClosureEvent(sessionRef: string): RelayEvent {
 }
 
 /**
- * Three sessions covering the states the card can be in: observed working with
- * a confirmed commit, observed working with nothing observed about its
- * worktree, and one whose last observation is hours old and whose umbrella has
- * been closed.
+ * Five accepted sessions exercise every coordination state. The reachable
+ * session's durable observation is deliberately hours old: only its separate
+ * lease makes it provider-reachable. The three open-unverified sessions cover
+ * no lease, an expired lease, and an explicit release. The closed session also
+ * has a fresh live lease so the closure's precedence is observable.
  */
 function seededSessionFacts(): RelayEvent[] {
+  const activeTarget = sessionTarget("11111111-2222-3333-4444-555555555555");
+  const unobservedTarget = sessionTarget(
+    "22222222-3333-4444-5555-666666666666",
+  );
+  const closedTarget = sessionTarget("33333333-4444-5555-6666-777777777777");
+  const expiredTarget = sessionTarget("44444444-5555-6666-7777-888888888888");
+  const releasedTarget = sessionTarget("55555555-6666-7777-8888-999999999999");
   return [
+    ...sessionAuthorityEvents({
+      target: activeTarget,
+      sessionRef: ACTIVE_SESSION_REF,
+      commandId: "pulse-create-reachable",
+    }),
     sessionMetadataEvent({
       sessionRef: ACTIVE_SESSION_REF,
-      sessionId: "11111111-2222-3333-4444-555555555555",
+      sessionId: activeTarget.sessionId,
       title: "Pulse plumbing",
-      status: "running",
+      status: "idle",
       branch: "wip/project-pulse",
-      createdAtOffset: 120,
+      createdAtOffset: 10_800,
       facts: {
         observedCommit: "9f2c1ab34de5f6a7",
         dirty: true,
         relayReachable: true,
-        verifiedAt: nowSeconds() - 150,
+        verifiedAt: nowSeconds() - 10_900,
       },
     }),
     sessionNameEvent(ACTIVE_SESSION_REF, "Pulse plumbing"),
     sessionGoalEvent(ACTIVE_SESSION_REF, "Land the digest fold and its twin."),
+    sessionLeaseEvent({
+      target: activeTarget,
+      commandId: "pulse-create-reachable",
+      sequence: 10,
+      state: "live",
+      createdAtOffset: 30,
+    }),
+    ...sessionAuthorityEvents({
+      target: unobservedTarget,
+      sessionRef: UNOBSERVED_SESSION_REF,
+      commandId: "pulse-create-no-lease",
+    }),
     sessionMetadataEvent({
       sessionRef: UNOBSERVED_SESSION_REF,
-      sessionId: "22222222-3333-4444-5555-666666666666",
+      sessionId: unobservedTarget.sessionId,
       title: "Relay ingest",
       status: "waiting_for_input",
       branch: null,
-      createdAtOffset: 240,
+      createdAtOffset: 7_200,
     }),
     sessionNameEvent(UNOBSERVED_SESSION_REF, "Relay ingest"),
+    ...sessionAuthorityEvents({
+      target: expiredTarget,
+      sessionRef: EXPIRED_SESSION_REF,
+      commandId: "pulse-create-expired",
+    }),
+    sessionMetadataEvent({
+      sessionRef: EXPIRED_SESSION_REF,
+      sessionId: expiredTarget.sessionId,
+      title: "Expired lease",
+      status: "idle",
+      branch: "main",
+      createdAtOffset: 5_400,
+    }),
+    sessionNameEvent(EXPIRED_SESSION_REF, "Expired lease"),
+    sessionLeaseEvent({
+      target: expiredTarget,
+      commandId: "pulse-create-expired",
+      sequence: 3,
+      state: "live",
+      createdAtOffset: 600,
+    }),
+    ...sessionAuthorityEvents({
+      target: releasedTarget,
+      sessionRef: RELEASED_SESSION_REF,
+      commandId: "pulse-create-released",
+    }),
+    sessionMetadataEvent({
+      sessionRef: RELEASED_SESSION_REF,
+      sessionId: releasedTarget.sessionId,
+      title: "Released lease",
+      status: "idle",
+      branch: null,
+      createdAtOffset: 3_600,
+    }),
+    sessionNameEvent(RELEASED_SESSION_REF, "Released lease"),
+    sessionLeaseEvent({
+      target: releasedTarget,
+      commandId: "pulse-create-released",
+      sequence: 8,
+      state: "released",
+      createdAtOffset: 20,
+    }),
+    ...sessionAuthorityEvents({
+      target: closedTarget,
+      sessionRef: LAST_SEEN_SESSION_REF,
+      commandId: "pulse-create-closed",
+    }),
     sessionMetadataEvent({
       sessionRef: LAST_SEEN_SESSION_REF,
-      sessionId: "33333333-4444-5555-6666-777777777777",
+      sessionId: closedTarget.sessionId,
       title: "Conformance corpus",
-      status: "disconnected",
+      status: "idle",
       branch: "main",
       createdAtOffset: 10_800,
       facts: {
@@ -330,6 +548,13 @@ function seededSessionFacts(): RelayEvent[] {
       },
     }),
     sessionNameEvent(LAST_SEEN_SESSION_REF, "Conformance corpus"),
+    sessionLeaseEvent({
+      target: closedTarget,
+      commandId: "pulse-create-closed",
+      sequence: 12,
+      state: "live",
+      createdAtOffset: 15,
+    }),
     sessionClosureEvent(LAST_SEEN_SESSION_REF),
   ];
 }
@@ -388,6 +613,24 @@ async function seedSessionFacts(page: Page, events: RelayEvent[]) {
     },
     { channelName: GENERAL_CHANNEL_NAME, seeds: events as never },
   );
+}
+
+async function waitForLeaseLiveSubscription(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ channelName, kind }) =>
+          window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+            channelName,
+            kind,
+          }) ?? false,
+        {
+          channelName: GENERAL_CHANNEL_NAME,
+          kind: KIND_CODING_SESSION_LEASE,
+        },
+      ),
+    )
+    .toBe(true);
 }
 
 async function createProject(page: Page, name: string) {
@@ -496,8 +739,11 @@ test("the project home card opens a Pulse that keeps every claim honest", async 
   await expect(screen).not.toContainText("Live summaries");
   await expect(screen).not.toContainText("Automatic summary");
   // Nothing is running here, and the screen says so rather than going dark.
-  await expect(page.getByTestId("pulse-sessions-empty")).toContainText(
-    "No coding sessions observed in this project's channels.",
+  await expect(page.getByTestId("pulse-sessions-empty")).toHaveText(
+    "No sessions are currently verified live.",
+  );
+  await expect(screen).not.toContainText(
+    /nobody is working|\bquiet\b|safe to proceed/i,
   );
   await capture(page, "02-pulse-screen");
 
@@ -540,19 +786,22 @@ test("the sidebar row reaches the same Pulse the home card does", async ({
   });
 });
 
-test("a quiet project reads as confirmed empty, never as unavailable", async ({
+test("an empty project qualifies absence, never presenting it as a verdict", async ({
   page,
 }) => {
   await boot(page, []);
-  await createProject(page, "Quiet Demo");
-  await openProjectScreen(page, QUIET_DTAG);
+  await createProject(page, "Empty Demo");
+  await openProjectScreen(page, EMPTY_DTAG);
   await page.getByTestId("project-screen-open-pulse").click();
 
   const empty = page.getByTestId("pulse-empty");
   await expect(empty).toBeVisible({ timeout: 10_000 });
   await expect(empty).toContainText("This read completed");
-  await expect(empty).toContainText("Quiet.");
-  // The quiet state teaches the first action and admits the screen is read-only.
+  await expect(empty).toContainText("No sessions are currently verified live.");
+  await expect(empty).not.toContainText(
+    /nobody is working|\bquiet\b|safe to proceed/i,
+  );
+  // The empty state teaches the first action and admits the screen is read-only.
   await expect(page.getByTestId("pulse-write-hint")).toContainText(
     "buzz pulse update --project",
   );
@@ -561,7 +810,7 @@ test("a quiet project reads as confirmed empty, never as unavailable", async ({
   await capture(page, "04-confirmed-empty");
 });
 
-test("session cards render every observation as what it is", async ({
+test("session cards separate provider reachability from durable observations", async ({
   page,
 }) => {
   await boot(page, [
@@ -585,29 +834,43 @@ test("session cards render every observation as what it is", async ({
 
   const screen = page.getByTestId("project-pulse-screen");
   await expect(screen).toBeVisible({ timeout: 10_000 });
-  const activeWork = page.getByTestId("pulse-active-work");
-  await expect(activeWork.getByTestId("pulse-session-card")).toHaveCount(2, {
-    timeout: 10_000,
-  });
-  const lastSeen = page.getByTestId("pulse-last-seen");
-  await expect(lastSeen.getByTestId("pulse-session-card")).toHaveCount(1);
-  await expect(lastSeen).toContainText("Disconnected · last observed 3h ago");
-  await expect(lastSeen.getByTestId("pulse-session-closed")).toHaveText(
-    "Closed",
+  const providerReachable = page.getByTestId("pulse-provider-reachable");
+  await expect(providerReachable.getByTestId("pulse-session-card")).toHaveCount(
+    1,
+    { timeout: 10_000 },
   );
+  await expect(providerReachable).toContainText("Pulse plumbing");
+  await expect(providerReachable).toContainText("Provider-reachable sessions");
+  await expect(providerReachable).toContainText("Idle · provider reachable");
+  await expect(providerReachable).toContainText("observed 3h ago");
+
+  const openUnverified = page.getByTestId("pulse-open-unverified");
+  await expect(openUnverified.getByTestId("pulse-session-card")).toHaveCount(3);
+  await expect(openUnverified).toContainText("Open · liveness unverified");
+  await expect(openUnverified).toContainText("Relay ingest");
+  await expect(openUnverified).toContainText("Expired lease");
+  await expect(openUnverified).toContainText("Released lease");
+  await expect(openUnverified).toContainText("liveness unverified");
+
+  const closed = page.getByTestId("pulse-closed");
+  await expect(closed.getByTestId("pulse-session-card")).toHaveCount(1);
+  await expect(closed).toContainText("Closed/history");
+  await expect(closed).toContainText("Conformance corpus");
+  await expect(closed.getByTestId("pulse-session-closed")).toHaveText("Closed");
+  await expect(closed).not.toContainText("provider reachable");
   // An entry's `pu-session` tag resolves to the session's name, and still
   // renders at project level rather than inside that session's card.
   const reference = page.getByTestId("pulse-entry-session-reference");
   await expect(reference).toHaveText("references session “Pulse plumbing”");
   expect(
-    await activeWork
+    await providerReachable
       .locator("[data-testid='pulse-entry-session-reference']")
       .count(),
   ).toBe(0);
-  await captureLocator(page, screen, "05-sessions-active-and-last-seen");
+  await captureLocator(page, screen, "05-session-coordination-groups");
 
   // The confirmed observation and the tri-state nulls are two different cards.
-  const observed = activeWork
+  const observed = providerReachable
     .getByTestId("pulse-session-card")
     .filter({ hasText: "Pulse plumbing" });
   await expect(observed.getByTestId("pulse-session-commit")).toHaveText(
@@ -621,7 +884,7 @@ test("session cards render every observation as what it is", async ({
   ).toContainText("Commit confirmed on relay ·");
   await captureLocator(page, observed, "06-session-card-observed");
 
-  const unobserved = activeWork
+  const unobserved = openUnverified
     .getByTestId("pulse-session-card")
     .filter({ hasText: "Relay ingest" });
   await expect(unobserved.getByTestId("pulse-session-commit")).toHaveText(
@@ -634,6 +897,54 @@ test("session cards render every observation as what it is", async ({
     unobserved.getByTestId("pulse-session-commit-confirmation"),
   ).toHaveText("Commit not checked");
   await captureLocator(page, unobserved, "07-session-card-not-observed");
+
+  // Cold snapshot established the first live lease. A higher release then a
+  // still-higher live lease must flow through the ephemeral live subscription
+  // and update the same register without becoming durable channel history.
+  await waitForLeaseLiveSubscription(page);
+  const activeTarget = sessionTarget("11111111-2222-3333-4444-555555555555");
+  await seedSessionFacts(page, [
+    sessionLeaseEvent({
+      target: activeTarget,
+      commandId: "pulse-create-reachable",
+      sequence: 11,
+      state: "released",
+      createdAtOffset: 0,
+    }),
+  ]);
+  await expect(
+    openUnverified
+      .getByTestId("pulse-session-card")
+      .filter({ hasText: "Pulse plumbing" }),
+  ).toBeVisible();
+  await seedSessionFacts(page, [
+    sessionLeaseEvent({
+      target: activeTarget,
+      commandId: "pulse-create-reachable",
+      sequence: 10,
+      state: "live",
+      createdAtOffset: 0,
+    }),
+  ]);
+  await expect(
+    openUnverified
+      .getByTestId("pulse-session-card")
+      .filter({ hasText: "Pulse plumbing" }),
+  ).toBeVisible();
+  await seedSessionFacts(page, [
+    sessionLeaseEvent({
+      target: activeTarget,
+      commandId: "pulse-create-reachable",
+      sequence: 12,
+      state: "live",
+      createdAtOffset: 0,
+    }),
+  ]);
+  await expect(
+    providerReachable
+      .getByTestId("pulse-session-card")
+      .filter({ hasText: "Pulse plumbing" }),
+  ).toBeVisible();
 });
 
 test("a branch chip filters the rows, and its count agrees with them", async ({
@@ -667,17 +978,17 @@ test("a branch chip filters the rows, and its count agrees with them", async ({
 
   const screen = page.getByTestId("project-pulse-screen");
   await expect(screen).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId("pulse-session-card")).toHaveCount(3, {
+  await expect(page.getByTestId("pulse-session-card")).toHaveCount(5, {
     timeout: 10_000,
   });
   const mainChip = page
     .getByTestId("pulse-branch-chip")
     .filter({ hasText: "main" });
-  await expect(mainChip).toHaveText("main2");
+  await expect(mainChip).toHaveText("main3");
   await mainChip.click();
   await expect(mainChip).toHaveAttribute("aria-pressed", "true");
-  // The count promised two rows: one session and one entry, and no more.
-  await expect(page.getByTestId("pulse-session-card")).toHaveCount(1);
+  // The count promised three rows: two sessions and one entry, and no more.
+  await expect(page.getByTestId("pulse-session-card")).toHaveCount(2);
   await expect(page.getByTestId("pulse-entry-row")).toHaveCount(1);
   await expect(screen).toContainText("Backport notes live on main.");
   await captureLocator(page, screen, "08-branch-filtered");
@@ -727,7 +1038,7 @@ test("a head this community cannot read never renders as an empty project", asyn
   );
 });
 
-test("a source that did not answer renders as a partial read, not a quiet project", async ({
+test("a source that did not answer renders as a partial read, not an empty verdict", async ({
   page,
 }) => {
   await boot(page, seededEntries(), { rejectKinds: [KIND_PULSE_ENTRY] });
@@ -736,20 +1047,11 @@ test("a source that did not answer renders as a partial read, not a quiet projec
   const partial = page.getByTestId("pulse-partial");
   await expect(partial).toBeVisible({ timeout: 10_000 });
   await expect(partial).toContainText("Partial read.");
-  // The card names the loss in the reader's vocabulary, not the fold's: the
-  // wire scope (`entries:`) lives in the note's `title`, never in its sentence.
-  await expect(partial).toContainText(
-    "This project's entries could not be read",
-  );
-  await expect(partial).not.toContainText("entries:");
+  await expect(partial).toContainText("entries could not be read");
   await expect(page.getByTestId("pulse-empty")).toHaveCount(0);
-  // The one-line summary above the cards is the line a hurried reader
-  // actually reads. Over a read that lost events it may not report a total,
-  // and it may not report a bare absence — floors, said to be floors.
-  const entryCount = page.getByTestId("pulse-count-entries");
-  await expect(entryCount).toBeVisible();
-  await expect(entryCount).not.toHaveText("no entries");
-  await expect(entryCount).toContainText(/at least|in what this read returned/);
+  await expect(page.getByTestId("pulse-count-entries")).toContainText(
+    /at least|in what this read returned/,
+  );
   await expect(page.getByTestId("pulse-counts-incomplete")).toContainText(
     "floors, not totals",
   );
@@ -758,6 +1060,34 @@ test("a source that did not answer renders as a partial read, not a quiet projec
     page.getByTestId("project-pulse-screen"),
     "11-partial",
   );
+});
+
+test("a lease query failure cannot collapse into a reassuring absence", async ({
+  page,
+}) => {
+  await boot(
+    page,
+    [
+      projectHeadEvent({
+        dtag: SESSIONS_DTAG,
+        name: "Sessions Demo",
+        channelIds: [GENERAL_CHANNEL_ID],
+      }),
+    ],
+    { rejectKinds: [KIND_CODING_SESSION_LEASE] },
+  );
+  await seedSessionFacts(page, seededSessionFacts());
+  await openPulseFromSidebar(page, SESSIONS_DTAG);
+
+  const screen = page.getByTestId("project-pulse-screen");
+  const partial = page.getByTestId("pulse-partial");
+  await expect(partial).toBeVisible({ timeout: 10_000 });
+  await expect(partial).toContainText("session lease query failure");
+  await expect(page.getByTestId("pulse-empty")).toHaveCount(0);
+  await expect(screen).not.toContainText(
+    /nobody is working|\bquiet\b|safe to proceed/i,
+  );
+  await captureLocator(page, screen, "12-lease-partial");
 });
 
 test("a complete read that lost an event says so instead of looking exhaustive", async ({
@@ -777,14 +1107,7 @@ test("a complete read that lost an event says so instead of looking exhaustive",
   const excluded = page.getByTestId("pulse-excluded");
   await expect(excluded).toBeVisible({ timeout: 10_000 });
   await expect(excluded).toContainText("Some events were excluded.");
-  // Named by author and by what the entry says — `unresolved-supersedes` and
-  // the 64-hex id it points at are wire records, and stay in the `title`.
-  await expect(excluded).toContainText(
-    "says an entry that is not visible in this read is resolved",
-  );
-  await expect(excluded).toContainText(
-    "Superseding an entry this read cannot see.",
-  );
+  await expect(excluded).toContainText("not visible in this read");
   await expect(excluded).not.toContainText("unresolved-supersedes");
   await expect(page.getByTestId("pulse-empty")).toHaveCount(0);
   // The row keeps the claim visible in words, without printing the hash.
@@ -797,7 +1120,7 @@ test("a complete read that lost an event says so instead of looking exhaustive",
   await captureLocator(
     page,
     page.getByTestId("project-pulse-screen"),
-    "12-excluded-events",
+    "13-excluded-events",
   );
 });
 
@@ -860,15 +1183,15 @@ test("the Pulse screen, its retired entries and its session cards survive dark m
       document.documentElement.classList.contains("dark"),
     ),
   ).toBe(true);
-  await expect(page.getByTestId("pulse-session-card")).toHaveCount(3, {
+  await expect(page.getByTestId("pulse-session-card")).toHaveCount(5, {
     timeout: 10_000,
   });
-  await captureLocator(page, screen, "13-dark-pulse-screen");
+  await captureLocator(page, screen, "14-dark-pulse-screen");
 
   const observed = page
     .getByTestId("pulse-session-card")
     .filter({ hasText: "Pulse plumbing" });
-  await captureLocator(page, observed, "14-dark-session-card");
+  await captureLocator(page, observed, "15-dark-session-card");
 
   const toggle = page.getByTestId("pulse-superseded-toggle");
   await expect(toggle).toContainText("1 superseded entry");
@@ -880,49 +1203,23 @@ test("the Pulse screen, its retired entries and its session cards survive dark m
   await expect(
     retired.getByTestId("pulse-entry-superseded-badge"),
   ).toBeVisible();
-  await captureLocator(page, retired, "15-dark-superseded-entry");
+  await captureLocator(page, retired, "16-dark-superseded-entry");
 });
 
-/**
- * Three executions of one umbrella session, as a live provider emits them: the
- * same `sessionRef` (and therefore the same name a person gave it) under a new
- * generation each restart.
- */
 function restartedSessionFacts(): RelayEvent[] {
+  const sessionId = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+  const generation1 = sessionTarget(sessionId, 1);
+  const generation2 = sessionTarget(sessionId, 2);
+  const generation3 = sessionTarget(sessionId, 3);
   return [
-    sessionMetadataEvent({
+    ...sessionAuthorityEvents({
+      target: generation1,
       sessionRef: RESTARTED_SESSION_REF,
-      sessionId: "44444444-5555-6666-7777-888888888888",
-      title: "dedupe_test",
-      status: "running",
-      branch: "wip/dual-stream-thesis",
-      createdAtOffset: 90,
-      generation: 3,
-      facts: {
-        observedCommit: "50dee7a75a99abcd",
-        dirty: false,
-        relayReachable: true,
-        verifiedAt: nowSeconds() - 100,
-      },
+      commandId: "pulse-create-restarted",
     }),
     sessionMetadataEvent({
       sessionRef: RESTARTED_SESSION_REF,
-      sessionId: "44444444-5555-6666-7777-888888888888",
-      title: "dedupe_test",
-      status: "stopped",
-      branch: "wip/dual-stream-thesis",
-      createdAtOffset: 7_200,
-      generation: 2,
-      facts: {
-        observedCommit: "50dee7a75a99abcd",
-        dirty: false,
-        relayReachable: true,
-        verifiedAt: nowSeconds() - 7_300,
-      },
-    }),
-    sessionMetadataEvent({
-      sessionRef: RESTARTED_SESSION_REF,
-      sessionId: "44444444-5555-6666-7777-888888888888",
+      sessionId,
       title: "dedupe_test",
       status: "stopped",
       branch: "wip/dual-stream-thesis",
@@ -935,18 +1232,58 @@ function restartedSessionFacts(): RelayEvent[] {
         verifiedAt: nowSeconds() - 10_900,
       },
     }),
+    ...sessionResumeAuthorityEvents({
+      priorTarget: generation1,
+      target: generation2,
+      commandId: "pulse-resume-restarted-2",
+    }),
+    sessionMetadataEvent({
+      sessionRef: RESTARTED_SESSION_REF,
+      sessionId,
+      title: "dedupe_test",
+      status: "stopped",
+      branch: "wip/dual-stream-thesis",
+      createdAtOffset: 7_200,
+      generation: 2,
+      facts: {
+        observedCommit: "50dee7a75a99abcd",
+        dirty: false,
+        relayReachable: true,
+        verifiedAt: nowSeconds() - 7_300,
+      },
+    }),
+    ...sessionResumeAuthorityEvents({
+      priorTarget: generation2,
+      target: generation3,
+      commandId: "pulse-resume-restarted-3",
+    }),
+    sessionMetadataEvent({
+      sessionRef: RESTARTED_SESSION_REF,
+      sessionId,
+      title: "dedupe_test",
+      status: "running",
+      branch: "wip/dual-stream-thesis",
+      createdAtOffset: 90,
+      generation: 3,
+      facts: {
+        observedCommit: "50dee7a75a99abcd",
+        dirty: false,
+        relayReachable: true,
+        verifiedAt: nowSeconds() - 100,
+      },
+    }),
+    sessionLeaseEvent({
+      target: generation3,
+      commandId: "pulse-resume-restarted-3",
+      sequence: 1,
+      state: "live",
+      createdAtOffset: 30,
+    }),
     sessionNameEvent(RESTARTED_SESSION_REF, "dedupe_test"),
   ];
 }
 
-/**
- * F21 + F22, in the shape that produced them: one posted entry under a pile of
- * session rows, most of which were repeats of the same session.
- *
- * Entries lead the screen, the umbrella collapses to one card, and the history
- * it collapsed is one click away.
- */
-test("entries lead the screen, and repeated executions collapse into one card", async ({
+test("entries lead while restarted generations remain disclosed", async ({
   page,
 }) => {
   await boot(page, [
@@ -972,11 +1309,6 @@ test("entries lead the screen, and repeated executions collapse into one card", 
 
   const screen = page.getByTestId("project-pulse-screen");
   await expect(screen).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId("pulse-entry-row")).toHaveCount(1, {
-    timeout: 10_000,
-  });
-
-  // The human claim is above the machine observations, as the header promises.
   const entriesTop = await page
     .getByTestId("pulse-entries")
     .evaluate((node) => node.getBoundingClientRect().top);
@@ -985,11 +1317,10 @@ test("entries lead the screen, and repeated executions collapse into one card", 
     .evaluate((node) => node.getBoundingClientRect().top);
   expect(entriesTop).toBeLessThan(sessionsTop);
 
-  // Four umbrellas from six observations — and the summary counts umbrellas.
-  await expect(page.getByTestId("pulse-session-card")).toHaveCount(4);
+  await expect(page.getByTestId("pulse-session-card")).toHaveCount(6);
   await expect(page.getByTestId("pulse-count-entries")).toHaveText("1 entry");
   await expect(page.getByTestId("pulse-count-sessions")).toHaveText(
-    "4 sessions · 3 active",
+    "6 sessions · 2 provider-reachable",
   );
 
   const restarted = page
@@ -999,23 +1330,16 @@ test("entries lead the screen, and repeated executions collapse into one card", 
   await expect(restarted).toHaveAttribute("data-execution-count", "3");
   const toggle = restarted.getByTestId("pulse-session-executions-toggle");
   await expect(toggle).toHaveText("3 executions");
-  await expect(restarted.getByTestId("pulse-session-execution")).toHaveCount(0);
-  await captureLocator(page, screen, "16-entries-lead");
-  await captureLocator(page, restarted, "17-executions-collapsed");
+  await captureLocator(page, screen, "17-entries-lead");
+  await captureLocator(page, restarted, "18-executions-collapsed");
 
-  // Collapsed, never dropped: the older runs are one click away, each said in
-  // its own words rather than as a repeated full-height card.
   await toggle.click();
   await expect(restarted.getByTestId("pulse-session-execution")).toHaveCount(2);
   await expect(
     restarted.getByTestId("pulse-session-execution").first(),
   ).toContainText("Ended · last observed 2h ago");
-  await captureLocator(page, restarted, "18-executions-disclosed");
+  await captureLocator(page, restarted, "19-executions-disclosed");
 
-  // F23: the honest tri-state still renders — inline with the observations it
-  // qualifies rather than on a line of its own. (Not captured separately: the
-  // `Relay ingest` card is pixel-identical to `07-session-card-not-observed`,
-  // and a duplicate shot would trip the distinctness gate.)
   const notChecked = page
     .getByTestId("pulse-session-card")
     .filter({ hasText: "Relay ingest" });

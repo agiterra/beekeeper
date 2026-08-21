@@ -1,14 +1,14 @@
 /**
- * Reads behind Project Pulse: two filters, one fold.
+ * Reads behind Project Pulse: durable facts, current leases, and one fold.
  *
  * Entries come back by `#a` on the project coordinate; coding-session facts
  * come back by `#h` on the project's own channels. There is no queryable
  * "sessions of this project" relation — 44223 carries no `a` tag — and a
  * community-wide 44223 scan is forbidden because it is unbounded and it leaks.
  * A session running in a channel outside the project's channel set is
- * therefore not discoverable in v1, which is why the digest carries
- * `sessionsScope: "project channels"` and no surface may present Active work
- * as exhaustive.
+ * therefore not discoverable, which is why the digest carries
+ * `sessionsScope: "project channels"` and no surface may present provider
+ * reachability as exhaustive.
  *
  * Every channel that fails records a `{scope, message}` in `errors[]` and
  * flips `complete` to false. A read error must never render as a quiet
@@ -17,13 +17,15 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { parseBuzzCodingSessionMetadata } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import { relayClient } from "@/shared/api/relayClient";
 import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
 import {
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_LEASE,
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_NAME,
   KIND_PULSE_ENTRY,
@@ -40,17 +42,72 @@ import {
   type PulseDigestError,
 } from "./pulseFold.ts";
 import type { PulseEvent } from "./pulseEntry.ts";
+import { isStrictMetadataContent } from "./pulseFoldStrictJson.ts";
 
 /** Upper bound on entries fetched in one read; a truncated page is a partial read. */
 export const PULSE_ENTRY_QUERY_LIMIT = 500;
 /** Upper bound on session facts fetched in one read. */
 export const PULSE_SESSION_QUERY_LIMIT = 1000;
+/** One-shot cap for current Redis lease keys; reaching it is a partial read. */
+export const PULSE_LEASE_QUERY_LIMIT = 1000;
+/** Relay hard cap for the aggregate explicit `#h` values in one request. */
+export const PULSE_CHANNELS_PER_QUERY = 128;
 
-const SESSION_FACT_KINDS = [
+function channelChunks(channelIds: readonly string[]): string[][] {
+  const sorted = [...new Set(channelIds)].sort();
+  const chunks: string[][] = [];
+  for (
+    let index = 0;
+    index < sorted.length;
+    index += PULSE_CHANNELS_PER_QUERY
+  ) {
+    chunks.push(sorted.slice(index, index + PULSE_CHANNELS_PER_QUERY));
+  }
+  return chunks;
+}
+
+/** Milliseconds until the earliest currently reachable lease expires. */
+export function pulseLeaseExpiryDelayMs(
+  digest: Pick<ProjectPulseDigest, "sessions">,
+  nowMs = Date.now(),
+): number | null {
+  const expiries = digest.sessions.flatMap((session) =>
+    session.coordinationState !== "provider_reachable"
+      ? []
+      : session.generations
+          .filter(
+            (generation) =>
+              generation.current &&
+              generation.reachability === "provider_reachable" &&
+              generation.leaseExpiresAt !== null,
+          )
+          .map((generation) => generation.leaseExpiresAt as number),
+  );
+  if (expiries.length === 0) return null;
+  return Math.max(0, Math.min(...expiries) * 1_000 - nowMs);
+}
+
+/** Whether a channel list is only a floor rather than an authoritative set. */
+export function projectPulseChannelSetUnresolved(query: {
+  isPending: boolean;
+  isError: boolean;
+  isFetching: boolean;
+}): boolean {
+  return query.isPending || query.isError || query.isFetching;
+}
+
+const DURABLE_SESSION_FACT_KINDS = [
+  KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_METADATA,
+  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_CLOSURE,
+];
+
+const LIVE_SESSION_FACT_KINDS = [
+  KIND_CODING_SESSION_LEASE,
+  ...DURABLE_SESSION_FACT_KINDS,
 ];
 
 /** The one relay read this module needs; injectable so tests fold real bytes. */
@@ -115,7 +172,7 @@ function admissibleEvents(events: readonly RelayEvent[]): {
     }
     if (
       event.kind === KIND_CODING_SESSION_METADATA &&
-      parseBuzzCodingSessionMetadata(event.content) === null
+      !isStrictMetadataContent(event.content)
     ) {
       excluded(event, "carried undecodable coding-session metadata");
       continue;
@@ -181,26 +238,51 @@ export async function fetchProjectPulseDigest(
     sourceErrors.push({
       scope: "channels",
       message:
-        "the project's channel set could not be read; session facts were not queried",
+        channelIds.length === 0
+          ? "the project's channel set could not be read; session facts were not queried"
+          : "the complete project channel set could not be read; session facts were queried only for known channels",
     });
   }
 
-  if (channelIds.length > 0) {
-    try {
-      const sessions = await fetchEvents({
-        kinds: SESSION_FACT_KINDS,
-        "#h": [...channelIds],
-        limit: PULSE_SESSION_QUERY_LIMIT,
-      });
-      events.push(...sessions);
-      if (sessions.length >= PULSE_SESSION_QUERY_LIMIT) {
-        sourceErrors.push({
-          scope: "sessions",
-          message: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
+  const chunks = channelChunks(channelIds);
+  if (chunks.length > 0) {
+    for (const channels of chunks) {
+      try {
+        const sessions = await fetchEvents({
+          kinds: DURABLE_SESSION_FACT_KINDS,
+          "#h": channels,
+          limit: PULSE_SESSION_QUERY_LIMIT,
         });
+        events.push(...sessions);
+        if (sessions.length >= PULSE_SESSION_QUERY_LIMIT) {
+          sourceErrors.push({
+            scope: "sessions",
+            message: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
+          });
+        }
+      } catch (error) {
+        sourceErrors.push({ scope: "sessions", message: errorMessage(error) });
       }
-    } catch (error) {
-      sourceErrors.push({ scope: "sessions", message: errorMessage(error) });
+    }
+    for (const channels of chunks) {
+      try {
+        // Kind 24223 is an ephemeral Redis snapshot. One REQ obtains the current
+        // keys; it must not share the durable limit or be paginated as history.
+        const leases = await fetchEvents({
+          kinds: [KIND_CODING_SESSION_LEASE],
+          "#h": channels,
+          limit: PULSE_LEASE_QUERY_LIMIT,
+        });
+        events.push(...leases);
+        if (leases.length >= PULSE_LEASE_QUERY_LIMIT) {
+          sourceErrors.push({
+            scope: "leases",
+            message: `lease snapshot truncated at ${PULSE_LEASE_QUERY_LIMIT} events`,
+          });
+        }
+      } catch (error) {
+        sourceErrors.push({ scope: "leases", message: errorMessage(error) });
+      }
     }
   }
 
@@ -221,8 +303,8 @@ export async function fetchProjectPulseDigest(
 /** What the surface knows about a project's Pulse right now. */
 export type ProjectPulseState =
   | { kind: "loading"; digest: ProjectPulseDigest | null }
-  | { kind: "ready"; digest: ProjectPulseDigest }
-  | { kind: "partial"; digest: ProjectPulseDigest };
+  | { kind: "ready"; digest: ProjectPulseDigest; refreshing?: boolean }
+  | { kind: "partial"; digest: ProjectPulseDigest; refreshing?: boolean };
 
 /**
  * One project's folded Pulse, refreshed on live 44240 fan-out and on a 60s
@@ -241,55 +323,82 @@ export function useProjectPulseDigest(
   // Stable across renders that hand back a fresh channel array with the same
   // contents — a new key every render would re-subscribe on every paint.
   const channelKey = [...channelIds].sort().join(",");
+  const stableChannelIds = React.useMemo(
+    () => (channelKey === "" ? [] : channelKey.split(",")),
+    [channelKey],
+  );
   const key = React.useMemo(
     () =>
       projectPulseQueryKey(
         coordinate ?? "none",
-        channelKey.split(","),
+        stableChannelIds,
         channelsUnresolved,
       ),
-    [channelKey, channelsUnresolved, coordinate],
+    [channelsUnresolved, coordinate, stableChannelIds],
   );
 
   React.useEffect(() => {
     if (coordinate === null) return;
     let disposed = false;
-    let unsubscribe: (() => void) | null = null;
-    void relayClient
-      .subscribeLive(
-        {
-          kinds: [KIND_PULSE_ENTRY],
-          "#a": [coordinate],
-          since: Math.floor(Date.now() / 1_000),
-          limit: 100,
-        },
-        () => {
+    const unsubscribes = new Set<() => void>();
+    const subscribe = (filter: RelaySubscriptionFilter) => {
+      void relayClient
+        .subscribeLive(filter, () => {
           void queryClient.invalidateQueries({ queryKey: key });
-        },
-      )
-      .then((handle) => {
-        if (disposed) handle?.();
-        else unsubscribe = handle ?? null;
-      })
-      .catch(() => {
-        // The poll below is the fallback; a failed live subscription is not a
-        // read failure and must not be reported as one.
+        })
+        .then((handle) => {
+          if (!handle) return;
+          if (disposed) handle();
+          else unsubscribes.add(handle);
+        })
+        .catch(() => {
+          // The 60-second cold read below is the fallback. Its failures enter
+          // digest.errors; a live-subscription transport failure does not
+          // manufacture a durable read result.
+        });
+    };
+    const since = Math.floor(Date.now() / 1_000);
+    const subscribedChannelIds = channelKey === "" ? [] : channelKey.split(",");
+    subscribe({
+      kinds: [KIND_PULSE_ENTRY],
+      "#a": [coordinate],
+      since,
+      limit: 100,
+    });
+    for (const channels of channelChunks(subscribedChannelIds)) {
+      subscribe({
+        kinds: LIVE_SESSION_FACT_KINDS,
+        "#h": channels,
+        since,
+        limit: 100,
       });
+    }
     return () => {
       disposed = true;
-      unsubscribe?.();
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      unsubscribes.clear();
     };
-  }, [coordinate, key, queryClient]);
+  }, [channelKey, coordinate, key, queryClient]);
 
   const query = useQuery({
     queryKey: key,
     enabled: coordinate !== null,
     refetchInterval: 60_000,
     queryFn: () =>
-      fetchProjectPulseDigest(coordinate ?? "", channelIds, {
+      fetchProjectPulseDigest(coordinate ?? "", stableChannelIds, {
         channelsUnresolved,
       }),
   });
+
+  React.useEffect(() => {
+    if (!query.data) return;
+    const delay = pulseLeaseExpiryDelayMs(query.data);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: key });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [key, query.data, queryClient]);
 
   const digest =
     query.data ?? (coordinate ? readProjectPulseDigest(coordinate) : null);
@@ -297,6 +406,6 @@ export function useProjectPulseDigest(
     return { kind: "loading", digest };
   }
   return query.data.complete
-    ? { kind: "ready", digest: query.data }
-    : { kind: "partial", digest: query.data };
+    ? { kind: "ready", digest: query.data, refreshing: query.isFetching }
+    : { kind: "partial", digest: query.data, refreshing: query.isFetching };
 }

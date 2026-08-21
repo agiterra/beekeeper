@@ -23,8 +23,9 @@ import {
   groupPulseEntries,
   groupPulseSessions,
   matchesBranchFilter,
+  pulseSessionDisplayGeneration,
+  pulseSessionMatchesBranch,
   sortPulseEntriesByConsequence,
-  type PulseSessionExecutions,
 } from "../lib/pulseFormat";
 import {
   pulseDigestBranches,
@@ -182,8 +183,9 @@ function crossAuthorClaimsByTarget(
  *
  * Presentation only: every fact here was decided by `foldProjectPulseDigest`,
  * and this component's whole job is to keep the distinctions that fold made —
- * Active work vs Last seen, claim vs observation, unknown vs false — visible
- * instead of flattening them into something friendlier and wrong.
+ * recency vs unverified liveness vs closure, claim vs observation, and unknown
+ * vs false — visible instead of flattening them into something friendlier and
+ * wrong.
  */
 export function ProjectPulseView({
   state,
@@ -336,15 +338,18 @@ export function ProjectPulseView({
   }
 
   const readable = digest as ProjectPulseDigest;
+  const sessions = groupPulseSessions(readable);
   const entries = groupPulseEntries(readable);
-  // Filter executions first, then collapse: a branch chip that hid an umbrella
-  // because its *newest* execution ran elsewhere would hide the execution the
-  // reader asked for.
-  const visibleSessions = groupPulseSessions(
-    readable.sessions.filter((session) =>
-      matchesBranchFilter(session.branch, branch),
-    ),
-  );
+  // Sessions match on any generation's branch, and the chip counts call the
+  // same predicate — see `pulseSessionMatchesBranch`. Keeping one definition is
+  // what stops a chip's count and its rows from telling two different stories.
+  const sessionMatchesBranch = (session: PulseDigestSession) =>
+    pulseSessionMatchesBranch(session, branch);
+  const visibleSessions = {
+    providerReachable: sessions.providerReachable.filter(sessionMatchesBranch),
+    openUnverified: sessions.openUnverified.filter(sessionMatchesBranch),
+    closed: sessions.closed.filter(sessionMatchesBranch),
+  };
   const visibleEntries = (rows: PulseDigestEntry[]) =>
     rows.filter((entry) => matchesBranchFilter(entry.branch, branch));
   // The disclosure count and the rows behind it read the same filtered list:
@@ -357,59 +362,34 @@ export function ProjectPulseView({
   );
   const sessionsHidden =
     readable.sessions.length > 0 &&
-    visibleSessions.activeWork.length === 0 &&
-    visibleSessions.lastSeen.length === 0;
-  // A confirmed-empty verdict requires a read that lost nothing. An entry the
-  // fold could not validate, or an event this client could not decode, is an
-  // observation the surface does not have — saying "the project is quiet"
-  // over it would render a null as a completed negative.
-  /**
-   * A partial or excluded read has already told the reader it lost events, so
-   * the summary must not restate its own row count as a total — "no entries"
-   * over a failed read is the exact quiet-project lie this screen exists to
-   * refuse. Counts become explicit floors instead.
-   */
+    visibleSessions.providerReachable.length === 0 &&
+    visibleSessions.openUnverified.length === 0 &&
+    visibleSessions.closed.length === 0;
   const countsAreLowerBounds =
     state.kind === "partial" ||
-    digest?.complete === false ||
-    (digest?.errors?.length ?? 0) > 0;
-  /**
-   * A floor over zero cannot be spoken as "at least no entries", and a bare
-   * "no entries" is the absence claim this line must never make over a read
-   * that lost events. Zero rows from an incomplete read is a fact about the
-   * read, so say that: none *in what came back*, not none in the project.
-   */
+    readable.complete === false ||
+    readable.errors.length > 0;
   const asFloor = (count: number, formatted: string, noun: string): string =>
     count === 0
       ? `no ${noun} in what this read returned`
       : `at least ${formatted}`;
-
-  const isConfirmedEmpty =
-    state.kind === "ready" &&
-    state.digest.entries.length === 0 &&
-    state.digest.sessions.length === 0 &&
-    state.digest.errors.length === 0;
-
-  // Entries can be hidden by the branch chip rather than absent — the same
-  // distinction the sessions block already makes.
   const entriesHidden =
     readable.entries.some((entry) => entry.active) &&
     visibleActiveEntries.length === 0;
   const sessionCount =
-    visibleSessions.activeWork.length + visibleSessions.lastSeen.length;
-
-  const sessionCard = (group: PulseSessionExecutions) => (
-    <PulseSessionCard
-      key={group.key}
-      nowSeconds={nowSeconds}
-      olderExecutions={group.older}
-      onOpen={
-        onOpenSession ? () => onOpenSession(group.latest.targetKey) : undefined
-      }
-      onOpenExecution={onOpenSession}
-      session={group.latest}
-    />
-  );
+    visibleSessions.providerReachable.length +
+    visibleSessions.openUnverified.length +
+    visibleSessions.closed.length;
+  // A confirmed-empty verdict requires a read that lost nothing. An entry the
+  // fold could not validate, or an event this client could not decode, is an
+  // observation the surface does not have, so absence cannot be promoted into
+  // a liveness conclusion.
+  const isConfirmedEmpty =
+    state.kind === "ready" &&
+    !refreshing &&
+    state.digest.entries.length === 0 &&
+    state.digest.sessions.length === 0 &&
+    state.digest.errors.length === 0;
 
   const entryRow = (entry: PulseDigestEntry) => (
     <PulseEntryRow
@@ -422,49 +402,26 @@ export function ProjectPulseView({
       sessionsByRef={sessionsByRef}
     />
   );
+  const sessionCard = (session: PulseDigestSession) => {
+    const targetKey = pulseSessionDisplayGeneration(session)?.targetKey;
+    return (
+      <PulseSessionCard
+        key={session.sessionKey}
+        nowSeconds={nowSeconds}
+        onOpen={
+          onOpenSession && targetKey
+            ? () => onOpenSession(targetKey)
+            : undefined
+        }
+        onOpenExecution={onOpenSession}
+        session={session}
+      />
+    );
+  };
 
   return (
     <div className="flex flex-col gap-4 p-4" data-testid="project-pulse-screen">
       {header}
-
-      {/* What is on this screen, before any of it is scrolled. Entries lead the
-          page, but a project with a dozen sessions still pushes the session
-          groups below the fold, and a reader deserves to know they are there
-          without hunting. Counted from the rows actually rendered, so the
-          branch chip cannot make this line promise more than it shows. */}
-      {isConfirmedEmpty ? null : (
-        <div
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
-          data-testid="pulse-counts"
-        >
-          <span data-testid="pulse-count-entries">
-            {countsAreLowerBounds
-              ? asFloor(
-                  visibleActiveEntries.length,
-                  formatPulseEntryCount(visibleActiveEntries.length),
-                  "entries",
-                )
-              : formatPulseEntryCount(visibleActiveEntries.length)}
-          </span>
-          <span data-testid="pulse-count-sessions">
-            {countsAreLowerBounds
-              ? asFloor(
-                  sessionCount,
-                  formatPulseSessionCount(sessionCount),
-                  "sessions",
-                )
-              : formatPulseSessionCount(sessionCount)}
-            {visibleSessions.activeWork.length > 0
-              ? ` · ${visibleSessions.activeWork.length} active`
-              : ""}
-          </span>
-          {countsAreLowerBounds ? (
-            <span data-testid="pulse-counts-incomplete">
-              — this read lost events, so these are floors, not totals
-            </span>
-          ) : null}
-        </div>
-      )}
 
       {state.kind === "partial" ? (
         <StateCard
@@ -488,11 +445,11 @@ export function ProjectPulseView({
         <StateCard
           icon={<CircleCheck className="size-4" />}
           testId="pulse-empty"
-          verdict="Quiet."
+          verdict="No Pulse observations."
         >
-          No Pulse yet. Nobody has posted an entry for this project, and its
-          channels carry no coding-session facts. This read completed — the
-          project is quiet, not unreadable.
+          No sessions are currently verified live. This read completed and found
+          no Pulse entries or coding-session observations in the project's
+          channels; current liveness remains unverified.
           <PulseWriteHint />
         </StateCard>
       ) : null}
@@ -557,11 +514,43 @@ export function ProjectPulseView({
         </div>
       ) : null}
 
-      {/* Entries lead.
-          They are the only thing on this screen a person chose to say, and the
-          header promises them first. Behind a dozen session cards, the one
-          posted plan — the human claim the whole surface exists to carry — was
-          below the fold on a live project's first read. */}
+      {isConfirmedEmpty ? null : (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+          data-testid="pulse-counts"
+        >
+          {refreshing ? <span>Last completed read:</span> : null}
+          <span data-testid="pulse-count-entries">
+            {countsAreLowerBounds
+              ? asFloor(
+                  visibleActiveEntries.length,
+                  formatPulseEntryCount(visibleActiveEntries.length),
+                  "entries",
+                )
+              : formatPulseEntryCount(visibleActiveEntries.length)}
+          </span>
+          <span data-testid="pulse-count-sessions">
+            {countsAreLowerBounds
+              ? asFloor(
+                  sessionCount,
+                  formatPulseSessionCount(sessionCount),
+                  "sessions",
+                )
+              : formatPulseSessionCount(sessionCount)}
+            {visibleSessions.providerReachable.length > 0
+              ? ` · ${visibleSessions.providerReachable.length} provider-reachable`
+              : ""}
+          </span>
+          {countsAreLowerBounds ? (
+            <span data-testid="pulse-counts-incomplete">
+              — this read lost events, so these are floors, not totals
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {/* Explicit coordination claims lead the page. Observed executions are
+          still fully present below, but cannot bury what people chose to say. */}
       {isConfirmedEmpty ? null : (
         <section data-testid="pulse-entries">
           <GroupHeading>Entries</GroupHeading>
@@ -575,10 +564,10 @@ export function ProjectPulseView({
                 {entriesHidden
                   ? "No entries on this branch. Other branches have entries — clear the filter to see them."
                   : readable.errors.length > 0
-                    ? // A read that lost something cannot report an absence as
-                      // a finding, here for the same reason as below.
-                      "No entries posted for this project — but this read lost events, so that is not a confirmed answer."
-                    : "No entries posted for this project yet."}
+                    ? "No entries appeared in what this read returned; the read lost events, so that is not a project-wide answer."
+                    : refreshing
+                      ? "The last completed read contained no entries; refreshing now…"
+                      : "No entries posted for this project yet."}
               </p>
               {entriesHidden ? null : <PulseWriteHint />}
             </div>
@@ -610,45 +599,50 @@ export function ProjectPulseView({
         </section>
       ) : null}
 
-      {/* The sessions block renders whenever the digest is readable — including
-          when it is empty. This is the one place the surface admits its own
-          non-exhaustiveness, and it must not disappear in exactly the state
-          where a reader would otherwise conclude "nobody is running anything
-          here." */}
+      {/* Durable session observations follow claims and remain split by the
+          fold's independent lifecycle/reachability facts. */}
       <section data-testid="pulse-sessions">
-        {visibleSessions.activeWork.length > 0 ? (
-          <div className="mb-3" data-testid="pulse-active-work">
-            <GroupHeading>Active work</GroupHeading>
+        {visibleSessions.providerReachable.length > 0 ? (
+          <div className="mb-3" data-testid="pulse-provider-reachable">
+            <GroupHeading>Provider-reachable sessions</GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.activeWork.map(sessionCard)}
+              {visibleSessions.providerReachable.map(sessionCard)}
             </ul>
           </div>
         ) : null}
 
-        {visibleSessions.lastSeen.length > 0 ? (
-          <div className="mb-3" data-testid="pulse-last-seen">
-            <GroupHeading>Last seen</GroupHeading>
+        {visibleSessions.openUnverified.length > 0 ? (
+          <div className="mb-3" data-testid="pulse-open-unverified">
+            <GroupHeading>Open · liveness unverified</GroupHeading>
             <ul className="flex flex-col gap-2">
-              {visibleSessions.lastSeen.map(sessionCard)}
+              {visibleSessions.openUnverified.map(sessionCard)}
             </ul>
           </div>
-        ) : (
-          visibleSessions.activeWork.length === 0 && (
-            <p
-              className="text-sm text-muted-foreground"
-              data-testid="pulse-sessions-empty"
-            >
-              {sessionsHidden
+        ) : null}
+
+        {visibleSessions.closed.length > 0 ? (
+          <div className="mb-3" data-testid="pulse-closed">
+            <GroupHeading>Closed/history</GroupHeading>
+            <ul className="flex flex-col gap-2">
+              {visibleSessions.closed.map(sessionCard)}
+            </ul>
+          </div>
+        ) : null}
+
+        {sessionCount === 0 ? (
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="pulse-sessions-empty"
+          >
+            {refreshing
+              ? "The last completed read contained no provider-reachable sessions; refreshing now…"
+              : sessionsHidden
                 ? "No coding sessions on this branch. Other branches have sessions — clear the filter to see them."
                 : readable.errors.length > 0
-                  ? // A read that lost something cannot report an absence as a
-                    // finding: "none observed" over a failed or truncated
-                    // source is a null rendered as a confirmed negative.
-                    "No coding sessions observed in this project's channels — but this read lost events, so that is not a confirmed answer."
-                  : "No coding sessions observed in this project's channels."}
-            </p>
-          )
-        )}
+                  ? "No sessions are currently verified live — but this read lost events, so that is not a confirmed answer."
+                  : "No sessions are currently verified live."}
+          </p>
+        ) : null}
 
         <p
           className="mt-1 text-xs text-muted-foreground"

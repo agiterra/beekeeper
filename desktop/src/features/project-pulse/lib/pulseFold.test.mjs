@@ -5,11 +5,10 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  PULSE_ACTIVE_WINDOW_SECONDS,
+  PULSE_LEASE_TTL_SECONDS,
   foldProjectPulseDigest,
   pulseCommitConfirmation,
   pulseDigestBranches,
-  pulseSessionActivity,
 } from "@/features/project-pulse/lib/pulseFold";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -77,8 +76,8 @@ test("every banked conformance vector folds byte-identically", () => {
   }
 });
 
-test("the active window matches the corpus that pins it", () => {
-  assert.equal(PULSE_ACTIVE_WINDOW_SECONDS, VECTORS.activeWindowSeconds);
+test("the lease TTL is the conservative client-composed lifetime", () => {
+  assert.equal(PULSE_LEASE_TTL_SECONDS, 150);
 });
 
 test("a same-author revision retires its target and stays active itself", () => {
@@ -198,36 +197,128 @@ test("branch groups keep null as its own group, last", () => {
   assert.deepEqual(pulseDigestBranches(digest), ["wip/one", "wip/two", null]);
 });
 
-test("activity needs all three positive signals", () => {
-  const base = {
-    status: "running",
-    statusAt: 1_000,
-    closed: false,
-    now: 1_000,
-  };
-  assert.equal(pulseSessionActivity(base), "active");
-  assert.equal(
-    pulseSessionActivity({ ...base, now: 1_000 + PULSE_ACTIVE_WINDOW_SECONDS }),
-    "active",
-    "the window's last second is still active",
+function foldedVector(name) {
+  const vector = VECTORS.vectors.find((candidate) => candidate.name === name);
+  assert.ok(vector, `missing vector ${name}`);
+  return foldProjectPulseDigest({
+    project: vector.input.project,
+    now: vector.input.now,
+    events: vector.input.events,
+    sourceErrors: vector.input.sourceErrors,
+  });
+}
+
+test("old idle metadata remains reachable only through authorized lease evidence", () => {
+  const digest = foldedVector("idle-hours-old-with-live-authorized-lease");
+  assert.deepEqual(digest.providerReachableSessions, [
+    "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+  ]);
+  const generation = digest.sessions[0].generations[0];
+  assert.equal(digest.sessions[0].observedAgeSeconds, 10_000);
+  assert.equal(generation.reachability, "provider_reachable");
+  assert.equal(generation.leaseAcceptedAt, null);
+  assert.equal(generation.leaseExpiresAt, 1_785_600_090);
+});
+
+test("reordered lifecycle and lease envelopes are rejected", () => {
+  const source = VECTORS.vectors.find(
+    (vector) => vector.name === "idle-hours-old-with-live-authorized-lease",
   );
-  assert.equal(
-    pulseSessionActivity({
-      ...base,
-      now: 1_001 + PULSE_ACTIVE_WINDOW_SECONDS,
+  assert.ok(source);
+  for (const kind of [44221, 44224, 24223]) {
+    const vector = structuredClone(source);
+    const events = vector.input.events.filter(
+      (candidate) => candidate.kind === kind,
+    );
+    assert.notEqual(events.length, 0, `missing kind ${kind}`);
+    for (const event of events) {
+      [event.tags[0], event.tags[1]] = [event.tags[1], event.tags[0]];
+    }
+    const digest = foldProjectPulseDigest({
+      project: vector.input.project,
+      now: vector.input.now,
+      events: vector.input.events,
+      sourceErrors: vector.input.sourceErrors,
+    });
+    if (kind === 24223) {
+      assert.deepEqual(digest.providerReachableSessions, []);
+      assert.deepEqual(digest.openUnverifiedSessions, [
+        "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+      ]);
+    } else {
+      assert.deepEqual(digest.sessions, []);
+    }
+  }
+});
+
+test("malformed lifecycle JSON fails closed instead of throwing", () => {
+  const source = VECTORS.vectors.find(
+    (vector) => vector.name === "idle-hours-old-with-live-authorized-lease",
+  );
+  assert.ok(source);
+  const vector = structuredClone(source);
+  const command = vector.input.events.find((event) => event.kind === 44221);
+  assert.ok(command);
+  command.content = '{"unterminated';
+  assert.doesNotThrow(() =>
+    foldProjectPulseDigest({
+      project: vector.input.project,
+      now: vector.input.now,
+      events: vector.input.events,
+      sourceErrors: vector.input.sourceErrors,
     }),
-    "stale",
   );
+});
+
+test("all non-live lease outcomes fail closed without erasing evidence", () => {
+  const digest = foldedVector("unverified-lease-outcomes");
+  assert.deepEqual(digest.providerReachableSessions, []);
+  assert.equal(digest.openUnverifiedSessions.length, 1);
+  const generations = Object.fromEntries(
+    digest.sessions[0].generations.map((generation) => [
+      generation.executionKey.split(":").at(-1),
+      generation,
+    ]),
+  );
+  assert.equal(Object.keys(generations).length, 6);
+  assert.equal(generations.none.leaseState, null);
+  assert.equal(generations.released.leaseState, "released");
+  assert.equal(generations.expired.leaseExpiresAt, 1_785_599_970);
+  assert.equal(generations.expired.reachability, "unverified");
+  assert.equal(generations.conflict.leaseSequence, 7);
+  assert.equal(generations.conflict.leaseSourceEventId, null);
+  assert.equal(generations.wrong.leaseSequence, null);
+  assert.equal(generations.terminal.reachability, "terminal");
+});
+
+test("resume advances exactly one generation and never inherits reachability", () => {
+  const digest = foldedVector("resume-generation-isolation-and-continuity");
+  const [current, predecessor] = digest.sessions[0].generations;
+  assert.equal(digest.sessions.length, 1, "resume stays in one umbrella");
   assert.equal(
-    pulseSessionActivity({ ...base, status: "disconnected" }),
-    "stale",
-    "a dead provider is never active work",
+    digest.sessions[0].generations.length,
+    2,
+    "generation 4 is rejected",
   );
+  assert.equal(current.targetKey.endsWith("1:2"), true);
+  assert.equal(current.current, true);
+  assert.equal(current.reachability, "unverified");
+  assert.equal(predecessor.current, false);
+  assert.equal(predecessor.leaseState, "live");
+  assert.equal(predecessor.reachability, "unverified");
+});
+
+test("durable closure outranks a live current generation", () => {
+  const digest = foldedVector("closure-outranks-live-generation");
   assert.equal(
-    pulseSessionActivity({ ...base, closed: true }),
-    "stale",
-    "a closed umbrella is never active work",
+    digest.sessions[0].generations[0].reachability,
+    "provider_reachable",
   );
+  assert.equal(digest.sessions[0].coordinationState, "closed");
+  assert.deepEqual(digest.providerReachableSessions, []);
+  assert.deepEqual(digest.closedSessions, [
+    "8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64",
+  ]);
 });
 
 test("commit confirmation is tri-state and never says unreachable", () => {

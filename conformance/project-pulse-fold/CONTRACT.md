@@ -1,348 +1,317 @@
-# Project Pulse — the digest fold (conformance corpus)
+# Project Pulse digest fold — v2 conformance contract
 
-**Source of truth:** `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`
-§5.4 (client fold) and §6 (relay fold). Decision 19 of that plan makes this
-directory the fold's single source of truth: **a fold rule that exists in only
-one language is a defect.**
+This directory is the byte-exact source of truth for the Project Pulse fold.
+The Rust fold in `buzz-cli`, the TypeScript fold in Desktop, and a relay-side
+kind 39011 projection must bind to the same vectors. A rule implemented in only
+one fold is a defect.
 
-The fold is implemented at least three times — Rust in `buzz-cli`
-(`buzz pulse digest`, Slice 1), TypeScript in Desktop (Slice 1), and Rust in
-`buzz-relay` (kind 39011, Slice 2). All three bind to
-`fixtures/fold-vectors.json` in this directory and must produce the digest in
-`expected` for the events and clock in `input`.
+The fold reports facts. Rendering and the `wait | consult | proceed` decision
+consume those facts but are not part of this contract.
 
-Nothing here is a rule about *rendering*, except where a rendering rule is
-called out explicitly. The fold produces facts; surfaces render them.
+## Inputs and scope
 
----
+For one normalized kind-30621 project coordinate, a client-composed fold takes:
 
-## What the fold consumes
+- kind 44240 Pulse entries selected by their `a` tag;
+- project-channel facts of kinds 24223 (lease), 44221 (lifecycle command),
+  44223 (metadata), 44224 (lifecycle receipt), 44227 (goal), 44229 (name), and
+  44230 (closure);
+- `now`, read once after the last source query returns; and
+- `sourceErrors`, one `{scope, message}` per failed or truncated query.
 
-Per project, the caller supplies:
+Session reach is exactly `sessionsScope: "project channels"`. A community-wide
+session scan is forbidden and an `a` filter cannot discover session facts.
+Therefore an empty reachable set is not proof that no work exists outside that
+scope.
 
-- every readable kind:44240 Pulse entry for the project coordinate;
-- every readable coding-session fact reachable through the project's channels —
-  kind 44223 (metadata), 44227 (goal), 44229 (name), 44230 (closure);
-- `now`, a Unix-seconds clock read once, after the last source query returned;
-- `sourceErrors`, one `{scope, message}` per source query that failed or was
-  truncated.
+## Envelope and member shapes
 
-The caller's session reach is **`sessionsScope: "project channels"`** and
-nothing wider: a community-wide 44223 scan is forbidden (it is unbounded and it
-leaks), and 44223 carries no `a` tag, so `#a` does nothing for sessions. A
-session running in a channel outside the project's channel set is not
-discoverable in v1, and no surface may present the Active-work list as
-exhaustive.
-
----
-
-## The envelope
-
-The fold emits **exactly** the kind-39011 content object of §6, plus `source`,
-with these keys in this order:
+Keys occur in the following order. Every nullable member is emitted as `null`,
+never omitted.
 
 ```json
 {
-  "schema": "buzz-project-pulse-digest/v1",
+  "schema": "buzz-project-pulse-digest/v2",
   "source": "client-composed",
   "project": "30621:<owner>:<dtag>",
-  "asOf": 1785513037,
+  "asOf": 1785600000,
   "complete": true,
   "sessionsScope": "project channels",
   "sessions": [],
+  "providerReachableSessions": [],
+  "openUnverifiedSessions": [],
+  "closedSessions": [],
   "entries": [],
   "errors": []
 }
 ```
 
-- `source` is `"client-composed"` when the caller folded it and
-  `"relay-digest"` when kind 39011 produced it. Slice 2 changes who computes the
-  digest, never its shape. Every vector in this corpus is `"client-composed"`;
-  a relay-side fold binding to these vectors substitutes `"relay-digest"` and
-  changes nothing else.
-- `asOf` is mandatory: the wall-clock second the last source query returned.
-- `complete` is false whenever any source query failed or was truncated by
-  `limit`. **`complete:false` plus a non-empty `errors[]` is the only
-  representation of a partial read.** A partial fold must never print as a
-  complete digest with an empty session list — that is the "read error renders
-  as an empty project" failure arriving through a side door. The caller exits 2
-  on `complete:false`; a confirmed-empty project is `complete:true` and exit 0.
-
-Member shapes, with every key always present (`null`, not omitted, when there
-is no value) so the two languages serialize byte-identically:
+`source` is `client-composed` in this corpus. A relay projection substitutes
+`relay-digest`; it does not change the remaining shape. Client-composed output
+never invents relay receipt time: `leaseAcceptedAt` is always null.
 
 ```text
-entries[]      = { eventId, pubkey, createdAt, type, text, claimedAreas[],
-                   branch|null, sessionRef|null, supersedes|null,
-                   supersededBy[], active }
-sessions[]     = { targetKey, sessionRef|null, name|null, goal|null,
-                   status, statusAt, closed, activity, branch|null,
-                   observedCommit|null, dirty|null, relayReachable|null,
-                   verifiedAt|null, commitConfirmation, observedAgeSeconds,
-                   sourceEventIds[] }
-errors[]       = { scope, message }
+sessions[] = {
+  sessionKey, sessionRef|null, name|null, goal|null,
+  lifecycle, coordinationState,
+  latestObservationAt|null, observedAgeSeconds|null,
+  generations[], sourceEventIds[]
+}
+
+generations[] = {
+  targetKey, executionKey, providerAuthorityPubkey,
+  current, reachability,
+  status|null, statusAt|null, branch|null,
+  observedCommit|null, dirty|null, relayReachable|null, verifiedAt|null,
+  commitConfirmation,
+  leaseState|null, leaseIssuedAt|null, leaseAcceptedAt|null,
+  leaseExpiresAt|null, leaseSigner|null, leaseSourceEventId|null,
+  leaseSequence|null,
+  lifecycleCommandEventId, lifecycleReceiptEventId,
+  sourceEventIds[]
+}
+
+entries[] = {
+  eventId, pubkey, createdAt, type, text, claimedAreas[],
+  branch|null, sessionRef|null, supersedes|null,
+  supersededBy[], active
+}
+
 supersededBy[] = { eventId, pubkey|null, honored, reason|null }
+errors[]       = { scope, message }
 ```
 
-**Ordering** (byte-identity requires it, and the plan leaves it open):
+The three outer index arrays contain `sessionKey` strings in the same order as
+their rows in `sessions[]`; they do not duplicate session objects.
 
-- `entries[]`: `createdAt` descending, ties broken by the **greater** event id
-  first — the same total order the supersession law uses, so "newer" means one
-  thing in this file.
-- `sessions[]`: `statusAt` descending, ties broken by `targetKey` ascending.
-- `supersededBy[]`: `eventId` ascending. This is a set of claims, not a
-  recency ordering.
-- `errors[]`: `scope` ascending, then `message` ascending.
-- `claimedAreas[]` and `sourceEventIds[]`: `sourceEventIds[]` ascending;
-  `claimedAreas[]` keeps the author's first-seen order (the entry decoder
-  already rejected duplicates).
+## Lifecycle authority and generation identity
 
----
+A session generation exists in the digest only when exactly one immutable
+kind-44221 lifecycle command and exactly one kind-44224 receipt share a
+`commandId`, the receipt status successfully mints a generation, and the
+receipt signer equals the command action's `providerAuthorityPubkey`.
+Metadata authorship never establishes or changes authority.
 
-## Entries
+Proof uniqueness is also exact-target scoped. After identical command and
+receipt event IDs are deduplicated, exactly one successful proof pair may mint
+`(h,targetKey)`. Two distinct successful pairs for that same generation make
+the generation inadmissible, independent of input order; the fold never picks
+the first, newest, or lexicographically smallest authority proof.
 
-An event is an entry when it is kind 44240, carries this project's coordinate,
-and passes `buzz_core::pulse::validate_pulse_entry_envelope` (Rust) or its
-TypeScript twin.
+Every authority join is channel-bound. Command identity is `(h, commandId)`
+and generation identity for joins is `(h, targetKey)`. A command and receipt
+must carry the same exact nonempty `h`; metadata and lease evidence must carry
+the accepted generation's `h`. Same-named facts from another queried channel
+are unrelated and cannot mint or modify a generation. Creates mint generation
+1 only; a successful create receipt naming any other generation is rejected.
 
-- `claimedAreas` are **claims**, never observed facts, and every surface must
-  say so. They are the decoded `codeAreas` — a single leading `./` already
-  stripped by the decoder.
-- `sessionRef` is the `pu-session` tag, echoed verbatim. It is author-controlled
-  and unverified at ingest; see *Entry-to-session attribution*.
-- An event that fails validation is **excluded** from `entries[]` and recorded
-  in `errors[]` as
-  `{"scope": "invalid-entry", "message": "entry <id> failed validation and was excluded"}`.
-  It is never dropped silently and never counted as a valid claim. Ingest
-  rejects these shapes, so only a smuggled or legacy event reaches a reader.
-  An invalid entry is not a failed read: `complete` stays true.
+The receipt envelope is the SDK's exact, ordered four-tag sequence:
 
----
+```text
+h=<nonempty channel UUID>
+cslr-v=cslr1-1
+csl-command=<content.commandId>
+csl-key=coding-session-lifecycle-receipt/v1|<byte-length>:<commandId>
+```
 
-## The supersession fold law (plan §5.4, verbatim in effect)
+There is no `cs-target` receipt tag. The target is strictly decoded from the
+receipt content. Lifecycle commands likewise require ordered `h`, `csl-v`,
+`csl-command` tags, and leases require ordered `h`, `cslease-v`, `cs-target`,
+`csl-command`, `cslease-seq` tags. Reordering any of these envelopes rejects
+that fact rather than broadening the DB authority proof during a client fold.
+Lifecycle command, receipt, and lease content also use their protocol-defined
+closed field sets. Missing or unknown fields and duplicate JSON object keys at
+any nesting depth are rejected before authority or reachability is folded.
 
-Supersession is a **single-pass marking, never a traversal**, so cycles are
-structurally impossible and no naive traversal can hang or blank the active set.
+A successful create participates only when its content `projectRef`, normalized
+with `normalize_project_coordinate`, equals the requested project. Its verified
+`sessionRef` becomes `sessionKey`; without one, the fallback is
+`implicit:<executionKey>`.
 
-Entry `E` is marked superseded iff some entry `S` in the same
-(community, project) result set satisfies **all** of:
+A resume is accepted only when:
+
+- its command targets an already accepted exact generation;
+- receipt target driver, instance id, and session id equal the predecessor;
+- receipt generation is exactly predecessor generation + 1; and
+- the command/receipt authority proof above succeeds.
+
+The new generation inherits the predecessor's umbrella `sessionRef`. Multiple
+executions deliberately created with the same verified `sessionRef`, and all
+accepted resumes, collapse into one outer session row.
+
+`targetKey` is `coding-session/v1|` plus UTF-8 byte-length-prefixed driver,
+instance id, session id, and generation. `executionKey` uses
+`coding-execution/v1|` and the same first three fields, omitting generation.
+Within each execution, only the greatest accepted generation is `current:true`.
+
+## Durable observations and liveness evidence
+
+For each accepted exact generation, retain the newest authority-signed kind
+44223 metadata by `(created_at, event id)`. It participates only when its
+content-derived target matches the accepted generation, its normalized
+`projectRef` matches the project, and its signer equals the lifecycle-bound
+provider authority. A `sessionRef` claimed by metadata does not establish
+authority or umbrella grouping.
+
+`statusAt` is the metadata event's `created_at`. `latestObservationAt` is the
+greatest non-null `statusAt` across the umbrella, and
+`observedAgeSeconds = now - latestObservationAt`. Observation fields
+`observedCommit`, `dirty`, `relayReachable`, and `verifiedAt` preserve null.
+
+`commitConfirmation` is fixed:
+
+| `relayReachable` | value |
+|---|---|
+| `true` | `Commit confirmed on relay` |
+| `false` | `Commit not found on relay` |
+| `null` | `Commit not checked` |
+
+A kind-24223 lease is eligible only when its content target and `cs-target` tag
+name an accepted exact generation, `csl-command` names that generation's
+accepted create/resume command, `cslease-seq` equals content `leaseSequence`,
+and its signer equals that command's `providerAuthorityPubkey`.
+
+Per exact generation:
+
+1. Retain eligible leases at the greatest `leaseSequence`.
+2. Duplicate rows with the same event id collapse.
+3. Two different event ids at the same greatest sequence are conflicting
+   evidence: `leaseSequence` preserves that sequence, the selected lease fields
+   are null, and both ids remain in `sourceEventIds`.
+4. A unique `released` winner is preserved but does not prove reachability.
+5. A unique `live` winner expires conservatively at
+   `event.created_at + 150`. This conservative signed-time lifetime subtracts
+   30 seconds from Redis's authoritative 180-second accepted-time TTL so a cold
+   client cannot extend reachability beyond the snapshot it cannot observe.
+   `now < leaseExpiresAt` is live; exact equality is expired.
+   `leaseAcceptedAt` remains null in a client-composed digest. A future
+   relay-composed digest may use validated `acceptedAt + 180` instead.
+
+Generation `reachability` is:
+
+- `terminal` when newest metadata says `stopped` or `disconnected`, regardless
+  of lease evidence;
+- `provider_reachable` only for a `current:true` generation with a unique,
+  unexpired, authority-valid `live` lease; otherwise
+- `unverified`.
+
+A valid lease on an old generation never transfers to its resumed successor
+and cannot keep the old generation provider-reachable once it is non-current.
+Other event streams may be positive activity evidence to a product, but never
+extend or manufacture a lease in this fold.
+
+Lifecycle commands, receipts, metadata, closures, and leases use the strict
+buzz-core decoders: exact accepted field sets, duplicate-key rejection at every
+depth, bounded nonempty identifiers, exact enums and null coupling, and
+receipt status/session/error consistency. A malformed signed fact is not a
+partial source read and cannot mint, observe, close, or make a generation live.
+
+## Umbrella lifecycle and coordination state
+
+The newest kind-44230 by `(created_at, event id)` joined through verified
+`sessionRef` determines umbrella `lifecycle`: content action `closed` yields
+`closed`; absence or `open` yields `open`.
+
+Goal, name, and closure joins are `(h, sessionRef)` joins. When one verified
+umbrella `sessionRef` has accepted generations in more than one channel, those
+umbrella facts fail closed rather than selecting one channel or allowing a
+fact from either channel to govern the other.
+
+`coordinationState` and the outer indexes are tri-state:
+
+- `closed`: umbrella lifecycle is closed; closure outranks every lease;
+- `provider_reachable`: lifecycle is open and at least one current generation
+  is `provider_reachable`;
+- `open_unverified`: lifecycle is open without such evidence.
+
+An unclosed session without a valid lease is not dead and is not ordinary
+history. No age threshold changes this state. The v1 30-minute freshness law
+is removed: durable observation recency and ephemeral reachability are
+independent axes.
+
+## Pulse entries and supersession
+
+A kind-44240 event participates when it belongs to this project and passes the
+strict Pulse entry envelope validator. Invalid in-scope entries are excluded
+and add `invalid-entry` detail to `errors[]` without making the read partial.
+Foreign-project events are ignored without error. `claimedAreas` remain author
+claims. `pu-session` is echoed but is not verified attribution.
+
+Supersession is single-pass marking, never traversal. Entry `E` becomes
+`active:false` iff an entry `S` in the same result set satisfies all of:
 
 - `S.supersedes == E.id`;
 - `S.pubkey == E.pubkey`;
-- `S.created_at >= E.created_at`, ties on `created_at` broken by the greater
-  event id — matching the established `(created_at, event id)` fold at
-  `crates/buzz-core/src/coding_session_closure.rs:148-156`;
+- `S` is newer by `(created_at, event id)`, with greater id winning a timestamp
+  tie; and
 - `S.id != E.id`.
 
-`E.active` is false exactly when at least one honored claim names it.
+Cross-author claims never retire the target and use reason `cross-author`.
+Missing targets use `unresolved` and add an `unresolved-supersedes` error.
+Claims losing the total order use `out-of-order`. Superseded entries remain in
+the digest with `active:false`.
 
-Consequences, all of which are honesty requirements and not preferences:
+Entry-to-session placement is a consumer authorization law. Because
+`pu-session` is author-controlled, a surface may nest an entry only after
+resolving founder/grant authority from the sanctioned session authority chain.
+The v2 digest does not encode that result, so the corpus cannot assert it.
 
-- **A cross-author `supersedes` never removes its target.** The target stays
-  active and both entries render; the superseding entry carries
-  `supersededBy: [{eventId: <target>, pubkey: <target author>, honored: false,
-  reason: "cross-author"}]`, and Desktop renders
-  `supersession claimed by <author>`. Without this rule, any project writer
-  could publish a one-line 44240 superseding a peer's `blocker` and silently
-  push it out of the active set that drives wait|consult|proceed — one agent
-  erasing another agent's claim.
-- **A reference to an id not in the result set** leaves the target unknown and
-  `E` active; the digest echoes `supersedes` verbatim with
-  `supersededBy: [{eventId: <target>, pubkey: null, honored: false,
-  reason: "unresolved"}]`, Desktop renders `supersedes <id> (not visible)`, and
-  `errors[]` records
-  `{"scope": "unresolved-supersedes", "message": "entry <S.id> supersedes <target>, which is not in the visible result set"}`.
-  A reference to a non-44240 or different-project event is treated identically.
-  An unresolved reference is not a failed read: `complete` stays true.
-- **A same-author claim that loses the ordering** (`S.created_at <
-  E.created_at`, or a `created_at` tie lost on event id) is not honored and
-  carries `reason: "out-of-order"`. The order is total, so two entries can
-  never supersede each other.
-- **Superseded entries are never dropped.** They are returned with
-  `active: false` and their `supersededBy[]` populated, and remain available in
-  Desktop through progressive disclosure.
+## Ordering
 
-`reason` is `null` on an honored claim and one of `"cross-author"`,
-`"unresolved"`, `"out-of-order"` otherwise. `pubkey` is the other entry's
-author, or `null` when that entry is not in the result set.
+- `entries[]`: `createdAt` descending, greater event id first on ties.
+- `sessions[]`: `latestObservationAt` descending, null last, then
+  `sessionKey` byte-ascending.
+- `generations[]`: current first, then `executionKey` byte-ascending, then
+  `targetKey` byte-ascending.
+- the three session index arrays follow `sessions[]` order.
+- `supersededBy[]` and every `sourceEventIds[]`: event id ascending.
+- `errors[]`: scope ascending, then message ascending.
+- `claimedAreas[]`: author order after decoder normalization.
 
----
+Branch filters are exact and case-sensitive. A null branch stays distinct;
+`--branch -` selects null and omitting the filter selects all. Filtering must
+recompute the outer session index arrays so they never name hidden rows.
 
-## Sessions
+## Completeness
 
-Sessions are keyed by `targetKey` — the `cs-target` tag value,
-`coding-session/v1|<len>:<driver><len>:<instance><len>:<session><len>:<generation>`
-(`buzz_core::coding_session_command::coding_session_target_key`). Only 44223
-events whose content `projectRef`, normalized through
-`normalize_project_coordinate`, equals the requested coordinate participate.
+`complete` is false exactly when `sourceErrors` is nonempty. Those errors are
+returned even with partial entries or sessions. A confirmed-empty project is
+`complete:true`; a failed read must never masquerade as one. Fold observations
+such as invalid entries or unresolved supersession do not by themselves make a
+read incomplete.
 
-- The winning 44223 for a target is the newest by `(created_at, event id)`.
-  `status` is its content `status`; `statusAt` is its `created_at`.
-- `sessionRef` is the winning 44223's `sessionRef` echo — the umbrella UUID,
-  **not** a genesis event id. `name`, `goal`, and `closed` are joined on it:
-  the newest 44229, the newest 44227, and the newest 44230 by
-  `(created_at, event id)`, each `null`/`false` when absent.
-- `sourceEventIds[]` lists every event folded into the row — the winning 44223
-  plus each winning goal, name, and closure — ascending.
-- `observedAgeSeconds` = `now − statusAt`, rendered `observed <age> ago`. It is
-  **never** derived from `verifiedAt`, which is null whenever the reachability
-  check did not complete and would otherwise show "age: unknown" for a session
-  with perfectly fresh 44223 observations.
+## Vector format and coverage
 
-### Active work — the definition
+`fixtures/fold-vectors.json` has schema
+`buzz-project-pulse-fold-vectors/v2`, digest schema
+`buzz-project-pulse-digest/v2`, entry schema `buzz-pulse-entry/v1`, and an array
+of `{name, description, input, expected}`. Inputs use signature-stripped Nostr
+rows (`id`, `pubkey`, `created_at`, `kind`, `tags`, `content`). Synthetic ids
+are lowercase 64-hex ordering fixtures, not hashes of the event body.
 
-The absence of a closure is not evidence of life. A machine that dies mid-turn
-leaves the last 44223 saying `running` forever, and a session whose provider
-identity is gone can never publish a closure. Answering "who is actively
-working on this project?" with that ghost would tell a new worker to **wait**
-on it indefinitely.
+The corpus preserves every v1 entry/supersession case and adds:
 
-A session's `activity` is `"active"` only on a positive freshness signal. All
-three must hold:
+- `idle-hours-old-with-live-authorized-lease`: old idle metadata plus a live
+  authority-bound lease is provider-reachable using the real receipt tags;
+- `unverified-lease-outcomes`: no lease, release, exact-boundary expiry,
+  equal-sequence conflict, wrong signer, and terminal precedence collapse into
+  one open/unverified umbrella while preserving evidence;
+- `resume-generation-isolation-and-continuity`: a +1 resume stays in one
+  umbrella, predecessor reachability does not transfer, and generation +2 is
+  rejected; and
+- `closure-outranks-live-generation`: durable closure wins over live generation
+  evidence and indexes the umbrella as closed;
+- `cross-channel-authority-proof-splicing-rejected`: session facts cannot join
+  across channel `h` values;
+- `create-receipt-generation-two-rejected`: create can mint generation 1 only;
+  and
+- `strict-lifecycle-and-lease-json-rejected`: closed field sets and duplicate
+  JSON-key rejection plus lifecycle/receipt/metadata/closure value validation
+  stay byte-parity behavior across folds.
+- `competing-generation-proofs-rejected-forward` and `-reverse`: two distinct
+  successful proofs for one exact target reject the generation in both orders.
 
-- (a) the latest 44230 fold is not `closed`;
-- (b) the newest 44223 status is one of
-  `starting | running | idle | waiting_for_input`;
-- (c) `statusAt` is within `PULSE_ACTIVE_WINDOW = 30 minutes` of `now`, i.e.
-  `now − statusAt <= 1800`. Exactly 1800 is still active; 1801 is not.
-
-Anything failing (b) or (c) is `activity: "stale"`, renders in a separate
-**Last seen** group labelled `<status> · last observed <age> ago`, and **must
-never contribute a `wait` to the wait|consult|proceed advisory**.
-`disconnected` and `failed` render as `Disconnected` / `Needs attention` per
-`codingSessionWireWorkspaceStatus`, never as Active work. A session failing (a)
-is also `"stale"`; it carries `closed: true` and renders under a closed
-grouping — closed history is disclosed, never deleted, and never presented as
-somebody currently working.
-
-Implementations must assert that their own `PULSE_ACTIVE_WINDOW` equals this
-file's `activeWindowSeconds` (1800). The constant lives in code; the corpus
-pins it.
-
-### Session status precedence
-
-The session status is one derivation, not two: a signed lifecycle status
-outranks the transcript and `statusAt` decides freshness, exactly as
-`deriveCodingSessionWorkspaceStatus`
-(`desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.ts:193-230`)
-does. A fixture test asserts the CLI and Desktop produce identical status for
-the same event set.
-
-### Observation fields — unknown is not false
-
-`observedCommit`, `dirty`, `relayReachable`, and `verifiedAt` are emitted
-exactly as nullable observations. **Never convert `null` into `false`.**
-`relayReachable` is null exactly when `verifiedAt` is null.
-
-`commitConfirmation` is a fixed tri-state string that every surface emits, so
-they cannot drift:
-
-| `relayReachable` | `commitConfirmation`         |
-|---|---|
-| `true`  | `Commit confirmed on relay` |
-| `false` | `Commit not found on relay` |
-| `null`  | `Commit not checked`        |
-
-**Rendering rule, not a fold rule:** surfaces append `· <verifiedAt age> ago`
-to the first two, and nothing to the third. The age is *rendered*, never folded
-into the digest — a humanized age baked into a JSON field is stale the moment
-it is written, and Slice 2's relay-signed 39011 would then carry a sentence
-that ages while the digest sits in a client cache. `verifiedAt` is in the
-envelope; the age is computed from it at paint time.
-
-**Never render the words "relay reachable" or "relay unreachable."** The
-underlying fact is "the relay's advertised refs contained this exact commit at
-`verifiedAt`" — it says nothing about whether the session is connected.
-
-### Branch
-
-44223's `branch` is `Option<String>`. A null branch is its own group: it is
-never merged into a named branch and never rendered as one. `--branch <name>`
-selects rows whose branch equals `<name>` exactly, case-sensitive; the reserved
-`--branch -` selects only null-branch rows; omitting `--branch` returns
-everything. Desktop's "no branch" chip maps to `--branch -`.
-
----
-
-## Entry-to-session attribution
-
-The `pu-session` tag is author-controlled and unverified at ingest. An entry is
-displayed *inside* a session card only when its author is that session's founder
-(the 44226 genesis pubkey) or holds a 44228 authority grant for it. Any other
-entry naming a `pu-session` renders at project level as
-`references session <name>`, attributed to its own author, and never inside the
-session's card or its status line. Otherwise any project writer could publish a
-`blocker` carrying another team's `sessionRef` and have it render on that team's
-card.
-
-This is a **consumer law with no representation in the v1 envelope**: the fixed
-member shapes carry neither a founder pubkey on `sessions[]` nor an attribution
-flag on `entries[]`, so a surface must resolve 44226/44228 itself before
-placing an entry inside a card. The vectors therefore do not pin it, and it is
-the one law in this document that the corpus cannot enforce. Treat any change
-to the envelope that would let it be pinned as an improvement, not a break.
-
----
-
-## The vector file
-
-`fixtures/fold-vectors.json`:
-
-```text
-{
-  schema:              "buzz-project-pulse-fold-vectors/v1",
-  contract:            path to this file,
-  activeWindowSeconds: 1800,          // PULSE_ACTIVE_WINDOW, pinned
-  digestSchema:        "buzz-project-pulse-digest/v1",
-  entrySchema:         "buzz-pulse-entry/v1",
-  vectors: [{
-    name:        unique slug,
-    description: the law this vector pins, in prose,
-    input: {
-      project:      the project coordinate the fold was asked for,
-      now:          injected clock, Unix seconds,
-      sourceErrors: [{scope, message}] the caller's failed/truncated queries,
-      events:       [ signature-stripped Nostr events ]
-    },
-    expected:      the complete digest object
-  }]
-}
-```
-
-Events are signature-stripped JSON objects — `id`, `pubkey`, `created_at`,
-`kind`, `tags`, `content` — the same shape the CLI reads back from `POST /query`
-and the same shape Desktop's bridge yields. **Ids are synthetic** and are not
-hashes of the event: these are fold inputs, not signature or id-verification
-fixtures. Every id is 64 lowercase hex characters so the `(created_at, id)`
-ordering is exercised honestly, and every 44240 and 44223 content in the corpus
-decodes with the real `buzz_core::pulse::decode_pulse_entry` and
-`buzz_core::coding_session_payload::decode_coding_session_metadata` — except the
-one deliberately invalid entry in `self-referencing-entry-excluded`.
-
-Binders:
-
-- `implementation.test.mjs` in this directory binds the Desktop fold module,
-  following the node-only binder pattern of `conformance/transcript-export/`
-  and run by `just conformance-check`.
-- A `#[test]` in `crates/buzz-cli` loads the same JSON with `include_str!` and
-  asserts byte-identical serialized output.
-- Slice 2's kind-39011 fold binds to the same vectors, substituting
-  `source: "relay-digest"`.
-
-### What each vector pins
-
-| Vector | Law |
-|---|---|
-| `empty-project` | A quiet project is a complete digest, not a partial read. |
-| `same-author-supersession-chain` | Single-pass marking down a chain; only the newest stays active. |
-| `cross-author-supersession-not-honored` | A peer's claim never removes your entry from the active set. |
-| `unresolved-supersedes` | A dangling reference is echoed and recorded, never resolved away, and never a failed read. |
-| `created-at-tie-greater-id-honored` | The one-second-precision tiebreak, honored direction. |
-| `created-at-tie-lesser-id-not-honored` | The same tiebreak, refused direction — the order is total. |
-| `two-entries-supersede-one-target` | Marking is per-claim; the target is returned once with both claims. |
-| `self-referencing-entry-excluded` | An invalid entry is excluded *and* reported, never silently dropped. |
-| `session-null-observations-preserved` | Unknown is not false; `observedAgeSeconds` comes from 44223, not `verifiedAt`. |
-| `closed-session-is-not-active-work` | Clause (a): a closed umbrella is not active even with a fresh running status. |
-| `freshness-window-and-commit-confirmation` | Clauses (b) and (c) at the exact 1800-second boundary, the orphaned execution, and all three `commitConfirmation` strings. |
-| `no-branch-rows-preserved` | A null branch is its own group in both entries and sessions. |
-| `partial-read-is-never-an-empty-digest` | `complete:false` + non-empty `errors[]` is the only partial read. |
+`implementation.test.mjs` binds the production TypeScript fold. The Rust test
+in `buzz-cli` loads the same JSON with `include_str!` and compares both decoded
+objects and serialized field order. A relay-side fold must bind the same
+vectors with only the documented `source` substitution.

@@ -8,9 +8,11 @@
  */
 export { resetProjectPulseState } from "./lib/projectPulseCache";
 export {
-  PULSE_ACTIVE_WINDOW_SECONDS,
   PULSE_DIGEST_SCHEMA,
+  PULSE_LEASE_TTL_SECONDS,
   foldProjectPulseDigest,
+  type PulseDigestGeneration,
+  type PulseDigestSession,
   type ProjectPulseDigest,
 } from "./lib/pulseFold.ts";
 export { useProjectPulseDigest } from "./lib/pulseQueries";

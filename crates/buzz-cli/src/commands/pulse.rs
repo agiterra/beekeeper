@@ -1,6 +1,6 @@
 //! `buzz pulse` — Project Pulse: the explicit coordination entries a project's
 //! workers publish (kind 44240) folded together with the coding-session facts
-//! their providers already observe (44223/44227/44229/44230).
+//! their providers assert through lifecycle, metadata, lease, and umbrella facts.
 //!
 //! Three rules shape this module, and each of them is a rule about honesty
 //! rather than convenience:
@@ -9,8 +9,8 @@
 //!    lands in the digest's `errors[]`, flips `complete` to false, and exits
 //!    non-zero. A partial fold must never print as a complete digest with an
 //!    empty session list.
-//! 2. **The absence of a closure is not evidence of life.** A session is
-//!    Active work only on a positive freshness signal — see [`session_activity`].
+//! 2. **The absence of a closure is not evidence of life.** Reachability needs
+//!    a current, authority-bound, unexpired lease for the exact generation.
 //! 3. **A peer can never quietly retract your claim.** Supersession is honored
 //!    only within one author, so nobody can push another author's `blocker` out
 //!    of the set that drives the `wait | consult | proceed` advisory.
@@ -19,72 +19,37 @@
 //! [`fold_pulse_digest`] is bound to those vectors by a test at the bottom of
 //! this file, and the Desktop and (Slice 2) relay folds bind to the same ones.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::str::FromStr;
 
-use buzz_core::coding_session_closure::{
-    decode_coding_session_closure, CodingSessionClosureAction,
-};
-use buzz_core::coding_session_command::coding_session_target_key;
-use buzz_core::coding_session_payload::{
-    decode_coding_session_metadata, SessionMetadata, SessionStatus,
-};
 use buzz_core::kind::{
     normalize_project_coordinate, KIND_CODING_SESSION_CLOSURE, KIND_CODING_SESSION_GOAL,
+    KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_NIP29_GROUP_METADATA, KIND_PROJECT, KIND_PROJECT_MEMBERS, KIND_PULSE_ENTRY,
 };
-use buzz_core::pulse::{
-    pulse_entry_project_coordinate, validate_pulse_entry_envelope, PulseEntry, PulseEntryType,
-    MAX_PULSE_TEXT_BYTES, PULSE_ENTRY_SCHEMA,
+use buzz_core::pulse::{PulseEntry, PulseEntryType, MAX_PULSE_TEXT_BYTES, PULSE_ENTRY_SCHEMA};
+use buzz_core::pulse_fold::{
+    fold_pulse_digest, PulseDigest, PulseDigestEntry, PulseDigestError, PulseDigestSession,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+#[cfg(test)]
+use buzz_core::pulse_fold::{
+    commit_confirmation, PulseGenerationReachability, PULSE_DIGEST_SCHEMA,
+};
+#[cfg(test)]
+use serde::Deserialize;
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
 
-// ── Wire constants ───────────────────────────────────────────────────────────
-
-/// How recent the newest 44223 observation must be for a session to count as
-/// Active work, in seconds. Pinned by
-/// `conformance/project-pulse-fold/fixtures/fold-vectors.json`
-/// (`activeWindowSeconds`); exactly `PULSE_ACTIVE_WINDOW` seconds old is still
-/// active, one second more is not.
-pub const PULSE_ACTIVE_WINDOW: i64 = 30 * 60;
-
-/// Schema of the digest envelope — the kind-39011 content object of the plan's
-/// §6, which Slice 1 already emits verbatim so Slice 2 can change only *who*
-/// computes it.
-const PULSE_DIGEST_SCHEMA: &str = "buzz-project-pulse-digest/v1";
-
-/// `source` value for a digest this client folded itself. The relay-signed
-/// 39011 of Slice 2 substitutes `relay-digest` and changes nothing else.
-const PULSE_DIGEST_SOURCE: &str = "client-composed";
-
-/// How far the session scan reaches. There is no queryable "sessions of this
-/// project" relation, and a community-wide 44223 scan is both unbounded and a
-/// leak, so sessions are reached through the project's channels only — a
-/// session running in a channel outside that set is not discoverable in v1 and
-/// no surface may present the Active-work list as exhaustive.
-const PULSE_SESSIONS_SCOPE: &str = "project channels";
-
-/// The three `commitConfirmation` strings. Fixed here and mirrored in Desktop
-/// so the two surfaces cannot drift. Never render "relay reachable": the fact
-/// is that the relay's advertised refs contained this exact commit at
-/// `verifiedAt`, which says nothing about whether the session is connected.
-const COMMIT_CONFIRMED: &str = "Commit confirmed on relay";
-const COMMIT_NOT_FOUND: &str = "Commit not found on relay";
-const COMMIT_NOT_CHECKED: &str = "Commit not checked";
-
 /// The reserved `--branch` value selecting rows that carry no branch at all.
 const NO_BRANCH: &str = "-";
 
-/// Session facts fetched per project channel. 44224 is fetched with the rest
-/// so one round trip carries the whole coding-session surface of a channel,
-/// matching `sessions.rs`'s existing shape; the v1 fold reads 44223/44227/
-/// 44229/44230 and ignores the receipts.
-const SESSION_FACT_KINDS: [u32; 5] = [
+/// Durable session facts fetched as paginated history per project channel.
+const DURABLE_SESSION_FACT_KINDS: [u32; 6] = [
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_GOAL,
@@ -99,152 +64,23 @@ const CHANNEL_SCAN_LIMIT: u32 = 500;
 /// Upper bound on the project heads a bare-dtag resolution will consider.
 const PROJECT_SCAN_LIMIT: u32 = 500;
 
-// ── Digest model ─────────────────────────────────────────────────────────────
-
-/// One `{scope, message}` row: a source query that failed or was truncated, or
-/// a fold observation that must not disappear (an excluded invalid entry, a
-/// dangling `supersedes`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PulseDigestError {
-    /// What the failure was about — `entries`, `channels`, or
-    /// `sessions:<channel-id>` for a read; `invalid-entry` /
-    /// `unresolved-supersedes` for a fold observation.
-    pub scope: String,
-    /// Human-readable detail.
-    pub message: String,
+/// `--branch` semantics, identical for `list`, `digest`, and Desktop's chips:
+/// a named filter matches byte-exactly and never returns null-branch rows, the
+/// reserved `-` returns only null-branch rows, and no filter returns
+/// everything.
+fn branch_matches(filter: Option<&str>, branch: Option<&str>) -> bool {
+    match filter {
+        None => true,
+        Some(NO_BRANCH) => branch.is_none(),
+        Some(name) => branch == Some(name),
+    }
 }
 
-/// One supersession claim relating two entries.
-///
-/// An **honored** claim is recorded on the entry it retires, naming the
-/// claimant. An **unhonored** claim is recorded on the claimant instead,
-/// naming the entry it failed to retire — so a refused claim is visible on the
-/// entry that made it rather than silently vanishing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PulseSupersessionClaim {
-    /// The other entry in the relation.
-    pub event_id: String,
-    /// That entry's author, or `null` when it is not in the visible result set.
-    pub pubkey: Option<String>,
-    /// Whether the fold honored the claim.
-    pub honored: bool,
-    /// `null` when honored, else `cross-author`, `unresolved`, or
-    /// `out-of-order`.
-    pub reason: Option<String>,
-}
-
-/// One folded Pulse entry. `claimedAreas` are claims, never observed facts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PulseDigestEntry {
-    /// The 44240 event id.
-    pub event_id: String,
-    /// The author.
-    pub pubkey: String,
-    /// The event's `created_at`, Unix seconds.
-    pub created_at: i64,
-    /// `plan | milestone | note | handoff | blocker`.
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    /// The author's prose, verbatim.
-    pub text: String,
-    /// Repository-relative paths the author *claims* to be working in.
-    pub claimed_areas: Vec<String>,
-    /// The branch the claim applies to, or `null`.
-    pub branch: Option<String>,
-    /// The `pu-session` tag, echoed verbatim. Author-controlled and unverified
-    /// at ingest — a surface must resolve 44226/44228 itself before placing an
-    /// entry inside a session's card.
-    pub session_ref: Option<String>,
-    /// The entry this one claims to revise, echoed verbatim.
-    pub supersedes: Option<String>,
-    /// Every claim relating this entry to another, `eventId` ascending.
-    pub superseded_by: Vec<PulseSupersessionClaim>,
-    /// False exactly when an honored claim names this entry. Superseded
-    /// entries are never dropped.
-    pub active: bool,
-}
-
-/// One folded coding session, keyed by its `cs-target` key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PulseDigestSession {
-    /// `coding-session/v1|<len>:<driver>…` — the target key of one generation.
-    pub target_key: String,
-    /// The umbrella session UUID the goal/name/closure kinds join on.
-    pub session_ref: Option<String>,
-    /// Newest 44229, or `null`.
-    pub name: Option<String>,
-    /// Newest 44227, or `null`.
-    pub goal: Option<String>,
-    /// The winning 44223's status.
-    pub status: String,
-    /// That 44223's `created_at`.
-    pub status_at: i64,
-    /// Whether the newest 44230 closed the umbrella.
-    pub closed: bool,
-    /// `active` only on a positive freshness signal; see [`session_activity`].
-    pub activity: String,
-    /// Observed branch, or `null`. A null branch is its own group.
-    pub branch: Option<String>,
-    /// Observed HEAD commit, or `null`.
-    pub observed_commit: Option<String>,
-    /// Observed worktree dirtiness. Unknown is not false.
-    pub dirty: Option<bool>,
-    /// Whether the relay's advertised refs contained the observed commit at
-    /// `verifiedAt`. Null exactly when `verifiedAt` is null.
-    pub relay_reachable: Option<bool>,
-    /// When the commit check completed, or `null`.
-    pub verified_at: Option<i64>,
-    /// One of the three fixed [`COMMIT_CONFIRMED`] / [`COMMIT_NOT_FOUND`] /
-    /// [`COMMIT_NOT_CHECKED`] strings. Surfaces append the `verifiedAt` age to
-    /// the first two at paint time; the age is never folded in.
-    pub commit_confirmation: String,
-    /// `now − statusAt`. Never derived from `verifiedAt`.
-    pub observed_age_seconds: i64,
-    /// Every event folded into this row, ascending.
-    pub source_event_ids: Vec<String>,
-}
-
-/// The digest envelope — the kind-39011 content object plus `source`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PulseDigest {
-    /// Always [`PULSE_DIGEST_SCHEMA`].
-    pub schema: String,
-    /// Who folded it.
-    pub source: String,
-    /// The project coordinate the digest was asked for.
-    pub project: String,
-    /// The wall-clock second the last source query returned.
-    pub as_of: i64,
-    /// False whenever any source query failed or was truncated.
-    pub complete: bool,
-    /// Always [`PULSE_SESSIONS_SCOPE`].
-    pub sessions_scope: String,
-    /// Sessions, `statusAt` descending, ties on `targetKey` ascending.
-    pub sessions: Vec<PulseDigestSession>,
-    /// Entries, `createdAt` descending, ties on the greater event id first.
-    pub entries: Vec<PulseDigestEntry>,
-    /// Failures and fold observations, `scope` then `message` ascending.
-    pub errors: Vec<PulseDigestError>,
-}
-
-// ── Event access helpers ─────────────────────────────────────────────────────
-
-/// A string field of a signature-stripped relay event.
 fn json_str<'a>(event: &'a Value, field: &str) -> Option<&'a str> {
     event.get(field).and_then(Value::as_str)
 }
 
-/// The `created_at` of a relay event.
-fn json_created_at(event: &Value) -> Option<i64> {
-    event.get("created_at").and_then(Value::as_i64)
-}
-
-/// The kind of a relay event.
+#[cfg(test)]
 fn json_kind(event: &Value) -> Option<u32> {
     event
         .get("kind")
@@ -252,7 +88,6 @@ fn json_kind(event: &Value) -> Option<u32> {
         .and_then(|kind| u32::try_from(kind).ok())
 }
 
-/// The first value of the named tag on a relay event.
 fn json_tag_value<'a>(event: &'a Value, name: &str) -> Option<&'a str> {
     event
         .get("tags")?
@@ -264,473 +99,16 @@ fn json_tag_value<'a>(event: &'a Value, name: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
 }
 
-/// Every value of the named tag on a relay event.
 fn json_tag_values<'a>(event: &'a Value, name: &str) -> Vec<&'a str> {
-    let Some(tags) = event.get("tags").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    tags.iter()
+    event
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
         .filter_map(Value::as_array)
         .filter(|parts| parts.first().and_then(Value::as_str) == Some(name))
-        .filter_map(|parts| parts.get(1))
-        .filter_map(Value::as_str)
+        .filter_map(|parts| parts.get(1).and_then(Value::as_str))
         .collect()
-}
-
-/// Rebuild a `nostr::Event` from a relay row so buzz-core's validators can run
-/// against it.
-///
-/// The signature is a placeholder: nothing in the Pulse fold verifies it (the
-/// relay did that at ingest), while the *id* is load-bearing — the
-/// self-supersession rule compares against it — so a row without a well-formed
-/// id, author, kind, or tag set is not decodable at all and is reported rather
-/// than guessed at.
-fn nostr_event_from_json(event: &Value) -> Option<nostr::Event> {
-    let id = nostr::EventId::from_hex(json_str(event, "id")?).ok()?;
-    let pubkey = nostr::PublicKey::from_hex(json_str(event, "pubkey")?).ok()?;
-    let created_at = u64::try_from(json_created_at(event)?).ok()?;
-    let kind = u16::try_from(json_kind(event)?).ok()?;
-    let mut tags: Vec<nostr::Tag> = Vec::new();
-    for parts in event.get("tags")?.as_array()? {
-        let parts: Vec<&str> = parts
-            .as_array()?
-            .iter()
-            .map(Value::as_str)
-            .collect::<Option<Vec<&str>>>()?;
-        tags.push(nostr::Tag::parse(parts).ok()?);
-    }
-    // 64 zero bytes is always a well-formed Schnorr signature value, so this
-    // arm never fires; it is mapped rather than unwrapped.
-    let signature = nostr::secp256k1::schnorr::Signature::from_slice(&[0u8; 64]).ok()?;
-    Some(nostr::Event::new(
-        id,
-        pubkey,
-        nostr::Timestamp::from_secs(created_at),
-        nostr::Kind::Custom(kind),
-        tags,
-        json_str(event, "content")?,
-        signature,
-    ))
-}
-
-/// The total order the fold uses everywhere "newer" appears: `created_at`,
-/// ties broken by the greater event id. Matching
-/// `crates/buzz-core/src/coding_session_closure.rs:148-156`, so two events can
-/// never each be newer than the other.
-fn is_newer(a_created_at: i64, a_id: &str, b_created_at: i64, b_id: &str) -> bool {
-    (a_created_at, a_id) > (b_created_at, b_id)
-}
-
-// ── The fold ─────────────────────────────────────────────────────────────────
-
-/// One decoded, project-scoped Pulse entry, before its claims are resolved.
-struct EntryRow {
-    event_id: String,
-    pubkey: String,
-    created_at: i64,
-    entry: PulseEntry,
-    session_ref: Option<String>,
-    branch: Option<String>,
-    superseded_by: Vec<PulseSupersessionClaim>,
-    active: bool,
-}
-
-/// One signed fact folded into a session row.
-struct FactRow {
-    event_id: String,
-    created_at: i64,
-    content: String,
-}
-
-/// Fold Pulse entries and coding-session facts into the digest envelope.
-///
-/// `events` are signature-stripped relay rows of any kind; rows that belong to
-/// another project, or to no project, are ignored. `now` is a Unix-seconds
-/// clock read **after** the last source query returned, and `source_errors`
-/// carries one row per query that failed or was truncated — the only thing that
-/// can set `complete: false`.
-///
-/// Every rule this implements is stated in
-/// `conformance/project-pulse-fold/CONTRACT.md` and pinned by the vectors
-/// beside it.
-pub fn fold_pulse_digest(
-    project: &str,
-    now: i64,
-    source_errors: Vec<PulseDigestError>,
-    events: &[Value],
-) -> PulseDigest {
-    let complete = source_errors.is_empty();
-    let mut errors = source_errors;
-    let mut rows = Vec::new();
-
-    for event in events {
-        if json_kind(event) != Some(KIND_PULSE_ENTRY) {
-            continue;
-        }
-        let raw_id = json_str(event, "id").unwrap_or_default().to_owned();
-        let Some(decoded) = nostr_event_from_json(event) else {
-            errors.push(invalid_entry_error(&raw_id));
-            continue;
-        };
-        match pulse_entry_project_coordinate(&decoded) {
-            // Another project's entry: not this digest's business, and not an
-            // error — a mixed result set is a caller's shape, not a defect.
-            Some(coordinate) if coordinate != project => continue,
-            Some(_) => {}
-            None => {
-                errors.push(invalid_entry_error(&raw_id));
-                continue;
-            }
-        }
-        match validate_pulse_entry_envelope(&decoded) {
-            Ok(entry) => rows.push(EntryRow {
-                event_id: decoded.id.to_hex(),
-                pubkey: decoded.pubkey.to_hex(),
-                created_at: json_created_at(event).unwrap_or_default(),
-                session_ref: json_tag_value(event, "pu-session").map(str::to_owned),
-                // The content field is the claim; the tag exists so a relay
-                // filter can see it, and the validator already proved the two
-                // agree whenever both are present.
-                branch: entry
-                    .branch
-                    .clone()
-                    .or_else(|| json_tag_value(event, "branch").map(str::to_owned)),
-                entry,
-                superseded_by: Vec::new(),
-                active: true,
-            }),
-            Err(_) => errors.push(invalid_entry_error(&raw_id)),
-        }
-    }
-
-    resolve_supersession(&mut rows, &mut errors);
-
-    rows.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| b.event_id.cmp(&a.event_id))
-    });
-    let entries: Vec<PulseDigestEntry> = rows
-        .into_iter()
-        .map(|row| PulseDigestEntry {
-            event_id: row.event_id,
-            pubkey: row.pubkey,
-            created_at: row.created_at,
-            entry_type: row.entry.entry_type.as_str().to_owned(),
-            text: row.entry.text,
-            claimed_areas: row.entry.code_areas,
-            branch: row.branch,
-            session_ref: row.session_ref,
-            supersedes: row.entry.supersedes,
-            superseded_by: row.superseded_by,
-            active: row.active,
-        })
-        .collect();
-
-    let sessions = fold_sessions(project, now, events);
-
-    errors.sort_by(|a, b| {
-        a.scope
-            .cmp(&b.scope)
-            .then_with(|| a.message.cmp(&b.message))
-    });
-
-    PulseDigest {
-        schema: PULSE_DIGEST_SCHEMA.to_owned(),
-        source: PULSE_DIGEST_SOURCE.to_owned(),
-        project: project.to_owned(),
-        as_of: now,
-        complete,
-        sessions_scope: PULSE_SESSIONS_SCOPE.to_owned(),
-        sessions,
-        entries,
-        errors,
-    }
-}
-
-/// The `errors[]` row for an entry excluded by validation. An invalid entry is
-/// never silently dropped and never counted as a valid claim, and it is not a
-/// failed read — `complete` stays true.
-fn invalid_entry_error(event_id: &str) -> PulseDigestError {
-    PulseDigestError {
-        scope: "invalid-entry".to_owned(),
-        message: format!("entry {event_id} failed validation and was excluded"),
-    }
-}
-
-/// Apply the supersession fold law: a **single-pass marking, never a
-/// traversal**, so cycles are structurally impossible and no traversal can hang
-/// or blank the active set.
-///
-/// Entry `E` is marked superseded only by an `S` with `S.supersedes == E.id`,
-/// `S.pubkey == E.pubkey`, and `S` newer than `E` under [`is_newer`]. A
-/// cross-author, out-of-order, or dangling claim is recorded on the claimant as
-/// unhonored and changes nothing about its target — otherwise any project
-/// writer could publish a one-line entry superseding a peer's `blocker` and
-/// silently push it out of the set that drives `wait | consult | proceed`.
-fn resolve_supersession(rows: &mut [EntryRow], errors: &mut Vec<PulseDigestError>) {
-    let index: HashMap<String, usize> = rows
-        .iter()
-        .enumerate()
-        .map(|(position, row)| (row.event_id.clone(), position))
-        .collect();
-
-    for position in 0..rows.len() {
-        let Some(target_id) = rows[position].entry.supersedes.clone() else {
-            continue;
-        };
-        let Some(&target) = index.get(&target_id) else {
-            rows[position].superseded_by.push(PulseSupersessionClaim {
-                event_id: target_id.clone(),
-                pubkey: None,
-                honored: false,
-                reason: Some("unresolved".to_owned()),
-            });
-            errors.push(PulseDigestError {
-                scope: "unresolved-supersedes".to_owned(),
-                message: format!(
-                    "entry {} supersedes {target_id}, which is not in the visible result set",
-                    rows[position].event_id
-                ),
-            });
-            continue;
-        };
-        // A self-reference cannot reach here: buzz-core rejects it, so such an
-        // entry was already excluded above.
-        if target == position {
-            continue;
-        }
-        let unhonored = if rows[target].pubkey != rows[position].pubkey {
-            Some("cross-author")
-        } else if !is_newer(
-            rows[position].created_at,
-            &rows[position].event_id,
-            rows[target].created_at,
-            &rows[target].event_id,
-        ) {
-            Some("out-of-order")
-        } else {
-            None
-        };
-        match unhonored {
-            Some(reason) => {
-                let claim = PulseSupersessionClaim {
-                    event_id: rows[target].event_id.clone(),
-                    pubkey: Some(rows[target].pubkey.clone()),
-                    honored: false,
-                    reason: Some(reason.to_owned()),
-                };
-                rows[position].superseded_by.push(claim);
-            }
-            None => {
-                let claim = PulseSupersessionClaim {
-                    event_id: rows[position].event_id.clone(),
-                    pubkey: Some(rows[position].pubkey.clone()),
-                    honored: true,
-                    reason: None,
-                };
-                rows[target].superseded_by.push(claim);
-                rows[target].active = false;
-            }
-        }
-    }
-
-    for row in rows.iter_mut() {
-        row.superseded_by
-            .sort_by(|a, b| a.event_id.cmp(&b.event_id));
-    }
-}
-
-/// Fold the coding-session facts of one project into session rows.
-///
-/// Only 44223 rows whose content `projectRef` normalizes to this project
-/// participate; goal, name, and closure join on the umbrella `sessionRef`.
-fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSession> {
-    let mut metadata: HashMap<String, (FactRow, SessionMetadata)> = HashMap::new();
-    let mut goals: HashMap<String, FactRow> = HashMap::new();
-    let mut names: HashMap<String, FactRow> = HashMap::new();
-    let mut closures: HashMap<String, FactRow> = HashMap::new();
-
-    for event in events {
-        let (Some(kind), Some(event_id), Some(created_at)) = (
-            json_kind(event),
-            json_str(event, "id"),
-            json_created_at(event),
-        ) else {
-            continue;
-        };
-        let content = json_str(event, "content").unwrap_or_default();
-        let fact = FactRow {
-            event_id: event_id.to_owned(),
-            created_at,
-            content: content.to_owned(),
-        };
-        match kind {
-            KIND_CODING_SESSION_METADATA => {
-                let Ok(meta) = decode_coding_session_metadata(content) else {
-                    continue;
-                };
-                let matches_project = meta
-                    .project_ref
-                    .as_deref()
-                    .and_then(normalize_project_coordinate)
-                    .is_some_and(|coordinate| coordinate == project);
-                if !matches_project {
-                    continue;
-                }
-                let key = coding_session_target_key(&meta.session);
-                keep_newest_pair(&mut metadata, key, fact, meta);
-            }
-            KIND_CODING_SESSION_GOAL => keep_newest_by_d_tag(&mut goals, event, fact),
-            KIND_CODING_SESSION_NAME => keep_newest_by_d_tag(&mut names, event, fact),
-            KIND_CODING_SESSION_CLOSURE => keep_newest_by_d_tag(&mut closures, event, fact),
-            _ => {}
-        }
-    }
-
-    let mut sessions: Vec<PulseDigestSession> = metadata
-        .into_iter()
-        .map(|(target_key, (fact, meta))| {
-            let mut source_event_ids = vec![fact.event_id.clone()];
-            let session_ref = meta.session_ref.clone();
-            let joined = |facts: &HashMap<String, FactRow>| -> Option<(String, String)> {
-                let reference = session_ref.as_deref()?;
-                let fact = facts.get(reference)?;
-                Some((fact.event_id.clone(), fact.content.clone()))
-            };
-            let name = joined(&names);
-            let goal = joined(&goals);
-            let closure = joined(&closures);
-            for (event_id, _) in [&name, &goal, &closure].into_iter().flatten() {
-                source_event_ids.push(event_id.clone());
-            }
-            source_event_ids.sort();
-            let closed = closure.as_ref().is_some_and(|(_, content)| {
-                decode_coding_session_closure(content)
-                    .is_ok_and(|payload| payload.action == CodingSessionClosureAction::Closed)
-            });
-            PulseDigestSession {
-                target_key,
-                session_ref: meta.session_ref.clone(),
-                name: name.map(|(_, content)| content),
-                goal: goal.map(|(_, content)| content),
-                status: session_status_str(meta.status),
-                status_at: fact.created_at,
-                closed,
-                activity: session_activity(meta.status, closed, now - fact.created_at).to_owned(),
-                branch: meta.branch.clone(),
-                observed_commit: meta.observed_commit.clone(),
-                dirty: meta.dirty,
-                relay_reachable: meta.relay_reachable,
-                verified_at: meta.verified_at,
-                commit_confirmation: commit_confirmation(meta.relay_reachable).to_owned(),
-                observed_age_seconds: now - fact.created_at,
-                source_event_ids,
-            }
-        })
-        .collect();
-
-    sessions.sort_by(|a, b| {
-        b.status_at
-            .cmp(&a.status_at)
-            .then_with(|| a.target_key.cmp(&b.target_key))
-    });
-    sessions
-}
-
-/// Keep the newest `(created_at, event id)` fact per key, alongside its decoded
-/// payload.
-fn keep_newest_pair<T>(
-    facts: &mut HashMap<String, (FactRow, T)>,
-    key: String,
-    fact: FactRow,
-    payload: T,
-) {
-    match facts.get(&key) {
-        Some((held, _))
-            if !is_newer(
-                fact.created_at,
-                &fact.event_id,
-                held.created_at,
-                &held.event_id,
-            ) => {}
-        _ => {
-            facts.insert(key, (fact, payload));
-        }
-    }
-}
-
-/// Keep the newest `(created_at, event id)` fact per `d` tag — the session
-/// UUID that 44227/44229/44230 are keyed by.
-fn keep_newest_by_d_tag(facts: &mut HashMap<String, FactRow>, event: &Value, fact: FactRow) {
-    let Some(session_ref) = json_tag_value(event, "d") else {
-        return;
-    };
-    match facts.get(session_ref) {
-        Some(held)
-            if !is_newer(
-                fact.created_at,
-                &fact.event_id,
-                held.created_at,
-                &held.event_id,
-            ) => {}
-        _ => {
-            facts.insert(session_ref.to_owned(), fact);
-        }
-    }
-}
-
-/// The wire spelling of a session status.
-fn session_status_str(status: SessionStatus) -> String {
-    serde_json::to_value(status)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-/// Active work requires a **positive freshness signal**, not merely the absence
-/// of a closure.
-///
-/// A machine that dies mid-turn leaves its last 44223 saying `running` forever,
-/// and a session whose provider identity is gone can never publish a closure;
-/// answering "who is actively working on this project?" with that ghost would
-/// tell a new worker to wait on it indefinitely. All three must hold: the
-/// umbrella is not closed, the newest status is one a live session reports, and
-/// that status is no older than [`PULSE_ACTIVE_WINDOW`].
-fn session_activity(status: SessionStatus, closed: bool, age_seconds: i64) -> &'static str {
-    let live_status = matches!(
-        status,
-        SessionStatus::Starting
-            | SessionStatus::Running
-            | SessionStatus::Idle
-            | SessionStatus::WaitingForInput
-    );
-    if !closed && live_status && age_seconds <= PULSE_ACTIVE_WINDOW {
-        "active"
-    } else {
-        "stale"
-    }
-}
-
-/// The fixed tri-state commit line. Unknown is never converted to false.
-fn commit_confirmation(relay_reachable: Option<bool>) -> &'static str {
-    match relay_reachable {
-        Some(true) => COMMIT_CONFIRMED,
-        Some(false) => COMMIT_NOT_FOUND,
-        None => COMMIT_NOT_CHECKED,
-    }
-}
-
-/// `--branch` semantics, identical for `list`, `digest`, and Desktop's chips:
-/// a named filter matches byte-exactly and never returns null-branch rows, the
-/// reserved `-` returns only null-branch rows, and no filter returns
-/// everything.
-fn branch_matches(filter: Option<&str>, branch: Option<&str>) -> bool {
-    match filter {
-        None => true,
-        Some(NO_BRANCH) => branch.is_none(),
-        Some(name) => branch == Some(name),
-    }
 }
 
 // ── Relay reads ──────────────────────────────────────────────────────────────
@@ -752,8 +130,17 @@ fn entries_filter(coordinate: &str, since: Option<u64>) -> Value {
 
 /// The per-channel session-fact filter. `kinds` is never omitted: an
 /// open-ended filter trips the relay's p-gate and comes back 403.
-fn session_facts_filter(channel_id: &str) -> Value {
-    json!({ "kinds": SESSION_FACT_KINDS, "#h": [channel_id] })
+fn durable_session_facts_filter(channel_id: &str) -> Value {
+    json!({ "kinds": DURABLE_SESSION_FACT_KINDS, "#h": [channel_id] })
+}
+
+/// One cold snapshot of the relay's ephemeral per-generation lease keys.
+///
+/// This deliberately has no history limit and is never passed to
+/// `query_all`: a second page would treat an ephemeral Redis snapshot like a
+/// durable event log and can join lease states from different instants.
+fn session_lease_filter(channel_id: &str) -> Value {
+    json!({ "kinds": [KIND_CODING_SESSION_LEASE], "#h": [channel_id] })
 }
 
 /// Fetch a project's Pulse entries, reporting whether `--limit` truncated them.
@@ -889,11 +276,39 @@ async fn scan_project_sessions(client: &BuzzClient, coordinate: &str) -> Session
         }
     };
     for channel in channels {
-        match client.query_all(session_facts_filter(&channel)).await {
+        match client
+            .query_all(durable_session_facts_filter(&channel))
+            .await
+        {
             Ok(events) => scan.events.extend(events),
             Err(error) => {
                 scan.errors.push(PulseDigestError {
                     scope: format!("sessions:{channel}"),
+                    message: error.to_string(),
+                });
+                if scan.failure.is_none() {
+                    scan.failure = Some(error);
+                }
+            }
+        }
+        match client.query(&session_lease_filter(&channel)).await {
+            Ok(body) => match serde_json::from_str::<Vec<Value>>(&body) {
+                Ok(events) => scan.events.extend(events),
+                Err(error) => {
+                    scan.errors.push(PulseDigestError {
+                        scope: format!("leases:{channel}"),
+                        message: format!("failed to parse lease snapshot: {error}"),
+                    });
+                    if scan.failure.is_none() {
+                        scan.failure = Some(CliError::Other(format!(
+                            "failed to parse lease snapshot: {error}"
+                        )));
+                    }
+                }
+            },
+            Err(error) => {
+                scan.errors.push(PulseDigestError {
+                    scope: format!("leases:{channel}"),
                     message: error.to_string(),
                 });
                 if scan.failure.is_none() {
@@ -1241,11 +656,17 @@ async fn cmd_list(
 fn session_row(session: &PulseDigestSession, format: &crate::OutputFormat) -> Value {
     match format {
         crate::OutputFormat::Compact => json!({
-            "targetKey": session.target_key,
+            "sessionKey": session.session_key,
             "name": session.name,
-            "status": session.status,
-            "activity": session.activity,
-            "branch": session.branch,
+            "lifecycle": session.lifecycle,
+            "coordinationState": session.coordination_state,
+            "generations": session.generations.iter().map(|generation| json!({
+                "targetKey": generation.target_key,
+                "current": generation.current,
+                "reachability": generation.reachability,
+                "status": generation.status,
+                "branch": generation.branch,
+            })).collect::<Vec<Value>>(),
             "observedAgeSeconds": session.observed_age_seconds,
         }),
         crate::OutputFormat::Json => serde_json::to_value(session).unwrap_or(Value::Null),
@@ -1267,8 +688,9 @@ async fn cmd_sessions(
     let coordinate = resolve_project(client, project).await?;
     let scan = scan_project_sessions(client, &coordinate).await;
     let now = chrono::Utc::now().timestamp();
-    let sessions = fold_sessions(&coordinate, now, &scan.events);
-    let rows: Vec<Value> = sessions
+    let digest = fold_pulse_digest(&coordinate, now, Vec::new(), &scan.events);
+    let rows: Vec<Value> = digest
+        .sessions
         .iter()
         .map(|session| session_row(session, format))
         .collect();
@@ -1292,9 +714,30 @@ async fn cmd_digest(
     digest
         .entries
         .retain(|entry| branch_matches(branch, entry.branch.as_deref()));
-    digest
+    digest.sessions.retain(|session| {
+        session
+            .generations
+            .iter()
+            .any(|generation| branch_matches(branch, generation.branch.as_deref()))
+    });
+    digest.provider_reachable_sessions = digest
         .sessions
-        .retain(|session| branch_matches(branch, session.branch.as_deref()));
+        .iter()
+        .filter(|session| session.coordination_state == "provider_reachable")
+        .map(|session| session.session_key.clone())
+        .collect();
+    digest.open_unverified_sessions = digest
+        .sessions
+        .iter()
+        .filter(|session| session.coordination_state == "open_unverified")
+        .map(|session| session.session_key.clone())
+        .collect();
+    digest.closed_sessions = digest
+        .sessions
+        .iter()
+        .filter(|session| session.coordination_state == "closed")
+        .map(|session| session.session_key.clone())
+        .collect();
 
     let rendered = match format {
         // Both formats print `source`; compact drops the two constants a
@@ -1319,13 +762,22 @@ fn compact_digest(digest: &PulseDigest) -> Value {
         "asOf": digest.as_of,
         "complete": digest.complete,
         "sessionsScope": digest.sessions_scope,
+        "providerReachableSessions": digest.provider_reachable_sessions,
+        "openUnverifiedSessions": digest.open_unverified_sessions,
+        "closedSessions": digest.closed_sessions,
         "sessions": digest.sessions.iter().map(|session| json!({
-            "targetKey": session.target_key,
+            "sessionKey": session.session_key,
             "name": session.name,
-            "status": session.status,
-            "activity": session.activity,
-            "branch": session.branch,
-            "commitConfirmation": session.commit_confirmation,
+            "lifecycle": session.lifecycle,
+            "coordinationState": session.coordination_state,
+            "generations": session.generations.iter().map(|generation| json!({
+                "targetKey": generation.target_key,
+                "current": generation.current,
+                "reachability": generation.reachability,
+                "status": generation.status,
+                "branch": generation.branch,
+                "commitConfirmation": generation.commit_confirmation,
+            })).collect::<Vec<Value>>(),
             "observedAgeSeconds": session.observed_age_seconds,
         })).collect::<Vec<Value>>(),
         "entries": digest.entries.iter().map(|entry| json!({
@@ -1410,7 +862,6 @@ mod tests {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct FoldVectorFile {
-        active_window_seconds: i64,
         digest_schema: String,
         entry_schema: String,
         vectors: Vec<FoldVector>,
@@ -1440,9 +891,8 @@ mod tests {
 
     /// The corpus pins the constants; the constants live in code.
     #[test]
-    fn corpus_pins_the_active_window_and_schemas() {
+    fn corpus_pins_the_schemas() {
         let file = vectors();
-        assert_eq!(file.active_window_seconds, PULSE_ACTIVE_WINDOW);
         assert_eq!(file.digest_schema, PULSE_DIGEST_SCHEMA);
         assert_eq!(file.entry_schema, PULSE_ENTRY_SCHEMA);
     }
@@ -1481,6 +931,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn reordered_lifecycle_and_lease_envelopes_are_rejected() {
+        for kind in [
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            KIND_CODING_SESSION_LEASE,
+        ] {
+            let mut vector = vectors()
+                .vectors
+                .into_iter()
+                .find(|vector| vector.name == "idle-hours-old-with-live-authorized-lease")
+                .expect("live lease vector present");
+            let mut changed = 0;
+            for event in vector
+                .input
+                .events
+                .iter_mut()
+                .filter(|event| json_kind(event) == Some(kind))
+            {
+                event["tags"].as_array_mut().expect("tags array").swap(0, 1);
+                changed += 1;
+            }
+            assert!(changed > 0, "kind {kind} present");
+            let digest = fold_pulse_digest(
+                &vector.input.project,
+                vector.input.now,
+                vector.input.source_errors,
+                &vector.input.events,
+            );
+            if kind == KIND_CODING_SESSION_LEASE {
+                assert!(digest.provider_reachable_sessions.is_empty());
+                assert_eq!(
+                    digest.open_unverified_sessions,
+                    vec!["5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10"]
+                );
+            } else {
+                assert!(digest.sessions.is_empty(), "kind {kind} was admitted");
+            }
+        }
+    }
+
     /// The envelope's key order is part of the contract both languages bind to.
     #[test]
     fn digest_key_order_is_the_envelope_order() {
@@ -1501,6 +992,9 @@ mod tests {
                 "complete",
                 "sessionsScope",
                 "sessions",
+                "providerReachableSessions",
+                "openUnverifiedSessions",
+                "closedSessions",
                 "entries",
                 "errors",
             ]
@@ -1554,16 +1048,24 @@ mod tests {
         assert_eq!(entries["since"], json!(42));
         assert!(entries.get("#h").is_none());
 
-        let sessions = session_facts_filter("05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2");
+        let sessions = durable_session_facts_filter("05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2");
         assert_eq!(
             sessions["kinds"],
-            json!([44223, 44224, 44227, 44229, 44230])
+            json!([44221, 44223, 44224, 44227, 44229, 44230])
         );
         assert_eq!(
             sessions["#h"],
             json!(["05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"])
         );
         assert!(sessions.get("#a").is_none());
+
+        let leases = session_lease_filter("05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2");
+        assert_eq!(leases["kinds"], json!([24223]));
+        assert_eq!(
+            leases["#h"],
+            json!(["05ef0ecf-745f-5fb8-b7ff-f9cba21e01c2"])
+        );
+        assert!(leases.get("limit").is_none());
     }
 
     // ---- Project resolution ----
@@ -1751,7 +1253,7 @@ mod tests {
         let vector = file
             .vectors
             .iter()
-            .find(|vector| vector.name == "session-null-observations-preserved")
+            .find(|vector| vector.name == "idle-hours-old-with-live-authorized-lease")
             .expect("vector present");
         fold_pulse_digest(
             &vector.input.project,
@@ -1770,18 +1272,22 @@ mod tests {
         assert_eq!(compact["source"], json!("client-composed"));
 
         let session = &standard["sessions"][0];
+        let generation = &session["generations"][0];
         for field in ["observedCommit", "dirty", "relayReachable", "verifiedAt"] {
             assert_eq!(
-                session[field],
+                generation[field],
                 Value::Null,
                 "{field} must stay null — unknown is not false"
             );
         }
-        assert_eq!(session["commitConfirmation"], json!("Commit not checked"));
-        // The age comes from the 44223 `created_at`, never from `verifiedAt`.
-        assert_eq!(session["observedAgeSeconds"], json!(600));
         assert_eq!(
-            compact["sessions"][0]["commitConfirmation"],
+            generation["commitConfirmation"],
+            json!("Commit not checked")
+        );
+        // The age comes from the 44223 `created_at`, never from `verifiedAt`.
+        assert_eq!(session["observedAgeSeconds"], json!(10_000));
+        assert_eq!(
+            compact["sessions"][0]["generations"][0]["commitConfirmation"],
             json!("Commit not checked")
         );
     }
@@ -1844,6 +1350,70 @@ mod tests {
         )
     }
 
+    #[test]
+    fn non_live_lease_outcomes_fail_closed_without_erasing_evidence() {
+        let digest = folded_vector("unverified-lease-outcomes");
+        assert!(digest.provider_reachable_sessions.is_empty());
+        assert_eq!(digest.open_unverified_sessions.len(), 1);
+        let generations = &digest.sessions[0].generations;
+        assert_eq!(generations.len(), 6);
+        let named = |name: &str| {
+            generations
+                .iter()
+                .find(|generation| generation.execution_key.ends_with(name))
+                .unwrap_or_else(|| panic!("{name} generation present"))
+        };
+        assert_eq!(named("none").lease_state, None);
+        assert_eq!(named("released").lease_state.as_deref(), Some("released"));
+        assert_eq!(named("expired").lease_expires_at, Some(1_785_599_970));
+        assert_eq!(
+            named("expired").reachability,
+            PulseGenerationReachability::Unverified
+        );
+        assert_eq!(named("conflict").lease_sequence, Some(7));
+        assert_eq!(named("conflict").lease_source_event_id, None);
+        assert_eq!(named("wrong").lease_sequence, None);
+        assert_eq!(
+            named("terminal").reachability,
+            PulseGenerationReachability::Terminal
+        );
+    }
+
+    #[test]
+    fn resume_is_generation_isolated_and_requires_exact_continuity() {
+        let digest = folded_vector("resume-generation-isolation-and-continuity");
+        assert_eq!(digest.sessions.len(), 1);
+        let generations = &digest.sessions[0].generations;
+        assert_eq!(generations.len(), 2, "skipped generation must be rejected");
+        assert!(generations[0].current);
+        assert!(generations[0].target_key.ends_with("1:2"));
+        assert_eq!(
+            generations[0].reachability,
+            PulseGenerationReachability::Unverified
+        );
+        assert!(!generations[1].current);
+        assert_eq!(generations[1].lease_state.as_deref(), Some("live"));
+        assert_eq!(
+            generations[1].reachability,
+            PulseGenerationReachability::Unverified
+        );
+    }
+
+    #[test]
+    fn closure_outranks_live_generation_evidence() {
+        let digest = folded_vector("closure-outranks-live-generation");
+        assert_eq!(
+            digest.sessions[0].generations[0].reachability,
+            PulseGenerationReachability::ProviderReachable
+        );
+        assert_eq!(digest.sessions[0].coordination_state, "closed");
+        assert!(digest.provider_reachable_sessions.is_empty());
+        assert_eq!(
+            digest.closed_sessions,
+            vec!["8d3f6b41-2c07-4e6a-9f52-31ab7c9e0d64"]
+        );
+    }
+
     /// A peer cannot quietly retract another author's claim: the target stays
     /// active and the claim is rendered as unhonored on the claimant.
     #[test]
@@ -1865,12 +1435,12 @@ mod tests {
     }
 
     /// Entry-to-session attribution is a consumer law with no representation in
-    /// the v1 envelope: the CLI echoes `pu-session` verbatim and never nests an
+    /// the v2 envelope: the CLI echoes `pu-session` verbatim and never nests an
     /// entry inside a session row, so it cannot attribute one author's entry to
     /// another team's card.
     #[test]
     fn entries_are_never_nested_inside_a_session_row() {
-        let digest = folded_vector("session-null-observations-preserved");
+        let digest = folded_vector("idle-hours-old-with-live-authorized-lease");
         let session = serde_json::to_value(&digest.sessions[0]).expect("serialize");
         let object = session.as_object().expect("object");
         assert!(!object.contains_key("entries"));
@@ -1888,42 +1458,6 @@ mod tests {
         assert!(!branch_matches(Some("main"), None));
         assert!(branch_matches(Some("-"), None));
         assert!(!branch_matches(Some("-"), Some("main")));
-    }
-
-    // ---- Active work ----
-
-    #[test]
-    fn active_work_requires_a_positive_freshness_signal() {
-        assert_eq!(
-            session_activity(SessionStatus::Running, false, PULSE_ACTIVE_WINDOW),
-            "active"
-        );
-        assert_eq!(
-            session_activity(SessionStatus::Running, false, PULSE_ACTIVE_WINDOW + 1),
-            "stale"
-        );
-        assert_eq!(session_activity(SessionStatus::Running, true, 0), "stale");
-        for status in [
-            SessionStatus::Disconnected,
-            SessionStatus::Failed,
-            SessionStatus::Completed,
-            SessionStatus::Stopped,
-            SessionStatus::Interrupted,
-            SessionStatus::Unknown,
-        ] {
-            assert_eq!(
-                session_activity(status, false, 0),
-                "stale",
-                "{status:?} is never Active work"
-            );
-        }
-        for status in [
-            SessionStatus::Starting,
-            SessionStatus::Idle,
-            SessionStatus::WaitingForInput,
-        ] {
-            assert_eq!(session_activity(status, false, 0), "active");
-        }
     }
 
     #[test]

@@ -14,8 +14,26 @@ import {
   PULSE_COMMIT_NOT_CHECKED,
   type ProjectPulseDigest,
   type PulseDigestEntry,
+  type PulseDigestGeneration,
   type PulseDigestSession,
 } from "./pulseFold.ts";
+
+/** Current generation with the newest observation, then the newest fallback. */
+export function pulseSessionDisplayGeneration(
+  session: PulseDigestSession,
+): PulseDigestGeneration | null {
+  const current = session.generations.filter(
+    (generation) => generation.current,
+  );
+  const candidates = current.length > 0 ? current : session.generations;
+  return (
+    [...candidates].sort((left, right) => {
+      if (left.statusAt === null) return right.statusAt === null ? 0 : 1;
+      if (right.statusAt === null) return -1;
+      return right.statusAt - left.statusAt;
+    })[0] ?? null
+  );
+}
 
 /** Compact age for a duration in seconds — `4m`, `3h`, `2d`, `just now`. */
 export function formatPulseAge(seconds: number): string {
@@ -31,6 +49,7 @@ export function formatPulseAge(seconds: number): string {
 
 /** `observed 4m ago` — the age of the session's newest 44223 observation. */
 export function formatObservedAge(session: PulseDigestSession): string {
+  if (session.observedAgeSeconds === null) return "observation time unknown";
   return `observed ${formatPulseAge(session.observedAgeSeconds)} ago`;
 }
 
@@ -47,14 +66,16 @@ export function formatCommitConfirmation(
   session: PulseDigestSession,
   nowSeconds: number,
 ): string {
+  const generation = pulseSessionDisplayGeneration(session);
+  if (!generation) return PULSE_COMMIT_NOT_CHECKED;
   if (
-    session.commitConfirmation === PULSE_COMMIT_NOT_CHECKED ||
-    session.verifiedAt === null
+    generation.commitConfirmation === PULSE_COMMIT_NOT_CHECKED ||
+    generation.verifiedAt === null
   ) {
-    return session.commitConfirmation;
+    return generation.commitConfirmation;
   }
-  const age = formatPulseAge(nowSeconds - session.verifiedAt);
-  return `${session.commitConfirmation} · ${age} ago`;
+  const age = formatPulseAge(nowSeconds - generation.verifiedAt);
+  return `${generation.commitConfirmation} · ${age} ago`;
 }
 
 /** How a nullable observation renders. Unknown is never false. */
@@ -75,93 +96,55 @@ export function formatObservedCommit(commit: string | null): string {
  * else on the Pulse card two cards below it.
  */
 export function pulseSessionStatusLabel(session: PulseDigestSession): string {
-  return codingSessionWireWorkspaceStatus(session.status as CodingSessionStatus)
-    .label;
+  const status = pulseSessionDisplayGeneration(session)?.status ?? undefined;
+  return codingSessionWireWorkspaceStatus(
+    status as CodingSessionStatus | undefined,
+  ).label;
 }
 
-/** `Disconnected · last observed 3h ago` — the Last seen group's row label. */
-export function formatLastSeenLabel(session: PulseDigestSession): string {
-  const age = formatPulseAge(session.observedAgeSeconds);
-  return `${pulseSessionStatusLabel(session)} · last observed ${age} ago`;
+/** Reachability wording appears only when the chosen generation proves it. */
+export function formatProviderReachableLabel(
+  session: PulseDigestSession,
+): string {
+  const generation = pulseSessionDisplayGeneration(session);
+  const reachable =
+    session.coordinationState === "provider_reachable" &&
+    generation?.reachability === "provider_reachable";
+  return `${pulseSessionStatusLabel(session)} · ${reachable ? "provider reachable · " : ""}${formatObservedAge(session)}`;
 }
 
-/**
- * One umbrella session and every execution of it this read observed.
- *
- * A provider restarts a session as a new *generation* — a new `targetKey` — but
- * the umbrella `sessionRef` (and therefore the name a person gave it) stays the
- * same. The fold keeps one row per execution, which is right for a digest and
- * wrong for a screen: three restarts of `dedupe_test` on one branch at one
- * commit render as three full-height cards, and the sessions that are actually
- * distinct get pushed off the fold.
- *
- * So the grouping is presentation-only: the digest still carries every
- * execution, and this type just says which of them a card leads with and which
- * sit behind its disclosure. Nothing is dropped.
- */
-export type PulseSessionExecutions = {
-  /** The umbrella: the session's `sessionRef`, or its own key when it has none. */
-  key: string;
-  /** The newest execution — the observation the card shows. */
-  latest: PulseDigestSession;
-  /** Older executions of the same umbrella, newest first. */
-  older: PulseDigestSession[];
-  /** Executions of this umbrella, including {@link latest}. */
-  count: number;
-};
-
-/**
- * Collapse executions onto their umbrella session, preserving digest order.
- *
- * The fold sorts sessions by `(statusAt desc, targetKey)`, so the first
- * execution of a key in that order is its newest one and becomes `latest`.
- * Groups appear in the order their newest execution does, which keeps the
- * screen's session order the digest's order.
- *
- * A session with no `sessionRef` is its own umbrella: two unrelated sessions
- * must never be merged because both lack the field that would tell them apart.
- */
-export function groupPulseSessionExecutions(
-  sessions: readonly PulseDigestSession[],
-): PulseSessionExecutions[] {
-  const groups: PulseSessionExecutions[] = [];
-  const byKey = new Map<string, PulseSessionExecutions>();
-  for (const session of sessions) {
-    const key = session.sessionRef ?? session.targetKey;
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.older.push(session);
-      existing.count += 1;
-      continue;
-    }
-    const group: PulseSessionExecutions = {
-      key,
-      latest: session,
-      older: [],
-      count: 1,
-    };
-    byKey.set(key, group);
-    groups.push(group);
-  }
-  return groups;
+/** Open or closed rows report observation recency without inferring liveness. */
+export function formatUnverifiedObservationLabel(
+  session: PulseDigestSession,
+): string {
+  const age = session.observedAgeSeconds;
+  return age === null
+    ? `${pulseSessionStatusLabel(session)} · observation time unknown`
+    : `${pulseSessionStatusLabel(session)} · last observed ${formatPulseAge(age)} ago`;
 }
 
 /**
- * Umbrella sessions split into Active work and Last seen, per the §5.4
- * definition applied to each umbrella's newest execution.
+ * Session umbrellas grouped by independent lifecycle and reachability facts.
  *
- * The newest execution decides, so an umbrella whose current run is live is
- * Active work even when its earlier runs aged out — the older runs travel with
- * it rather than seeding a duplicate row under Last seen.
+ * A valid lease can prove provider reachability for one generation. An open
+ * umbrella without that proof remains coordination-relevant, and durable
+ * closure is the only fact that moves the umbrella into history.
  */
-export function groupPulseSessions(sessions: readonly PulseDigestSession[]): {
-  activeWork: PulseSessionExecutions[];
-  lastSeen: PulseSessionExecutions[];
+export function groupPulseSessions(digest: ProjectPulseDigest): {
+  providerReachable: PulseDigestSession[];
+  openUnverified: PulseDigestSession[];
+  closed: PulseDigestSession[];
 } {
-  const groups = groupPulseSessionExecutions(sessions);
   return {
-    activeWork: groups.filter((group) => group.latest.activity === "active"),
-    lastSeen: groups.filter((group) => group.latest.activity !== "active"),
+    providerReachable: digest.sessions.filter(
+      (session) => session.coordinationState === "provider_reachable",
+    ),
+    openUnverified: digest.sessions.filter(
+      (session) => session.coordinationState === "open_unverified",
+    ),
+    closed: digest.sessions.filter(
+      (session) => session.coordinationState === "closed",
+    ),
   };
 }
 
@@ -266,11 +249,30 @@ export function matchesBranchFilter(
 }
 
 /**
- * How many rows a branch chip would show: session cards plus **active** entries.
+ * Does this umbrella belong to the selected branch chip?
  *
- * Sessions are counted as *umbrella* rows, not as executions, because that is
- * what the screen renders — a chip promising 19 rows over 12 cards is a count
- * that outran the thing it counts.
+ * Matches on **any** generation's branch, not just the display generation's.
+ * The chip list is enumerated over every generation (`pulseDigestBranches`), so
+ * matching the display branch alone would offer a chip that yields zero cards
+ * whenever the branch belongs only to a superseded generation — a control that
+ * lies about what it will show. This is the rule the shipped fold already
+ * stated: filter executions first, then collapse, so a chip never hides the
+ * execution the reader asked for.
+ *
+ * Both the visible rows and `countPulseBranchRows` call this one predicate;
+ * that is what keeps a chip's count and its rows from drifting apart.
+ */
+export function pulseSessionMatchesBranch(
+  session: PulseDigestSession,
+  selected: string | null | undefined,
+): boolean {
+  return session.generations.some((generation) =>
+    matchesBranchFilter(generation.branch, selected),
+  );
+}
+
+/**
+ * How many rows a branch chip would show: sessions plus **active** entries.
  *
  * Superseded entries are deliberately excluded — they sit behind a disclosure
  * whose own count is computed from the same filtered list, and a chip count
@@ -280,10 +282,8 @@ export function countPulseBranchRows(
   digest: ProjectPulseDigest,
   selected: string | null | undefined,
 ): number {
-  const sessions = groupPulseSessionExecutions(
-    digest.sessions.filter((session) =>
-      matchesBranchFilter(session.branch, selected),
-    ),
+  const sessions = digest.sessions.filter((session) =>
+    pulseSessionMatchesBranch(session, selected),
   ).length;
   const entries = digest.entries.filter(
     (entry) => entry.active && matchesBranchFilter(entry.branch, selected),
@@ -291,49 +291,31 @@ export function countPulseBranchRows(
   return sessions + entries;
 }
 
-/**
- * `1 entry` / `3 entries` / `no entries` — a count that reads as a sentence.
- *
- * Used by the at-a-glance summary under the header, whose whole job is to let
- * a reader see that there *is* an entry (and how many sessions sit under it)
- * without scrolling a long session list.
- */
+/** `1 entry` / `3 entries` / `no entries` — a count that reads as a sentence. */
 export function formatPulseEntryCount(count: number): string {
   if (count === 0) return "no entries";
   return `${count} ${count === 1 ? "entry" : "entries"}`;
 }
 
-/** `1 session` / `12 sessions` / `no sessions` — umbrellas, not executions. */
+/** `1 session` / `12 sessions` / `no sessions` — umbrellas, not generations. */
 export function formatPulseSessionCount(count: number): string {
   if (count === 0) return "no sessions";
   return `${count} ${count === 1 ? "session" : "sessions"}`;
 }
 
-/**
- * `3 executions` — the umbrella's disclosure label.
- *
- * Counts the whole umbrella, including the execution the card already shows,
- * so the number answers "how many times has this session run?" rather than
- * "how many rows are hidden?".
- */
+/** `3 executions` — the umbrella disclosure counts every generation. */
 export function formatPulseExecutionCount(count: number): string {
   return `${count} ${count === 1 ? "execution" : "executions"}`;
 }
 
-/**
- * Does the `Closed` chip repeat what the status label already said?
- *
- * A session whose wire status is `stopped` renders `Ended · last observed 30m
- * ago`; putting a `Closed` chip next to it is two words for one fact. Every
- * other status — `disconnected`, `failed`, an unknown one — carries information
- * the closure does not, so the chip stays.
- */
+/** Whether a `Closed` chip would only repeat the selected status label. */
 export function pulseSessionClosedIsRestated(
   session: PulseDigestSession,
 ): boolean {
+  const status = pulseSessionDisplayGeneration(session)?.status ?? undefined;
   return (
-    session.closed &&
-    codingSessionWireWorkspaceStatus(session.status as CodingSessionStatus)
+    session.lifecycle === "closed" &&
+    codingSessionWireWorkspaceStatus(status as CodingSessionStatus | undefined)
       .kind === "ended"
   );
 }

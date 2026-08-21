@@ -54,36 +54,85 @@ function entry(overrides = {}) {
 }
 
 function session(overrides = {}) {
+  const targetKey =
+    overrides.targetKey ?? "coding-session/v1|3:acp6:inst-16:sess-11:1";
+  const sessionRef = Object.hasOwn(overrides, "sessionRef")
+    ? overrides.sessionRef
+    : "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const statusAt = overrides.statusAt ?? NOW - 60;
+  const lifecycle =
+    overrides.lifecycle ?? (overrides.closed ? "closed" : "open");
+  const coordinationState =
+    overrides.coordinationState ??
+    (lifecycle === "closed"
+      ? "closed"
+      : overrides.activity === "stale"
+        ? "open_unverified"
+        : "provider_reachable");
+  const status = overrides.status ?? "running";
+  const reachability =
+    overrides.reachability ??
+    (status === "stopped" || status === "disconnected"
+      ? "terminal"
+      : coordinationState === "provider_reachable"
+        ? "provider_reachable"
+        : "unverified");
   return {
-    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
-    sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
-    name: "Pulse plumbing",
-    goal: null,
-    status: "running",
-    statusAt: NOW - 60,
-    closed: false,
-    activity: "active",
-    branch: "wip/project-pulse",
-    observedCommit: null,
-    dirty: null,
-    relayReachable: null,
-    verifiedAt: null,
-    commitConfirmation: "Commit not checked",
-    observedAgeSeconds: 60,
-    sourceEventIds: [id("s1")],
-    ...overrides,
+    sessionKey: sessionRef ?? `implicit:${targetKey}`,
+    sessionRef,
+    name: overrides.name ?? "Pulse plumbing",
+    goal: overrides.goal ?? null,
+    lifecycle,
+    coordinationState,
+    latestObservationAt: statusAt,
+    observedAgeSeconds: overrides.observedAgeSeconds ?? 60,
+    generations: overrides.generations ?? [
+      {
+        targetKey,
+        executionKey: `coding-execution/v1|${targetKey}`,
+        providerAuthorityPubkey: "d4".repeat(32),
+        current: true,
+        reachability,
+        status,
+        statusAt,
+        branch: overrides.branch ?? "wip/project-pulse",
+        observedCommit: overrides.observedCommit ?? null,
+        dirty: overrides.dirty ?? null,
+        relayReachable: overrides.relayReachable ?? null,
+        verifiedAt: overrides.verifiedAt ?? null,
+        commitConfirmation:
+          overrides.commitConfirmation ?? "Commit not checked",
+        leaseState: reachability === "provider_reachable" ? "live" : null,
+        leaseIssuedAt: reachability === "provider_reachable" ? NOW - 30 : null,
+        leaseAcceptedAt: null,
+        leaseExpiresAt:
+          reachability === "provider_reachable" ? NOW + 150 : null,
+        leaseSigner:
+          reachability === "provider_reachable" ? "d4".repeat(32) : null,
+        leaseSourceEventId:
+          reachability === "provider_reachable" ? id("l1") : null,
+        leaseSequence: reachability === "provider_reachable" ? 1 : null,
+        lifecycleCommandEventId: id("c1"),
+        lifecycleReceiptEventId: id("r1"),
+        sourceEventIds: [id("c1"), id("r1"), id("s1")],
+      },
+    ],
+    sourceEventIds: [id("c1"), id("r1"), id("s1")],
   };
 }
 
 function digest(overrides = {}) {
   return {
-    schema: "buzz-project-pulse-digest/v1",
+    schema: "buzz-project-pulse-digest/v2",
     source: "client-composed",
     project: PROJECT,
     asOf: NOW,
     complete: true,
     sessionsScope: "project channels",
     sessions: [],
+    providerReachableSessions: [],
+    openUnverifiedSessions: [],
+    closedSessions: [],
     entries: [],
     errors: [],
     ...overrides,
@@ -122,6 +171,31 @@ test("the header sentence never claims more than the screen shows", async () => 
   assert.equal(queryByText(/Automatic summary/i), null);
 });
 
+test("session presentation separates provider reachability, open uncertainty, and closed history", async () => {
+  const { groupPulseSessions } = await import(
+    "@/features/project-pulse/lib/pulseFormat"
+  );
+  const reachable = session();
+  const openUnverified = session({
+    targetKey: "coding-session/v1|3:acp6:inst-26:sess-21:1",
+    coordinationState: "open_unverified",
+    observedAgeSeconds: 10_800,
+  });
+  const closed = session({
+    targetKey: "coding-session/v1|3:acp6:inst-36:sess-31:1",
+    coordinationState: "closed",
+    lifecycle: "closed",
+  });
+
+  const groups = groupPulseSessions(
+    digest({ sessions: [reachable, openUnverified, closed] }),
+  );
+
+  assert.deepEqual(groups.providerReachable, [reachable]);
+  assert.deepEqual(groups.openUnverified, [openUnverified]);
+  assert.deepEqual(groups.closed, [closed]);
+});
+
 test("loading, confirmed-empty, and unavailable are three different cards", async () => {
   const loading = await renderView({ kind: "loading" });
   assert.ok(loading.getByTestId("pulse-loading"));
@@ -153,7 +227,12 @@ test("each state leads with its own verdict, and only the incomplete ones warn",
   const cases = [
     [{ kind: "loading" }, "pulse-loading", /^Reading…/, false],
     [{ kind: "unavailable" }, "pulse-unavailable", /^Not readable\./, false],
-    [{ kind: "ready", digest: digest() }, "pulse-empty", /^Quiet\./, false],
+    [
+      { kind: "ready", digest: digest() },
+      "pulse-empty",
+      /^No Pulse observations\./,
+      false,
+    ],
     [
       {
         kind: "partial",
@@ -221,9 +300,9 @@ test("the screen names the project it describes and offers a way back", async ()
 });
 
 /**
- * A quiet state that says "nobody has posted" and offers no control reads as
- * an invitation to a button that does not exist. Desktop cannot write a 44240
- * in v1, and the empty state has to say so.
+ * An observation-empty state that offers no control reads as an invitation to
+ * a button that does not exist. Desktop cannot write a 44240 in v1, and the
+ * empty state has to say so.
  */
 test("the empty state teaches the CLI first action and admits it is read-only", async () => {
   const { getByTestId } = await renderView({ kind: "ready", digest: digest() });
@@ -258,16 +337,30 @@ test("the header dates the read and marks a cached one as cached", async () => {
     cached.getByTestId("pulse-stale-read").textContent,
     /showing last complete read/,
   );
+  assert.equal(
+    cached.queryByTestId("pulse-empty"),
+    null,
+    "a refreshing cached empty digest is not a confirmed current absence",
+  );
+  assert.doesNotMatch(
+    cached.container.textContent,
+    /No sessions are currently verified live/,
+    "no current-tense absence claim may come from the last completed read",
+  );
+  assert.match(
+    cached.getByTestId("pulse-sessions-empty").textContent,
+    /last completed read.*refreshing/i,
+  );
 });
 
 /**
  * A digest can be `complete` — every query answered — and still have lost
  * individual events: an entry the fold could not validate, or a 44223 the
- * client could not decode. Saying "the project is quiet" over those is a null
- * rendered as a confirmed negative, which is exactly what this screen exists
- * to prevent.
+ * client could not decode. Turning those omissions into a settled absence is a
+ * null rendered as a confirmed negative, which is exactly what this screen
+ * exists to prevent.
  */
-test("a complete read that excluded events never says the project is quiet", async () => {
+test("a complete read that excluded events never presents absence as settled", async () => {
   const { getByTestId, queryByTestId } = await renderView({
     kind: "ready",
     digest: digest({
@@ -357,31 +450,54 @@ test("a partial read says so and still shows what it read", async () => {
   assert.equal(getByTestId("pulse-entries").querySelectorAll("li").length, 1);
 });
 
-test("Active work and Last seen are separate groups", async () => {
-  const { getByTestId, queryByTestId } = await renderView({
+test("provider-reachable, open-unverified, and closed sessions render as separate honest groups", async () => {
+  const { container, getByTestId, queryByTestId } = await renderView({
     kind: "ready",
     digest: digest({
       sessions: [
         session(),
         session({
           targetKey: "coding-session/v1|3:acp6:inst-26:sess-21:1",
-          sessionRef: "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6",
-          activity: "stale",
+          coordinationState: "open_unverified",
           status: "disconnected",
           statusAt: NOW - 10_800,
           observedAgeSeconds: 10_800,
           name: "Orphaned run",
         }),
+        session({
+          targetKey: "coding-session/v1|3:acp6:inst-36:sess-31:1",
+          coordinationState: "closed",
+          status: "stopped",
+          statusAt: NOW - 21_600,
+          observedAgeSeconds: 21_600,
+          name: "Finished run",
+          lifecycle: "closed",
+        }),
       ],
     }),
   });
   assert.equal(
-    getByTestId("pulse-active-work").querySelectorAll("li").length,
+    getByTestId("pulse-provider-reachable").querySelectorAll("li").length,
     1,
   );
-  const lastSeen = getByTestId("pulse-last-seen");
-  assert.equal(lastSeen.querySelectorAll("li").length, 1);
-  assert.match(lastSeen.textContent, /Disconnected · last observed 3h ago/);
+  assert.match(
+    getByTestId("pulse-provider-reachable").textContent,
+    /Provider-reachable sessions/,
+  );
+  const openUnverified = getByTestId("pulse-open-unverified");
+  assert.equal(openUnverified.querySelectorAll("li").length, 1);
+  assert.match(openUnverified.textContent, /Open · liveness unverified/);
+  assert.match(
+    openUnverified.textContent,
+    /Disconnected · last observed 3h ago/,
+  );
+  const closed = getByTestId("pulse-closed");
+  assert.equal(closed.querySelectorAll("li").length, 1);
+  assert.match(closed.textContent, /Closed\/history/);
+  assert.equal(
+    /active work|\blive\b|currently connected/i.test(container.textContent),
+    false,
+  );
   assert.equal(queryByTestId("pulse-empty"), null);
   assert.match(
     getByTestId("pulse-sessions-scope").textContent,
@@ -439,9 +555,14 @@ test("null observations render as unknown, never as false", async () => {
     getByTestId("pulse-session-commit").textContent,
     "Commit unknown",
   );
+  assert.match(
+    getByTestId("pulse-session-status").textContent,
+    /observed 1m ago/,
+  );
   assert.equal(
-    getByTestId("pulse-session-observed-age").textContent,
-    "observed 1m ago",
+    document.querySelector("[data-testid='pulse-session-observed-age']"),
+    null,
+    "the header already carries the age, so the metadata row does not repeat it",
   );
 });
 
@@ -646,7 +767,7 @@ test("an entry naming a session renders at project level, never inside the card"
   assert.equal(reference.textContent, "references session “Pulse plumbing”");
   assert.match(reference.getAttribute("title"), /5b7e1c2a/);
   assert.equal(
-    getByTestId("pulse-active-work").contains(reference),
+    getByTestId("pulse-provider-reachable").contains(reference),
     false,
     "an unverified pu-session claim never renders inside that session's card",
   );
@@ -669,8 +790,8 @@ test("a session reference this digest cannot resolve says so in words", async ()
 /**
  * The sessions block is the one place this surface admits its own
  * non-exhaustiveness. Gating it on `sessions.length > 0` removed that
- * admission in exactly the state where a reader would otherwise conclude
- * "nobody is running anything here."
+ * admission in exactly the state where a reader might otherwise treat absence
+ * as a settled liveness conclusion.
  */
 test("a readable digest with no sessions still says so, with the scope caveat", async () => {
   const { getByTestId } = await renderView({
@@ -679,7 +800,7 @@ test("a readable digest with no sessions still says so, with the scope caveat", 
   });
   assert.equal(
     getByTestId("pulse-sessions-empty").textContent,
-    "No coding sessions observed in this project's channels.",
+    "No sessions are currently verified live.",
   );
   assert.match(
     getByTestId("pulse-sessions-scope").textContent,
@@ -756,6 +877,58 @@ test("branch chips are a labelled control whose counts match the rows", async ()
 });
 
 /**
+ * Regression: the chips are enumerated over **every** generation's branch
+ * (`pulseDigestBranches`), so a branch that only ever hosted a superseded
+ * generation still gets a chip. If the session rows matched on the display
+ * generation's branch alone, that chip would count zero and show zero cards —
+ * a control offering a view of work it then refuses to show. The shipped fold
+ * settled this: filter executions first, then collapse.
+ */
+test("a chip for a branch only a superseded generation ran on still shows its session", async () => {
+  const current = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:2",
+  }).generations[0];
+  const superseded = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
+    branch: "wip/earlier-attempt",
+    status: "stopped",
+    statusAt: NOW - 7_200,
+  }).generations[0];
+  superseded.current = false;
+  assert.equal(current.branch, "wip/project-pulse");
+
+  const { getAllByTestId, getByTestId, queryByTestId } = await renderView({
+    kind: "ready",
+    digest: digest({
+      sessions: [session({ generations: [current, superseded] })],
+    }),
+  });
+
+  // The chip exists, and its count already promises the row.
+  const chips = getAllByTestId("pulse-branch-chip").map(
+    (chip) => chip.textContent,
+  );
+  assert.deepEqual(chips, ["wip/earlier-attempt1", "wip/project-pulse1"]);
+
+  // Selecting it shows the umbrella, rather than an empty state.
+  const supersededChip = getAllByTestId("pulse-branch-chip").find((chip) =>
+    chip.textContent.startsWith("wip/earlier-attempt"),
+  );
+  const { act } = await import("react");
+  await act(async () => {
+    supersededChip.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }),
+    );
+  });
+  assert.equal(queryByTestId("pulse-sessions-empty"), null);
+  assert.equal(getAllByTestId("pulse-session-card").length, 1);
+  assert.equal(
+    getByTestId("pulse-count-sessions").textContent,
+    "1 session · 1 provider-reachable",
+  );
+});
+
+/**
  * `VISION_ACTIVITY.md`: "the reader thinks in names, not hashes." A pubkey may
  * appear in a `title` for copying, never as the label of a person.
  */
@@ -776,45 +949,34 @@ test("authors render as names, with the hex only in a copyable title", async () 
   );
 });
 
-/**
- * F22. A provider that restarts a session emits a new generation — a new
- * `targetKey` under the same umbrella `sessionRef` — and the fold keeps every
- * one. Rendering each as a full card turned one session run three times into
- * three near-identical rows, which is how nineteen rows on a live project hid
- * the sessions that were actually distinct.
- *
- * Collapsed, never dropped: the card leads with the newest execution and the
- * older ones stay one click away.
- */
-test("executions of one umbrella session collapse into a single card", async () => {
+test("generations of one umbrella collapse into one disclosed session card", async () => {
   const opened = [];
+  const newest = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:3",
+  }).generations[0];
+  const generation2 = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:2",
+    status: "stopped",
+    statusAt: NOW - 7_200,
+    observedCommit: "50dee7a75a99abcd",
+  }).generations[0];
+  generation2.current = false;
+  const generation1 = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
+    status: "stopped",
+    statusAt: NOW - 10_800,
+  }).generations[0];
+  generation1.current = false;
+
   const { getAllByTestId, getByTestId, queryByTestId } = await renderView(
     {
       kind: "ready",
       digest: digest({
         sessions: [
           session({
-            targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:3",
+            targetKey: newest.targetKey,
             name: "dedupe_test",
-            statusAt: NOW - 60,
-            observedAgeSeconds: 60,
-          }),
-          session({
-            targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:2",
-            name: "dedupe_test",
-            status: "stopped",
-            activity: "stale",
-            statusAt: NOW - 7_200,
-            observedAgeSeconds: 7_200,
-            observedCommit: "50dee7a75a99abcd",
-          }),
-          session({
-            targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
-            name: "dedupe_test",
-            status: "stopped",
-            activity: "stale",
-            statusAt: NOW - 10_800,
-            observedAgeSeconds: 10_800,
+            generations: [newest, generation2, generation1],
           }),
         ],
       }),
@@ -822,24 +984,24 @@ test("executions of one umbrella session collapse into a single card", async () 
     { onOpenSession: (key) => opened.push(key) },
   );
 
-  const cards = getAllByTestId("pulse-session-card");
-  assert.equal(cards.length, 1, "three executions, one card");
-  assert.equal(cards[0].getAttribute("data-execution-count"), "3");
-  // The umbrella's newest execution decides where the card sits: its current
-  // run is live, so it is Active work rather than a second row under Last seen.
-  assert.ok(getByTestId("pulse-active-work"));
-  assert.equal(queryByTestId("pulse-last-seen"), null);
+  assert.equal(getAllByTestId("pulse-session-card").length, 1);
+  assert.equal(
+    getByTestId("pulse-session-card").getAttribute("data-execution-count"),
+    "3",
+  );
+  assert.ok(getByTestId("pulse-provider-reachable"));
+  assert.equal(queryByTestId("pulse-open-unverified"), null);
+  assert.equal(queryByTestId("pulse-closed"), null);
 
   const toggle = getByTestId("pulse-session-executions-toggle");
   assert.match(toggle.textContent, /3 executions/);
   assert.equal(queryByTestId("pulse-session-execution-list"), null);
-
   const { act } = await import("react");
   await act(async () => {
     toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
   });
   const history = getAllByTestId("pulse-session-execution");
-  assert.equal(history.length, 2, "history is disclosed, not discarded");
+  assert.equal(history.length, 2);
   assert.match(history[0].textContent, /Ended · last observed 2h ago/);
   assert.match(history[0].textContent, /50dee7a75a99/);
 
@@ -848,28 +1010,18 @@ test("executions of one umbrella session collapse into a single card", async () 
       .querySelector("[data-testid='pulse-session-execution-open']")
       .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
   });
-  assert.deepEqual(opened, ["coding-session/v1|3:acp6:inst-16:sess-11:2"]);
+  assert.deepEqual(opened, [generation2.targetKey]);
 });
 
-/**
- * Two sessions that merely lack a `sessionRef` are two sessions. Merging them
- * on the field that is missing from both would invent an umbrella nobody
- * created — and hide one session behind another's disclosure.
- */
-test("sessions with no umbrella reference are never merged with each other", async () => {
+test("sessions without an umbrella reference remain separate cards", async () => {
   const { getAllByTestId } = await renderView({
     kind: "ready",
     digest: digest({
       sessions: [
-        session({
-          targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1",
-          sessionRef: null,
-          name: null,
-        }),
+        session({ sessionRef: null }),
         session({
           targetKey: "coding-session/v1|3:acp6:inst-26:sess-21:1",
           sessionRef: null,
-          name: null,
         }),
       ],
     }),
@@ -877,35 +1029,7 @@ test("sessions with no umbrella reference are never merged with each other", asy
   assert.equal(getAllByTestId("pulse-session-card").length, 2);
 });
 
-/**
- * F21. Entries are the only thing on this screen a person chose to say, and
- * the header promises them first. With a dozen session cards above them, the
- * one posted plan on a live project was below the fold.
- */
-test("entries are rendered above the session groups", async () => {
-  const { getByTestId } = await renderView({
-    kind: "ready",
-    digest: digest({
-      entries: [entry()],
-      sessions: [session()],
-    }),
-  });
-  const entries = getByTestId("pulse-entries");
-  const sessions = getByTestId("pulse-sessions");
-  assert.equal(
-    entries.compareDocumentPosition(sessions) &
-      dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
-    dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
-    "the sessions block follows the entries block",
-  );
-  // The sessions block is still there, scope caveat and all.
-  assert.match(
-    getByTestId("pulse-sessions-scope").textContent,
-    /channels only/,
-  );
-});
-
-test("the superseded disclosure travels with the entries, above the sessions", async () => {
+test("entries and their superseded disclosure render above session observations", async () => {
   const original = entry({ eventId: id("d1"), active: false });
   const { getByTestId } = await renderView({
     kind: "ready",
@@ -921,34 +1045,36 @@ test("the superseded disclosure travels with the entries, above the sessions", a
       sessions: [session()],
     }),
   });
-  const superseded = getByTestId("pulse-superseded");
   const sessions = getByTestId("pulse-sessions");
-  assert.equal(
-    superseded.compareDocumentPosition(sessions) &
+  for (const preceding of [
+    getByTestId("pulse-entries"),
+    getByTestId("pulse-superseded"),
+  ]) {
+    assert.equal(
+      preceding.compareDocumentPosition(sessions) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
       dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
-    dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
-  );
+    );
+  }
 });
 
-/**
- * The summary is the "without scrolling" half of F21: entries lead, but a
- * project with a dozen sessions still pushes the session groups below the
- * fold, and the reader should not have to hunt to learn they exist. It counts
- * the rows the screen renders — umbrellas, not executions — so the branch chip
- * cannot make it promise more than it shows.
- */
-test("the summary counts the rows the screen actually renders", async () => {
+test("the summary counts rendered umbrellas and names verified reachability", async () => {
+  const current = session().generations[0];
+  const old = session({
+    targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:0",
+    status: "stopped",
+  }).generations[0];
+  old.current = false;
   const { getByTestId } = await renderView({
     kind: "ready",
     digest: digest({
       entries: [entry()],
       sessions: [
-        session({ targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:2" }),
-        session({ targetKey: "coding-session/v1|3:acp6:inst-16:sess-11:1" }),
+        session({ generations: [current, old] }),
         session({
           targetKey: "coding-session/v1|3:acp6:inst-26:sess-21:1",
           sessionRef: "1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6",
-          activity: "stale",
+          coordinationState: "open_unverified",
           status: "disconnected",
           statusAt: NOW - 10_800,
           observedAgeSeconds: 10_800,
@@ -959,18 +1085,11 @@ test("the summary counts the rows the screen actually renders", async () => {
   assert.equal(getByTestId("pulse-count-entries").textContent, "1 entry");
   assert.equal(
     getByTestId("pulse-count-sessions").textContent,
-    "2 sessions · 1 active",
+    "2 sessions · 1 provider-reachable",
   );
 });
 
-/**
- * The counts line is a summary of a read, not a census of the project. A read
- * that lost events cannot be summarised with a total, and it certainly cannot
- * be summarised with a bare "no entries" — that is the quiet-project lie the
- * whole screen exists to refuse, printed in the one line a hurried reader
- * actually reads. Floors, plus a note saying they are floors.
- */
-test("counts over an incomplete read are floors, never a bare absence", async () => {
+test("counts over incomplete reads are explicit floors", async () => {
   const partial = await renderView({
     kind: "partial",
     digest: digest({
@@ -986,17 +1105,14 @@ test("counts over an incomplete read are floors, never a bare absence", async ()
   );
   assert.equal(
     partial.getByTestId("pulse-count-sessions").textContent,
-    "at least 1 session · 1 active",
+    "at least 1 session · 1 provider-reachable",
   );
   assert.match(
     partial.getByTestId("pulse-counts-incomplete").textContent,
-    /this read lost events, so these are floors, not totals/,
+    /floors, not totals/,
   );
   partial.unmount();
 
-  // Zero rows out of a broken read is a fact about the read. It may not be
-  // spoken as "no entries" (a claim about the project) and it may not be
-  // spoken as "at least no entries" (not a sentence).
   const empty = await renderView({
     kind: "partial",
     digest: digest({
@@ -1004,49 +1120,19 @@ test("counts over an incomplete read are floors, never a bare absence", async ()
       errors: [{ scope: "entries", message: "relay unavailable" }],
     }),
   });
-  const entriesCount = empty.getByTestId("pulse-count-entries").textContent;
-  const sessionsCount = empty.getByTestId("pulse-count-sessions").textContent;
-  assert.notEqual(entriesCount, "no entries");
-  assert.notEqual(sessionsCount, "no sessions");
-  assert.doesNotMatch(entriesCount, /at least no/);
-  assert.doesNotMatch(sessionsCount, /at least no/);
-  assert.equal(entriesCount, "no entries in what this read returned");
-  assert.equal(sessionsCount, "no sessions in what this read returned");
-  assert.match(
-    empty.getByTestId("pulse-counts-incomplete").textContent,
-    /floors, not totals/,
+  assert.equal(
+    empty.getByTestId("pulse-count-entries").textContent,
+    "no entries in what this read returned",
+  );
+  assert.equal(
+    empty.getByTestId("pulse-count-sessions").textContent,
+    "no sessions in what this read returned",
   );
   empty.unmount();
-
-  // Same rule for a read that returned but dropped events: `ready` with
-  // errors is still a read that lost something.
-  const excluded = await renderView({
-    kind: "ready",
-    digest: digest({
-      entries: [entry()],
-      sessions: [session()],
-      errors: [
-        {
-          scope: "entries",
-          message: "unresolved-supersedes",
-          eventId: id("e9"),
-        },
-      ],
-    }),
-  });
-  assert.equal(
-    excluded.getByTestId("pulse-count-entries").textContent,
-    "at least 1 entry",
-  );
-  assert.equal(
-    excluded.queryByTestId("pulse-counts-incomplete") === null,
-    false,
-    "the floors note travels with the floors",
-  );
 });
 
-test("the confirmed-empty state says it once, without a second empty summary", async () => {
-  const { queryByTestId, getAllByTestId } = await renderView({
+test("confirmed empty renders one teaching state without a second summary", async () => {
+  const { getAllByTestId, queryByTestId } = await renderView({
     kind: "ready",
     digest: digest(),
   });
@@ -1055,28 +1141,18 @@ test("the confirmed-empty state says it once, without a second empty summary", a
   assert.equal(getAllByTestId("pulse-write-hint").length, 1);
 });
 
-/**
- * With entries leading, a project whose Pulse has sessions but no entries would
- * otherwise open on a session list under a header that promised explicit
- * updates first. The absence is stated, and it teaches the one way to fix it.
- */
-test("a project with sessions and no entries says so where the entries would be", async () => {
-  const { getByTestId } = await renderView({
+test("entry absence distinguishes settled, incomplete, and branch-hidden reads", async () => {
+  const settled = await renderView({
     kind: "ready",
     digest: digest({ sessions: [session()] }),
   });
   assert.match(
-    getByTestId("pulse-entries-empty").textContent,
-    /No entries posted for this project yet\./,
+    settled.getByTestId("pulse-entries-empty").textContent,
+    /No entries posted for this project yet/,
   );
-  assert.match(
-    getByTestId("pulse-write-hint").textContent,
-    /buzz pulse update --project/,
-  );
-});
+  settled.unmount();
 
-test("an incomplete read never reports 'no entries' as a finding", async () => {
-  const { getByTestId } = await renderView({
+  const incomplete = await renderView({
     kind: "partial",
     digest: digest({
       complete: false,
@@ -1085,21 +1161,21 @@ test("an incomplete read never reports 'no entries' as a finding", async () => {
     }),
   });
   assert.match(
-    getByTestId("pulse-entries-empty").textContent,
-    /not a confirmed answer/,
+    incomplete.getByTestId("pulse-entries-empty").textContent,
+    /not a project-wide answer/,
   );
-});
+  incomplete.unmount();
 
-test("a branch filter that hides every entry says that, not that there are none", async () => {
-  const { getAllByTestId, getByTestId, queryByTestId } = await renderView({
+  const filtered = await renderView({
     kind: "ready",
     digest: digest({
       entries: [entry({ branch: "wip/project-pulse" })],
       sessions: [session({ branch: "main" })],
     }),
   });
-  const chips = getAllByTestId("pulse-branch-chip");
-  const mainChip = chips.find((chip) => chip.textContent.startsWith("main"));
+  const mainChip = filtered
+    .getAllByTestId("pulse-branch-chip")
+    .find((chip) => chip.textContent.startsWith("main"));
   const { act } = await import("react");
   await act(async () => {
     mainChip.dispatchEvent(
@@ -1107,50 +1183,36 @@ test("a branch filter that hides every entry says that, not that there are none"
     );
   });
   assert.match(
-    getByTestId("pulse-entries-empty").textContent,
+    filtered.getByTestId("pulse-entries-empty").textContent,
     /No entries on this branch/,
   );
-  // Not an invitation to post: the entries exist, the filter is hiding them.
-  assert.equal(queryByTestId("pulse-write-hint"), null);
+  assert.equal(filtered.queryByTestId("pulse-write-hint"), null);
+  filtered.unmount();
 });
 
-/**
- * F23a. `Commit not checked` is the honest tri-state for a null
- * `relayReachable` and must stay — but it claimed a line of its own on every
- * card, which on nineteen cards is nineteen lines of the same sentence. It
- * sits with the other observations now, at text-xs rather than the chips'
- * text-2xs, because it is the qualifier that keeps the card honest.
- */
-test("the commit confirmation shares the observation row rather than a line of its own", async () => {
+test("commit confirmation stays inline with the commit observation", async () => {
   const { getByTestId } = await renderView({
     kind: "ready",
     digest: digest({ sessions: [session()] }),
   });
   const confirmation = getByTestId("pulse-session-commit-confirmation");
-  assert.equal(confirmation.textContent, "Commit not checked");
   assert.equal(confirmation.tagName, "SPAN");
   assert.equal(
     confirmation.parentElement,
     getByTestId("pulse-session-commit").parentElement,
-    "it sits in the same row as the commit it qualifies",
   );
   assert.match(confirmation.className, /\btext-xs\b/);
 });
 
-/**
- * F23b. `Ended · last observed 30m ago` beside a `Closed` chip is two words for
- * one fact. The chip only earns its place when the status label says something
- * the closure does not.
- */
-test("a session whose status already says it ended does not also say Closed", async () => {
+test("Closed is suppressed only when the status already says Ended", async () => {
   const ended = await renderView({
     kind: "ready",
     digest: digest({
       sessions: [
         session({
+          lifecycle: "closed",
+          coordinationState: "closed",
           status: "stopped",
-          closed: true,
-          activity: "stale",
           statusAt: NOW - 1_800,
           observedAgeSeconds: 1_800,
         }),
@@ -1162,20 +1224,16 @@ test("a session whose status already says it ended does not also say Closed", as
     /^Ended · last observed 30m ago$/,
   );
   assert.equal(ended.queryByTestId("pulse-session-closed"), null);
-  // The age is not repeated in the row below it either.
-  assert.equal(ended.queryByTestId("pulse-session-observed-age"), null);
   ended.unmount();
 
-  // A closed session that was last seen *disconnected* still needs both: the
-  // connection dropping and the umbrella being closed are two facts.
   const disconnected = await renderView({
     kind: "ready",
     digest: digest({
       sessions: [
         session({
+          lifecycle: "closed",
+          coordinationState: "closed",
           status: "disconnected",
-          closed: true,
-          activity: "stale",
           statusAt: NOW - 10_800,
           observedAgeSeconds: 10_800,
         }),

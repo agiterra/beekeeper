@@ -18,7 +18,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  PULSE_ACTIVE_WINDOW_SECONDS,
   PULSE_DIGEST_SCHEMA,
   PULSE_SESSIONS_SCOPE,
   foldProjectPulseDigest,
@@ -31,8 +30,7 @@ const corpus = JSON.parse(
 );
 
 test("the corpus pins the constants the fold codes", () => {
-  assert.equal(corpus.schema, "buzz-project-pulse-fold-vectors/v1");
-  assert.equal(corpus.activeWindowSeconds, PULSE_ACTIVE_WINDOW_SECONDS);
+  assert.equal(corpus.schema, "buzz-project-pulse-fold-vectors/v2");
   assert.equal(corpus.digestSchema, PULSE_DIGEST_SCHEMA);
   assert.equal(corpus.entrySchema, PULSE_ENTRY_SCHEMA);
   assert.ok(corpus.vectors.length > 0, "the corpus must hold vectors");
