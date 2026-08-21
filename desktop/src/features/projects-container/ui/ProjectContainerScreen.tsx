@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
+import { ProjectTerminalsCard } from "@/features/builtin-shell/ui/ProjectTerminalsCard";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import {
@@ -356,6 +357,16 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
               </ul>
             )}
           </SectionCard>
+
+          <FeatureGate feature="builtin-shell">
+            <ProjectTerminalsCard
+              projectAddress={
+                project.id === LOCAL_GENERAL_ID ? null : project.address
+              }
+              isFallback={project.id === LOCAL_GENERAL_ID}
+              repos={repos}
+            />
+          </FeatureGate>
 
           <SectionCard
             count={streamChannels.length}

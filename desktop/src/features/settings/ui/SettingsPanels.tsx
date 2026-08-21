@@ -1,33 +1,12 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  Archive,
-  BellRing,
-  Bot,
-  ChevronDown,
-  Cpu,
-  Download,
-  FlaskConical,
-  Keyboard,
-  LayoutTemplate,
-  MessagesSquare,
-  MonitorCog,
-  Moon,
-  ShieldAlert,
-  Smartphone,
-  Smile,
-  Sun,
-  SunMoon,
-  Ticket,
-  UserRound,
-  Volume2,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown, Moon, Sun, SunMoon } from "lucide-react";
 import type {
   DesktopNotificationPermissionState,
   NotificationSettings,
 } from "@/features/notifications/hooks";
 import type { SoundName, SoundSlot } from "@/features/notifications/lib/sound";
+import { BuiltinShellSettingsCard } from "@/features/builtin-shell/ui/BuiltinShellSettingsCard";
 import { CommunityMembersSettingsCard } from "@/features/community-members/ui/CommunityMembersSettingsCard";
 import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { LocalArchiveSettingsCard } from "@/features/local-archive/ui/LocalArchiveSettingsCard";
@@ -79,59 +58,16 @@ import { UpdateChecker } from "../UpdateChecker";
 import { SettingsSectionHeader } from "./SettingsSectionHeader";
 import { VoiceSettingsCard } from "./VoiceSettingsCard";
 
-export type SettingsSection =
-  | "profile"
-  | "notifications"
-  | "voice"
-  | "experimental"
-  | "agents"
-  | "channel-templates"
-  | "compute"
-  | "appearance"
-  | "shortcuts"
-  | "hosted-communities"
-  | "community-members"
-  | "moderation"
-  | "custom-emoji"
-  | "local-archive"
-  | "mobile"
-  | "updates";
-
-export const DEFAULT_SETTINGS_SECTION: SettingsSection = "profile";
-
-const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
-  "profile",
-  "notifications",
-  "voice",
-  "experimental",
-  "agents",
-  "channel-templates",
-  "compute",
-  "appearance",
-  "shortcuts",
-  "hosted-communities",
-  "community-members",
-  "moderation",
-  "custom-emoji",
-  "local-archive",
-  "mobile",
-  "updates",
-];
-
-export function isSettingsSection(value: unknown): value is SettingsSection {
-  return (
-    typeof value === "string" &&
-    (SETTINGS_SECTION_VALUES as readonly string[]).includes(value)
-  );
-}
-
-export type SettingsSectionDescriptor = {
-  value: SettingsSection;
-  label: string;
-  icon: LucideIcon;
-  /** If set, this section is only visible when the feature is enabled */
-  featureGate?: string;
-};
+export type {
+  SettingsSection,
+  SettingsSectionDescriptor,
+} from "./settingsSections";
+export {
+  DEFAULT_SETTINGS_SECTION,
+  isSettingsSection,
+  settingsSections,
+} from "./settingsSections";
+import type { SettingsSection } from "./settingsSections";
 
 export type SettingsPanelProps = {
   currentPubkey?: string;
@@ -147,92 +83,6 @@ export type SettingsPanelProps = {
   onSetAllSlotAlertsEnabled: (enabled: boolean) => void;
   onSetSoundForSlot: (slot: SoundSlot, name: SoundName) => void;
 };
-
-export const settingsSections: SettingsSectionDescriptor[] = [
-  {
-    value: "appearance",
-    label: "Appearance",
-    icon: MonitorCog,
-  },
-  {
-    value: "profile",
-    label: "Profile",
-    icon: UserRound,
-  },
-  {
-    value: "notifications",
-    label: "Notifications",
-    icon: BellRing,
-  },
-  {
-    value: "voice",
-    label: "Voice",
-    icon: Volume2,
-  },
-  {
-    value: "experimental",
-    label: "Experiments",
-    icon: FlaskConical,
-  },
-  {
-    value: "agents",
-    label: "Agents",
-    icon: Bot,
-    featureGate: "managed-agents",
-  },
-  {
-    value: "channel-templates",
-    label: "Channel templates",
-    icon: LayoutTemplate,
-    featureGate: "channel-templates",
-  },
-  {
-    value: "compute",
-    label: "Compute",
-    icon: Cpu,
-  },
-  {
-    value: "shortcuts",
-    label: "Shortcuts",
-    icon: Keyboard,
-  },
-  {
-    value: "hosted-communities",
-    label: "Hosted communities",
-    icon: MessagesSquare,
-  },
-  {
-    value: "community-members",
-    label: "Invites",
-    icon: Ticket,
-  },
-  {
-    value: "moderation",
-    label: "Moderation",
-    icon: ShieldAlert,
-  },
-  {
-    value: "custom-emoji",
-    label: "Custom emoji",
-    icon: Smile,
-    featureGate: "custom-emoji",
-  },
-  {
-    value: "local-archive",
-    label: "Local archive",
-    icon: Archive,
-  },
-  {
-    value: "mobile",
-    label: "Mobile",
-    icon: Smartphone,
-  },
-  {
-    value: "updates",
-    label: "Updates",
-    icon: Download,
-  },
-];
 
 function formatThemeLabel(name: string): string {
   return name
@@ -869,6 +719,8 @@ export function renderSettingsSection(
       return <ModerationQueueCard />;
     case "custom-emoji":
       return <CustomEmojiSettingsCard />;
+    case "builtin-shell":
+      return <BuiltinShellSettingsCard />;
     case "local-archive":
       return <LocalArchiveSettingsCard />;
     case "mobile":

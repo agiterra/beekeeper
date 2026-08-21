@@ -237,9 +237,16 @@ enum Cmd {
     /// Persona pack operations (local, no relay connection needed)
     #[command(subcommand)]
     Pack(PackCmd),
+    /// Read and drive interactive sessions on this machine (local; via the
+    /// desktop session broker, gated by per-session agent consent)
+    #[command(subcommand)]
+    Session(commands::session::SessionCmd),
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// List, share, and drive shared terminals (NIP-ST)
+    #[command(subcommand)]
+    Terminals(TerminalsCmd),
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1298,6 +1305,26 @@ impl ProjectRoleArg {
     }
 }
 
+/// Shared-terminal roster role (NIP-ST): collaborator (watch + type) or
+/// viewer (watch only).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum ShellRoleArg {
+    /// May watch and type into the owner's PTY.
+    Collaborator,
+    /// Watch-only access.
+    Viewer,
+}
+
+impl ShellRoleArg {
+    /// The roster role string this variant serializes to.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShellRoleArg::Collaborator => "collaborator",
+            ShellRoleArg::Viewer => "viewer",
+        }
+    }
+}
+
 /// Visibility of a multi-repo project listing.
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum ProjectVisibility {
@@ -1484,6 +1511,68 @@ pub enum ProjectsCmd {
         /// Project owner pubkey (64-char hex). Defaults to the current identity.
         #[arg(long)]
         owner: Option<String>,
+    },
+}
+
+/// Shared-terminal commands (NIP-ST kind 30623 announces + kind 24312 input).
+#[derive(Subcommand)]
+pub enum TerminalsCmd {
+    /// List shared-terminal session announces (kind 30623)
+    List {
+        /// Restrict to one project: a `30621:<owner>:<dtag>` coordinate, or
+        /// a bare slug (expanded with your own pubkey as owner).
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Add a pubkey to your own session's roster, or change their role.
+    ///
+    /// Read-modify-writes your own kind:30623 announce; errors if you have
+    /// no announce for the session id. The owner host independently
+    /// re-verifies roster membership before input reaches the PTY.
+    Invite {
+        /// Session id (`d` tag of your announce)
+        session_id: String,
+        /// Invitee pubkey (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+        /// Roster role: collaborator (watch + type) or viewer (watch only)
+        #[arg(long, value_enum)]
+        role: ShellRoleArg,
+    },
+    /// Remove a pubkey from your own session's roster
+    Revoke {
+        /// Session id (`d` tag of your announce)
+        session_id: String,
+        /// Pubkey to remove (64-char lowercase hex)
+        #[arg(long)]
+        pubkey: String,
+    },
+    /// Print a session announce's roster as `[{pubkey, role}]`
+    Roster {
+        /// Session id (`d` tag of the announce)
+        session_id: String,
+        /// Session owner pubkey (64-char hex). Defaults to the current identity.
+        #[arg(long)]
+        owner: Option<String>,
+    },
+    /// Send raw input bytes to a shared terminal (kind 24312, ephemeral).
+    ///
+    /// Accepted by the relay only from the session owner or a roster
+    /// collaborator; delivered only to the owner. Content is chunked when
+    /// it exceeds 6 KiB raw.
+    #[command(name = "send-input")]
+    SendInput {
+        /// Session id (`d` tag of the owner's announce)
+        session_id: String,
+        /// Session owner pubkey (64-char hex)
+        #[arg(long)]
+        owner: String,
+        /// Input text to send. Use --stdin to send raw stdin bytes instead.
+        #[arg(long, conflicts_with = "stdin", required_unless_present = "stdin")]
+        text: Option<String>,
+        /// Read the input bytes from stdin
+        #[arg(long, default_value_t = false)]
+        stdin: bool,
     },
 }
 
@@ -2115,6 +2204,18 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         };
     }
 
+    // Session commands are local-only — they call the desktop session broker,
+    // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
+    // the caller pubkey is passed to the broker for its audit log.
+    if let Cmd::Session(ref sub) = cli.command {
+        let caller = cli
+            .private_key
+            .as_ref()
+            .and_then(|k| Keys::parse(k).ok())
+            .map(|keys| keys.public_key().to_hex());
+        return commands::session::dispatch(sub, caller).await;
+    }
+
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
     let private_key_str = cli.private_key.ok_or_else(|| {
@@ -2174,7 +2275,9 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
+        Cmd::Session(_) => unreachable!("handled above"),
     }
 }
 
@@ -2279,7 +2382,9 @@ mod tests {
             "projects",
             "reactions",
             "repos",
+            "session",
             "social",
+            "terminals",
             "upload",
             "users",
             "workflows",
@@ -2452,6 +2557,10 @@ mod tests {
             names(&cmd, "issues"),
             vec!["assign", "create", "get", "list", "status", "unassign"]
         );
+        assert_eq!(
+            names(&cmd, "terminals"),
+            vec!["invite", "list", "revoke", "roster", "send-input"]
+        );
         assert_eq!(names(&cmd, "media"), vec!["get"]);
         assert_eq!(names(&cmd, "upload"), vec!["file"]);
         assert_eq!(names(&cmd, "pack"), vec!["inspect", "validate"]);
@@ -2489,6 +2598,7 @@ mod tests {
             ("reactions", 3),
             ("repos", 5),
             ("social", 7),
+            ("terminals", 5),
             ("upload", 1),
             ("users", 5),
             ("workflows", 8),

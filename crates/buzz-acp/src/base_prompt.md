@@ -21,11 +21,14 @@ The `buzz` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ
 | `buzz users` | `get`, `set-profile`, `presence` |
 | `buzz workflows` | `list`, `trigger`, `runs` |
 | `buzz feed` | `get` |
+| `buzz session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
 | `buzz social` | `publish`, `notes` |
 | `buzz repos` | `create`, `get`, `list` |
 | `buzz issues` | `create`, `get`, `list`, `status`, `assign` |
 | `buzz pr` | `open`, `update`, `get`, `list`, `status` |
 | `buzz upload` | `file` |
+
+`buzz session` acts on the built-in terminal sessions running on this machine — NOT buzz channels or DMs. When someone asks you to check on or advance a terminal session, use `buzz session list` / `buzz session read "<name>"` to see its state, and `buzz session send "<name>" "<text>"` or `buzz session exec "<name>" "<command>"` to drive it. Writes require the owner to have enabled that session's "Agents" toggle; without it, `exec` and `buzz session request-access "<name>" --command "<command>"` prompt the owner to approve just that command or grant full access — a refusal means they did not.
 
 Run `buzz --help` or `buzz <group> --help` for full usage. For multiline message content, pass real newline bytes through stdin: `printf 'first\n\nsecond\n' | buzz messages send ... --content -`. Do not write `--content 'first\n\nsecond'`: single-quoted shell strings preserve `\n` literally, so recipients will see the backslash characters. `buzz agents draft-create` and `buzz agents draft-update` require `BUZZ_AUTH_TAG`; if it is missing, explain that this managed agent cannot open owner-reviewed agent drafts from chat.
 

@@ -1,6 +1,9 @@
-import { Bot, FolderGit2, Zap } from "lucide-react";
+import { Bot, Eye, FolderGit2, Terminal, Zap } from "lucide-react";
 
+import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
+import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
 import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
+import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
@@ -10,8 +13,8 @@ import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
 /**
  * Renders one row of a project's flat child list; the row's type picks the
- * icon and behavior. Channel/forum rows delegate to the shared row component
- * so they behave identically to their non-project counterparts.
+ * icon and behavior. Channel/forum and shell rows delegate to the shared row
+ * components so they behave identically to their non-project counterparts.
  */
 export function ProjectChildRowItem({
   row,
@@ -19,12 +22,22 @@ export function ProjectChildRowItem({
   onOpenAgents,
   onOpenRepo,
   onOpenWorkflow,
+  activeShellSessionId,
+  onOpenShell,
+  onRequestRenameShell,
+  onRequestCloseShell,
+  onObserveShell,
 }: {
   row: ProjectChildRow;
   channelHandlers: ProjectChannelHandlers;
   onOpenAgents: () => void;
   onOpenRepo: (repo: CodeRepo) => void;
   onOpenWorkflow?: (workflow: Workflow) => void;
+  activeShellSessionId?: string;
+  onOpenShell?: (sessionId: string) => void;
+  onRequestRenameShell?: (session: ShellSessionInfo) => void;
+  onRequestCloseShell?: (session: ShellSessionInfo) => void;
+  onObserveShell?: (terminal: RemoteTerminal) => void;
 }) {
   switch (row.type) {
     case "channel":
@@ -95,5 +108,36 @@ export function ProjectChildRowItem({
           </SidebarMenuButton>
         </SidebarMenuItem>
       );
+    case "shell": {
+      if (!onOpenShell || !onRequestRenameShell || !onRequestCloseShell) {
+        return null;
+      }
+      return (
+        <ShellSessionRow
+          session={row.session}
+          isActive={row.session.sessionId === activeShellSessionId}
+          onOpen={onOpenShell}
+          onRequestRename={onRequestRenameShell}
+          onRequestClose={onRequestCloseShell}
+        />
+      );
+    }
+    case "remote-shell": {
+      if (!onObserveShell) return null;
+      const { terminal } = row;
+      return (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            onClick={() => onObserveShell(terminal)}
+            data-testid="project-remote-shell-row"
+            title="A member's shared terminal — open read-only"
+          >
+            <Terminal className="size-4 shrink-0" />
+            <span className="truncate">{terminal.title}</span>
+            <Eye className="ml-auto size-3.5 shrink-0 text-sidebar-foreground/50" />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      );
+    }
   }
 }

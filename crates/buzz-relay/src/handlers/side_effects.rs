@@ -11,7 +11,7 @@ use buzz_core::kind::{
     KIND_GIT_REPO_ANNOUNCEMENT, KIND_IA_ARCHIVED, KIND_IA_ARCHIVED_LIST, KIND_IA_UNARCHIVED,
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_NIP29_GROUP_ADMINS,
     KIND_NIP29_GROUP_MEMBERS, KIND_NIP29_GROUP_METADATA, KIND_NIP43_MEMBERSHIP_LIST, KIND_PROJECT,
-    KIND_REACTION, KIND_THREAD_SUMMARY,
+    KIND_REACTION, KIND_SHELL_SESSION, KIND_THREAD_SUMMARY,
 };
 use buzz_core::StoredEvent;
 use buzz_db::channel::{MemberRecord, MemberRole};
@@ -38,6 +38,7 @@ pub fn is_admin_kind(kind: u32) -> bool {
 /// duplicates without storing the event at all.
 pub fn is_side_effect_kind(kind: u32) -> bool {
     matches!(kind, 0 | 5 | 9000..=9022 | KIND_GIT_REPO_ANNOUNCEMENT | KIND_AGENT_PROFILE | KIND_PROJECT | 41001..=41003 | 40099)
+        || kind == buzz_core::kind::KIND_SHELL_SESSION
 }
 
 async fn evict_live_channel_subscriptions(
@@ -228,6 +229,12 @@ pub async fn handle_side_effects(
         // re-project the relay-signed 39010 roster head.
         buzz_core::kind::KIND_PROJECT_PUT_MEMBER | buzz_core::kind::KIND_PROJECT_REMOVE_MEMBER => {
             handle_project_member_op(tenant, kind, event, state).await
+        }
+        // NIP-ST: project the announce head's roster + status so the
+        // ephemeral input/watch gates resolve membership from a row, not
+        // from re-parsing the stored head per keystroke.
+        buzz_core::kind::KIND_SHELL_SESSION => {
+            handle_shell_session_acl_projection(tenant, event, state).await
         }
         // kind:7 (reaction) handled inline in ingest_event() before storage.
         _ => Ok(()),
@@ -2300,6 +2307,47 @@ async fn handle_project_acl_projection(
     Ok(())
 }
 
+/// Project a kind:30623 shared-terminal announce head into
+/// `shell_session_acl` (+ members): status, project coordinate, and the
+/// role-tagged roster. Stale replays are ignored by the LWW guard; the
+/// roster cache is flushed so revocations land immediately.
+async fn handle_shell_session_acl_projection(
+    tenant: &TenantContext,
+    event: &Event,
+    state: &Arc<AppState>,
+) -> anyhow::Result<()> {
+    let session_id =
+        extract_tag_value(event, "d").ok_or_else(|| anyhow::anyhow!("kind:30623 missing d tag"))?;
+    let coordinate = buzz_core::kind::shell_observe_project_ref(event)
+        .ok_or_else(|| anyhow::anyhow!("kind:30623 missing a tag"))?;
+    let status = extract_tag_value(event, "status").unwrap_or_else(|| "open".to_string());
+    // Ingest validated every roster tag; unknown roles were rejected there,
+    // and the parser skips them anyway (never a silent grant).
+    let members: Vec<buzz_db::shell_session_acl::ShellMember> =
+        buzz_core::kind::shell_session_roster(event)
+            .into_iter()
+            .filter_map(|(pubkey_hex, role)| {
+                let pubkey = hex::decode(&pubkey_hex).ok()?;
+                let role = role.parse::<buzz_db::shell_session_acl::ShellRole>().ok()?;
+                Some((pubkey, role))
+            })
+            .collect();
+    state
+        .db
+        .upsert_shell_session_acl(
+            tenant.community(),
+            &event.pubkey.to_bytes(),
+            &session_id,
+            &coordinate,
+            &status,
+            &members,
+            event.created_at.as_secs() as i64,
+        )
+        .await?;
+    state.shell_roster_cache.invalidate_all();
+    Ok(())
+}
+
 /// Apply a stored NIP-MP membership op (kind 9010 put-member / 9011
 /// remove-member) to the relay-managed roster, then flush the read caches
 /// and re-project the kind:39010 roster head.
@@ -2626,6 +2674,26 @@ async fn handle_a_tag_deletion(
                     .await?;
                 if link_cleared {
                     state.invalidate_all_accessible_channels(tenant);
+                }
+            }
+            // A deleted shared-terminal announce drops its roster projection
+            // (same created_at scoping), so the 24310 watch / 24312 input gates
+            // fall back to project-only access instead of honoring invites on a
+            // session that no longer exists. The flushed cache is the roster
+            // cache — what this ACL gates — not the channel-access caches the
+            // project/repo branches above flush.
+            if k == KIND_SHELL_SESSION {
+                let roster_dropped = state
+                    .db
+                    .delete_shell_session_acl(
+                        tenant.community(),
+                        &pubkey_bytes,
+                        d_tag,
+                        event.created_at.as_secs() as i64,
+                    )
+                    .await?;
+                if roster_dropped {
+                    state.shell_roster_cache.invalidate_all();
                 }
             }
         }

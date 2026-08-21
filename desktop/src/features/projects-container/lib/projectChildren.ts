@@ -1,4 +1,6 @@
+import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import type { Channel } from "@/shared/api/types";
+import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Workflow } from "@/shared/api/workflowTypes";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { KIND_MANAGED_AGENT, KIND_PERSONA } from "@/shared/constants/kinds";
@@ -42,7 +44,9 @@ export type ProjectChildRow =
   | { type: "forum"; channel: Channel }
   | { type: "repo"; repo: CodeRepo }
   | { type: "workflow"; workflow: Workflow }
-  | { type: "agent"; agent: ProjectAgentRow };
+  | { type: "agent"; agent: ProjectAgentRow }
+  | { type: "shell"; session: ShellSessionInfo }
+  | { type: "remote-shell"; terminal: RemoteTerminal };
 
 /** Fixed display order of the flat list — mirrors the old subsection order,
  * with forums promoted next to channels. */
@@ -53,6 +57,8 @@ export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
     repo: 2,
     workflow: 3,
     agent: 4,
+    shell: 5,
+    "remote-shell": 6,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
@@ -68,6 +74,10 @@ export function projectChildKey(row: ProjectChildRow): string {
       return `workflow:${row.workflow.id}`;
     case "agent":
       return `agent:${row.agent.key}`;
+    case "shell":
+      return `shell:${row.session.sessionId}`;
+    case "remote-shell":
+      return `remote-shell:${row.terminal.ownerPubkey}:${row.terminal.sessionId}`;
   }
 }
 
@@ -82,6 +92,10 @@ export function projectChildLabel(row: ProjectChildRow): string {
       return row.workflow.name;
     case "agent":
       return row.agent.label;
+    case "shell":
+      return row.session.title;
+    case "remote-shell":
+      return row.terminal.title;
   }
 }
 
@@ -113,6 +127,8 @@ export function buildProjectChildren(input: {
   repos: CodeRepo[];
   workflows: Workflow[];
   agents: ProjectAgentRow[];
+  shellSessions: ShellSessionInfo[];
+  remoteTerminals?: RemoteTerminal[];
 }): ProjectChildRow[] {
   const rows: ProjectChildRow[] = [
     ...input.streamChannels.map(
@@ -126,6 +142,12 @@ export function buildProjectChildren(input: {
       (workflow): ProjectChildRow => ({ type: "workflow", workflow }),
     ),
     ...input.agents.map((agent): ProjectChildRow => ({ type: "agent", agent })),
+    ...input.shellSessions.map(
+      (session): ProjectChildRow => ({ type: "shell", session }),
+    ),
+    ...(input.remoteTerminals ?? []).map(
+      (terminal): ProjectChildRow => ({ type: "remote-shell", terminal }),
+    ),
   ];
   return rows.sort(compareProjectChildren);
 }

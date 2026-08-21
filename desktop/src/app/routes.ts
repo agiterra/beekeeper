@@ -5,6 +5,13 @@ export const routes = rootRoute("root.tsx", [
   route("/agents", "agents.tsx"),
   route("/pulse", "pulse.tsx"),
   route("/reminders", "reminders.tsx"),
+  route("/shell/$sessionId", "shell.$sessionId.tsx"),
+  // Nested (not flat) on purpose: the route generator silently drops flat
+  // multi-segment param paths from virtual configs, so a regen by any dev
+  // server would erase this route in its flat form.
+  route("/observe/$owner", [
+    route("/$sessionId", "observe.$owner.$sessionId.tsx"),
+  ]),
   route("/settings", "settings.tsx"),
   route("/workflows", "workflows.tsx"),
   route("/workflows/$workflowId", "workflows.$workflowId.tsx"),

@@ -1,8 +1,11 @@
 export { TerminalBootstrap } from "@/features/terminal/TerminalBootstrap";
 import * as React from "react";
 
-import type { Channel } from "@/shared/api/types";
+import { ShellAccessRequestDialog } from "@/features/builtin-shell/ui/ShellAccessRequestDialog";
+import { ShellBroadcastPump } from "@/features/builtin-shell/ui/ShellBroadcastPump";
 import type { CreateChannelInput } from "@/features/sidebar/lib/useCreateChannelForm";
+import type { Channel } from "@/shared/api/types";
+import { FeatureGate } from "@/shared/features";
 import { useDeferredModalOpen } from "@/shared/ui/deferredModalOpen";
 
 const ChannelBrowserDialog = React.lazy(async () => {
@@ -121,6 +124,14 @@ export function AppShellOverlays({
           />
         </React.Suspense>
       ) : null}
+
+      {/* App-wide: an agent access request must reach the owner wherever
+          they are, not only on the shell screen; the broadcast pump streams
+          shared terminals to project members whichever screen is open. */}
+      <FeatureGate feature="builtin-shell">
+        <ShellAccessRequestDialog />
+        <ShellBroadcastPump />
+      </FeatureGate>
     </>
   );
 }

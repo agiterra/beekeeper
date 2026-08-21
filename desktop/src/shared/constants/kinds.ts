@@ -75,6 +75,19 @@ export const KIND_GIT_STATUS_DRAFT = 1633;
 // NIP-DV: relay-signed per-viewer DM visibility snapshot (d=viewer pubkey,
 // h-tags = currently-hidden DM channel ids).
 export const KIND_DM_VISIBILITY = 30622;
+// NIP-ST: shared terminals. 30623 announces an open built-in-shell session
+// into its project (addressable, d=session id, a=project coordinate);
+// 24310 is the ephemeral observer→owner watch/keepalive/resync; 24311 is the
+// ephemeral owner→observers frame stream (base64 terminal bytes); 24312 is
+// the ephemeral collaborator→owner input stream (base64 keystrokes),
+// relay-gated to the 30623 roster's collaborators and re-verified by the
+// owner host before any byte reaches the PTY.
+// Keep in sync: crates/buzz-core/src/kind.rs and mobile
+// lib/shared/relay/nostr_models.dart.
+export const KIND_SHELL_SESSION = 30623;
+export const KIND_SHELL_WATCH = 24310;
+export const KIND_SHELL_FRAME = 24311;
+export const KIND_SHELL_INPUT = 24312;
 
 // NIP-MP membership ops: 9010 puts members (add or change role) on a project
 // roster, 9011 removes them; both carry the project coordinate in an `a` tag

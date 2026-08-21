@@ -108,7 +108,11 @@ buzz_sdk_pkg = { package = "buzz-sdk", path = "../../crates/buzz-sdk" }
 buzz_agent_pkg = { package = "buzz-agent", path = "../../crates/buzz-agent" }
 buzz_voice_pkg = { package = "buzz-voice", path = "../../crates/buzz-voice" }
 buzz_terminal = { package = "buzz-terminal", path = "crates/buzz-terminal" }
+buzz-shell-host = { path = "../../crates/buzz-shell-host" }
 portable-pty = "0.9"
+# Built-in shell sessions keep a rendered mirror of each PTY byte stream so
+# agents can read a clean screen instead of raw ANSI scrollback.
+vt100 = "0.15"
 iroh = { version = "1.0.2", optional = true }
 mesh-llm-sdk = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.75.1", package = "mesh-llm-sdk", default-features = false, features = ["client", "serving"], optional = true }
 mesh-llm-host-runtime = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.75.1", package = "mesh-llm-host-runtime", default-features = false, features = ["dynamic-native-runtime"], optional = true }
