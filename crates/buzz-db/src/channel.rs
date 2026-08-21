@@ -1538,8 +1538,21 @@ mod tests {
 
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1 -- local test-only credentials
 
+    /// Resolve the test database, honouring `BUZZ_TEST_DATABASE_URL` before
+    /// falling back to the stock dev URL.
+    ///
+    /// The literal is not a usable default everywhere: `localhost` resolves to
+    /// `::1` first, so a second Postgres listening on the IPv6 loopback
+    /// silently shadows the dev instance on `127.0.0.1` and every test in this
+    /// module fails to authenticate against a database it never meant to
+    /// reach. The env var is the escape hatch, and it is what the rest of the
+    /// crate already reads.
+    fn test_db_url() -> String {
+        std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
+    }
+
     async fn setup_pool() -> PgPool {
-        PgPool::connect(TEST_DB_URL)
+        PgPool::connect(&test_db_url())
             .await
             .expect("connect to test DB")
     }
@@ -1907,9 +1920,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn accessible_channel_ids_are_not_truncated_at_one_thousand() {
-        let database_url =
-            std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string());
-        let pool = PgPool::connect(&database_url)
+        let pool = PgPool::connect(&test_db_url())
             .await
             .expect("connect to test DB");
         let community_id = make_test_community(&pool).await;
@@ -1946,9 +1957,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Postgres"]
     async fn get_members_returns_full_roster_beyond_1000() {
-        let database_url =
-            std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string());
-        let pool = PgPool::connect(&database_url)
+        let pool = PgPool::connect(&test_db_url())
             .await
             .expect("connect to test DB");
         let community_id = make_test_community(&pool).await;

@@ -998,8 +998,11 @@ mod tests {
         let owner = test_pubkey();
         let transferee = test_pubkey();
 
-        // Give the transferee 3 communities (the max).
-        for _ in 0..3 {
+        // Fill the transferee to the effective cap. Read the limit rather than
+        // restating it: the literal 3 here silently stopped matching when the
+        // constant moved to 5, so the test filled the transferee only part-way
+        // and the transfer it expected to refuse legitimately succeeded.
+        for _ in 0..max_communities_per_owner() {
             let c = make_test_community(&pool).await;
             bootstrap_owner(&pool, c, &transferee)
                 .await
