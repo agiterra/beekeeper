@@ -12,6 +12,7 @@ import {
   KIND_CODING_SESSION_CLOSURE,
   KIND_CODING_SESSION_GENESIS,
   KIND_CODING_SESSION_GOAL,
+  KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_METADATA,
@@ -96,6 +97,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       command: KIND_CODING_SESSION_COMMAND,
       closure: KIND_CODING_SESSION_CLOSURE,
       lifecycleCommand: KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+      lease: KIND_CODING_SESSION_LEASE,
       providerCatalog: KIND_CODING_SESSION_PROVIDER_CATALOG,
       metadata: KIND_CODING_SESSION_METADATA,
       lifecycleReceipt: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
@@ -109,6 +111,7 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       command: 44220,
       closure: 44230,
       lifecycleCommand: 44221,
+      lease: 24223,
       providerCatalog: 44222,
       metadata: 44223,
       lifecycleReceipt: 44224,
@@ -119,7 +122,12 @@ test("codingSessionKinds_matchBuzzCoreValues", () => {
       name: 44229,
     },
   );
-  assert.equal(CODING_SESSION_EVENT_KINDS.length, 11);
+  assert.equal(CODING_SESSION_EVENT_KINDS.length, 12);
+  assert.equal(
+    KIND_CODING_SESSION_LEASE >= 20000 && KIND_CODING_SESSION_LEASE <= 29999,
+    true,
+    "the session lease must remain in Nostr's ephemeral kind range",
+  );
 });
 
 test("codingSessionKinds_neverEnterTheChatTimeline", () => {

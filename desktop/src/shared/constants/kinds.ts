@@ -78,7 +78,8 @@ export const KIND_DM_VISIBILITY = 30622;
 // ── Coding sessions (44220–44230) ────────────────────────────────────────────
 //
 // Provider-neutral kinds for driving a coding agent against a working
-// directory. All eleven are channel-scoped (`h` tag) and never enter
+// directory. All twelve, including the ephemeral 24223 lease, are
+// channel-scoped (`h` tag) and never enter
 // CHANNEL_TIMELINE_CONTENT_KINDS: a session's turns and transcript belong to
 // its own workspace surface, not to the chat timeline. Names mirror
 // crates/buzz-core/src/kind.rs — keep them in sync.
@@ -93,6 +94,9 @@ export const KIND_CODING_SESSION_LIFECYCLE_COMMAND = 44221;
 // separately from chat so message volume cannot age discovery out of a bounded
 // history window.
 export const KIND_CODING_SESSION_PROVIDER_CATALOG = 44222;
+// NIP-CSL: ephemeral provider-signed liveness lease for one exact generation.
+// Stored only in Redis with TTL; cold REQ reads return the current snapshot.
+export const KIND_CODING_SESSION_LEASE = 24223;
 // NIP-CSL: provider-authored immutable facts about one exact generation
 // (`csm1-1`).
 export const KIND_CODING_SESSION_METADATA = 44223;
@@ -123,6 +127,7 @@ export const KIND_CODING_SESSION_CLOSURE = 44230;
 // Every coding-session kind, in one place, so the regression guard keeping them
 // out of the chat timeline cannot silently miss a newly added member.
 export const CODING_SESSION_EVENT_KINDS = [
+  KIND_CODING_SESSION_LEASE,
   KIND_CODING_SESSION_COMMAND,
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_PROVIDER_CATALOG,
