@@ -754,13 +754,15 @@ pub struct AppState {
     /// Per-(channel, pubkey) coding-session steer standing (NIP-CSAT):
     /// whether the pubkey founded a genesis-rooted session in the channel or
     /// holds a live operator grant on one. Backs the relay-grain 44220 gate.
-    /// Same TTL/flush discipline as [`Self::membership_cache`]; flushed on
+    /// Same TTL/flush discipline as [`Self::project_gate_cache`]; flushed on
     /// every accepted 44228 transition.
     #[allow(clippy::type_complexity)]
     pub session_steer_cache: Arc<moka::sync::Cache<(CommunityId, Uuid, Vec<u8>), bool>>,
     /// Per-(channel, pubkey) coding-session grant presence (any role):
     /// whether the pubkey holds a live operator or viewer grant in the
-    /// channel. Same TTL/flush discipline as [`Self::session_steer_cache`].
+    /// channel — the positive read grant admitting external session
+    /// invitees to the transport channel at fan-out. Same TTL/flush
+    /// discipline as [`Self::session_steer_cache`].
     #[allow(clippy::type_complexity)]
     pub session_grant_cache: Arc<moka::sync::Cache<(CommunityId, Uuid, Vec<u8>), bool>>,
 
