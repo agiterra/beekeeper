@@ -25,7 +25,7 @@ class _ConnectionSection extends ConsumerWidget {
           AppListRow(
             icon: LucideIcons.scanQrCode,
             title: 'Send identity to desktop',
-            subtitle: 'Scan a recovery code shown by Buzz Desktop',
+            subtitle: 'Scan a recovery code shown by Bee Keeper Desktop',
             trailing: const _RowChevron(),
             onTap: () async {
               final pairing = ref.read(pairingProvider.notifier);

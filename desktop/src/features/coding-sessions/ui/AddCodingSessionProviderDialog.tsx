@@ -84,8 +84,8 @@ export function AddCodingSessionProviderDialog({
             The new execution joins this same session and this same channel. It
             keeps its own signed transcript — nothing is merged. The new agent
             does not automatically read this transcript — it starts fresh unless
-            Buzz can prepare verified session history for it, and its transcript
-            will say which happened.
+            Bee Keeper can prepare verified session history for it, and its
+            transcript will say which happened.
           </DialogDescription>
         </DialogHeader>
         {open ? (

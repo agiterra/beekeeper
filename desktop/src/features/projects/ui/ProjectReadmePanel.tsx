@@ -163,7 +163,7 @@ export function ReadmePanel({
     const unavailableContent = {
       authentication: {
         description:
-          "Buzz could not authenticate with this repository. Check your access and try again.",
+          "Bee Keeper could not authenticate with this repository. Check your access and try again.",
         icon: LockKeyhole,
         title: "Repository access failed",
       },
@@ -199,7 +199,7 @@ export function ReadmePanel({
       },
       unknown: {
         description:
-          "Buzz could not load this repository. Try again or contact the project owner.",
+          "Bee Keeper could not load this repository. Try again or contact the project owner.",
         icon: CircleAlert,
         title: "Repository unavailable",
       },

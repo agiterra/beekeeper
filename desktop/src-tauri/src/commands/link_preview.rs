@@ -217,7 +217,7 @@ async fn send_pinned_request(url: &Url, accept: &str) -> Result<reqwest::Respons
     let request = client
         .get(url.as_str())
         .header(ACCEPT, accept)
-        .header(USER_AGENT, "Buzz Desktop link preview");
+        .header(USER_AGENT, "Bee Keeper Desktop link preview");
 
     tokio::time::timeout(PREVIEW_FETCH_TIMEOUT, request.send())
         .await

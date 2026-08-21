@@ -331,9 +331,9 @@ export function EncryptedBackupCreator({
 
           {!state.downloadPending && !state.savedPassword ? (
             <p className="text-xs leading-5 text-muted-foreground">
-              Keep the file private and save its password somewhere safe — Buzz
-              cannot reset it. Once ready, the backup remains available to
-              download for 5 minutes.
+              Keep the file private and save its password somewhere safe — Bee
+              Keeper cannot reset it. Once ready, the backup remains available
+              to download for 5 minutes.
             </p>
           ) : null}
 

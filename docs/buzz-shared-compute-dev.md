@@ -2,7 +2,7 @@
 
 This runbook verifies the actual desktop path used by the built-in **Fizz** agent:
 
-`Buzz Desktop → buzz-acp → buzz-agent → MeshLLM SDK → local/remote compute`
+`Bee Keeper Desktop → buzz-acp → buzz-agent → MeshLLM SDK → local/remote compute`
 
 It does not use a substitute agent harness.
 

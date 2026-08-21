@@ -21,7 +21,8 @@ import { writeTextToClipboard } from "@/shared/lib/clipboard";
 const COPY_SUCCESS_MESSAGE =
   "Signed response copied. Paste it into the Buzz admin console.";
 const PREVIEW_COPY_SUCCESS_MESSAGE = "Preview response copied.";
-const COPY_FAILURE_MESSAGE = "Buzz couldn't access the clipboard. Try again.";
+const COPY_FAILURE_MESSAGE =
+  "Bee Keeper couldn't access the clipboard. Try again.";
 const EXPIRED_LINK_MESSAGE =
   "This binding link has expired. Request a new one from the requesting app.";
 const VERIFICATION_CODE_LENGTH = 6;
@@ -675,7 +676,7 @@ export function NostrBindConsentDialog() {
                     id="nostr-bind-description"
                   >
                     {payload.returnMode === "browser_fragment_v1"
-                      ? "Buzz opened your browser to finish verification."
+                      ? "Bee Keeper opened your browser to finish verification."
                       : "Copy the response below, then paste it into the Buzz website to finish verification."}
                   </DialogPrimitive.Description>
 

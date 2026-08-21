@@ -9,7 +9,7 @@ final _bareLinkPattern = RegExp(
 final _trailingPunctuationPattern = RegExp(r'[.,!?:;]+$');
 final _backtickRunPattern = RegExp(r'`+');
 
-/// Converts supported Buzz and HTTP(S) autolinks and bare links into Markdown
+/// Converts supported Bee Keeper and HTTP(S) autolinks and bare links into Markdown
 /// links while leaving inline and fenced code untouched. Punctuation peeling
 /// is limited to Buzz URLs so existing HTTP(S) destinations stay unchanged.
 String normalizeBareLinks(String content) {

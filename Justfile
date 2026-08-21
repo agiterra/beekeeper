@@ -909,7 +909,7 @@ _release-pr lane version:
             CHANGELOG="CHANGELOG.md"
             ADD_FILES=(desktop/package.json desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock pnpm-lock.yaml CHANGELOG.md)
             LOG_PATHS=(desktop/ crates/buzz-core/ crates/buzz-persona/ crates/buzz-sdk/ crates/buzz-agent/)
-            ARTIFACT="Buzz Desktop" ;;
+            ARTIFACT="Bee Keeper Desktop" ;;
         relay)
             BRANCH_PREFIX="relay-release"
             TAG_FETCH='relay-v*'

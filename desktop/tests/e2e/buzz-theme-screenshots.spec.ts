@@ -1175,7 +1175,7 @@ test("glass background is unavailable on Linux", async ({ page }) => {
     });
     Object.defineProperty(navigator, "userAgent", {
       configurable: true,
-      get: () => "Buzz Desktop Linux",
+      get: () => "Bee Keeper Desktop Linux",
     });
   }, GLASS_BACKGROUND_STORAGE_KEY);
   await installMockBridge(page);

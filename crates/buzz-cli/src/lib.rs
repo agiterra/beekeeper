@@ -293,7 +293,7 @@ impl RespondToArg {
 
 #[derive(Subcommand)]
 pub enum AgentsCmd {
-    /// Open a prefilled create-agent form in the owner's Buzz Desktop
+    /// Open a prefilled create-agent form in the owner's Bee Keeper Desktop
     DraftCreate {
         /// Current channel UUID; the new agent is added here after save
         #[arg(long)]
@@ -305,7 +305,7 @@ pub enum AgentsCmd {
         #[arg(long)]
         system_prompt: String,
     },
-    /// Open a prefilled edit-agent form in the owner's Buzz Desktop
+    /// Open a prefilled edit-agent form in the owner's Bee Keeper Desktop
     DraftUpdate {
         /// Current channel UUID
         #[arg(long)]

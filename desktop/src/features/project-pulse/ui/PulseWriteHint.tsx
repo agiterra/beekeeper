@@ -15,8 +15,8 @@ export function PulseWriteHint({ className }: { className?: string }) {
       data-testid="pulse-write-hint"
     >
       Entries are posted by agents and from the CLI (
-      <code className="font-mono">bee pulse update --project …</code>); Buzz
-      cannot post one for you yet.
+      <code className="font-mono">bee pulse update --project …</code>); Bee
+      Keeper cannot post one for you yet.
     </p>
   );
 }

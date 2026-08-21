@@ -26,7 +26,7 @@ cat > "$tmp/.release/desktop-candidate.json" <<JSON
 {"schema":1,"version":"1.0.0","base_sha":"$prior_base","previous_tag":null,"tag":"desktop-v1.0.0","commit_count":1}
 JSON
 git -C "$tmp" add .
-git -C "$tmp" commit -qm 'chore(release): release Buzz Desktop version 1.0.0'
+git -C "$tmp" commit -qm 'chore(release): release Bee Keeper Desktop version 1.0.0'
 prior_candidate=$(git -C "$tmp" rev-parse HEAD)
 git -C "$tmp" -c tag.gpgSign=false tag desktop-v1.0.0
 
@@ -64,7 +64,7 @@ for path in ('desktop/package.json', 'desktop/src-tauri/tauri.conf.json'):
 open('desktop/src-tauri/Cargo.toml','w').write('[package]\nversion = "1.0.1"\n')
 PY
   git add .
-  git -c user.name=Wes -c user.email=wesbillman@users.noreply.github.com commit -q -s -m 'chore(release): release Buzz Desktop version 1.0.1' -m 'Co-authored-by: Test Automation <test@example.com>'
+  git -c user.name=Wes -c user.email=wesbillman@users.noreply.github.com commit -q -s -m 'chore(release): release Bee Keeper Desktop version 1.0.1' -m 'Co-authored-by: Test Automation <test@example.com>'
   PATH="$mock_bin:$PATH" scripts/desktop_release.py validate --version 1.0.1 --repo block/buzz
   grep -Fq "$unrelated_before" CHANGELOG.md
   grep -Fq "$unrelated_after" CHANGELOG.md

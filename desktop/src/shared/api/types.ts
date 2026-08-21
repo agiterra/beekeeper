@@ -628,7 +628,7 @@ export type AgentPersona = {
   systemPrompt: string;
   /** Preferred ACP runtime ID (e.g. "goose", "claude"). */
   runtime: string | null;
-  /** Opaque, harness-specific model identifier string. Buzz stores and passes through without interpretation. */
+  /** Opaque, harness-specific model identifier string. Bee Keeper stores and passes through without interpretation. */
   model: string | null;
   /** LLM inference provider (e.g. "databricks", "anthropic"). Injected as the runtime's provider env var at spawn time. */
   provider: string | null;

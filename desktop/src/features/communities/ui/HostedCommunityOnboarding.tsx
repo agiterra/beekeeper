@@ -506,7 +506,7 @@ export function HostedCommunityOnboarding({
               {/* Quiet breadcrumb: Buzz itself is open source; this hosted
                     relay is the one account-backed piece of the flow. */}
               <p className="mt-6 w-full border-t border-foreground/10 pt-4 text-xs leading-5 text-foreground/45">
-                Buzz is open source. Builderlab hosts the relay for this
+                Bee Keeper is open source. Builderlab hosts the relay for this
                 account.
               </p>
             </>

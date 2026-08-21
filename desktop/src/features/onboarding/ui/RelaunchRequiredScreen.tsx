@@ -4,8 +4,8 @@ export function RelaunchRequiredScreen() {
   return (
     <RecoveryScreen
       testId="relaunch-required"
-      title="Restart Buzz to finish recovery"
-      body="Your identity was updated. Buzz needs to restart so syncing and agents run under it."
+      title="Restart Bee Keeper to finish recovery"
+      body="Your identity was updated. Bee Keeper needs to restart so syncing and agents run under it."
     />
   );
 }
