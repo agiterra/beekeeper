@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy latest CI-green agiterra/beekeeper main build to the hive instance
+Documentation=file:/usr/local/sbin/beekeeper-autodeploy
+
+[Service]
+Type=oneshot
+User=debian
+ExecStart=/usr/local/sbin/beekeeper-autodeploy
+# a cold relay image build takes ~15 min
+TimeoutStartSec=3600

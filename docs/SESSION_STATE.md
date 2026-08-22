@@ -50,7 +50,7 @@ partial because several session channels were inaccessible._
 | | |
 | --- | --- |
 | Deployed (Bee Keeper) | `beekeeper-relay:d52d38c89` on **hive.agiterra.org**, hand-built and hand-deployed — there is no autodeploy for hive yet. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; its owner key was generated in-container and imported into the desktop keychain. Proven live 2026-08-21 night: the rebuilt app connected and authenticated as owner. |
-| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. Autodeploy now tracks it, pinned to `repo_id = 1 and branch = 'main'`; **hive still has no deployer at all**. |
+| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. Autodeploy now tracks it, pinned to `repo_id = 1 and branch = 'main'`. Hive's deployer is written and reviewable at `deploy/autodeploy/` but **not yet installed** — installing needs root on agincus, and its first tick will be a real ~15 min build, not a no-op, because hive is many commits behind. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
@@ -905,6 +905,20 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   `desktop/src/features/agent-progress/lib/agentProgressSources.ts` on
   `wip/agent-sidebar` (fixed by `9cf627a0a`). Use `"\u0000"` in source, or a
   printable delimiter. Worth a lint rule.
+- **Clearing a desktop install means four locations, not one.** On macOS a
+  Tauri app keeps `localStorage` in `~/Library/WebKit/<bundle-id>`, *not* in
+  Application Support — so clearing Application Support alone leaves the
+  community list (`buzz-communities`, `communityStorage.ts`) and every
+  onboarding flag intact, and the app comes back up exactly as it was.
+  `scripts/reset-desktop-dev-state.sh:37-42` already encodes the full list —
+  Application Support, Caches, WebKit, Preferences plist — and is the canonical
+  reference even when resetting a *prod* bundle the script itself does not
+  target. Two more traps in the same job: `security delete-generic-password`
+  removes one entry per call, so loop it; and a running app or a detached
+  sidecar will recreate directories behind you (two `buzz-shell-host`
+  processes, alive since 13 and 17 August, kept recreating
+  `xyz.block.buzz.app/shell-sessions` because the old path is baked into their
+  argv — they outlive the app by design).
 - **`buzz-autodeploy` picks a pipeline by branch alone — no `repo_id`.** Its
   query is `where branch = 'integrated' and event = 'push' order by id desc
   limit 1`. Woodpecker now serves **two** repos (1 = `agiterra/buzz`,
