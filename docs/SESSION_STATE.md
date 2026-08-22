@@ -15,11 +15,27 @@ disagrees with an older document about *current state*, this one wins.
 > relay at `lightyear.agiterra.org`; Bee Keeper gets a new relay at
 > `hive.agiterra.org`. **All data on the current relay is being abandoned**, so
 > every deployment fact below this banner describes a relay that is going away.
-> Two host-side items are not repo changes and are still owed: the forge mirror
-> and `buzz-autodeploy` both still watch `agiterra/buzz` and the branch name
-> `integrated`.
+>
+> **Host side, as of 2026-08-22.** The forge mirror and Woodpecker are done:
+> `/srv/git/beekeeper.git` is a true mirror (`+refs/*:refs/*`, read-only deploy
+> key `forge mirror (agincus)`) and joined `git-mirror.service` automatically
+> because the updater globs `/srv/git/*.git`; `agiterra/beekeeper` is Woodpecker
+> **repo id 2**, active, branch `main`, Trusted→Volumes on (the gate's
+> `/srv/ci-cache` mounts require it, and new repos default it off). Still owed:
+> `buzz-autodeploy` remains hardcoded to `agiterra/buzz` / `integrated` /
+> `/opt/buzz` / the `buzz` instance, so **hive has no automated deploy** and
+> runs a hand-built image. GitHub Actions are **disabled** on
+> `agiterra/beekeeper` — eleven of the eighteen workflows lack the
+> `github.repository == 'block/buzz'` guard and failed on every push. The
+> workflow files stay in the tree on purpose: deleting them would conflict
+> against upstream on every future merge.
 
-_Last updated: 2026-08-21, preparing the lease-backed **Agent Progress**
+_Last updated: 2026-08-22 — the rebrand landed on `main` (`d90c24d14`, local
+`just ci` green), hive serves Bee Keeper with its own owner key, and the forge
+mirror plus Woodpecker registration are live. Lightyear has **not** been
+rebuilt as vanilla yet._
+
+_Previously: 2026-08-21, preparing the lease-backed **Agent Progress**
 surface for the next build (§2 item 36). `build/2026-08-21.1` is no longer a
 candidate: Woodpecker #109 passed at `04a087e4a`, and the first live digest
 proved the deployed lease end to end — one provider-reachable session whose
@@ -32,7 +48,8 @@ partial because several session channels were inaccessible._
 
 | | |
 | --- | --- |
-| Deployed | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
+| Deployed (Bee Keeper) | `beekeeper-relay:d52d38c89` on **hive.agiterra.org**, hand-built and hand-deployed — there is no autodeploy for hive yet. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; its owner key was generated in-container and imported into the desktop keychain. Proven live 2026-08-21 night: the rebuilt app connected and authenticated as owner. |
+| Deployed (going away) | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
 | Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
@@ -886,6 +903,27 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   `desktop/src/features/agent-progress/lib/agentProgressSources.ts` on
   `wip/agent-sidebar` (fixed by `9cf627a0a`). Use `"\u0000"` in source, or a
   printable delimiter. Worth a lint rule.
+- **`buzz-autodeploy` picks a pipeline by branch alone — no `repo_id`.** Its
+  query is `where branch = 'integrated' and event = 'push' order by id desc
+  limit 1`. Woodpecker now serves **two** repos (1 = `agiterra/buzz`,
+  2 = `agiterra/beekeeper`), and beekeeper's branch is `main`. Today that is
+  safe only because the watched branch names differ. The moment a deployer
+  watches `main` — which hive's must — it will match the vanilla repo's `main`
+  pipelines too and can deploy **stock upstream Buzz onto a Bee Keeper relay**,
+  or the reverse. Pin `repo_id` in both deployers before wiring hive up.
+- **A freshly-added Woodpecker repo has every Trusted flag off**, including
+  Volumes. The gate mounts host caches from `/srv/ci-cache`, so without it the
+  first run fails on the volume config and reads like a broken pipeline rather
+  than a missing admin toggle. Only a server admin can set it.
+- **Upstream `block/buzz` ships a failing test that this fork fixes.**
+  `git-sign-nostr`'s `test_parse_envelope_rejects_invalid_oa_pubkey` asserts
+  `parse_envelope` rejects an `oa[0]` that is hex-shaped but not a curve point;
+  on the pristine tree it fails (`assertion failed: result.is_err()`), because
+  nostr's `PublicKey` parses lazily and never checks. Our `b4e019bd9` adds the
+  eight-line `XOnlyPublicKey::from_slice` guard. Verified both ways on
+  2026-08-22: red on vanilla in Woodpecker #112, green on beekeeper `main`.
+  This is the best upstream PR candidate we have — one self-contained commit
+  that turns a test they already wrote green.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 
