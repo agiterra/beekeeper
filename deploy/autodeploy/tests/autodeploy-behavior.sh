@@ -29,8 +29,10 @@ cat >"$tmp/bin/incus" <<'STUB'
 echo "$*" >> "$INCUS_LOG"
 args="$*"
 case "$args" in
+  # ── Woodpecker ────────────────────────────────────────────────────────────
+  *"count(*) from pipelines"*)        echo "${STUB_REPO_ROWS-9}" ;;
   *"docker cp woodpecker-server-1"*)  echo "$STUB_PIPELINE_ROW" ;;
-  *"grep -oE '^BUZZ_IMAGE="*)         echo "$STUB_CURRENT" ;;
+  # ── mirror ────────────────────────────────────────────────────────────────
   *"rev-parse --git-dir"*)
       if [[ "${STUB_MIRROR_READABLE:-1}" == "1" ]]; then
         echo "."
@@ -39,8 +41,24 @@ case "$args" in
         exit 128
       fi ;;
   *"cat-file -e"*)                    exit "${STUB_COMMIT_PRESENT:-0}" ;;
-  *"test -e"*)                        exit 1 ;;   # no failure marker
-  *)                                  exit 0 ;;
+  *"git-mirror.service"*)             : >"$STUB_DIR/mirror-triggered" ;;
+  # ── instance ──────────────────────────────────────────────────────────────
+  *"cat "*"/compose/.env"*)
+      # Model the file, not the extraction: the script greps locally so it can
+      # tell "unreadable instance" from "no BUZZ_IMAGE line".
+      if [[ "${STUB_ENV_READABLE-1}" == "1" ]]; then
+        echo "BUZZ_IMAGE=${STUB_IMAGE_NAME-test-relay}:${STUB_CURRENT-}"
+      else
+        exit 1
+      fi ;;
+  *"autodeploy-failed-"*)             exit 1 ;;   # no failure marker
+  *"docker build"*)                   : >"$STUB_DIR/built" ;;
+  *"State.Health.Status"*)            echo "${STUB_HEALTH-healthy}" ;;
+  # Anything else is a deploy-path side effect (tar, pg_dump, run.sh, the
+  # retention globs). Record it so an unmodelled call is visible rather than
+  # silently succeeding — that is how the .env read drifted out from under
+  # this stub and reported "deployed is unknown" instead of failing.
+  *)                                  echo "$args" >> "$STUB_DIR/unmodelled" ;;
 esac
 STUB
 # flock is util-linux — absent on macOS. Without this stub these tests pass in
@@ -51,19 +69,25 @@ chmod +x "$tmp/bin/incus" "$tmp/bin/flock" "$tmp/bin/sleep"
 
 export PATH="$tmp/bin:$PATH"
 export INCUS_LOG="$tmp/incus.log"
+export STUB_DIR="$tmp"
+mkdir -p "$tmp/lock"
 
-# Valid configuration; individual cases override single values.
+# Valid configuration; individual cases override single values. LOCK_DIR keeps
+# the suite hermetic — without it every run drops a lock file in the real /tmp.
 base_env=(
   AUTODEPLOY_NAME=testrelay
   REPO_ID=7
+  BRANCH=main
   MIRROR=/srv/git/test.git
   INSTANCE=testinst
   BASE=/opt/test
   IMAGE_NAME=test-relay
+  LOCK_DIR="$tmp/lock"
 )
 
 run() {  # run <extra env>... -- captures stdout+stderr, never aborts the suite
   : >"$INCUS_LOG"
+  rm -f "$tmp/built" "$tmp/mirror-triggered" "$tmp/unmodelled"
   set +e
   out=$(env "${base_env[@]}" "$@" "$script" 2>&1)
   rc=$?
@@ -94,29 +118,64 @@ done
 run STUB_PIPELINE_ROW="running 1111111111111111111111111111111111111111" STUB_CURRENT=999999999
 [[ $rc -eq 0 ]]                             || fail "running pipeline should exit 0, got $rc"
 grep -q "is 'running'" <<<"$out"            || fail "should report the non-success status"
-grep -q "docker build" "$INCUS_LOG"         && fail "must not build on a non-green pipeline"
+[[ ! -e "$tmp/built" ]]                     || fail "must not build on a non-green pipeline"
 
-# ── 3. already current is a silent no-op ─────────────────────────────────────
+# ── 3. already current: no build, but it must still say what it decided ──────
+# Deliberately NOT asserting silence. A quiet tick and a deployer broken into
+# permanent silence are indistinguishable from outside, which is how the
+# safe.directory fault stayed invisible; requiring silence here would have
+# locked that in as a feature.
 run STUB_PIPELINE_ROW="success 2222222222222222222222222222222222222222" STUB_CURRENT=222222222
 [[ $rc -eq 0 ]]                             || fail "current relay should exit 0, got $rc"
-[[ -z "$out" ]]                             || fail "current relay should print nothing, got: $out"
+[[ ! -e "$tmp/built" ]]                     || fail "must not build when already current"
+grep -q "up to date" <<<"$out"              || fail "a quiet tick must still report its decision"
+grep -q "rev-parse --git-dir" "$INCUS_LOG"  || fail "the mirror must be proved readable BEFORE the up-to-date exit, or a config fault is only ever discovered on a tick that wants to deploy"
 
 # ── 4. an unreadable mirror is FATAL, not a sync delay ───────────────────────
 # The regression test for the bug that would have made the deployer useless
-# forever. Note it must NOT reach for git-mirror.service: an unreadable repo is
-# a configuration fault, and triggering a sync would paper over it.
+# forever. It must NOT reach for git-mirror.service: an unreadable repo is a
+# configuration fault, and triggering a sync would paper over it.
 run STUB_PIPELINE_ROW="success 3333333333333333333333333333333333333333" \
     STUB_CURRENT=999999999 STUB_MIRROR_READABLE=0
-[[ $rc -eq 1 ]]                                   || fail "unreadable mirror should exit 1, got $rc"
+[[ $rc -ne 0 ]]                                   || fail "unreadable mirror must not exit 0"
 grep -q "FATAL" <<<"$out"                         || fail "unreadable mirror must be FATAL"
 grep -q "configuration fault" <<<"$out"           || fail "should name it a configuration fault"
 grep -q "dubious ownership" <<<"$out"             || fail "should echo git's actual error"
-grep -q "commit not in mirror yet" <<<"$out"      && fail "must not report a config fault as a sync delay"
-grep -q "git-mirror.service" "$INCUS_LOG"         && fail "must not trigger a sync for an unreadable mirror"
+grep -q "not in mirror yet" <<<"$out"             && fail "must not report a config fault as a sync delay"
+[[ ! -e "$tmp/mirror-triggered" ]]                || fail "must not trigger a sync for an unreadable mirror"
 
-# ── 5. the query is pinned to the configured repo ────────────────────────────
-run STUB_PIPELINE_ROW="success 4444444444444444444444444444444444444444" STUB_CURRENT=999999999 STUB_COMMIT_PRESENT=0
+# ── 5. zero rows is a fault, not a quiet exit ────────────────────────────────
+# This branch used to log a benign line and exit 0, swallowing a REPO_ID that
+# names no repo and a retired BRANCH — both permanent, neither self-resolving.
+run STUB_PIPELINE_ROW="" STUB_CURRENT=999999999
+[[ $rc -ne 0 ]]                             || fail "no pipeline row must be fatal, got exit 0"
+grep -q "none on branch" <<<"$out"          || fail "should name the retired-branch case"
+run STUB_PIPELINE_ROW="" STUB_CURRENT=999999999 STUB_REPO_ROWS=0
+[[ $rc -ne 0 ]]                             || fail "no pipelines for REPO_ID must be fatal"
+grep -q "no pipelines at all" <<<"$out"     || fail "should name the wrong-repo_id case"
+
+# ── 6. an unreadable instance is not an undeployed one ───────────────────────
+# `|| true` on the .env read used to mean "nothing is deployed" even when the
+# instance was down — which leads straight to a 15-minute build.
+run STUB_PIPELINE_ROW="success 6666666666666666666666666666666666666666" STUB_ENV_READABLE=0
+[[ $rc -ne 0 ]]                             || fail "unreadable instance must be fatal"
+grep -q "unreadable relay" <<<"$out"        || fail "should refuse to treat an unreadable relay as undeployed"
+[[ ! -e "$tmp/built" ]]                     || fail "must not build when the relay state is unknown"
+
+# ── 7. the happy path completes, and prunes ──────────────────────────────────
+# The previous version of this suite never asserted an exit code here, so it
+# silently exercised the rollback branch and passed anyway.
+run STUB_PIPELINE_ROW="success 8888888888888888888888888888888888888888" STUB_CURRENT=999999999
+[[ $rc -eq 0 ]]                             || fail "happy path should exit 0, got $rc"
+[[ -e "$tmp/built" ]]                       || fail "happy path must build"
+grep -q "DEPLOYED" <<<"$out"                || fail "happy path must report DEPLOYED"
+grep -q "retention done" <<<"$out"          || fail "retention must run on the success path"
 grep -q "repo_id = 7" "$INCUS_LOG"          || fail "query must pin repo_id; log: $(head -1 "$INCUS_LOG")"
 grep -q "wp-testrelay.sqlite" "$INCUS_LOG"  || fail "scratch sqlite path must be per-target, or concurrent runs race"
+
+# ── 8. an unhealthy relay rolls back ─────────────────────────────────────────
+run STUB_PIPELINE_ROW="success 9999999999999999999999999999999999999999" STUB_CURRENT=111111111 STUB_HEALTH=unhealthy
+[[ $rc -ne 0 ]]                             || fail "an unhealthy relay must not report success"
+grep -q "ROLLING BACK" <<<"$out"            || fail "should roll back on an unhealthy relay"
 
 echo "autodeploy behavior tests passed"

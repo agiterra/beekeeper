@@ -53,14 +53,20 @@
 set -euo pipefail
 
 # ── configuration ────────────────────────────────────────────────────────────
-# Required — no defaults on purpose. A deployer that invents its own target is
-# worse than one that refuses to start.
-: "${AUTODEPLOY_NAME:=}"          # short id: log prefix, lock and scratch paths
-: "${REPO_ID:=}"                  # Woodpecker repos.id — see the note above
-: "${MIRROR:=}"                   # bare git mirror in the forge instance
-: "${INSTANCE:=}"                 # incus instance holding the relay
-: "${BASE:=}"                     # deployment root inside that instance
-: "${IMAGE_NAME:=}"               # docker image name, tagged with <short9>
+# Required, and deliberately NOT pre-declared. Writing `: "${X:=}"` here would
+# assign the empty string and permanently disarm `set -u` for exactly the six
+# variables it exists to protect — the validator below would become the only
+# thing standing between a missing config and a deployer that invents its own
+# target, and the seventh constant someone adds would be protected by nothing.
+# `require` reads them with ${!name-} instead, which distinguishes unset from
+# empty without assigning, so `set -u` stays a live backstop.
+#
+#   AUTODEPLOY_NAME  short id: log prefix, lock and scratch paths
+#   REPO_ID          Woodpecker repos.id — see the note above
+#   MIRROR           bare git mirror in the forge instance
+#   INSTANCE         incus instance holding the relay
+#   BASE             deployment root inside that instance
+#   IMAGE_NAME       docker image name, tagged with <short9>
 
 # Optional — these are genuinely the same for both relays today. Container
 # names come from `name: buzz-prod` in compose.yml, which both instances share;
@@ -81,17 +87,36 @@ set -euo pipefail
 # a syntax error, which yields an empty row, which the "no usable pipeline row"
 # branch treats as a normal quiet exit. Silence is exactly the failure mode
 # this script keeps producing, so refuse loudly instead.
-die() { echo "[${AUTODEPLOY_NAME:-autodeploy}] FATAL: $*" >&2; exit 2; }
+die() { echo "[${AUTODEPLOY_NAME-unconfigured}-autodeploy] FATAL: $*" >&2; exit 2; }
 
-for var in AUTODEPLOY_NAME REPO_ID MIRROR INSTANCE BASE IMAGE_NAME; do
-  [[ -n "${!var}" ]] || die "$var is unset or empty — check the unit's EnvironmentFile (it must not use the '-' prefix, so a missing config file fails the unit rather than running it unconfigured)"
-done
-[[ "$REPO_ID"    =~ ^[1-9][0-9]*$ ]]  || die "REPO_ID must be a positive integer, got '$REPO_ID'"
-[[ "$AUTODEPLOY_NAME" =~ ^[a-z0-9-]+$ ]] || die "AUTODEPLOY_NAME must be [a-z0-9-]+, got '$AUTODEPLOY_NAME' (it names the lock and scratch paths)"
-[[ "$MIRROR"     = /* ]]              || die "MIRROR must be an absolute path, got '$MIRROR'"
-[[ "$BASE"       = /* ]]              || die "BASE must be an absolute path, got '$BASE'"
+# ${!name-} distinguishes unset from empty without assigning, so `set -u`
+# remains a live backstop for anything this list forgets.
+#
+# Anchored patterns, not just non-emptiness: systemd skips a malformed
+# EnvironmentFile line with a journal warning and *still starts the service*,
+# so a broken config arrives here as a missing or mangled variable rather than
+# as a failed unit. A trailing `# comment` in particular becomes part of the
+# value in some systemd versions — rejecting it outright makes the question
+# moot instead of betting on the parser.
+require() {  # require NAME REGEX WHY
+  local name=$1 re=$2 why=$3 val
+  val=${!name-__UNSET__}
+  [[ $val != __UNSET__ ]] || die "$name is not set — the unit's EnvironmentFile did not supply it ($why)"
+  [[ -n $val ]]           || die "$name is set but empty ($why)"
+  [[ $val =~ $re ]]       || die "$name=$(printf '%q' "$val") does not match $re — a trailing '# comment', stray quote or leading space in an EnvironmentFile becomes part of the value ($why)"
+}
+
+require AUTODEPLOY_NAME '^[a-z][a-z0-9-]*$'      'log prefix, lock file, scratch paths'
+require REPO_ID         '^[1-9][0-9]*$'          'interpolated into SQL; empty yields "where repo_id =  and ..."'
+require BRANCH          '^[A-Za-z0-9][A-Za-z0-9._/-]*$' 'interpolated into SQL; a typo selects nothing, forever'
+require MIRROR          '^/[A-Za-z0-9._/-]+\.git$'      'bare mirror inside the forge instance'
+require INSTANCE        '^[a-z][a-z0-9-]*$'      'incus instance name'
+require BASE            '^/[A-Za-z0-9._/-]+$'    'interpolated into rm -rf and mv inside the instance'
+require IMAGE_NAME      '^[a-z0-9][a-z0-9._-]*$' 'docker tag, and an ERE in the .env grep — a metachar there silently reports nothing deployed'
+require RELAY_CONTAINER '^[A-Za-z0-9][A-Za-z0-9_.-]*$'  'health gate and image-retention exclusion'
+require PG_CONTAINER    '^[A-Za-z0-9][A-Za-z0-9_.-]*$'  'pre-deploy pg_dump'
 for var in KEEP_BACKUPS KEEP_ENV_BACKUPS KEEP_IMAGES KEEP_BUILD_TREES; do
-  [[ "${!var}" =~ ^[0-9]+$ ]] || die "$var must be a non-negative integer, got '${!var}'"
+  require "$var" '^[1-9][0-9]*$' 'a retention count of 0 would delete the artefacts a failed deploy needs for diagnosis'
 done
 
 COMPOSE=$BASE/compose
@@ -99,7 +124,11 @@ COMPOSE=$BASE/compose
 # shared path inside the forge container would have one run rm -f'ing the
 # sqlite copy the other is mid-read.
 WP_SQLITE=/tmp/wp-$AUTODEPLOY_NAME.sqlite
-LOCK=/tmp/$AUTODEPLOY_NAME-autodeploy.lock
+# LOCK_DIR is overridable so the tests stay hermetic — they would otherwise
+# leave a real lock file in the host's /tmp, and one `sudo` run would leave a
+# root-owned one that the User=debian unit then cannot open, failing every
+# subsequent tick with a redirection error.
+LOCK=${LOCK_DIR:-/run/lock}/$AUTODEPLOY_NAME-autodeploy.lock
 
 log()      { echo "[$AUTODEPLOY_NAME-autodeploy] $*"; }
 forge()    { incus exec forge -- "$@"; }
@@ -113,18 +142,68 @@ mirror_git() { forge git -c safe.directory="$MIRROR" -C "$MIRROR" "$@"; }
 exec 9>"$LOCK"
 flock -n 9 || { log "another run holds the lock; exiting"; exit 0; }
 
+# ── 0. prove the mirror is readable, on every tick ───────────────────────────
+# Deliberately ahead of the up-to-date check rather than beside the commit
+# lookup. An unreadable repo makes `cat-file -e` fail exactly as a missing
+# commit does, so this fault used to surface only on a tick that wanted to
+# deploy — and looked like a transient sync delay when it did. Up here it is a
+# first-tick failure even when nothing needs deploying, which is the whole
+# point: a quiet tick should still have proved something.
+#
+# Fatal via die(), not log(): die writes to stderr, so `journalctl -p err`
+# surfaces it. Routed through log() this went to stdout at info priority and
+# was invisible to exactly the query an operator would run.
+if ! mirror_err=$(mirror_git rev-parse --git-dir 2>&1); then
+  die "cannot read mirror $MIRROR — a configuration fault, not a sync delay. git said: ${mirror_err//$'\n'/ }"
+fi
+
 # ── 1. newest green pipeline for THIS repo ───────────────────────────────────
-row=$(forge sh -c "docker cp woodpecker-server-1:/var/lib/woodpecker/woodpecker.sqlite $WP_SQLITE >/dev/null && sqlite3 -separator ' ' $WP_SQLITE \"select status, \\\"commit\\\" from pipelines where repo_id = ${REPO_ID} and branch = '${BRANCH}' and event = 'push' order by id desc limit 1;\" && rm -f $WP_SQLITE")
+# The copy is a full Woodpecker database — CI secrets, forge OAuth tokens,
+# agent tokens. `cp && query && rm` leaves it lying in the forge container's
+# /tmp whenever the query fails, which is the same class of exposure the
+# retention rules exist to prevent. Remove it unconditionally, and create it
+# under umask 077. The SQL travels as an argument rather than interpolated, so
+# nothing here needs a fourth level of quote escaping.
+wp_query() {  # wp_query <sql>
+  forge sh -c 'umask 077
+    docker cp woodpecker-server-1:/var/lib/woodpecker/woodpecker.sqlite "$1" >/dev/null 2>&1 || exit 91
+    sqlite3 -separator " " "$1" "$2"; rc=$?
+    rm -f "$1"
+    exit $rc' _ "$WP_SQLITE" "$1"
+}
+
+row=$(wp_query "select status, \"commit\" from pipelines where repo_id = ${REPO_ID} and branch = '${BRANCH}' and event = 'push' order by id desc limit 1;") \
+  || die "could not read Woodpecker's database (rc $?) — the forge instance may be down, or sqlite3/the schema may have moved. This is not a wait."
+
 read -r status sha <<<"$row"
 
+# Zero rows is never normal for a deployer watching a live branch, so do not
+# treat it as one. This branch used to log a benign line and exit 0, which
+# quietly swallowed: a REPO_ID naming a repo that does not exist, a typo'd or
+# retired BRANCH, and a Woodpecker schema change — each of them permanent, none
+# of them ever resolving on its own. Silence is this script's recurring failure
+# mode; refuse loudly and say which of the two it is.
 if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-  log "no usable pipeline row (got: '$row'); exiting"
-  exit 0
+  n_repo=$(wp_query "select count(*) from pipelines where repo_id = ${REPO_ID};" || echo "?")
+  [[ "$n_repo" != "0" ]] || die "Woodpecker has no pipelines at all for repo_id=$REPO_ID — the id is wrong, or names a repo that has never built. Nothing will ever be selected."
+  die "repo_id=$REPO_ID has $n_repo pipelines but none on branch '$BRANCH' (event=push). The branch name is wrong or the branch is retired; this will never resolve. Raw row: '$row'"
 fi
 short=${sha:0:9}
 
-current=$(instance sh -c "grep -oE '^BUZZ_IMAGE=${IMAGE_NAME}:[0-9a-f]+' $COMPOSE/.env | cut -d: -f2" || true)
+# `|| true` here used to mean "nothing is deployed" even when the instance was
+# unreachable — the most dangerous available reading, since it leads straight
+# to "deployed is unknown — deploying" and a 15-minute build. Separate the two.
+if ! current_raw=$(instance sh -c "cat $COMPOSE/.env" 2>/dev/null); then
+  die "cannot read $COMPOSE/.env in the $INSTANCE instance — the instance is down or the path is wrong. Refusing to treat an unreadable relay as an undeployed one."
+fi
+current=$(grep -oE "^BUZZ_IMAGE=${IMAGE_NAME}:[0-9a-f]+" <<<"$current_raw" | cut -d: -f2 || true)
+
 if [[ "$current" == "$short" ]]; then
+  # Not silent. A quiet tick and a deployer broken into permanent silence look
+  # identical from the outside, which is precisely how the safe.directory fault
+  # stayed invisible. One line a tick makes them distinguishable by reading
+  # rather than by proving a negative.
+  log "repo=$REPO_ID branch=$BRANCH selected=$short($status) deployed=$current — up to date"
   exit 0
 fi
 
@@ -141,22 +220,18 @@ fi
 log "green pipeline at $short, deployed is ${current:-unknown} — deploying"
 
 # ── 2. make sure the mirror has the commit ───────────────────────────────────
-# Prove the mirror is readable BEFORE asking whether a commit is in it. An
-# unreadable repo makes `cat-file -e` exit non-zero exactly like a missing
-# commit does, so without this the deployer reports "not synced yet", exits 0,
-# and retries forever — a permanent silent no-op wearing the costume of a
-# transient wait.
-if ! err=$(mirror_git rev-parse --git-dir 2>&1); then
-  log "FATAL: cannot read mirror $MIRROR — this is a configuration fault, not a sync delay"
-  while IFS= read -r line; do log "  $line"; done <<<"$err"
-  exit 1
-fi
-
-# This doubles as a defence against a misconfigured REPO_ID: a sha selected
-# from the wrong repo will not exist in this mirror, so the deploy stops here
-# rather than building another product's tree. It degrades to a quiet exit 0
-# rather than an alarm, so it is a backstop, not the primary guard — REPO_ID
-# being right is still the thing that matters.
+# Readability was already proved above, on every tick including quiet ones.
+#
+# How much wrong-repo protection this gives: a sha selected from another repo
+# is usually absent here, so the deploy stops. But the two mirrors share
+# history — `cc8a8b0dc`, the fork point, resolves in *both* — so any commit at
+# or before the fork is present in either mirror and would sail through. That
+# is precisely the region a retired-branch selection reaches into, so treat
+# this as a backstop that narrows the window, not as a guard. REPO_ID being
+# right remains the thing that actually matters. (Checked on the host: the
+# mirrors have no `objects/info/alternates`, so the sharing is history, not a
+# shared object store — and `merge-base --is-ancestor` would not discriminate
+# any better, since shared-history commits are reachable from both branches.)
 if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
   log "commit not in mirror yet; triggering git-mirror.service"
   forge systemctl start git-mirror.service
