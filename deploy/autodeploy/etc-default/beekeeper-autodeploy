@@ -1,0 +1,17 @@
+# /etc/default/beekeeper-autodeploy — Bee Keeper, hive.agiterra.org
+#
+# Read by beekeeper-autodeploy.service via EnvironmentFile=. systemd parses
+# this itself, not a shell: no `export`, no command substitution, no variable
+# expansion. Plain KEY=value only.
+#
+# REPO_ID is the load-bearing line. Woodpecker serves both repos and both use
+# branch `main`, so a query that is not pinned to a repo returns whichever
+# pushed most recently — which would deploy the vanilla relay's build here, and
+# it would come up healthy. Cross-check against the other config in this
+# directory: the two REPO_IDs must differ.
+AUTODEPLOY_NAME=beekeeper
+REPO_ID=2
+MIRROR=/srv/git/beekeeper.git
+INSTANCE=hive
+BASE=/opt/beekeeper
+IMAGE_NAME=beekeeper-relay

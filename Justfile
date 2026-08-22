@@ -99,7 +99,15 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check file-size-check
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check file-size-check autodeploy-test
+
+# Test the relay deployers (deploy/autodeploy). They stub incus, flock and
+# sleep on PATH, so they need no host, no containers and no Woodpecker — and
+# they run in about a second. Every case is a regression test for a failure
+# that reached production, most of them silent ones.
+autodeploy-test:
+    ./deploy/autodeploy/tests/config-contract.sh
+    ./deploy/autodeploy/tests/autodeploy-behavior.sh
 
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays

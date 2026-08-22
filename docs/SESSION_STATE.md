@@ -50,7 +50,7 @@ partial because several session channels were inaccessible._
 | | |
 | --- | --- |
 | Deployed (Bee Keeper) | `beekeeper-relay:0be70d424` on **hive.agiterra.org**, shipped 2026-08-22 12:24 UTC by its own deployer (`deploy/autodeploy/`, installed as `beekeeper-autodeploy.timer`) — the first automated Bee Keeper deploy. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; owner `6cbdf445…92b68df2`, key imported into the desktop keychain and the server copy deleted. Relay identity (NIP-11 `self`) is **`1fb029d0…c09ab336`** — recorded here as the baseline, because `BUZZ_RELAY_PRIVATE_KEY` auto-generates when unset, and a relay that silently rotates its key on every restart evicts every client cache. Both it and `BUZZ_GIT_HOOK_HMAC_SECRET` are persisted at 64 chars; check `self` against this value after any deploy. |
-| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. Autodeploy now tracks it, pinned to `repo_id = 1 and branch = 'main'`. Hive's deployer is written and reviewable at `deploy/autodeploy/` but **not yet installed** — installing needs root on agincus, and its first tick will be a real ~15 min build, not a no-op, because hive is many commits behind. |
+| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Owner key backed up and `/opt/buzz/.owner-key` deleted. Autodeploy tracks it, pinned to `repo_id = 1`. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
@@ -919,6 +919,13 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   processes, alive since 13 and 17 August, kept recreating
   `xyz.block.buzz.app/shell-sessions` because the old path is baked into their
   argv — they outlive the app by design).
+- **Both deployers are now one script in the repo**, `deploy/autodeploy/`,
+  parameterized by `/etc/default/<unit>` via `EnvironmentFile=`. They had been
+  two near-identical files, one of them untracked and root-owned, and every
+  hazard below was found by reading the tracked one while still existing in the
+  copy nobody could see. `just autodeploy-test` covers them; the cases were
+  each verified to fail when the property is removed, because a test that
+  cannot fail reads as coverage without being any.
 - **`buzz-autodeploy` picks a pipeline by branch alone — no `repo_id`.** Its
   query is `where branch = 'integrated' and event = 'push' order by id desc
   limit 1`. Woodpecker now serves **two** repos (1 = `agiterra/buzz`,

@@ -5,24 +5,32 @@ on agincus. They run on the **host**, not inside an instance, because they
 drive `incus exec` against both `forge` (Woodpecker's sqlite, the git mirrors)
 and the target instance.
 
-| Deployer | Woodpecker repo | Branch | Instance | Relay | Image |
-| --- | --- | --- | --- | --- | --- |
-| `beekeeper-autodeploy` (here) | id **2**, `agiterra/beekeeper` | `main` | `hive` | hive.agiterra.org | `beekeeper-relay:<short9>` |
-| `buzz-autodeploy` (**untracked**) | id **1**, `agiterra/buzz` | `main` | `buzz` | lightyear.agiterra.org | `buzz-relay:<short9>` |
+**One script, two relays.** Everything that differs arrives through the
+environment, from `/etc/default/<unit>` via each unit's `EnvironmentFile=`:
 
-`buzz-autodeploy` still lives only at `/usr/local/sbin/buzz-autodeploy` on
-agincus with no copy in any repo. That is why the `repo_id` bug below survived
-unreviewed for as long as it did. It should be brought here too.
+| | Woodpecker repo | Instance | Relay | Image |
+| --- | --- | --- | --- | --- |
+| `buzz-autodeploy` | id **1**, `agiterra/buzz` | `buzz` | lightyear.agiterra.org | `buzz-relay:<short9>` |
+| `beekeeper-autodeploy` | id **2**, `agiterra/beekeeper` | `hive` | hive.agiterra.org | `beekeeper-relay:<short9>` |
 
-## Two hazards, both found the hard way
+Both track branch `main` and share container names (`buzz-prod-relay-1`,
+`buzz-prod-postgres-1` — the compose project is `buzz-prod` in both instances,
+which never collide because the instances are separate).
 
-**`repo_id` is not optional.** Woodpecker serves both repos and both use
-branch `main`. A query filtered on branch alone returns whichever repo pushed
-most recently. An unpinned deployer will build Bee Keeper and deploy it onto
-the vanilla relay — and the relay comes up **healthy**, because a relay is a
-relay. Wrong product, wrong schema, no alarm. Caught live on 2026-08-22 with
-roughly five minutes to spare: run side by side, the pinned query returned the
-vanilla commit while the unpinned one returned a Bee Keeper commit mid-build.
+This started as two near-identical scripts, one of them untracked and
+root-owned on the host. That invisibility is the direct cause of every hazard
+below: each was found by reading the tracked copy, and each still existed in
+the copy nobody could see.
+
+## Four hazards, all found the hard way
+
+**`REPO_ID` is not optional.** Woodpecker serves both repos and both use branch
+`main`. A query filtered on branch alone returns whichever repo pushed most
+recently. An unpinned deployer will build Bee Keeper and deploy it onto the
+vanilla relay — and the relay comes up **healthy**, because a relay is a relay.
+Wrong product, wrong schema, no alarm. Caught live on 2026-08-22 with about
+five minutes to spare: run side by side, the pinned query returned the vanilla
+commit while the unpinned one returned a Bee Keeper commit mid-build.
 
 **Deleting a branch disarms nothing.** The `pipelines` table keeps history, so
 a deployer pointed at a long-dead branch keeps selecting that branch's last
@@ -31,84 +39,118 @@ deployed; change the image and it wakes up and deploys the ghost. This is
 exactly what happened to lightyear during the vanilla rebuild — the health
 check and rollback were the only things that caught it.
 
-**A new mirror is unreadable by root until you say otherwise.** `incus exec`
-runs as root; the mirrors are owned by `git`. Git refuses with "detected
-dubious ownership" unless the repo is in root's `safe.directory`, and on
-agincus that list held exactly one entry — `/srv/git/buzz.git`, added by hand
-when `buzz-autodeploy` was built. The failure is nasty because
-`git cat-file -e` exits non-zero for an unreadable repo and for a genuinely
-missing commit alike, so the deployer logged *"commit not in mirror yet"* and
-exited 0, forever. Caught on this deployer's first live run. Fixed two ways:
-`mirror_git` carries `-c safe.directory=$MIRROR` so it does not depend on host
-config, and the script now proves the mirror is *readable* before asking what
-is in it, treating unreadability as fatal rather than as a sync delay.
+**A mirror root cannot read is not a mirror that is behind.** `incus exec` runs
+as root; mirrors are owned by `git`. Git refuses with "detected dubious
+ownership" unless the repo is in root's `safe.directory`, and on agincus that
+list held exactly one entry — `/srv/git/buzz.git`, added by hand when the first
+deployer was built. The failure is nasty because `git cat-file -e` exits
+non-zero for an unreadable repo and for a genuinely missing commit alike, so
+the deployer logged *"commit not in mirror yet"* and exited 0, forever. Fixed
+two ways: `mirror_git` carries `-c safe.directory=$MIRROR` so it does not
+depend on host config, and the script proves the mirror is *readable* before
+asking what is in it, treating unreadability as fatal.
 
-## Retention
+**Retention is a credential concern before a disk one.** Every run leaves a
+`.env.bak-pre-<sha>`, each a full copy of the relay private key. By 2026-08-22
+one host had 34 of those, plus 38 SQL dumps and 51 images. Pruning now runs
+after a *successful* deploy only — a failed run leaves everything in place for
+diagnosis — and never removes the image the relay is currently running.
 
-`buzz-autodeploy` has none. By 2026-08-22 one host had accumulated 38 SQL
-dumps, 34 `.env` backups and 51 relay images. **Each `.env.bak-pre-<sha>` is a
-full copy of the relay private key**, so this is a credential problem before
-it is a disk problem. The deployer here prunes builds, backups, `.env` backups,
-build logs and images after a *successful* deploy only — a failed run leaves
-everything in place for diagnosis.
+## Configuration
 
-Image pruning explicitly excludes whatever the relay is currently running,
-regardless of what the keep-count would otherwise say.
+`/etc/default/<unit>` is parsed by **systemd, not a shell**: plain `KEY=value`,
+no `export`, no command substitution, no variable expansion. The unit uses
+`EnvironmentFile=` with **no `-` prefix**, so a missing config file fails the
+unit rather than letting the deployer start unconfigured and choose its own
+target.
+
+The script validates every required value before the first `incus` call, and
+rejects a `REPO_ID` that is empty or non-numeric. That case matters more than
+it looks: a set-but-empty value slips past `set -u`, and the resulting SQL
+`where repo_id =  and ...` is a syntax error that yields an empty row — which
+the "no usable pipeline row" branch would treat as a perfectly normal quiet
+exit.
+
+## Tests
+
+```bash
+just autodeploy-test
+```
+
+They stub `incus`, `flock` and `sleep` on `PATH`, so they need no host and run
+in about a second. `flock` is util-linux and absent on macOS, which is why it
+is stubbed rather than assumed. Wired into `.woodpecker/gate.yml` as the
+`deploy-scripts` step and into `just check`.
+
+Covered: invalid config is fatal before anything reaches the host; a
+still-building pipeline does not deploy; already-current is a silent no-op; an
+unreadable mirror is FATAL and does not masquerade as a sync delay; the query
+is pinned to the configured repo; and the scratch sqlite path is per-target.
+
+Each case was verified to fail when its property is removed from the script —
+a test that cannot fail is worse than no test, because it reads as coverage.
 
 ## Install
 
-Requires root on agincus. From a checkout of this repo:
+Requires root on agincus. `sudo install` of an scp'd file clears the permission
+check where `sudo sed -i` and piping into `sudo python3` do not; copy up, then
+install.
 
 ```bash
-scp deploy/autodeploy/beekeeper-autodeploy agincus:/tmp/
-scp deploy/autodeploy/beekeeper-autodeploy.{service,timer} agincus:/tmp/
+scp deploy/autodeploy/autodeploy agincus:/tmp/
+scp deploy/autodeploy/etc-default/{buzz,beekeeper}-autodeploy agincus:/tmp/
+scp deploy/autodeploy/{buzz,beekeeper}-autodeploy.{service,timer} agincus:/tmp/
 
 ssh agincus '
-  sudo install -m 0755 /tmp/beekeeper-autodeploy /usr/local/sbin/beekeeper-autodeploy &&
+  sudo install -m 0755 /tmp/autodeploy /usr/local/sbin/autodeploy &&
+  sudo install -m 0644 /tmp/buzz-autodeploy      /etc/default/buzz-autodeploy &&
+  sudo install -m 0644 /tmp/beekeeper-autodeploy /etc/default/beekeeper-autodeploy &&
+  sudo install -m 0644 /tmp/buzz-autodeploy.service      /etc/systemd/system/ &&
+  sudo install -m 0644 /tmp/buzz-autodeploy.timer        /etc/systemd/system/ &&
   sudo install -m 0644 /tmp/beekeeper-autodeploy.service /etc/systemd/system/ &&
   sudo install -m 0644 /tmp/beekeeper-autodeploy.timer   /etc/systemd/system/ &&
   sudo systemctl daemon-reload &&
-  sudo systemctl enable --now beekeeper-autodeploy.timer &&
-  systemctl list-timers beekeeper-autodeploy.timer --no-pager
+  sudo systemctl enable --now buzz-autodeploy.timer beekeeper-autodeploy.timer
 '
 ```
 
-## Verify
+## Verify — positively, not by absence
 
-Know which of the two first runs you are expecting **before** you enable the
-timer, because they look nothing alike and each is alarming if you expected the
-other.
-
-- **Relay already current** → a silent no-op: started and deactivated within a
-  second or two, no log lines. That is the `current == short` early exit.
-- **Relay behind** → a real build and deploy, ~15 min, with a pre-deploy
-  backup and a health-gated restart. This is the expected case for hive's
-  first run: it has never had a deployer, so it is many commits behind
-  whatever `main` is green at.
-
-Check which one you are in first — compare the selected commit against the
-deployed image:
+**A silent no-op is weak evidence.** It is exactly what the `safe.directory`
+bug produced: nothing happened, and nothing was wrong-looking. "Nothing
+happened" cannot distinguish *correctly current* from *broken into permanent
+silence*. Check the mechanism directly instead.
 
 ```bash
-# what the deployer will select
-ssh agincus "incus exec forge -- sh -c \"docker cp woodpecker-server-1:/var/lib/woodpecker/woodpecker.sqlite /tmp/c.sqlite >/dev/null && sqlite3 /tmp/c.sqlite \\\"select status, substr(commit,1,9) from pipelines where repo_id = 2 and branch = 'main' and event = 'push' order by id desc limit 1;\\\"; rm -f /tmp/c.sqlite\""
+# 1. each unit resolves its own config, and the two REPO_IDs differ
+ssh agincus 'systemctl show buzz-autodeploy.service beekeeper-autodeploy.service -p Environment'
 
-# what hive is running
-ssh agincus "incus exec hive -- grep -m1 ^BUZZ_IMAGE= /opt/beekeeper/compose/.env"
+# 2. both mirrors are readable by root the way the script reads them
+ssh agincus 'for m in /srv/git/buzz.git /srv/git/beekeeper.git; do
+  incus exec forge -- git -c safe.directory=$m -C $m rev-parse --git-dir >/dev/null && echo "$m readable"
+done'
 
-journalctl -u beekeeper-autodeploy -n 20 --no-pager
+# 3. what each deployer would select, side by side
+ssh agincus "incus exec forge -- sh -c \"docker cp woodpecker-server-1:/var/lib/woodpecker/woodpecker.sqlite /tmp/c.sqlite >/dev/null && for r in 1 2; do echo -n \\\"repo \\\$r: \\\"; sqlite3 /tmp/c.sqlite \\\"select status, substr(commit,1,9) from pipelines where repo_id = \\\$r and branch = 'main' and event = 'push' order by id desc limit 1;\\\"; done; rm -f /tmp/c.sqlite\""
+
+# 4. what each relay is actually running
+ssh agincus 'incus exec buzz -- grep -m1 ^BUZZ_IMAGE= /opt/buzz/compose/.env
+             incus exec hive -- grep -m1 ^BUZZ_IMAGE= /opt/beekeeper/compose/.env'
 ```
 
-The thing that should actually alarm you is a build whose commit you do not
-recognise as belonging to **this** repo. Cross-check the selected sha against
-`git log` on `agiterra/beekeeper` before letting a first run finish; a sha that
-turns out to be a `agiterra/buzz` commit means the `repo_id` filter did not
-take, and the deploy must be stopped.
+Step 3 is the one that caught the cross-deploy hazard. If a repo's selected sha
+is not a commit you recognise as belonging to *that* repo, stop the timer
+before it finishes.
+
+After any deploy, confirm the relay's NIP-11 `self` still matches its recorded
+baseline (see `docs/SESSION_STATE.md` § 1). `BUZZ_RELAY_PRIVATE_KEY`
+auto-generates when unset, so a relay can silently adopt a new identity on
+restart and evict every client's cache.
 
 ## Paper trail
 
-- `journalctl -u beekeeper-autodeploy`
-- `/opt/beekeeper/deploy.log` (in the `hive` instance)
-- `/opt/beekeeper/build-<short9>.log`
-- `/opt/beekeeper/autodeploy-failed-<short9>` — left after a failed attempt so
-  the timer does not loop. Remove it to retry.
+- `journalctl -u {buzz,beekeeper}-autodeploy`
+- `<BASE>/deploy.log` in the target instance
+- `<BASE>/build-<short9>.log`
+- `<BASE>/autodeploy-failed-<short9>` — left after a failed attempt so the
+  timer does not loop. Remove it to retry.

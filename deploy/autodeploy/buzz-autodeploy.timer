@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll Woodpecker for green agiterra/buzz main builds and deploy them
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

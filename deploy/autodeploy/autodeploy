@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# autodeploy — deploy the newest CI-green build of a repo to its relay.
+#
+# One implementation, two relays. Everything that differs between them arrives
+# through the environment, normally from /etc/default/<unit> via the systemd
+# unit's EnvironmentFile=:
+#
+#   AUTODEPLOY_NAME=beekeeper  REPO_ID=2  MIRROR=/srv/git/beekeeper.git
+#   INSTANCE=hive  BASE=/opt/beekeeper  IMAGE_NAME=beekeeper-relay
+#
+# Runs on the agincus host (<name>-autodeploy.timer, every 5 min):
+#   1. Read the newest Woodpecker pipeline (repo_id=$REPO_ID, branch=$BRANCH,
+#      event=push) from the server's sqlite DB in the forge instance. Anything
+#      but status=success exits without touching the deployment.
+#   2. If its commit differs from BUZZ_IMAGE in $BASE/compose/.env, export the
+#      tree from the forge git mirror at that commit (triggering
+#      git-mirror.service if the commit hasn't synced yet), docker-build
+#      $IMAGE_NAME:<short9> inside $INSTANCE, pg_dump a pre-deploy backup, flip
+#      BUZZ_IMAGE, and `run.sh restart` (compose --wait).
+#   3. On failed restart/health: restore the saved .env and restart on the
+#      previous image.
+#   4. Prune old builds, backups, .env backups, build logs and images.
+#
+# A failed attempt leaves $BASE/autodeploy-failed-<short9> in the instance so
+# the timer does not rebuild in a loop; remove the marker to retry.
+# Paper trail: journalctl -u <name>-autodeploy, $BASE/deploy.log,
+# $BASE/build-<short9>.log.
+#
+# ── Four ways this has actually gone wrong ───────────────────────────────────
+#
+# REPO_ID is not optional. Woodpecker serves both repos and both use branch
+# `main`. A query filtered on branch alone returns whichever repo pushed most
+# recently, so an unpinned deployer will happily build Bee Keeper and deploy it
+# onto the vanilla relay — and it comes up *healthy*, because a relay is a
+# relay. Wrong product against the wrong schema, silently. Found live on
+# 2026-08-22, about five minutes before it fired.
+#
+# Deleting a branch disarms nothing. The pipelines table keeps history, so a
+# deployer pointed at a long-dead branch keeps selecting that branch's last
+# build forever, staying quiet only while it happens to match what is already
+# deployed. Change the image and it wakes up and deploys the ghost.
+#
+# An unreadable mirror is not a mirror that is behind. `incus exec` runs as
+# root while the mirrors are owned by `git`, so git refuses with "detected
+# dubious ownership" unless the repo is in root's safe.directory. `cat-file -e`
+# exits non-zero for an unreadable repo exactly as for an absent commit, so a
+# permanent configuration fault reported as a transient sync delay, exited 0,
+# and would have retried every five minutes forever.
+#
+# Retention is a credential concern, not a disk concern. Every run leaves a
+# .env.bak-pre-<sha>, each a full copy of the relay private key. 34 of them had
+# accumulated on one host, alongside 38 SQL dumps and 51 images.
+set -euo pipefail
+
+# ── configuration ────────────────────────────────────────────────────────────
+# Required — no defaults on purpose. A deployer that invents its own target is
+# worse than one that refuses to start.
+: "${AUTODEPLOY_NAME:=}"          # short id: log prefix, lock and scratch paths
+: "${REPO_ID:=}"                  # Woodpecker repos.id — see the note above
+: "${MIRROR:=}"                   # bare git mirror in the forge instance
+: "${INSTANCE:=}"                 # incus instance holding the relay
+: "${BASE:=}"                     # deployment root inside that instance
+: "${IMAGE_NAME:=}"               # docker image name, tagged with <short9>
+
+# Optional — these are genuinely the same for both relays today. Container
+# names come from `name: buzz-prod` in compose.yml, which both instances share;
+# they never collide because the instances are separate, but do not "fix" this
+# by assuming the names are unique host-wide.
+: "${BRANCH:=main}"
+: "${RELAY_CONTAINER:=buzz-prod-relay-1}"
+: "${PG_CONTAINER:=buzz-prod-postgres-1}"
+: "${KEEP_BACKUPS:=5}"            # backup-pre-*.sql.gz
+: "${KEEP_ENV_BACKUPS:=3}"        # .env.bak-pre-* (each holds the relay key)
+: "${KEEP_IMAGES:=5}"             # $IMAGE_NAME:*, never the running one
+: "${KEEP_BUILD_TREES:=2}"        # build-prev-*
+
+# ── validation, before anything reaches the host ─────────────────────────────
+# This runs ahead of the lock and every incus call. An unset variable under
+# `set -u` would abort anyway, but a variable that is *set and empty* would
+# not: REPO_ID="" builds the SQL `where repo_id =  and branch = ...`, which is
+# a syntax error, which yields an empty row, which the "no usable pipeline row"
+# branch treats as a normal quiet exit. Silence is exactly the failure mode
+# this script keeps producing, so refuse loudly instead.
+die() { echo "[${AUTODEPLOY_NAME:-autodeploy}] FATAL: $*" >&2; exit 2; }
+
+for var in AUTODEPLOY_NAME REPO_ID MIRROR INSTANCE BASE IMAGE_NAME; do
+  [[ -n "${!var}" ]] || die "$var is unset or empty — check the unit's EnvironmentFile (it must not use the '-' prefix, so a missing config file fails the unit rather than running it unconfigured)"
+done
+[[ "$REPO_ID"    =~ ^[1-9][0-9]*$ ]]  || die "REPO_ID must be a positive integer, got '$REPO_ID'"
+[[ "$AUTODEPLOY_NAME" =~ ^[a-z0-9-]+$ ]] || die "AUTODEPLOY_NAME must be [a-z0-9-]+, got '$AUTODEPLOY_NAME' (it names the lock and scratch paths)"
+[[ "$MIRROR"     = /* ]]              || die "MIRROR must be an absolute path, got '$MIRROR'"
+[[ "$BASE"       = /* ]]              || die "BASE must be an absolute path, got '$BASE'"
+for var in KEEP_BACKUPS KEEP_ENV_BACKUPS KEEP_IMAGES KEEP_BUILD_TREES; do
+  [[ "${!var}" =~ ^[0-9]+$ ]] || die "$var must be a non-negative integer, got '${!var}'"
+done
+
+COMPOSE=$BASE/compose
+# Per-target scratch. Both timers fire within seconds of each other, so a
+# shared path inside the forge container would have one run rm -f'ing the
+# sqlite copy the other is mid-read.
+WP_SQLITE=/tmp/wp-$AUTODEPLOY_NAME.sqlite
+LOCK=/tmp/$AUTODEPLOY_NAME-autodeploy.lock
+
+log()      { echo "[$AUTODEPLOY_NAME-autodeploy] $*"; }
+forge()    { incus exec forge -- "$@"; }
+instance() { incus exec "$INSTANCE" -- "$@"; }
+
+# git against the mirror, from root, without depending on host-global config.
+# Carrying the safe.directory exception in-script keeps this working on any
+# host, rather than depending on an allowlist entry nobody remembers adding.
+mirror_git() { forge git -c safe.directory="$MIRROR" -C "$MIRROR" "$@"; }
+
+exec 9>"$LOCK"
+flock -n 9 || { log "another run holds the lock; exiting"; exit 0; }
+
+# ── 1. newest green pipeline for THIS repo ───────────────────────────────────
+row=$(forge sh -c "docker cp woodpecker-server-1:/var/lib/woodpecker/woodpecker.sqlite $WP_SQLITE >/dev/null && sqlite3 -separator ' ' $WP_SQLITE \"select status, \\\"commit\\\" from pipelines where repo_id = ${REPO_ID} and branch = '${BRANCH}' and event = 'push' order by id desc limit 1;\" && rm -f $WP_SQLITE")
+read -r status sha <<<"$row"
+
+if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+  log "no usable pipeline row (got: '$row'); exiting"
+  exit 0
+fi
+short=${sha:0:9}
+
+current=$(instance sh -c "grep -oE '^BUZZ_IMAGE=${IMAGE_NAME}:[0-9a-f]+' $COMPOSE/.env | cut -d: -f2" || true)
+if [[ "$current" == "$short" ]]; then
+  exit 0
+fi
+
+if [[ "$status" != "success" ]]; then
+  log "newest $BRANCH pipeline ($short) is '$status'; keeping $current deployed"
+  exit 0
+fi
+
+if instance test -e "$BASE/autodeploy-failed-$short"; then
+  log "previous attempt for $short failed; rm $BASE/autodeploy-failed-$short (in the $INSTANCE instance) to retry"
+  exit 0
+fi
+
+log "green pipeline at $short, deployed is ${current:-unknown} — deploying"
+
+# ── 2. make sure the mirror has the commit ───────────────────────────────────
+# Prove the mirror is readable BEFORE asking whether a commit is in it. An
+# unreadable repo makes `cat-file -e` exit non-zero exactly like a missing
+# commit does, so without this the deployer reports "not synced yet", exits 0,
+# and retries forever — a permanent silent no-op wearing the costume of a
+# transient wait.
+if ! err=$(mirror_git rev-parse --git-dir 2>&1); then
+  log "FATAL: cannot read mirror $MIRROR — this is a configuration fault, not a sync delay"
+  while IFS= read -r line; do log "  $line"; done <<<"$err"
+  exit 1
+fi
+
+# This doubles as a defence against a misconfigured REPO_ID: a sha selected
+# from the wrong repo will not exist in this mirror, so the deploy stops here
+# rather than building another product's tree. It degrades to a quiet exit 0
+# rather than an alarm, so it is a backstop, not the primary guard — REPO_ID
+# being right is still the thing that matters.
+if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
+  log "commit not in mirror yet; triggering git-mirror.service"
+  forge systemctl start git-mirror.service
+  sleep 30
+  if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
+    log "commit still missing from mirror after a sync; will retry next tick"
+    exit 0
+  fi
+fi
+
+# ── 3. export source and build ───────────────────────────────────────────────
+instance sh -c "rm -rf $BASE/build-incoming && mkdir -p $BASE/build-incoming"
+mirror_git archive --format=tar "$sha" | instance sh -c "tar -x -C $BASE/build-incoming"
+instance test -f "$BASE/build-incoming/Dockerfile"
+
+log "building $IMAGE_NAME:$short (log: $BASE/build-$short.log in the $INSTANCE instance)"
+if ! instance sh -c "docker build -t $IMAGE_NAME:$short $BASE/build-incoming >$BASE/build-$short.log 2>&1"; then
+  instance touch "$BASE/autodeploy-failed-$short"
+  log "BUILD FAILED for $short — see $BASE/build-$short.log; marker left, remove to retry"
+  exit 1
+fi
+
+# ── 4. pre-deploy backup ─────────────────────────────────────────────────────
+stamp=$(date +%Y%m%d)
+backup="$BASE/backup-pre-$short-$stamp.sql.gz"
+instance sh -c "docker exec $PG_CONTAINER sh -c 'pg_dump -U \"\$POSTGRES_USER\" \"\$POSTGRES_DB\"' | gzip > $backup"
+# validity: a failed pg_dump yields a near-empty file with no completion trailer
+# (the DB itself can legitimately be small, e.g. right after a reset)
+if ! instance sh -c "[ \$(stat -c%s $backup) -gt 10000 ] && zcat $backup | tail -5 | grep -q 'database dump complete'"; then
+  instance touch "$BASE/autodeploy-failed-$short"
+  log "backup $backup failed validation (too small or no completion trailer); aborting before deploy"
+  exit 1
+fi
+
+# ── 5. flip the image and restart ────────────────────────────────────────────
+instance sh -c "cd $COMPOSE && cp .env .env.bak-pre-$short && sed -i 's#^BUZZ_IMAGE=.*#BUZZ_IMAGE=$IMAGE_NAME:$short#' .env"
+if instance sh -c "cd $COMPOSE && ./run.sh restart" \
+   && [[ "$(instance docker inspect -f '{{.State.Health.Status}}' "$RELAY_CONTAINER")" == "healthy" ]]; then
+  instance sh -c "if [ -d $BASE/build ] && [ -n '$current' ] && [ ! -e $BASE/build-prev-$current ]; then mv $BASE/build $BASE/build-prev-$current; else rm -rf $BASE/build; fi; mv $BASE/build-incoming $BASE/build"
+  instance sh -c "echo \"\$(date -u +%FT%TZ) deployed $IMAGE_NAME:$short (was ${current:-unknown})\" >> $BASE/deploy.log"
+  log "DEPLOYED $IMAGE_NAME:$short (was ${current:-unknown}); backup: $backup"
+else
+  log "restart failed or relay unhealthy on $short — ROLLING BACK to ${current:-previous image}"
+  instance sh -c "cd $COMPOSE && cp .env.bak-pre-$short .env && ./run.sh restart" || log "rollback restart ALSO failed — manual intervention needed"
+  instance touch "$BASE/autodeploy-failed-$short"
+  log "rollback done; relay is $(instance docker inspect -f '{{.State.Health.Status}}' "$RELAY_CONTAINER" 2>/dev/null || echo unknown); marker left for $short"
+  exit 1
+fi
+
+# ── 6. retention ─────────────────────────────────────────────────────────────
+# Runs only after a successful deploy, so a failed run never prunes the very
+# artefacts someone is about to need for diagnosis.
+instance sh -c "ls -1dt $BASE/build-prev-* 2>/dev/null | tail -n +$((KEEP_BUILD_TREES + 1)) | xargs -r rm -rf"
+instance sh -c "ls -1t $BASE/backup-pre-*.sql.gz 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f"
+instance sh -c "ls -1t $COMPOSE/.env.bak-pre-* 2>/dev/null | tail -n +$((KEEP_ENV_BACKUPS + 1)) | xargs -r rm -f"
+instance sh -c "ls -1t $BASE/build-*.log 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -f"
+# Images: never remove the one the relay is running, whatever the count says.
+instance sh -c "
+  running=\$(docker inspect -f '{{.Config.Image}}' $RELAY_CONTAINER 2>/dev/null || echo none)
+  docker images --format '{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}' $IMAGE_NAME \
+    | sort -k2 -r | cut -f1 | tail -n +$((KEEP_IMAGES + 1)) \
+    | grep -vFx \"\$running\" \
+    | xargs -r -n1 docker rmi 2>/dev/null || true
+"
+log "retention done (kept $KEEP_BACKUPS backups, $KEEP_ENV_BACKUPS env backups, $KEEP_IMAGES images)"
