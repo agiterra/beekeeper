@@ -107,7 +107,7 @@ just migrate                         # applies the full set, reseeds local hosts
 
 Do **not** reach for `scripts/dev-reset.sh` for a database problem. Despite the
 name it also runs `reset-desktop-dev-state.sh`, which deletes every
-`io.agiterra.beekeeper.dev*` application-support directory and the
+`io.agiterra.beekeeper.app.dev*` application-support directory and the
 `buzz-desktop-dev` keychain item — i.e. provider state, session history, and dev
 agent keys. During this phase those directories held the only local copy of the
 orphaned Hallway session records the phase used as a test case.

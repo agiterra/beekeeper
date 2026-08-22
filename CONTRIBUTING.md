@@ -188,10 +188,10 @@ just reset   # Wipe all dev state and recreate it; installed Buzz is preserved
 ```
 
 Development desktop state uses separate bundle identifiers
-(`io.agiterra.beekeeper.dev` and per-worktree variants), a separate keyring service
+(`io.agiterra.beekeeper.app.dev` and per-worktree variants), a separate keyring service
 (`beekeeper-desktop-dev`), and `~/.buzz-dev`. `just reset` removes those dev-only
 locations and the local Docker volumes. It does not touch the installed app's
-`io.agiterra.beekeeper` data, `beekeeper-desktop` keyring service, or
+`io.agiterra.beekeeper.app` data, `beekeeper-desktop` keyring service, or
 `~/.beekeeper` nest.
 
 ---

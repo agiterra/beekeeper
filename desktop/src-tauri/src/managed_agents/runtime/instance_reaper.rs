@@ -10,7 +10,7 @@ use super::*;
 /// therefore shares every name here — which is fine, and is precisely why
 /// [`desktop_is_alive_for_instance`] additionally requires the bundle
 /// identifier to appear in the process's argv/environ. That identifier
-/// (`io.agiterra.beekeeper` vs `xyz.block.buzz.app`) is the only thing keeping
+/// (`io.agiterra.beekeeper.app` vs `xyz.block.buzz.app`) is the only thing keeping
 /// two coexisting installs from reaping each other's agents.
 const DESKTOP_BINARY_NAMES: &[&str] = &[
     "buzz-desktop",
@@ -27,10 +27,10 @@ pub(super) fn is_desktop_binary(name: &str) -> bool {
 
 /// Check whether `buf` contains `id` as a complete identifier — not as a
 /// prefix of a longer dotted name. The identifier appears in the Tauri config
-/// JSON as `"identifier":"io.agiterra.beekeeper.dev"` and in environment entries
+/// JSON as `"identifier":"io.agiterra.beekeeper.app.dev"` and in environment entries
 /// as `KEY=...app.dev\0`, so a valid match is followed by a non-identifier byte
 /// (not `[A-Za-z0-9._-]`) or sits at the end of the buffer. This prevents
-/// `io.agiterra.beekeeper` from matching inside `io.agiterra.beekeeper.dev`.
+/// `io.agiterra.beekeeper.app` from matching inside `io.agiterra.beekeeper.app.dev`.
 pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
     if id.is_empty() {
         return false;

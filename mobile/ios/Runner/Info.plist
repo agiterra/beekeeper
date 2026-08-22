@@ -28,7 +28,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>io.agiterra.beekeeper.deeplink</string>
+			<string>io.agiterra.beekeeper.mobile.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>beekeeper</string>

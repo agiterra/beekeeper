@@ -7,8 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-pub(crate) const CANONICAL_DEV_IDENTIFIER: &str = "io.agiterra.beekeeper.dev";
-pub(crate) const CANONICAL_RELEASE_IDENTIFIER: &str = "io.agiterra.beekeeper";
+pub(crate) const CANONICAL_DEV_IDENTIFIER: &str = "io.agiterra.beekeeper.app.dev";
+pub(crate) const CANONICAL_RELEASE_IDENTIFIER: &str = "io.agiterra.beekeeper.app";
 /// One rename back. The Sprout-era pair these replaced is not chained: a
 /// two-hop migration needs the intermediate directory, which no longer exists.
 const LEGACY_CANONICAL_DEV_IDENTIFIER: &str = "xyz.block.buzz.app.dev";
@@ -16,8 +16,8 @@ const LEGACY_RELEASE_IDENTIFIER: &str = "xyz.block.buzz.app";
 
 /// Returns `true` when `name` is a dev data dir name — i.e. it is exactly the
 /// canonical dev identifier or a worktree variant separated by a `.` (e.g.
-/// `io.agiterra.beekeeper.dev.my-branch`). Rejects prefix-collisions such as
-/// `io.agiterra.beekeeper.developer`. This is the authoritative dev/prod
+/// `io.agiterra.beekeeper.app.dev.my-branch`). Rejects prefix-collisions such as
+/// `io.agiterra.beekeeper.app.developer`. This is the authoritative dev/prod
 /// discriminator shared by `run_boot_migrations`, `sync_shared_agent_data`,
 /// and `reconcile_target_dir`.
 pub(crate) fn is_dev_data_dir_name(name: &str) -> bool {
@@ -53,21 +53,23 @@ mod tests {
 
     #[test]
     fn dev_discriminator_rejects_prefix_collisions() {
-        assert!(is_dev_data_dir_name("io.agiterra.beekeeper.dev"));
-        assert!(is_dev_data_dir_name("io.agiterra.beekeeper.dev.my-branch"));
-        assert!(!is_dev_data_dir_name("io.agiterra.beekeeper"));
-        assert!(!is_dev_data_dir_name("io.agiterra.beekeeper.developer"));
+        assert!(is_dev_data_dir_name("io.agiterra.beekeeper.app.dev"));
+        assert!(is_dev_data_dir_name(
+            "io.agiterra.beekeeper.app.dev.my-branch"
+        ));
+        assert!(!is_dev_data_dir_name("io.agiterra.beekeeper.app"));
+        assert!(!is_dev_data_dir_name("io.agiterra.beekeeper.app.developer"));
     }
 
     #[test]
     fn canonical_dev_data_dir_replaces_only_the_last_component() {
         assert_eq!(
-            canonical_dev_data_dir(Path::new("/s/io.agiterra.beekeeper.dev.my-branch")),
-            Some(PathBuf::from("/s/io.agiterra.beekeeper.dev"))
+            canonical_dev_data_dir(Path::new("/s/io.agiterra.beekeeper.app.dev.my-branch")),
+            Some(PathBuf::from("/s/io.agiterra.beekeeper.app.dev"))
         );
         // Already canonical: returns the same path. `sync_shared_agent_data`
         // relies on that equality to decide there is nothing to sync.
-        let canonical = Path::new("/s/io.agiterra.beekeeper.dev");
+        let canonical = Path::new("/s/io.agiterra.beekeeper.app.dev");
         assert_eq!(
             canonical_dev_data_dir(canonical),
             Some(canonical.to_path_buf())
@@ -79,15 +81,15 @@ mod tests {
     #[test]
     fn a_dev_dir_maps_to_the_dev_legacy_name_not_the_release_one() {
         assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.dev")),
+            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app.dev")),
             Some(PathBuf::from("/d/xyz.block.buzz.app.dev"))
         );
         assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.dev.wt")),
+            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app.dev.wt")),
             Some(PathBuf::from("/d/xyz.block.buzz.app.dev.wt"))
         );
         assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper")),
+            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app")),
             Some(PathBuf::from("/d/xyz.block.buzz.app"))
         );
         assert_eq!(legacy_app_data_dir(Path::new("/d/com.other.app")), None);

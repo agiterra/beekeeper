@@ -68,7 +68,7 @@ project never appears in the app). Reuse the sanctioned extraction from
 ```bash
 A_SK="$(security find-generic-password -s buzz-desktop-dev -a secrets -w 2>/dev/null \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("identity",""))')"
-[ -n "$A_SK" ] || A_SK="$(cat "$HOME/Library/Application Support/io.agiterra.beekeeper.dev/identity.key")"
+[ -n "$A_SK" ] || A_SK="$(cat "$HOME/Library/Application Support/io.agiterra.beekeeper.app.dev/identity.key")"
 [ -n "$A_SK" ] || echo "FALLBACK: create A with generate-key below and add the Desktop pubkey (Settings → Profile) as a collaborator"
 ```
 
@@ -282,7 +282,7 @@ is the main checkout, so switching *its* branch changes nothing. Do this:
 git worktree add /Users/brian/Projects/buzz-pulse-live -b pulse-live-a wip/project-pulse
 # stop `just dev` in terminal 1 first — port 3000 is single-occupancy; Postgres keeps the data
 cd /Users/brian/Projects/buzz-pulse-live && . ./bin/activate-hermit
-BUZZ_SHARE_IDENTITY=1 just dev        # identifier io.agiterra.beekeeper.dev.pulse-live-a, same user identity A
+BUZZ_SHARE_IDENTITY=1 just dev        # identifier io.agiterra.beekeeper.app.dev.pulse-live-a, same user identity A
 ```
 
 `BUZZ_SHARE_IDENTITY=1` reuses the main checkout's key as the **user** identity
@@ -312,7 +312,7 @@ left. If the departing provider managed to publish `disconnected` on shutdown
 check first, wait only if needed.
 
 Plan B if you would rather not touch git: quit the app and
-`mv "$HOME/Library/Application Support/io.agiterra.beekeeper.dev/session-provider"{,.bak}`,
+`mv "$HOME/Library/Application Support/io.agiterra.beekeeper.app.dev/session-provider"{,.bak}`,
 then relaunch. Same end state (no provider record → new provider identity), but
 it is not the documented repro — say which one you used in the ledger entry.
 

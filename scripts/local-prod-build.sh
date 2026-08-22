@@ -3,9 +3,10 @@
 # commit-ish and install it to /Applications.
 #
 # The bundle is the release Bee Keeper identity (productName "Bee Keeper",
-# identifier io.agiterra.beekeeper, release-profile keyring service
+# identifier io.agiterra.beekeeper.app, release-profile keyring service
 # "beekeeper-desktop"), so it coexists both with `just desktop-standalone` dev
-# instances (identifier io.agiterra.beekeeper.dev*) and with a stock Buzz.app. It is unsigned (linker ad-hoc), exactly like
+# instances (identifier io.agiterra.beekeeper.app.dev*) and with a stock
+# Buzz.app. It is unsigned (linker ad-hoc), exactly like
 # `just desktop-release-build` — macOS will ask for the login keychain once on
 # the first launch after every update; that is expected and accepted.
 #

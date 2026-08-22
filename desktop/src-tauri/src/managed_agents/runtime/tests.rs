@@ -12,52 +12,52 @@ fn appimage_binary_matches_truncated_linux_comm_name() {
 #[test]
 fn identifier_prefix_does_not_match_longer_id() {
     // DMG identifier should NOT match inside a dev desktop's config JSON.
-    let buf = br#""identifier":"io.agiterra.beekeeper.dev""#;
-    let id = b"io.agiterra.beekeeper";
+    let buf = br#""identifier":"io.agiterra.beekeeper.app.dev""#;
+    let id = b"io.agiterra.beekeeper.app";
     assert!(!super::buffer_contains_identifier(buf, id));
 }
 
 #[test]
 fn identifier_prefix_does_not_match_worktree_slug() {
     // Main dev identifier should NOT match inside a worktree desktop's buffer.
-    let buf = br#""identifier":"io.agiterra.beekeeper.dev.my-branch""#;
-    let id = b"io.agiterra.beekeeper.dev";
+    let buf = br#""identifier":"io.agiterra.beekeeper.app.dev.my-branch""#;
+    let id = b"io.agiterra.beekeeper.app.dev";
     assert!(!super::buffer_contains_identifier(buf, id));
 }
 
 #[test]
 fn identifier_exact_match_with_quote_boundary() {
     // Exact match followed by closing quote — should match.
-    let buf = br#""identifier":"io.agiterra.beekeeper.dev""#;
-    let id = b"io.agiterra.beekeeper.dev";
+    let buf = br#""identifier":"io.agiterra.beekeeper.app.dev""#;
+    let id = b"io.agiterra.beekeeper.app.dev";
     assert!(super::buffer_contains_identifier(buf, id));
 }
 
 #[test]
 fn identifier_match_with_null_boundary() {
     // In KERN_PROCARGS2, entries are null-delimited.
-    let mut buf = b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.dev".to_vec();
+    let mut buf = b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app.dev".to_vec();
     buf.push(0);
     buf.extend_from_slice(b"OTHER_VAR=value");
-    let id = b"io.agiterra.beekeeper.dev";
+    let id = b"io.agiterra.beekeeper.app.dev";
     assert!(super::buffer_contains_identifier(&buf, id));
 }
 
 #[test]
 fn identifier_exact_match_at_end_of_buffer() {
     // Exact match with end-of-buffer as the boundary — Thufir's case 1.
-    let buf = b"io.agiterra.beekeeper.dev";
-    let id = b"io.agiterra.beekeeper.dev";
+    let buf = b"io.agiterra.beekeeper.app.dev";
+    let id = b"io.agiterra.beekeeper.app.dev";
     assert!(super::buffer_contains_identifier(buf, id));
 }
 
 #[test]
 fn longer_id_matches_when_short_prefix_also_present() {
     // The longer ID still matches when a shorter prefix token appears earlier.
-    let mut buf = b"io.agiterra.beekeeper".to_vec();
+    let mut buf = b"io.agiterra.beekeeper.app".to_vec();
     buf.push(0);
-    buf.extend_from_slice(br#""identifier":"io.agiterra.beekeeper.dev""#);
-    let id = b"io.agiterra.beekeeper.dev";
+    buf.extend_from_slice(br#""identifier":"io.agiterra.beekeeper.app.dev""#);
+    let id = b"io.agiterra.beekeeper.app.dev";
     assert!(super::buffer_contains_identifier(&buf, id));
 }
 
@@ -75,12 +75,12 @@ fn marker_entry_is_namespaced_by_instance_id() {
     // format and guards against a dev build (`...app.dev`) matching a
     // release build's (`...app`) agents.
     assert_eq!(
-        super::buzz_marker_entry("io.agiterra.beekeeper"),
-        b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper".to_vec()
+        super::buzz_marker_entry("io.agiterra.beekeeper.app"),
+        b"BUZZ_MANAGED_AGENT=io.agiterra.beekeeper.app".to_vec()
     );
     assert_ne!(
-        super::buzz_marker_entry("io.agiterra.beekeeper"),
-        super::buzz_marker_entry("io.agiterra.beekeeper.dev")
+        super::buzz_marker_entry("io.agiterra.beekeeper.app"),
+        super::buzz_marker_entry("io.agiterra.beekeeper.app.dev")
     );
 }
 

@@ -69,7 +69,7 @@ if (externalReleaseSigning && uploadSigningValues.values.any { !it.isNullOrBlank
 }
 
 android {
-    namespace = "io.agiterra.beekeeper"
+    namespace = "io.agiterra.beekeeper.mobile"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -83,7 +83,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.agiterra.beekeeper"
+        applicationId = "io.agiterra.beekeeper.mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

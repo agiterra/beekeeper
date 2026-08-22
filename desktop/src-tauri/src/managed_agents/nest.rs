@@ -62,7 +62,7 @@ const CANONICAL_SKILL_DIR: &str = ".agents/skills/buzz-cli";
 const NEST_DIR_PROD: &str = ".beekeeper";
 
 /// Nest directory name for dev builds. Dev builds (those whose Tauri app-data
-/// directory name starts with `"io.agiterra.beekeeper.dev"`) use a separate
+/// directory name starts with `"io.agiterra.beekeeper.app.dev"`) use a separate
 /// nest so that the DMG and dev-build instances don't clobber each other's
 /// `.repos-dir` dotfile and `REPOS` symlink.
 const NEST_DIR_DEV: &str = ".beekeeper-dev";
@@ -83,7 +83,7 @@ static NEST_DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new
 /// `OnceLock` is set exactly once.
 ///
 /// `is_dev` should be `true` when the running binary is a dev build — i.e.
-/// when the Tauri app-data directory name starts with `"io.agiterra.beekeeper.dev"`.
+/// when the Tauri app-data directory name starts with `"io.agiterra.beekeeper.app.dev"`.
 /// Pass `false` for production (signed DMG) builds.
 pub fn init_nest_dir(is_dev: bool) {
     let suffix = if is_dev { NEST_DIR_DEV } else { NEST_DIR_PROD };
