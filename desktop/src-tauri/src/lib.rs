@@ -444,17 +444,6 @@ pub fn run() {
                 None => true,
             };
 
-            // Carry the agent's knowledge from the legacy nest (~/.sprout) into
-            // the live nest after it exists. Must run after ensure_nest() so the
-            // destination is present. Non-fatal.
-            // On a real migration, emit a one-time hint so the user can delete
-            // the now-inert ~/.sprout; the frontend dedupes the toast.
-            // Suppressed when a reset completed this boot: the nest was wiped and
-            // a fresh ~/.sprout-less state is exactly what we want.
-            if !reset_outcome.completed && migration::migrate_legacy_nest() {
-                let _ = app_handle.emit("legacy-nest-migrated", ());
-            }
-
             // One-time migration for dev builds: copy accumulated knowledge
             // from the shared ~/.beekeeper nest into the new dedicated ~/.beekeeper-dev
             // nest so no work is lost when the nest is first namespaced.

@@ -1,19 +1,13 @@
-//! Tauri app-data directory identifiers, and the mapping from a current one
-//! back to the name the previous product rename shipped under.
+//! Tauri app-data directory identifiers.
 //!
-//! The Tauri identifier controls the app-data path, so a product rename looks
-//! like a fresh install unless something copies the old directory forward —
-//! see [`super::migrate_legacy_app_data_dir`], which this module feeds.
+//! There is deliberately no mapping back to a predecessor. Bee Keeper is a
+//! fork of Buzz, not a rename of it: both apps stay installed and keep
+//! running, so copying `xyz.block.buzz.app` forward would fork a live app's
+//! state — see the note in [`super::run_boot_migrations`].
 
 use std::path::{Path, PathBuf};
 
 pub(crate) const CANONICAL_DEV_IDENTIFIER: &str = "io.agiterra.beekeeper.app.dev";
-pub(crate) const CANONICAL_RELEASE_IDENTIFIER: &str = "io.agiterra.beekeeper.app";
-/// One rename back. The Sprout-era pair these replaced is not chained: a
-/// two-hop migration needs the intermediate directory, which no longer exists.
-const LEGACY_CANONICAL_DEV_IDENTIFIER: &str = "xyz.block.buzz.app.dev";
-const LEGACY_RELEASE_IDENTIFIER: &str = "xyz.block.buzz.app";
-
 /// Returns `true` when `name` is a dev data dir name — i.e. it is exactly the
 /// canonical dev identifier or a worktree variant separated by a `.` (e.g.
 /// `io.agiterra.beekeeper.app.dev.my-branch`). Rejects prefix-collisions such as
@@ -31,22 +25,6 @@ pub(crate) fn canonical_dev_data_dir(current: &Path) -> Option<PathBuf> {
     current.parent().map(|p| p.join(CANONICAL_DEV_IDENTIFIER))
 }
 
-/// The sibling directory `current` would have been called before the rename,
-/// preserving any worktree suffix. `None` when `current` is not one of ours.
-pub(crate) fn legacy_app_data_dir(current: &Path) -> Option<PathBuf> {
-    let name = current.file_name()?.to_str()?;
-    // Dev first: the dev identifier starts with the release identifier, so the
-    // opposite order would rewrite every dev dir with the release mapping.
-    let legacy_name = if name.starts_with(CANONICAL_DEV_IDENTIFIER) {
-        name.replacen(CANONICAL_DEV_IDENTIFIER, LEGACY_CANONICAL_DEV_IDENTIFIER, 1)
-    } else if name.starts_with(CANONICAL_RELEASE_IDENTIFIER) {
-        name.replacen(CANONICAL_RELEASE_IDENTIFIER, LEGACY_RELEASE_IDENTIFIER, 1)
-    } else {
-        return None;
-    };
-    current.parent().map(|parent| parent.join(legacy_name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +37,17 @@ mod tests {
         ));
         assert!(!is_dev_data_dir_name("io.agiterra.beekeeper.app"));
         assert!(!is_dev_data_dir_name("io.agiterra.beekeeper.app.developer"));
+    }
+
+    #[test]
+    fn no_identifier_here_belongs_to_another_installed_app() {
+        // Bee Keeper forked from Buzz rather than replacing it: both stay
+        // installed and both keep running. Anything that mapped one of our
+        // identifiers onto `xyz.block.buzz.app` would make a migration fork a
+        // live app's state, and would make a reset wipe it.
+        let id = CANONICAL_DEV_IDENTIFIER;
+        assert!(id.starts_with("io.agiterra.beekeeper"), "{id} is not ours");
+        assert!(!id.contains("block.buzz"), "{id} names another app");
     }
 
     #[test]
@@ -76,22 +65,5 @@ mod tests {
         );
         // A root path has no parent.
         assert_eq!(canonical_dev_data_dir(Path::new("/")), None);
-    }
-
-    #[test]
-    fn a_dev_dir_maps_to_the_dev_legacy_name_not_the_release_one() {
-        assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app.dev")),
-            Some(PathBuf::from("/d/xyz.block.buzz.app.dev"))
-        );
-        assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app.dev.wt")),
-            Some(PathBuf::from("/d/xyz.block.buzz.app.dev.wt"))
-        );
-        assert_eq!(
-            legacy_app_data_dir(Path::new("/d/io.agiterra.beekeeper.app")),
-            Some(PathBuf::from("/d/xyz.block.buzz.app"))
-        );
-        assert_eq!(legacy_app_data_dir(Path::new("/d/com.other.app")), None);
     }
 }

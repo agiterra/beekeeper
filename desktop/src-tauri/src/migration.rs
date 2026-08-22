@@ -25,9 +25,9 @@ use crate::util::replace_with_symlink;
 
 mod identifiers;
 use identifiers::canonical_dev_data_dir;
+pub(crate) use identifiers::is_dev_data_dir_name;
 #[cfg(test)]
 use identifiers::CANONICAL_DEV_IDENTIFIER;
-pub(crate) use identifiers::{is_dev_data_dir_name, legacy_app_data_dir};
 
 /// JSON files symlinked from worktree data directories to the canonical
 /// dev data directory. Only data files — never `agent-pids/` or `logs/`.
@@ -78,9 +78,9 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Run every data migration that must complete before identity resolution and
-/// agent restore. Ordering is load-bearing: `migrate_legacy_app_data_dir` must
-/// precede any disk read, and `sync_shared_agent_data` must precede
-/// `restore_managed_agents_on_launch` (which reads `managed-agents.json`).
+/// agent restore. Ordering is load-bearing: `sync_shared_agent_data` must
+/// precede `restore_managed_agents_on_launch` (which reads
+/// `managed-agents.json`).
 /// Identity-dependent migrations (persona/team event signing) run separately in
 /// boot setup after the persisted identity is resolved.
 ///
@@ -129,10 +129,6 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
         maybe_migrate_dev_repos_dir(is_dev, reset_completed, &home, &dev_nest);
     }
 
-    // Before any secret is read: the keyring service moved, and it has no
-    // read-fallback, so un-migrated installs would look identity-less.
-    crate::app_state::migrate_legacy_keyring_service();
-    migrate_legacy_app_data_dir(app);
     sync_shared_agent_data(app);
     // Dev-build-only: copy any agent keys that exist in the production
     // keyring ("beekeeper-desktop") into the dev service
@@ -169,38 +165,6 @@ fn run_boot_migrations_inner(app: &tauri::AppHandle, reset_completed: bool) {
     materialize_agent_runtimes(app);
 }
 
-/// Copy one-time app state from the legacy app identifier directory to
-/// the current Buzz identifier directory. The Tauri identifier controls the app
-/// data path, so without this copy a product rename would look like a fresh
-/// install and users would lose their persisted identity and agent settings.
-pub fn migrate_legacy_app_data_dir(app: &tauri::AppHandle) {
-    let current_dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            eprintln!("buzz-desktop: app-data-migration: cannot resolve app data dir: {e}");
-            return;
-        }
-    };
-    let Some(legacy_dir) = legacy_app_data_dir(&current_dir) else {
-        return;
-    };
-    if !legacy_dir.exists() {
-        return;
-    }
-    match copy_dir_all(&legacy_dir, &current_dir) {
-        Ok(()) => eprintln!(
-            "buzz-desktop: app-data-migration: copied legacy data from {} to {}",
-            legacy_dir.display(),
-            current_dir.display()
-        ),
-        Err(error) => eprintln!(
-            "buzz-desktop: app-data-migration: failed to copy {} to {}: {error}",
-            legacy_dir.display(),
-            current_dir.display()
-        ),
-    }
-}
-
 /// Knowledge directories and files carried from the legacy nest into the live
 /// nest. Deliberately excludes `REPOS/`: cloned repositories are re-clonable by
 /// definition (Will's stranded `REPOS/` measured 62 GB of checkouts plus build
@@ -216,11 +180,6 @@ pub fn migrate_legacy_app_data_dir(app: &tauri::AppHandle) {
 /// these dirs (e.g. by a skill writing into `.scratch/`) would hit that branch's
 /// clobber/abort hazard. The per-entry log-and-continue below bounds the blast
 /// radius of such a failure to the single offending entry.
-/// The previous product's nest directory. This names the *old* thing, so a
-/// rename sweep over `.buzz` paths must not touch it — doing exactly that once
-/// turned [`migrate_legacy_nest`] into a silent self-copy.
-const LEGACY_NEST_DIR: &str = ".buzz";
-
 const LEGACY_NEST_KNOWLEDGE: &[&str] = &[
     "AGENTS.md",
     "RESEARCH",
@@ -230,37 +189,6 @@ const LEGACY_NEST_KNOWLEDGE: &[&str] = &[
     "OUTBOX",
     ".scratch",
 ];
-
-/// Migrate the legacy agent nest (`~/.buzz`) into the current nest.
-///
-/// An earlier hop (`~/.sprout` → `~/.buzz`) shipped with no migration and
-/// stranded the agent's knowledge, so agents searched `$HOME` for files they
-/// "remembered" and tripped macOS TCC prompts. This copies only the knowledge
-/// directories (see [`LEGACY_NEST_KNOWLEDGE`]), never `REPOS/`.
-///
-/// Non-fatal and idempotent, mirroring [`migrate_legacy_app_data_dir`]: a copy
-/// error is logged and never aborts startup. There is no completion sentinel —
-/// the migration re-runs on every launch while `~/.buzz` exists, which is
-/// cheap because the copy is tiny and `copy_dir_all` skips files that already
-/// exist in the destination. This relies on `REPOS/` being out of scope; if it
-/// is ever added back, a sentinel or off-thread copy becomes mandatory.
-///
-/// Returns `true` when a legacy `~/.buzz` nest was present (migration ran),
-/// so the caller can emit a one-time hint inviting the user to delete it. The
-/// frontend dedupes the hint, so re-firing while `~/.buzz` lingers is benign.
-pub fn migrate_legacy_nest() -> bool {
-    let Some(home) = dirs::home_dir() else {
-        eprintln!("buzz-desktop: nest-migration: cannot resolve home directory");
-        return false;
-    };
-    // Destination is the current build's nest dir (`.beekeeper` or
-    // `.beekeeper-dev`).
-    let Some(current_nest) = crate::managed_agents::nest_dir() else {
-        eprintln!("buzz-desktop: nest-migration: cannot resolve nest directory");
-        return false;
-    };
-    migrate_legacy_nest_at(&home.join(LEGACY_NEST_DIR), &current_nest)
-}
 
 /// Copy the [`LEGACY_NEST_KNOWLEDGE`] entries from `legacy` to `current`.
 ///

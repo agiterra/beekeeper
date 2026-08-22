@@ -31,8 +31,10 @@ fn copy_dir_all_preserves_nested_files_without_overwriting() {
 fn setup_sync_layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let parent = tempfile::tempdir().unwrap();
     let canonical = parent.path().join(CANONICAL_DEV_IDENTIFIER);
-    let worktree = parent.path().join("xyz.block.buzz.app.dev.my-branch");
-    let main_instance = parent.path().join("xyz.block.buzz.app.dev.main");
+    let worktree = parent
+        .path()
+        .join("io.agiterra.beekeeper.app.dev.my-branch");
+    let main_instance = parent.path().join("io.agiterra.beekeeper.app.dev.main");
 
     std::fs::create_dir_all(canonical.join("agents")).unwrap();
     std::fs::write(
@@ -313,7 +315,7 @@ fn seed_up_migrates_sibling_file_to_canonical_then_symlinks() {
     let sibling = canonical
         .parent()
         .unwrap()
-        .join("xyz.block.buzz.app.dev.main");
+        .join("io.agiterra.beekeeper.app.dev.main");
     std::fs::create_dir_all(sibling.join("agents")).unwrap();
     std::fs::write(sibling.join(rel), r#"[{"id":"brain"}]"#).unwrap();
 
@@ -359,7 +361,7 @@ fn seed_up_skipped_when_canonical_has_file() {
     let sibling = canonical
         .parent()
         .unwrap()
-        .join("xyz.block.buzz.app.dev.main");
+        .join("io.agiterra.beekeeper.app.dev.main");
     std::fs::create_dir_all(sibling.join("agents")).unwrap();
     std::fs::write(sibling.join(rel), r#"[{"id":"should-not-win"}]"#).unwrap();
 
@@ -386,7 +388,7 @@ fn seed_up_ignores_sibling_symlink_as_source() {
     let sibling = canonical
         .parent()
         .unwrap()
-        .join("xyz.block.buzz.app.dev.main");
+        .join("io.agiterra.beekeeper.app.dev.main");
     std::fs::create_dir_all(sibling.join("agents")).unwrap();
     std::os::unix::fs::symlink(
         PathBuf::from("/nonexistent/elsewhere.json"),
@@ -428,7 +430,7 @@ fn sync_migrates_teams_from_sibling_to_canonical() {
     let main_instance = canonical
         .parent()
         .unwrap()
-        .join("xyz.block.buzz.app.dev.main");
+        .join("io.agiterra.beekeeper.app.dev.main");
 
     // Before sync: canonical has no teams, .main has the real team dir.
     assert!(!canonical.join("agents/teams").exists());
@@ -796,14 +798,6 @@ fn a_nest_migration_onto_itself_is_refused_not_reported_as_success() {
         !super::migrate_legacy_nest_at(&nest, &nest),
         "a self-copy is not a migration and must not report that one ran"
     );
-}
-
-#[test]
-fn the_legacy_nest_constant_names_the_previous_product_not_this_one() {
-    // The whole point of the constant is to name the directory we are moving
-    // *away from*; if it ever equals the current nest the migration is dead.
-    assert_eq!(super::LEGACY_NEST_DIR, ".buzz");
-    assert_ne!(super::LEGACY_NEST_DIR, ".beekeeper");
 }
 
 #[test]
