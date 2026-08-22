@@ -782,6 +782,31 @@ fn reconcile_mcp_commands_skips_record_without_agent_command() {
 }
 
 #[test]
+fn a_nest_migration_onto_itself_is_refused_not_reported_as_success() {
+    // Regression: a rename sweep rewrote the legacy nest constant to the
+    // current one, so the migration copied `~/.beekeeper` onto `~/.beekeeper`
+    // and logged "migrated X to X" — a broken import that looked healthy while
+    // the real legacy nest was never read.
+    let dir = tempfile::tempdir().unwrap();
+    let nest = dir.path().join(".beekeeper");
+    std::fs::create_dir_all(&nest).unwrap();
+    std::fs::write(nest.join("AGENTS.md"), "agents").unwrap();
+
+    assert!(
+        !super::migrate_legacy_nest_at(&nest, &nest),
+        "a self-copy is not a migration and must not report that one ran"
+    );
+}
+
+#[test]
+fn the_legacy_nest_constant_names_the_previous_product_not_this_one() {
+    // The whole point of the constant is to name the directory we are moving
+    // *away from*; if it ever equals the current nest the migration is dead.
+    assert_eq!(super::LEGACY_NEST_DIR, ".buzz");
+    assert_ne!(super::LEGACY_NEST_DIR, ".beekeeper");
+}
+
+#[test]
 fn migrate_legacy_nest_carries_knowledge_and_skips_repos() {
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".sprout");

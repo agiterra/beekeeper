@@ -216,6 +216,11 @@ pub fn migrate_legacy_app_data_dir(app: &tauri::AppHandle) {
 /// these dirs (e.g. by a skill writing into `.scratch/`) would hit that branch's
 /// clobber/abort hazard. The per-entry log-and-continue below bounds the blast
 /// radius of such a failure to the single offending entry.
+/// The previous product's nest directory. This names the *old* thing, so a
+/// rename sweep over `.buzz` paths must not touch it — doing exactly that once
+/// turned [`migrate_legacy_nest`] into a silent self-copy.
+const LEGACY_NEST_DIR: &str = ".buzz";
+
 const LEGACY_NEST_KNOWLEDGE: &[&str] = &[
     "AGENTS.md",
     "RESEARCH",
@@ -226,7 +231,7 @@ const LEGACY_NEST_KNOWLEDGE: &[&str] = &[
     ".scratch",
 ];
 
-/// Migrate the legacy agent nest (`~/.beekeeper`) into the current nest.
+/// Migrate the legacy agent nest (`~/.buzz`) into the current nest.
 ///
 /// An earlier hop (`~/.sprout` → `~/.buzz`) shipped with no migration and
 /// stranded the agent's knowledge, so agents searched `$HOME` for files they
@@ -235,14 +240,14 @@ const LEGACY_NEST_KNOWLEDGE: &[&str] = &[
 ///
 /// Non-fatal and idempotent, mirroring [`migrate_legacy_app_data_dir`]: a copy
 /// error is logged and never aborts startup. There is no completion sentinel —
-/// the migration re-runs on every launch while `~/.beekeeper` exists, which is
+/// the migration re-runs on every launch while `~/.buzz` exists, which is
 /// cheap because the copy is tiny and `copy_dir_all` skips files that already
 /// exist in the destination. This relies on `REPOS/` being out of scope; if it
 /// is ever added back, a sentinel or off-thread copy becomes mandatory.
 ///
-/// Returns `true` when a legacy `~/.beekeeper` nest was present (migration ran),
+/// Returns `true` when a legacy `~/.buzz` nest was present (migration ran),
 /// so the caller can emit a one-time hint inviting the user to delete it. The
-/// frontend dedupes the hint, so re-firing while `~/.beekeeper` lingers is benign.
+/// frontend dedupes the hint, so re-firing while `~/.buzz` lingers is benign.
 pub fn migrate_legacy_nest() -> bool {
     let Some(home) = dirs::home_dir() else {
         eprintln!("buzz-desktop: nest-migration: cannot resolve home directory");
@@ -254,7 +259,7 @@ pub fn migrate_legacy_nest() -> bool {
         eprintln!("buzz-desktop: nest-migration: cannot resolve nest directory");
         return false;
     };
-    migrate_legacy_nest_at(&home.join(".beekeeper"), &current_nest)
+    migrate_legacy_nest_at(&home.join(LEGACY_NEST_DIR), &current_nest)
 }
 
 /// Copy the [`LEGACY_NEST_KNOWLEDGE`] entries from `legacy` to `current`.
@@ -266,9 +271,20 @@ fn migrate_legacy_nest_at(legacy: &Path, current: &Path) -> bool {
     if !legacy.exists() {
         return false;
     }
+    // Copying a directory onto itself is not a migration, it is a no-op that
+    // reports success — which is how a rename sweep hid a broken migration
+    // behind a reassuring "migrated X to X" log line. Refuse loudly instead.
+    if legacy == current {
+        eprintln!(
+            "buzz-desktop: nest-migration: legacy and current nest are the same path ({}); \
+             skipping",
+            current.display()
+        );
+        return false;
+    }
     // A deliberate dev reset pre-creates this marker to opt out of every
     // production/legacy nest import. Normal first-run migration still copies
-    // `.beekeeper` before `migrate_dev_nest()` writes the marker later in boot.
+    // the legacy nest before `migrate_dev_nest()` writes the marker later in boot.
     if current
         .file_name()
         .is_some_and(|name| name == ".beekeeper-dev")
