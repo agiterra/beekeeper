@@ -919,6 +919,15 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   processes, alive since 13 and 17 August, kept recreating
   `xyz.block.buzz.app/shell-sessions` because the old path is baked into their
   argv — they outlive the app by design).
+- **A quiet tick must still say something.** Both deployers now log one line
+  per run — `repo=1 branch=main selected=<sha>(success) deployed=<sha> — up to
+  date`. The `repo=` field is the assertion that a unit resolved its own
+  config; it is the only practical runtime check, because
+  `systemctl show -p Environment` returns **empty** for anything supplied via
+  `EnvironmentFile` (that property covers only `Environment=` directives), so
+  it reads as a missing config when nothing is wrong. Silence used to be the
+  convention here, and silence is exactly what a deployer broken into a
+  permanent no-op produces.
 - **Both deployers are now one script in the repo**, `deploy/autodeploy/`,
   parameterized by `/etc/default/<unit>` via `EnvironmentFile=`. They had been
   two near-identical files, one of them untracked and root-owned, and every

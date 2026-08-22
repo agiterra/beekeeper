@@ -122,8 +122,20 @@ happened" cannot distinguish *correctly current* from *broken into permanent
 silence*. Check the mechanism directly instead.
 
 ```bash
-# 1. each unit resolves its own config, and the two REPO_IDs differ
-ssh agincus 'systemctl show buzz-autodeploy.service beekeeper-autodeploy.service -p Environment'
+# 1. each unit resolves its own config, and the two REPO_IDs differ.
+#
+# Run each service once and read the line it logs. Do NOT reach for
+# `systemctl show -p Environment` — that property reflects only `Environment=`
+# directives, and comes back EMPTY for values supplied by EnvironmentFile,
+# which systemd resolves at exec time. It looks like a missing config when
+# nothing is wrong.
+ssh agincus 'sudo systemctl start buzz-autodeploy.service beekeeper-autodeploy.service
+             journalctl -u buzz-autodeploy -u beekeeper-autodeploy -n 4 --no-pager'
+# expect, on a current relay:
+#   [buzz-autodeploy]      repo=1 branch=main selected=<sha>(success) deployed=<sha> — up to date
+#   [beekeeper-autodeploy] repo=2 branch=main selected=<sha>(success) deployed=<sha> — up to date
+# The repo= field is the assertion. If a relay is behind, this starts a real
+# ~15 min build instead — check which case you are in first.
 
 # 2. both mirrors are readable by root the way the script reads them
 ssh agincus 'for m in /srv/git/buzz.git /srv/git/beekeeper.git; do
