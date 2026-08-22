@@ -24,6 +24,7 @@ import {
   resetEncryptedBackupSession,
   useEncryptedBackupSession,
 } from "./EncryptedBackupCreator";
+import Wordmark from "@/shared/ui/buzz-logo/Wordmark";
 import { IdentityKeyHelpDialog } from "./IdentityKeyHelpDialog";
 import { IdentityRecoveryPairing } from "./IdentityRecoveryPairing";
 import { LandingBees } from "./LandingBees";
@@ -311,11 +312,7 @@ export function MachineOnboardingFlow({
               direction={transitionDirection}
               transitionKey={`machine-identity-${transitionDirection}`}
             >
-              <img
-                alt="Buzz"
-                className="w-full max-w-[600px]"
-                src="/landing/buzz-wordmark.png"
-              />
+              <Wordmark className="w-full max-w-[600px] text-foreground" />
               <p className="mt-2 max-w-[560px] text-center text-2xl font-normal leading-none text-foreground">
                 Your people, your agents, your projects —<br />
                 all in one place.
