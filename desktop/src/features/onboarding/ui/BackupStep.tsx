@@ -190,9 +190,9 @@ export function BackupStep({
             Backup options
           </h1>
           <p className="mt-5 text-sm leading-6 text-foreground/75">
-            Your identity key works like a password for your Buzz account. Keep
-            a copy somewhere safe. You can create a backup file and lock it with
-            a password you can remember.
+            Your identity key works like a password for your Bee Keeper account.
+            Keep a copy somewhere safe. You can create a backup file and lock it
+            with a password you can remember.
           </p>
         </div>
 

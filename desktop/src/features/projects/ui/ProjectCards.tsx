@@ -286,7 +286,7 @@ function RepositoryUnavailableIndicator({
       label: "Access failed",
     },
     missing: {
-      description: "No git repository was found on the Buzz relay.",
+      description: "No git repository was found on the Bee Keeper relay.",
       label: "Uninitialized",
     },
     access: {

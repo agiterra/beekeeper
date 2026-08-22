@@ -397,9 +397,9 @@ export function MobilePairingCard({
         title="Mobile"
         description={
           <>
-            Connect the Buzz mobile app to this relay by scanning a QR code. The
-            connection is secured with end-to-end encryption and a verification
-            code.
+            Connect the Bee Keeper mobile app to this relay by scanning a QR
+            code. The connection is secured with end-to-end encryption and a
+            verification code.
           </>
         }
       />

@@ -169,7 +169,7 @@ export function ReadmePanel({
       },
       missing: {
         description:
-          "The project announcement exists, but its git repository was not found on the Buzz relay.",
+          "The project announcement exists, but its git repository was not found on the Bee Keeper relay.",
         icon: CircleAlert,
         title: "Repository not initialized",
       },
@@ -233,7 +233,7 @@ export function ReadmePanel({
           </h3>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {externalHost ? (
-              "Clone this repository locally to explore its files, commits, and contributors in Buzz."
+              "Clone this repository locally to explore its files, commits, and contributors in Bee Keeper."
             ) : reason === "access" && accessChannelId ? (
               <AccessRestrictedDescription accessChannelId={accessChannelId} />
             ) : (
