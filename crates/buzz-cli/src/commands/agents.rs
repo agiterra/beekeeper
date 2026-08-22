@@ -35,7 +35,7 @@ pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), Cli
                 obj.insert("saved".into(), false.into());
                 obj.insert(
                     "message".into(),
-                    "Draft sent to Buzz Desktop for owner review. Nothing changes until the owner saves it."
+                    "Draft sent to Bee Keeper Desktop for owner review. Nothing changes until the owner saves it."
                         .into(),
                 );
             }
@@ -77,7 +77,7 @@ pub async fn dispatch(command: AgentsCmd, client: &BuzzClient) -> Result<(), Cli
                 obj.insert("saved".into(), false.into());
                 obj.insert(
                     "message".into(),
-                    "Draft sent to Buzz Desktop for owner review. Nothing changes until the owner saves it."
+                    "Draft sent to Bee Keeper Desktop for owner review. Nothing changes until the owner saves it."
                         .into(),
                 );
             }
@@ -451,7 +451,7 @@ pub(crate) async fn fetch_archived_snapshot(client: &BuzzClient) -> Result<Vec<S
     Ok(archived.into_iter().map(str::to_string).collect())
 }
 
-/// `buzz agents archived`: read path over [`fetch_archived_snapshot`] for
+/// `bee agents archived`: read path over [`fetch_archived_snapshot`] for
 /// direct invocation — a trust failure (state 3) is fatal here so a
 /// verification command can never look like success.
 async fn cmd_archived(client: &BuzzClient) -> Result<(), CliError> {

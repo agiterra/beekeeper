@@ -169,7 +169,7 @@ Everything is environment variables. No flags, no config files. (We are a subpro
 
 ## Reply Guard
 
-Off by default, except on Buzz shared-compute (mesh) agents, where Buzz Desktop
+Off by default, except on Buzz shared-compute (mesh) agents, where Bee Keeper Desktop
 sets `BUZZ_AGENT_REQUIRE_REPLY=1` automatically. With it enabled, a turn that is
 about to end without any recognized attempt to post to Buzz gets a reminder that
 its assistant text is invisible to humans, and is rerolled.
@@ -214,7 +214,7 @@ JSON to the model, louder feedback than a reminder.
 
 **Known limits**, both deliberate. A command assembled at runtime (`$CMD`) or
 buried in a wrapper script is missed, so that turn is reminded despite having
-posted. Text that merely quotes a send (`echo "buzz messages send"`) matches, so
+posted. Text that merely quotes a send (`echo "bee messages send"`) matches, so
 that turn is not reminded. Missing a real post is the expensive direction, and
 substring matching is the forgiving one there. Neither edge is pinned by a test;
 the matcher is free to improve.

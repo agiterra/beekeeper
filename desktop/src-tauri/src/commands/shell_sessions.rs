@@ -123,7 +123,7 @@ pub fn list_shell_access_requests() -> Vec<AccessRequest> {
 
 /// Answer a pending access request. `decision` is `once` (run the requested
 /// command a single time), `full` (enable agent consent for the session), or
-/// `deny`. Wakes the waiting `buzz session request-access` call.
+/// `deny`. Wakes the waiting `bee session request-access` call.
 #[tauri::command]
 pub fn resolve_shell_access_request(
     app: AppHandle,

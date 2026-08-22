@@ -98,7 +98,7 @@ pub(crate) struct ResetContext<'a> {
     /// present and non-empty, wiped alongside `app_data_dir` to prevent
     /// `migrate_legacy_app_data_dir` from restoring the old identity.
     pub legacy_app_data_dir: Option<PathBuf>,
-    /// Nest dir (`~/.buzz` or `~/.buzz-dev`) scoped to this build's variant,
+    /// Nest dir (`~/.beekeeper` or `~/.beekeeper-dev`) scoped to this build's variant,
     /// injected so unit tests can override without touching the global OnceLock.
     pub nest_dir: Option<PathBuf>,
     pub keychain: &'a dyn ResetKeychain,
@@ -123,7 +123,12 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
 
     let store = crate::secret_store::SecretStore::keyring(crate::app_state::keyring_service());
     let home_dir = dirs::home_dir();
-    let legacy_dir = crate::migration::legacy_app_data_dir(app_data_dir);
+    // No predecessor directory to trash. Bee Keeper forked from Buzz rather
+    // than replacing it, so a mapping here would point at a *live* app's data
+    // and a Bee Keeper reset would wipe stock Buzz. The field stays so the
+    // reset machinery keeps handling the case if a real predecessor ever
+    // appears.
+    let legacy_dir = None;
     let nest_dir = crate::managed_agents::nest_dir();
 
     let ctx = ResetContext {
@@ -564,8 +569,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
 
         // Create both nests.
-        let dev_nest = tmp.path().join(".buzz-dev");
-        let prod_nest = tmp.path().join(".buzz");
+        let dev_nest = tmp.path().join(".beekeeper-dev");
+        let prod_nest = tmp.path().join(".beekeeper");
         std::fs::create_dir_all(&dev_nest).unwrap();
         std::fs::create_dir_all(&prod_nest).unwrap();
 
@@ -600,8 +605,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
 
         // Create both nests.
-        let dev_nest = tmp.path().join(".buzz-dev");
-        let prod_nest = tmp.path().join(".buzz");
+        let dev_nest = tmp.path().join(".beekeeper-dev");
+        let prod_nest = tmp.path().join(".beekeeper");
         std::fs::create_dir_all(&dev_nest).unwrap();
         std::fs::create_dir_all(&prod_nest).unwrap();
 
@@ -719,13 +724,13 @@ mod tests {
         std::fs::create_dir_all(&app_data).unwrap();
         write_sentinel(&app_data).unwrap();
 
-        // Seed prod ~/.buzz/.repos-dir so the migration has something to copy.
+        // Seed prod ~/.beekeeper/.repos-dir so the migration has something to copy.
         let home = tmp.path().join("home");
-        let prod_nest = home.join(".buzz");
+        let prod_nest = home.join(".beekeeper");
         std::fs::create_dir_all(&prod_nest).unwrap();
         std::fs::write(prod_nest.join(".repos-dir"), "/some/workspace").unwrap();
 
-        let dev_nest = tmp.path().join(".buzz-dev");
+        let dev_nest = tmp.path().join(".beekeeper-dev");
 
         // Run a real reset and take the REAL outcome.completed.
         let kc = FakeKeychain::ok();
@@ -750,7 +755,7 @@ mod tests {
         // Arm 2 (positive control): non-reset dev boot → dev nest IS created
         // with .repos-dir copied. This proves the test would have caught the
         // pass-3 resurrection live.
-        let dev_nest_2 = tmp.path().join(".buzz-dev-control");
+        let dev_nest_2 = tmp.path().join(".beekeeper-dev-control");
         crate::migration::maybe_migrate_dev_repos_dir(true, false, &home, &dev_nest_2);
         assert!(
             dev_nest_2.join(".repos-dir").exists(),
@@ -763,7 +768,7 @@ mod tests {
         );
 
         // Arm 3: prod build (is_dev=false) → nothing created regardless.
-        let dev_nest_3 = tmp.path().join(".buzz-dev-prod");
+        let dev_nest_3 = tmp.path().join(".beekeeper-dev-prod");
         crate::migration::maybe_migrate_dev_repos_dir(false, false, &home, &dev_nest_3);
         assert!(
             !dev_nest_3.join(".repos-dir").exists(),

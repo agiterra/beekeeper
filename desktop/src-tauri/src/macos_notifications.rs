@@ -365,8 +365,8 @@ mod tests {
     #[test]
     fn requires_the_executable_to_use_the_app_bundle_layout() {
         assert!(is_application_bundle_layout(
-            Path::new("/Applications/Buzz.app"),
-            Path::new("/Applications/Buzz.app/Contents/MacOS/buzz-desktop"),
+            Path::new("/Applications/Bee Keeper.app"),
+            Path::new("/Applications/Bee Keeper.app/Contents/MacOS/buzz-desktop"),
         ));
         assert!(!is_application_bundle_layout(
             Path::new("/tmp/Fake.app"),
@@ -377,7 +377,7 @@ mod tests {
             Path::new("/Users/developer/buzz/desktop/src-tauri/target/debug/buzz-desktop"),
         ));
         assert!(!is_application_bundle_layout(
-            Path::new("/Applications/Buzz.app"),
+            Path::new("/Applications/Bee Keeper.app"),
             Path::new("/Applications/Other.app/Contents/MacOS/buzz-desktop"),
         ));
     }

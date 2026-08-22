@@ -69,7 +69,7 @@ if (externalReleaseSigning && uploadSigningValues.values.any { !it.isNullOrBlank
 }
 
 android {
-    namespace = "xyz.block.buzz.mobile"
+    namespace = "io.agiterra.beekeeper.mobile"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -83,7 +83,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "xyz.block.buzz.mobile"
+        applicationId = "io.agiterra.beekeeper.mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -91,7 +91,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        resValue("string", "app_name", "Buzz")
+        resValue("string", "app_name", "Bee Keeper")
     }
 
     signingConfigs {

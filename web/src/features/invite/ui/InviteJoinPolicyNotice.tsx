@@ -117,7 +117,7 @@ export function InviteJoinPolicyNotice({
           checked={agreementConfirmed}
           onCheckedChange={onAgreementConfirmedChange}
         >
-          I agree to the Buzz{" "}
+          I agree to the Bee Keeper{" "}
           {policy.terms_markdown ? (
             <button
               className="text-black no-underline underline-offset-4 hover:text-black/70 hover:underline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-black"

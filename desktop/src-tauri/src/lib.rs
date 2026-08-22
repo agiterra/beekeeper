@@ -88,7 +88,7 @@ pub fn run() {
             }
             // Forward any deep link URLs from the duplicate launch.
             for arg in &argv {
-                if arg.starts_with("buzz://") {
+                if arg.starts_with("beekeeper://") {
                     handle_deep_link_url(app, arg);
                 }
             }
@@ -421,7 +421,7 @@ pub fn run() {
                     .store(port, std::sync::atomic::Ordering::Relaxed);
             });
 
-            // Create the Buzz nest (~/.buzz or ~/.buzz-dev for dev builds) before
+            // Create the Buzz nest (~/.beekeeper or ~/.beekeeper-dev for dev builds) before
             // agents are restored, so default_agent_workdir() resolves to the
             // nest directory. Non-fatal: agents fall back to $HOME if nest
             // creation fails.
@@ -444,26 +444,15 @@ pub fn run() {
                 None => true,
             };
 
-            // Carry the agent's knowledge from the legacy nest (~/.sprout) into
-            // the live nest after it exists. Must run after ensure_nest() so the
-            // destination is present. Non-fatal.
-            // On a real migration, emit a one-time hint so the user can delete
-            // the now-inert ~/.sprout; the frontend dedupes the toast.
-            // Suppressed when a reset completed this boot: the nest was wiped and
-            // a fresh ~/.sprout-less state is exactly what we want.
-            if !reset_outcome.completed && migration::migrate_legacy_nest() {
-                let _ = app_handle.emit("legacy-nest-migrated", ());
-            }
-
             // One-time migration for dev builds: copy accumulated knowledge
-            // from the shared ~/.buzz nest into the new dedicated ~/.buzz-dev
+            // from the shared ~/.beekeeper nest into the new dedicated ~/.beekeeper-dev
             // nest so no work is lost when the nest is first namespaced.
-            // Runs only when nest_dir() resolved to ~/.buzz-dev (dev instance).
-            // Suppressed after a reset so re-importing ~/.buzz into ~/.buzz-dev
+            // Runs only when nest_dir() resolved to ~/.beekeeper-dev (dev instance).
+            // Suppressed after a reset so re-importing ~/.beekeeper into ~/.beekeeper-dev
             // doesn't re-populate what was just wiped.
             let is_dev_nest = managed_agents::nest_dir()
                 .and_then(|p| p.file_name().map(|n| n.to_os_string()))
-                .is_some_and(|n| n == ".buzz-dev");
+                .is_some_and(|n| n == ".beekeeper-dev");
             if !reset_outcome.completed && is_dev_nest {
                 migration::migrate_dev_nest();
             }

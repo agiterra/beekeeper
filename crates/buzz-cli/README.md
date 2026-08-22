@@ -17,7 +17,7 @@ cargo install --path crates/buzz-cli
 ```bash
 # Private key identity (NIP-98 signed requests)
 export BUZZ_PRIVATE_KEY="nsec1..."
-buzz channels list
+bee channels list
 ```
 
 ## Usage
@@ -29,69 +29,69 @@ All output is JSON on stdout. Errors are JSON on stderr. Exit codes: 0=ok, 1=use
 export BUZZ_RELAY_URL="https://relay.example.com"
 
 # Messages
-buzz messages send --channel <uuid> --content "Hello"
-buzz messages send --channel <uuid> --content "Reply" --reply-to <event-id> --broadcast
-buzz messages send --channel <uuid> --content - < message.md   # read body from stdin
-buzz messages get --channel <uuid> --limit 20
-buzz messages thread --channel <uuid> --event <event-id>
-buzz messages search --query "architecture"
-buzz messages search --author <pubkey|npub|name> --since <unix-ts>
-buzz messages edit --event <event-id> --content "Updated text"
-buzz messages delete --event <event-id>
+bee messages send --channel <uuid> --content "Hello"
+bee messages send --channel <uuid> --content "Reply" --reply-to <event-id> --broadcast
+bee messages send --channel <uuid> --content - < message.md   # read body from stdin
+bee messages get --channel <uuid> --limit 20
+bee messages thread --channel <uuid> --event <event-id>
+bee messages search --query "architecture"
+bee messages search --author <pubkey|npub|name> --since <unix-ts>
+bee messages edit --event <event-id> --content "Updated text"
+bee messages delete --event <event-id>
 
 # Diffs
-buzz messages send-diff --channel <uuid> --diff - --repo https://github.com/org/repo --commit abc123 < diff.patch
+bee messages send-diff --channel <uuid> --diff - --repo https://github.com/org/repo --commit abc123 < diff.patch
 
 # Channels
-buzz channels list
-buzz channels create --name "my-channel" --type stream --visibility open
-buzz channels join --channel <uuid>
-buzz channels topic --channel <uuid> --topic "New topic"
+bee channels list
+bee channels create --name "my-channel" --type stream --visibility open
+bee channels join --channel <uuid>
+bee channels topic --channel <uuid> --topic "New topic"
 
 # Reactions
-buzz reactions add --event <event-id> --emoji "👍"
-buzz reactions get --event <event-id>
+bee reactions add --event <event-id> --emoji "👍"
+bee reactions get --event <event-id>
 
 # Users & Presence
-buzz users get                          # your own profile
-buzz users get --pubkey <hex>           # single user
-buzz users get --pubkey <hex> --pubkey <hex>  # batch (max 200)
-buzz users get --name Honey --owner me  # exact-name lookup in your managed agents
-buzz users set-presence --status online
-buzz users set-status --text "heads down on the CLI" --emoji "🚀"
-buzz users set-status --clear                 # remove your status
+bee users get                          # your own profile
+bee users get --pubkey <hex>           # single user
+bee users get --pubkey <hex> --pubkey <hex>  # batch (max 200)
+bee users get --name Honey --owner me  # exact-name lookup in your managed agents
+bee users set-presence --status online
+bee users set-status --text "heads down on the CLI" --emoji "🚀"
+bee users set-status --clear                 # remove your status
 
 # DMs
-buzz dms open --pubkey <hex>
-buzz dms list
+bee dms open --pubkey <hex>
+bee dms list
 
 # Workflows
-buzz workflows list --channel <uuid>
-buzz workflows trigger --workflow <uuid>
-buzz workflows approve --token <uuid>
-buzz workflows approve --token <uuid> --approved false --note "needs revision"
+bee workflows list --channel <uuid>
+bee workflows trigger --workflow <uuid>
+bee workflows approve --token <uuid>
+bee workflows approve --token <uuid> --approved false --note "needs revision"
 
 # Forum
-buzz messages vote --event <event-id> --direction up
+bee messages vote --event <event-id> --direction up
 
 # Canvas
-buzz canvas get --channel <uuid>
-buzz canvas set --channel <uuid> --content "# Welcome"
+bee canvas get --channel <uuid>
+bee canvas set --channel <uuid> --content "# Welcome"
 
 # Agent Memory (NIP-AE)
-buzz mem ls
-buzz mem get <slug>
-buzz mem set <slug> "my-value"
-buzz mem patch <slug> --base-hash <hex> < diff.patch  # or --no-base-hash
-buzz mem rm <slug>
+bee mem ls
+bee mem get <slug>
+bee mem set <slug> "my-value"
+bee mem patch <slug> --base-hash <hex> < diff.patch  # or --no-base-hash
+bee mem rm <slug>
 
 # Repository protection
-buzz repos protect list --id my-repo
-buzz repos protect set --id my-repo --ref refs/heads/main --push admin --no-force-push --no-delete
-buzz repos protect remove --id my-repo --ref refs/heads/main
+bee repos protect list --id my-repo
+bee repos protect set --id my-repo --ref refs/heads/main --push admin --no-force-push --no-delete
+bee repos protect remove --id my-repo --ref refs/heads/main
 
 # Pipe to jq
-buzz channels list | jq '.[].name'
+bee channels list | jq '.[].name'
 ```
 
 `protect set` replaces every existing rule for the exact ref pattern. Any

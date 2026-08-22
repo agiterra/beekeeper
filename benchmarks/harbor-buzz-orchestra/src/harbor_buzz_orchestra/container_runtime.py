@@ -2,7 +2,7 @@
 
 Each provisioned identity is a full ``buzz-acp`` → ``buzz-agent`` →
 ``buzz-dev-mcp`` process tree launched *inside* the task container — the same
-binaries and the same MCP toolset (shell, file tools, the ``buzz`` CLI on
+binaries and the same MCP toolset (shell, file tools, the ``bee`` CLI on
 PATH) that the desktop app gives a Buzz agent. The harness stays outside:
 it provisions, uploads the pinned binaries, posts the task as the trial
 user, and observes the channel until the orchestrator publishes DONE.

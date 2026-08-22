@@ -1,4 +1,4 @@
-//! `buzz notes` — NIP-23 long-form editable notes (kind:30023).
+//! `bee notes` — NIP-23 long-form editable notes (kind:30023).
 //!
 //! Skill-sharing knowledge base for the team. Notes are parameterized-replaceable
 //! events keyed by `(kind=30023, pubkey, d-tag)`; the `d` tag is the human slug.

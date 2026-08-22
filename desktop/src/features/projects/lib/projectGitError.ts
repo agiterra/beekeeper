@@ -32,7 +32,7 @@ export function projectCloneErrorPresentation(
       title: "Repository access required",
       description: github
         ? "This repository requires GitHub authentication. Buzz currently clones public GitHub repositories without credentials."
-        : "Buzz could not authenticate with this repository. Check your access and try again.",
+        : "Bee Keeper could not authenticate with this repository. Check your access and try again.",
     };
   }
   if (/\b404\b|repository not found|repository does not exist/.test(message)) {

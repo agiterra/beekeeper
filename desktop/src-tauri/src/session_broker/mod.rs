@@ -1,6 +1,6 @@
 //! The local **session broker** (buzz ↔ agent access to sessions).
 //!
-//! The `buzz session` CLI calls this owner-only Unix-socket broker inside the
+//! The `bee session` CLI calls this owner-only Unix-socket broker inside the
 //! desktop app, which is the single authority: before any write reaches a
 //! session it requires the calling agent's pubkey to hold a **collaborator**
 //! entry on that session's invite roster (or to be this app's own identity).
@@ -10,7 +10,7 @@
 //!
 //! The protocol and CLI are backend-agnostic on purpose: built-in shell
 //! sessions fulfill requests today; another session backend could be added
-//! without changing the agent-facing surface (`buzz session`), the socket, or
+//! without changing the agent-facing surface (`bee session`), the socket, or
 //! the access model.
 
 pub mod model;
@@ -26,7 +26,7 @@ pub use server::spawn_session_broker;
 /// ratchet; the ordering comments are why it is one function rather than two
 /// call sites.
 pub fn start_unix_session_services(app: &tauri::AppHandle) {
-    // The owner-only unix socket the `buzz session` CLI calls to let agents act
+    // The owner-only unix socket the `bee session` CLI calls to let agents act
     // on sessions, gated per-session by the invite roster (see `server.rs`).
     let broker_handle = app.clone();
     tauri::async_runtime::spawn(async move {

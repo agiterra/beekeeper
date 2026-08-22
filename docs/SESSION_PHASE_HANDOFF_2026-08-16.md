@@ -224,7 +224,7 @@ reason to alter a protocol contract (R15's standing rule).
   at a time.** Awaiting Brian's confirmation.
 - **Takeover contestability on return** (blocks A9). Recommendation: takeover
   is final; the returner is re-granted by a later transition.
-- **R19 export identity**: `buzz sessions export` ships only 44223/44224/44225
+- **R19 export identity**: `bee sessions export` ships only 44223/44224/44225
   — no commands, no genesis, no transitions. Either expand it to a real audit
   bundle or rename it honestly as a provider-transcript export. Must resolve
   before phase close.

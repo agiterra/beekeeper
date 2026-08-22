@@ -1095,7 +1095,7 @@ async fn create_session_and_apply_model(
 /// `pulse_project`, when present, is the §5.5-resolved Project Pulse
 /// coordinate for this channel session. It is pushed onto every MCP server's
 /// env as `BUZZ_PULSE_PROJECT`, the same mechanism `BUZZ_GIT_ORIGIN_CHANNEL_ID`
-/// already takes, so `buzz-dev-mcp` shell invocations (and `buzz` CLI calls
+/// already takes, so `buzz-dev-mcp` shell invocations (and `bee` CLI calls
 /// made through them) inherit it. This is deliberately **not** set on the ACP
 /// agent subprocess's own env — that env is fixed once at pool-process spawn
 /// (`EnvFence::OPEN`, `acp.rs:530-546`) and is identical for every channel
@@ -3006,7 +3006,7 @@ pub(crate) fn render_canvas_section(event_id: &str, timestamp: &str, channel_uui
         "[Channel Canvas]\n\
          Canvas revision (event ID): {event_id}\n\
          Last modified: {timestamp}\n\
-         Fetch current content with: buzz canvas get --channel {channel_uuid}"
+         Fetch current content with: bee canvas get --channel {channel_uuid}"
     )
 }
 
@@ -7779,7 +7779,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             "[Channel Canvas]\n\
              Canvas revision (event ID): a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\n\
              Last modified: 2024-01-15T10:30:00+00:00\n\
-             Fetch current content with: buzz canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae"
+             Fetch current content with: bee canvas get --channel 00f1ccaf-1506-4dd7-9a0e-fa67e9e486ae"
         );
     }
 
@@ -7889,7 +7889,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         let result = canvas_section_from_query_response(&[ev], CHANNEL_UUID);
         let section = result.expect("expected Some");
         assert!(section.contains(&id), "section must contain the event id");
-        assert!(section.contains("buzz canvas get --channel"));
+        assert!(section.contains("bee canvas get --channel"));
         assert!(section.contains(CHANNEL_UUID));
         assert!(section.starts_with("[Channel Canvas]"));
         // Timestamp must use Z suffix, not +00:00

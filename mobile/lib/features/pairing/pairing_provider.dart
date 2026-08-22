@@ -131,7 +131,7 @@ class PairingNotifier extends Notifier<PairingState> {
     if (trimmed.startsWith('nostrpair://')) {
       return _pairNipAb(trimmed);
     }
-    // Legacy buzz:// flow.
+    // Legacy beekeeper:// flow.
     return _pairLegacy(trimmed);
   }
 
@@ -828,7 +828,7 @@ class PairingNotifier extends Notifier<PairingState> {
     );
   }
 
-  // ── Legacy buzz:// flow ───────────────────────────────────────────────
+  // ── Legacy beekeeper:// flow ───────────────────────────────────────────────
 
   Future<void> _pairLegacy(String rawInput) async {
     state = const PairingState(status: PairingStatus.connecting);
@@ -894,8 +894,8 @@ class PairingNotifier extends Notifier<PairingState> {
   Community _parseLegacyInput(String raw) {
     var payload = raw.trim();
 
-    if (payload.startsWith('buzz://')) {
-      payload = payload.substring('buzz://'.length);
+    if (payload.startsWith('beekeeper://')) {
+      payload = payload.substring('beekeeper://'.length);
     }
 
     final normalized = base64Url.normalize(payload);

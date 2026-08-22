@@ -2069,10 +2069,10 @@ done
             .expect("_meta.systemPrompt.append");
         assert!(
             appended.contains("cannot authenticate"),
-            "a fenced session must be told why `buzz` will not work"
+            "a fenced session must be told why `bee` will not work"
         );
         assert!(
-            !appended.contains("buzz pulse update"),
+            !appended.contains("bee pulse update"),
             "a fenced session must never be told to write the Pulse"
         );
         assert!(

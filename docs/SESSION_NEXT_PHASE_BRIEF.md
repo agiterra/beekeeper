@@ -140,7 +140,7 @@ impersonation: "An event that includes a valid `auth` tag remains authored by
 `event.pubkey`." The `<conditions>` field holds "zero or more clauses separated
 by `&`", and a valid tag is described as "a reusable capability."
 
-**[VERIFIED]** **NIP-AE** — agent memory, surfaced as `buzz mem` with
+**[VERIFIED]** **NIP-AE** — agent memory, surfaced as `bee mem` with
 `ls/get/hash/set/patch/rm`, tombstones, and `--base-hash` optimistic concurrency
 on `patch`. Relay-persisted, not host-local.
 

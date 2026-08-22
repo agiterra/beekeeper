@@ -17,7 +17,7 @@
 - perf(relay): index channel-id lookups and skip trace-only reads ([#4647](https://github.com/block/buzz/pull/4647)) ([`bc9e6528a7`](https://github.com/block/buzz/commit/bc9e6528a7ba6007c5a25f6a0aca9c05d72e9d2c))
 - Polish mobile inbox and media flows ([#4512](https://github.com/block/buzz/pull/4512)) ([`feccf4eabc`](https://github.com/block/buzz/commit/feccf4eabc23fdba94ce3537a194357ed17b197c))
 - fix(git): allow deleting the default branch ([#4297](https://github.com/block/buzz/pull/4297)) ([`fc598f5f8d`](https://github.com/block/buzz/commit/fc598f5f8d70728d11d0712b9fa8e3acc44ea4c3))
-- feat(projects): add buzz projects CLI commands (NIP-MP kind:30621) ([#4020](https://github.com/block/buzz/pull/4020)) ([`b7bb15122e`](https://github.com/block/buzz/commit/b7bb15122e8a2053b545dc2210afc167f6c7a626))
+- feat(projects): add bee projects CLI commands (NIP-MP kind:30621) ([#4020](https://github.com/block/buzz/pull/4020)) ([`b7bb15122e`](https://github.com/block/buzz/commit/b7bb15122e8a2053b545dc2210afc167f6c7a626))
 - perf(relay): serve relay-membership checks from the read replica ([#4124](https://github.com/block/buzz/pull/4124)) ([`ac4fa13b8e`](https://github.com/block/buzz/commit/ac4fa13b8e4d947071d57deb6918dcf12bf74961))
 - fix(relay): allow open relays to set their NIP-11 workspace icon (kind:9033) ([#3998](https://github.com/block/buzz/pull/3998)) ([`5765fc74b7`](https://github.com/block/buzz/commit/5765fc74b77224f0207ddd4b41736a5ff18d333d))
 - feat(relay): accept kind:30621 multi-repo projects at ingest ([#3171](https://github.com/block/buzz/pull/3171)) ([`cb9701cd30`](https://github.com/block/buzz/commit/cb9701cd30fb344bf134585634a09007f3155bfb))

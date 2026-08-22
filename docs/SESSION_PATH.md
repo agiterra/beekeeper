@@ -163,7 +163,7 @@ Two follow-ons Brian has called for explicitly (2026-08-12):
   `SessionMetadata.agent_ref` (structurally present, currently always null)
   so an execution can be backed by a durable managed-agent identity
   (kind 30177) instead of an anonymous per-provision key. This is the
-  convergence point between coding sessions and buzz agents: executions
+  convergence point between coding sessions and bee agents: executions
   become mentionable first-class identities, can persist across sessions
   (memory, persona, reputation), and can address each other without the
   operator mediating. Prerequisites named in SESSION_STEP4_DESIGN.md:
@@ -181,7 +181,7 @@ agents already speak. Two convergence directions, in order:
 
 1. **Managed agents INTO sessions (near-term, Step 4.5-sized).** Example:
    a merge-captain agent. Invite it to the host channel; @mention it in
-   the session lane with the session's `buzz://` deep link; it reads the
+   the session lane with the session's `beekeeper://` deep link; it reads the
    signed transcripts via the CLI's read-only sessions surface, does repo
    work with its existing tools (git signed with its Nostr key), and
    reports in the lane as an attributable participant. Zero new wire

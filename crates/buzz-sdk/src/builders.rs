@@ -4427,7 +4427,7 @@ mod tests {
 
     #[test]
     fn git_patch_rejects_whitespace_only_content() {
-        // Regression: a failed `git format-patch | buzz patches send
+        // Regression: a failed `git format-patch | bee patches send
         // --patch-file -` must not silently publish a whitespace-only
         // (i.e. unappliable) patch.
         let repo = GitRepoCoord {

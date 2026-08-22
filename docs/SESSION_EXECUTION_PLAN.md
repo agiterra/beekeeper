@@ -618,7 +618,7 @@ missing adoption references, both deletion mechanisms).
   must run wherever the infra path runs (`just test` and the repo CI
   pipeline), and its database name must be unique per run (fixed
   `buzz_genesis_gate` collides across simultaneous worktrees).
-- **R19 (export completeness — ledger item).** `buzz sessions export`
+- **R19 (export completeness — ledger item).** `bee sessions export`
   fetches only 44223/44224/44225: no operator commands, no genesis, no
   future transitions — not a complete audit bundle. Either expand it to
   the full command/authority record or rename it honestly as a

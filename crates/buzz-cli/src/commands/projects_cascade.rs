@@ -1,10 +1,10 @@
-//! Opt-in child cascade for `buzz projects delete --cascade`.
+//! Opt-in child cascade for `bee projects delete --cascade`.
 //!
 //! NIP-MP (`docs/nips/NIP-MP.md`) is explicit that deleting a kind:30621
 //! project deletes **only** the project event: member repositories, channels,
 //! and everything inside them survive. That contract is unchanged — this
 //! module is reached only when the caller passes `--cascade`, and the default
-//! `buzz projects delete <slug>` path never touches it.
+//! `bee projects delete <slug>` path never touches it.
 //!
 //! The cascade is orchestrated entirely client-side, so every child deletion
 //! travels its own existing authorization path (kind:9008 for channels, a
@@ -453,7 +453,7 @@ pub fn cascade_confirmation_required(plan: &CascadePlan, yes: bool) -> Option<St
     if plan.has_no_children() {
         return Some(format!(
             "cascade delete of project {slug:?} enumerated NO channels and NO workflows, so it \
-             would delete only the project itself — identical to `buzz projects delete {slug}` \
+             would delete only the project itself — identical to `bee projects delete {slug}` \
              without --cascade. If you expected children here, the enumeration came up short; \
              check the plan above before proceeding. Re-run with --yes to confirm, or --dry-run \
              to inspect the plan without publishing."

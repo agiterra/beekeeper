@@ -4,15 +4,15 @@ Two coexisting desktop instances built from `integrated`:
 
 | | Production | Dev |
 |---|---|---|
-| What | Installed `/Applications/Buzz.app` | `just desktop-standalone` (tauri dev) |
+| What | Installed `/Applications/Bee Keeper.app` | `just desktop-standalone` (tauri dev) |
 | Source | newest `build/*` tag, dedicated worktree `~/Code/lightyear/buzz-prod` | main checkout (parked on `integrated`; re-fetch after ceremonies) |
-| Identifier | `xyz.block.buzz.app` | `xyz.block.buzz.app.dev` (worktrees: `.dev.<slug>`) |
+| Identifier | `io.agiterra.beekeeper.app` | `io.agiterra.beekeeper.app.dev` (worktrees: `.dev.<slug>`) |
 | Icon | stock Buzz | "dev"-badged (worktrees: branch-labelled) |
 | Secrets | OS keychain, service `buzz-desktop` | 0600 files (with `nokeyring`), or keychain `buzz-desktop-dev[.slug]` |
-| Data | `~/Library/Application Support/xyz.block.buzz.app`, nest `~/.buzz` | `…/xyz.block.buzz.app.dev*`, nest `~/.buzz-dev` (shared by all dev instances) |
+| Data | `~/Library/Application Support/io.agiterra.beekeeper.app`, nest `~/.beekeeper` | `…/io.agiterra.beekeeper.app.dev*`, nest `~/.beekeeper-dev` (shared by all dev instances) |
 
 They never collide: the single-instance lock, app-data dir, and keyring all key
-off the identifier or build profile. `buzz://` deep links go to the installed
+off the identifier or build profile. `beekeeper://` deep links go to the installed
 production bundle (tauri-dev instances don't register the scheme). Per-feature
 worktree instances keep working unchanged alongside both.
 
@@ -64,7 +64,7 @@ resets file-based instances too (it wipes the whole app-data dir).
 running; expect one final keychain prompt for the `security` read):
 
 ```bash
-DIR="$HOME/Library/Application Support/xyz.block.buzz.app.dev"; mkdir -p "$DIR"
+DIR="$HOME/Library/Application Support/io.agiterra.beekeeper.app.dev"; mkdir -p "$DIR"
 for SVC in buzz-desktop-dev.main buzz-desktop-dev; do
   BLOB="$(security find-generic-password -s "$SVC" -a secrets -w 2>/dev/null)" && break; done
 printf '%s' "$BLOB" | python3 -c 'import json,sys; sys.stdout.write(json.load(sys.stdin)["identity"])' > "$DIR/identity.key"

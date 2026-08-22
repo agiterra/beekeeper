@@ -1,4 +1,4 @@
-//! Wire protocol for the local session broker (desktop ↔ `buzz session` CLI).
+//! Wire protocol for the local session broker (desktop ↔ `bee session` CLI).
 //!
 //! Newline-delimited JSON, one request line answered by one response line, over
 //! an owner-only Unix socket. The unit is a **session** (workspaceId); the

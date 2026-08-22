@@ -635,7 +635,7 @@ export function newCodingSessionFailureMessage(
     // runtime installed afterwards shows as ready in the picker but is not in
     // that offer until the provider restarts. Without this line the raw
     // receipt reads like a dead end, when a restart is the whole fix.
-    return `${error.message}. This usually means the runtime was installed after the provider started — restart Buzz to refresh its available runtimes, then try again.`;
+    return `${error.message}. This usually means the runtime was installed after the provider started — restart Bee Keeper to refresh its available runtimes, then try again.`;
   }
   return error.message;
 }

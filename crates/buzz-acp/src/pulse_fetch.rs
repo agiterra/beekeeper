@@ -402,7 +402,7 @@ fn render_digest(digest: &PulseDigest) -> String {
     if active.is_empty() {
         lines.push(if digest.complete {
             format!(
-                "No entries yet. If you start non-trivial work, post a plan with `buzz pulse update --project {} --kind plan`.",
+                "No entries yet. If you start non-trivial work, post a plan with `bee pulse update --project {} --kind plan`.",
                 digest.project
             )
         } else {
@@ -566,7 +566,7 @@ fn fit_budget(mut lines: Vec<String>) -> String {
 
 fn render_unresolved(error: &str) -> String {
     format!(
-        "[{SECTION_LABEL}]\nWARNING: Project Pulse is incomplete; this channel's project could not be resolved ({}). Verify with `buzz pulse digest --project <coordinate>` before coordinating work.",
+        "[{SECTION_LABEL}]\nWARNING: Project Pulse is incomplete; this channel's project could not be resolved ({}). Verify with `bee pulse digest --project <coordinate>` before coordinating work.",
         peer_text(error)
     )
 }

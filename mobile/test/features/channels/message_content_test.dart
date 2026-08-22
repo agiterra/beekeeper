@@ -449,7 +449,7 @@ void main() {
 
       testWidgets('renders and routes a buzz message link', (tester) async {
         const url =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '[Open message]($url)')),
@@ -476,7 +476,7 @@ void main() {
 
       testWidgets('renders and routes bare Buzz message links', (tester) async {
         const url =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'See $url now')),
@@ -503,7 +503,7 @@ void main() {
         tester,
       ) async {
         const url =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '**$url**. and _${url}_')),
@@ -530,7 +530,7 @@ void main() {
         tester,
       ) async {
         const url =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(
@@ -566,9 +566,9 @@ void main() {
         tester,
       ) async {
         const messageUrl =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
         const joinUrl =
-            'buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=invite-1';
+            'beekeeper://join?relay=wss%3A%2F%2Frelay.example.com&code=invite-1';
 
         await tester.pumpWidget(
           _testable(
@@ -613,7 +613,7 @@ void main() {
         tester,
       ) async {
         const url =
-            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+            'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '<$url>')),
@@ -640,7 +640,7 @@ void main() {
 
       testWidgets('renders and routes bare Buzz join links', (tester) async {
         const url =
-            'buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=invite-1';
+            'beekeeper://join?relay=wss%3A%2F%2Frelay.example.com&code=invite-1';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'Join with $url')),
@@ -663,7 +663,7 @@ void main() {
       });
 
       testWidgets('renders and routes bare Buzz channel links', (tester) async {
-        const url = 'buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
+        const url = 'beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'See $url now')),
@@ -687,7 +687,7 @@ void main() {
       testWidgets('renders and routes labeled Buzz channel links', (
         tester,
       ) async {
-        const url = 'buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
+        const url = 'beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '[Open channel]($url)')),
@@ -711,7 +711,7 @@ void main() {
         tester,
       ) async {
         const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
-        const url = 'buzz://channel/$channelId';
+        const url = 'beekeeper://channel/$channelId';
         String? tappedChannelId;
 
         await tester.pumpWidget(
@@ -736,7 +736,7 @@ void main() {
       testWidgets('renders and routes autolinked Buzz channel links', (
         tester,
       ) async {
-        const url = 'buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
+        const url = 'beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '<$url>')),
@@ -760,7 +760,7 @@ void main() {
         tester,
       ) async {
         const url =
-            'buzz://channel?channel=580ca78b-9dae-46f3-8854-bd671853ba32';
+            'beekeeper://channel?channel=580ca78b-9dae-46f3-8854-bd671853ba32';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'See $url now')),
@@ -1698,9 +1698,9 @@ Photos
         final id = 'cd' * 32;
         const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
         final links = {
-          'Open message': 'buzz://message?channel=$channelId&id=$id',
-          'Open channel': 'buzz://channel/$channelId',
-          'Release candidate': 'buzz://pr?id=$id&owner=$owner&d=buzz',
+          'Open message': 'beekeeper://message?channel=$channelId&id=$id',
+          'Open channel': 'beekeeper://channel/$channelId',
+          'Release candidate': 'beekeeper://pr?id=$id&owner=$owner&d=buzz',
         };
 
         await tester.pumpWidget(
@@ -1730,7 +1730,8 @@ Photos
         await tester.pumpWidget(
           _testable(
             const MessageContent(
-              content: '[**design discussion**](buzz://channel/$channelId)',
+              content:
+                  '[**design discussion**](beekeeper://channel/$channelId)',
             ),
           ),
         );
@@ -1746,11 +1747,11 @@ Photos
           final id = 'cd' * 32;
           const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
           final urls = [
-            'buzz://message?channel=$channelId&id=$id',
-            'buzz://channel/$channelId',
-            'buzz://repo?owner=$owner&d=buzz',
-            'buzz://pr?id=$id&owner=$owner&d=buzz',
-            'buzz://issue?id=$id&owner=$owner&d=buzz',
+            'beekeeper://message?channel=$channelId&id=$id',
+            'beekeeper://channel/$channelId',
+            'beekeeper://repo?owner=$owner&d=buzz',
+            'beekeeper://pr?id=$id&owner=$owner&d=buzz',
+            'beekeeper://issue?id=$id&owner=$owner&d=buzz',
           ];
           await tester.pumpWidget(
             _testable(
@@ -1807,8 +1808,8 @@ Photos
       ) async {
         final id = 'cd' * 32;
         const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
-        final messageUrl = 'buzz://message?channel=$channelId&id=$id';
-        const channelUrl = 'buzz://channel/$channelId';
+        final messageUrl = 'beekeeper://message?channel=$channelId&id=$id';
+        const channelUrl = 'beekeeper://channel/$channelId';
 
         await tester.pumpWidget(
           _testable(MessageContent(content: '$messageUrl $channelUrl')),

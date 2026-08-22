@@ -306,7 +306,7 @@ pub fn validate_pulse_entry_envelope(event: &nostr::Event) -> Result<PulseEntry,
         // 32-hex simple and braced forms; those are unreachable by any `#h`
         // relay filter (the SQL containment probe matches exact bytes) and the
         // TypeScript twin rejects them outright, so accepting them here would
-        // fold one way in `buzz pulse digest` and another in Desktop.
+        // fold one way in `bee pulse digest` and another in Desktop.
         match uuid::Uuid::parse_str(channel) {
             Ok(parsed) if parsed.to_string() == channel => {}
             _ => {

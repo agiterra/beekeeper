@@ -556,14 +556,14 @@ void main() {
           message: _message(rootId: 'root-1'),
           channelId: _channelId,
         ),
-        'buzz://message?channel=chan-1&id=msg-1&thread=root-1',
+        'beekeeper://message?channel=chan-1&id=msg-1&thread=root-1',
       );
     });
 
     test('omits thread for top-level messages', () {
       expect(
         messageLinkFor(message: _message(), channelId: _channelId),
-        'buzz://message?channel=chan-1&id=msg-1',
+        'beekeeper://message?channel=chan-1&id=msg-1',
       );
     });
   });

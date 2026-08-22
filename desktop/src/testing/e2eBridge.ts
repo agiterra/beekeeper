@@ -495,7 +495,7 @@ type E2eConfig = {
     // Event IDs that `get_event` should report as definitively not found.
     // Causes `useDraftRootStatus` to classify as `deleted`.
     deletedEventIds?: string[];
-    // Pending community deep links (buzz://join / buzz://connect / buzz://add-community) seeded into
+    // Pending community deep links (beekeeper://join / beekeeper://connect / beekeeper://add-community) seeded into
     // the mocked Rust-side queue. Mirrors the real queue's semantics:
     // `take_pending_community_deep_link` peeks the head and
     // `acknowledge_pending_community_deep_link` removes by id. Drives the

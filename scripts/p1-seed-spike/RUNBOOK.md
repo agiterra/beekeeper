@@ -60,10 +60,10 @@ outputs — G1 is per-adapter and these are its evidence. Sanity check first wit
 ## Step 2 — Pick and export the real session
 
 ```bash
-buzz --format compact channels list                    # find the channel id
-buzz sessions list --channel <channel-uuid>            # pick a target
-buzz sessions show --channel <channel-uuid> --target <cs-target-key>
-buzz sessions export --channel <channel-uuid> --out /tmp/p1-export
+bee --format compact channels list                    # find the channel id
+bee sessions list --channel <channel-uuid>            # pick a target
+bee sessions show --channel <channel-uuid> --target <cs-target-key>
+bee sessions export --channel <channel-uuid> --out /tmp/p1-export
 ```
 
 Pick a session that (1) you remember well enough to judge, (2) has 3+ turns

@@ -1,15 +1,15 @@
 const _markdownDelimiters = ['***', '___', '**', '__', '~~', '*', '_'];
 
 final _autolinkPattern = RegExp(
-  r'<((?:https?://|buzz://(?:message\?|join\?|channel/|(?:pr|issue|repo)\?))[^>]+)>',
+  r'<((?:https?://|beekeeper://(?:message\?|join\?|channel/|(?:pr|issue|repo)\?))[^>]+)>',
 );
 final _bareLinkPattern = RegExp(
-  r'(?<![(\]=])(?:https?://|buzz://(?:message\?|join\?|channel/|(?:pr|issue|repo)\?))[^\s)>\]]+',
+  r'(?<![(\]=])(?:https?://|beekeeper://(?:message\?|join\?|channel/|(?:pr|issue|repo)\?))[^\s)>\]]+',
 );
 final _trailingPunctuationPattern = RegExp(r'[.,!?:;]+$');
 final _backtickRunPattern = RegExp(r'`+');
 
-/// Converts supported Buzz and HTTP(S) autolinks and bare links into Markdown
+/// Converts supported Bee Keeper and HTTP(S) autolinks and bare links into Markdown
 /// links while leaving inline and fenced code untouched. Punctuation peeling
 /// is limited to Buzz URLs so existing HTTP(S) destinations stay unchanged.
 String normalizeBareLinks(String content) {
@@ -126,7 +126,7 @@ String _normalizeBareLink(String segment, Match match) {
   final matched = match[0]!;
   var url = matched;
   var trailing = '';
-  final isBuzzUrl = matched.startsWith('buzz://');
+  final isBuzzUrl = matched.startsWith('beekeeper://');
   final start = match.start;
 
   if (isBuzzUrl) {

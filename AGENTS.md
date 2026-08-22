@@ -233,7 +233,7 @@ check existing reply handlers for the pattern.
 
 ## Agent CLI (`buzz-cli`)
 
-`buzz` is the agent-first CLI. Auth env vars
+`bee` is the agent-first CLI. Auth env vars
 (`BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`) are auto-injected
 by the ACP harness into managed agent subprocesses. In development, set
 `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` in your environment manually.
@@ -249,11 +249,11 @@ or invoke with the full path.
 
 ### Deep Links
 
-`buzz://message?channel=<uuid>&id=<hex>` links reference a specific message
+`beekeeper://message?channel=<uuid>&id=<hex>` links reference a specific message
 thread. To read the linked thread:
 
 ```bash
-buzz --format compact messages thread --channel <uuid> --event <hex>
+bee --format compact messages thread --channel <uuid> --event <hex>
 ```
 
 Extract `channel` and `id` from the URL query parameters. The optional
@@ -265,7 +265,7 @@ All reads return sig-stripped JSON arrays; all writes return
 0=ok, 1=input error, 2=network/relay, 3=auth, 4=other, 5=write conflict (NIP-33 LWW).
 
 `--format compact` is a **global** flag — it goes before the subcommand:
-`buzz --format compact channels list`, NOT `buzz channels list --format compact`.
+`bee --format compact channels list`, NOT `bee channels list --format compact`.
 
 See `crates/buzz-cli/TESTING.md` for the full live-testing runbook.
 
@@ -292,7 +292,7 @@ See [TESTING.md](TESTING.md) for the full multi-agent E2E guide.
 
 ### PR Screenshots
 
-> **Do NOT use `buzz upload`, the relay media endpoint, or any third-party
+> **Do NOT use `bee upload`, the relay media endpoint, or any third-party
 > image host for PR screenshots.** Relay media URLs fail through GitHub's camo
 > proxy. Always use `scripts/post-screenshots.sh` for PNGs before linking them
 > from a PR body/comment. If you hand-edit PR markdown, run

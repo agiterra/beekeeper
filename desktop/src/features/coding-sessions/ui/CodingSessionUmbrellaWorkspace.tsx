@@ -358,7 +358,7 @@ export function CodingSessionUmbrellaTimelineView({
     [entries, umbrella],
   );
 
-  // Provenance resolution for handoff chips: the `buzz://coding-session` link
+  // Provenance resolution for handoff chips: the `beekeeper://coding-session` link
   // is a client-side convention nothing registers, so the only honest control
   // is one that jumps to a fact this view already holds.
   const factCandidates = React.useMemo(

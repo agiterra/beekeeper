@@ -25,7 +25,7 @@ if [[ "${BUZZ_RESET_WEBVIEW_STATE:-0}" == "1" ]]; then
     DEV_URL="${DEV_URL}?resetDevState=1"
 fi
 
-BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev\",\"productName\":\"Buzz Dev\"}"
+BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Buzz Dev\"}"
 unset VITE_DEV_BRANCH
 
 # Generate a badged variant of the app icon labelled $1 into
@@ -43,7 +43,7 @@ generate_badged_icon() {
 # In worktrees, extract a label from the branch name and derive a unique app
 # identity and icon so multiple local desktop instances can run side by side.
 # The main checkout keeps the plain dev identity but still gets a "dev"-badged
-# icon so it is distinguishable from an installed production Buzz.app.
+# icon so it is distinguishable from an installed production Bee Keeper.app.
 #
 # Worktree detection: compare --git-dir to --git-common-dir. In the main
 # working tree these are identical; in any worktree (whether under .worktrees/,
@@ -61,7 +61,7 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
         # identifier is kept so concurrent instances don't collide on
         # tauri-plugin-single-instance or the app data directory.
         if [[ "${BUZZ_SHARE_IDENTITY:-0}" == "1" ]]; then
-            KEYRING_SERVICE="buzz-desktop-dev"
+            KEYRING_SERVICE="beekeeper-desktop-dev"
             KEYRING_BLOB=""
             case "$(uname -s)" in
                 Darwin)
@@ -77,7 +77,7 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
             esac
 
             KEYRING_IDENTITY="$(printf '%s' "$KEYRING_BLOB" | python3 -c 'import json, sys; value = json.load(sys.stdin).get("identity", ""); print(value if isinstance(value, str) else "")' 2>/dev/null || true)"
-            CANONICAL_KEY="$HOME/Library/Application Support/xyz.block.buzz.app.dev/identity.key"
+            CANONICAL_KEY="$HOME/Library/Application Support/io.agiterra.beekeeper.app.dev/identity.key"
             LEGACY_CANONICAL_KEY="$HOME/Library/Application Support/xyz.block.sprout.app.dev/identity.key"
 
             SHARED_IDENTITY="$KEYRING_IDENTITY"
@@ -97,10 +97,10 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
         if generate_badged_icon "$BUZZ_WORKTREE_LABEL"; then
             echo "🌳 Worktree: ${BUZZ_WORKTREE_LABEL}"
             export VITE_DEV_BRANCH="$BUZZ_WORKTREE_LABEL"
-            BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Buzz Dev (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+            BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Buzz Dev (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
         fi
     elif generate_badged_icon "dev"; then
-        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"xyz.block.buzz.app.dev\",\"productName\":\"Buzz Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Buzz Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
     fi
 fi
 

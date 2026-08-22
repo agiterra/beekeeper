@@ -36,17 +36,17 @@ pub fn session_id_from_workspace(workspace_id: &str) -> Option<&str> {
 
 /// The per-instance shell state root: `~/.local/state/buzz` for production,
 /// `~/.local/state/buzz-dev` for dev builds — the same dev/prod namespace as
-/// the nest (`~/.buzz` vs `~/.buzz-dev`).
+/// the nest (`~/.beekeeper` vs `~/.beekeeper-dev`).
 ///
 /// Holds the detached-host sockets/receipts and the session-broker socket.
 /// The split keeps two instances on one machine from adopting each other's
 /// detached sessions at reattach and from stealing each other's broker
-/// socket bind. The `buzz session` CLI defaults to the production socket;
+/// socket bind. The `bee session` CLI defaults to the production socket;
 /// point it at a dev instance with `BUZZ_SESSION_BROKER_SOCK`.
 pub fn state_dir() -> Result<std::path::PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     let is_dev = crate::managed_agents::nest_dir()
-        .and_then(|nest| nest.file_name().map(|n| n == ".buzz-dev"))
+        .and_then(|nest| nest.file_name().map(|n| n == ".beekeeper-dev"))
         .unwrap_or(false);
     let namespace = if is_dev { "buzz-dev" } else { "buzz" };
     Ok(std::path::PathBuf::from(home)

@@ -1,9 +1,18 @@
 use super::*;
 
-/// Binary names for the Buzz desktop/Tauri process. Used by dead-instance
-/// detection to confirm the owning desktop is still alive.
+/// Binary names for the Bee Keeper desktop/Tauri process. Used by
+/// dead-instance detection to narrow the PID scan before the identifier check
+/// below, which is what actually decides ownership.
+///
+/// These are all spellings of the **Cargo binary name**, not the product name:
+/// `CFBundleExecutable` stays `buzz-desktop` through a Tauri rename, so
+/// `productName` never appears as a process name on any platform. Stock Buzz
+/// therefore shares every name here — which is fine, and is precisely why
+/// [`desktop_is_alive_for_instance`] additionally requires the bundle
+/// identifier to appear in the process's argv/environ. That identifier
+/// (`io.agiterra.beekeeper.app` vs `xyz.block.buzz.app`) is the only thing keeping
+/// two coexisting installs from reaping each other's agents.
 const DESKTOP_BINARY_NAMES: &[&str] = &[
-    "Buzz",
     "buzz-desktop",
     "buzz_desktop",
     // Linux limits /proc/<pid>/comm to 15 visible bytes, truncating the
@@ -11,17 +20,17 @@ const DESKTOP_BINARY_NAMES: &[&str] = &[
     "buzz-desktop.bi",
 ];
 
-/// Check if a process name matches a known Buzz desktop binary.
+/// Check if a process name matches a known Bee Keeper desktop binary.
 pub(super) fn is_desktop_binary(name: &str) -> bool {
     DESKTOP_BINARY_NAMES.contains(&name)
 }
 
 /// Check whether `buf` contains `id` as a complete identifier — not as a
 /// prefix of a longer dotted name. The identifier appears in the Tauri config
-/// JSON as `"identifier":"xyz.block.buzz.app.dev"` and in environment entries
+/// JSON as `"identifier":"io.agiterra.beekeeper.app.dev"` and in environment entries
 /// as `KEY=...app.dev\0`, so a valid match is followed by a non-identifier byte
 /// (not `[A-Za-z0-9._-]`) or sits at the end of the buffer. This prevents
-/// `xyz.block.buzz.app` from matching inside `xyz.block.buzz.app.dev`.
+/// `io.agiterra.beekeeper.app` from matching inside `io.agiterra.beekeeper.app.dev`.
 pub(super) fn buffer_contains_identifier(buf: &[u8], id: &[u8]) -> bool {
     if id.is_empty() {
         return false;
@@ -106,7 +115,7 @@ fn extract_buzz_marker_value(_pid: u32) -> Option<String> {
 }
 
 /// Check if a Buzz desktop process is still alive for the given instance ID.
-/// Scans all user-owned processes named "Buzz" or "buzz-desktop" and checks
+/// Scans all user-owned processes named "buzz-desktop" and checks
 /// whether any has the identifier in its command-line args (KERN_PROCARGS2 buffer
 /// includes both argv and environ — the `--config` JSON from `tauri dev` contains
 /// the identifier string).

@@ -1,6 +1,6 @@
-//! Canonical `buzz://` deep links for Buzz-hosted git entities.
+//! Canonical `beekeeper://` deep links for Buzz-hosted git entities.
 //!
-//! Buzz Desktop renders these links as rich preview cards in chat and
+//! Bee Keeper Desktop renders these links as rich preview cards in chat and
 //! navigates in-app when they are clicked. The desktop parser lives in
 //! `desktop/src/shared/lib/entityLink.ts` — the two implementations must
 //! stay format-compatible (see `golden_format_matches_desktop` below and
@@ -15,7 +15,7 @@
 //! (overview); the parameter exists for the desktop's tab-aware copy-link
 //! button.
 
-/// Whether a d-tag can be expressed in a `buzz://` link.
+/// Whether a d-tag can be expressed in a `beekeeper://` link.
 ///
 /// Project slugs accept up to 1024 bytes of arbitrary UTF-8, but the link
 /// format is restricted to `[a-zA-Z0-9._-]{1,64}` (no leading dot, no `..`)
@@ -39,29 +39,29 @@ pub fn is_linkable_dtag(dtag: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
 }
 
-/// Build a `buzz://repo` link for a repository announcement (kind 30617).
+/// Build a `beekeeper://repo` link for a repository announcement (kind 30617).
 pub fn repo_link(owner: &str, repo_id: &str) -> String {
-    format!("buzz://repo?owner={owner}&d={repo_id}")
+    format!("beekeeper://repo?owner={owner}&d={repo_id}")
 }
 
-/// Build a `buzz://project` link for a project announcement (kind 30621).
+/// Build a `beekeeper://project` link for a project announcement (kind 30621).
 ///
 /// No CLI command prints a project link today; the function is kept because
 /// `golden_format_matches_desktop` pins its format against the shared
 /// `test-fixtures/entity-links.json` golden that desktop also reads.
 #[allow(dead_code)]
 pub fn project_link(owner: &str, project_id: &str) -> String {
-    format!("buzz://project?owner={owner}&d={project_id}")
+    format!("beekeeper://project?owner={owner}&d={project_id}")
 }
 
-/// Build a `buzz://pr` link for a pull request event (kind 1618).
+/// Build a `beekeeper://pr` link for a pull request event (kind 1618).
 pub fn pull_request_link(event_id: &str, owner: &str, repo_id: &str) -> String {
-    format!("buzz://pr?id={event_id}&owner={owner}&d={repo_id}")
+    format!("beekeeper://pr?id={event_id}&owner={owner}&d={repo_id}")
 }
 
-/// Build a `buzz://issue` link for an issue event (kind 1621).
+/// Build a `beekeeper://issue` link for an issue event (kind 1621).
 pub fn issue_link(event_id: &str, owner: &str, repo_id: &str) -> String {
-    format!("buzz://issue?id={event_id}&owner={owner}&d={repo_id}")
+    format!("beekeeper://issue?id={event_id}&owner={owner}&d={repo_id}")
 }
 
 #[cfg(test)]

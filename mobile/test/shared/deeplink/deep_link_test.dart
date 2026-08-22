@@ -16,7 +16,9 @@ void main() {
     test('parses canonical channel, id, and optional thread', () {
       expect(
         parseMessageDeepLink(
-          Uri.parse('buzz://message?channel=$channel&id=$id&thread=$thread'),
+          Uri.parse(
+            'beekeeper://message?channel=$channel&id=$id&thread=$thread',
+          ),
         ),
         const MessageDeepLink(
           channelId: channel,
@@ -28,22 +30,22 @@ void main() {
 
     test('rejects malformed or ambiguous forms', () {
       for (final url in [
-        'buzz://message?id=$id',
-        'buzz://message?channel=&id=$id',
-        'buzz://message?channel=$channel',
+        'beekeeper://message?id=$id',
+        'beekeeper://message?channel=&id=$id',
+        'beekeeper://message?channel=$channel',
         'https://message?channel=$channel&id=$id',
-        'buzz://connect?channel=$channel&id=$id',
-        'buzz://message:1234?channel=$channel&id=$id',
-        'buzz://message/path?channel=$channel&id=$id',
-        'buzz://message?channel=$channel&id=$id#fragment',
-        'buzz://user@message?channel=$channel&id=$id',
-        'buzz://message?channel=$channel&id=$id&extra=true',
-        'buzz://message?channel=$channel&channel=$channel&id=$id',
-        'buzz://message?channel=$channel&id=$id&id=$id',
-        'buzz://message?channel=$channel&id=$id&thread=',
-        'buzz://message?channel=not-a-uuid&id=$id',
-        'buzz://message?channel=$channel&id=not-hex',
-        'buzz://message?channel=$channel&id=$id&thread=not-hex',
+        'beekeeper://connect?channel=$channel&id=$id',
+        'beekeeper://message:1234?channel=$channel&id=$id',
+        'beekeeper://message/path?channel=$channel&id=$id',
+        'beekeeper://message?channel=$channel&id=$id#fragment',
+        'beekeeper://user@message?channel=$channel&id=$id',
+        'beekeeper://message?channel=$channel&id=$id&extra=true',
+        'beekeeper://message?channel=$channel&channel=$channel&id=$id',
+        'beekeeper://message?channel=$channel&id=$id&id=$id',
+        'beekeeper://message?channel=$channel&id=$id&thread=',
+        'beekeeper://message?channel=not-a-uuid&id=$id',
+        'beekeeper://message?channel=$channel&id=not-hex',
+        'beekeeper://message?channel=$channel&id=$id&thread=not-hex',
       ]) {
         expect(parseMessageDeepLink(Uri.parse(url)), isNull, reason: url);
       }
@@ -56,7 +58,7 @@ void _channelTests() {
     test('parses canonical channel path', () {
       expect(
         parseChannelDeepLink(
-          Uri.parse('buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
+          Uri.parse('beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
         ),
         const ChannelDeepLink(
           channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
@@ -67,7 +69,7 @@ void _channelTests() {
     test('accepts v7 and canonicalizes uppercase UUIDs', () {
       expect(
         parseChannelDeepLink(
-          Uri.parse('buzz://channel/018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9'),
+          Uri.parse('beekeeper://channel/018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9'),
         ),
         const ChannelDeepLink(
           channelId: '018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9',
@@ -75,7 +77,7 @@ void _channelTests() {
       );
       expect(
         parseChannelDeepLink(
-          Uri.parse('buzz://channel/580CA78B-9DAE-46F3-8854-BD671853BA32'),
+          Uri.parse('beekeeper://channel/580CA78B-9DAE-46F3-8854-BD671853BA32'),
         ),
         const ChannelDeepLink(
           channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
@@ -85,16 +87,16 @@ void _channelTests() {
 
     test('rejects missing, extra, query, and fragment forms', () {
       for (final url in [
-        'buzz://channel',
-        'buzz://channel/',
-        'buzz://channel/one/two',
-        'buzz://channel:1234/580ca78b-9dae-46f3-8854-bd671853ba32',
-        'buzz://channel/one?extra=true',
-        'buzz://channel/one#fragment',
+        'beekeeper://channel',
+        'beekeeper://channel/',
+        'beekeeper://channel/one/two',
+        'beekeeper://channel:1234/580ca78b-9dae-46f3-8854-bd671853ba32',
+        'beekeeper://channel/one?extra=true',
+        'beekeeper://channel/one#fragment',
         'https://channel/one',
-        'buzz://channel/not-a-uuid',
-        'buzz://channel/%2F',
-        'buzz://channel/%00',
+        'beekeeper://channel/not-a-uuid',
+        'beekeeper://channel/%2F',
+        'beekeeper://channel/%00',
       ]) {
         expect(parseChannelDeepLink(Uri.parse(url)), isNull, reason: url);
       }
@@ -103,7 +105,7 @@ void _channelTests() {
     test('is included in the top-level parser', () {
       expect(
         parseBuzzDeepLink(
-          Uri.parse('buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
+          Uri.parse('beekeeper://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
         ),
         const ChannelDeepLink(
           channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
@@ -141,7 +143,7 @@ void _inviteTests() {
     test('parses buzz join handoff link', () {
       final link = parseInviteDeepLink(
         Uri.parse(
-          'buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=abc123',
+          'beekeeper://join?relay=wss%3A%2F%2Frelay.example.com&code=abc123',
         ),
       );
       expect(
@@ -156,7 +158,7 @@ void _inviteTests() {
     test('normalizes trailing slash in buzz join handoff', () {
       final link = parseInviteDeepLink(
         Uri.parse(
-          'buzz://join?relay=wss%3A%2F%2Frelay.example.com%2F&code=abc123',
+          'beekeeper://join?relay=wss%3A%2F%2Frelay.example.com%2F&code=abc123',
         ),
       );
       expect(link?.relayUrl, 'wss://relay.example.com');
@@ -165,7 +167,9 @@ void _inviteTests() {
     test('rejects plaintext public buzz join handoff', () {
       final relay = Uri.encodeQueryComponent('ws://relay.example.com');
       expect(
-        parseInviteDeepLink(Uri.parse('buzz://join?relay=$relay&code=abc')),
+        parseInviteDeepLink(
+          Uri.parse('beekeeper://join?relay=$relay&code=abc'),
+        ),
         isNull,
       );
     });
@@ -173,7 +177,7 @@ void _inviteTests() {
     test('preserves policy receipt in buzz join handoff', () {
       final link = parseInviteDeepLink(
         Uri.parse(
-          'buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=abc123&policy_receipt=receipt.value',
+          'beekeeper://join?relay=wss%3A%2F%2Frelay.example.com&code=abc123&policy_receipt=receipt.value',
         ),
       );
       expect(
@@ -217,7 +221,7 @@ void _inviteTests() {
       expect(
         parseInviteDeepLink(
           Uri.parse(
-            'buzz://join?relay=wss%3A%2F%2Fuser%3Apass%40relay.example.com&code=abc',
+            'beekeeper://join?relay=wss%3A%2F%2Fuser%3Apass%40relay.example.com&code=abc',
           ),
         ),
         isNull,
@@ -227,18 +231,20 @@ void _inviteTests() {
     test('rejects buzz join without websocket relay or code', () {
       expect(
         parseInviteDeepLink(
-          Uri.parse('buzz://join?relay=https://relay.example.com&code=abc'),
+          Uri.parse(
+            'beekeeper://join?relay=https://relay.example.com&code=abc',
+          ),
         ),
         isNull,
       );
       expect(
         parseInviteDeepLink(
-          Uri.parse('buzz://join?relay=wss://relay.example.com'),
+          Uri.parse('beekeeper://join?relay=wss://relay.example.com'),
         ),
         isNull,
       );
       expect(
-        parseInviteDeepLink(Uri.parse('buzz://connect?relay=wss://x')),
+        parseInviteDeepLink(Uri.parse('beekeeper://connect?relay=wss://x')),
         isNull,
       );
     });
@@ -272,7 +278,9 @@ void _inviteTests() {
       ]) {
         final encoded = Uri.encodeQueryComponent(hostile);
         expect(
-          parseInviteDeepLink(Uri.parse('buzz://join?relay=$encoded&code=abc')),
+          parseInviteDeepLink(
+            Uri.parse('beekeeper://join?relay=$encoded&code=abc'),
+          ),
           isNull,
           reason: 'must reject relay scheme in $hostile',
         );
@@ -290,7 +298,7 @@ void _buildMessageLinkTests() {
           messageId:
               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         ),
-        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       );
     });
 
@@ -303,7 +311,7 @@ void _buildMessageLinkTests() {
           threadRootId:
               'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         ),
-        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&thread=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&thread=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       );
     });
 
@@ -315,7 +323,7 @@ void _buildMessageLinkTests() {
               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           threadRootId: '',
         ),
-        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'beekeeper://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       );
     });
 
@@ -357,18 +365,20 @@ void _buildMessageLinkTests() {
 
     test('parses repo, PR, and issue permalinks', () {
       expect(
-        parseEntityDeepLink(Uri.parse('buzz://repo?owner=$owner&d=buzz'))?.type,
+        parseEntityDeepLink(
+          Uri.parse('beekeeper://repo?owner=$owner&d=buzz'),
+        )?.type,
         'repo',
       );
       expect(
         parseEntityDeepLink(
-          Uri.parse('buzz://pr?id=$id&owner=$owner&d=buzz'),
+          Uri.parse('beekeeper://pr?id=$id&owner=$owner&d=buzz'),
         )?.eventId,
         id,
       );
       expect(
         parseEntityDeepLink(
-          Uri.parse('buzz://issue?id=$id&owner=$owner&d=buzz'),
+          Uri.parse('beekeeper://issue?id=$id&owner=$owner&d=buzz'),
         )?.type,
         'issue',
       );
@@ -376,30 +386,30 @@ void _buildMessageLinkTests() {
 
     test('rejects malformed entity permalinks', () {
       expect(
-        parseEntityDeepLink(Uri.parse('buzz://repo?owner=short&d=buzz')),
+        parseEntityDeepLink(Uri.parse('beekeeper://repo?owner=short&d=buzz')),
         isNull,
       );
       expect(
         parseEntityDeepLink(
-          Uri.parse('buzz://pr?id=$id&owner=$owner&d=buzz&extra=true'),
+          Uri.parse('beekeeper://pr?id=$id&owner=$owner&d=buzz&extra=true'),
         ),
         isNull,
       );
       expect(
-        parseEntityDeepLink(Uri.parse('buzz://repo?owner=$owner&d=a..b')),
+        parseEntityDeepLink(Uri.parse('beekeeper://repo?owner=$owner&d=a..b')),
         isNull,
       );
       expect(
         parseEntityDeepLink(
-          Uri.parse('buzz://repo?owner=$owner&d=${'a' * 65}'),
+          Uri.parse('beekeeper://repo?owner=$owner&d=${'a' * 65}'),
         ),
         isNull,
       );
       for (final url in [
-        'buzz://repo?owner=$owner&owner=$owner&d=buzz',
-        'buzz://repo?owner=$owner&d=buzz&d=other',
-        'buzz://pr?id=$id&id=$id&owner=$owner&d=buzz',
-        'buzz://issue?id=$id&owner=$owner&owner=$owner&d=buzz',
+        'beekeeper://repo?owner=$owner&owner=$owner&d=buzz',
+        'beekeeper://repo?owner=$owner&d=buzz&d=other',
+        'beekeeper://pr?id=$id&id=$id&owner=$owner&d=buzz',
+        'beekeeper://issue?id=$id&owner=$owner&owner=$owner&d=buzz',
       ]) {
         expect(parseEntityDeepLink(Uri.parse(url)), isNull, reason: url);
       }

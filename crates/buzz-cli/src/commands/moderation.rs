@@ -1,4 +1,4 @@
-//! `buzz moderation` — community moderation queue, enforcement, and audit.
+//! `bee moderation` — community moderation queue, enforcement, and audit.
 //!
 //! Mutations (`ban`/`unban`/`timeout`/`untimeout`/`resolve`) are signed
 //! command events (kinds 9040–9044) submitted via `POST /events`, mirroring

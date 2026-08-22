@@ -176,7 +176,7 @@ test("an h tag must be a lowercase canonical channel UUID", () => {
     true,
   );
   // Spellings Rust's `Uuid::parse_str` also accepts; both languages must
-  // reject them, or the same signed event folds one way in `buzz pulse
+  // reject them, or the same signed event folds one way in `bee pulse
   // digest` and another here.
   for (const nonCanonical of [
     CHANNEL.toUpperCase(),

@@ -122,7 +122,7 @@ export function CodingSessionTaskRail({
           <TaskRailLoadingState />
         ) : loadState === "error" ? (
           <TaskRailEmptyState
-            description="Buzz could not read the latest signed plan. The session transcript is still available."
+            description="Bee Keeper could not read the latest signed plan. The session transcript is still available."
             icon="error"
             title="Plan unavailable"
           />

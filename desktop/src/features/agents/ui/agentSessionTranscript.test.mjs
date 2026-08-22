@@ -1763,7 +1763,7 @@ test("buildTranscript five-section system prompt card is standalone with all sec
             "[Channel Canvas]",
             "Canvas revision (event ID): a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
             "Last modified: 2026-07-01T10:00:00Z",
-            "Fetch current content with: buzz canvas get --channel 44444444-4444-4444-4444-444444444444",
+            "Fetch current content with: bee canvas get --channel 44444444-4444-4444-4444-444444444444",
           ].join("\n"),
         },
       },
@@ -1905,7 +1905,7 @@ test("buildTranscript session/new via _meta.systemPrompt.append produces identic
     "[Channel Canvas]",
     "Canvas revision (event ID): a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
     "Last modified: 2026-07-01T10:00:00Z",
-    "Fetch current content with: buzz canvas get --channel 55555555-5555-5555-5555-555555555555",
+    "Fetch current content with: bee canvas get --channel 55555555-5555-5555-5555-555555555555",
   ].join("\n");
 
   const makeEvents = (params) => [

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generate a synthetic-but-shape-accurate `buzz sessions export` directory.
+"""Generate a synthetic-but-shape-accurate `bee sessions export` directory.
 
 Produces fixtures/export/{manifest.json, <session>-g1.jsonl} matching what
-`buzz sessions export` writes: raw signed-event JSON (sig-stripped, as the
+`bee sessions export` writes: raw signed-event JSON (sig-stripped, as the
 CLI's /query returns), kinds 44223/44224/44225, envelopes per
 crates/buzz-core/src/coding_session_payload.rs (TranscriptEnvelope: schema,
 session, eventSeq, timestamp, turnId, item) with cs-target/cst-seq tags.

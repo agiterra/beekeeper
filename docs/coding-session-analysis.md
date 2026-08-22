@@ -71,24 +71,24 @@ projects the querying human may not be a member of.
 
 ## The CLI surface
 
-`buzz sessions` covers the questions that come up most, and resolves generations
+`bee sessions` covers the questions that come up most, and resolves generations
 the same way the desktop app does (a receipt confirms a generation exists; the
 newest metadata wins, with a same-second burst broken on event id). Use it when
 you want the CLI and the app to agree.
 
 ```
-buzz sessions list       --channel <uuid>
-buzz sessions transcript --channel <uuid> --target <cs-target> | --session <sessionId>
+bee sessions list       --channel <uuid>
+bee sessions transcript --channel <uuid> --target <cs-target> | --session <sessionId>
                          [--format md|jsonl]
-buzz sessions tools      --channel <uuid> [--target <cs-target>]
-buzz sessions export     --channel <uuid> --out <dir>
-buzz sessions grant      --channel <uuid> --genesis <event-id> --pubkey <hex> --role collaborator|viewer
-buzz sessions revoke     --channel <uuid> --genesis <event-id> --pubkey <hex>
-buzz sessions roster     --channel <uuid> --genesis <event-id>
+bee sessions tools      --channel <uuid> [--target <cs-target>]
+bee sessions export     --channel <uuid> --out <dir>
+bee sessions grant      --channel <uuid> --genesis <event-id> --pubkey <hex> --role collaborator|viewer
+bee sessions revoke     --channel <uuid> --genesis <event-id> --pubkey <hex>
+bee sessions roster     --channel <uuid> --genesis <event-id>
 ```
 
 - **`list`** — one row per generation: target key, title, status, model, and
-  created-at. `--format` is the global flag (`buzz --format compact sessions
+  created-at. `--format` is the global flag (`bee --format compact sessions
   list …`); `compact` drops everything but those five fields.
 - **`transcript`** — items in `cst-seq` order. `--format md` renders turns as
   headings with tool calls folded into one line each carrying their outcome;
@@ -209,7 +209,7 @@ ORDER BY sessions DESC;
 
 ### Full transcript dump for one generation
 
-Take the `cs-target` key from `buzz sessions list`. **Order by the numeric
+Take the `cs-target` key from `bee sessions list`. **Order by the numeric
 sequence, not the tag text** — `cst-seq` is a decimal string on the wire, so a
 lexicographic sort puts item 10 before item 9 and silently reorders every
 transcript longer than nine items.
@@ -317,15 +317,15 @@ the race was refused and never persisted.
 **Fold rule:** reconstruct the live grant set by folding the relay's
 acceptance receipts (kind 40099, `content.type =
 "coding_session_authority_transition_accepted"`) in `seq` order — not the raw
-44228s directly. `buzz sessions roster` already does this; prefer it over
+44228s directly. `bee sessions roster` already does this; prefer it over
 hand-rolled SQL unless you specifically need the unconfirmed chain:
 
 ```
-buzz sessions roster --channel <uuid> --genesis <genesis-event-id>
+bee sessions roster --channel <uuid> --genesis <genesis-event-id>
 ```
 
 ```sql
--- raw chain, ordered by seq (equivalent to what buzz sessions roster folds)
+-- raw chain, ordered by seq (equivalent to what bee sessions roster folds)
 SELECT
     (content::jsonb) ->> 'seq'           AS seq,
     (content::jsonb) ->> 'type'          AS transition_type,
@@ -393,7 +393,7 @@ recorded but not honored. The reference implementation of this fold is pinned
 by `conformance/project-pulse-fold/` — three implementations across two
 languages (Rust in `buzz-cli`, TypeScript in Desktop, Rust in `buzz-relay` for
 Slice 2; `conformance/project-pulse-fold/CONTRACT.md:8-10`);
-prefer it (or, once shipped, `buzz pulse digest`) over reimplementing the fold
+prefer it (or, once shipped, `bee pulse digest`) over reimplementing the fold
 in SQL:
 
 ```sql
@@ -430,7 +430,7 @@ generation:
 ```
 
 Results are capped per page; follow the relay's composite `(until, before_id)`
-cursor for the rest, which is what `buzz sessions` does internally.
+cursor for the rest, which is what `bee sessions` does internally.
 
 ## See also
 

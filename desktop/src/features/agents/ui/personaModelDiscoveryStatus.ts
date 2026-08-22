@@ -52,7 +52,7 @@ export function formatModelDiscoveryErrorStatus(
     if (message.includes("waiting for the current member roster")) {
       return {
         message:
-          "Buzz is waiting for the relay's member roster. Try again shortly; if this persists, check the relay's membership configuration.",
+          "Bee Keeper is waiting for the relay's member roster. Try again shortly; if this persists, check the relay's membership configuration.",
         tone: "warning",
       };
     }
@@ -68,7 +68,7 @@ export function formatModelDiscoveryErrorStatus(
     if (message.includes("shared compute is not available in this build")) {
       return {
         message:
-          "This version of Buzz cannot use shared compute. Update Buzz or choose another provider.",
+          "This version of Bee Keeper cannot use shared compute. Update Bee Keeper or choose another provider.",
         tone: "warning",
       };
     }
@@ -83,7 +83,7 @@ export function formatModelDiscoveryErrorStatus(
 
     return {
       message:
-        "Buzz couldn't check shared compute through the relay. Check your relay connection and try again.",
+        "Bee Keeper couldn't check shared compute through the relay. Check your relay connection and try again.",
       tone: "warning",
     };
   }

@@ -82,7 +82,7 @@ Every rung passed on the wire; all evidence is signed events on the relay:
   --key <founder> --channel <uuid> --genesis <id> --seq 1 --grantee <pk>`).
 - Membership to a session's hidden transport channel is the visibility
   gate for other members; tonight it was granted via
-  `buzz channels add-member` (no UI affordance yet — known A8-shaped gap).
+  `bee channels add-member` (no UI affordance yet — known A8-shaped gap).
 
 ## 4. Known gaps carried forward (ordered)
 

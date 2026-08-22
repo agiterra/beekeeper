@@ -1200,7 +1200,7 @@ a reviewer can see it was considered and rejected on evidence, not missed.
 | A relay-fetch tool or relay credential in the sidecar | Contradicts `session_context.rs:1-5` and the agent-visible promise at `buzz-dev-mcp/src/lib.rs:197`, and puts relay auth in a process whose stdio the agent drives. |
 | A `refresh_session_context` tool the agent calls | Still needs relay access in the sidecar, or a broker; §9's pull-at-tool-call gives the same freshness without widening the tool surface or changing the `session_context_personality_lists_only_read_only_context_tools` guarantee (`buzz-dev-mcp/src/lib.rs:302-308`). |
 | A Unix-domain-socket refresh broker (`context_refresh.rs`) | Rejected in favour of §9's file generations: `self.rest_client` (`lib.rs:319`) + the `spawn_git_probe` precedent (`:1739-1776`) already do the work, and a socket adds a new local IPC/auth surface and forces the sidecar's sync tool bodies async. |
-| Copying Project Pulse's live shell-out (`BUZZ_PULSE_PROJECT` + `buzz pulse digest`, `crates/buzz-acp/src/pool.rs:1095-1137`) | Verified impossible: `agent_fence.rs:39-44` removed the agent's ability to authenticate `buzz` on purpose. Pulse content also need not be a signed proof graph; rehydration history must be. **Anchor warning:** `pool.rs` is *uncommitted* Project Pulse work (§4), so `:1095-1137` was exact on 2026-08-19 and will drift as that build lands. If the lines no longer match, re-find it by the `BUZZ_PULSE_PROJECT` literal rather than trusting the number. |
+| Copying Project Pulse's live shell-out (`BUZZ_PULSE_PROJECT` + `bee pulse digest`, `crates/buzz-acp/src/pool.rs:1095-1137`) | Verified impossible: `agent_fence.rs:39-44` removed the agent's ability to authenticate `buzz` on purpose. Pulse content also need not be a signed proof graph; rehydration history must be. **Anchor warning:** `pool.rs` is *uncommitted* Project Pulse work (§4), so `:1095-1137` was exact on 2026-08-19 and will drift as that build lands. If the lines no longer match, re-find it by the `BUZZ_PULSE_PROJECT` literal rather than trusting the number. |
 | Mid-session `mcpServers` push over ACP | `mcpServers` appears only on `session/new` / `session/resume` / `session/load` (`crates/buzz-acp/src/acp.rs:827-918`). Would need adapter changes we do not own. |
 | Overwriting the package in place | Refused by the kernel (`context_store.rs:49-50`) and by a dedicated test (`:183`). |
 | Atomic temp-file + `rename(2)` publication of a generation | Decision 14. `rename(2)` replaces its destination, repealing the write-once guarantee and breaking `context_store.rs:183`; macOS lacks a portable `RENAME_NOREPLACE`. The reader's validate-or-refuse path (H4) closes the same window with no new machinery — see §9.1. |
@@ -1225,7 +1225,7 @@ not evidence.
 desktop transcript and on the wire:
 
 ```bash
-buzz --format compact sessions transcript --channel <uuid> --session <id> \
+bee --format compact sessions transcript --channel <uuid> --session <id> \
   | jq 'select(.item.kind=="status")'
 ```
 
@@ -1288,7 +1288,7 @@ identities so the transcript proves who ran what.
    `recover()` swept it (§9.1's startup sweep).
 
 **L3 — item 5: a bounded, error-free walk.** Find a session with >200 items
-(`buzz --format compact sessions transcript … | wc -l`). Ask the agent to
+(`bee --format compact sessions transcript … | wc -l`). Ask the agent to
 retrieve the whole history and report how many `session_history` calls it made.
 Expect: **no** `invalid_params` error at any point; every short page names its
 `stoppedBy` and hands back a usable `nextCursor`; and the call count matches
@@ -1301,11 +1301,11 @@ error for a blown context window (§15.3).
 says sourceEventCount N and totalHistoryItems M — account for the difference
 exactly."* It must reconcile from `sourceEventBreakdown` with no "unexplained"
 flag. Hand-check the authority term against
-`buzz --format compact sessions roster --channel <uuid> --genesis <hex>`.
+`bee --format compact sessions roster --channel <uuid> --genesis <hex>`.
 
 **L5 — the fence still holds (regression gate on Slice E).** Inside a
 rehydrated session, ask the agent to run
-`buzz sessions list --channel <uuid>`. It must fail for want of credentials.
+`bee sessions list --channel <uuid>`. It must fail for want of credentials.
 This proves the refresh smuggled no relay access into the agent or the sidecar
 (`agent_fence.rs:39-44`).
 

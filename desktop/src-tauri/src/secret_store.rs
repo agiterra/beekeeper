@@ -47,7 +47,7 @@ const BLOB_KEY: &str = "secrets";
 //
 // Two concurrent Buzz processes (e.g. the signed DMG build and an unsigned dev
 // build via `just staging`) share the same OS keychain blob because the
-// service name `"buzz-desktop"` is a constant — it does not key off the bundle
+// service name `"beekeeper-desktop"` is a constant — it does not key off the bundle
 // identifier. Each process holds its own in-memory cache, so without an
 // interprocess lock a warm-cache write in process A drops keys added by process
 // B between A's last cache-warming read and A's write.
@@ -237,7 +237,7 @@ impl SecretStore {
     /// cache and one mutex — so concurrent blob read-modify-write operations
     /// see each other's writes and the last-writer-wins race is closed.
     ///
-    /// Only one service name (`"buzz-desktop"`) is used in practice. If a
+    /// Only one service name (`"beekeeper-desktop"`) is used in practice. If a
     /// second service name is ever needed, this can be extended to a registry.
     pub fn shared(service: &'static str) -> &'static SecretStore {
         use std::sync::OnceLock;
@@ -1055,7 +1055,7 @@ mod tests {
         // invariant to $TMPDIR — so both a GUI-launched DMG (env-stripped by
         // launchd) and a terminal-launched dev build resolve the same inode and
         // achieve mutual exclusion.
-        let path = blob_lockfile_path("buzz-desktop");
+        let path = blob_lockfile_path("beekeeper-desktop");
         #[cfg(unix)]
         {
             let uid = unsafe { libc::getuid() };

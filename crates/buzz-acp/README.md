@@ -263,7 +263,7 @@ Each channel has at most one prompt in flight. Multiple channels can be processe
 
 ## Bring Your Own Harness (BYOH)
 
-Buzz Desktop supports registering any ACP-speaking agent tool as a selectable runtime without a PR.
+Bee Keeper Desktop supports registering any ACP-speaking agent tool as a selectable runtime without a PR.
 
 ### How it works
 

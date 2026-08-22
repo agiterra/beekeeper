@@ -21,7 +21,7 @@ cargo test -p buzz-test-client -- --ignored
 ## Live Local Relay
 
 The fastest way to exercise the relay end-to-end is to build the release
-binaries once, run `buzz-relay`, and drive it with the `buzz` CLI. The
+binaries once, run `buzz-relay`, and drive it with the `bee` CLI. The
 CLI signs every request with NIP-98, so you don't need `nak` or hand-rolled
 `curl`.
 
@@ -33,7 +33,7 @@ cp .env.example .env             # one-time
 just setup                       # start Docker services, run migrations
 ```
 
-> **Already running Buzz Desktop?** Desktop uses the same Docker container
+> **Already running Bee Keeper Desktop?** Desktop uses the same Docker container
 > names (`buzz-postgres`, `buzz-redis`) and the same
 > default ports (`:5432`, `:6379`). `just setup` will reuse those
 > services, so **your test relay writes into Desktop's database**. That's
@@ -93,7 +93,7 @@ The relay starts in dev mode (`BUZZ_REQUIRE_AUTH_TOKEN=false`). The startup
 log emits a WARN about this — that's expected for local testing. See the env
 vars table at the bottom if you need to lock it down.
 
-> **Already running Buzz Desktop (or another relay) on `:3000` / `:8080` /
+> **Already running Bee Keeper Desktop (or another relay) on `:3000` / `:8080` /
 > `:9102`?** Buzz binds three ports — main, health, metrics — and any of
 > them can collide. Use a separate terminal per role and export the right
 > vars in each:
@@ -117,7 +117,7 @@ vars table at the bottom if you need to lock it down.
 >
 > Every snippet later in this doc shows the defaults. When you see
 > `localhost:3000` / `:8080` in a code block, mentally substitute your
-> overrides — or the CLI will end up talking to Buzz Desktop's relay.
+> overrides — or the CLI will end up talking to Bee Keeper Desktop's relay.
 
 > **Ignore `just setup`'s "Next steps" banner.** It still prints
 > `just relay` (a debug build). Use `buzz-relay` from step 2 here —
@@ -141,16 +141,16 @@ PUBKEY=$(echo "$GEN"           | awk '/Public key:/ {print $3}')
 echo "pubkey: $PUBKEY"
 
 # Create a channel — the UUID is returned in the response
-CHANNEL=$(buzz channels create --name "smoke-$$" --type stream --visibility open | jq -r '.channel_id')
+CHANNEL=$(bee channels create --name "smoke-$$" --type stream --visibility open | jq -r '.channel_id')
 echo "channel: $CHANNEL"
 
 # Send a message and read it back
-SEND=$(buzz messages send --channel "$CHANNEL" --content "hello from smoke test")
+SEND=$(bee messages send --channel "$CHANNEL" --content "hello from smoke test")
 EVENT_ID=$(echo "$SEND" | jq -r '.event_id')
-buzz messages get --channel "$CHANNEL" --limit 5 | jq .
+bee messages get --channel "$CHANNEL" --limit 5 | jq .
 
 # Fetch the reply chain for a specific message (empty array on a leaf — that's fine)
-buzz messages thread --channel "$CHANNEL" --event "$EVENT_ID" | jq .
+bee messages thread --channel "$CHANNEL" --event "$EVENT_ID" | jq .
 ```
 
 A successful run prints `{"event_id":"…","accepted":true,"message":""}` for
@@ -192,7 +192,7 @@ PASS targeted-repair-preserves-metadata-and-admin-events channel=<uuid>
 PASS discovery-after-republish channel=<uuid> members=1502 late_pubkey=<hex>
 ```
 
-The script refuses debug binaries and refuses a `buzz` or `buzz-admin` resolved
+The script refuses debug binaries and refuses a `bee` or `buzz-admin` resolved
 outside this checkout's `target/release`. It also requires the targeted admin
 operation to use `BUZZ_RELAY_PRIVATE_KEY`; never substitute an ephemeral signer
 for an authoritative replacement.
@@ -213,7 +213,7 @@ a client other than `buzz-cli`:
 
 All three accept NIP-98 auth (recommended) or, in dev mode, an `X-Pubkey`
 header fallback. There is no REST API for fetching message threads — use
-`POST /query` with an `#e` filter, or `buzz messages thread`.
+`POST /query` with an `#e` filter, or `bee messages thread`.
 
 ---
 
@@ -243,7 +243,7 @@ AGENT_PUBKEY=$(echo "$AGENT_GEN" | awk '/Public key:/ {print $3}')
 # 3. Add the agent as a member of $CHANNEL — still using the sender identity.
 #    Skip this and the agent boots to "discovered 0 channel(s) → agent will
 #    sit idle" and silently ignores every mention.
-buzz channels add-member --channel "$CHANNEL" --pubkey "$AGENT_PUBKEY" --role member
+bee channels add-member --channel "$CHANNEL" --pubkey "$AGENT_PUBKEY" --role member
 
 # 4. Switch to the agent identity and start it.
 #    buzz-acp wants ws:// (not http://). If you set BUZZ_RELAY_URL to an
@@ -288,16 +288,16 @@ from step 4 and @mention the agent:
 
 ```bash
 export BUZZ_PRIVATE_KEY=$SENDER_SK          # the key from step 4
-buzz messages send --channel "$CHANNEL" \
+bee messages send --channel "$CHANNEL" \
   --content "Hey agent, reply PONG only."
 
 # Wait 10–90s, then read the channel — the agent's reply is a kind:9 from
 # AGENT_PUBKEY. The current ACP build is quiet on stdout during a turn, so
-# `buzz messages get` is how you confirm it ran.
-buzz messages get --channel "$CHANNEL" --limit 5 | jq '.[] | {pubkey, content}'
+# `bee messages get` is how you confirm it ran.
+bee messages get --channel "$CHANNEL" --limit 5 | jq '.[] | {pubkey, content}'
 ```
 
-Replies are kind:9 in the same channel; `buzz messages thread --channel <id>
+Replies are kind:9 in the same channel; `bee messages thread --channel <id>
 --event <event_id>` fetches the reply chain for a specific mention.
 
 ---
@@ -346,6 +346,6 @@ CLI-side, only two matter for testing:
 | `auth-required: verification failed` on a closed relay | NIP-OA attestation needed | Set `BUZZ_AUTH_TAG` to the owner-issued JSON, or relax `BUZZ_REQUIRE_RELAY_MEMBERSHIP` |
 | `channels list` empty after `channels create` | The CLI doesn't echo the channel UUID; use the filter shown in step 4 | Or `POST /query` with `{"kinds":[39002]}` |
 | ACP agent ignores all events | `BUZZ_ACP_RESPOND_TO=owner-only` (default) with no owner configured | Set `BUZZ_ACP_RESPOND_TO=anyone` for testing |
-| ACP logs `discovered 0 channel(s)` / `no channel subscriptions resolved` | Agent identity isn't a member of any channel | `buzz channels add-member --channel "$CHANNEL" --pubkey "$AGENT_PUBKEY" --role member` from another identity |
+| ACP logs `discovered 0 channel(s)` / `no channel subscriptions resolved` | Agent identity isn't a member of any channel | `bee channels add-member --channel "$CHANNEL" --pubkey "$AGENT_PUBKEY" --role member` from another identity |
 | `GOOSE_MODE` warning, agent hangs | Not set | `export GOOSE_MODE=auto` |
 | Tests pass locally but CI fails | Forgot to run `just ci` | `just ci` runs the gate (fmt, clippy, unit tests, desktop/web builds) |

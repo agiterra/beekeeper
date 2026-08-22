@@ -293,9 +293,9 @@ test("a recognized handoff prompt renders a chip; edited text degrades to plain 
   );
   assert.match(chipMarkup, /Handoff from Claude · claude-opus-5/);
   // The quoted fact is in this view, so the control is a real one that jumps
-  // to it — never a bare buzz:// anchor, which nothing in the app parses.
+  // to it — never a bare beekeeper:// anchor, which nothing in the app parses.
   assert.match(chipMarkup, /data-testid="coding-session-umbrella-view-source"/);
-  assert.doesNotMatch(chipMarkup, /<a[^>]+href="buzz:\/\//);
+  assert.doesNotMatch(chipMarkup, /<a[^>]+href="beekeeper:\/\//);
 
   const plainMarkup = await renderTimeline({
     channelId: CHANNEL_ID,
@@ -331,9 +331,9 @@ test("a handoff link this view cannot resolve renders inert provenance, not a de
     markup,
     /data-testid="coding-session-umbrella-view-source"/,
   );
-  assert.doesNotMatch(markup, /<a[^>]+href="buzz:\/\//);
+  assert.doesNotMatch(markup, /<a[^>]+href="beekeeper:\/\//);
   // The durable provenance still lives in the prompt text itself.
-  assert.match(markup, /buzz:\/\/coding-session\?/);
+  assert.match(markup, /beekeeper:\/\/coding-session\?/);
 });
 
 test("a handoff link from another channel never resolves to a lookalike block", async () => {
@@ -476,7 +476,7 @@ test("the handoff prefill quotes the source and addresses the chosen execution",
   assert.equal(prefill.participantKey, `execution:${codex.executionKey}`);
   assert.match(
     prefill.text,
-    /^> From Claude · claude-opus-5 \(this session\) — buzz:\/\/coding-session\?/,
+    /^> From Claude · claude-opus-5 \(this session\) — beekeeper:\/\/coding-session\?/,
   );
   assert.match(prefill.text, /seq=2/);
   assert.match(prefill.text, /> The failing test is fixtures\/relay\.rs:88\./);
@@ -504,7 +504,7 @@ test("without a resolvable signed fact the prefill degrades to a plain quote", (
     sourceLabel: "Claude · claude-opus-5",
     targetExecutionKey: codex.executionKey,
   });
-  assert.doesNotMatch(prefill.text, /buzz:\/\//);
+  assert.doesNotMatch(prefill.text, /beekeeper:\/\//);
   assert.match(
     prefill.text,
     /^> From Claude · claude-opus-5 \(this session\)\n/,

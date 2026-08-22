@@ -13,19 +13,19 @@ const MarkdownIt = requireFromTiptap("markdown-it");
 
 const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const MESSAGE_ID = "root-event";
-const HREF = `buzz://message?channel=${CHANNEL_ID}&id=${MESSAGE_ID}`;
-const CHANNEL_HREF = `buzz://channel/${CHANNEL_ID}`;
+const HREF = `beekeeper://message?channel=${CHANNEL_ID}&id=${MESSAGE_ID}`;
+const CHANNEL_HREF = `beekeeper://channel/${CHANNEL_ID}`;
 const CHANNEL_MESSAGE_ID = "a".repeat(64);
-const CHANNEL_MESSAGE_HREF = `buzz://channel/${CHANNEL_ID}/${CHANNEL_MESSAGE_ID}`;
+const CHANNEL_MESSAGE_HREF = `beekeeper://channel/${CHANNEL_ID}/${CHANNEL_MESSAGE_ID}`;
 const OWNER = "a".repeat(64);
-const REPO_HREF = `buzz://repo?owner=${OWNER}&d=buzz-world`;
+const REPO_HREF = `beekeeper://repo?owner=${OWNER}&d=buzz-world`;
 const ISSUE_ID = "b".repeat(64);
-const ISSUE_HREF = `buzz://issue?id=${ISSUE_ID}&owner=${OWNER}&d=buzz-world`;
+const ISSUE_HREF = `beekeeper://issue?id=${ISSUE_ID}&owner=${OWNER}&d=buzz-world`;
 
 test("resolves a composer preview and canonicalizes the underlying href", () => {
   assert.deepEqual(
     resolveComposerMessageLinkAttributes(
-      HREF.replace("buzz://", "BUZZ://"),
+      HREF.replace("beekeeper://", "BEEKEEPER://"),
       (channelId) => (channelId === CHANNEL_ID ? "general" : undefined),
     ),
     { channelName: "general", href: HREF },
@@ -35,7 +35,7 @@ test("resolves a composer preview and canonicalizes the underlying href", () => 
 test("rejects malformed message links", () => {
   assert.equal(
     resolveComposerMessageLinkAttributes(
-      `buzz://message?channel=${CHANNEL_ID}`,
+      `beekeeper://message?channel=${CHANNEL_ID}`,
       () => "general",
     ),
     null,
@@ -55,7 +55,7 @@ test("resolves channel and entity links as composer chips", () => {
     ),
     {
       channelName: "general",
-      href: `buzz://message?channel=${CHANNEL_ID}&id=${CHANNEL_MESSAGE_ID}`,
+      href: `beekeeper://message?channel=${CHANNEL_ID}&id=${CHANNEL_MESSAGE_ID}`,
     },
   );
   assert.deepEqual(
@@ -120,7 +120,7 @@ test("real markdown-it parsing materializes a restored message link", () => {
   const html = md.renderInline(`See ${HREF}.`);
   assert.match(html, /See <span data-composer-buzz-link=""/);
   assert.match(html, /data-channel-name="general"/);
-  assert.match(html, /data-href="buzz:\/\/message\?channel=.*&amp;id=/);
+  assert.match(html, /data-href="beekeeper:\/\/message\?channel=.*&amp;id=/);
 });
 
 test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
@@ -132,8 +132,11 @@ test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
 
   const html = md.renderInline(`${HREF} ${CHANNEL_HREF} ${REPO_HREF}`);
   assert.equal((html.match(/data-composer-buzz-link=""/g) ?? []).length, 3);
-  assert.match(html, /data-href="buzz:\/\/channel\/9a1657ac/);
-  assert.match(html, /data-href="buzz:\/\/repo\?owner=a{64}&amp;d=buzz-world/);
+  assert.match(html, /data-href="beekeeper:\/\/channel\/9a1657ac/);
+  assert.match(
+    html,
+    /data-href="beekeeper:\/\/repo\?owner=a{64}&amp;d=buzz-world/,
+  );
 });
 
 test("real markdown-it parsing preserves underscores in restored entity links", () => {
@@ -141,22 +144,27 @@ test("real markdown-it parsing preserves underscores in restored entity links", 
   registerComposerMessageLinkMarkdownIt(md, {
     resolveChannelName: () => undefined,
   });
-  const href = `buzz://repo?owner=${OWNER}&d=my_repo`;
+  const href = `beekeeper://repo?owner=${OWNER}&d=my_repo`;
 
   const html = md.renderInline(href);
 
   assert.equal((html.match(/data-composer-buzz-link=""/g) ?? []).length, 1);
-  assert.match(html, /data-href="buzz:\/\/repo\?owner=a{64}&amp;d=my_repo"/);
+  assert.match(
+    html,
+    /data-href="beekeeper:\/\/repo\?owner=a{64}&amp;d=my_repo"/,
+  );
   assert.doesNotMatch(html, /<\/span>_repo/);
 });
 
-test("markdown parsing resumes after markdown-it consumes the buzz prefix", () => {
+test("markdown parsing resumes after markdown-it consumes the scheme prefix", () => {
   const { rule } = captureMarkdownRule();
   let token = null;
+  // markdown-it's text rule stops at `:`, so by the time the rule runs the
+  // scheme is already in `pending` and only `://…` is left in `src`.
   const state = {
-    pending: "See buzz",
+    pending: "See beekeeper",
     src: `See ${HREF}`,
-    pos: "See buzz".length,
+    pos: "See beekeeper".length,
     push: () => {
       token = { meta: null };
       return token;
@@ -243,6 +251,6 @@ test("markdown rendering stores identity in attributes, not visible id text", ()
 
   assert.match(html, /data-composer-buzz-link=""/);
   assert.match(html, /data-channel-name="general"/);
-  assert.match(html, /data-href="buzz:\/\/message\?channel=.*&amp;id=/);
+  assert.match(html, /data-href="beekeeper:\/\/message\?channel=.*&amp;id=/);
   assert.doesNotMatch(html, />[^<]*root-event/);
 });

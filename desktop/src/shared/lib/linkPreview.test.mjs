@@ -96,7 +96,7 @@ test("parseSupportedLinkPreview parses Buzz relay git clone URLs", () => {
     ),
     {
       kind: "buzz-repository",
-      href: `buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
+      href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
       provider: "Buzz",
       title: "buzz-world-galaxy",
       typeLabel: "repo",
@@ -119,7 +119,7 @@ test("parseSupportedLinkPreview strips .git suffix from clone URLs", () => {
     ),
     {
       kind: "buzz-repository",
-      href: `buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
+      href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
       provider: "Buzz",
       title: "buzz-world",
       typeLabel: "repo",
@@ -178,14 +178,14 @@ test("parseSupportedLinkPreview rejects clone URLs from non-relay hosts", () => 
 const BUZZ_EVENT_ID =
   "c3b589fa5713ba25bad6dc095e2de00a4ac8f50050fdea00fc6444e603be1dd1";
 
-test("parseSupportedLinkPreview parses buzz:// PR and issue deep links", () => {
+test("parseSupportedLinkPreview parses beekeeper:// PR and issue deep links", () => {
   assert.deepEqual(
     parseSupportedLinkPreview(
-      `buzz://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
+      `beekeeper://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
     ),
     {
       kind: "buzz-pull-request",
-      href: `buzz://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
+      href: `beekeeper://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
       provider: "Buzz",
       title: "buzz-world #c3b589fa",
       typeLabel: "PR",
@@ -193,15 +193,17 @@ test("parseSupportedLinkPreview parses buzz:// PR and issue deep links", () => {
   );
   assert.deepEqual(
     parseSupportedLinkPreview(
-      `buzz://issue?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
+      `beekeeper://issue?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world`,
     )?.typeLabel,
     "issue",
   );
   assert.deepEqual(
-    parseSupportedLinkPreview(`buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world`),
+    parseSupportedLinkPreview(
+      `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
+    ),
     {
       kind: "buzz-repository",
-      href: `buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
+      href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world`,
       provider: "Buzz",
       title: "buzz-world",
       typeLabel: "repo",
@@ -209,14 +211,14 @@ test("parseSupportedLinkPreview parses buzz:// PR and issue deep links", () => {
   );
 });
 
-test("parseSupportedLinkPreview parses buzz:// project deep links", () => {
+test("parseSupportedLinkPreview parses beekeeper:// project deep links", () => {
   assert.deepEqual(
     parseSupportedLinkPreview(
-      `buzz://project?owner=${BUZZ_OWNER}&d=buzz-world`,
+      `beekeeper://project?owner=${BUZZ_OWNER}&d=buzz-world`,
     ),
     {
       kind: "buzz-project",
-      href: `buzz://project?owner=${BUZZ_OWNER}&d=buzz-world`,
+      href: `beekeeper://project?owner=${BUZZ_OWNER}&d=buzz-world`,
       provider: "Buzz",
       title: "buzz-world",
       typeLabel: "project",
@@ -224,40 +226,40 @@ test("parseSupportedLinkPreview parses buzz:// project deep links", () => {
   );
 });
 
-test("parseSupportedLinkPreview rejects malformed buzz:// entity links", () => {
+test("parseSupportedLinkPreview rejects malformed beekeeper:// entity links", () => {
   for (const href of [
-    `buzz://pr?owner=${BUZZ_OWNER}&d=buzz-world`,
-    `buzz://pr?id=short&owner=${BUZZ_OWNER}&d=buzz-world`,
-    `buzz://issue?id=${BUZZ_EVENT_ID}&owner=nope&d=buzz-world`,
-    `buzz://repo?owner=${BUZZ_OWNER}&d=.hidden`,
-    `buzz://project?owner=${BUZZ_OWNER}&d=.hidden`,
+    `beekeeper://pr?owner=${BUZZ_OWNER}&d=buzz-world`,
+    `beekeeper://pr?id=short&owner=${BUZZ_OWNER}&d=buzz-world`,
+    `beekeeper://issue?id=${BUZZ_EVENT_ID}&owner=nope&d=buzz-world`,
+    `beekeeper://repo?owner=${BUZZ_OWNER}&d=.hidden`,
+    `beekeeper://project?owner=${BUZZ_OWNER}&d=.hidden`,
   ]) {
     assert.equal(parseSupportedLinkPreview(href), null, href);
   }
 });
 
-test("extractSupportedLinkPreviews picks up buzz:// project links in prose", () => {
+test("extractSupportedLinkPreviews picks up beekeeper:// project links in prose", () => {
   assert.deepEqual(
     extractSupportedLinkPreviews(
-      `tracking here: buzz://project?owner=${BUZZ_OWNER}&d=buzz-world`,
+      `tracking here: beekeeper://project?owner=${BUZZ_OWNER}&d=buzz-world`,
     ).map((preview) => [preview.kind, preview.typeLabel, preview.title]),
     [["buzz-project", "project", "buzz-world"]],
   );
 });
 
-test("extractSupportedLinkPreviews picks up buzz:// links in prose", () => {
+test("extractSupportedLinkPreviews picks up beekeeper:// links in prose", () => {
   assert.deepEqual(
     extractSupportedLinkPreviews(
-      `PR is up: buzz://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world — review please.`,
+      `PR is up: beekeeper://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world — review please.`,
     ).map((preview) => [preview.kind, preview.title]),
     [["buzz-pull-request", "buzz-world #c3b589fa"]],
   );
 });
 
-test("extractSupportedLinkPreviews uses markdown labels for buzz:// links", () => {
+test("extractSupportedLinkPreviews uses markdown labels for beekeeper:// links", () => {
   assert.deepEqual(
     extractSupportedLinkPreviews(
-      `[Add header links](buzz://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world)`,
+      `[Add header links](beekeeper://pr?id=${BUZZ_EVENT_ID}&owner=${BUZZ_OWNER}&d=buzz-world)`,
     ).map((preview) => preview.title),
     ["Add header links"],
   );
@@ -333,7 +335,7 @@ test("extractSupportedLinkPreviews picks up bare Buzz clone URLs in prose", () =
     [
       {
         kind: "buzz-repository",
-        href: `buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
+        href: `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
         provider: "Buzz",
         title: "buzz-world-galaxy",
         typeLabel: "repo",
@@ -368,20 +370,20 @@ test("extractSupportedLinkPreviews dedupes clone URL variants of one repo", () =
       ].join(" "),
       "https://relay.example",
     ).map((preview) => preview.href),
-    [`buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`],
+    [`beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`],
   );
 });
 
-test("clone URLs and buzz://repo links for the same repo dedupe to one card", () => {
+test("clone URLs and beekeeper://repo links for the same repo dedupe to one card", () => {
   assert.deepEqual(
     extractSupportedLinkPreviews(
       [
         `https://relay.example/git/${BUZZ_OWNER}/buzz-world-galaxy`,
-        `buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
+        `beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`,
       ].join(" "),
       "https://relay.example",
     ).map((preview) => preview.href),
-    [`buzz://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`],
+    [`beekeeper://repo?owner=${BUZZ_OWNER}&d=buzz-world-galaxy`],
   );
 });
 

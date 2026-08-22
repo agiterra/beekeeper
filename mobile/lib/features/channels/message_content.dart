@@ -173,7 +173,7 @@ class MessageContent extends HookConsumerWidget {
         (String channelId) {
           ref
               .read(pendingDeepLinkProvider.notifier)
-              .open(Uri(scheme: 'buzz', host: 'channel', path: channelId));
+              .open(Uri(scheme: 'beekeeper', host: 'channel', path: channelId));
         };
     final channelPresentationKey = [
       for (final entry
@@ -355,7 +355,7 @@ class MessageContent extends HookConsumerWidget {
 
     final baseStyle = fallbackStyle ?? linkStyle;
     final uri = Uri.tryParse(url);
-    final buzzLink = uri?.scheme == 'buzz'
+    final buzzLink = uri?.scheme == 'beekeeper'
         ? parseBuzzDeepLink(uri!) ?? parseEntityDeepLink(uri)
         : null;
     final isBuzzLink =
@@ -442,7 +442,7 @@ class MessageContent extends HookConsumerWidget {
         // references so detail-page callers can suppress self-navigation.
         // Message and join links still need the top-level authenticated
         // dispatcher.
-        if (uri.scheme == 'buzz') {
+        if (uri.scheme == 'beekeeper') {
           final deepLink = parseBuzzDeepLink(uri);
           if (deepLink case ChannelDeepLink(:final channelId)) {
             resolvedChannelTap(channelId);

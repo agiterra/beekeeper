@@ -1334,7 +1334,7 @@ export function createMarkdownComponents(
       );
     }
 
-    // Intercept `buzz://channel/<uuid>` and `buzz://message?...` links so
+    // Intercept `beekeeper://channel/<uuid>` and `beekeeper://message?...` links so
     // clicks navigate in-app instead of opening the URL in the OS browser.
     if (href) {
       if (parseChannelLink(href).ok) {
@@ -1378,7 +1378,7 @@ export function createMarkdownComponents(
       // anchor (renders as a normal external link).
     }
 
-    // `buzz://pr|issue|repo?…` entity links navigate in-app; malformed ones
+    // `beekeeper://pr|issue|repo?…` entity links navigate in-app; malformed ones
     // fall through to the default anchor.
     const entityAnchor = renderEntityLinkAnchor({
       children,

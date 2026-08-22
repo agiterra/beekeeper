@@ -1,4 +1,4 @@
-//! `buzz projects` commands — NIP-MP kind:30621 write path.
+//! `bee projects` commands — NIP-MP kind:30621 write path.
 //!
 //! All mutations follow a read-modify-write pattern:
 //!   1. Fetch the caller's own live head via `kinds:[30621] + authors:[self] + #d:[slug]`.
@@ -158,7 +158,7 @@ fn rebuild_project(
 
 // ── Command implementations ───────────────────────────────────────────────────
 
-/// `buzz projects create`
+/// `bee projects create`
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_create(
     client: &BuzzClient,
@@ -216,7 +216,7 @@ pub async fn cmd_create(
     // ── Network: collision preflight ──────────────────────────────────────
     if fetch_own_project(client, slug).await?.is_some() {
         return Err(CliError::Conflict(format!(
-            "project {slug:?} already exists; use 'buzz projects update' to modify it"
+            "project {slug:?} already exists; use 'bee projects update' to modify it"
         )));
     }
 
@@ -251,7 +251,7 @@ pub async fn cmd_create(
     submit_project(client, builder).await
 }
 
-/// `buzz projects get`
+/// `bee projects get`
 pub async fn cmd_get(client: &BuzzClient, slug: &str, owner: Option<&str>) -> Result<(), CliError> {
     validate_project_slug(slug)?;
     let resp = match fetch_project(client, slug, owner).await? {
@@ -274,7 +274,7 @@ pub async fn cmd_get(client: &BuzzClient, slug: &str, owner: Option<&str>) -> Re
     Ok(())
 }
 
-/// `buzz projects list`
+/// `bee projects list`
 pub async fn cmd_list(
     client: &BuzzClient,
     owner: Option<&str>,
@@ -299,7 +299,7 @@ pub async fn cmd_list(
     Ok(())
 }
 
-/// `buzz projects add-repo`
+/// `bee projects add-repo`
 pub async fn cmd_add_repo(
     client: &BuzzClient,
     slug: &str,
@@ -364,7 +364,7 @@ pub async fn cmd_add_repo(
     submit_project(client, builder).await
 }
 
-/// `buzz projects remove-repo`
+/// `bee projects remove-repo`
 pub async fn cmd_remove_repo(
     client: &BuzzClient,
     slug: &str,
@@ -427,7 +427,7 @@ pub async fn cmd_remove_repo(
     submit_project(client, builder).await
 }
 
-/// `buzz projects update`
+/// `bee projects update`
 ///
 /// Requires at least one setter or clearer; a no-op call is a usage error.
 #[allow(clippy::too_many_arguments)]
@@ -459,7 +459,7 @@ pub async fn cmd_update(
         || access.is_some();
     if !has_mutation {
         return Err(CliError::Usage(
-            "buzz projects update requires at least one of: \
+            "bee projects update requires at least one of: \
              --name, --clear-name, --description, --clear-description, \
              --channel, --clear-channel, --visibility, --clear-visibility, \
              --access"
@@ -580,7 +580,7 @@ async fn publish_project_tombstone(
     Ok(())
 }
 
-/// `buzz projects delete`
+/// `bee projects delete`
 ///
 /// **Default (no `--cascade`): unchanged.** Per `docs/nips/NIP-MP.md`, deleting
 /// a project deletes the kind:30621 event only — member repositories, channels,
@@ -828,7 +828,7 @@ fn roster_from_event_json(event: &serde_json::Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `buzz projects members` — print the authoritative roster as
+/// `bee projects members` — print the authoritative roster as
 /// `[{pubkey, role}]`.
 ///
 /// Reads the latest relay-signed kind:39010 projection for the coordinate;

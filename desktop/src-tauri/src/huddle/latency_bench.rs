@@ -107,11 +107,11 @@ struct TurnResult {
 }
 
 #[test]
-#[ignore = "ad-hoc latency baseline; needs models in ~/.buzz/models and an audio output device"]
+#[ignore = "ad-hoc latency baseline; needs models in ~/.beekeeper/models and an audio output device"]
 fn baseline_stt_fake_llm_tts_first_audio() {
     let home = dirs::home_dir().expect("home");
-    let stt_dir = home.join(".buzz/models/parakeet-tdt-ctc-110m-en");
-    let tts_dir = home.join(".buzz/models/pocket-tts");
+    let stt_dir = home.join(".beekeeper/models/parakeet-tdt-ctc-110m-en");
+    let tts_dir = home.join(".beekeeper/models/pocket-tts");
     assert!(
         stt_dir.join("model.int8.onnx").exists(),
         "parakeet model missing"

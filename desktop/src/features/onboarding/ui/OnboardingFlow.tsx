@@ -577,9 +577,9 @@ export function OnboardingFlow({
                       </h1>
                       <p className="mt-5 text-sm leading-6 text-muted-foreground">
                         Your identity is no longer in the system keyring.
-                        Re-import your nsec to restore it — Buzz will restart to
-                        finish recovery. Or go back to start a new identity with
-                        a fresh key.
+                        Re-import your nsec to restore it — Bee Keeper will
+                        restart to finish recovery. Or go back to start a new
+                        identity with a fresh key.
                       </p>
                     </>
                   ) : (

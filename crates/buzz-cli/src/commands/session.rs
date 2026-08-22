@@ -1,4 +1,4 @@
-//! `buzz session` — agent-facing access to interactive sessions.
+//! `bee session` — agent-facing access to interactive sessions.
 //!
 //! Local-only: this command does **not** talk to the relay. It calls the desktop
 //! app's owner-only session broker (a Unix socket), which is the single
@@ -285,7 +285,7 @@ fn resolve_session(target: &str, caller: Option<&str>) -> Result<String, CliErro
         .collect();
     match fuzzy.len() {
         0 => Err(CliError::Usage(format!(
-            "no session matches '{target}'. Run `buzz session list` to see running sessions."
+            "no session matches '{target}'. Run `bee session list` to see running sessions."
         ))),
         1 => Ok(fuzzy[0].workspace_id.clone()),
         _ => Err(ambiguous(target, &fuzzy)),

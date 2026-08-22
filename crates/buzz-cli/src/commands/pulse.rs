@@ -1,4 +1,4 @@
-//! `buzz pulse` — Project Pulse: the explicit coordination entries a project's
+//! `bee pulse` — Project Pulse: the explicit coordination entries a project's
 //! workers publish (kind 44240) folded together with the coding-session facts
 //! their providers assert through lifecycle, metadata, lease, and umbrella facts.
 //!
@@ -548,7 +548,7 @@ fn build_entry(
     })
 }
 
-/// `buzz pulse update` — publish one entry.
+/// `bee pulse update` — publish one entry.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_update(
     client: &BuzzClient,
@@ -602,7 +602,7 @@ async fn cmd_update(
     Ok(())
 }
 
-/// One row of `buzz pulse list` — an unfolded entry with its signature
+/// One row of `bee pulse list` — an unfolded entry with its signature
 /// stripped.
 fn list_row(entry: &PulseDigestEntry, format: &crate::OutputFormat) -> Value {
     match format {
@@ -627,7 +627,7 @@ fn list_row(entry: &PulseDigestEntry, format: &crate::OutputFormat) -> Value {
     }
 }
 
-/// `buzz pulse list` — unfolded entries, newest first.
+/// `bee pulse list` — unfolded entries, newest first.
 async fn cmd_list(
     client: &BuzzClient,
     project: Option<&str>,
@@ -652,7 +652,7 @@ async fn cmd_list(
     Ok(())
 }
 
-/// One row of `buzz pulse sessions`.
+/// One row of `bee pulse sessions`.
 fn session_row(session: &PulseDigestSession, format: &crate::OutputFormat) -> Value {
     match format {
         crate::OutputFormat::Compact => json!({
@@ -673,7 +673,7 @@ fn session_row(session: &PulseDigestSession, format: &crate::OutputFormat) -> Va
     }
 }
 
-/// `buzz pulse sessions` — the coding sessions observed in the project's
+/// `bee pulse sessions` — the coding sessions observed in the project's
 /// channels.
 ///
 /// The list is printed even when a channel failed, and the command still exits
@@ -701,7 +701,7 @@ async fn cmd_sessions(
     Ok(())
 }
 
-/// `buzz pulse digest` — the §6 envelope, printed verbatim.
+/// `bee pulse digest` — the §6 envelope, printed verbatim.
 async fn cmd_digest(
     client: &BuzzClient,
     project: Option<&str>,
@@ -793,7 +793,7 @@ fn compact_digest(digest: &PulseDigest) -> Value {
     })
 }
 
-/// Route a `buzz pulse` subcommand.
+/// Route a `bee pulse` subcommand.
 pub async fn dispatch(
     cmd: crate::PulseCmd,
     client: &BuzzClient,

@@ -203,7 +203,7 @@ export function updateComposerLinkPreviewInput(
   const nextHrefs = new Set(
     extractSupportedLinkPreviews(content)
       .filter((preview) =>
-        preview.href.startsWith("buzz://")
+        preview.href.startsWith("beekeeper://")
           ? true
           : isValidLinkPreviewSnapshotCanonicalUrl(preview.href),
       )
@@ -277,7 +277,7 @@ export function useComposerLinkPreviews(
     (source: string) =>
       enabled
         ? extractSupportedLinkPreviews(source).filter((preview) =>
-            preview.href.startsWith("buzz://")
+            preview.href.startsWith("beekeeper://")
               ? true
               : isValidLinkPreviewSnapshotCanonicalUrl(preview.href),
           )
@@ -468,7 +468,7 @@ export function useComposerLinkPreviews(
     !suppressed &&
     previews.some(
       (preview) =>
-        !preview.href.startsWith("buzz://") &&
+        !preview.href.startsWith("beekeeper://") &&
         (preview.imageState === "pending" ||
           isHrefReentering(preview.href) ||
           (preview.snapshotReady && !readyTags[preview.href])),
@@ -479,7 +479,7 @@ export function useComposerLinkPreviews(
     !suppressed &&
     liveCandidates.some(
       (href) =>
-        !href.startsWith("buzz://") &&
+        !href.startsWith("beekeeper://") &&
         !readyTags[href] &&
         !candidates.some((candidate) => candidate.href === href),
     );

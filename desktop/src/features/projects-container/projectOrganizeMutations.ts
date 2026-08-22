@@ -304,7 +304,7 @@ export type DeleteProjectContainerCascadeInput = {
  * and that stays the default everywhere — this path runs only when the user
  * ticks "delete everything" in the confirmation dialog.
  *
- * Order matters and mirrors the CLI's `buzz projects delete --cascade`:
+ * Order matters and mirrors the CLI's `bee projects delete --cascade`:
  * channels first, then workflows, and the project tombstone **last**. A
  * failure part-way through therefore leaves the project itself in place, so
  * the user can retry instead of being left with an unreachable orphan set.

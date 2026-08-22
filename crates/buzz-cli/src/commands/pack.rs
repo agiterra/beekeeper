@@ -1,4 +1,4 @@
-//! `buzz pack` subcommands — local persona pack operations.
+//! `bee pack` subcommands — local persona pack operations.
 //!
 //! These commands operate on local pack directories. No relay connection needed.
 
@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::error::CliError;
 
-/// Run `buzz pack validate <path>`.
+/// Run `bee pack validate <path>`.
 ///
 /// Calls `validate_pack()` from the persona crate, prints diagnostics,
 /// and exits with the appropriate code:
@@ -45,7 +45,7 @@ pub fn cmd_validate(path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Run `buzz pack inspect <path>`.
+/// Run `bee pack inspect <path>`.
 ///
 /// Loads and resolves a pack, then pretty-prints a summary of each persona's
 /// effective configuration.

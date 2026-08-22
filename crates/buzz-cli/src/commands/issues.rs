@@ -257,7 +257,7 @@ pub async fn cmd_create_issue(
     let event = client.sign_event(builder)?;
     let event_id = event.id.to_hex();
     let resp = client.submit_event(event).await?;
-    // `link` renders as a rich preview card in Buzz Desktop when included in
+    // `link` renders as a rich preview card in Bee Keeper Desktop when included in
     // a chat message — agents announce issues with it (see base_prompt.md).
     let link = crate::links::issue_link(&event_id, repo_owner, repo_id);
     crate::client::print_create_response(&resp, "link", &link);
@@ -522,7 +522,7 @@ pub async fn cmd_issue_status(
         }
     };
 
-    // Mirrors `buzz patches status`: default a `p` tag to the repo owner
+    // Mirrors `bee patches status`: default a `p` tag to the repo owner
     // for discoverability, plus a `--to` escape hatch for the issue author
     // or anyone else who should be notified of the status change.
     let mut recipients = Vec::new();
