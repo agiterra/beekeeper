@@ -50,7 +50,7 @@ partial because several session channels were inaccessible._
 | | |
 | --- | --- |
 | Deployed (Bee Keeper) | `beekeeper-relay:d52d38c89` on **hive.agiterra.org**, hand-built and hand-deployed — there is no autodeploy for hive yet. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; its owner key was generated in-container and imported into the desktop keychain. Proven live 2026-08-21 night: the rebuilt app connected and authenticated as owner. |
-| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. **No autodeploy** — see below. |
+| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. Autodeploy now tracks it, pinned to `repo_id = 1 and branch = 'main'`; **hive still has no deployer at all**. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
@@ -929,13 +929,25 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   as a second patch** (`12201c49b`) on top of the CI one, because
   `buzz-autodeploy` only ships green pipelines and the vanilla gate could not
   go green without it. Revert that commit the moment upstream takes the fix.
-- **`buzz-autodeploy` is still pointed at a branch that does not exist**
-  (`integrated` on `agiterra/buzz`), so **neither relay has automation**:
-  lightyear was rebuilt by hand on 2026-08-22 and hive has never had a
-  deployer. This is the safe state, not a broken one — repointing it at `main`
-  without first pinning `repo_id` is what would be dangerous (see the trap
-  above). The patch is written and waiting; it needs a root edit of
-  `/usr/local/sbin/buzz-autodeploy` on agincus.
+- **Deleting a branch does not disarm `buzz-autodeploy`.** This was written
+  here on 2026-08-22 as "autodeploy is inert because `integrated` no longer
+  exists," and that was **wrong** — it selects from Woodpecker's `pipelines`
+  table, which still holds every historical `integrated` row. It had been
+  quietly resolving to fork build `393276ac0` the whole time, and staying
+  silent only because that matched the deployed image. The instant lightyear's
+  `BUZZ_IMAGE` changed to the vanilla tag, it woke up and tried to deploy **the
+  fork image onto the freshly wiped vanilla relay** (journal, 03:17 UTC). The
+  health check failed, it rolled back correctly, and the schema was still at
+  32/32 afterwards — the fork build never migrated. Now pinned:
+  `where repo_id = 1 and branch = 'main'`. The general rule: a deployer that
+  reads CI history is armed as long as the history exists, whatever happened to
+  the branch.
+- **The pin was proven necessary the same minute it was applied.** Run
+  side by side, the pinned query returned repo 1 / `12201c49b` (vanilla, equal
+  to the deployed image → no-op) while the unpinned one returned repo **2** /
+  `a0860552c` — a Bee Keeper commit, mid-build. Had it gone green first, an
+  unpinned deployer would have put Bee Keeper on the vanilla relay, and it
+  would have come up *healthy* while serving the wrong product.
 - **Retired secrets accumulate in `/opt/buzz/compose/`.** Every autodeploy run
   leaves a `.env.bak-pre-<sha>`, each a full copy of the relay private key.
   33 of them had built up by 2026-08-22, plus a suffix-less `.env.bak` holding
