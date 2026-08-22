@@ -30,10 +30,11 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-22 — the rebrand landed on `main` (`d90c24d14`, local
-`just ci` green), hive serves Bee Keeper with its own owner key, and the forge
-mirror plus Woodpecker registration are live. Lightyear has **not** been
-rebuilt as vanilla yet._
+_Last updated: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
+(`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
+green at `62bcaa223`), hive serves Bee Keeper, and **lightyear has been rebuilt
+as a vanilla relay** with a wiped database and a rotated keypair. What remains
+is automation: neither relay has a deployer._
 
 _Previously: 2026-08-21, preparing the lease-backed **Agent Progress**
 surface for the next build (§2 item 36). `build/2026-08-21.1` is no longer a
@@ -49,7 +50,8 @@ partial because several session channels were inaccessible._
 | | |
 | --- | --- |
 | Deployed (Bee Keeper) | `beekeeper-relay:d52d38c89` on **hive.agiterra.org**, hand-built and hand-deployed — there is no autodeploy for hive yet. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; its owner key was generated in-container and imported into the desktop keychain. Proven live 2026-08-21 night: the rebuilt app connected and authenticated as owner. |
-| Deployed (going away) | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
+| Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Its owner nsec waits at `/opt/buzz/.owner-key` (root-only) until imported into a stock Buzz client, then delete it. **No autodeploy** — see below. |
+| Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
 | Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
 | Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
@@ -923,7 +925,24 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   eight-line `XOnlyPublicKey::from_slice` guard. Verified both ways on
   2026-08-22: red on vanilla in Woodpecker #112, green on beekeeper `main`.
   This is the best upstream PR candidate we have — one self-contained commit
-  that turns a test they already wrote green.
+  that turns a test they already wrote green. **`agiterra/buzz` now carries it
+  as a second patch** (`12201c49b`) on top of the CI one, because
+  `buzz-autodeploy` only ships green pipelines and the vanilla gate could not
+  go green without it. Revert that commit the moment upstream takes the fix.
+- **`buzz-autodeploy` is still pointed at a branch that does not exist**
+  (`integrated` on `agiterra/buzz`), so **neither relay has automation**:
+  lightyear was rebuilt by hand on 2026-08-22 and hive has never had a
+  deployer. This is the safe state, not a broken one — repointing it at `main`
+  without first pinning `repo_id` is what would be dangerous (see the trap
+  above). The patch is written and waiting; it needs a root edit of
+  `/usr/local/sbin/buzz-autodeploy` on agincus.
+- **Retired secrets accumulate in `/opt/buzz/compose/`.** Every autodeploy run
+  leaves a `.env.bak-pre-<sha>`, each a full copy of the relay private key.
+  33 of them had built up by 2026-08-22, plus a suffix-less `.env.bak` holding
+  the key that had just been rotated out. All were deleted along with the 38
+  pre-deploy SQL dumps when lightyear was wiped. If a deployer is ever
+  re-enabled, give it a retention limit — the backups grow without bound and
+  each one is a credential.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 
