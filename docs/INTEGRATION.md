@@ -4,6 +4,22 @@ This repo is **Bee Keeper**, agiterra's fork of
 [block/buzz](https://github.com/block/buzz). It is a single-branch repo: `main`
 is the product, and upstream is merged in occasionally.
 
+## Remotes
+
+| Remote | Repo | What it is |
+|---|---|---|
+| `origin` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | **This product.** Daily work, PRs, and the relay deploys all come from here. |
+| `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
+
+There is deliberately **no `block/buzz` remote**. `vanilla` already carries
+that history, so a second path to the same commits earned nothing and cost 827
+remote-tracking refs. If the mirror ever stops being synced, `git remote add
+upstream https://github.com/block/buzz.git` puts the old path back in one
+command.
+
+Keep `origin` named `origin`: the pre-push file-size gate resolves its base
+from `origin/main` directly (see § CI below).
+
 ## Branches
 
 | Branch | Meaning |
@@ -24,14 +40,25 @@ and two of them had already stopped building standalone. The vanilla mirror,
 and the one CI patch that runs on ci.agiterra.org, now live in
 [agiterra/buzz](https://github.com/agiterra/buzz).
 
+Those branches were retired locally on 2026-08-22, along with the pre-rebrand
+`feature/*` lineage whose content is already on `main` under different SHAs.
+Nothing was thrown away: each survives as a local-only `archive/<branch>` tag
+(`git tag -l 'archive/*'`), which keeps the commits reachable without putting
+them back in `git branch`. They are not pushed.
+
 ## Merging upstream
 
 ```sh
-git fetch upstream
-git merge upstream/main        # merge, never rebase — this is shared history
+git fetch vanilla
+git merge vanilla/main         # merge, never rebase — this is shared history
 ```
 
-Two things to check before starting one:
+Three things to check before starting one:
+
+- **`vanilla/main` is not pristine block/buzz.** It carries this fork's CI
+  patch on top (`12201c49b`, BIP-340 validation of `oa[0]` in
+  `git-sign-nostr`), so a merge brings that along. Wanted today; slated for
+  revert once upstream takes the fix.
 
 - **Migration numbering.** This fork owns `migrations/0032`–`0040`. If upstream
   has added migrations past `0031`, the numbers collide and the renumbering has

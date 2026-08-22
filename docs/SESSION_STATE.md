@@ -811,6 +811,22 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
+- **This checkout has two remotes, and neither is `upstream`.** As of
+  2026-08-22: `origin` = `agiterra/beekeeper` (the product), `vanilla` =
+  `agiterra/buzz` (the block/buzz mirror plus the one CI patch). The
+  `block/buzz` remote was removed — it was a second path to commits `vanilla`
+  already carries, at a cost of 827 remote-tracking refs. Merge upstream with
+  `git fetch vanilla && git merge vanilla/main`. **The ceremony bullets further
+  down this section still say `upstream/main`, `upstream/integrated`, and
+  "`origin` = relay, `upstream` = GitHub" — those remotes are gone.** The
+  lessons in them (rerere, per-file folds) still hold; the remote names do not.
+- **The 15 retired branches are `archive/*` tags, not lost.** The ceremony
+  branches (`integrated`, `integrated-build`, `integration/glue*`) and the
+  pre-rebrand `feature/*` lineage were deleted locally on 2026-08-22 after the
+  checkout read as a clone of the vanilla fork — 11 of 19 branches tracked refs
+  that were `gone`. Each was tagged `archive/<branch>` first, so the commits
+  stay reachable; `git tag -l 'archive/*'` lists them. Local-only, never
+  pushed. Survivors: `main`, `rebrand/beekeeper`, `vanilla-patch`.
 - **One agent in a ceremony worktree at a time, and never stage a tree
   wholesale.** Both rules were bought with destroyed work on 2026-08-20 (§2
   item 30). Two pipelines pointed at the same worktree interfered; the damage
