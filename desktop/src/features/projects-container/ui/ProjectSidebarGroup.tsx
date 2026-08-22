@@ -408,7 +408,16 @@ export function ProjectSidebarGroup({
             className="px-2"
             data-testid={`project-children-${project.dtag}`}
           >
-            {pulseRows.map(renderRow)}
+            {/* Pulse is the one row group rendered outside a section, so it
+                needs its own list wrapper. Without it the SidebarMenuItem is
+                an <li> with no <ul> ancestor, and Tailwind's preflight resets
+                list-style on ol/ul/menu only — never on li — so the orphan
+                keeps the UA `display: list-item` and paints a marker. Its
+                child is a full-width flex block, so the marker lands on its
+                own line above the row: the stray bullet. */}
+            {pulseRows.length > 0 ? (
+              <SidebarMenu>{pulseRows.map(renderRow)}</SidebarMenu>
+            ) : null}
             {sessionRows.length > 0 || terminalRows.length > 0 ? (
               <ProjectChildSection
                 label="Open Sessions"
