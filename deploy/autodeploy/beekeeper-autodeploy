@@ -67,6 +67,17 @@ log()      { echo "[beekeeper-autodeploy] $*"; }
 forge()    { incus exec forge -- "$@"; }
 instance() { incus exec "$INSTANCE" -- "$@"; }
 
+# git against the mirror, from root, without depending on host-global config.
+#
+# `incus exec` runs as root while the mirrors are owned by `git`, so every git
+# command hits "detected dubious ownership" unless the repo is in root's
+# safe.directory allowlist. On agincus that allowlist contained exactly one
+# entry — /srv/git/buzz.git, added by hand when buzz-autodeploy was built — so
+# a second deployer inherits a repo it cannot read. Carrying the exception
+# in-script keeps this working on any host, rather than depending on a piece of
+# root config nobody remembers setting.
+mirror_git() { forge git -c safe.directory="$MIRROR" -C "$MIRROR" "$@"; }
+
 exec 9>/tmp/beekeeper-autodeploy.lock
 flock -n 9 || { log "another run holds the lock; exiting"; exit 0; }
 
@@ -98,19 +109,30 @@ fi
 log "green pipeline at $short, deployed is ${current:-unknown} — deploying"
 
 # ── 2. make sure the mirror has the commit ───────────────────────────────────
-if ! forge git -C "$MIRROR" cat-file -e "$sha^{commit}" 2>/dev/null; then
+# Prove the mirror is readable BEFORE asking whether a commit is in it. An
+# unreadable repo makes `cat-file -e` exit non-zero exactly like a missing
+# commit does, so without this the deployer reports "not synced yet", exits 0,
+# and retries forever — a permanent silent no-op wearing the costume of a
+# transient wait. That is precisely what happened on this deployer's first run.
+if ! err=$(mirror_git rev-parse --git-dir 2>&1); then
+  log "FATAL: cannot read mirror $MIRROR — this is a configuration fault, not a sync delay"
+  while IFS= read -r line; do log "  $line"; done <<<"$err"
+  exit 1
+fi
+
+if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
   log "commit not in mirror yet; triggering git-mirror.service"
   forge systemctl start git-mirror.service
   sleep 30
-  if ! forge git -C "$MIRROR" cat-file -e "$sha^{commit}" 2>/dev/null; then
-    log "commit still missing from mirror; will retry next tick"
+  if ! mirror_git cat-file -e "$sha^{commit}" 2>/dev/null; then
+    log "commit still missing from mirror after a sync; will retry next tick"
     exit 0
   fi
 fi
 
 # ── 3. export source and build ───────────────────────────────────────────────
 instance sh -c "rm -rf $BASE/build-incoming && mkdir -p $BASE/build-incoming"
-forge git -C "$MIRROR" archive --format=tar "$sha" | instance sh -c "tar -x -C $BASE/build-incoming"
+mirror_git archive --format=tar "$sha" | instance sh -c "tar -x -C $BASE/build-incoming"
 instance test -f "$BASE/build-incoming/Dockerfile"
 
 log "building $IMAGE_NAME:$short (log: $BASE/build-$short.log in the $INSTANCE instance)"

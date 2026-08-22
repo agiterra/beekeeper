@@ -31,6 +31,18 @@ deployed; change the image and it wakes up and deploys the ghost. This is
 exactly what happened to lightyear during the vanilla rebuild — the health
 check and rollback were the only things that caught it.
 
+**A new mirror is unreadable by root until you say otherwise.** `incus exec`
+runs as root; the mirrors are owned by `git`. Git refuses with "detected
+dubious ownership" unless the repo is in root's `safe.directory`, and on
+agincus that list held exactly one entry — `/srv/git/buzz.git`, added by hand
+when `buzz-autodeploy` was built. The failure is nasty because
+`git cat-file -e` exits non-zero for an unreadable repo and for a genuinely
+missing commit alike, so the deployer logged *"commit not in mirror yet"* and
+exited 0, forever. Caught on this deployer's first live run. Fixed two ways:
+`mirror_git` carries `-c safe.directory=$MIRROR` so it does not depend on host
+config, and the script now proves the mirror is *readable* before asking what
+is in it, treating unreadability as fatal rather than as a sync delay.
+
 ## Retention
 
 `buzz-autodeploy` has none. By 2026-08-22 one host had accumulated 38 SQL
