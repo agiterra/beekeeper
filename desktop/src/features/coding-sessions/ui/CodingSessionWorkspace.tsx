@@ -10,6 +10,7 @@ import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSe
 import {
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
+  umbrellaHasCollapsedHistory,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
@@ -243,9 +244,12 @@ export function CodingSessionWorkspace({
 
   return (
     <>
-      {/* The umbrella surface is a render branch, not a mode: an umbrella of
-          one falls through to exactly today's single-session tree. */}
-      {umbrella.executions.length > 1 ? (
+      {/* The umbrella surface is a render branch, not a mode: an umbrella with
+          no collapsed history falls through to exactly today's single-session
+          tree. Routing on collapsed history rather than execution count is
+          what lets a resumed session — one execution, several generations —
+          reach the only view that renders its earlier turns. */}
+      {umbrellaHasCollapsedHistory(umbrella) ? (
         <UmbrellaCodingSessionWorkspace
           channelId={channelId}
           channelName={channel?.name ?? null}

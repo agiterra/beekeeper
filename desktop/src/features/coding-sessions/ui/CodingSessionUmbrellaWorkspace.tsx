@@ -33,7 +33,10 @@ import type { CodingSessionName } from "@/features/coding-sessions/lib/codingSes
 import { openCodingSessionPopout } from "@/features/coding-sessions/lib/codingSessionWindow";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
 import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
-import { codingSessionWireWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import {
+  codingSessionUmbrellaGenerationLabel,
+  codingSessionWireWorkspaceStatus,
+} from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
@@ -193,7 +196,7 @@ export function UmbrellaCodingSessionWorkspace({
       <div className="shrink-0" data-testid="coding-session-authority-summary">
         <CodingSessionHeader
           channelName={channelName}
-          generationLabel={`${umbrella.executions.length} executions`}
+          generationLabel={codingSessionUmbrellaGenerationLabel(umbrella)}
           onAddProvider={onAddProvider}
           onBack={onBack}
           onCloseSession={onCloseSession}

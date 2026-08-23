@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  codingSessionUmbrellaGenerationLabel,
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
+  umbrellaHasCollapsedHistory,
 } from "./codingSessionWorkspaceModel.ts";
 
 const session = {
@@ -550,5 +552,69 @@ test("a session-scoped continuity fact is not mistaken for a streaming turn", ()
       "running",
     ),
     { kind: "working", label: "Working" },
+  );
+});
+
+function umbrellaOf(executions) {
+  return { executions };
+}
+
+function executionOf({ generation = 1, priorGenerations = [] } = {}) {
+  return {
+    activeGeneration: {
+      ...session,
+      commandTarget: { ...session.commandTarget, generation },
+    },
+    priorGenerations,
+  };
+}
+
+test("a resumed single execution routes to the umbrella surface", () => {
+  // The regression this guards: one execution, two generations. Routing on
+  // execution count alone sent this to the flat tree, which renders only the
+  // active generation — so a resume read as an erased transcript.
+  const umbrella = umbrellaOf([
+    executionOf({ generation: 2, priorGenerations: [session] }),
+  ]);
+  assert.equal(umbrellaHasCollapsedHistory(umbrella), true);
+});
+
+test("a single execution with no prior generations stays on the flat tree", () => {
+  assert.equal(
+    umbrellaHasCollapsedHistory(umbrellaOf([executionOf({ generation: 1 })])),
+    false,
+  );
+});
+
+test("more than one execution still routes to the umbrella surface", () => {
+  assert.equal(
+    umbrellaHasCollapsedHistory(
+      umbrellaOf([executionOf(), executionOf({ generation: 1 })]),
+    ),
+    true,
+  );
+});
+
+test("the umbrella label counts executions only when there are several", () => {
+  assert.equal(
+    codingSessionUmbrellaGenerationLabel(
+      umbrellaOf([executionOf(), executionOf()]),
+    ),
+    "2 executions",
+  );
+});
+
+test("a resumed single execution is labelled by generation, never '1 executions'", () => {
+  const label = codingSessionUmbrellaGenerationLabel(
+    umbrellaOf([executionOf({ generation: 2, priorGenerations: [session] })]),
+  );
+  assert.equal(label, "generation 2 · 1 earlier");
+  assert.ok(!label.includes("1 executions"));
+});
+
+test("an umbrella with nothing collapsed contributes no label", () => {
+  assert.equal(
+    codingSessionUmbrellaGenerationLabel(umbrellaOf([executionOf()])),
+    "",
   );
 });
