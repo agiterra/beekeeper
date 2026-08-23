@@ -860,7 +860,12 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   checkout read as a clone of the vanilla fork — 11 of 19 branches tracked refs
   that were `gone`. Each was tagged `archive/<branch>` first, so the commits
   stay reachable; `git tag -l 'archive/*'` lists them. Local-only, never
-  pushed. Survivors: `main`, `rebrand/beekeeper`, `vanilla-patch`.
+  pushed. Survivors as of that date: `main`, `rebrand/beekeeper`,
+  `vanilla-patch`. `rebrand/beekeeper` was deleted local-and-origin on
+  2026-08-23 once fully merged into `main` (same SHA both sides, zero commits
+  absent) — no archive tag, because `main` already reaches its commits. **The
+  branch list today is `main` and `vanilla-patch`**, the latter checked out in
+  the `-vanilla` sibling worktree.
 - **One agent in a ceremony worktree at a time, and never stage a tree
   wholesale.** Both rules were bought with destroyed work on 2026-08-20 (§2
   item 30). Two pipelines pointed at the same worktree interfered; the damage
