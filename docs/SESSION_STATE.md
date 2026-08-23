@@ -7,7 +7,10 @@ disagrees with an older document about *current state*, this one wins.
 
 > **2026-08-21 — the branch ceremony is gone, and so is the repo it ran in.**
 > This repo is now `agiterra/beekeeper`: a single `main` branch, ordinary topic
-> branches, upstream **merged** in occasionally. `scripts/integrate.sh`,
+> branches, upstream **merged** in occasionally. **Since 2026-08-23 topic
+> branches are rebased onto `main`, not merged into it** — upstream stays a
+> merge, and `docs/INTEGRATION.md` § Landing a topic branch explains why the
+> two differ. `scripts/integrate.sh`,
 > `CONTRIBUTING-FORK.md` and the split-map bookkeeping are deleted;
 > `docs/INTEGRATION.md` now describes only what is still live (CI, caching,
 > autodeploy). The near-pristine upstream mirror plus the single
@@ -49,7 +52,7 @@ partial because several session channels were inaccessible._
 
 | | |
 | --- | --- |
-| Deployed (Bee Keeper) | `beekeeper-relay:0be70d424` on **hive.agiterra.org**, shipped 2026-08-22 12:24 UTC by its own deployer (`deploy/autodeploy/`, installed as `beekeeper-autodeploy.timer`) — the first automated Bee Keeper deploy. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; owner `6cbdf445…92b68df2`, key imported into the desktop keychain and the server copy deleted. Relay identity (NIP-11 `self`) is **`1fb029d0…c09ab336`** — recorded here as the baseline, because `BUZZ_RELAY_PRIVATE_KEY` auto-generates when unset, and a relay that silently rotates its key on every restart evicts every client cache. Both it and `BUZZ_GIT_HOOK_HMAC_SECRET` are persisted at 64 chars; check `self` against this value after any deploy. |
+| Deployed (Bee Keeper) | `beekeeper-relay:7d224a8b6` on **hive.agiterra.org**, observed running there 2026-08-23 (deploy time not recorded), with `a961fb277` pushed to `main` the same morning and awaiting the deployer's next tick. (Was `0be70d424`, shipped 2026-08-22 12:24 UTC by its own deployer (`deploy/autodeploy/`, installed as `beekeeper-autodeploy.timer`) — the first automated Bee Keeper deploy. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; owner `6cbdf445…92b68df2`, key imported into the desktop keychain and the server copy deleted. Relay identity (NIP-11 `self`) is **`1fb029d0…c09ab336`** — recorded here as the baseline, because `BUZZ_RELAY_PRIVATE_KEY` auto-generates when unset, and a relay that silently rotates its key on every restart evicts every client cache. Both it and `BUZZ_GIT_HOOK_HMAC_SECRET` are persisted at 64 chars; check `self` against this value after any deploy.) |
 | Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Owner key backed up and `/opt/buzz/.owner-key` deleted. Autodeploy tracks it, pinned to `repo_id = 1`. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
@@ -810,6 +813,37 @@ exists. Longer horizon lives in the research report §7: relay-durable
 checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
+
+- **`CLAUDE.md` is a symlink to `AGENTS.md`.** Editing through it modifies
+  `AGENTS.md`; `git add CLAUDE.md` then stages an unchanged symlink and drops
+  the edit with no error. On 2026-08-23 a branching-policy change committed as
+  "1 file changed" and had to be amended — the commit stat was the only tell.
+  Stage `AGENTS.md`.
+- **`just desktop-standalone` reaps its own successor.** The recipe traps
+  `cleanup-instance-agents.sh "$INSTANCE_ID"` on EXIT, and two runs on the same
+  branch share that id, so a dying run kills the replacement — `Terminated: 15`,
+  exit 143, seconds after a clean-looking start, which reads as a build failure.
+  Let the old run finish dying before launching. Related: for testing against a
+  real community use `desktop-standalone`, not `just dev` — `dev` boots a local
+  relay and a worktree identity, so hive.agiterra.org data is simply absent.
+  `productName` and the bundled feature manifest are fixed at launch/build time;
+  a running app cannot pick up either, only a relaunch can.
+- **Renaming the desktop crate breaks three things that fail silently.**
+  `buzz-desktop` → `beekeeper-desktop` on 2026-08-23 (the dock label is the
+  Cargo binary name, not `productName`). `desktop-release-cache-key.py` matched
+  the old name in `Cargo.lock`; `local-prod-build.sh` pgreps the binary to
+  refuse installing over a running app — its own comment records that guard
+  silently passing through the *previous* rename; and `DESKTOP_BINARY_NAMES`
+  drives orphan-agent reaping, so the new names were **added**, not substituted,
+  because installed older builds still run under the old one. Deliberately not
+  renamed: `buzz-desktop-latest` (the GitHub release tag inside
+  `BUZZ_UPDATER_ENDPOINT` — renaming breaks auto-update for every install) and
+  `BUZZ_DEV_KEYRING_SERVICE` (keys stored dev secrets).
+- **Autodeploy is healthy — a relay image that looks stale probably is not.**
+  On 2026-08-23 hive ran `beekeeper-relay:7d224a8b6` while local `main` was at
+  `a45b25397`, which read as the deployer's documented quiet-failure mode. It
+  was the opposite: `origin/main` had advanced and `7d224a8b6` was *newer*.
+  Compare against `origin/main` after a fetch, not against a local branch.
 
 - **This checkout has two remotes, and neither is `upstream`.** As of
   2026-08-22: `origin` = `agiterra/beekeeper` (the product), `vanilla` =
