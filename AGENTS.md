@@ -10,12 +10,23 @@
 
 > **This repo is Bee Keeper, agiterra's fork of
 > [block/buzz](https://github.com/block/buzz).** It is a single-branch repo:
-> `main` is the product, topic branches are ordinary and short-lived, and
-> upstream is **merged** in occasionally — never rebased. There is no assembly
-> ceremony and no split step; build on a topic branch, let the user test it,
-> merge it. See [docs/INTEGRATION.md](docs/INTEGRATION.md), especially the
-> two checks before starting an upstream merge (migration numbering, and the
-> upstream `projects`/`pulse` collision).
+> `main` is the product and topic branches are ordinary and short-lived. There
+> is no assembly ceremony and no split step; build on a topic branch, let the
+> user test it, land it.
+>
+> **Topic branches are rebased onto `main`, never merged into it.** They are
+> short-lived and single-author, so rewriting them costs nothing and keeps
+> `main` linear. Use `git rebase --signoff origin/main` — a plain `git rebase`
+> preserves existing trailers, but any commit it recreates without one fails
+> the DCO gate. Force-push the topic branch afterwards; that is expected.
+>
+> **Upstream is the exception: `vanilla/main` is merged, never rebased.** Those
+> commits already exist in `agiterra/buzz` and `block/buzz`, so rebasing would
+> rewrite history other repos share and make every later merge conflict against
+> its own phantom copies. See [docs/INTEGRATION.md](docs/INTEGRATION.md),
+> especially the three checks before starting an upstream merge (the CI patch
+> `vanilla/main` carries, migration numbering, and the upstream
+> `projects`/`pulse` collision).
 >
 > The near-pristine upstream mirror, and the single CI patch that runs it on
 > ci.agiterra.org, live in

@@ -25,11 +25,44 @@ from `origin/main` directly (see § CI below).
 | Branch | Meaning |
 |---|---|
 | `main` | The product. Default branch; deploys and daily work use it. |
-| topic branches | Ordinary short-lived branches, merged back via PR or fast-forward. |
+| topic branches | Ordinary short-lived branches, **rebased** onto `main` and landed fast-forward. See § Landing a topic branch. |
 | `build/YYYY-MM-DD[.n]` (tags) | Immutable pins of a deployed build. Relay images are tagged with the build tag they came from. |
 
 Commit with `git commit -s` — the **DCO Check** fails any PR with a commit
 missing a `Signed-off-by` trailer.
+
+## Landing a topic branch
+
+Topic branches are **rebased**, not merged. They are short-lived and
+single-author, so rewriting them costs nothing, and `main` stays linear —
+which keeps `git log main` a readable list of what shipped rather than a
+braid of two-commit merges.
+
+```sh
+git fetch origin
+git rebase --signoff origin/main   # --signoff: see below
+just check                         # re-run the gate — the base moved
+git push --force-with-lease        # expected; the branch was rewritten
+```
+
+Then land it on `main` as a fast-forward.
+
+Two things to get right:
+
+- **`--signoff`, not a plain `git rebase`.** A rebase preserves the trailers on
+  commits it replays untouched, but any commit it *recreates* — a conflict
+  resolution, a squash — loses its `Signed-off-by` and fails the DCO gate. The
+  `commit-msg` hook does not fire during a rebase. Same applies to
+  `git cherry-pick --signoff`.
+- **`--force-with-lease`, not `--force`.** It refuses the push if the remote
+  moved since your last fetch, which is the only thing standing between a
+  rewritten branch and someone else's work on it.
+
+Re-run the gate *after* rebasing, not before. A branch that was green against
+an older `main` proves nothing about the base it will actually land on.
+
+**This does not apply to `vanilla/main`** — see § Merging upstream, which
+explains why upstream history is merged instead.
 
 This repo previously carried an upstreamable-feature-branch model
 (`feature/*` rebased onto a `main` mirror, reassembled through
@@ -50,8 +83,14 @@ them back in `git branch`. They are not pushed.
 
 ```sh
 git fetch vanilla
-git merge vanilla/main         # merge, never rebase — this is shared history
+git merge vanilla/main         # merge, never rebase — see below
 ```
+
+Upstream is the one place this repo does **not** rebase, and the reason is not
+style. Those commits already exist in `agiterra/buzz` and in `block/buzz`;
+rebasing them would mint new SHAs for history other repos share, so every later
+merge would conflict against its own phantom copies. Topic branches carry no
+such obligation — nobody else has them — which is why they are rebased.
 
 Three things to check before starting one:
 
