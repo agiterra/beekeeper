@@ -5,18 +5,26 @@ use super::*;
 /// below, which is what actually decides ownership.
 ///
 /// These are all spellings of the **Cargo binary name**, not the product name:
-/// `CFBundleExecutable` stays `buzz-desktop` through a Tauri rename, so
-/// `productName` never appears as a process name on any platform. Stock Buzz
-/// therefore shares every name here — which is fine, and is precisely why
+/// `CFBundleExecutable` is the *Cargo binary* name, not `productName`, so a
+/// Tauri `productName` rename never changes the process name — but renaming the
+/// crate does. The crate was `buzz-desktop` before the Bee Keeper rebrand, and
+/// both names stay listed: an installed older build, or stock Buzz, still runs
+/// under the old one. Stock Buzz therefore shares names here — which is fine,
+/// and is precisely why
 /// [`desktop_is_alive_for_instance`] additionally requires the bundle
 /// identifier to appear in the process's argv/environ. That identifier
 /// (`io.agiterra.beekeeper.app` vs `xyz.block.buzz.app`) is the only thing keeping
 /// two coexisting installs from reaping each other's agents.
 const DESKTOP_BINARY_NAMES: &[&str] = &[
+    "beekeeper-desktop",
+    "beekeeper_desktop",
     "buzz-desktop",
     "buzz_desktop",
     // Linux limits /proc/<pid>/comm to 15 visible bytes, truncating the
-    // AppImage shim's real executable name, `buzz-desktop.bin`.
+    // AppImage shim's real executable name, `<crate>.bin`. At 17 bytes,
+    // `beekeeper-desktop` truncates to the same 15 as its `.bin` shim, so one
+    // entry covers both; the 12-byte `buzz-desktop` needed a separate one.
+    "beekeeper-deskt",
     "buzz-desktop.bi",
 ];
 

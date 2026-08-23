@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Remove desktop state owned by development bundle identifiers only.
-# Production state (`io.agiterra.beekeeper.app`, `~/.beekeeper`, and `buzz-desktop`) is
+# Production state (`io.agiterra.beekeeper.app`, `~/.beekeeper`, and `beekeeper-desktop`) is
 # deliberately outside every deletion pattern in this script.
 set -euo pipefail
 
