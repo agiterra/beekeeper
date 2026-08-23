@@ -48,10 +48,21 @@ generate_badged_icon() {
 # Worktree detection: compare --git-dir to --git-common-dir. In the main
 # working tree these are identical; in any worktree (whether under .worktrees/,
 # .claude/worktrees/, or elsewhere on disk) they differ.
+#
+# Both MUST be resolved to physical absolute paths before comparing. Git
+# reports them relative to the current directory, and not in the same form:
+# from the repo root both read `.git`, but from a subdirectory --git-dir comes
+# back absolute while --git-common-dir stays relative (`../.git`). Every
+# desktop recipe sources this file after `cd desktop`, so a raw string compare
+# called the main checkout a worktree and handed it a branch-derived identity —
+# which is where the stray `io.agiterra.beekeeper.app.dev.main` app-data
+# directory came from.
 if git rev-parse --is-inside-work-tree &>/dev/null; then
-    GIT_DIR=$(git rev-parse --git-dir)
+    GIT_DIR=$(git rev-parse --absolute-git-dir 2>/dev/null)
+    GIT_DIR=$(cd "$GIT_DIR" 2>/dev/null && pwd -P || true)
     GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
-    if [[ -n "$GIT_COMMON_DIR" && "$GIT_DIR" != "$GIT_COMMON_DIR" ]]; then
+    GIT_COMMON_DIR=$(cd "$GIT_COMMON_DIR" 2>/dev/null && pwd -P || true)
+    if [[ -n "$GIT_DIR" && -n "$GIT_COMMON_DIR" && "$GIT_DIR" != "$GIT_COMMON_DIR" ]]; then
         BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
         export BUZZ_WORKTREE_LABEL="${BRANCH_NAME##*/}"
         export BUZZ_INSTANCE_SLUG=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
