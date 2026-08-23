@@ -508,7 +508,9 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
                   >
                     <Button
                       className="h-8 min-w-0 flex-1 justify-start gap-2 px-2"
-                      onClick={() => void goProjectRepo(projectId, repo.id)}
+                      onClick={() =>
+                        void goProjectRepo(projectId, repo.repoAddress)
+                      }
                       variant="ghost"
                     >
                       <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />

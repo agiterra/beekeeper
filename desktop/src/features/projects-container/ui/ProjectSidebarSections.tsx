@@ -360,7 +360,9 @@ export function ProjectSidebarSections({
               })
             }
             onOpenProject={() => handleOpenProject(project)}
-            onOpenRepo={(repo) => void goProjectRepo(project.id, repo.id)}
+            onOpenRepo={(repo) =>
+              void goProjectRepo(project.id, repo.repoAddress)
+            }
             onNewCodingSession={() =>
               void goNewProjectCodingSession(project.id)
             }

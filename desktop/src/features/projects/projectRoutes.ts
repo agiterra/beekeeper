@@ -71,3 +71,31 @@ export function projectMatchesRouteId(
     (!owner || project.owner.toLowerCase() === owner)
   );
 }
+
+/**
+ * Matches a project that *contains* a repository named by a legacy
+ * `<owner>:<dtag>` route id.
+ *
+ * `Repository.id` is built in exactly that form (`projectModels.ts`), so every
+ * repo-open link carries it. It resolved only while a project's dtag happened
+ * to equal its repository's — true for legacy one-repo projects, where
+ * `repositoryToLegacyProject` copies the dtag across, and false as soon as a
+ * repo is imported into a container under a different name. That mismatch
+ * stranded the repo page on "This project could not be found."
+ *
+ * Strictly a fallback: callers must try {@link projectMatchesRouteId} across
+ * every project first, so a project owning the dtag always outranks one that
+ * merely contains a repository using it.
+ */
+export function projectContainsRepositoryRouteId(
+  project: Project,
+  projectId: string,
+): boolean {
+  const { address, owner, dtag } = parseProjectRouteId(projectId);
+  if (address) return false;
+  return project.repositories.some(
+    (repository) =>
+      repository.dtag === dtag &&
+      (!owner || repository.owner.toLowerCase() === owner),
+  );
+}

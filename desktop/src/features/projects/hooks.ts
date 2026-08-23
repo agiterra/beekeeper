@@ -69,7 +69,10 @@ import {
   type FetchProjectEventsExhaustively,
   fetchProjectEventsExhaustively,
 } from "./projectEnumeration";
-import { projectMatchesRouteId } from "./projectRoutes";
+import {
+  projectContainsRepositoryRouteId,
+  projectMatchesRouteId,
+} from "./projectRoutes";
 import {
   projectsSnapshotKey,
   readProjectsSnapshot,
@@ -678,8 +681,13 @@ export function useProjectsQuery() {
 export function useProjectQuery(projectId: string) {
   return useQuery({
     ...useProjectsQueryConfig(),
+    // Two passes, not one predicate: a project that owns the dtag must always
+    // outrank one that merely contains a repository using it.
     select: (projects: Project[]) =>
       projects.find((project) => projectMatchesRouteId(project, projectId)) ??
+      projects.find((project) =>
+        projectContainsRepositoryRouteId(project, projectId),
+      ) ??
       null,
   });
 }
