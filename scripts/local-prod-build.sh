@@ -120,12 +120,18 @@ if $NO_INSTALL; then
   echo "==> --no-install: skipping /Applications install"
   exit 0
 fi
-# Match the executable, not the product name: Tauri leaves CFBundleExecutable
-# as the Cargo binary (`beekeeper-desktop`), so a productName-based pattern never
-# matches and this guard silently passes over a running app. The pre-rename
-# version had exactly that bug — it looked for `MacOS/Buzz` against a process
-# whose real path is `MacOS/beekeeper-desktop`.
-if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/beekeeper-desktop" >/dev/null; then
+# Match the bundle's MacOS directory, not a binary name. Tauri leaves
+# CFBundleExecutable as the Cargo binary, so a productName-based pattern never
+# matches and the guard silently passes over a running app — the pre-rename
+# version had exactly that bug, looking for `MacOS/Buzz` against a process
+# whose real path was `MacOS/buzz-desktop`.
+#
+# Naming the *current* binary reintroduces it across any rename, in the one
+# direction that matters: the installed app is by definition the OLD build, so
+# right after `buzz-desktop` became `beekeeper-desktop` the guard stopped
+# recognising every app it was meant to catch, and the install would `rm -rf` a
+# running bundle. The directory is what is actually invariant here.
+if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/" >/dev/null; then
   echo "Bee Keeper.app is running — quit it, then re-run the install" >&2
   exit 1
 fi
