@@ -5,6 +5,7 @@
       "id": "workflows",
       "name": "Workflows",
       "description": "YAML-defined automations with approval gates",
+      "defaultEnabled": true,
       "platforms": [
         "desktop"
       ]
@@ -13,12 +14,14 @@
       "id": "projects",
       "name": "Projects",
       "description": "Group agents, channels, code, and forums into collapsible sidebar projects",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     },
     {
       "id": "pulse",
       "name": "Pulse",
       "description": "Activity feed with notes, social posts, and agent activity",
+      "defaultEnabled": true,
       "platforms": [
         "desktop"
       ]
@@ -27,6 +30,7 @@
       "id": "forum",
       "name": "Forum Channels",
       "description": "Forum-style threaded channels for long-form discussions",
+      "defaultEnabled": true,
       "platforms": [
         "desktop"
       ]
@@ -35,30 +39,35 @@
       "id": "agentManagedProfiles",
       "name": "Agent-managed profiles",
       "description": "Let agents manage their own relay name and avatar instead of restoring the desktop copy",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     },
     {
       "id": "builtin-shell",
       "name": "Built-in Shell",
       "description": "Terminal sessions hosted inside Buzz with consent-gated agent access",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     },
     {
       "id": "project-pulse",
       "name": "Project Pulse",
       "description": "Per-project coordination view: explicit member claims beside observed coding-session state",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     },
     {
       "id": "agent-progress",
       "name": "Agent progress",
       "description": "Live per-session progress for every coding session you can read, folded from events that already exist",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     },
     {
       "id": "coding-session-export",
       "name": "Coding-session transcript export",
       "description": "Export a coding session as a static, redacted, self-contained transcript bundle with an offline viewer",
+      "defaultEnabled": true,
       "platforms": ["desktop"]
     }
   ]
