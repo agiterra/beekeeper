@@ -615,9 +615,18 @@ desktop-standalone *ARGS: _ensure-sidecar-stubs
     fi
     source ../scripts/instance-env.sh
     INSTANCE_ID=$(node -e "console.log(JSON.parse(process.env.BUZZ_TAURI_CONFIG).identifier)")
-    export BUZZ_DEV_KEYRING_SERVICE="buzz-desktop-dev.${BUZZ_INSTANCE_SLUG:-main}"
+    # Worktrees get a scoped keyring service so concurrent instances do not
+    # share an identity. The main checkout deliberately leaves this UNSET so
+    # the Rust default applies: `beekeeper-desktop-dev` is where the existing
+    # dev identity lives, and it is the only service the one-time agent-key
+    # migration runs for (managed_agents/storage.rs `migrate_agent_keys_to_dev_service`
+    # early-returns unless `keyring_service()` is exactly that). Naming the
+    # main checkout `.main` would silently strand both.
+    if [[ -n "${BUZZ_INSTANCE_SLUG:-}" ]]; then
+        export BUZZ_DEV_KEYRING_SERVICE="beekeeper-desktop-dev.${BUZZ_INSTANCE_SLUG}"
+    fi
     if [[ -n "{{fresh}}" ]]; then
-        ../scripts/reset-desktop-standalone-state.sh "$INSTANCE_ID" "$BUZZ_DEV_KEYRING_SERVICE"
+        ../scripts/reset-desktop-standalone-state.sh "$INSTANCE_ID" "${BUZZ_DEV_KEYRING_SERVICE:-beekeeper-desktop-dev}"
     fi
     trap '../scripts/cleanup-instance-agents.sh "$INSTANCE_ID" || true' EXIT
     echo "Starting standalone desktop on Vite port ${BUZZ_VITE_PORT}; no relay services were started"
