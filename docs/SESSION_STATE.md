@@ -33,16 +33,15 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-23 night — a long live run on the dev instance against
-hive produced six findings — §2 items 39-44, each with the log line or
-`file:line` that proves it. Items 37 and 38, found earlier the same day, were
-moved into the same section out of the "Recovered 2026-08-18" block, where
-their numbers collided with items 18 and 19. All eight are the active track
-(§3). `main` is at
-`051f9771`; nothing from that run is fixed yet. Three environment facts from
-the same run are in §3a: the dev instance must launch in keyring mode, a killed
-`tauri dev` leaves vite holding its port, and prod and dev own different
-providers._
+_Last updated: 2026-08-24, early morning — the coding-session honesty pass
+landed on `fix/codex-context-mcp-surface`. §2 items 37, 38, 39, 41, 42 and 43
+are fixed with tests that were watched fail; item 40 was closed live on hive
+(a Codex execution called the context MCP at 03:12Z) and its premise corrected;
+item 44's premise was wrong and is corrected rather than coded around. What is
+**not** done: nothing has been observed live on hive for items 37-39 and 41-43
+— the dev instance was not rebuilt after these commits, so every claim about
+them rests on unit, component and mock-bridge e2e evidence. §3a carries three
+environment facts from the run that produced them._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -782,12 +781,28 @@ where their numbers collided with items 18 and 19.
     the provider name or the assertion is stale; decide which by reading the
     entry component, not by editing the test until it passes. Inherited, not
     caused by `fix/resumed-session-history`.
+    - **Fixed 2026-08-24 by reading the component, as required.** The raw
+      driver id was never coming back — the row's display name became the
+      session's name. What the assertion was really protecting is that the row
+      names its agent, and it had stopped doing that, so a single-provider row
+      now carries the human label ("Claude Code") beside the name and the spec
+      asserts that. A **second** stale assertion of the same class was hiding
+      behind the first, never reached because it failed earlier: the authority
+      gate's copy became the roster-aware "View only — ask the session owner
+      for collaborator access" when grant/revoke landed (`8bb80ff7`).
+      `coding-sessions.spec.ts` is green — 7 smoke tests.
 
 38. **The catalog trigger counts generations, not sessions.** A resumed
     session reads "Coding sessions (2)" and lists two entries that open the
     same umbrella. `desktop/tests/e2e/coding-sessions.spec.ts` ("a resumed
     session renders every earlier generation") asserts that real count on
     purpose; the fix must update the spec in the same change.
+    - **Fixed 2026-08-24.** `resolveChannelCodingSessionIngress` groups through
+      the umbrella model and emits one row per durable session, opening its
+      most recently active generation. Each row discloses what it stands for —
+      "2 providers", "2 generations" — so collapsing hides nothing. Both e2e
+      assertions were updated in the same change, and the multi-provider case
+      collapsed from two rows to one for the same reason.
 
 39. **Codex offers exactly one model, named `default`, and every Codex
     execution is then labelled with it.** Seen in "Add provider → Codex":
@@ -821,6 +836,19 @@ where their numbers collided with items 18 and 19.
     - **The label is a second, separable bug.** An execution must display the
       model the adapter *reported* (`extract_model_state`), not the string the
       create requested — for every driver, including Claude.
+    - **Fixed 2026-08-24, both halves.** codex opted into discovery after the
+      probe was verified against it (`buzz-acp models --json` →
+      `currentValue: gpt-5.6-terra` plus the full option list); goose stays out
+      because the same probe answers `-32603 Internal error`, tested rather
+      than assumed. The desktop probe stopped being Claude-hardcoded:
+      `runtime_probe_target` resolves each runtime's own adapter and args, and
+      the runtime's name reaches its errors. And `apply_model` now falls back
+      to `buzz_acp::acp::reported_model` — stable `configOptions.currentValue`
+      first, then unstable `models.currentModelId` — so an unofferable request
+      publishes what the adapter says it is running instead of the request.
+      The recording fake agent grew a `MCP_TEST_MODELS` hook and answers
+      `session/set_config_option`, so both branches run against a real ACP
+      exchange; dropping the fallback turns the unofferable-model test red.
 
 40. **Codex says the session-context MCP is not among its callable tools while
     the transcript tells the operator that verified history is available.**
@@ -940,6 +968,22 @@ where their numbers collided with items 18 and 19.
       and Stop is replaced by the affordance in item 42. Wants a unit test
       with a stale lease and an e2e case seeding metadata `running` with no
       lease event.
+    - **Fixed 2026-08-24.** `deriveCodingSessionWorkspaceStatus` takes a
+      reachability verdict and demotes a live-sounding status when coordination
+      proves nobody is answering: the header reads `No provider answering ·
+      last reported Idle 2h ago`, the composer disables its editor and says
+      why, and the reported status is kept as history. Signed terminal and
+      attention states outrank it. The verdict comes from the shared
+      coordination fold through `useCodingSessionReachabilityResolver`,
+      resolved once per surface and threaded down, so a workspace with eight
+      executions still makes one read — no second liveness clock (§3). Fail
+      open everywhere: a missing read, a partial read and an unproven
+      generation all demote nothing. Both tests exist —
+      `coding-session-reachability.spec.ts` seeds the same two-hour-stale
+      session twice and differs only in whether an unexpired lease exists, and
+      neutralising the demotion turns it red (the mutation had to compile:
+      a `tsc` failure makes Playwright serve the previous `dist` and the run
+      lies, §3a).
 
 42. **Stop is terminal, nothing says so, and stops aimed at a dead provider
     vanish instead of queueing visibly.** Brian pressed Stop three times on
@@ -962,6 +1006,19 @@ where their numbers collided with items 18 and 19.
       turns. `useCodingSessionResumeSettle` already implements the
       refusal/receipt watcher for resume; extend the pattern rather than
       inventing a second one.
+    - **Fixed 2026-08-24 (a, b, and c for stop).** The confirm says a stopped
+      execution cannot be resumed and names the way forward; the ended banner
+      carries an **Add provider** action, as does the unanswered banner from
+      item 41. A stop aimed at a provider that is not answering is described as
+      what it is — the dialog says it stays on the relay and runs whenever one
+      returns, and the receipt after publishing says "Stop requested — no
+      provider is listening". Only that case speaks; a delivered stop shows
+      itself in the transcript. The copy moved into
+      `endCodingSessionDialogDescription`, a pure function, so both branches
+      are pinned by tests rather than by reading JSX. **Turns are covered by
+      item 41's disabled composer rather than by a pending receipt** — a turn
+      that cannot be sent is better than a turn that queues invisibly — so the
+      "same for turns" half is deliberately not built.
 
 43. **A Codex tool row elides the shell binary as private context, and the row
     becomes unreadable for no privacy gain.** Rendered: `Ran [elided private
@@ -979,6 +1036,13 @@ where their numbers collided with items 18 and 19.
       for prose. The fix belongs at that seam — parse the command structurally
       for codex, or exempt an interpreter `argv[0]` — not by loosening the
       host-path rule, which is protecting real host layout.
+    - **Fixed 2026-08-24 with the second option.** An exact-match allowlist of
+      stock POSIX interpreters (`/bin/sh`, `/bin/zsh`, `/usr/bin/env`, …) is
+      exempt from `contains_host_path`: those strings are identical on every
+      host and disclose nothing. Nothing else moves — `/usr/local/bin/zsh`,
+      `/opt/homebrew/bin/bash`, `/bin/zsh-custom` and anything under `/Users`
+      stay redacted, and an exempt argv[0] does not rescue the host paths
+      beside it in the same command. Three tests, watched fail.
 
 44. **Coding-session lane messages also appear in the ordinary channel
     timeline — but not for the reason recorded here (corrected 2026-08-24).**
@@ -1022,9 +1086,18 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-**The active track, as of 2026-08-23 night, is the coding-session honesty pass
-— §2 items 39-44, in that order (39, 40, 41 and 42 are what a user actually
-hits; 43 and 44 are cheap).** It jumps this queue. The numbered list below is
+**The active track was the coding-session honesty pass — §2 items 37-44. As of
+2026-08-24 the code is done and the live confirmation is not.** Six items are
+fixed behind tests, item 40 is closed by a live tool call on hive, item 44's
+premise was corrected. **What is owed is one pass on the dev instance against
+hive with these commits built in** (`env -u BUZZ_DESKTOP_NOKEYRING just
+desktop-standalone`, ≈5 min after a cargo change): add a Codex provider and
+confirm the picker lists real model ids and the execution row stops saying
+`default` (39); quit the app that owns an execution and confirm the header
+says "No provider answering · last reported …" and the composer explains
+itself (41); stop that execution and confirm the receipt says the stop is
+queued (42); and read one Codex shell row for its command (43). Until that
+happens these are tested, not proven. It jumps this queue. The numbered list below is
 unchanged and resumes after it; its numbers are referenced by
 `REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` and
 `PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`, so do not
