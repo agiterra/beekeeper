@@ -981,14 +981,32 @@ where their numbers collided with items 18 and 19.
       host-path rule, which is protecting real host layout.
 
 44. **Coding-session lane messages also appear in the ordinary channel
-    timeline.** `publishCodingSessionLaneRenderableRefs`
+    timeline — but not for the reason recorded here (corrected 2026-08-24).**
+    The finding said `publishCodingSessionLaneRenderableRefs`
     (`desktop/src/features/messages/lib/codingSessionLaneVisibility.ts:104`)
-    exists, is exported, and has no production caller, so the channel timeline
-    never learns which `cs-session`-tagged kind:9 messages a lane has already
-    claimed and renders them twice. The predicate it needs is already restated
-    structurally at `:124` (`codingSessionLaneRenderableRefsFromUmbrellas`,
-    matching `umbrellaHasCollapsedHistory`). Wire the publisher from the
-    umbrella fold. Lowest impact of the seven.
+    had no production caller. It has had one since 2026-08-18:
+    `useCodingSessionLaneVisibility`
+    (`desktop/src/features/messages/useCodingSessionLaneVisibility.ts`, added by
+    `a84f7b01` "hide session lane chat only where it is renderable"), mounted
+    from `useUnreadChannels:142` so every channel gets the same answer, not
+    only the visible one. There is nothing to wire.
+    - **What is actually true.** Suppression is deliberately narrow and
+      fail-open in two ways, either of which produces what was seen. (a) It
+      applies only to umbrellas that *render* a lane —
+      `umbrellaHasCollapsedHistory`
+      (`codingSessionUmbrellaModel.ts:156`): more than one execution, or one
+      carrying prior generations. A single-execution session that has never
+      been resumed shows no lane, so hiding its tagged chat would hide it
+      everywhere, and it stays in the timeline **by design**. (b) Until a ref
+      resolves through the global catalog subscription, the message is ordinary
+      chat and counts toward unread — the rule that stops a forged
+      `cs-session` tag from hiding a message from every new client.
+    - **What would close it.** A reproduction that names which umbrella the
+      message belonged to and whether that umbrella renders a lane. If it does
+      and the message still shows twice, the defect is in resolution timing and
+      `refreshChannelWindowMessages` is the seam; if it does not, the product
+      is behaving as designed and the item is a documentation fix, not a code
+      one. Not changed on speculation.
 
 ## 2a. Direction settled 2026-08-18
 
