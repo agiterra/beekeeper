@@ -77,16 +77,16 @@ function multiExecutionUmbrella({ creates } = {}) {
   return umbrellas[0];
 }
 
-function singleExecutionUmbrella() {
-  const umbrellas = groupCodingSessionCatalog([
-    record({
-      target: CLAUDE_TARGET,
-      signerPubkey: CLAUDE_SIGNER,
-      runtime: "claude",
-      model: "claude-opus-5",
-      sessionRef: null,
-    }),
-  ]);
+function singleExecutionUmbrella({ lifecycleStatus } = {}) {
+  const entry = record({
+    target: CLAUDE_TARGET,
+    signerPubkey: CLAUDE_SIGNER,
+    runtime: "claude",
+    model: "claude-opus-5",
+    sessionRef: null,
+  });
+  if (lifecycleStatus) entry.status = lifecycleStatus;
+  const umbrellas = groupCodingSessionCatalog([entry]);
   assert.equal(umbrellas.length, 1);
   return umbrellas[0];
 }
@@ -241,4 +241,28 @@ test("no coordination read yet claims nothing about the provider", () => {
     umbrella: singleExecutionUmbrella(),
   });
   assert.doesNotMatch(markup, /coding-session-composer-unreachable/);
+});
+
+// §2 item 42 — a stopped execution is not resumable by design, so the banner
+// that announces it must offer the only way forward instead of leaving the
+// operator waiting for a Resume button.
+test("an ended execution says it cannot be resumed and offers Add provider", () => {
+  const markup = render({
+    currentUserPubkey: FOUNDER,
+    umbrella: singleExecutionUmbrella({ lifecycleStatus: "stopped" }),
+    onAddProvider: () => {},
+  });
+  assert.match(markup, /data-testid="coding-session-composer-ended"/);
+  assert.match(markup, /has ended and cannot be resumed/);
+  assert.match(markup, /data-testid="coding-session-composer-add-provider"/);
+});
+
+test("an unanswered execution offers Add provider too", () => {
+  const markup = render({
+    currentUserPubkey: FOUNDER,
+    umbrella: singleExecutionUmbrella(),
+    resolveReachability: () => ({ known: true, reachable: false }),
+    onAddProvider: () => {},
+  });
+  assert.match(markup, /data-testid="coding-session-composer-add-provider"/);
 });

@@ -14,7 +14,41 @@ export type EndCodingSessionRequest = {
     target: CodingSessionCommandTarget;
     providerAuthorityPubkey: string;
   }>;
+  /**
+   * True when coordination proves nothing is answering for these executions.
+   *
+   * A stop published at a dead provider is accepted by the relay and sits
+   * there: Brian's three clicks drained two hours later, when the app that
+   * owned the execution came back (§2 item 42). The command is still worth
+   * publishing — that is what made those stops eventually run — but the person
+   * pressing it has to be told it is a request, not an effect.
+   */
+  providerUnanswered?: boolean;
 };
+
+/**
+ * What the confirm dialog says, as a pure function of the request.
+ *
+ * Two facts the old copy left out, both bought with live confusion (§2 item
+ * 42): a stopped execution is never resumable — the composer offers Reconnect
+ * for `disconnected` only — and a stop aimed at a provider that is not
+ * answering is a queued request rather than an effect.
+ */
+export function endCodingSessionDialogDescription(
+  request: EndCodingSessionRequest | null,
+): string {
+  if (request === null) return "";
+  const base =
+    `The provider execution for "${request.label}" will be stopped for ` +
+    "everyone, and a stopped execution cannot be resumed — to carry the work " +
+    "on, add a provider to the session. The durable session and its " +
+    "transcript stay open; close the session separately when the work is " +
+    "finished.";
+  return request.providerUnanswered
+    ? `${base} No provider is answering for it right now, so this is a ` +
+        "request: it stays on the relay and runs whenever one returns."
+    : base;
+}
 
 /**
  * The structural slice of a session row this module needs. Any surface that

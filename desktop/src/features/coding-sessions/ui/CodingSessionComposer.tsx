@@ -58,6 +58,13 @@ type CodingSessionComposerProps = {
    * Observe the live draft. The umbrella composer uses this to follow a typed
    * `@handle` with the participant selector; nothing here depends on it.
    */
+  /**
+   * Opens the add-provider flow. A stopped execution is deliberately not
+   * resumable, so the only honest way forward is another provider — the banner
+   * that says the execution ended offers it rather than leaving the operator
+   * hunting for a Resume button that will never exist (§2 item 42).
+   */
+  onAddProvider?: () => void;
   onTextChange?: (text: string) => void;
   /**
    * Last transform applied to the draft before it is published — the umbrella
@@ -92,6 +99,7 @@ export function CodingSessionComposer({
   isUngovernedSession = false,
   lifecycleStatus,
   layout = "inline",
+  onAddProvider,
   onTextChange,
   prepareText,
   prefill = null,
@@ -296,6 +304,7 @@ export function CodingSessionComposer({
       label: sessionLabel?.trim() || "this session",
       channelId,
       stops: [{ target, providerAuthorityPubkey }],
+      providerUnanswered: unreachableStatus !== null,
     });
   }, [
     canSessionStop,
@@ -304,6 +313,7 @@ export function CodingSessionComposer({
     providerAuthorityPubkey,
     sessionLabel,
     target,
+    unreachableStatus,
   ]);
 
   return (
@@ -356,14 +366,28 @@ export function CodingSessionComposer({
         </p>
       ) : null}
       {unreachableStatus !== null ? (
-        <p
-          className="mb-2 rounded-xl border border-border/70 px-3 py-2 text-sm text-muted-foreground"
+        <div
+          className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2"
           data-testid="coding-session-composer-unreachable"
         >
-          {`No provider is answering for this execution${
-            unreachableDetail === null ? "" : ` — ${unreachableDetail}`
-          }. Add a provider to the session to continue the work.`}
-        </p>
+          <p className="text-sm text-muted-foreground">
+            {`No provider is answering for this execution${
+              unreachableDetail === null ? "" : ` — ${unreachableDetail}`
+            }. Add a provider to the session to continue the work.`}
+          </p>
+          {onAddProvider ? (
+            <Button
+              className="shrink-0"
+              data-testid="coding-session-composer-add-provider"
+              onClick={onAddProvider}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Add provider
+            </Button>
+          ) : null}
+        </div>
       ) : isDisconnected ? (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
           <p className="text-sm text-muted-foreground">
@@ -397,9 +421,26 @@ export function CodingSessionComposer({
           </div>
         </div>
       ) : isEnded ? (
-        <p className="mb-2 rounded-xl border border-border/70 px-3 py-2 text-sm text-muted-foreground">
-          This provider execution has ended.
-        </p>
+        <div
+          className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2"
+          data-testid="coding-session-composer-ended"
+        >
+          <p className="text-sm text-muted-foreground">
+            This provider execution has ended and cannot be resumed.
+          </p>
+          {onAddProvider ? (
+            <Button
+              className="shrink-0"
+              data-testid="coding-session-composer-add-provider"
+              onClick={onAddProvider}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Add provider
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       <div
         className={cn(

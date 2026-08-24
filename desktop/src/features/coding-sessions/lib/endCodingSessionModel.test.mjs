@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildEndCodingSessionStops,
+  endCodingSessionDialogDescription,
   publishEndCodingSessionRequest,
 } from "./endCodingSessionModel.ts";
 
@@ -100,4 +101,35 @@ test("the publish fans out with fresh command ids and survives a sibling failure
     async () => {},
   );
   assert.deepEqual(clean, { ok: true, errorMessage: null });
+});
+
+// §2 item 42 — the dialog told people the session stays open but never that
+// the execution is gone for good, so they waited for a Resume button that does
+// not exist. And a stop aimed at a provider that quit sat unacknowledged for
+// two hours before draining.
+test("the confirm says a stopped execution cannot be resumed", () => {
+  const copy = endCodingSessionDialogDescription({
+    label: "Testing1",
+    channelId: "channel-1",
+    stops: [],
+  });
+  assert.match(copy, /cannot be resumed/);
+  assert.match(copy, /add a provider to the session/);
+  assert.match(copy, /durable session and its transcript stay open/);
+  assert.doesNotMatch(copy, /No provider is answering/);
+});
+
+test("a stop with nothing listening is described as a request, not an effect", () => {
+  const copy = endCodingSessionDialogDescription({
+    label: "Testing1",
+    channelId: "channel-1",
+    stops: [],
+    providerUnanswered: true,
+  });
+  assert.match(copy, /No provider is answering for it right now/);
+  assert.match(copy, /stays on the relay and runs whenever one returns/);
+});
+
+test("no request, no copy", () => {
+  assert.equal(endCodingSessionDialogDescription(null), "");
 });

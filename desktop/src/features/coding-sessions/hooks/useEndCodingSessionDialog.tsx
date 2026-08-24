@@ -16,6 +16,7 @@ import { buildCodingSessionTargetKey } from "../lib/codingSessionCommand";
 import { recordPendingCodingSessionLifecycle } from "../lib/codingSessionPendingLifecycle";
 import { publishCodingSessionStop } from "../lib/codingSessionLifecycleCommand";
 import {
+  endCodingSessionDialogDescription,
   publishEndCodingSessionRequest,
   type EndCodingSessionRequest,
 } from "../lib/endCodingSessionModel";
@@ -51,6 +52,16 @@ export function useEndCodingSessionDialog(): {
           toast.error(result.errorMessage ?? "Failed to end the session.");
           return;
         }
+        // A stop nobody can hear is a queued request, and saying nothing is
+        // how three of them looked like dead buttons for two hours (§2 item
+        // 42). Only the unanswered case speaks: a delivered stop shows itself
+        // in the transcript.
+        if (target.providerUnanswered) {
+          toast.info("Stop requested — no provider is listening", {
+            description:
+              "The signed stop is on the relay and will run if a provider for this execution comes back.",
+          });
+        }
         // The signed stops are on the relay; file the row under Recent
         // Sessions now instead of waiting for the provider's `stopped`
         // metadata.
@@ -80,12 +91,8 @@ export function useEndCodingSessionDialog(): {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Stop this execution?</AlertDialogTitle>
-          <AlertDialogDescription>
-            {target
-              ? `The provider execution for "${target.label}" will be stopped ` +
-                "for everyone. The durable session and its transcript stay " +
-                "open; close the session separately when the work is finished."
-              : ""}
+          <AlertDialogDescription data-testid="coding-session-end-description">
+            {endCodingSessionDialogDescription(target)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

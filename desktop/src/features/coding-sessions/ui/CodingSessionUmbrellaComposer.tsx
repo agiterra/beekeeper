@@ -45,6 +45,8 @@ type CodingSessionUmbrellaComposerProps = {
   umbrella: CodingSessionUmbrellaRecord;
   /** The signed-in identity, for founder preflight; null while loading. */
   currentUserPubkey: string | null;
+  /** Opens the add-provider flow from an ended or unanswered execution. */
+  onAddProvider?: () => void;
   prefill?: CodingSessionUmbrellaComposerPrefill | null;
   /**
    * Coordination's answer for one execution, threaded from the surface that
@@ -74,6 +76,7 @@ export function CodingSessionUmbrellaComposer({
   currentUserPubkey,
   isMember,
   layout = "inline",
+  onAddProvider,
   prefill = null,
   publishLaneMessage = publishCodingSessionLaneMessage,
   resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
@@ -241,6 +244,7 @@ export function CodingSessionUmbrellaComposer({
           // that chose the new target.
           key={`draft-${draftEpoch}`}
           layout={layout}
+          onAddProvider={onAddProvider}
           onTextChange={setDraft}
           participant={selected}
           prepareText={prepareText}
@@ -263,6 +267,7 @@ function ExecutionComposer({
   channelId,
   isMember,
   layout,
+  onAddProvider,
   onTextChange,
   participant,
   prepareText,
@@ -273,6 +278,7 @@ function ExecutionComposer({
   channelId: string;
   isMember: boolean;
   layout: "inline" | "stacked";
+  onAddProvider?: () => void;
   onTextChange: (text: string) => void;
   participant: Extract<CodingSessionUmbrellaParticipant, { kind: "execution" }>;
   prepareText: (text: string) => string;
@@ -318,6 +324,7 @@ function ExecutionComposer({
       canControl={authority.canPromptExecutions}
       canSteer={record.capabilities?.threadSteer === true}
       channelId={channelId}
+      onAddProvider={onAddProvider}
       controlContext={{
         capabilities: record.capabilities,
         model: record.model,

@@ -680,6 +680,7 @@ function ReadyCodingSessionWorkspace({
                   }}
                   immersive
                   isMember={isMember}
+                  onAddProvider={onAddProvider}
                   isWorking={isWorking}
                   isUngovernedSession={composerAuthority.isUngovernedSession}
                   lifecycleStatus={session.status}

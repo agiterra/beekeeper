@@ -281,6 +281,7 @@ export function UmbrellaCodingSessionWorkspace({
                   channelId={channelId}
                   currentUserPubkey={identity.data?.pubkey ?? null}
                   isMember={isMember}
+                  onAddProvider={onAddProvider}
                   prefill={prefill}
                   resolveReachability={resolveReachability}
                   umbrella={umbrella}
