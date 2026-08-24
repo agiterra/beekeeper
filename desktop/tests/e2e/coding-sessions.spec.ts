@@ -463,7 +463,11 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   await trigger.click();
   const entry = page.getByTestId("channel-coding-session-entry");
   await expect(entry).toHaveCount(1);
-  await expect(entry).toContainText("Claude Agent Acp");
+  // The row's name is the session's, so the agent is named beside it. This
+  // assertion used to read "Claude Agent Acp" — the raw driver id — and had
+  // been red on `main` since the row started showing the human label
+  // (§2 item 37).
+  await expect(entry).toContainText("Claude Code");
   await expect(page.getByTestId("coding-session-goal-catalog")).toContainText(
     "Make authority visible at every decision point",
   );
@@ -512,9 +516,13 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
 
   await expect(page.getByTestId("coding-session-composer")).toBeVisible();
   const gatedComposer = page.getByTestId("coding-session-composer");
+  // The gate's copy became the roster-aware hint when grant/revoke landed
+  // (`8bb80ff7`); the founder-only sentence is now only the fallback for a
+  // composer with no resolved authority reason. Second stale assertion of the
+  // same class as §2 item 37 — this spec had been red before it ever got here.
   await expect(
     page.getByTestId("coding-session-composer-authority-gated"),
-  ).toContainText("Only the session founder");
+  ).toContainText("View only — ask the session owner for collaborator access");
   await expect(page.getByLabel("Coding-session instruction")).toBeDisabled();
   await waitForAnimations(page);
   await gatedComposer.screenshot({
@@ -568,10 +576,15 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   );
 
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
-  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (2)", {
+  // One durable session, however many providers joined it (§2 item 38). The
+  // row says how many rather than becoming two rows onto the same umbrella.
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (1)", {
     timeout: 15_000,
   });
   await trigger.click();
+  await expect(
+    page.getByTestId("channel-coding-session-history").first(),
+  ).toContainText("2 providers");
   await page.getByTestId("channel-coding-session-open").first().click();
 
   const workspace = page.getByTestId("coding-session-umbrella-workspace");
@@ -629,14 +642,19 @@ test("a resumed session renders every earlier generation, not just the newest", 
     },
   );
 
-  // The catalog trigger counts generations, so a resume reads as two here.
-  // That count is the trusted-ingress assertion; the grouping is proven below
-  // by which surface opens.
+  // A resume is one session with two generations, and the trigger counts
+  // sessions (§2 item 38). The generations are disclosed on the row rather
+  // than becoming a second row onto the same umbrella; the grouping is proven
+  // again below by which surface opens.
   const trigger = page.getByTestId("channel-coding-sessions-trigger");
-  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (2)", {
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (1)", {
     timeout: 15_000,
   });
   await trigger.click();
+  await expect(page.getByTestId("channel-coding-session-entry")).toHaveCount(1);
+  await expect(
+    page.getByTestId("channel-coding-session-history"),
+  ).toContainText("2 generations");
   await page.getByTestId("channel-coding-session-open").first().click();
 
   // One execution with collapsed history routes to the umbrella surface —

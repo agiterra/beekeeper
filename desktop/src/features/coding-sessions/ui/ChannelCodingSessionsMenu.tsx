@@ -18,6 +18,7 @@ import { useIdentityQuery } from "@/shared/api/hooks";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 
 type ChannelCodingSessionsMenuProps = {
@@ -123,7 +124,7 @@ export function ChannelCodingSessionsMenu({
           <p className="text-sm font-semibold">Coding sessions</p>
           <p className="text-xs text-muted-foreground">
             {entries.length > 0
-              ? "Open an exact signed session generation."
+              ? "Open a signed session at its latest generation."
               : "No signed sessions in this channel yet."}
           </p>
         </div>
@@ -240,7 +241,7 @@ export function ChannelCodingSessionList({
 
   return (
     <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-      {entries.map(({ session, status }) => {
+      {entries.map(({ session, status, executionCount, generationCount }) => {
         const authority = authorityByGeneration.get(session.generationId) ?? {
           founderPubkey: null,
           sessionRef: session.sessionRef,
@@ -265,6 +266,11 @@ export function ChannelCodingSessionList({
                 ),
               )?.content ?? null)
             : null;
+        const note = historyNote(
+          session.runtime ?? session.provider,
+          executionCount,
+          generationCount,
+        );
         const providerTitle = session.title.trim();
         const displayName =
           sessionName ??
@@ -297,6 +303,14 @@ export function ChannelCodingSessionList({
                 {status.label}
               </span>
             </div>
+            {note ? (
+              <p
+                className="mt-0.5 text-2xs text-muted-foreground"
+                data-testid="channel-coding-session-history"
+              >
+                {note}
+              </p>
+            ) : null}
             <CodingSessionGoalPill
               channelId={channelId}
               currentUserPubkey={currentUserPubkey}
@@ -333,4 +347,26 @@ export function ChannelCodingSessionList({
       })}
     </div>
   );
+}
+
+/**
+ * What one row stands for beyond the generation it opens.
+ *
+ * A single-provider row names its agent, which is what the row's own label
+ * stopped saying when the display name became the session's name (§2 item 37).
+ * A row standing for several providers deliberately names none of them: it
+ * opens an umbrella, and picking one to print would be a guess. Generations
+ * are disclosed for the same reason — collapsing them into one row (§2 item
+ * 38) must not hide that there were several.
+ */
+function historyNote(
+  runtime: string | null,
+  executionCount: number,
+  generationCount: number,
+): string | null {
+  const parts: string[] = [];
+  if (executionCount > 1) parts.push(`${executionCount} providers`);
+  else if (runtime) parts.push(formatCodingSessionRuntimeLabel(runtime));
+  if (generationCount > 1) parts.push(`${generationCount} generations`);
+  return parts.length === 0 ? null : parts.join(" · ");
 }

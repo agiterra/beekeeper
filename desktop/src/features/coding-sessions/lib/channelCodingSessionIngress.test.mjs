@@ -105,3 +105,110 @@ test("channel ingress fails closed when projection authority is invalid", () => 
     [],
   );
 });
+
+// §2 item 38 — a resumed session read "Coding sessions (2)" and listed two
+// rows that opened the same umbrella. Generations are how many times a session
+// was resumed; they are a property of one row, not two.
+const RESUME_TARGET = {
+  driver: "claude-agent-acp",
+  instanceId: "instance-1",
+  sessionId: "11111111-1111-1111-1111-111111111111",
+};
+const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+function generation({
+  generation: generationNumber,
+  lastEventAt,
+  sessionRef = null,
+  sessionId = RESUME_TARGET.sessionId,
+  status = "idle",
+}) {
+  return {
+    generationId: `gen-${sessionId.slice(0, 4)}-${generationNumber}`,
+    label: `generation ${generationNumber}`,
+    title: "Fix the reconnect bug",
+    providerAuthorityPubkey: "a".repeat(64),
+    metadataAuthorityPubkey: "a".repeat(64),
+    lastEventAt,
+    status,
+    statusAt: null,
+    transcript: [],
+    conflictCount: 0,
+    commandTarget: {
+      ...RESUME_TARGET,
+      sessionId,
+      generation: generationNumber,
+    },
+    projectRef: null,
+    repoRef: null,
+    sessionRef,
+    provider: null,
+    runtime: null,
+    model: null,
+    capabilities: null,
+  };
+}
+
+test("a resumed session is one row that says how many generations it has", () => {
+  const entries = resolveChannelCodingSessionIngress({
+    activeChannelId: "channel-a",
+    catalog: catalog({
+      entries: [
+        generation({ generation: 1, lastEventAt: "2026-08-23T10:00:00.000Z" }),
+        generation({ generation: 2, lastEventAt: "2026-08-23T11:00:00.000Z" }),
+      ],
+    }),
+  });
+
+  assert.equal(entries.length, 1, "one durable session, one row");
+  assert.equal(entries[0].generationCount, 2);
+  assert.equal(entries[0].executionCount, 1);
+  assert.equal(
+    entries[0].session.label,
+    "generation 2",
+    "the row opens the most recently active generation",
+  );
+});
+
+test("two providers under one session ref are still one row", () => {
+  const entries = resolveChannelCodingSessionIngress({
+    activeChannelId: "channel-a",
+    catalog: catalog({
+      entries: [
+        generation({
+          generation: 1,
+          lastEventAt: "2026-08-23T10:00:00.000Z",
+          sessionRef: SESSION_REF,
+        }),
+        generation({
+          generation: 1,
+          lastEventAt: "2026-08-23T12:00:00.000Z",
+          sessionRef: SESSION_REF,
+          sessionId: "22222222-2222-2222-2222-222222222222",
+        }),
+      ],
+    }),
+  });
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].executionCount, 2);
+  assert.equal(entries[0].generationCount, 2);
+});
+
+test("two unrelated sessions stay two rows", () => {
+  const entries = resolveChannelCodingSessionIngress({
+    activeChannelId: "channel-a",
+    catalog: catalog({
+      entries: [
+        generation({ generation: 1, lastEventAt: "2026-08-23T10:00:00.000Z" }),
+        generation({
+          generation: 1,
+          lastEventAt: "2026-08-23T11:00:00.000Z",
+          sessionId: "33333333-3333-3333-3333-333333333333",
+        }),
+      ],
+    }),
+  });
+
+  assert.equal(entries.length, 2);
+});
