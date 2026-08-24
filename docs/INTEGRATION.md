@@ -8,17 +8,36 @@ is the product, and upstream is merged in occasionally.
 
 | Remote | Repo | What it is |
 |---|---|---|
-| `origin` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | **This product.** Daily work, PRs, and the relay deploys all come from here. |
+| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. Needs Nostr credentials (`git-credential-nostr`). |
+| `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | **Where `main` lives.** `main` tracks `upstream/main`; Woodpecker watches this repo, so this is what CI and the relay deploy from. |
 | `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
+
+This is not the arrangement described before 2026-08-24, when `origin` was the
+GitHub repo and there was no `upstream`. Both names moved at once, so anything
+you remember about which is which is probably stale — `git remote -v` is the
+only reliable answer.
 
 There is deliberately **no `block/buzz` remote**. `vanilla` already carries
 that history, so a second path to the same commits earned nothing and cost 827
 remote-tracking refs. If the mirror ever stops being synced, `git remote add
-upstream https://github.com/block/buzz.git` puts the old path back in one
-command.
+block https://github.com/block/buzz.git` puts the old path back in one command
+— note the name, since `upstream` is taken now.
 
-Keep `origin` named `origin`: the pre-push file-size gate resolves its base
-from `origin/main` directly (see § CI below).
+**Do not hard-code `origin` in tooling.** Two pre-push guards did, and both
+broke the day the names moved — silently, in different ways:
+
+- `scripts/check-file-sizes-core.mjs` resolved the ratchet base from
+  `origin/main`, which stopped existing. Every branch failed the gate at once,
+  and since pre-push runs it, every push was blocked.
+- `scripts/check-branch-skew.sh` ran `git fetch origin main`, which then meant
+  the relay, which wants credentials a hook cannot supply. It hung two pushes
+  for 17 minutes each with no output. Its `|| true` caught a fetch that
+  *fails*, not one that never returns.
+
+Both now resolve from what `main` tracks (`main@{upstream}`, then
+`origin/main`, then `upstream/main`), and anything touching the network in a
+hook sets `GIT_TERMINAL_PROMPT=0` so it fails fast rather than blocking. Follow
+that pattern rather than adding a third remote-name assumption.
 
 ## Branches
 

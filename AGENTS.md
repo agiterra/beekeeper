@@ -16,21 +16,33 @@
 >
 > **Topic branches are rebased onto `main`, never merged into it.** They are
 > short-lived and single-author, so rewriting them costs nothing and keeps
-> `main` linear. Use `git rebase --signoff origin/main` — a plain `git rebase`
+> `main` linear. Use `git rebase --signoff main` — rebase onto the local
+> branch, not a remote-tracking ref, because the remote names moved on
+> 2026-08-24 and any command naming one dates quickly. A plain `git rebase`
 > preserves existing trailers, but any commit it recreates without one fails
 > the DCO gate. Force-push the topic branch afterwards; that is expected.
 >
-> **Upstream is the exception: `vanilla/main` is merged, never rebased.** Those
-> commits already exist in `agiterra/buzz` and `block/buzz`, so rebasing would
-> rewrite history other repos share and make every later merge conflict against
-> its own phantom copies. See [docs/INTEGRATION.md](docs/INTEGRATION.md),
+> **The vanilla mirror is the exception: `vanilla/main` is merged, never
+> rebased.** Those commits already exist in `agiterra/buzz` and `block/buzz`,
+> so rebasing would rewrite history other repos share and make every later
+> merge conflict against its own phantom copies. (Read "upstream" carefully in
+> older documents: it used to mean block/buzz, and since 2026-08-24 there is
+> also a *remote* named `upstream`, which is the GitHub copy of this fork.) See [docs/INTEGRATION.md](docs/INTEGRATION.md),
 > especially the three checks before starting an upstream merge (the CI patch
 > `vanilla/main` carries, migration numbering, and the upstream
 > `projects`/`pulse` collision).
 >
-> The near-pristine upstream mirror, and the single CI patch that runs it on
+> The near-pristine vanilla mirror, and the single CI patch that runs it on
 > ci.agiterra.org, live in
 > [agiterra/buzz](https://github.com/agiterra/buzz) — not here.
+>
+> **Three remotes, and the names moved recently.** `origin` is the relay's own
+> git hosting (`hive.agiterra.org`), `upstream` is
+> [agiterra/beekeeper](https://github.com/agiterra/beekeeper) where `main`
+> lives and CI watches, `vanilla` is the block/buzz mirror. Run `git remote -v`
+> rather than trusting memory, and **never hard-code a remote name in tooling**
+> — two pre-push guards did and both broke silently the day the names moved.
+> See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Remotes.
 
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,

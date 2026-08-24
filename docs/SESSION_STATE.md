@@ -1298,15 +1298,34 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   was the opposite: `origin/main` had advanced and `7d224a8b6` was *newer*.
   Compare against `origin/main` after a fetch, not against a local branch.
 
-- **This checkout has two remotes, and neither is `upstream`.** As of
-  2026-08-22: `origin` = `agiterra/beekeeper` (the product), `vanilla` =
-  `agiterra/buzz` (the block/buzz mirror plus the one CI patch). The
-  `block/buzz` remote was removed — it was a second path to commits `vanilla`
-  already carries, at a cost of 827 remote-tracking refs. Merge upstream with
-  `git fetch vanilla && git merge vanilla/main`. **The ceremony bullets further
-  down this section still say `upstream/main`, `upstream/integrated`, and
-  "`origin` = relay, `upstream` = GitHub" — those remotes are gone.** The
-  lessons in them (rerere, per-file folds) still hold; the remote names do not.
+- **Three remotes, and the names moved on 2026-08-24 — check, do not
+  remember.** Current: `origin` = the relay's own git hosting
+  (`hive.agiterra.org/git/<owner>/agiterra-beekeeper`, needs Nostr
+  credentials), `upstream` = `agiterra/beekeeper` on GitHub where `main` lives
+  and Woodpecker watches, `vanilla` = `agiterra/buzz` (the block/buzz mirror
+  plus the one CI patch). Merge vanilla with
+  `git fetch vanilla && git merge vanilla/main`. There is still no `block/buzz`
+  remote; adding one back needs a *different* name now, since `upstream` is
+  taken.
+
+  For two days (2026-08-22 to 08-24) `origin` was the GitHub repo and there was
+  no `upstream` at all — so the ceremony bullets further down this section,
+  which say "`origin` = relay, `upstream` = GitHub", went from stale back to
+  accurate without anyone editing them. Treat every remote name in this file as
+  dated rather than current.
+
+- **Nothing may hard-code a remote name, and nothing in a hook may prompt.**
+  The 2026-08-24 repoint broke two pre-push guards, both silently and in
+  different ways. `check-file-sizes-core.mjs` resolved the ratchet base from
+  `origin/main`, which stopped resolving — every branch failed the gate at
+  once, and since pre-push runs it, every push was blocked.
+  `check-branch-skew.sh` ran `git fetch origin main`, which now meant the
+  relay, which wants credentials a hook cannot supply: it hung two pushes for
+  17 minutes each with **no output**, looking exactly like a slow build. Its
+  `|| true` caught a fetch that *fails*, not one that never returns. Both now
+  resolve from `main@{upstream}` → `origin/main` → `upstream/main`, and
+  network-touching git in a hook sets `GIT_TERMINAL_PROMPT=0`. Diagnose this
+  class by walking the process tree (`pgrep -P`), not by waiting.
 - **The 15 retired branches are `archive/*` tags, not lost.** The ceremony
   branches (`integrated`, `integrated-build`, `integration/glue*`) and the
   pre-rebrand `feature/*` lineage were deleted locally on 2026-08-22 after the
