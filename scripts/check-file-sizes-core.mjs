@@ -50,19 +50,39 @@ export function resolveBaseRef(repoRoot, env = process.env) {
     return "HEAD^1";
   }
 
+  // Candidates in preference order, not a single hard-coded ref. `origin/main`
+  // alone broke the moment `origin` was repointed at the relay's own git
+  // hosting and GitHub moved to `upstream`: the ratchet stopped resolving on
+  // every branch at once, which also blocks every push, since pre-push runs it.
+  // Whatever `main` actually tracks is the honest base, so ask git rather than
+  // assume a remote name.
+  const candidates = [];
   try {
-    const mergeBase = git(
-      ["merge-base", "origin/main", "HEAD"],
-      repoRoot,
-    ).trim();
-    const head = git(["rev-parse", "HEAD"], repoRoot).trim();
-    return mergeBase === head ? "HEAD" : mergeBase;
-  } catch (error) {
-    throw new Error(
-      "Could not resolve the file-size base from origin/main. Fetch origin/main or set CHECK_FILE_SIZES_BASE to an explicit commit.",
-      { cause: error },
+    candidates.push(
+      git(["rev-parse", "--abbrev-ref", "main@{upstream}"], repoRoot).trim(),
     );
+  } catch {
+    // `main` may have no upstream configured, or may not exist in this
+    // checkout. Fall through to the conventional names.
   }
+  candidates.push("origin/main", "upstream/main");
+
+  const head = git(["rev-parse", "HEAD"], repoRoot).trim();
+  let lastError;
+  for (const ref of candidates) {
+    if (!ref) continue;
+    try {
+      const mergeBase = git(["merge-base", ref, "HEAD"], repoRoot).trim();
+      return mergeBase === head ? "HEAD" : mergeBase;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `Could not resolve the file-size base from any of: ${candidates.join(", ")}. Fetch one of them, point main at a tracking branch, or set CHECK_FILE_SIZES_BASE to an explicit commit.`,
+    { cause: lastError },
+  );
 }
 
 export function parseChangedFiles(output) {

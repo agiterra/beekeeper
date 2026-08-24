@@ -43,7 +43,54 @@ test("local base resolution uses the branch merge-base and fails without origin/
   git(repo, "update-ref", "-d", "refs/remotes/origin/main");
   assert.throws(
     () => resolveBaseRef(repo, {}),
-    /Fetch origin\/main or set CHECK_FILE_SIZES_BASE/,
+    /Could not resolve the file-size base from any of/,
+  );
+});
+
+test("base resolution follows what main tracks, not the name 'origin'", () => {
+  // The 2026-08-24 breakage: `origin` was repointed at the relay's own git
+  // hosting and GitHub became `upstream`. A hard-coded origin/main stopped
+  // resolving on every branch at once — and since pre-push runs this, that
+  // blocked every push in the checkout. Whatever main tracks is the base.
+  const repo = mkdtempSync(path.join(tmpdir(), "file-size-track-"));
+  git(repo, "init", "-b", "main");
+  git(repo, "config", "user.name", "Test");
+  git(repo, "config", "user.email", "test@example.com");
+  git(repo, "commit", "--allow-empty", "-m", "base");
+  git(repo, "remote", "add", "upstream", repo);
+  git(repo, "fetch", "upstream", "main:refs/remotes/upstream/main");
+  git(repo, "branch", "--set-upstream-to=upstream/main", "main");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "switch", "-c", "feature");
+  git(repo, "commit", "--allow-empty", "-m", "branch commit");
+
+  // No origin/main exists at all here — the old implementation threw.
+  assert.equal(resolveBaseRef(repo, {}), base);
+});
+
+test("upstream/main is the last resort when main tracks nothing", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "file-size-fallback-"));
+  git(repo, "init", "-b", "main");
+  git(repo, "config", "user.name", "Test");
+  git(repo, "config", "user.email", "test@example.com");
+  git(repo, "commit", "--allow-empty", "-m", "base");
+  git(repo, "remote", "add", "upstream", repo);
+  git(repo, "fetch", "upstream", "main:refs/remotes/upstream/main");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "switch", "-c", "feature");
+  git(repo, "commit", "--allow-empty", "-m", "branch commit");
+
+  // main has no configured upstream and there is no origin/main; the chain
+  // must still find upstream/main rather than give up.
+  assert.equal(resolveBaseRef(repo, {}), base);
+});
+
+test("an explicit CHECK_FILE_SIZES_BASE still wins over every candidate", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "file-size-explicit-"));
+  git(repo, "init", "-b", "main");
+  assert.equal(
+    resolveBaseRef(repo, { CHECK_FILE_SIZES_BASE: "deadbeef" }),
+    "deadbeef",
   );
 });
 
