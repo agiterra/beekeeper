@@ -647,9 +647,33 @@ fn session_new_briefing_transport<'a>(
     )
 }
 
-fn rehydrated_bootstrap(first_turn_brief: &str) -> String {
+/// Where the context MCP's tools actually appear, for adapters that do not put
+/// them in the model's function list.
+///
+/// `claude-agent-acp` exposes an MCP server's tools as ordinary callable
+/// functions (`mcp__buzz-session-context__session_overview`), so
+/// "call session_overview" is a complete instruction there. `codex-acp` does
+/// not: codex places MCP tools on its *code-execution* surface, absent from the
+/// function list the model can see, reachable only from inside the code
+/// sandbox. An agent told only to call `session_overview` therefore looks for a
+/// function that is not there and reports the MCP as unavailable — which is
+/// exactly what a live Codex execution did on 2026-08-23 (§2 item 40).
+///
+/// Every layer beneath this one was verified working against codex-acp 1.6.2 /
+/// codex 0.148.0: the server is spawned, the MCP handshake completes, codex
+/// calls `tools/list` and receives all three tools, and a `tools/call` reaches
+/// the server and returns the package. The only missing piece was the name.
+fn context_tool_access_note(agent_name: &str) -> &'static str {
+    if agent_name.contains("codex") {
+        " Your adapter does not list MCP tools among your directly callable functions — they are on your code-execution surface instead. Reach them from inside that sandbox as `tools.mcp__buzz_session_context__session_overview()`, `tools.mcp__buzz_session_context__session_history({...})` and `tools.mcp__buzz_session_context__search_session({...})`; tool rows display them as `mcp.buzz-session-context.<tool>`. Try that path before reporting the session-context MCP as unavailable."
+    } else {
+        ""
+    }
+}
+
+fn rehydrated_bootstrap(first_turn_brief: &str, access_note: &str) -> String {
     format!(
-        "{REHYDRATED_BOOTSTRAP_PREFIX}\n\n--- VERIFIED FIRST-TURN BRIEF (JSON) ---\n{first_turn_brief}"
+        "{REHYDRATED_BOOTSTRAP_PREFIX}{access_note}\n\n--- VERIFIED FIRST-TURN BRIEF (JSON) ---\n{first_turn_brief}"
     )
 }
 
@@ -679,12 +703,15 @@ async fn open_agent_session(
 ) -> Result<OpenedSession, AcpError> {
     let mcp_servers = rehydration_mcp_servers(request)?;
     let rehydrated = !mcp_servers.is_empty();
+    // The adapter has already answered `initialize` here, so its own name is
+    // known and the briefing can name the call path this adapter actually has.
+    let access_note = context_tool_access_note(client.agent_name());
     let bootstrap = rehydrated
         .then(|| {
             request
                 .rehydration_mcp
                 .as_ref()
-                .map(|descriptor| rehydrated_bootstrap(&descriptor.first_turn_brief))
+                .map(|descriptor| rehydrated_bootstrap(&descriptor.first_turn_brief, access_note))
         })
         .flatten();
     // Every execution must be told that its shell is fenced, and a rehydrated
@@ -1934,6 +1961,10 @@ done
         assert!(system_prompt.contains("continuity mode is Rehydrated"));
         assert!(system_prompt.contains("session_overview"));
         assert!(system_prompt.contains("coding-session-first-turn-brief/v1"));
+        assert!(
+            system_prompt.contains("tools.mcp__buzz_session_context__session_overview"),
+            "a codex adapter must be told where its MCP tools actually are"
+        );
 
         assert_eq!(
             turn.prompt["params"]["prompt"][0]["text"], "Review the prior decision",
@@ -1971,6 +2002,10 @@ done
         assert!(appended.contains("continuity mode is Rehydrated"));
         assert!(appended.contains("session_overview"));
         assert!(appended.contains("coding-session-first-turn-brief/v1"));
+        assert!(
+            !appended.contains("code-execution surface"),
+            "claude-agent-acp lists MCP tools as functions — the codex note would be a false claim there"
+        );
         assert_eq!(
             turn.session_new["params"]["_meta"]["sessionTitle"], "Ship it",
             "the bootstrap must not clobber the operator's session title"
@@ -2116,6 +2151,46 @@ done
         assert!(message.contains("must be absolute"));
         assert!(!message.contains("private/command"));
         assert!(!message.contains("private/package.json"));
+    }
+
+    /// The instruction has to name the call path the adapter in front of it
+    /// actually offers. On codex the tools are not callable functions at all,
+    /// so a briefing that says only "call session_overview" describes a tool
+    /// the model cannot find — and a live Codex execution reported the MCP as
+    /// unavailable for exactly that reason (§2 item 40).
+    #[test]
+    fn a_codex_bootstrap_names_the_code_mode_path_and_a_claude_one_does_not() {
+        let codex = rehydrated_bootstrap("{}", context_tool_access_note("codex"));
+        assert!(
+            codex.contains("tools.mcp__buzz_session_context__session_overview"),
+            "a codex briefing must name the sandbox identifier it can actually call"
+        );
+        assert!(
+            codex.contains("mcp.buzz-session-context."),
+            "and the display name it will see on its own tool rows"
+        );
+
+        let bundled = rehydrated_bootstrap(
+            "{}",
+            context_tool_access_note("@agentclientprotocol/codex-acp"),
+        );
+        assert_eq!(
+            bundled, codex,
+            "the published adapter name must be recognised as codex too"
+        );
+
+        let claude = rehydrated_bootstrap(
+            "{}",
+            context_tool_access_note(buzz_acp::acp::CLAUDE_AGENT_ACP_NAME),
+        );
+        assert!(
+            !claude.contains("code-execution surface"),
+            "claude-agent-acp lists MCP tools as functions; the note would be false there"
+        );
+        assert!(
+            claude.contains("session_overview"),
+            "every rehydrated briefing still names the tool"
+        );
     }
 
     /// A watermark is not an age. The bootstrap must tell the agent to read the

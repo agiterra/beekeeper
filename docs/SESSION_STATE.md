@@ -849,15 +849,61 @@ where their numbers collided with items 18 and 19.
       unrecognized extension methods with `{}` — a JSON-RPC *success*, not
       `-32601` (`crates/buzz-acp/src/acp.rs:200-207`, which is why
       `steering_supported` exists as an explicit capability gate).
-    - **What closes it, and it is the only thing that closes it.** Brian's
-      instruction, 2026-08-23: *do not work around this — fix it.* So the
-      deliverable is the MCP genuinely callable from a Codex execution, proven
-      by a `tool_call: mcp__buzz-session-context__…` line in a provider log
-      from a Codex execution against hive. Changing the continuity marker's
-      wording is **not** a fix and does not close this item; it is only worth
-      doing if the transport turns out to be impossible on codex-acp's side,
-      and that finding would have to be recorded here with the evidence that
-      established it.
+    - **The premise above is wrong, and the investigation is the finding
+      (2026-08-24).** Brian's instruction was *do not work around this — fix
+      it*, so the transport was traced to the wire instead. Every layer is
+      healthy. Codex's own log proves it for the **live** thread:
+      `~/.codex/logs_2.sqlite` id 643510, 01:49:29Z, from
+      `app_server.client_name="buzz-acp"` — `session_init.mcp_manager_init:
+      mcp.runtime.refresh:new{server_name=buzz-session-context}: Service
+      initialized as client`, carrying the sidecar's own `serverInfo`
+      (`buzz-session-context-mcp 0.1.0`) and its instructions text. The server
+      was attached, spawned and handshook for the execution that said it had
+      no such tool.
+    - **What is actually different about codex.** Reproduced offline against
+      the same adapter (`@agentclientprotocol/codex-acp` 1.6.2), the same
+      `codex` 0.148.0, the same model settings the live turn used
+      (`gpt-5.6-terra`, effort `Low`) and that execution's own context
+      package: codex does **not** put MCP tools in the model's function list.
+      Asked to name every tool it can call, the model lists only
+      `functions.exec`, `functions.wait`, `functions.request_user_input` and
+      the `collaboration.*` set. The MCP tools live on codex's *code-execution*
+      surface — callable as `tools.mcp__buzz_session_context__session_overview()`
+      inside the sandbox, displayed on tool rows as
+      `mcp.buzz-session-context.<tool>`. Called that way they work: the proxy
+      capture shows `tools/call` reaching the sidecar and the real package
+      coming back. So "the MCP isn't currently exposed among my callable
+      tools" is *literally true of the function list* and false as an
+      operational claim — the honest-looking sentence that sent this
+      investigation after a phantom.
+    - **Ruled out, each by test, not by reading.** codex-acp forwards
+      `mcpServers` for every driver (`session.rs:680-774`); the `{command,
+      args, env}` entry it emits matches codex's stdio schema; injecting the
+      same server through `CODEX_CONFIG` instead behaves identically;
+      `features.tool_search`, `features.code_mode` and `tools.code_mode`
+      change nothing; and Buzz's exact `clientCapabilities` (no `fs`, no
+      `terminal`) make no difference. `/mcp` listing the server with no tool
+      count is a red herring — `mcpServerStatus/list` is config-scoped and
+      never sees a session-injected server.
+    - **What shipped.** `context_tool_access_note`
+      (`crates/buzz-session-provider/src/session.rs`) appends one
+      codex-only sentence to the rehydration briefing naming the code-mode
+      identifiers, so the adapter is told where its tools actually are instead
+      of being pointed at a function name it does not have. Claude's briefing
+      is unchanged — the note would be false there — and both halves are
+      pinned by `a_codex_bootstrap_names_the_code_mode_path_and_a_claude_one
+      _does_not` plus assertions in the two transport tests; disabling the
+      note turns two tests red.
+    - **Still owed, and it is the part no test can supply.** The live failure
+      was **not reproduced**: in eight offline runs with the live package, the
+      live briefing and the live model settings, Codex called
+      `mcp.buzz-session-context.session_overview` every time, with and without
+      the new note. So the note is an improvement to an honest-but-misleading
+      report, not a proven cause. The open question is why the live execution
+      declined to. Answer it with one live Codex execution on the dev instance
+      against hive — a `tool_call: mcp.buzz-session-context.…` line in the
+      provider log closes it; the same "not among my callable tools" sentence,
+      now with the note delivered, reopens it against a different cause.
 
 41. **The session header reads Idle over a provider that is not running.**
     Brian's prod app quit at 21:17 (its `session-provider` log: `shutdown
