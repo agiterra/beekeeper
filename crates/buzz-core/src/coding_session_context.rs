@@ -884,6 +884,37 @@ pub fn sanitize_coding_session_context_text(value: &str) -> String {
     sanitized
 }
 
+/// Absolute paths that describe every POSIX host identically.
+///
+/// The host-path rule protects *this* machine's layout — home directories,
+/// project roots, mount points. A stock system interpreter is none of those:
+/// `/bin/zsh` is the same string on every macOS install and discloses nothing.
+///
+/// It has to be exempt because of how `codex-acp` names tool calls. It leaves
+/// `tool.input` empty and puts the whole command in `tool.toolName` as prose
+/// (§2 item 2), so a Codex shell row is the argv itself — and the redactor,
+/// working word by word, elided argv[0] and produced `Ran [elided private
+/// context: 10 bytes, sha256:…] -lc "sed -n …"` (§2 item 43). Ten bytes of
+/// public knowledge, in exchange for a row nobody can read.
+///
+/// Deliberately exact matches only, and deliberately short: a path under
+/// `/usr/local`, `/opt`, or anywhere a person installs things is host layout
+/// again and stays redacted.
+const SYSTEM_COMMAND_PATHS: &[&str] = &[
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/zsh",
+    "/bin/dash",
+    "/bin/ksh",
+    "/bin/csh",
+    "/bin/tcsh",
+    "/usr/bin/sh",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/bin/dash",
+    "/usr/bin/env",
+];
+
 fn contains_host_path(word: &str) -> bool {
     let token = word.trim_matches(|character: char| {
         matches!(
@@ -892,6 +923,9 @@ fn contains_host_path(word: &str) -> bool {
         )
     });
     let candidate = token.rsplit_once('=').map_or(token, |(_, value)| value);
+    if SYSTEM_COMMAND_PATHS.contains(&candidate) {
+        return false;
+    }
     let lowered = candidate.to_ascii_lowercase();
     let unix_absolute = candidate.char_indices().any(|(index, character)| {
         character == '/'

@@ -437,3 +437,56 @@ fn the_first_turn_brief_carries_the_source_breakdown() {
     validate_coding_session_first_turn_brief_json(&serde_json::to_string(&legacy).unwrap())
         .unwrap();
 }
+
+/// §2 item 43 — a Codex shell row rendered as
+/// `Ran [elided private context: 10 bytes, sha256:…] -lc "sed -n …"`.
+/// The ten elided bytes were `/bin/zsh`: public knowledge, redacted at the cost
+/// of an unreadable row. codex-acp puts the whole command in the tool name
+/// (§2 item 2), so the redactor was working on argv rather than prose.
+#[test]
+fn a_stock_interpreter_survives_but_the_host_layout_around_it_does_not() {
+    let sanitized =
+        sanitize_coding_session_context_text("/bin/zsh -lc \"sed -n '1,180p' docs/STATUS.md\"");
+    assert_eq!(
+        sanitized, "/bin/zsh -lc \"sed -n '1,180p' docs/STATUS.md\"",
+        "a stock interpreter and a relative path are both readable and both public"
+    );
+
+    for public in ["/bin/sh", "/bin/bash", "/usr/bin/env", "/usr/bin/zsh"] {
+        assert_eq!(
+            sanitize_coding_session_context_text(public),
+            public,
+            "{public} is identical on every host"
+        );
+    }
+}
+
+#[test]
+fn the_exemption_is_exact_and_does_not_widen_the_hole() {
+    for private in [
+        "/Users/brian/Projects/beekeeper",
+        "/bin/zsh/../../Users/brian",
+        "/usr/local/bin/zsh",
+        "/opt/homebrew/bin/bash",
+        "/bin/zsh-custom",
+        "~/bin/zsh",
+    ] {
+        let sanitized = sanitize_coding_session_context_text(private);
+        assert!(
+            sanitized.starts_with("[elided private context: "),
+            "{private} is host layout and must stay redacted, got {sanitized}"
+        );
+    }
+}
+
+#[test]
+fn an_exempt_interpreter_does_not_rescue_the_host_paths_beside_it() {
+    let sanitized =
+        sanitize_coding_session_context_text("/bin/zsh -lc \"cat /Users/brian/.ssh/id_ed25519\"");
+    assert!(sanitized.starts_with("/bin/zsh -lc"), "{sanitized}");
+    assert!(!sanitized.contains("/Users/brian"), "{sanitized}");
+    assert!(
+        sanitized.contains("[elided private context: "),
+        "{sanitized}"
+    );
+}
