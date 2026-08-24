@@ -627,6 +627,13 @@ export function newCodingSessionFailureMessage(
   if (error.code === "PROVIDER_AUTH_REQUIRED") {
     return codingSessionAuthRemediation(authRuntime).message;
   }
+  if (error.code === "SESSION_LIMIT") {
+    // Read as an account limit — "there can only be 4 concurrent Claude
+    // sessions?" — when it is this computer's own provider holding at most N
+    // live agent processes. The provider's sentence carries the number and
+    // the remediation; this adds who is imposing it.
+    return `${error.message}. This is Bee Keeper's own cap on this computer, not a limit from the model provider — every other session in this community is unaffected.`;
+  }
   if (
     error.code === "PROVIDER_UNAVAILABLE" &&
     error.message.includes("unknown providerInstanceRef")

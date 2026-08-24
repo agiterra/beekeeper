@@ -6699,6 +6699,13 @@ mod tests {
         assert_eq!(receipts.len(), 3);
         assert_eq!(receipts[2]["status"], "failed");
         assert_eq!(receipts[2]["error"]["code"], "SESSION_LIMIT");
+        // The refusal has to say whose cap it is and what clears it: read as
+        // "maximum of 4 sessions", it was taken for the model vendor's own
+        // account limit (reported 2026-08-24).
+        let refusal = receipts[2]["error"]["message"].as_str().expect("message");
+        assert!(refusal.contains("this provider"), "{refusal}");
+        assert!(refusal.contains("stop an execution"), "{refusal}");
+        assert!(refusal.contains("BUZZ_CSP_MAX_SESSIONS"), "{refusal}");
         assert_eq!(provider.state().sessions().count(), 2);
     }
 

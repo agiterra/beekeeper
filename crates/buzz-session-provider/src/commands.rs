@@ -326,11 +326,16 @@ pub fn decide_lifecycle(
     }
 
     if context.active_session_count >= context.max_sessions {
+        // The count is live adapter *processes* on this one provider, not
+        // durable sessions and nothing to do with the model vendor's own
+        // limits — a distinction the old sentence left to the reader, who
+        // reasonably read "maximum of 4 session(s)" as an account limit
+        // (reported 2026-08-24). Say whose cap it is and what clears it.
         return LifecycleDecision::Fail {
             command_id: payload.command_id.clone(),
             code: SESSION_LIMIT,
             message: format!(
-                "provider is already running its maximum of {} session(s)",
+                "this provider already holds its maximum of {} running agent process(es); stop an execution you are finished with to free a slot, or set BUZZ_CSP_MAX_SESSIONS to raise the cap",
                 context.max_sessions
             ),
         };
