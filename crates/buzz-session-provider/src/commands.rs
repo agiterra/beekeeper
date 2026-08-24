@@ -325,7 +325,9 @@ pub fn decide_lifecycle(
         };
     }
 
-    if context.active_session_count >= context.max_sessions {
+    if context.max_sessions != crate::config::UNLIMITED_MAX_SESSIONS
+        && context.active_session_count >= context.max_sessions
+    {
         // The count is live adapter *processes* on this one provider, not
         // durable sessions and nothing to do with the model vendor's own
         // limits — a distinction the old sentence left to the reader, who
@@ -1310,6 +1312,31 @@ mod tests {
             LifecycleDecision::Fail { code, .. } => assert_eq!(code, SESSION_LIMIT),
             other => panic!("expected a failure receipt, got {other:?}"),
         }
+    }
+
+    /// Zero is unlimited: the very state that refuses at a ceiling of four
+    /// admits when the ceiling is none (asked for 2026-08-24).
+    #[test]
+    fn an_unlimited_ceiling_never_refuses_for_capacity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        for index in 0..64 {
+            state
+                .insert_session(session(&format!("s{index}"), dir.path()))
+                .expect("insert");
+        }
+        let projects = projects_with_channel(Uuid::nil(), dir.path());
+        let mut context = ctx(&state, &projects, 1_000);
+        context.max_sessions = crate::config::UNLIMITED_MAX_SESSIONS;
+        assert!(matches!(
+            decide_lifecycle(
+                &context,
+                Uuid::nil(),
+                1_000,
+                &create_content("create-1", "null", AUTHORITY),
+            ),
+            LifecycleDecision::Create(_)
+        ));
     }
 
     /// Generation fencing is the whole safety story for turns: a command that

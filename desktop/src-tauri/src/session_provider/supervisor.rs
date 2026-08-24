@@ -103,9 +103,25 @@ struct SupervisorHandle {
     provider_pubkey: String,
     stop: Arc<AtomicBool>,
     child_pid: Arc<AtomicU32>,
+    /// The ceiling this supervisor's children were started with. Kept so a
+    /// settings surface can say what is *in force*, which is not necessarily
+    /// what is stored: the child reads its ceiling from the environment once,
+    /// at startup.
+    max_sessions: Option<usize>,
 }
 
 impl CodingSessionProviderState {
+    /// The session ceiling the running provider was started with.
+    ///
+    /// `None` when nothing is supervised, or when the child was started with
+    /// no explicit ceiling and is therefore on the provider's own default.
+    pub(crate) fn running_max_sessions(&self) -> Option<usize> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|handle| handle.as_ref().and_then(|handle| handle.max_sessions))
+    }
+
     /// Pubkey of the provider currently being supervised.
     ///
     /// `Some` means the desktop is actively keeping a provider alive — the
@@ -232,6 +248,12 @@ fn start_supervisor(
 ) -> Result<(), String> {
     let state_dir = provider_state_dir(app, &record.provider_pubkey)?;
     let log_path = provider_log_path(app, &record.provider_pubkey)?;
+    // Read here, not per respawn: a supervised child that crashes comes back
+    // with the ceiling its supervisor started under, so the number a person
+    // sees as "in force" stays true until they restart the provider.
+    let max_sessions = load_provider_store(app)
+        .map(|store| store.max_sessions)
+        .unwrap_or(None);
     let binary = resolve_command(PROVIDER_BINARY).ok_or_else(|| {
         format!(
             "{PROVIDER_BINARY} was not found — build it with \
@@ -252,7 +274,14 @@ fn start_supervisor(
     // as a child process and has no channel to adopt a foreign one.
     take_over_stale_provider(&state_dir, &log_path);
 
-    let mut child = spawn_provider_child(&binary, &record, &relay_url, &state_dir, &log_path)?;
+    let mut child = spawn_provider_child(
+        &binary,
+        &record,
+        &relay_url,
+        &state_dir,
+        &log_path,
+        max_sessions,
+    )?;
     child_pid.store(child.id(), Ordering::Release);
 
     state.install(SupervisorHandle {
@@ -260,6 +289,7 @@ fn start_supervisor(
         provider_pubkey: record.provider_pubkey.clone(),
         stop: Arc::clone(&stop),
         child_pid: Arc::clone(&child_pid),
+        max_sessions,
     });
 
     let app = app.clone();
@@ -299,7 +329,14 @@ fn start_supervisor(
             if stop.load(Ordering::Acquire) {
                 break;
             }
-            match spawn_provider_child(&binary, &record, &relay_url, &state_dir, &log_path) {
+            match spawn_provider_child(
+                &binary,
+                &record,
+                &relay_url,
+                &state_dir,
+                &log_path,
+                max_sessions,
+            ) {
                 Ok(next) => {
                     child_pid.store(next.id(), Ordering::Release);
                     child = next;
@@ -551,6 +588,7 @@ fn spawn_provider_child(
     relay_url: &str,
     state_dir: &Path,
     log_path: &Path,
+    max_sessions: Option<usize>,
 ) -> Result<std::process::Child, String> {
     let _ = append_log_marker(
         log_path,
@@ -582,6 +620,10 @@ fn spawn_provider_child(
         agent_command: resolve_command(PROVIDER_AGENT_BINARY),
         context_mcp_command: resolve_command("buzz-dev-mcp"),
         claude_code_executable: resolve_claude_code_executable(),
+        // Read once per spawn from the person's stored preference: the child
+        // reads its ceiling from the environment at startup, so a change takes
+        // effect the next time the provider starts and never mid-flight.
+        max_sessions,
         // Computed per spawn: installing an adapter takes effect on the next
         // provider (re)start, matching the rest of the discovery surface.
         runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),

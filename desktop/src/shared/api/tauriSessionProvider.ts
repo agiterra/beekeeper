@@ -74,6 +74,40 @@ export type CodingSessionProviderRuntime = {
   capabilities: CodingSessionProviderRuntimeCapabilities;
 };
 
+/** This computer's ceiling on live agent processes, and what is in force. */
+export type CodingSessionCapacitySettings = {
+  /** Stored ceiling: `null` for the provider default, `0` for unlimited. */
+  maxSessions: number | null;
+  /** The provider's own default, so no surface has to hardcode the number. */
+  defaultMaxSessions: number;
+  /** What the *running* provider started with, when one is running. */
+  runningMaxSessions: number | null;
+};
+
+/** Read the stored session ceiling alongside the one being enforced. */
+export async function getCodingSessionCapacity(): Promise<CodingSessionCapacitySettings> {
+  return invokeTauri<CodingSessionCapacitySettings>(
+    "coding_session_capacity_settings",
+  );
+}
+
+/**
+ * Store a session ceiling. `null` restores the provider default, `0` removes
+ * the ceiling entirely.
+ *
+ * The provider reads its ceiling from the environment at startup, so this
+ * takes effect the next time it starts — callers must say so rather than
+ * implying the new number is already being enforced.
+ */
+export async function setCodingSessionCapacity(
+  maxSessions: number | null,
+): Promise<CodingSessionCapacitySettings> {
+  return invokeTauri<CodingSessionCapacitySettings>(
+    "set_coding_session_capacity",
+    { maxSessions },
+  );
+}
+
 /** Read the provider's provisioning and supervision state. */
 export async function getCodingSessionProviderStatus(): Promise<CodingSessionProviderStatus> {
   return invokeTauri<CodingSessionProviderStatus>(

@@ -73,6 +73,7 @@ const settingsNavGroups: Array<{
     label: "App",
     sections: [
       "agents",
+      "sessions",
       "compute",
       "builtin-shell",
       "experimental",

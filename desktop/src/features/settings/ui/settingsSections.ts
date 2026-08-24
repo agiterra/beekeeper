@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   Smartphone,
   Smile,
+  SquareTerminal,
   Terminal,
   Ticket,
   UserRound,
@@ -32,6 +33,7 @@ export type SettingsSection =
   | "experimental"
   | "agents"
   | "channel-templates"
+  | "sessions"
   | "compute"
   | "appearance"
   | "shortcuts"
@@ -50,6 +52,7 @@ const SETTINGS_SECTION_VALUES: readonly SettingsSection[] = [
   "profile",
   "notifications",
   "voice",
+  "sessions",
   "experimental",
   "agents",
   "channel-templates",
@@ -118,6 +121,11 @@ export const settingsSections: SettingsSectionDescriptor[] = [
     label: "Channel templates",
     icon: LayoutTemplate,
     featureGate: "channel-templates",
+  },
+  {
+    value: "sessions",
+    label: "Sessions",
+    icon: SquareTerminal,
   },
   {
     value: "compute",

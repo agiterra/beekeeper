@@ -109,6 +109,11 @@ buzz_agent_pkg = { package = "buzz-agent", path = "../../crates/buzz-agent" }
 buzz_voice_pkg = { package = "buzz-voice", path = "../../crates/buzz-voice" }
 buzz_terminal = { package = "buzz-terminal", path = "crates/buzz-terminal" }
 buzz-shell-host = { path = "../../crates/buzz-shell-host" }
+# Linked for its *configuration contract* only — the session ceiling's default
+# and the value that means unlimited. The desktop spawns the provider as a
+# binary; duplicating those numbers here is how a settings panel comes to
+# advertise a default the sidecar stopped using.
+buzz_session_provider_pkg = { package = "buzz-session-provider", path = "../../crates/buzz-session-provider" }
 portable-pty = "0.9"
 # Built-in shell sessions keep a rendered mirror of each PTY byte stream so
 # agents can read a clean screen instead of raw ANSI scrollback.

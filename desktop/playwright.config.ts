@@ -25,6 +25,7 @@ export default defineConfig({
         "**/coding-sessions.spec.ts",
         "**/coding-session-reachability.spec.ts",
         "**/coding-session-model-picker.spec.ts",
+        "**/coding-session-capacity.spec.ts",
         "**/coding-session-goal.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",

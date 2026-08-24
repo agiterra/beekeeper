@@ -78,6 +78,16 @@ pub(crate) struct CodingSessionProviderStore {
     /// Keyed by [`canonical_relay_key`].
     #[serde(default)]
     pub providers: BTreeMap<String, CodingSessionProviderRecord>,
+
+    /// How many agent processes the provider may hold at once, or `None` for
+    /// the provider's own default.
+    ///
+    /// Machine-wide rather than per relay: the ceiling is about this
+    /// computer's capacity, and a person running two communities has one set
+    /// of CPUs. `Some(0)` is unlimited, matching
+    /// `buzz_session_provider::config::UNLIMITED_MAX_SESSIONS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_sessions: Option<usize>,
 }
 
 impl Default for CodingSessionProviderStore {
@@ -85,6 +95,7 @@ impl Default for CodingSessionProviderStore {
         Self {
             version: STORE_VERSION,
             providers: BTreeMap::new(),
+            max_sessions: None,
         }
     }
 }

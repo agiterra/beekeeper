@@ -30,6 +30,14 @@ pub const DEFAULT_MODEL: &str = "default";
 
 /// Default ceiling on concurrently live sessions.
 pub const DEFAULT_MAX_SESSIONS: usize = 4;
+/// `BUZZ_CSP_MAX_SESSIONS` value meaning "no ceiling".
+///
+/// Zero used to be rejected outright. It is the natural spelling of unlimited,
+/// nothing depended on the old error, and a person who has decided their own
+/// machine can hold more than four agents at once should be able to say so
+/// (asked for 2026-08-24). Every other slot rule still applies: idle sessions
+/// are still reclaimed, and a create still fails if the adapter will not start.
+pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// Default idle window before a live session's subprocess is reclaimed.
 ///
 /// Thirty minutes reclaimed adapters out from under people mid-workday: a
@@ -140,13 +148,8 @@ impl Config {
 
         let runtimes = parse_runtimes(&lookup)?;
 
+        // 0 is unlimited, not invalid — see `UNLIMITED_MAX_SESSIONS`.
         let max_sessions = parse_usize(&lookup, "BUZZ_CSP_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)?;
-        if max_sessions == 0 {
-            return Err(ConfigError::Invalid {
-                name: "BUZZ_CSP_MAX_SESSIONS",
-                reason: "must be at least 1".into(),
-            });
-        }
         let session_idle_shutdown = parse_secs(
             &lookup,
             "BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS",
@@ -573,10 +576,6 @@ mod tests {
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
 
         let mut vars = minimal();
-        vars.insert("BUZZ_CSP_MAX_SESSIONS", "0".into());
-        assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
-
-        let mut vars = minimal();
         vars.insert("BUZZ_CSP_INCLUDE_THOUGHTS", "maybe".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
 
@@ -599,5 +598,24 @@ mod tests {
         let mut vars = minimal();
         vars.insert("BUZZ_CSP_INCLUDE_THOUGHTS", "false".into());
         assert!(!load(&vars).unwrap().include_thoughts);
+    }
+
+    /// Zero is how a person says "no ceiling" (asked for 2026-08-24). It used
+    /// to be rejected, so nothing depended on the old error.
+    #[test]
+    fn zero_max_sessions_means_unlimited_rather_than_invalid() {
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_MAX_SESSIONS", "0".into());
+        let config = load(&vars).expect("zero is a valid ceiling");
+        assert_eq!(config.max_sessions, UNLIMITED_MAX_SESSIONS);
+
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_MAX_SESSIONS", "12".into());
+        assert_eq!(load(&vars).expect("explicit ceiling").max_sessions, 12);
+
+        // A value that is not a number at all is still a configuration error.
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_MAX_SESSIONS", "lots".into());
+        assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
     }
 }

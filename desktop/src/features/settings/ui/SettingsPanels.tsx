@@ -47,6 +47,7 @@ import { MobilePairingCard } from "./MobilePairingCard";
 import { ModerationQueueCard } from "./ModerationQueueCard";
 import { NotificationSettingsCard } from "./NotificationSettingsCard";
 import { AgentsSettingsPanel } from "./AgentsSettingsPanel";
+import { CodingSessionsSettingsPanel } from "./CodingSessionsSettingsPanel";
 import { HostedCommunitiesSettingsCard } from "./HostedCommunitiesSettingsCard";
 import {
   SettingsOptionGroup,
@@ -703,6 +704,8 @@ export function renderSettingsSection(
       return <AgentsSettingsPanel />;
     case "channel-templates":
       return <ChannelTemplatesSettingsCard />;
+    case "sessions":
+      return <CodingSessionsSettingsPanel />;
     case "compute":
       return <MeshComputeSettingsCard />;
     case "appearance":

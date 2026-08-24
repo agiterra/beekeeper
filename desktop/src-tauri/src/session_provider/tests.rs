@@ -225,6 +225,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         claude_code_executable: Some(PathBuf::from("/usr/local/bin/claude")),
         runtimes: sample_runtimes(),
         augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),
+        max_sessions: None,
     })
 }
 
@@ -306,6 +307,7 @@ fn env_omits_an_empty_runtime_list() {
         claude_code_executable: None,
         runtimes: Vec::new(),
         augmented_path: None,
+        max_sessions: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
@@ -634,4 +636,38 @@ fn codex_model_ids_survive_the_response_decoder() {
 
     assert_eq!(models.default_model, "gpt-5.6-terra");
     assert!(!models.allowed_models.contains(&"default".to_string()));
+}
+
+/// The person's ceiling has to reach the child, and an unset one must stay
+/// unset — exporting a number equal to the provider's default would make a
+/// later change to that default silently not apply (asked for 2026-08-24).
+#[test]
+fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
+    let record = sample_record();
+    let base = |max_sessions| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions,
+    };
+
+    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
+    assert_eq!(
+        build_provider_env(&base(Some(9)))
+            .get("BUZZ_CSP_MAX_SESSIONS")
+            .map(String::as_str),
+        Some("9")
+    );
+    // Zero is unlimited, not "unset": it must be exported like any other choice.
+    assert_eq!(
+        build_provider_env(&base(Some(0)))
+            .get("BUZZ_CSP_MAX_SESSIONS")
+            .map(String::as_str),
+        Some("0")
+    );
 }

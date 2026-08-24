@@ -60,6 +60,56 @@ pub async fn coding_session_provider_status(
     provider_status(&app, &provider, &relay_url)
 }
 
+/// The session-capacity setting, and what the running provider is enforcing.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionCapacitySettings {
+    /// The person's stored ceiling: `None` for the provider default, `Some(0)`
+    /// for unlimited, `Some(n)` for n live agent processes.
+    pub max_sessions: Option<usize>,
+    /// The provider's own default, so the UI can name it rather than repeat a
+    /// number that lives in the sidecar.
+    pub default_max_sessions: usize,
+    /// The ceiling the **running** provider started with, when one is running.
+    ///
+    /// A change to `max_sessions` reaches the child only at its next start, so
+    /// a surface that shows the stored value alone would claim a ceiling that
+    /// is not being enforced.
+    pub running_max_sessions: Option<usize>,
+}
+
+/// Read the stored ceiling alongside what is actually in force.
+#[tauri::command]
+pub async fn coding_session_capacity_settings(
+    app: AppHandle,
+    provider: State<'_, CodingSessionProviderState>,
+) -> Result<CodingSessionCapacitySettings, String> {
+    let stored = crate::session_provider::store::load_provider_store(&app)?.max_sessions;
+    Ok(CodingSessionCapacitySettings {
+        max_sessions: stored,
+        default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
+        running_max_sessions: provider.running_max_sessions(),
+    })
+}
+
+/// Store a new ceiling. `None` restores the provider default; `Some(0)` is
+/// unlimited.
+#[tauri::command]
+pub async fn set_coding_session_capacity(
+    app: AppHandle,
+    provider: State<'_, CodingSessionProviderState>,
+    max_sessions: Option<usize>,
+) -> Result<CodingSessionCapacitySettings, String> {
+    let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    store.max_sessions = max_sessions;
+    crate::session_provider::store::save_provider_store(&app, &store)?;
+    Ok(CodingSessionCapacitySettings {
+        max_sessions,
+        default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
+        running_max_sessions: provider.running_max_sessions(),
+    })
+}
+
 /// Probe one runtime's model surface.
 ///
 /// Every runtime that opts into discovery is probed through **its own**

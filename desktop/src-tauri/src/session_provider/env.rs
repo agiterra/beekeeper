@@ -49,6 +49,9 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// reads this as the complete offer; an older one ignores it and keeps
     /// using the legacy variables above, which stay exported alongside it.
     pub runtimes: Vec<RuntimeDescriptor>,
+    /// Ceiling on concurrently live agent processes, or `None` to leave the
+    /// provider's own default (4) in charge. `Some(0)` is unlimited.
+    pub max_sessions: Option<usize>,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -80,6 +83,15 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
         "BUZZ_CSP_STATE_DIR".to_string(),
         inputs.state_dir.to_string_lossy().into_owned(),
     );
+    if let Some(max_sessions) = inputs.max_sessions {
+        // Absent means "provider's own default", so the variable is exported
+        // only when a person actually chose a number — an unset ceiling and a
+        // ceiling that happens to equal the default are different facts.
+        env.insert(
+            "BUZZ_CSP_MAX_SESSIONS".to_string(),
+            max_sessions.to_string(),
+        );
+    }
     env.insert(
         "BUZZ_CSP_PROJECTS_FILE".to_string(),
         inputs

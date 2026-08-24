@@ -90,6 +90,12 @@ type MockCommandAvailability = {
   resolvedPath?: string | null;
 };
 
+/** Mutable capacity mock: a stored ceiling plus the running child's. */
+const mockCodingSessionCapacity: {
+  maxSessions: number | null;
+  runningMaxSessions: number | null;
+} = { maxSessions: null, runningMaxSessions: null };
+
 export type MockManagedAgentSeed = {
   pubkey: string;
   name: string;
@@ -12591,6 +12597,28 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return status;
+      }
+      case "coding_session_capacity_settings": {
+        // Mirrors the host: a stored ceiling, the provider's own default, and
+        // whatever the running child actually started with.
+        return {
+          maxSessions: mockCodingSessionCapacity.maxSessions,
+          defaultMaxSessions: 4,
+          runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
+        };
+      }
+      case "set_coding_session_capacity": {
+        const next = (payload as { maxSessions?: number | null } | null)
+          ?.maxSessions;
+        mockCodingSessionCapacity.maxSessions = next ?? null;
+        // Deliberately does NOT update `runningMaxSessions`: the real provider
+        // reads its ceiling at startup, and a mock that applied it instantly
+        // would hide the disclosure the panel exists to make.
+        return {
+          maxSessions: mockCodingSessionCapacity.maxSessions,
+          defaultMaxSessions: 4,
+          runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
+        };
       }
       case "coding_session_provider_runtimes": {
         const mock = activeConfig?.mock;
