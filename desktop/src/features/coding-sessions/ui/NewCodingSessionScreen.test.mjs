@@ -83,10 +83,10 @@ test("the provider picker offers the catalog's models, and defers when it has no
     }),
   );
   // The catalog's models live in the picker's panel now; the closed trigger
-  // states the current one, and the list itself is covered by
+  // states the current one by name, and the list itself is covered by
   // `codingSessionModelPickerModel.test.mjs`.
-  assert.match(withModels, /opus/);
-  assert.doesNotMatch(withModels, /Provider default/);
+  assert.match(withModels, />Opus</);
+  assert.doesNotMatch(withModels, /Adapter default/);
 
   const uncatalogued = {
     ...targets[0],
@@ -102,7 +102,9 @@ test("the provider picker offers the catalog's models, and defers when it has no
       targets: [uncatalogued],
     }),
   );
-  assert.match(withoutModels, /Provider default/);
+  // No catalog at all: the trigger says the adapter will choose rather than
+  // naming a model nobody selected.
+  assert.match(withoutModels, /Adapter default/);
 });
 
 test("an empty provider list disables selection rather than pretending to offer one", () => {
@@ -123,7 +125,7 @@ test("an empty provider list disables selection rather than pretending to offer 
     markup,
     /data-testid="coding-session-model-picker"[^>]*disabled/,
   );
-  assert.match(markup, /Provider default/);
+  assert.match(markup, /Adapter default/);
 });
 
 test("the auth-required state names the exact command that fixes it", () => {

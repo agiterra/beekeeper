@@ -1,6 +1,7 @@
-import { Bot, Search, Sparkles, Star, Terminal } from "lucide-react";
+import { Bot, Check, Search, Sparkles, Star, Terminal } from "lucide-react";
 import * as React from "react";
 
+import { codingSessionModelDisplayName } from "@/features/coding-sessions/lib/codingSessionModelDisplay";
 import {
   CODING_SESSION_MODEL_FAVORITES_RAIL,
   codingSessionModelFavoriteKey,
@@ -143,21 +144,72 @@ export function CodingSessionModelPicker({
     setOpen(true);
   };
 
+  const [active, setActive] = React.useState(0);
   const rows = codingSessionModelPickerRows({
     providers,
     favorites,
     rail,
     query,
   });
+  const rowsKey = rows.map((row) => row.rowKey).join("|");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rowsKey is the content signal for `rows`
+  React.useEffect(() => setActive(0), [rowsKey]);
+  const pick = React.useCallback(
+    (row: { ready: boolean; selectionKey: string; model: string }) => {
+      if (!row.ready) return;
+      onModelChange({ selectionKey: row.selectionKey, model: row.model });
+      setOpen(false);
+    },
+    [onModelChange],
+  );
+  /**
+   * The hints the rows print have to work.
+   *
+   * ⌘N used to be rendered beside every favourite with nothing listening for
+   * it — a keyboard shortcut that was only a picture of one. Arrow keys and
+   * Enter come with it, because a searchable list a person cannot leave the
+   * text field to use is a list they still have to reach for the mouse in.
+   */
+  const handlePanelKeyDown = (event: React.KeyboardEvent) => {
+    // Escape is handled here rather than left to the dismissable layer: the
+    // panel proved not to close on it (caught by e2e), and a keyboard-driven
+    // list a person cannot leave with Escape is a trap.
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+      const target = rows.find((row) => row.shortcut === Number(event.key));
+      if (target) {
+        event.preventDefault();
+        pick(target);
+      }
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if (rows.length === 0) return;
+      event.preventDefault();
+      setActive((current) => {
+        const next = event.key === "ArrowDown" ? current + 1 : current - 1;
+        return (next + rows.length) % rows.length;
+      });
+      return;
+    }
+    if (event.key === "Enter") {
+      const target = rows[active];
+      if (target) {
+        event.preventDefault();
+        pick(target);
+      }
+    }
+  };
+
   const selectedProvider =
     providers.find((provider) => provider.selectionKey === selectionKey) ??
     null;
-  const triggerLabel =
-    model === null || model === ""
-      ? "Provider default"
-      : selectedProvider === null
-        ? model
-        : `${selectedProvider.label} · ${model}`;
+  // The glyph already says whose model this is, so the trigger says which.
+  const triggerLabel = codingSessionModelDisplayName(model ?? "");
 
   return (
     <Popover
@@ -183,8 +235,12 @@ export function CodingSessionModelPicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="flex w-[26rem] gap-0 p-0"
+        className="flex w-[22rem] gap-0 p-0"
+        collisionPadding={12}
         data-testid="coding-session-model-picker-panel"
+        onKeyDown={handlePanelKeyDown}
+        side="bottom"
+        sideOffset={6}
       >
         <div className="flex w-11 shrink-0 flex-col gap-1 border-r border-border/60 bg-muted/30 p-1">
           <RailButton
@@ -240,18 +296,37 @@ export function CodingSessionModelPicker({
                   : "No model matches that search."}
               </p>
             ) : null}
-            {rows.map((row) => {
+            {rows.map((row, index) => {
               const isSelected =
                 row.selectionKey === selectionKey && row.model === model;
+              // Inside one provider's rail the provider name is on every row
+              // and tells nobody anything; the id it stands for does. In
+              // Favourites, where providers mix, the opposite is true.
+              const secondary =
+                rail === CODING_SESSION_MODEL_FAVORITES_RAIL
+                  ? row.providerLabel
+                  : row.model === ""
+                    ? "the adapter chooses"
+                    : row.model;
               return (
                 <div
                   className={cn(
                     "flex items-center gap-2 rounded-md px-2 py-1.5",
+                    index === active && "bg-muted/70",
                     isSelected && "bg-muted",
                   )}
+                  data-active={index === active ? "true" : undefined}
+                  data-selected={isSelected ? "true" : undefined}
                   data-testid="coding-session-model-row"
                   key={row.rowKey}
                 >
+                  <Check
+                    aria-hidden
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      isSelected ? "opacity-100" : "opacity-0",
+                    )}
+                  />
                   <button
                     className={cn(
                       "flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left",
@@ -260,23 +335,23 @@ export function CodingSessionModelPicker({
                     data-model={row.model}
                     data-testid="coding-session-model-row-select"
                     disabled={!row.ready}
-                    onClick={() => {
-                      onModelChange({
-                        selectionKey: row.selectionKey,
-                        model: row.model,
-                      });
-                      setOpen(false);
-                    }}
+                    onClick={() => pick(row)}
+                    onMouseEnter={() => setActive(index)}
                     type="button"
                   >
                     <span className="w-full truncate text-sm">
-                      {row.model === "" ? "Provider default" : row.model}
+                      {codingSessionModelDisplayName(row.model)}
                     </span>
                     <span className="flex w-full items-center gap-1 truncate text-2xs text-muted-foreground">
-                      <RuntimeGlyph className="size-3" runtime={row.runtime} />
+                      {rail === CODING_SESSION_MODEL_FAVORITES_RAIL ? (
+                        <RuntimeGlyph
+                          className="size-3"
+                          runtime={row.runtime}
+                        />
+                      ) : null}
                       {row.ready
-                        ? row.providerLabel
-                        : `${row.providerLabel} — ${row.unavailableNote ?? "unavailable"}`}
+                        ? secondary
+                        : `${secondary} — ${row.unavailableNote ?? "unavailable"}`}
                     </span>
                   </button>
                   {row.shortcut === null ? null : (

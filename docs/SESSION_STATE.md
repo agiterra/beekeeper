@@ -1129,6 +1129,17 @@ same morning and one left as a product question.
       invent a choice `claude-agent-acp` never offered; and "Adapter default"
       is offered only where the adapter also published the bare id, because for
       a level-only model it would name something the provider would refuse.
+    - **The first picker was wrong in ten ways, and Brian named the shape he
+      wanted: provider/model → thinking → access.** The critique that produced
+      the current one, worth keeping because most of it generalises: the ⌘N
+      hints were **rendered with nothing listening for them** — a keyboard
+      shortcut that was only a picture of one, which is this project's own
+      favourite class of bug; rows showed wire ids (`claude-fable-5[1m]`)
+      instead of names; `default` sat among the models as if it were one;
+      `[1m]` stayed glued to the name; every row repeated the rail it was in;
+      the panel was 26rem and landed on top of the dialog's own fields; the
+      selected row had a tint but no checkmark; and the trigger repeated the
+      provider its own glyph already showed.
     - **Then the picker itself, which Brian asked for next**, modelled on
       t3code's (`~/Projects/t3code/…/components/chat/ModelPickerSidebar.tsx`,
       `modelPickerSearch.ts`) and rebuilt on Buzz primitives: provider and
@@ -1138,6 +1149,15 @@ same morning and one left as a product question.
       pin a catalog entry from another machine — and a provider whose catalog
       has no models keeps a row, because a signed-out runtime publishes none
       and dropping it hid the row that explains why it cannot be used.
+    - **Two bugs the rebuild found in itself, both by e2e rather than by
+      reading.** Starring a model made it jump out from under the cursor,
+      because an unsearched list was still sorted by favourite — pins now
+      collect on the Favorites rail and never reorder a provider's own list.
+      And **Escape did not close the panel**: the dismissable layer never saw
+      the key, so the picker handles it directly. A keyboard-driven list a
+      person cannot leave with Escape is a trap, and a static render cannot
+      catch either of these — `coding-session-model-picker.spec.ts` presses
+      the keys.
     - **What the adapter really publishes**, worth knowing before trusting
       either list: the *stable* `configOptions[category=model]` carries 7 clean
       base models (probed 2026-08-24), while the unstable `availableModels`

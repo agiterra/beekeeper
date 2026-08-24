@@ -121,6 +121,22 @@ test("search matches model, provider label, and runtime, and every token must hi
   assert.deepEqual(rows({ query: "spark nonsense" }), []);
 });
 
+test("an unsearched list keeps adapter order so starring never moves a row", () => {
+  const favorites = new Set([
+    codingSessionModelFavoriteKey(CODEX.selectionKey, "gpt-5.3-codex-spark"),
+  ]);
+  assert.deepEqual(
+    codingSessionModelPickerRows({
+      providers: PROVIDERS,
+      favorites,
+      rail: CODEX.selectionKey,
+      query: "",
+    }).map((row) => row.model),
+    CODEX.models,
+    "the starred model stays third, where the adapter put it",
+  );
+});
+
 test("a prefix outranks a mid-string hit, and a favourite outranks both", () => {
   const plain = {
     model: "gpt-5.6-terra",
@@ -180,15 +196,17 @@ test("the picker opens where the person already is", () => {
   );
 });
 
-test("a provider's rows are its base models, levels folded away", () => {
+test("a provider's rows are its base models — levels, windows and the alias folded away", () => {
   assert.deepEqual(
     codingSessionProviderBaseModels([
+      "default",
       "gpt-5.6-terra",
       "gpt-5.6-luna[high]",
       "gpt-5.6-luna[max]",
       "opus[1m]",
     ]),
-    ["gpt-5.6-terra", "gpt-5.6-luna", "opus[1m]"],
+    ["gpt-5.6-terra", "gpt-5.6-luna", "opus", "default"],
+    "the `default` alias sorts last because it is not a model",
   );
 });
 

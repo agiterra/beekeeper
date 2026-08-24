@@ -84,7 +84,11 @@ export function scoreCodingSessionModelRow(
   query: string,
 ): number | null {
   const tokens = normalize(query).split(" ").filter(Boolean);
-  if (tokens.length === 0) return row.favorite ? -1 : 0;
+  // With no query the list keeps the adapter's order, favourites included:
+  // ranking them up meant a row jumped out from under the cursor the moment
+  // it was starred. Pins collect on the Favorites rail; they do not reorder
+  // the provider's own list.
+  if (tokens.length === 0) return 0;
   const fields = [
     normalize(row.model),
     normalize(row.providerLabel),

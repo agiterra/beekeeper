@@ -12609,12 +12609,20 @@ export function maybeInstallE2eTauriMocks() {
         if (!activeConfig?.mock?.codingSessionProviderStatus) {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
+        const instanceRef =
+          (payload as { instanceRef?: string } | null)?.instanceRef ??
+          "claude-primary";
+        // The real command answers per runtime — that is the whole point of
+        // §2 item 39's fix — so the mock answers from the same runtime table
+        // a spec already configures instead of returning one empty list for
+        // every provider.
+        const runtime = activeConfig.mock.codingSessionProviderRuntimes?.find(
+          (entry) => entry.instanceRef === instanceRef,
+        );
         return {
-          instanceRef:
-            (payload as { instanceRef?: string } | null)?.instanceRef ??
-            "claude-primary",
-          defaultModel: "default",
-          allowedModels: [],
+          instanceRef,
+          defaultModel: runtime?.defaultModel ?? "default",
+          allowedModels: runtime?.allowedModels ?? [],
         };
       }
       case "discover_backend_providers":

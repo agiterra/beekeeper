@@ -59,52 +59,51 @@ function optionValues(markup, testid) {
 test("provider and model are one control that names the current choice", () => {
   const markup = render({ model: "gpt-5.6-terra" });
   assert.match(markup, /data-testid="coding-session-model-picker"/);
-  assert.match(markup, /Codex · Primary · gpt-5\.6-terra/);
+  // The glyph says whose model it is, so the trigger says which — by name,
+  // not by wire id.
+  assert.match(markup, />GPT-5\.6 Terra</);
+  assert.doesNotMatch(markup, /gpt-5\.6-terra/);
   assert.equal(optionValues(markup, "new-coding-session-model"), null);
   assert.doesNotMatch(markup, /data-testid="new-coding-session-provider"/);
 });
 
-test("a model with no levels shows no thinking control at all", () => {
+test("a model with no levels and no windows shows no thinking control at all", () => {
   const markup = render({ model: "gpt-5.6-terra" });
-  assert.equal(optionValues(markup, "new-coding-session-thinking"), null);
+  assert.doesNotMatch(markup, /data-testid="coding-session-traits-picker"/);
 });
 
-test("a model with levels gets its own control, defaulting where the adapter has a bare id", () => {
+test("a model with levels gets its own control, summarising the current choice", () => {
   const withBare = render({ model: "gpt-5.3-codex-spark" });
-  assert.deepEqual(optionValues(withBare, "new-coding-session-thinking"), [
-    "",
-    "high",
-    "low",
-  ]);
+  assert.match(withBare, /data-testid="coding-session-traits-picker"/);
+  // No level chosen and the adapter publishes the bare id: that is a real
+  // state, and it says so rather than naming a level nobody picked.
+  assert.match(withBare, /Adapter default/);
 
-  // luna is offered only at named levels, so "adapter default" would name a
-  // model id the provider never published.
-  const levelOnly = render({ model: "gpt-5.6-luna[high]" });
-  assert.deepEqual(optionValues(levelOnly, "new-coding-session-thinking"), [
-    "high",
-    "max",
-  ]);
+  const levelled = render({ model: "gpt-5.6-luna[high]" });
+  assert.match(levelled, /data-testid="coding-session-traits-picker"/);
+  assert.match(levelled, />High</);
 });
 
 test("the selected level is the one shown, not folded away", () => {
   const markup = render({ model: "gpt-5.6-luna[max]" });
-  assert.match(
-    markup,
-    /data-testid="new-coding-session-thinking"[^>]*>(?:(?!<\/select>).)*value="max" selected/s,
-  );
+  assert.match(markup, />Max</);
+  // And it is not smuggled back into the model name.
+  assert.doesNotMatch(markup, /luna\[max\]/);
 });
 
-test("claude's context variant is a model, not a thinking level", () => {
+test("claude's context window is a trait, and never part of the model name", () => {
   const claude = ["default", "opus[1m]", "sonnet", "haiku"];
   const markup = render({
     model: "opus[1m]",
     targets: [target(claude)],
     selectedTarget: target(claude),
   });
-  // The trigger shows the id whole — splitting `[1m]` off would name a model
-  // the adapter never published.
-  assert.match(markup, /opus\[1m\]/);
-  assert.equal(optionValues(markup, "new-coding-session-thinking"), null);
+  // The trigger names the model the way a person does…
+  assert.match(markup, />Opus</);
+  // …and the bracket is the traits control's business, printed as 1M.
+  assert.doesNotMatch(markup, /opus\[1m\]/);
+  assert.match(markup, /data-testid="coding-session-traits-picker"/);
+  assert.match(markup, />1M</);
 });
 
 // Asked live, 2026-08-24: "how is the permission setting being done in Buzz?

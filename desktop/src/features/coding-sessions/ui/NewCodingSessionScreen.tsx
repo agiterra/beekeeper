@@ -35,6 +35,7 @@ import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
 import {
   codingSessionModelChoices,
   joinCodingSessionModelId,
+  resolveCodingSessionContext,
   resolveCodingSessionThinking,
   splitCodingSessionModelId,
 } from "@/features/coding-sessions/lib/codingSessionModelChoice";
@@ -46,6 +47,7 @@ import {
 import { codingSessionProviderBaseModels } from "@/features/coding-sessions/lib/codingSessionModelPickerModel";
 import { CodingSessionAccessNotice } from "@/features/coding-sessions/ui/CodingSessionAccessNotice";
 import { CodingSessionModelPicker } from "@/features/coding-sessions/ui/CodingSessionModelPicker";
+import { CodingSessionTraitsPicker } from "@/features/coding-sessions/ui/CodingSessionTraitsPicker";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
@@ -777,10 +779,22 @@ export function NewCodingSessionProviderPicker({
             pick.model,
             selected.thinking,
           ),
+          resolveCodingSessionContext(
+            nextChoices,
+            pick.model,
+            selected.context,
+          ),
         ),
       );
     },
-    [onModelChange, onTargetChange, selected.thinking, selectedTarget, targets],
+    [
+      onModelChange,
+      onTargetChange,
+      selected.context,
+      selected.thinking,
+      selectedTarget,
+      targets,
+    ],
   );
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
@@ -813,49 +827,44 @@ export function NewCodingSessionProviderPicker({
       </div>
       <div className="flex shrink-0 flex-col gap-2">
         <span className="text-xs font-medium text-muted-foreground">
+          Thinking
+        </span>
+        <CodingSessionTraitsPicker
+          className="min-w-36"
+          context={selected.context}
+          contexts={choices.contextByModel.get(selected.model) ?? []}
+          disabled={disabled}
+          hasBareModel={choices.bareModels.has(selected.model)}
+          onContextChange={(context) =>
+            onModelChange(
+              joinCodingSessionModelId(
+                selected.model,
+                selected.thinking,
+                context,
+              ),
+            )
+          }
+          onThinkingChange={(thinking) =>
+            onModelChange(
+              joinCodingSessionModelId(
+                selected.model,
+                thinking,
+                selected.context,
+              ),
+            )
+          }
+          thinking={selected.thinking}
+          thinkingLevels={thinkingLevels}
+        />
+      </div>
+      <div className="flex shrink-0 flex-col gap-2">
+        <span className="text-xs font-medium text-muted-foreground">
           Access
         </span>
         <div className="flex h-9 items-center">
           <CodingSessionAccessNotice />
         </div>
       </div>
-      {thinkingLevels.length > 0 ? (
-        <div className="flex min-w-0 flex-col gap-2 sm:w-40">
-          <label
-            className="text-xs font-medium text-muted-foreground"
-            htmlFor="coding-session-thinking"
-          >
-            Thinking
-          </label>
-          <select
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
-            data-testid="new-coding-session-thinking"
-            disabled={disabled}
-            id="coding-session-thinking"
-            onChange={(event) =>
-              onModelChange(
-                joinCodingSessionModelId(
-                  selected.model,
-                  event.target.value === "" ? null : event.target.value,
-                ),
-              )
-            }
-            value={selected.thinking ?? ""}
-          >
-            {/* Only offered when the adapter itself publishes the bare id:
-                for a model that exists only at named levels, "default" would
-                name a model the provider would refuse. */}
-            {choices.bareModels.has(selected.model) ? (
-              <option value="">Adapter default</option>
-            ) : null}
-            {thinkingLevels.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
     </div>
   );
 }
