@@ -455,3 +455,124 @@ test("a viewer who runs no providers resolves the same founder as the founder do
   assert.equal(umbrella.genesisRef, genesis.id);
   assert.equal(umbrella.founderPubkey, founderPubkey);
 });
+
+// Observed live 2026-08-24, 11:04Z: Testing1 held five executions, Brian
+// stopped the newest one, and the header read ENDED while four others —
+// including one answering turns — were still open.
+function statusRecord({
+  sessionId,
+  status,
+  lastEventAt,
+  signer = "a".repeat(64),
+}) {
+  return {
+    generationId: `gen-${sessionId}`,
+    label: `session ${sessionId}`,
+    title: "Testing1",
+    providerAuthorityPubkey: signer,
+    metadataAuthorityPubkey: signer,
+    lastEventAt,
+    status,
+    statusAt: Date.parse(lastEventAt),
+    transcript: [],
+    conflictCount: 0,
+    commandTarget: {
+      driver: "codex-acp",
+      instanceId: "instance-1",
+      sessionId,
+      generation: 1,
+    },
+    projectRef: null,
+    repoRef: null,
+    sessionRef: "3f0a5c9e-2b71-4d88-9a6f-5c1e0b7d4a23",
+    provider: "codex-acp",
+    runtime: "codex-acp",
+    model: "default",
+    capabilities: null,
+  };
+}
+
+test("stopping the newest execution does not end an umbrella that still lives", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    statusRecord({
+      sessionId: "11111111-1111-1111-1111-111111111111",
+      status: "idle",
+      lastEventAt: "2026-08-24T10:59:00.000Z",
+    }),
+    statusRecord({
+      sessionId: "22222222-2222-2222-2222-222222222222",
+      status: "stopped",
+      lastEventAt: "2026-08-24T11:04:00.000Z",
+    }),
+  ]);
+
+  assert.equal(umbrella.executions.length, 2);
+  assert.equal(
+    umbrella.status,
+    "idle",
+    "a per-execution stop is not the umbrella's end",
+  );
+});
+
+test("an umbrella whose every execution stopped is ended", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    statusRecord({
+      sessionId: "11111111-1111-1111-1111-111111111111",
+      status: "stopped",
+      lastEventAt: "2026-08-24T10:59:00.000Z",
+    }),
+    statusRecord({
+      sessionId: "22222222-2222-2222-2222-222222222222",
+      status: "stopped",
+      lastEventAt: "2026-08-24T11:04:00.000Z",
+    }),
+  ]);
+
+  assert.equal(umbrella.status, "stopped");
+});
+
+test("activity anywhere still outranks a quiet survivor", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    statusRecord({
+      sessionId: "11111111-1111-1111-1111-111111111111",
+      status: "running",
+      lastEventAt: "2026-08-24T10:00:00.000Z",
+    }),
+    statusRecord({
+      sessionId: "22222222-2222-2222-2222-222222222222",
+      status: "stopped",
+      lastEventAt: "2026-08-24T11:04:00.000Z",
+    }),
+  ]);
+
+  assert.equal(umbrella.status, "running");
+});
+
+test("two same-signer executions get chips a person can tell apart", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    statusRecord({
+      sessionId: "16e36197-d021-4862-a3b7-f08c5adc6659",
+      status: "idle",
+      lastEventAt: "2026-08-24T10:59:00.000Z",
+    }),
+    statusRecord({
+      sessionId: "39977bdf-bb7a-4c0e-9b84-c7358f531882",
+      status: "idle",
+      lastEventAt: "2026-08-24T11:00:00.000Z",
+    }),
+  ]);
+
+  const labels = listCodingSessionUmbrellaParticipants(umbrella)
+    .filter((participant) => participant.kind === "execution")
+    .map((participant) => participant.label);
+  assert.equal(labels.length, 2);
+  assert.notEqual(labels[0], labels[1], `identical chips: ${labels[0]}`);
+  assert.ok(
+    labels.some((label) => label.includes("16e36197")),
+    labels.join(" / "),
+  );
+  assert.ok(
+    labels.some((label) => label.includes("39977bdf")),
+    labels.join(" / "),
+  );
+});

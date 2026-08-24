@@ -32,6 +32,12 @@ import {
   type NewCodingSessionTarget,
 } from "../lib/newCodingSessionModel";
 import { formatCodingSessionRuntimeLabel } from "../lib/codingSessionLabels";
+import {
+  codingSessionModelChoices,
+  joinCodingSessionModelId,
+  resolveCodingSessionThinking,
+  splitCodingSessionModelId,
+} from "@/features/coding-sessions/lib/codingSessionModelChoice";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
@@ -678,6 +684,14 @@ export function NewCodingSessionProviderPicker({
   targets: readonly NewCodingSessionTarget[];
 }) {
   const models = selectedTarget?.provider.allowedModels ?? [];
+  // One control per decision. Codex encodes reasoning effort in the model id,
+  // so live discovery turned four models into thirty rows (§2 item 45).
+  const choices = React.useMemo(
+    () => codingSessionModelChoices(models),
+    [models],
+  );
+  const selected = splitCodingSessionModelId(model ?? "");
+  const thinkingLevels = choices.thinkingByModel.get(selected.model) ?? [];
   // One remediation row per unavailable runtime — disabled options say what
   // is wrong, but an <option> cannot carry a full sentence, let alone the
   // Connect button that fixes a signed-out runtime in place.
@@ -777,21 +791,69 @@ export function NewCodingSessionProviderPicker({
         <select
           className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
           data-testid="new-coding-session-model"
-          disabled={disabled || models.length === 0}
+          disabled={disabled || choices.models.length === 0}
           id="coding-session-model"
-          onChange={(event) => onModelChange(event.target.value)}
-          value={model ?? ""}
+          onChange={(event) =>
+            onModelChange(
+              joinCodingSessionModelId(
+                event.target.value,
+                resolveCodingSessionThinking(
+                  choices,
+                  event.target.value,
+                  selected.thinking,
+                ),
+              ),
+            )
+          }
+          value={selected.model}
         >
-          {models.length === 0 ? (
+          {choices.models.length === 0 ? (
             <option value="">Provider default</option>
           ) : null}
-          {models.map((allowed) => (
+          {choices.models.map((allowed) => (
             <option key={allowed} value={allowed}>
               {allowed}
             </option>
           ))}
         </select>
       </div>
+      {thinkingLevels.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-2 sm:w-40">
+          <label
+            className="text-xs font-medium text-muted-foreground"
+            htmlFor="coding-session-thinking"
+          >
+            Thinking
+          </label>
+          <select
+            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
+            data-testid="new-coding-session-thinking"
+            disabled={disabled}
+            id="coding-session-thinking"
+            onChange={(event) =>
+              onModelChange(
+                joinCodingSessionModelId(
+                  selected.model,
+                  event.target.value === "" ? null : event.target.value,
+                ),
+              )
+            }
+            value={selected.thinking ?? ""}
+          >
+            {/* Only offered when the adapter itself publishes the bare id:
+                for a model that exists only at named levels, "default" would
+                name a model the provider would refuse. */}
+            {choices.bareModels.has(selected.model) ? (
+              <option value="">Adapter default</option>
+            ) : null}
+            {thinkingLevels.map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
     </div>
   );
 }

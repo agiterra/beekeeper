@@ -174,12 +174,27 @@ export function listCodingSessionUmbrellaParticipants(
   for (const label of labels) {
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
+  // Two executions of the same runtime and model, created by the same
+  // provider, produced two chips reading `Codex · default · 1958c6c4…9644` —
+  // identical, so the selector offered a choice nobody could make (observed
+  // live 2026-08-24). The signer disambiguates *across* providers; within one
+  // it says nothing, and the execution's own session id is the only thing left
+  // that differs.
+  const signerLabels = umbrella.executions.map((execution, index) =>
+    (counts.get(labels[index]) ?? 0) > 1
+      ? `${labels[index]} · ${truncatePubkey(execution.signerPubkey)}`
+      : labels[index],
+  );
+  const signerCounts = new Map<string, number>();
+  for (const label of signerLabels) {
+    signerCounts.set(label, (signerCounts.get(label) ?? 0) + 1);
+  }
   const participants: CodingSessionUmbrellaParticipant[] =
     umbrella.executions.map((execution, index) => {
-      const label = labels[index];
+      const label = signerLabels[index];
       const disambiguated =
-        (counts.get(label) ?? 0) > 1
-          ? `${label} · ${truncatePubkey(execution.signerPubkey)}`
+        (signerCounts.get(label) ?? 0) > 1
+          ? `${label} · ${executionShortId(execution)}`
           : label;
       return {
         kind: "execution",
@@ -439,6 +454,28 @@ function resolveFounder(
   };
 }
 
+/**
+ * A `stop` is per execution and terminal for that execution alone. An umbrella
+ * that still holds a live one has not ended.
+ */
+function isEndedExecution(execution: ExecutionAccumulator): boolean {
+  return execution.activeGeneration.status === "stopped";
+}
+
+/**
+ * The umbrella's status across every execution it holds.
+ *
+ * Falling through to "the most recently active execution" is what made a
+ * session with five executions read **ENDED** in its header the moment the
+ * newest one was stopped, while four others — including one answering turns —
+ * were still open (observed live 2026-08-24, 11:04Z). A stop is per execution;
+ * the umbrella has ended only when every execution has.
+ *
+ * The order is deliberate: activity outranks quiet, and quiet outranks
+ * terminal. Within each tier the most recently active execution decides, so a
+ * session that stopped one provider still reports the state of the ones that
+ * remain.
+ */
 function deriveUmbrellaStatus(
   executions: readonly ExecutionAccumulator[],
   latest: ExecutionAccumulator,
@@ -457,7 +494,27 @@ function deriveUmbrellaStatus(
   ) {
     return "waiting_for_input";
   }
-  return latest.activeGeneration.status;
+  if (!isEndedExecution(latest)) return latest.activeGeneration.status;
+  // Every remaining tier-3 candidate is quiet, so the newest *observation*
+  // decides — the same rule `latest` uses, applied to the survivors. (The
+  // caller's array is ordered by attach time, not activity, so this cannot
+  // read the last element.)
+  const alive = executions.filter((execution) => !isEndedExecution(execution));
+  if (alive.length === 0) return latest.activeGeneration.status;
+  return alive.reduce((best, candidate) =>
+    candidate.latestEventMs > best.latestEventMs ? candidate : best,
+  ).activeGeneration.status;
+}
+
+/**
+ * The shortest thing that still tells two same-signer executions apart: the
+ * head of the provider-minted session id from their own command target.
+ */
+function executionShortId(execution: CodingSessionExecution): string {
+  const sessionId = execution.activeGeneration.commandTarget?.sessionId ?? null;
+  return sessionId === null
+    ? execution.executionKey.slice(-8)
+    : sessionId.slice(0, 8);
 }
 
 function executionLabel(execution: CodingSessionExecution): string {
