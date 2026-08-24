@@ -50,6 +50,7 @@ fn live_claude_models_preserve_adapter_order_and_current_default() {
             selected_model: None,
             supports_switching: true,
         },
+        "claude",
     )
     .expect("model response");
 
@@ -77,6 +78,7 @@ fn live_claude_models_fall_back_to_the_first_adapter_option() {
             selected_model: None,
             supports_switching: true,
         },
+        "claude",
     )
     .expect("model response");
 
@@ -536,4 +538,103 @@ fn global_config_serializes_the_allowlist_under_the_donor_key() {
     append_allowed_bridge_pubkey(&mut config, &"f".repeat(64), LOCAL_PROVIDER_LABEL);
     let json = serde_json::to_string(&config).expect("serialize");
     assert!(json.contains("\"allowed-bridge-pubkeys\""), "{json}");
+}
+
+/// §2 item 39 — every Codex execution rendered as `Codex · default` because
+/// this runtime was declared with `discover_models: false` and a placeholder
+/// model. codex-acp answers the same probe claude-agent-acp does (verified
+/// 2026-08-24 against codex-acp 1.6.2), so the placeholder was hiding a real
+/// model list, which is the "default label hiding the real model" bug.
+#[test]
+fn codex_opts_into_live_model_discovery_and_goose_does_not() {
+    use crate::session_provider::runtimes::known_instance_ref;
+    assert_eq!(known_instance_ref("claude-primary"), Some(true));
+    assert_eq!(known_instance_ref("codex-primary"), Some(true));
+    // goose answers the probe with `-32603 Internal error`; opting it in would
+    // spend the discovery timeout to learn nothing.
+    assert_eq!(known_instance_ref("goose-primary"), Some(false));
+    assert_eq!(known_instance_ref("ghost-primary"), None);
+}
+
+/// A probe that resolved `claude-agent-acp` whatever it was asked about would
+/// report Claude's models under Codex's label.
+#[test]
+fn each_runtime_is_probed_through_its_own_adapter() {
+    use crate::session_provider::runtimes::runtime_probe_target;
+    let unknown = runtime_probe_target("ghost-primary").expect_err("unknown ref must fail");
+    assert!(unknown.contains("ghost-primary"));
+
+    match runtime_probe_target("codex-primary") {
+        Ok(target) => {
+            assert_eq!(target.label, "codex");
+            assert!(!target.needs_claude_executable);
+            assert!(
+                target
+                    .agent_command
+                    .to_string_lossy()
+                    .contains("codex-acp"),
+                "codex must be probed through codex-acp, not through Claude's adapter"
+            );
+        }
+        // Not installed on this host: the message must name the adapter that is
+        // missing rather than Claude's.
+        Err(message) => assert!(message.contains("codex")),
+    }
+
+    match runtime_probe_target("goose-primary") {
+        Ok(target) => {
+            assert_eq!(target.label, "goose");
+            assert_eq!(target.agent_args, vec!["acp".to_string()]);
+        }
+        Err(message) => assert!(message.contains("goose")),
+    }
+}
+
+/// The adapter's own label reaches the error, so an empty Codex list does not
+/// blame Claude.
+#[test]
+fn an_empty_model_list_names_the_runtime_that_returned_it() {
+    let error = coding_session_provider_models_from_response(
+        "codex-primary",
+        AgentModelsResponse {
+            agent_name: "codex-acp".to_string(),
+            agent_version: "1.6.2".to_string(),
+            models: Vec::new(),
+            agent_default_model: None,
+            selected_model: None,
+            supports_switching: true,
+        },
+        "codex",
+    )
+    .expect_err("no models is an error");
+    assert!(error.contains("codex"), "{error}");
+    assert!(!error.contains("Claude"), "{error}");
+}
+
+/// The real shape codex-acp returned on 2026-08-24, through the same decoder.
+#[test]
+fn codex_model_ids_survive_the_response_decoder() {
+    let models = coding_session_provider_models_from_response(
+        "codex-primary",
+        AgentModelsResponse {
+            agent_name: "@agentclientprotocol/codex-acp".to_string(),
+            agent_version: "1.6.2".to_string(),
+            models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+                .into_iter()
+                .map(|id| AgentModelInfo {
+                    id: id.to_string(),
+                    name: None,
+                    description: None,
+                })
+                .collect(),
+            agent_default_model: Some("gpt-5.6-terra".to_string()),
+            selected_model: None,
+            supports_switching: true,
+        },
+        "codex",
+    )
+    .expect("model response");
+
+    assert_eq!(models.default_model, "gpt-5.6-terra");
+    assert!(!models.allowed_models.contains(&"default".to_string()));
 }

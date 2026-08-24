@@ -601,7 +601,14 @@ async fn start_agent(
         "ACP session opened"
     );
 
-    let model = apply_model(&mut client, &response, request.model.as_deref()).await;
+    // What the adapter says it is running outranks what the create asked for:
+    // an unofferable model is silently not applied, and publishing the request
+    // as the model is the "default label hiding the real model" bug (§2 item
+    // 39). A successful switch is the one case the request *is* the truth —
+    // the response predates it.
+    let model = apply_model(&mut client, &response, request.model.as_deref())
+        .await
+        .or_else(|| buzz_acp::acp::reported_model(&response.raw));
     Ok((
         client,
         SessionStartup {
@@ -1516,7 +1523,9 @@ while IFS= read -r line; do
         printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"load rejected"}}\n' "$id"
       fi ;;
     *'"method":"session/new"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fresh-context-session"}}\n' "$id" ;;
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fresh-context-session"%s}}\n' "$id" "${MCP_TEST_MODELS:-}" ;;
+    *'"method":"session/set_config_option"'*|*'"method":"session/set_model"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
     *'"method":"session/prompt"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
   esac
@@ -2191,6 +2200,68 @@ done
             claude.contains("session_overview"),
             "every rehydrated briefing still names the tool"
         );
+    }
+
+    /// §2 item 39 — an execution must be labelled with the model the adapter
+    /// says it is on, not with the string the create asked for. A create that
+    /// requests `default` against an adapter that offers real ids is not
+    /// applied at all, and publishing `default` made every Codex execution
+    /// render as `Codex · default` over a session really running
+    /// `gpt-5.6-terra`.
+    #[tokio::test]
+    async fn an_unofferable_model_reports_what_the_adapter_says_it_is_running() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "model-report-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.model = Some("default".into());
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                dir.path().join("model.requests").to_string_lossy().into_owned(),
+            ),
+            (
+                "MCP_TEST_MODELS".to_owned(),
+                r#","configOptions":[{"category":"model","id":"model","currentValue":"gpt-5.6-terra","options":[{"value":"gpt-5.6-terra"},{"value":"gpt-5.6-sol"}]}]"#
+                    .to_owned(),
+            ),
+        ];
+
+        let startup = manager.create(create).await.expect("create");
+        assert_eq!(
+            startup.model.as_deref(),
+            Some("gpt-5.6-terra"),
+            "the adapter's own current model, not the unofferable request"
+        );
+        manager.shutdown("s1");
+    }
+
+    /// A model the adapter *does* offer is applied, and the applied value is
+    /// what the execution reports — the response predates the switch.
+    #[tokio::test]
+    async fn an_applied_model_is_reported_as_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "model-switch-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.model = Some("gpt-5.6-sol".into());
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                dir.path().join("switch.requests").to_string_lossy().into_owned(),
+            ),
+            (
+                "MCP_TEST_MODELS".to_owned(),
+                r#","configOptions":[{"category":"model","id":"model","currentValue":"gpt-5.6-terra","options":[{"value":"gpt-5.6-terra"},{"value":"gpt-5.6-sol"}]}]"#
+                    .to_owned(),
+            ),
+        ];
+
+        let startup = manager.create(create).await.expect("create");
+        assert_eq!(startup.model.as_deref(), Some("gpt-5.6-sol"));
+        manager.shutdown("s1");
     }
 
     /// A watermark is not an age. The bootstrap must tell the agent to read the

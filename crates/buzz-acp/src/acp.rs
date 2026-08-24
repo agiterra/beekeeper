@@ -2527,6 +2527,36 @@ pub fn extract_model_state(result: &serde_json::Value) -> Option<serde_json::Val
     result.get("models").cloned()
 }
 
+/// The model the adapter says this session is actually on.
+///
+/// Stable `configOptions[category=model].currentValue` first, then the
+/// unstable `models.currentModelId` — the same precedence
+/// [`resolve_model_switch_method`] uses, so a reader and a writer never
+/// disagree about which surface is authoritative.
+///
+/// This exists because a *requested* model is not an applied one. When a
+/// create asks for a model the adapter does not offer, the switch is skipped
+/// and the session runs on the adapter's own default; publishing the request
+/// as the model is how `Codex · default` came to label executions that were
+/// really running `gpt-5.6-terra` (§2 item 39).
+pub fn reported_model(session_new_result: &serde_json::Value) -> Option<String> {
+    for config_option in extract_model_config_options(session_new_result) {
+        if let Some(current) = config_option
+            .get("currentValue")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            return Some(current.to_owned());
+        }
+    }
+    extract_model_state(session_new_result)
+        .as_ref()
+        .and_then(|models| models.get("currentModelId"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 /// Match a desired model ID against a fresh `session/new` response.
 ///
 /// Returns the correct ACP method to call, or `None` if no match.
@@ -2673,6 +2703,48 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
 
 #[cfg(test)]
 mod tests {
+
+    /// §2 item 39 — a requested model is not an applied one.
+    #[test]
+    fn the_reported_model_prefers_the_stable_config_option() {
+        let response = serde_json::json!({
+            "configOptions": [{
+                "category": "model",
+                "id": "model",
+                "currentValue": "gpt-5.6-terra",
+                "options": [{"value": "gpt-5.6-terra"}, {"value": "gpt-5.6-sol"}]
+            }],
+            "models": {"currentModelId": "gpt-5.6-sol", "availableModels": []}
+        });
+        assert_eq!(
+            reported_model(&response).as_deref(),
+            Some("gpt-5.6-terra"),
+            "the stable surface wins, exactly as the switch resolver decides"
+        );
+    }
+
+    #[test]
+    fn the_reported_model_falls_back_to_the_unstable_model_state() {
+        let response = serde_json::json!({
+            "models": {"currentModelId": "claude-sonnet-5", "availableModels": []}
+        });
+        assert_eq!(
+            reported_model(&response).as_deref(),
+            Some("claude-sonnet-5")
+        );
+    }
+
+    #[test]
+    fn an_adapter_that_reports_nothing_is_not_invented_for() {
+        assert_eq!(reported_model(&serde_json::json!({})), None);
+        assert_eq!(
+            reported_model(&serde_json::json!({
+                "configOptions": [{"category": "model", "id": "model", "currentValue": ""}]
+            })),
+            None,
+            "an empty string is not a model name"
+        );
+    }
     use super::*;
 
     /// The child's env plan as `(key, Some(value) | None)`, where `None` is an

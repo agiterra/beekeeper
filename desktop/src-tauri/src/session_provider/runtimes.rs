@@ -55,7 +55,13 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         driver: "codex-acp",
         adapter_commands: &["codex-acp"],
         agent_args: &[],
-        discover_models: false,
+        // codex-acp answers the same ACP model probe claude-agent-acp does.
+        // Verified 2026-08-24 against codex-acp 1.6.2: `buzz-acp models --json`
+        // returns a `model` config option whose `currentValue` is the real
+        // model (`gpt-5.6-terra`) and whose options list every selectable one.
+        // Left `false`, every Codex execution rendered as `Codex · default` —
+        // the "default label hiding the real model" bug (§2 item 39).
+        discover_models: true,
         always_offered: false,
     },
     HostRuntime {
@@ -64,6 +70,9 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         driver: "goose-acp",
         adapter_commands: &["goose"],
         agent_args: &["acp"],
+        // Deliberately not opted in: the same probe against goose 
+        // answers `-32603 Internal error` (tested 2026-08-24), so discovery
+        // would spend its timeout to learn nothing. Flip it when goose answers.
         discover_models: false,
         always_offered: false,
     },
@@ -119,6 +128,42 @@ pub(crate) fn known_instance_ref(instance_ref: &str) -> Option<bool> {
         .iter()
         .find(|runtime| runtime.instance_ref == instance_ref)
         .map(|runtime| runtime.discover_models)
+}
+
+/// What the models command needs to probe one runtime's own adapter.
+///
+/// The probe is driver-agnostic — `buzz-acp models --json` drives whatever
+/// `BUZZ_ACP_AGENT_COMMAND` names — but the desktop command used to resolve
+/// `claude-agent-acp` by name whatever runtime it was asked about, so opting a
+/// second runtime into discovery would have reported Claude's models under its
+/// label (§2 item 39).
+#[derive(Debug)]
+pub(crate) struct RuntimeProbeTarget {
+    pub label: &'static str,
+    pub agent_command: PathBuf,
+    pub agent_args: Vec<String>,
+    pub needs_claude_executable: bool,
+}
+
+/// Resolve one runtime's adapter for the model probe, or say which is missing.
+pub(crate) fn runtime_probe_target(instance_ref: &str) -> Result<RuntimeProbeTarget, String> {
+    let runtime = HOST_RUNTIMES
+        .iter()
+        .find(|runtime| runtime.instance_ref == instance_ref)
+        .ok_or_else(|| format!("unknown coding-session runtime instanceRef: {instance_ref}"))?;
+    let agent_command = resolve_adapter(runtime).ok_or_else(|| {
+        format!(
+            "the {} ACP adapter is not installed ({})",
+            runtime.runtime_id,
+            runtime.adapter_commands.join(" or ")
+        )
+    })?;
+    Ok(RuntimeProbeTarget {
+        label: runtime.runtime_id,
+        agent_command,
+        agent_args: runtime.agent_args.iter().map(|arg| arg.to_string()).collect(),
+        needs_claude_executable: runtime.runtime_id == "claude",
+    })
 }
 
 /// Build the descriptor list written to `BUZZ_CSP_RUNTIMES` for one spawn.
@@ -279,14 +324,26 @@ mod tests {
         assert_eq!(classify_auth_state(true, None, None), Ready);
     }
 
+    /// Discovery is per adapter-capability, not per favourite runtime.
+    ///
+    /// This assertion used to read `discover_models == (runtime_id ==
+    /// "claude")`, which is how every Codex execution came to render as
+    /// `Codex · default` (§2 item 39): codex-acp answers the probe, it was
+    /// simply never asked. goose stays out because it answers `-32603
+    /// Internal error`, tested the same day.
     #[test]
-    fn only_claude_discovers_models_and_only_claude_is_always_offered() {
+    fn codex_discovers_models_with_claude_and_goose_does_not() {
         for runtime in HOST_RUNTIMES {
-            assert_eq!(runtime.discover_models, runtime.runtime_id == "claude");
+            assert_eq!(
+                runtime.discover_models,
+                runtime.runtime_id != "goose",
+                "unexpected discovery policy for {}",
+                runtime.runtime_id
+            );
             assert_eq!(runtime.always_offered, runtime.runtime_id == "claude");
         }
         assert_eq!(known_instance_ref("claude-primary"), Some(true));
-        assert_eq!(known_instance_ref("codex-primary"), Some(false));
+        assert_eq!(known_instance_ref("codex-primary"), Some(true));
         assert_eq!(known_instance_ref("goose-primary"), Some(false));
         assert_eq!(known_instance_ref("ghost-primary"), None);
     }

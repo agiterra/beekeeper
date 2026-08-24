@@ -62,11 +62,13 @@ pub async fn coding_session_provider_status(
 
 /// Probe one runtime's model surface.
 ///
-/// `claude-primary` (and the argument-less legacy call) keeps the live adapter
-/// probe so the first session in a brand-new channel can offer the same
-/// choices as an established channel. Other known runtimes advertise the
-/// static `"default"` alias without spawning anything — their adapters resolve
-/// the real model at session time. An unknown ref is an error.
+/// Every runtime that opts into discovery is probed through **its own**
+/// adapter: the probe itself is driver-agnostic (`buzz-acp models --json`
+/// drives whatever `BUZZ_ACP_AGENT_COMMAND` names), and resolving
+/// `claude-agent-acp` here regardless of the runtime asked about would report
+/// Claude's models under another runtime's label. Runtimes that do not opt in
+/// advertise the static `"default"` alias without spawning anything — their
+/// adapters resolve the real model at session time. An unknown ref is an error.
 #[tauri::command]
 pub async fn coding_session_provider_models(
     instance_ref: Option<String>,
@@ -89,25 +91,25 @@ pub async fn coding_session_provider_models(
 
     let resolved_acp = crate::managed_agents::resolve_command("buzz-acp")
         .ok_or_else(|| "buzz-acp was not found; rebuild the desktop sidecars".to_string())?;
-    let resolved_agent = crate::managed_agents::resolve_command("claude-agent-acp")
-        .or_else(|| crate::managed_agents::resolve_command("claude-code-acp"))
-        .ok_or_else(|| "the Claude Code ACP adapter is not installed".to_string())?;
+    let probe = crate::session_provider::runtimes::runtime_probe_target(&instance_ref)?;
     let mut env = BTreeMap::new();
-    if let Some(claude) = resolve_claude_code_executable() {
-        env.insert(
-            "CLAUDE_CODE_EXECUTABLE".to_string(),
-            claude.to_string_lossy().into_owned(),
-        );
+    if probe.needs_claude_executable {
+        if let Some(claude) = resolve_claude_code_executable() {
+            env.insert(
+                "CLAUDE_CODE_EXECUTABLE".to_string(),
+                claude.to_string_lossy().into_owned(),
+            );
+        }
     }
     let response = crate::commands::agent_model_process::run_agent_models_command(
         resolved_acp,
-        resolved_agent.to_string_lossy().into_owned(),
-        Vec::new(),
+        probe.agent_command.to_string_lossy().into_owned(),
+        probe.agent_args.clone(),
         None,
         env,
     )
     .await?;
-    coding_session_provider_models_from_response(&instance_ref, response)
+    coding_session_provider_models_from_response(&instance_ref, response, probe.label)
 }
 
 /// Every runtime this desktop can offer, installed or not, with install/auth
@@ -126,13 +128,14 @@ pub async fn coding_session_provider_runtimes(
 pub(crate) fn coding_session_provider_models_from_response(
     instance_ref: &str,
     response: crate::managed_agents::AgentModelsResponse,
+    runtime_label: &str,
 ) -> Result<CodingSessionProviderModels, String> {
     let allowed_models: Vec<String> = response.models.into_iter().map(|model| model.id).collect();
     let default_model = response
         .agent_default_model
         .filter(|model| allowed_models.contains(model))
         .or_else(|| allowed_models.first().cloned())
-        .ok_or_else(|| "the Claude Code ACP adapter returned no selectable models".to_string())?;
+        .ok_or_else(|| format!("the {runtime_label} ACP adapter returned no selectable models"))?;
     Ok(CodingSessionProviderModels {
         instance_ref: instance_ref.to_string(),
         default_model,
