@@ -1249,6 +1249,24 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   the relay until that provider returns (§2 items 41 and 42, where three stops
   drained two hours later). When a session stops responding, check *which*
   provider owns it before debugging the code.
+- **Markdown is not automatically inert, and `docs/` is not automatically
+  documentation.** Two files defeat the obvious CI path filters:
+  `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d into `BASE_PROMPT`,
+  and `docs/nips/NIP-MP.fixtures.json` is `include_str!`'d by
+  `crates/buzz-sdk/src/builders.rs:5419`. So `**/*.md` and `docs/**` are both
+  unsafe as exclusions — each would skip the gate, and therefore the relay
+  rebuild, for a change to compiled output. The live exclusion is `*.md`,
+  `docs/*.md`, `docs/**/*.md`, guarded by
+  `scripts/test-woodpecker-path-filter.sh`, which found the `docs/**` case
+  before it shipped.
+- **Woodpecker's push path filter sees the whole push here, not just the tip
+  commit** — contradicting its own documentation, which says "only files from
+  the most recent commit". Pipeline 324 (`a961fb277`) recorded `changed_files`
+  spanning all six commits of a push tipped by a docs-only one. This is what
+  makes the docs-only filter safe for multi-commit pushes; re-check it if the
+  forge or Woodpecker major version changes, because the documented behaviour
+  would silently mask a relay change behind a docs commit.
+
 - **`CLAUDE.md` is a symlink to `AGENTS.md`.** Editing through it modifies
   `AGENTS.md`; `git add CLAUDE.md` then stages an unchanged symlink and drops
   the edit with no error. On 2026-08-23 a branching-policy change committed as

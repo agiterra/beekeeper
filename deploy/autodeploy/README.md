@@ -154,6 +154,30 @@ Step 3 is the one that caught the cross-deploy hazard. If a repo's selected sha
 is not a commit you recognise as belonging to *that* repo, stop the timer
 before it finishes.
 
+### A trailing `BUZZ_IMAGE` is now sometimes correct
+
+Since 2026-08-23, documentation-only pushes to `main` skip the Woodpecker gate
+(`.woodpecker/gate.yml` `path.exclude`), so no green pipeline exists for them
+and nothing is deployed. **The deployed image therefore trails `origin/main`
+by design whenever every commit since it was markdown.** Before this, a
+trailing tag meant something was wrong; now it usually does not, which is
+exactly the kind of ambiguity that hides a real fault.
+
+Tell the two apart by asking what actually changed, rather than by comparing
+shas:
+
+```bash
+# What is deployed, and what is main?
+ssh agincus 'incus exec hive -- grep -m1 ^BUZZ_IMAGE= /opt/beekeeper/compose/.env'
+git fetch origin && git log --oneline -1 origin/main
+
+# Anything between them that is NOT markdown? Empty output = correctly trailing.
+git diff --name-only <deployed-sha>..origin/main -- . ':(exclude)*.md' ':(exclude)docs/**/*.md'
+```
+
+Non-empty output with the relay still on the old image is a real fault — read
+the deployer's journal next, not the sha comparison.
+
 After any deploy, confirm the relay's NIP-11 `self` still matches its recorded
 baseline (see `docs/SESSION_STATE.md` § 1). `BUZZ_RELAY_PRIVATE_KEY`
 auto-generates when unset, so a relay can silently adopt a new identity on

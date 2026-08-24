@@ -108,6 +108,7 @@ check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clip
 autodeploy-test:
     ./deploy/autodeploy/tests/config-contract.sh
     ./deploy/autodeploy/tests/autodeploy-behavior.sh
+    ./scripts/test-woodpecker-path-filter.sh
 
 # Run the repository-wide differential file-size ratchet and its policy tests.
 # The ratchet inspects only files changed from the merge base, so this stays

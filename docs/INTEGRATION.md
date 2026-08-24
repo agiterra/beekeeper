@@ -114,6 +114,39 @@ Three things to check before starting one:
 `.woodpecker/` pipelines run the gate on pushes to `main` and on PRs, at
 [ci.agiterra.org](https://ci.agiterra.org).
 
+### Documentation-only pushes skip the gate — and therefore the deploy
+
+`gate.yml`'s push rule carries `path.exclude` for `*.md`, `docs/*.md` and
+`docs/**/*.md`. A push to `main` that touches nothing else runs no pipeline,
+so `beekeeper-autodeploy` — which deploys the newest **green pipeline** — has
+nothing new to select and the relay is not rebuilt. Prose used to cost about
+fifteen minutes of relay build; on 2026-08-23, two of four pushes to `main`
+were pure documentation.
+
+Two things make this safe, and both were verified rather than assumed:
+
+- **A code commit cannot hide behind a docs commit at the tip.** Woodpecker's
+  own documentation says push path filters consider only the most recent
+  commit, which would be disqualifying here — multi-commit pushes are normal.
+  This instance does not behave that way: pipeline 324 recorded `changed_files`
+  spanning all six commits of a push whose tip was documentation only.
+- **Only markdown is inert, and only outside `crates/`.** `docs/**` is *not*
+  excluded, because `docs/nips/NIP-MP.fixtures.json` is `include_str!`'d by
+  `crates/buzz-sdk/src/builders.rs`; `**/*.md` is *not* excluded, because
+  `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d into `BASE_PROMPT`.
+  Either would skip a rebuild for a change to compiled output.
+
+`scripts/test-woodpecker-path-filter.sh` enforces this: it expands the
+exclusion list over the tracked tree, resolves every `include_str!` /
+`include_bytes!` argument in `crates/` against it, and rejects any excluded
+path that is a relay build input. It runs in the `deploy-scripts` step and in
+`just check`. An exclusion pattern whose shape it cannot expand is fatal, not
+ignored — an unexamined pattern is how a rebuild goes missing quietly.
+
+The consequence to expect when reading deployment state: **`BUZZ_IMAGE` may
+legitimately trail `origin/main`.** See `deploy/autodeploy/README.md` § Verify.
+Pull requests are not filtered.
+
 Known runner-environment limitations (excluded from the gate, still run on
 dev machines; an upstream-issue candidate):
 - `buzz-relay` `api::mesh_demo::…round_trips_echo` — loopback QUIC cannot

@@ -7,9 +7,44 @@
 # scripts/ci-image/Dockerfile) with host cache mounts under /srv/ci-cache,
 # so warm runs skip apt, toolchain installs, registry downloads, and dependency
 # compilation. Cache layout + image rebuild runbook: docs/INTEGRATION.md.
+# Docs-only pushes to `main` skip this gate entirely, which also means no green
+# pipeline for `beekeeper-autodeploy` to select — so prose no longer costs a
+# ~15-minute relay rebuild. Verified on this instance (not assumed from the
+# docs, which claim otherwise): Woodpecker records `changed_files` for the
+# WHOLE push, not just its tip commit — pipeline 324 listed files from all six
+# commits of a push tipped by a docs-only one. A code commit therefore cannot
+# hide behind a docs commit at the tip.
+#
+# The patterns are narrow on purpose, in two directions that both look like
+# needless caution until you check:
+#
+#   - NOT `**/*.md`. `crates/buzz-acp/src/base_prompt.md` is `include_str!`'d
+#     into `BASE_PROMPT` (crates/buzz-acp/src/lib.rs) — compiled source that
+#     happens to end in `.md`, and 16 such files live under `crates/`.
+#   - NOT `docs/**`. `docs/nips/NIP-MP.fixtures.json` is `include_str!`'d by
+#     crates/buzz-sdk/src/builders.rs:5419, and `docs/` holds 29 other
+#     non-markdown files. Only markdown under `docs/` is inert.
+#
+# Either mistake skips the gate — and therefore the relay rebuild — for a real
+# change to compiled output, and the skip is indistinguishable from a healthy
+# quiet tick. `scripts/test-woodpecker-path-filter.sh` enforces both rules by
+# resolving every include_str!/include_bytes! in the tree against this list; it
+# runs in the `deploy-scripts` step below and in `just check`.
+#
+# Pull requests are deliberately NOT filtered — a PR keeps its checks whatever
+# it touches.
 when:
   - event: push
     branch: main
+    path:
+      exclude:
+        - '*.md'
+        - 'docs/*.md'
+        - 'docs/**/*.md'
+      # Explicit rather than implicit: when the forge supplies no file list,
+      # run the gate. Skipping on an unknown is the one reading that could
+      # silently ship an unbuilt relay.
+      on_empty: true
   - event: pull_request
 
 # Pin the workspace path so host cache mounts can target workspace-relative
@@ -143,6 +178,10 @@ steps:
       - git config --global --add safe.directory "$CI_WORKSPACE"
       - ./deploy/autodeploy/tests/config-contract.sh
       - ./deploy/autodeploy/tests/autodeploy-behavior.sh
+      # Guards the `when.path.exclude` list at the top of this file. Lives with
+      # the deployer tests because it protects the same thing they do: a relay
+      # that silently stops being rebuilt.
+      - ./scripts/test-woodpecker-path-filter.sh
 
   rust-agent:
     image: buzz-ci:1
