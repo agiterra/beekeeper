@@ -754,6 +754,17 @@ here.
     managed agents *into* sessions first via lane mention (no new wire
     concepts), then session executions *into* managed agents via `agentRef`
     (needs delegation grammar). D6 references the topic only abstractly.
+18. **`coding-sessions.spec.ts` "a seeded signed session is discoverable…"
+    fails on `main`** (2026-08-23, run at `da3f181f`): the catalog entry no
+    longer contains "Claude Agent Acp" — it renders
+    "Fix the reconnect bug · Idle · Goal: … · Open". Either the entry dropped
+    the provider name or the assertion is stale; decide which before the
+    next smoke run reads as a regression. Inherited, not caused by
+    `fix/resumed-session-history`.
+19. **The catalog trigger counts generations, not sessions.** A resumed
+    session reads "Coding sessions (2)" and lists two entries that open the
+    same umbrella. The resumed-history e2e spec asserts that real count on
+    purpose; fixing the count is a separate change.
 
 ## 2a. Direction settled 2026-08-18
 
@@ -1040,6 +1051,17 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   pre-deploy SQL dumps when lightyear was wiped. If a deployer is ever
   re-enabled, give it a retention limit — the backups grow without bound and
   each one is a credential.
+- **Verify desktop UI claims with the e2e mock bridge, not a release build.**
+  The 2026-08-23 resume fix was proven by a 20-minute `just prod-desktop`
+  build when `coding-sessions.spec.ts` already had the seeding scaffolding to
+  prove it in seconds (`__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__`, a `TARGET` with a
+  `generation` field). Two traps on that path: `pnpm build:e2e` runs `tsc`
+  first, so an unused import fails the build and Playwright then serves the
+  **previous** `dist` — a spec can pass against code that is not there; and
+  `reuseExistingServer` keeps a stale preview on 4173. Always kill 4173 and
+  check the build actually printed `built in`. The `just desktop-standalone`
+  failure that pushed the work onto the release build was itself a bug
+  (`fix/standalone-keyring-service`), not a workflow gap.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 
