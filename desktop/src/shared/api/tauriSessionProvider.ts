@@ -82,6 +82,12 @@ export type CodingSessionCapacitySettings = {
   defaultMaxSessions: number;
   /** What the *running* provider started with, when one is running. */
   runningMaxSessions: number | null;
+  /** Stored per-turn silence budget in seconds; `null` for the default. */
+  turnIdleTimeoutSecs: number | null;
+  /** The provider's own default silence budget, in seconds. */
+  defaultTurnIdleTimeoutSecs: number;
+  /** The budget the running provider started with, when one is running. */
+  runningTurnIdleTimeoutSecs: number | null;
 };
 
 /** Read the stored session ceiling alongside the one being enforced. */
@@ -105,6 +111,21 @@ export async function setCodingSessionCapacity(
   return invokeTauri<CodingSessionCapacitySettings>(
     "set_coding_session_capacity",
     { maxSessions },
+  );
+}
+
+/**
+ * Store the per-turn silence budget, in seconds. `null` restores the default.
+ *
+ * A turn dies when the adapter says nothing for this long; every line it writes
+ * resets the clock. Same startup-read caveat as the ceiling above.
+ */
+export async function setCodingSessionTurnIdleTimeout(
+  turnIdleTimeoutSecs: number | null,
+): Promise<CodingSessionCapacitySettings> {
+  return invokeTauri<CodingSessionCapacitySettings>(
+    "set_coding_session_turn_idle_timeout",
+    { turnIdleTimeoutSecs },
   );
 }
 

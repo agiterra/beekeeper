@@ -866,22 +866,244 @@ pub fn sanitize_coding_session_context_content(value: &Value) -> Value {
 
 /// Redact an unsafe host-private or credential-bearing prose field while
 /// retaining safe text byte-for-byte.
+///
+/// **Secrets are redacted; sentences are not.** This used to replace the
+/// *entire* text with an elision marker whenever it contained any of a list of
+/// words — "secret", "credential", "authorization", "private key", "token:".
+/// Those are the ordinary vocabulary of the work: this repo ships a binary
+/// called `git-credential-nostr`, and an agent asked about a git ACL branch
+/// answers in exactly those words. The result was that a coding session
+/// working on authorization could not show its work at all — an operator asked
+/// "what was the result?" and received a 1,934-byte hash (observed
+/// 2026-08-24).
+///
+/// So a hit now has to be a *value*, not a topic:
+///
+/// 1. a key block (`-----BEGIN … -----END …`), redacted whole, because the
+///    body carries no other information anyway;
+/// 2. a token with a recognisable shape — `nsec1…`, `sk-…`, `ghp_…`,
+///    `github_pat_…`, `xoxb-…`, `AKIA…` — redacted where it stands;
+/// 3. the value side of a credential assignment (`token=…`, `password: …`,
+///    `api key is …`), redacted while the sentence survives.
+///
+/// A bare mention of a credential word, with no value beside it, is prose and
+/// is left alone. Every shape the old rule caught is still caught; what
+/// changed is that catching one no longer costs the whole message.
 pub fn sanitize_coding_session_context_text(value: &str) -> String {
-    if contains_credential_material(value) {
-        return context_elision_marker(&Value::String(value.to_owned()));
-    }
-    let mut sanitized = String::with_capacity(value.len());
-    for segment in value.split_inclusive(char::is_whitespace) {
+    let without_blocks = redact_key_blocks(value);
+    let mut sanitized = String::with_capacity(without_blocks.len());
+    for segment in without_blocks.split_inclusive(char::is_whitespace) {
         let word = segment.trim_end_matches(char::is_whitespace);
         let trailing = &segment[word.len()..];
-        if contains_host_path(word) {
+        if is_context_elision_marker(word) {
+            // Already redacted upstream (a key block): never re-wrap it.
+            sanitized.push_str(word);
+        } else if contains_host_path(word) || contains_shaped_secret(word) {
             sanitized.push_str(&context_elision_marker(&Value::String(word.to_owned())));
         } else {
             sanitized.push_str(word);
         }
         sanitized.push_str(trailing);
     }
-    sanitized
+    redact_credential_assignments(&sanitized)
+}
+
+/// PEM-style blocks, redacted whole.
+fn redact_key_blocks(value: &str) -> String {
+    const BEGIN: &str = "-----BEGIN";
+    const END_MARK: &str = "-----END";
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    loop {
+        let Some(start) = rest.find(BEGIN) else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        // An unterminated block is still a key: redact to the end rather than
+        // emitting the half that was written.
+        let block_end = match tail.find(END_MARK) {
+            Some(at) => tail[at..]
+                .find("-----\n")
+                .map(|nl| at + nl + "-----\n".len())
+                .or_else(|| tail[at..].rfind("-----").map(|last| at + last + 5))
+                .unwrap_or(tail.len()),
+            None => tail.len(),
+        };
+        let block = &tail[..block_end];
+        out.push_str(&context_elision_marker(&Value::String(block.to_owned())));
+        rest = &tail[block_end..];
+    }
+}
+
+/// Prefixes that identify a credential by shape rather than by topic.
+const SHAPED_SECRET_PREFIXES: &[&str] = &[
+    "nsec1",
+    "sk-",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "xoxb-",
+    "xoxp-",
+    "xapp-",
+    "akia",
+    "asia",
+];
+
+/// Does this word carry a recognisable secret shape?
+fn contains_shaped_secret(word: &str) -> bool {
+    let token = word.trim_matches(|character: char| {
+        matches!(
+            character,
+            '\'' | '"' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+        )
+    });
+    // The value side of `KEY=value` carries the shape, not the whole pair.
+    let candidate = token.rsplit_once('=').map_or(token, |(_, value)| value);
+    let lowered = candidate.to_ascii_lowercase();
+    SHAPED_SECRET_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix) && candidate.len() > prefix.len() + 8)
+}
+
+/// Words that name a credential when a value follows them.
+const CREDENTIAL_KEYS: &[&str] = &[
+    "password",
+    "passwd",
+    "secret",
+    "api key",
+    "api_key",
+    "apikey",
+    "api token",
+    "access token",
+    "auth token",
+    "auth_token",
+    "authtoken",
+    "token",
+    "credential",
+    "credentials",
+    "authorization",
+    "bearer",
+    "private key",
+    "private_key",
+    "privatekey",
+    "signing key",
+    "resume cursor",
+    "resume_cursor",
+];
+
+/// Redact the value side of `<credential word><separator><value>`.
+///
+/// Line-scoped, because a value ends at the end of its line — redacting to the
+/// end of a paragraph would take the explanation with it, which is the failure
+/// this whole function exists to undo.
+fn redact_credential_assignments(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for (index, line) in value.split_inclusive('\n').enumerate() {
+        let _ = index;
+        out.push_str(&redact_credential_assignment_line(line));
+    }
+    out
+}
+
+/// Does this token look like a value rather than the next word of a sentence?
+///
+/// The gate exists for the space-separated form (`password hunter2`), where
+/// the "separator" carries no signal at all. A digit, mixed case, or real
+/// length is what distinguishes a secret from the next word of prose — so
+/// "the private key never leaves the keychain" keeps its sentence while
+/// "password hunter2" does not keep its password.
+fn looks_like_credential_value(token: &str) -> bool {
+    let trimmed = token.trim_matches(|character: char| {
+        matches!(
+            character,
+            '\'' | '"' | '`' | ',' | ';' | '.' | ')' | ']' | '}'
+        )
+    });
+    if trimmed.len() < 6 {
+        return false;
+    }
+    trimmed.chars().any(|character| character.is_ascii_digit())
+        || trimmed.len() >= 16
+        || trimmed.contains('_')
+        || (trimmed.chars().any(char::is_uppercase)
+            && trimmed.chars().any(char::is_lowercase)
+            && trimmed.chars().filter(|c| c.is_uppercase()).count() > 1)
+}
+
+/// Where a credential value starts on this line, and how it ends.
+enum CredentialValue {
+    /// `key=value` / `key: value` — everything after the separator is value.
+    RestOfLine { at: usize },
+    /// `key is value` / `key value` — only the next token is value.
+    NextToken { at: usize },
+}
+
+fn find_credential_value(line: &str) -> Option<CredentialValue> {
+    let lowered = line.to_ascii_lowercase();
+    CREDENTIAL_KEYS
+        .iter()
+        .filter_map(|key| {
+            let at = lowered.find(key)?;
+            let after = at + key.len();
+            let tail = &lowered[after..];
+            for separator in ["=", ":"] {
+                if let Some(rest) = tail.strip_prefix(separator) {
+                    let padding = rest.len() - rest.trim_start().len();
+                    return Some(CredentialValue::RestOfLine {
+                        at: after + separator.len() + padding,
+                    });
+                }
+            }
+            // `is`/`was`/a bare space: only the next token can be the value,
+            // and only if it looks like one.
+            for separator in [" is ", " was ", " "] {
+                let Some(rest) = tail.strip_prefix(separator) else {
+                    continue;
+                };
+                let padding = rest.len() - rest.trim_start().len();
+                let start = after + separator.len() + padding;
+                let token = line[start..].split_whitespace().next().unwrap_or_default();
+                if looks_like_credential_value(token) {
+                    return Some(CredentialValue::NextToken { at: start });
+                }
+                break;
+            }
+            None
+        })
+        .min_by_key(|found| match found {
+            CredentialValue::RestOfLine { at } | CredentialValue::NextToken { at } => *at,
+        })
+}
+
+fn redact_credential_assignment_line(line: &str) -> String {
+    let Some(found) = find_credential_value(line) else {
+        return line.to_owned();
+    };
+    let (start, payload_len) = match found {
+        CredentialValue::RestOfLine { at } => {
+            let payload = line[at..].trim_end();
+            (at, payload.len())
+        }
+        CredentialValue::NextToken { at } => {
+            let token = line[at..].split_whitespace().next().unwrap_or_default();
+            (at, token.len())
+        }
+    };
+    let payload = &line[start..start + payload_len];
+    if payload.is_empty() || is_context_elision_marker(payload) {
+        return line.to_owned();
+    }
+    format!(
+        "{}{}{}",
+        &line[..start],
+        context_elision_marker(&Value::String(payload.to_owned())),
+        &line[start + payload_len..]
+    )
 }
 
 /// Absolute paths that describe every POSIX host identically.

@@ -88,3 +88,37 @@ test("unlimited is a choice, and it says what it costs", async ({ page }) => {
     page.getByTestId("coding-session-capacity-unlimited"),
   ).toHaveText("Set a limit");
 });
+
+// Reported 2026-08-24: two turns died as "Idle timeout — no agent activity for
+// 900s" while a long command ran. The budget is the person's now, in the same
+// panel and with the same honesty about when it takes effect.
+test("the silent-turn budget is settable and says what it measures", async ({
+  page,
+}) => {
+  await openSessionsSettings(page);
+
+  const panel = page.getByTestId("settings-coding-session-capacity");
+  await expect(panel).toContainText("Now: 15 minutes");
+  await expect(panel).toContainText("budget for silence");
+  await expect(panel).toContainText("build, a test suite");
+
+  await page.getByTestId("coding-session-idle-timeout-input").fill("45");
+  await page.getByTestId("coding-session-idle-timeout-save").click();
+
+  await expect(panel).toContainText("Now: 45 minutes");
+  // The running provider read 15 minutes at startup, and the panel says so
+  // rather than implying 45 is already in force.
+  await expect(
+    page.getByTestId("coding-session-idle-timeout-pending"),
+  ).toContainText("gives up after 15 minutes of silence");
+  await expect(
+    page.getByTestId("coding-session-idle-timeout-pending"),
+  ).toContainText("next time it starts");
+
+  // And it can be handed back to the provider.
+  await page.getByTestId("coding-session-idle-timeout-default").click();
+  await expect(panel).toContainText("Now: 15 minutes");
+  await expect(
+    page.getByTestId("coding-session-idle-timeout-pending"),
+  ).toHaveCount(0);
+});

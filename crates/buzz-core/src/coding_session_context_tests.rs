@@ -490,3 +490,141 @@ fn an_exempt_interpreter_does_not_rescue_the_host_paths_beside_it() {
         "{sanitized}"
     );
 }
+
+/// Reported 2026-08-24: an operator asked a coding session "what was the
+/// result?" and received `[elided private context: 1934 bytes, sha256:…]`. The
+/// session was working on a git-ACL branch, so its answers contained words like
+/// "credential" and "authorization" — and a substring match on those words
+/// replaced the *entire* message.
+#[test]
+fn prose_about_credentials_survives_because_a_topic_is_not_a_secret() {
+    for text in [
+        "Ran git-credential-nostr and the push authenticated on the retry.",
+        "The authorization check passed for every member of the project.",
+        "I did not find a secret in the hook config; the ACL is what refused it.",
+        "The private key never leaves the keychain, so the provider record holds only a pubkey.",
+        "Set up the credentials helper, then re-ran the test.",
+    ] {
+        assert_eq!(
+            sanitize_coding_session_context_text(text),
+            text,
+            "a sentence about credentials is not a credential"
+        );
+    }
+}
+
+#[test]
+fn a_value_beside_a_credential_word_still_goes() {
+    let sanitized =
+        sanitize_coding_session_context_text("export GITHUB_TOKEN=ghp_0123456789abcdefghij");
+    assert!(
+        !sanitized.contains("ghp_0123456789abcdefghij"),
+        "{sanitized}"
+    );
+    assert!(
+        sanitized.contains("[elided private context: "),
+        "{sanitized}"
+    );
+    assert!(sanitized.starts_with("export"), "{sanitized}");
+
+    let assignment = sanitize_coding_session_context_text("password: hunter2");
+    assert!(!assignment.contains("hunter2"), "{assignment}");
+    assert!(assignment.starts_with("password:"), "{assignment}");
+
+    let prose = sanitize_coding_session_context_text("the api key is abcd1234efgh");
+    assert!(!prose.contains("abcd1234efgh"), "{prose}");
+    assert!(prose.starts_with("the api key is"), "{prose}");
+}
+
+#[test]
+fn every_shape_the_old_rule_caught_is_still_caught() {
+    for secret in [
+        "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "sk-abcdefghijklmnopqrstuvwxyz",
+        "ghp_0123456789abcdefghijklmnop",
+        "github_pat_11ABCDEFG0123456789",
+        "xoxb-1234567890-abcdefghij",
+        "AKIAIOSFODNN7EXAMPLE",
+    ] {
+        let sanitized = sanitize_coding_session_context_text(&format!("value {secret} end"));
+        assert!(
+            !sanitized.contains(secret),
+            "{secret} survived: {sanitized}"
+        );
+        assert!(sanitized.starts_with("value "), "{sanitized}");
+        assert!(sanitized.ends_with(" end"), "{sanitized}");
+    }
+}
+
+#[test]
+fn a_key_block_is_redacted_whole_and_takes_nothing_else_with_it() {
+    let text = concat!(
+        "Here is the config.\n",
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n",
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n",
+        "-----END OPENSSH PRIVATE KEY-----\n",
+        "That is the whole file.",
+    );
+    let sanitized = sanitize_coding_session_context_text(text);
+    assert!(
+        !sanitized.contains("b3BlbnNzaC1rZXktdjEAAAAABG5vbmU"),
+        "{sanitized}"
+    );
+    assert!(sanitized.starts_with("Here is the config."), "{sanitized}");
+    assert!(
+        sanitized.ends_with("That is the whole file."),
+        "{sanitized}"
+    );
+    assert!(
+        sanitized.contains("[elided private context: "),
+        "{sanitized}"
+    );
+}
+
+/// The redaction is per line, so a value cannot swallow the paragraph that
+/// explains it — the failure mode this whole change exists to undo.
+#[test]
+fn an_assignment_redacts_its_own_line_and_no_further() {
+    let sanitized = sanitize_coding_session_context_text(
+        "Checked the config.\ntoken: abcdef123456\nThe rest of the run was clean.",
+    );
+    assert!(!sanitized.contains("abcdef123456"), "{sanitized}");
+    assert!(sanitized.starts_with("Checked the config."), "{sanitized}");
+    assert!(
+        sanitized.ends_with("The rest of the run was clean."),
+        "{sanitized}"
+    );
+}
+
+/// The space-separated form has no separator to key on, so the *shape* of the
+/// following token decides. Getting this wrong in either direction is the
+/// whole difficulty: too eager and prose loses a word, too shy and a password
+/// ships to the channel.
+#[test]
+fn a_space_separated_value_goes_and_the_next_word_of_a_sentence_stays() {
+    let leaked = sanitize_coding_session_context_text("with password hunter2 in the config");
+    assert!(!leaked.contains("hunter2"), "{leaked}");
+    assert!(leaked.starts_with("with password "), "{leaked}");
+    assert!(leaked.ends_with(" in the config"), "{leaked}");
+
+    for prose in [
+        "the private key never leaves the keychain",
+        "the secret in the hook config was fine",
+        "credentials helper, then re-ran the test",
+        "password protection stays on",
+    ] {
+        assert_eq!(
+            sanitize_coding_session_context_text(prose),
+            prose,
+            "the next word of a sentence is not a value"
+        );
+    }
+}
+
+/// A repo binary named `git-credential-nostr` contains a credential word and
+/// is not one. This is the exact string from the session that reported the bug.
+#[test]
+fn a_tool_named_after_credentials_is_not_redacted() {
+    let text = "Ran git-credential-nostr; the push retried once and succeeded.";
+    assert_eq!(sanitize_coding_session_context_text(text), text);
+}

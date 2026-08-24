@@ -402,6 +402,7 @@ pub(crate) fn invoke_handler(
         session_provider::commands::coding_session_provider_status,
         session_provider::commands::coding_session_capacity_settings,
         session_provider::commands::set_coding_session_capacity,
+        session_provider::commands::set_coding_session_turn_idle_timeout,
         session_provider::commands::coding_session_provider_models,
         session_provider::commands::coding_session_provider_runtimes,
         session_provider::commands::provision_coding_session_provider,

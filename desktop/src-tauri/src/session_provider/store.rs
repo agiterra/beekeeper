@@ -88,6 +88,15 @@ pub(crate) struct CodingSessionProviderStore {
     /// `buzz_session_provider::config::UNLIMITED_MAX_SESSIONS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_sessions: Option<usize>,
+    /// How long one turn may go with no word from the agent, in seconds.
+    ///
+    /// `None` leaves the provider's own default (15 minutes). Every line the
+    /// adapter writes resets the clock, so this is a silence budget, not a
+    /// runtime budget — and a single long tool call that reports nothing until
+    /// it finishes is exactly what spends it. A turn that ran a 16-minute
+    /// build was killed as "no agent activity" (reported 2026-08-24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_idle_timeout_secs: Option<u64>,
 }
 
 impl Default for CodingSessionProviderStore {
@@ -96,6 +105,7 @@ impl Default for CodingSessionProviderStore {
             version: STORE_VERSION,
             providers: BTreeMap::new(),
             max_sessions: None,
+            turn_idle_timeout_secs: None,
         }
     }
 }

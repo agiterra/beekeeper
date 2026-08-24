@@ -5,10 +5,16 @@ import { useAgentProgressCoordination } from "@/features/agent-progress/lib/agen
 import {
   CODING_SESSION_CAPACITY_MAX,
   CODING_SESSION_CAPACITY_UNLIMITED,
+  CODING_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+  CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
   codingSessionCapacityChoice,
   codingSessionCapacityLabel,
   codingSessionCapacityPending,
+  codingSessionIdleTimeoutLabel,
+  codingSessionIdleTimeoutMinutes,
+  codingSessionIdleTimeoutPending,
   parseCodingSessionCapacityInput,
+  parseCodingSessionIdleTimeoutInput,
 } from "@/features/coding-sessions/lib/codingSessionCapacity";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
@@ -16,6 +22,7 @@ import {
   getCodingSessionCapacity,
   getCodingSessionProviderStatus,
   setCodingSessionCapacity,
+  setCodingSessionTurnIdleTimeout,
 } from "@/shared/api/tauriSessionProvider";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -69,6 +76,34 @@ export function CodingSessionCapacityCard() {
       setDirty(false);
     },
   });
+
+  const [idleDraft, setIdleDraft] = React.useState<number>(15);
+  const [idleDirty, setIdleDirty] = React.useState(false);
+  const storedIdleSeconds =
+    settings === null
+      ? null
+      : (settings.turnIdleTimeoutSecs ?? settings.defaultTurnIdleTimeoutSecs);
+  React.useEffect(() => {
+    if (idleDirty || storedIdleSeconds === null) return;
+    setIdleDraft(codingSessionIdleTimeoutMinutes(storedIdleSeconds));
+  }, [idleDirty, storedIdleSeconds]);
+  const saveIdle = useMutation({
+    mutationFn: (minutes: number | null) =>
+      setCodingSessionTurnIdleTimeout(minutes === null ? null : minutes * 60),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["coding-session-capacity"], next);
+      setIdleDirty(false);
+    },
+  });
+  const idlePending =
+    settings === null
+      ? null
+      : codingSessionIdleTimeoutPending({
+          turnIdleTimeoutSecs: settings.turnIdleTimeoutSecs,
+          defaultTurnIdleTimeoutSecs: settings.defaultTurnIdleTimeoutSecs,
+          runningTurnIdleTimeoutSecs: settings.runningTurnIdleTimeoutSecs,
+          providerRunning: statusQuery.data?.running === true,
+        });
 
   const choice =
     settings === null
@@ -159,6 +194,93 @@ export function CodingSessionCapacityCard() {
         >
           {choice.kind === "unlimited" ? "Set a limit" : "Unlimited"}
         </Button>
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-border/60 pt-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="coding-session-idle-timeout"
+            >
+              Give up on a silent turn after
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                className="h-9 w-24"
+                data-testid="coding-session-idle-timeout-input"
+                disabled={settingsQuery.isPending}
+                id="coding-session-idle-timeout"
+                inputMode="numeric"
+                max={CODING_SESSION_IDLE_TIMEOUT_MAX_MINUTES}
+                min={CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES}
+                onChange={(event) => {
+                  setIdleDirty(true);
+                  setIdleDraft((previous) =>
+                    parseCodingSessionIdleTimeoutInput(
+                      event.target.value,
+                      previous,
+                    ),
+                  );
+                }}
+                type="number"
+                value={idleDraft}
+              />
+              <span className="text-sm text-muted-foreground">minutes</span>
+            </div>
+          </div>
+          <Button
+            data-testid="coding-session-idle-timeout-save"
+            disabled={saveIdle.isPending}
+            onClick={() => saveIdle.mutate(idleDraft)}
+            size="sm"
+            type="button"
+          >
+            {saveIdle.isPending ? "Saving…" : "Save"}
+          </Button>
+          {settings?.turnIdleTimeoutSecs == null ? null : (
+            <Button
+              data-testid="coding-session-idle-timeout-default"
+              disabled={saveIdle.isPending}
+              onClick={() => saveIdle.mutate(null)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Use default
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {settings === null
+            ? "Reading this computer's turn timeout…"
+            : `Now: ${codingSessionIdleTimeoutLabel(
+                settings.turnIdleTimeoutSecs,
+                settings.defaultTurnIdleTimeoutSecs,
+              )}.`}{" "}
+          This is a budget for <em>silence</em>, not for work: anything the
+          agent reports resets it. A single long command that prints nothing
+          until it finishes — a build, a test suite — is what spends it, and a
+          turn that exceeds it is ended and marked failed.
+        </p>
+        {idlePending === null ? null : (
+          <p
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
+            data-testid="coding-session-idle-timeout-pending"
+          >
+            {idlePending}
+          </p>
+        )}
+        {saveIdle.isError ? (
+          <p
+            className="text-xs text-destructive"
+            data-testid="coding-session-idle-timeout-error"
+          >
+            {saveIdle.error instanceof Error
+              ? saveIdle.error.message
+              : "Could not save the turn timeout."}
+          </p>
+        ) : null}
       </div>
 
       {choice.kind === "unlimited" ? (

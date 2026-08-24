@@ -20,7 +20,18 @@ export type CodingSessionCapacitySettings = {
   defaultMaxSessions: number;
   /** The ceiling the running provider started with, when one is running. */
   runningMaxSessions: number | null;
+  /** Stored per-turn silence budget in seconds, or null for the default. */
+  turnIdleTimeoutSecs: number | null;
+  /** The provider's own default silence budget, in seconds. */
+  defaultTurnIdleTimeoutSecs: number;
+  /** The budget the running provider started with, when one is running. */
+  runningTurnIdleTimeoutSecs: number | null;
 };
+
+/** Shortest silence budget worth offering: below this, ordinary thinking trips it. */
+export const CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1;
+/** Longest: past this, a wedged turn outlives the person's patience anyway. */
+export const CODING_SESSION_IDLE_TIMEOUT_MAX_MINUTES = 240;
 
 export type CodingSessionCapacityChoice =
   | { kind: "default" }
@@ -96,4 +107,63 @@ export function codingSessionCapacityPending(settings: {
     running,
     settings.defaultMaxSessions,
   ).toLowerCase()}. Your change applies the next time it starts.`;
+}
+
+/**
+ * Coerce typed minutes into a storable silence budget.
+ *
+ * Same rule as the capacity field: unusable input keeps the previous value
+ * rather than silently becoming something the person did not choose.
+ */
+export function parseCodingSessionIdleTimeoutInput(
+  raw: string,
+  previousMinutes: number,
+): number {
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (
+    !Number.isFinite(parsed) ||
+    parsed < CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES
+  ) {
+    return previousMinutes;
+  }
+  return Math.min(parsed, CODING_SESSION_IDLE_TIMEOUT_MAX_MINUTES);
+}
+
+/** Seconds as the minutes a person set, rounded up so nothing reads as zero. */
+export function codingSessionIdleTimeoutMinutes(seconds: number): number {
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+/** How the current silence budget reads in a sentence. */
+export function codingSessionIdleTimeoutLabel(
+  turnIdleTimeoutSecs: number | null,
+  defaultTurnIdleTimeoutSecs: number,
+): string {
+  const seconds = turnIdleTimeoutSecs ?? defaultTurnIdleTimeoutSecs;
+  const minutes = codingSessionIdleTimeoutMinutes(seconds);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+/**
+ * What the panel must disclose about a silence budget not yet in force.
+ *
+ * Same reason as {@link codingSessionCapacityPending}: the child reads it from
+ * the environment once, at startup.
+ */
+export function codingSessionIdleTimeoutPending(settings: {
+  turnIdleTimeoutSecs: number | null;
+  defaultTurnIdleTimeoutSecs: number;
+  runningTurnIdleTimeoutSecs: number | null;
+  providerRunning: boolean;
+}): string | null {
+  if (!settings.providerRunning) return null;
+  const stored =
+    settings.turnIdleTimeoutSecs ?? settings.defaultTurnIdleTimeoutSecs;
+  const running =
+    settings.runningTurnIdleTimeoutSecs ?? settings.defaultTurnIdleTimeoutSecs;
+  if (stored === running) return null;
+  return `The provider running now gives up after ${codingSessionIdleTimeoutLabel(
+    running,
+    settings.defaultTurnIdleTimeoutSecs,
+  )} of silence. Your change applies the next time it starts.`;
 }

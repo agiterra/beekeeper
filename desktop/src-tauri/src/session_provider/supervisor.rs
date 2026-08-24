@@ -108,6 +108,9 @@ struct SupervisorHandle {
     /// what is stored: the child reads its ceiling from the environment once,
     /// at startup.
     max_sessions: Option<usize>,
+    /// The silence budget this supervisor's children were started with, for
+    /// the same reason as `max_sessions`: stored is not in force.
+    turn_idle_timeout_secs: Option<u64>,
 }
 
 impl CodingSessionProviderState {
@@ -120,6 +123,15 @@ impl CodingSessionProviderState {
             .lock()
             .ok()
             .and_then(|handle| handle.as_ref().and_then(|handle| handle.max_sessions))
+    }
+
+    /// The per-turn silence budget the running provider was started with.
+    pub(crate) fn running_turn_idle_timeout_secs(&self) -> Option<u64> {
+        self.inner.lock().ok().and_then(|handle| {
+            handle
+                .as_ref()
+                .and_then(|handle| handle.turn_idle_timeout_secs)
+        })
     }
 
     /// Pubkey of the provider currently being supervised.
@@ -251,9 +263,13 @@ fn start_supervisor(
     // Read here, not per respawn: a supervised child that crashes comes back
     // with the ceiling its supervisor started under, so the number a person
     // sees as "in force" stays true until they restart the provider.
-    let max_sessions = load_provider_store(app)
-        .map(|store| store.max_sessions)
-        .unwrap_or(None);
+    let stored_settings = load_provider_store(app).ok();
+    let max_sessions = stored_settings
+        .as_ref()
+        .and_then(|store| store.max_sessions);
+    let turn_idle_timeout_secs = stored_settings
+        .as_ref()
+        .and_then(|store| store.turn_idle_timeout_secs);
     let binary = resolve_command(PROVIDER_BINARY).ok_or_else(|| {
         format!(
             "{PROVIDER_BINARY} was not found — build it with \
@@ -281,6 +297,7 @@ fn start_supervisor(
         &state_dir,
         &log_path,
         max_sessions,
+        turn_idle_timeout_secs,
     )?;
     child_pid.store(child.id(), Ordering::Release);
 
@@ -290,6 +307,7 @@ fn start_supervisor(
         stop: Arc::clone(&stop),
         child_pid: Arc::clone(&child_pid),
         max_sessions,
+        turn_idle_timeout_secs,
     });
 
     let app = app.clone();
@@ -336,6 +354,7 @@ fn start_supervisor(
                 &state_dir,
                 &log_path,
                 max_sessions,
+                turn_idle_timeout_secs,
             ) {
                 Ok(next) => {
                     child_pid.store(next.id(), Ordering::Release);
@@ -589,6 +608,7 @@ fn spawn_provider_child(
     state_dir: &Path,
     log_path: &Path,
     max_sessions: Option<usize>,
+    turn_idle_timeout_secs: Option<u64>,
 ) -> Result<std::process::Child, String> {
     let _ = append_log_marker(
         log_path,
@@ -624,6 +644,7 @@ fn spawn_provider_child(
         // reads its ceiling from the environment at startup, so a change takes
         // effect the next time the provider starts and never mid-flight.
         max_sessions,
+        turn_idle_timeout_secs,
         // Computed per spawn: installing an adapter takes effect on the next
         // provider (re)start, matching the rest of the discovery surface.
         runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),

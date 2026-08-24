@@ -76,6 +76,12 @@ pub struct CodingSessionCapacitySettings {
     /// a surface that shows the stored value alone would claim a ceiling that
     /// is not being enforced.
     pub running_max_sessions: Option<usize>,
+    /// The person's stored per-turn silence budget, or `None` for the default.
+    pub turn_idle_timeout_secs: Option<u64>,
+    /// The provider's own default silence budget, in seconds.
+    pub default_turn_idle_timeout_secs: u64,
+    /// The budget the **running** provider started with, when one is running.
+    pub running_turn_idle_timeout_secs: Option<u64>,
 }
 
 /// Read the stored ceiling alongside what is actually in force.
@@ -84,11 +90,15 @@ pub async fn coding_session_capacity_settings(
     app: AppHandle,
     provider: State<'_, CodingSessionProviderState>,
 ) -> Result<CodingSessionCapacitySettings, String> {
-    let stored = crate::session_provider::store::load_provider_store(&app)?.max_sessions;
+    let store = crate::session_provider::store::load_provider_store(&app)?;
     Ok(CodingSessionCapacitySettings {
-        max_sessions: stored,
+        max_sessions: store.max_sessions,
         default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
         running_max_sessions: provider.running_max_sessions(),
+        turn_idle_timeout_secs: store.turn_idle_timeout_secs,
+        default_turn_idle_timeout_secs:
+            buzz_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
+        running_turn_idle_timeout_secs: provider.running_turn_idle_timeout_secs(),
     })
 }
 
@@ -103,11 +113,30 @@ pub async fn set_coding_session_capacity(
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
     store.max_sessions = max_sessions;
     crate::session_provider::store::save_provider_store(&app, &store)?;
-    Ok(CodingSessionCapacitySettings {
-        max_sessions,
-        default_max_sessions: buzz_session_provider_pkg::config::DEFAULT_MAX_SESSIONS,
-        running_max_sessions: provider.running_max_sessions(),
-    })
+    coding_session_capacity_settings(app, provider).await
+}
+
+/// Store a new per-turn silence budget. `None` restores the provider default.
+///
+/// A turn dies when the adapter says *nothing* for this long — every line it
+/// writes resets the clock — so the number a person wants here is "the longest
+/// my agent may run a silent command", not "the longest a turn may take". A
+/// build or a test suite that reports only on completion is what spends it.
+#[tauri::command]
+pub async fn set_coding_session_turn_idle_timeout(
+    app: AppHandle,
+    provider: State<'_, CodingSessionProviderState>,
+    turn_idle_timeout_secs: Option<u64>,
+) -> Result<CodingSessionCapacitySettings, String> {
+    if turn_idle_timeout_secs == Some(0) {
+        // Zero would be "die on the first quiet millisecond", which is not a
+        // setting anyone wants and is not what the provider reads it as.
+        return Err("a turn idle timeout of zero seconds would end every turn immediately; leave it unset for the provider default".to_string());
+    }
+    let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    store.turn_idle_timeout_secs = turn_idle_timeout_secs;
+    crate::session_provider::store::save_provider_store(&app, &store)?;
+    coding_session_capacity_settings(app, provider).await
 }
 
 /// Probe one runtime's model surface.

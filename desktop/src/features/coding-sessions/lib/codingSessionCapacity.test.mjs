@@ -7,7 +7,11 @@ import {
   codingSessionCapacityLabel,
   codingSessionCapacityPending,
   codingSessionCapacityValue,
+  codingSessionIdleTimeoutLabel,
+  codingSessionIdleTimeoutMinutes,
+  codingSessionIdleTimeoutPending,
   parseCodingSessionCapacityInput,
+  parseCodingSessionIdleTimeoutInput,
 } from "./codingSessionCapacity.ts";
 
 test("the three states round-trip", () => {
@@ -73,5 +77,63 @@ test("a change that is not yet in force says so, and one that is stays quiet", (
       providerRunning: false,
     }),
     null,
+  );
+});
+
+// Reported 2026-08-24: two of Andy's turns died as "Idle timeout — no agent
+// activity for 900s". The clock is a silence budget — every line the adapter
+// writes resets it — so a single long command that reports only on completion
+// is what spends it. It is now the person's to set.
+test("typed minutes are coerced the same way the capacity field is", () => {
+  assert.equal(parseCodingSessionIdleTimeoutInput("30", 15), 30);
+  // Unusable input keeps what was there rather than inventing a number.
+  for (const raw of ["", "   ", "abc", "0", "-5"]) {
+    assert.equal(parseCodingSessionIdleTimeoutInput(raw, 15), 15);
+  }
+  assert.equal(parseCodingSessionIdleTimeoutInput("99999", 15), 240);
+});
+
+test("seconds read back as the minutes a person set, never as zero", () => {
+  assert.equal(codingSessionIdleTimeoutMinutes(900), 15);
+  assert.equal(codingSessionIdleTimeoutMinutes(3600), 60);
+  // A sub-minute budget would otherwise render as "0 minutes".
+  assert.equal(codingSessionIdleTimeoutMinutes(30), 1);
+});
+
+test("the label names the default when nothing is stored", () => {
+  assert.equal(codingSessionIdleTimeoutLabel(null, 900), "15 minutes");
+  assert.equal(codingSessionIdleTimeoutLabel(3600, 900), "60 minutes");
+  assert.equal(codingSessionIdleTimeoutLabel(60, 900), "1 minute");
+});
+
+test("a saved budget that is not in force says so, and an equal one stays quiet", () => {
+  assert.equal(
+    codingSessionIdleTimeoutPending({
+      turnIdleTimeoutSecs: 3600,
+      defaultTurnIdleTimeoutSecs: 900,
+      runningTurnIdleTimeoutSecs: null,
+      providerRunning: true,
+    }),
+    "The provider running now gives up after 15 minutes of silence. Your change applies the next time it starts.",
+  );
+  assert.equal(
+    codingSessionIdleTimeoutPending({
+      turnIdleTimeoutSecs: 900,
+      defaultTurnIdleTimeoutSecs: 900,
+      runningTurnIdleTimeoutSecs: null,
+      providerRunning: true,
+    }),
+    null,
+    "stored equals running: there is nothing pending to disclose",
+  );
+  assert.equal(
+    codingSessionIdleTimeoutPending({
+      turnIdleTimeoutSecs: 3600,
+      defaultTurnIdleTimeoutSecs: 900,
+      runningTurnIdleTimeoutSecs: null,
+      providerRunning: false,
+    }),
+    null,
+    "nothing is running, so nothing is enforcing an older number",
   );
 });

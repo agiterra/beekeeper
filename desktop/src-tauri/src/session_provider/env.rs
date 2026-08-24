@@ -52,6 +52,8 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// Ceiling on concurrently live agent processes, or `None` to leave the
     /// provider's own default (4) in charge. `Some(0)` is unlimited.
     pub max_sessions: Option<usize>,
+    /// Per-turn silence budget in seconds; `None` keeps the provider default.
+    pub turn_idle_timeout_secs: Option<u64>,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -90,6 +92,12 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
         env.insert(
             "BUZZ_CSP_MAX_SESSIONS".to_string(),
             max_sessions.to_string(),
+        );
+    }
+    if let Some(idle_timeout) = inputs.turn_idle_timeout_secs {
+        env.insert(
+            "BUZZ_CSP_IDLE_TIMEOUT".to_string(),
+            idle_timeout.to_string(),
         );
     }
     env.insert(

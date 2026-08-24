@@ -90,11 +90,31 @@ type MockCommandAvailability = {
   resolvedPath?: string | null;
 };
 
-/** Mutable capacity mock: a stored ceiling plus the running child's. */
+/** Mutable session-settings mock: stored values plus the running child's. */
 const mockCodingSessionCapacity: {
   maxSessions: number | null;
   runningMaxSessions: number | null;
-} = { maxSessions: null, runningMaxSessions: null };
+  turnIdleTimeoutSecs: number | null;
+  runningTurnIdleTimeoutSecs: number | null;
+} = {
+  maxSessions: null,
+  runningMaxSessions: null,
+  turnIdleTimeoutSecs: null,
+  runningTurnIdleTimeoutSecs: null,
+};
+
+/** The settings payload both the read and the writes answer with. */
+function codingSessionCapacitySnapshot() {
+  return {
+    maxSessions: mockCodingSessionCapacity.maxSessions,
+    defaultMaxSessions: 4,
+    runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
+    turnIdleTimeoutSecs: mockCodingSessionCapacity.turnIdleTimeoutSecs,
+    defaultTurnIdleTimeoutSecs: 900,
+    runningTurnIdleTimeoutSecs:
+      mockCodingSessionCapacity.runningTurnIdleTimeoutSecs,
+  };
+}
 
 export type MockManagedAgentSeed = {
   pubkey: string;
@@ -12599,26 +12619,24 @@ export function maybeInstallE2eTauriMocks() {
         return status;
       }
       case "coding_session_capacity_settings": {
-        // Mirrors the host: a stored ceiling, the provider's own default, and
+        // Mirrors the host: stored values, the provider's own defaults, and
         // whatever the running child actually started with.
-        return {
-          maxSessions: mockCodingSessionCapacity.maxSessions,
-          defaultMaxSessions: 4,
-          runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
-        };
+        return codingSessionCapacitySnapshot();
       }
       case "set_coding_session_capacity": {
         const next = (payload as { maxSessions?: number | null } | null)
           ?.maxSessions;
         mockCodingSessionCapacity.maxSessions = next ?? null;
-        // Deliberately does NOT update `runningMaxSessions`: the real provider
-        // reads its ceiling at startup, and a mock that applied it instantly
-        // would hide the disclosure the panel exists to make.
-        return {
-          maxSessions: mockCodingSessionCapacity.maxSessions,
-          defaultMaxSessions: 4,
-          runningMaxSessions: mockCodingSessionCapacity.runningMaxSessions,
-        };
+        // Deliberately does NOT update the `running*` values: the real
+        // provider reads both at startup, and a mock that applied them
+        // instantly would hide the disclosure the panel exists to make.
+        return codingSessionCapacitySnapshot();
+      }
+      case "set_coding_session_turn_idle_timeout": {
+        const next = (payload as { turnIdleTimeoutSecs?: number | null } | null)
+          ?.turnIdleTimeoutSecs;
+        mockCodingSessionCapacity.turnIdleTimeoutSecs = next ?? null;
+        return codingSessionCapacitySnapshot();
       }
       case "coding_session_provider_runtimes": {
         const mock = activeConfig?.mock;

@@ -226,6 +226,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         runtimes: sample_runtimes(),
         augmented_path: Some("/opt/buzz/bin:/usr/bin".into()),
         max_sessions: None,
+        turn_idle_timeout_secs: None,
     })
 }
 
@@ -308,6 +309,7 @@ fn env_omits_an_empty_runtime_list() {
         runtimes: Vec::new(),
         augmented_path: None,
         max_sessions: None,
+        turn_idle_timeout_secs: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
@@ -654,6 +656,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         runtimes: Vec::new(),
         augmented_path: None,
         max_sessions,
+        turn_idle_timeout_secs: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
@@ -669,5 +672,33 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
             .get("BUZZ_CSP_MAX_SESSIONS")
             .map(String::as_str),
         Some("0")
+    );
+}
+
+/// Same contract for the per-turn silence budget: two of Andy's turns died as
+/// "no agent activity for 900s" while a long command ran, so the number is the
+/// person's — and an unset one must stay unset.
+#[test]
+fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
+    let record = sample_record();
+    let base = |turn_idle_timeout_secs| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions: None,
+        turn_idle_timeout_secs,
+    };
+
+    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_IDLE_TIMEOUT"));
+    assert_eq!(
+        build_provider_env(&base(Some(3_600)))
+            .get("BUZZ_CSP_IDLE_TIMEOUT")
+            .map(String::as_str),
+        Some("3600")
     );
 }

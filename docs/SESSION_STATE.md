@@ -1185,6 +1185,49 @@ same morning and one left as a product question.
       "pause becomes a first-class lifecycle state".
 
 
+### Found 2026-08-24 in Andy's session on the shared relay
+
+49. **A coding session working on authorization could not show its work.** Andy
+    asked "what was the result?" and received `[elided private context: 1934
+    bytes, sha256:…]` — the whole answer, replaced by a hash. Three of his
+    turns rendered that way.
+    - **Cause.** `contains_credential_material`
+      (`crates/buzz-core/src/coding_session_context.rs`) substring-matched a
+      list of *words* — "secret", "credential", "authorization", "private key",
+      "token:" — and any hit replaced the **entire** text with an elision
+      marker. His session was on `feat/project-membership-git-acl`. This repo
+      ships a binary called `git-credential-nostr`; an agent explaining a push
+      cannot avoid the word. The guard was keyed to the topic, so the sessions
+      most worth reading were the ones it erased.
+    - **Fixed the same day: secrets are redacted, sentences are not.** A hit
+      now has to be a *value* — a PEM block (redacted whole), a token with a
+      recognisable shape (`nsec1…`, `sk-…`, `ghp_…`, `github_pat_…`, `xoxb-…`,
+      `AKIA…`), or the value side of an assignment (`token=…`, `password: …`,
+      `api key is …`, and the bare-space form when the following token looks
+      like a value rather than the next word of a sentence). A bare mention of
+      a credential word is prose and survives. Every shape the old rule caught
+      is still caught; the projector's own leak test proved it, and the leak
+      direction is pinned by tests that were watched fail.
+    - **The tradeoff, stated.** This narrows a guard on signed, channel-visible
+      text. The old rule leaked nothing and destroyed everything; the new one
+      keeps the message and can in principle miss a secret written in a shape
+      no rule anticipated. That is a deliberate trade, and the shape list is
+      the place to add to when a new one appears.
+
+50. **Two of the same session's turns were killed as "Idle timeout — no agent
+    activity for 900s".** The clock is a *silence* budget, not a runtime
+    budget: every line the adapter writes resets it
+    (`crates/buzz-acp/src/acp.rs`, the read loop's `idle_deadline`). A single
+    long command that reports only on completion — a build, a test suite, this
+    repo's own ~11-minute `just ci` — spends the whole fifteen minutes without
+    the agent being stuck at all.
+    - **Fixed by making it the person's.** Settings → App → Sessions carries a
+      "give up on a silent turn after" control beside the session ceiling,
+      stored the same way and disclosed the same way: it reaches the provider
+      at its next start, and the panel says so while the two differ. The
+      default is unchanged at fifteen minutes, because raising it silently
+      would trade one wrong number for another.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
