@@ -40,6 +40,43 @@ test("buildInitialProjectEventTemplates emits a NIP-MP project", () => {
   ]);
 });
 
+test("buildInitialProjectEventTemplates omits buzz-channel when no channel is given", () => {
+  // The shape the create/import dialogs now produce: the repository's
+  // `project` back-reference is its ACL, so there is no channel to pick and
+  // no binding tag to emit.
+  const templates = buildInitialProjectEventTemplates({
+    name: "Sprout",
+    ownerPubkey: OWNER,
+    projectRef: `30621:${OWNER}:general`,
+  });
+
+  assert.deepEqual(templates.repository.tags, [
+    ["d", "sprout"],
+    ["name", "Sprout"],
+    ["project", `30621:${OWNER}:general`],
+  ]);
+  assert.deepEqual(templates.project.tags, [
+    ["d", "sprout"],
+    ["name", "Sprout"],
+    ["a", `30617:${OWNER}:sprout`],
+  ]);
+});
+
+test("buildInitialProjectEventTemplates still rejects a malformed channel when one is given", () => {
+  // Optional is not the same as unvalidated: a malformed value resolves
+  // `Broken` at the relay, which fails closed for everyone — strictly worse
+  // than the no-binding case it would have replaced.
+  assert.throws(
+    () =>
+      buildInitialProjectEventTemplates({
+        accessChannelId: "not-a-uuid",
+        name: "Sprout",
+        ownerPubkey: OWNER,
+      }),
+    /access channel is invalid/,
+  );
+});
+
 test("buildInitialProjectEventTemplates rejects names without an identifier", () => {
   assert.throws(
     () =>

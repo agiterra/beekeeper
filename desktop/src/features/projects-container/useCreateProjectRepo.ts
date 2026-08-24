@@ -15,7 +15,13 @@ export type CreateProjectRepoInput = {
   /** Target container — may be the local General placeholder. */
   project: ProjectContainer;
   name: string;
-  accessChannelId: string;
+  /**
+   * Optional legacy `buzz-channel` binding. Access normally comes from the
+   * project's roster (the repo's `project` back-reference is the ACL), so
+   * the create/import dialogs no longer collect this; it stays here for
+   * callers repairing a repo that predates the roster.
+   */
+  accessChannelId?: string;
   description?: string;
   cloneUrl?: string;
   webUrl?: string;

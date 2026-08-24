@@ -29,7 +29,7 @@ One custom kind, held by one signer, with all group state in one replaceable eve
 ## Non-Goals
 
 This NIP does not define shared or delegated project editing — a project is replaceable only by its own signer (see [Authority](#authority)).
-This NIP does not define any authorization over member repositories. Membership is not a permission grant, and a project is never consulted by git push policy.
+This NIP does not define any authorization over member repositories **through a project's own `a` tags**. Forward-referencing a repository is not a permission grant. Authorization flows only the other way, from the repository's own `["project", …]` back-reference — see [Repository access](#repository-access).
 This NIP does not define project-level branch protection, CI, or workflow configuration.
 This NIP does not define nested projects. A project's members are repositories, never other projects.
 This NIP does not require relays to verify that a member coordinate resolves to an existing repository — a project may reference a repository that does not exist yet, or no longer does.
@@ -147,6 +147,8 @@ The tag's arity is 2 to 4 (`invite-tag-arity`). The pinned role vocabulary is `o
 |------------|-------|--------------|--------|
 | Read the container and its contents | ✓ | ✓ | ✓ |
 | Write into project contents (channels, forums, own sessions, repos) | ✓ | ✓ | — |
+| `clone`/`fetch` a member repository over git ([Repository access](#repository-access)) | ✓ | ✓ | ✓ |
+| `push` to a member repository | as `owner` | as `member` | — |
 | Manage the roster (kinds `9010`/`9011`) | ✓ | — | — |
 | Edit head metadata (name, description, channel, access) | — | — | — |
 
@@ -189,13 +191,34 @@ Head-carried `p` tags require an owner republish per roster change and cannot ex
 
 Clients MUST read the roster from the latest `39010`, falling back to the head's `p` tags only when no projection exists (the roster is still head-sourced). `39010` is never client-submitted — the relay rejects a submitted one. Both op kinds and the projection are withheld from readers outside a private project by the same coordinate predicate that hides the container's other content.
 
-#### Repository access (phase 2)
+#### Repository access
 
-A repository joins a project by carrying `["project", "30621:<owner>:<project-d>"]` on its own `kind:30617` announcement — the repo owner's assertion, so gating on it never lets a stranger's project hide someone else's repository. When that coordinate resolves to a **private** project, the Buzz relay:
+A repository joins a project by carrying `["project", "30621:<owner>:<project-d>"]` on its own `kind:30617` announcement — the repo owner's assertion, so gating on it never lets a stranger's project hide or expose someone else's repository.
+
+**Event surface (private projects only).** When that coordinate resolves to a **private** project, the Buzz relay:
 
 - **Hides the repository's event surface** from readers outside the project: the `kind:30617` announcement, the relay-signed `kind:30618` ref state, and every NIP-34 child event that `a`-tags the repository (`1617` patches, `1618`/`1619` PRs, `1621` issues, `1630`–`1633` status), across the same read surfaces as the container gate. An event's own author always sees it; the repository owner is always admitted.
 - **Gates writes**: `kind:30618` and the child kinds targeting the repository are rejected (`restricted:`) unless the author is the repository owner, the project owner, or an invited member. The relay's own key is exempt so relay-signed ref state can be emitted.
-- **Extends git smart-HTTP reads**: the project's owner and invited members may `clone`/`fetch` the repository even without membership in its `buzz-channel`-bound channel — a purely additive grant. Explicit channel members keep read access (phase-1 consent rule; they can operate on the code but do not see the project's event surface unless invited), and push authorization is unchanged (bound-channel roles + `buzz-protect` rules).
+
+A public project applies neither: its contents are visible, so there is no gate to apply.
+
+**Git transport (every project, at any visibility).** The roster is a git ACL in its own right, sitting alongside the repository's `buzz-channel` binding. A repository may carry either tag, both, or neither, and the relay resolves the caller's effective role as the **more permissive** of the two grants:
+
+| Project role | `clone` / `fetch` | `push` |
+|--------------|-------------------|--------|
+| Owner (creator or roster `owner`) | ✓ | as NIP-29 `owner` |
+| Collaborator | ✓ | as NIP-29 `member` |
+| Viewer | ✓ | — |
+| Not on the roster | — | — |
+
+Neither ACL narrows the other: a channel `admin` is not demoted by also being a project `collaborator`, and a project `owner` is not demoted by also being a channel `guest`. `buzz-protect` rules apply to every pusher regardless of which path granted the role, owners included.
+
+Two consequences are deliberate and stated rather than left to be discovered:
+
+- **Visibility never grants.** A *public* project's repositories are no more cloneable than a private one's — only a roster row (or the implicit creator row) admits anyone. Public visibility governs the event surface above, not git transport. A relay MUST NOT infer a transport grant from visibility.
+- **A repository with neither tag is unreachable.** It has no ACL, so the relay denies every clone/fetch/push (`no_channel_binding`) until its owner links a project or binds a channel. This is the vanilla-NIP-34-announcement case, and it is the *only* case that earns that remediation: a repository inside a project is legitimately unbound, and telling its pusher to bind a channel would be advice for a problem they do not have.
+
+This is where a Buzz client stops asking for an "access channel" when a repository is created inside a project. The roster is already the membership mechanism; collecting a channel on top of it created a second, parallel ACL a user had to keep in sync by hand, and a repository whose two ACLs disagreed had no honest thing to display.
 
 The `project` tag on `kind:30617` is validated at ingest, fail-closed like `access-value`: singleton, exactly two elements, and a well-formed coordinate (`repo-project-ref`) — a malformed value is rejected rather than silently ignored, because silently ignoring would publish a repository its author believes is private. Linking a repository **into a private project** additionally requires the announcement author to be admitted to that project (`repo-project-membership`); public or unresolvable coordinates stay soft references, matching channel `project_ref` semantics.
 
@@ -233,6 +256,8 @@ The project signer's authority begins and ends at the container.
 Clients MUST preserve each member repository's own owner provenance in the UI. A repository rendered inside a project must not appear to be owned or governed by the project signer.
 
 `buzz-channel` on a project is **metadata only**. Git push policy reads the `buzz-channel` of the repository's own `kind:30617` (`crates/buzz-relay/src/api/git/policy.rs`); a project neither overrides that binding nor supplies one to a member that lacks it. A project's channel binding therefore cannot widen or narrow push access to anything.
+
+The project **roster** is a different matter, and the distinction is the whole of this section: a project's `a` tags are its signer's claim about *other people's* repositories and grant nothing, while a repository's own `project` back-reference is its owner's claim about *their own* repository and does grant — to the roster, per [Repository access](#repository-access). Both directions must exist for the asymmetry to be safe. If forward references granted, Alice could pull Bob's repository into her project and hand her roster push access to it; because only the back-reference grants, the only key that can place a repository behind a roster is the key that already controls it.
 
 ### Editing model
 
@@ -291,7 +316,7 @@ The Buzz validator enforces all fifteen rules. The shared fixtures in [`NIP-MP.f
 
 **Duplicates are rejected, never normalized.** A relay cannot dedupe tags inside a signed event: rewriting the tag array changes the event id and invalidates the signature. The choices are reject, or accept and require every present and future consumer to apply a first-wins interpretation rule. Rejecting keeps every stored head canonical and spares all consumers a defensive parse.
 
-**No membership authorization.** The relay MUST NOT check whether the signer owns, maintains, or has any relationship to a member repository. Referencing another owner's repository is legal and is the point of the kind. Because membership grants nothing ([Authority](#authority)), there is nothing to authorize. (The inverse direction is different: a repository's own `kind:30617` back-reference **into a private project** is authorized at 30617 ingest — `repo-project-ref` / `repo-project-membership`, [Repository access](#repository-access-phase-2) — because that link places the repository behind the project's ACL.)
+**No membership authorization.** The relay MUST NOT check whether the signer owns, maintains, or has any relationship to a member repository. Referencing another owner's repository is legal and is the point of the kind. Because membership grants nothing ([Authority](#authority)), there is nothing to authorize. (The inverse direction is different: a repository's own `kind:30617` back-reference **into a private project** is authorized at 30617 ingest — `repo-project-ref` / `repo-project-membership`, [Repository access](#repository-access) — because that link places the repository behind the project's ACL.)
 
 **Routing.** `kind:30621` is global-only, like every other NIP-34 kind in Buzz: it is addressed by `(pubkey, kind, d)` and is never channel-scoped. A stray `h` tag MUST NOT scope it to a channel — the `buzz-channel` tag is a metadata reference, not a routing directive.
 

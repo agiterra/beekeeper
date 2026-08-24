@@ -220,16 +220,31 @@ export function buildAddedRepositoryEventTemplatesFromHead({
     ["d", repositoryDtag],
     ["name", normalizedName],
   ];
+  // The repository's own `project` back-reference is what places it behind
+  // the project's roster — NIP-MP claim authority reads the repository, not
+  // the project's forward `a` tag, so without this the added repo would be
+  // reachable by nobody once the channel binding becomes optional.
+  const projectDtag = liveHead.tags.find((tag) => tag[0] === "d")?.[1]?.trim();
+  if (!projectDtag) {
+    throw new Error("Project metadata is unavailable. Refresh and try again.");
+  }
+  repositoryTags.push([
+    "project",
+    `${KIND_PROJECT_ANNOUNCEMENT}:${liveHead.pubkey.toLowerCase()}:${projectDtag}`,
+  ]);
+
+  // Optional: with the back-reference above, a project that has no channel to
+  // inherit is an ordinary case, not an error. A supplied value is still
+  // shape-validated — a malformed binding resolves `Broken` at the relay and
+  // fails closed for everyone, which is strictly worse than the no-binding
+  // case it would have replaced.
   const normalizedAccessChannelId = accessChannelId?.trim();
-  if (!normalizedAccessChannelId) {
-    throw new Error(
-      "This project has no repository access channel to inherit.",
-    );
+  if (normalizedAccessChannelId) {
+    if (!isValidProjectChannelId(normalizedAccessChannelId)) {
+      throw new Error("Repository access channel is invalid.");
+    }
+    repositoryTags.push(["buzz-channel", normalizedAccessChannelId]);
   }
-  if (!isValidProjectChannelId(normalizedAccessChannelId)) {
-    throw new Error("Repository access channel is invalid.");
-  }
-  repositoryTags.push(["buzz-channel", normalizedAccessChannelId]);
   if (normalizedDescription) {
     repositoryTags.push(["description", normalizedDescription]);
   }

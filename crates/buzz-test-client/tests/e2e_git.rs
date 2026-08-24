@@ -553,3 +553,161 @@ fn tempdir_named(prefix: &str) -> TempDir {
     std::fs::create_dir_all(&p).unwrap();
     TempDir(p)
 }
+
+/// Announce a NIP-MP project (kind:30621) with role-tagged invites and return
+/// its coordinate. `visibility` is `"public"` or `"private"`.
+async fn create_test_project(owner: &Keys, visibility: &str, members: &[(&Keys, &str)]) -> String {
+    let dtag = format!("e2e-proj-{}", uuid::Uuid::new_v4().simple());
+    let mut tags = vec![
+        Tag::parse(["d", &dtag]).unwrap(),
+        Tag::parse(["name", "e2e git project"]).unwrap(),
+    ];
+    if visibility == "private" {
+        tags.push(Tag::parse(["buzz-access", "private"]).unwrap());
+    }
+    for (member, role) in members {
+        tags.push(Tag::parse(["p", &member.public_key().to_hex(), "", role]).unwrap());
+    }
+    let event = EventBuilder::new(Kind::from(30621), "")
+        .tags(tags)
+        .sign_with_keys(owner)
+        .unwrap();
+    post_event(&event).await;
+    format!("30621:{}:{dtag}", owner.public_key().to_hex())
+}
+
+/// A repository announced into a project with **no** `buzz-channel` tag — the
+/// shape Bee Keeper Desktop now produces — is reachable through the project's
+/// roster alone.
+///
+/// This is the whole point of making membership the access signal, proved over
+/// real git rather than at the gate function: the project owner and a
+/// collaborator clone and push, a viewer clones but cannot push, and a
+/// stranger sees the same 404 a nonexistent repo returns.
+///
+/// The project is **public** deliberately. Its event surface is visible to the
+/// community, and this test pins that visibility still grants no git access —
+/// the regression that would silently expose every repo sitting in the
+/// auto-created `general` project.
+#[tokio::test]
+#[ignore = "requires live relay + MinIO + git"]
+async fn git_access_follows_the_project_roster_without_a_channel_binding() {
+    use nostr::ToBech32;
+
+    let owner = Keys::generate();
+    let collaborator = Keys::generate();
+    let viewer = Keys::generate();
+    let stranger = Keys::generate();
+
+    let nsec = |k: &Keys| k.secret_key().to_bech32().unwrap();
+    let owner_hex = owner.public_key().to_hex();
+    let repo = format!("e2e-git-mp-{}", uuid::Uuid::new_v4().simple());
+
+    let coordinate = create_test_project(
+        &owner,
+        "public",
+        &[(&collaborator, "collaborator"), (&viewer, "viewer")],
+    )
+    .await;
+
+    // No `buzz-channel` tag anywhere: the roster is the only ACL.
+    let announce = EventBuilder::new(Kind::from(30617), "")
+        .tags(vec![
+            Tag::parse(["d", &repo]).unwrap(),
+            Tag::parse(["name", "e2e project repo"]).unwrap(),
+            Tag::parse(["project", &coordinate]).unwrap(),
+        ])
+        .sign_with_keys(&owner)
+        .unwrap();
+    post_event(&announce).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let tmp = tempdir_named("e2e-git-mp");
+    let url = format!("{}/git/{}/{}", relay_http_url(), owner_hex, repo);
+
+    // 1. The project owner clones and seeds a first commit.
+    git(
+        &["clone", "--quiet", &url, "owner"],
+        tmp.path(),
+        &nsec(&owner),
+    );
+    let owner_clone = tmp.path().join("owner");
+    std::fs::write(owner_clone.join("README.md"), "hello\n").unwrap();
+    git(&["add", "."], &owner_clone, &nsec(&owner));
+    git(
+        &["commit", "--quiet", "-m", "initial"],
+        &owner_clone,
+        &nsec(&owner),
+    );
+    git(&["branch", "-M", "main"], &owner_clone, &nsec(&owner));
+    git(
+        &["push", "--quiet", "origin", "main"],
+        &owner_clone,
+        &nsec(&owner),
+    );
+
+    // 2. A collaborator clones and pushes — no channel membership anywhere.
+    git(
+        &["clone", "--quiet", &url, "collab"],
+        tmp.path(),
+        &nsec(&collaborator),
+    );
+    let collab_clone = tmp.path().join("collab");
+    assert_eq!(
+        std::fs::read_to_string(collab_clone.join("README.md")).unwrap(),
+        "hello\n",
+        "collaborator clone sees the owner's push"
+    );
+    std::fs::write(
+        collab_clone.join("README.md"),
+        "hello\nfrom the collaborator\n",
+    )
+    .unwrap();
+    git(
+        &["commit", "--quiet", "-am", "collaborator commit"],
+        &collab_clone,
+        &nsec(&collaborator),
+    );
+    git(
+        &["push", "--quiet", "origin", "main"],
+        &collab_clone,
+        &nsec(&collaborator),
+    );
+
+    // 3. A viewer clones but cannot push. Read and write are separate tiers,
+    //    and a viewer holding read must not imply a write grant.
+    git(
+        &["clone", "--quiet", &url, "viewer"],
+        tmp.path(),
+        &nsec(&viewer),
+    );
+    let viewer_clone = tmp.path().join("viewer");
+    std::fs::write(viewer_clone.join("README.md"), "viewer edit\n").unwrap();
+    git(
+        &["commit", "--quiet", "-am", "viewer commit"],
+        &viewer_clone,
+        &nsec(&viewer),
+    );
+    let denied = git_status(&["push", "origin", "main"], &viewer_clone, &nsec(&viewer));
+    assert!(
+        !denied.status.success(),
+        "a project viewer must not be able to push"
+    );
+    let denial = String::from_utf8_lossy(&denied.stderr).into_owned();
+    assert!(
+        !denial.contains("no_channel_binding"),
+        "a repo inside a project must never be told to bind a channel: {denial}"
+    );
+
+    // 4. A stranger gets the generic not-found. Public project visibility
+    //    exposes the project's *events*, never its code.
+    let refused = git_status(
+        &["clone", "--quiet", &url, "stranger"],
+        tmp.path(),
+        &nsec(&stranger),
+    );
+    assert!(
+        !refused.status.success(),
+        "a non-member must not be able to clone a public project's repo"
+    );
+}

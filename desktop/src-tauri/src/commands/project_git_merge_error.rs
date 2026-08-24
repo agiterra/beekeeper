@@ -44,17 +44,21 @@ impl ProjectPullRequestMergeError {
 
 impl From<String> for ProjectPullRequestMergeError {
     fn from(message: String) -> Self {
-        // Relay push-policy denial for a repo with no `buzz-channel` binding.
-        // The stable token is declared in `buzz-core::git_perms`
-        // (GIT_NO_CHANNEL_BINDING_TOKEN); the relay guarantees the denial body
-        // starts with it. Push failures reach this conversion as raw
-        // stderr/`remote:` text, so match the token anywhere in the message.
+        // Relay push-policy denial for a repo with no ACL at all — neither a
+        // project nor a `buzz-channel` binding. The stable token is declared
+        // in `buzz-core::git_perms` (GIT_NO_CHANNEL_BINDING_TOKEN); the relay
+        // guarantees the denial body starts with it and reserves it for that
+        // no-ACL case, so this copy can name both remedies without
+        // misdirecting a pusher who is merely off a project's roster. Push
+        // failures reach this conversion as raw stderr/`remote:` text, so
+        // match the token anywhere in the message.
         if message.contains(buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN) {
             return Self::new(
                 buzz_core_pkg::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN,
-                "This repository is not bound to a channel, so the relay cannot \
-                 authorize pushes. Bind it with: bee repos bind --id <repo> \
-                 --channel <channel-uuid>",
+                "This repository is not in a project and has no channel \
+                 binding, so the relay cannot authorize pushes. Fix it with: \
+                 bee repos bind --id <repo> --project <30621:owner:project> \
+                 (or --channel <channel-uuid>)",
             );
         }
         Self::new("merge_failed", message)

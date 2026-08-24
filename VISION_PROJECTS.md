@@ -68,7 +68,11 @@ So there is exactly one custom kind — [NIP-MP](docs/nips/NIP-MP.md), `kind:306
 }
 ```
 
-A project points at repos. That's all it does. The signer gets no authority over any member — no edit, no delete, no push, no admin. Adding Bob's repo to your project is your signed assertion that the two belong together, and it changes nothing about Bob's repo or who can push to it. Push policy reads the repo's own event, never the project's.
+A project's `a` tags point at repos. That's all *they* do. The signer gets no authority over any member through them — no edit, no delete, no push, no admin. Adding Bob's repo to your project is your signed assertion that the two belong together, and it changes nothing about Bob's repo or who can push to it. Push policy reads the repo's own event, never the project's forward reference.
+
+Authority runs the other way. A repo opts *into* a project by carrying `["project", "30621:<owner>:<d>"]` on its own `kind:30617` — its owner's assertion about their own repo — and that link makes the project's roster the repo's git ACL: owners push as owners, collaborators as members, viewers clone and read. Membership is how you grant access to code, which is why creating a repo inside a project no longer asks you to pick an "access channel". The older `buzz-channel` binding still works and still grants; a repo can carry both, and the relay takes whichever is more permissive.
+
+Project *visibility* is not part of that. A public project's repos are no more cloneable than a private one's — visibility governs who sees the project's events, never who can clone its code. Only the roster grants.
 
 The cost is stated plainly: a third-party NIP-34 client sees the member repos individually and ignores the grouping. Nothing degrades — the repos are still standard, portable `kind:30617` events. And a repo in no project still renders on its own, exactly as before.
 

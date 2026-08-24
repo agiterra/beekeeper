@@ -110,7 +110,6 @@ export function ProjectRepositoryManagement({
     <>
       <AddProjectRepositoryDialog
         accessChannelId={inheritedChannelId ?? undefined}
-        channels={accessChannels}
         isCreating={createMutation.isPending}
         onAdd={async (input) => {
           const result = await createMutation.mutateAsync({

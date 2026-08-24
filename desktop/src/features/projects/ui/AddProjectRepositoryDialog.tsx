@@ -2,7 +2,7 @@ import * as React from "react";
 
 import type { Project } from "@/features/projects/hooks";
 import type { AddProjectRepositoryInput } from "@/features/projects/useAddProjectRepository";
-import type { Channel } from "@/shared/api/types";
+import { ProjectRepoAccessNote } from "@/features/projects-container/ui/ProjectRepoAccessNote";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
@@ -16,15 +16,18 @@ const FIELD_CONTROL_CLASS =
 
 export function AddProjectRepositoryDialog({
   accessChannelId,
-  channels,
   isCreating,
   onAdd,
   onOpenChange,
   open,
   project,
 }: {
+  /**
+   * Legacy `buzz-channel` binding inherited from the project head, when it
+   * has one. Passed straight through so an existing project keeps granting
+   * its channel; access for new members comes from the project roster.
+   */
   accessChannelId?: string;
-  channels: Channel[];
   isCreating: boolean;
   onAdd: (input: AddProjectRepositoryInput) => Promise<void>;
   onOpenChange: (open: boolean) => void;
@@ -33,7 +36,6 @@ export function AddProjectRepositoryDialog({
 }) {
   const [name, setName] = React.useState("");
   const [cloneUrl, setCloneUrl] = React.useState("");
-  const [selectedChannelId, setSelectedChannelId] = React.useState("");
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const nameInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -41,22 +43,21 @@ export function AddProjectRepositoryDialog({
     if (!open) return;
     setName("");
     setCloneUrl("");
-    setSelectedChannelId(accessChannelId ?? "");
     setErrorMessage(null);
     const timerId = globalThis.setTimeout(
       () => nameInputRef.current?.focus(),
       50,
     );
     return () => globalThis.clearTimeout(timerId);
-  }, [accessChannelId, open]);
+  }, [open]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim() || !selectedChannelId) return;
+    if (!name.trim()) return;
     setErrorMessage(null);
     try {
       await onAdd({
-        accessChannelId: selectedChannelId,
+        accessChannelId,
         cloneUrl: cloneUrl.trim() || undefined,
         name: name.trim(),
         project,
@@ -85,7 +86,7 @@ export function AddProjectRepositoryDialog({
         footer={
           <Button
             data-testid="add-project-repository-submit"
-            disabled={isCreating || !name.trim() || !selectedChannelId}
+            disabled={isCreating || !name.trim()}
             form="add-project-repository-form"
             type="submit"
           >
@@ -128,38 +129,10 @@ export function AddProjectRepositoryDialog({
               />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <label
-              className="text-sm font-medium text-foreground"
-              htmlFor="add-project-repository-channel"
-            >
-              Access channel
-            </label>
-            <div className={FIELD_SHELL_CLASS}>
-              <select
-                className={cn(FIELD_CONTROL_CLASS, "w-full")}
-                data-testid="add-project-repository-channel"
-                disabled={isCreating}
-                id="add-project-repository-channel"
-                onChange={(event) => {
-                  setSelectedChannelId(event.target.value);
-                  setErrorMessage(null);
-                }}
-                required
-                value={selectedChannelId}
-              >
-                <option value="">Select a channel</option>
-                {channels.map((channel) => (
-                  <option key={channel.id} value={channel.id}>
-                    {channel.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Members of this channel can access the repository.
-            </p>
-          </div>
+          <ProjectRepoAccessNote
+            otherMemberCount={null}
+            projectName={project.name}
+          />
           <div className="space-y-1.5">
             <label
               className="text-sm font-medium text-foreground"

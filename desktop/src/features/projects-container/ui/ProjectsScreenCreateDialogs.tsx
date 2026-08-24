@@ -26,6 +26,7 @@ import {
   LOCAL_GENERAL_ID,
   makeLocalGeneral,
 } from "../lib/projectContainerModel";
+import { useProjectRosterQuery } from "../lib/projectMembers";
 import { useMoveRepoToProjectMutation } from "../projectOrganizeMutations";
 import {
   addProjectMembers,
@@ -124,36 +125,20 @@ export function ProjectsScreenCreateDialogs({
     onClose();
   }, [kind, channelsQuery.isLoading, workflowChannels.length, onClose]);
 
-  // A repository's access channel can be any channel the user is in; the
-  // default prefers the target project's own channels.
-  const repoAccessChannels = React.useMemo(
-    () =>
-      (channelsQuery.data ?? []).filter(
-        (channel) =>
-          channel.isMember &&
-          !channel.archivedAt &&
-          channel.channelType !== "dm",
-      ),
-    [channelsQuery.data],
+  // Repository access comes from the target project's roster — no channel to
+  // pick, and nothing that can block the dialog from opening. The roster is
+  // read only to tell the user when it is empty (see ProjectRepoAccessNote);
+  // the relay, not this query, is what authorizes.
+  const rosterQuery = useProjectRosterQuery(
+    kind === "repo" || kind === "repo-import" ? repoTargetProject : null,
   );
-  const defaultRepoChannelId = React.useMemo(() => {
-    const eligible = new Set(repoAccessChannels.map((channel) => channel.id));
-    return (
-      workflowChannels.find((channel) => eligible.has(channel.id))?.id ??
-      repoAccessChannels[0]?.id
-    );
-  }, [repoAccessChannels, workflowChannels]);
-
-  React.useEffect(() => {
-    if (kind !== "repo" && kind !== "repo-import") return;
-    if (channelsQuery.isLoading || repoAccessChannels.length > 0) return;
-    toast.error(
-      kind === "repo-import"
-        ? "Add a channel to this project before importing a repository."
-        : "Add a channel to this project before creating a repository.",
-    );
-    onClose();
-  }, [kind, channelsQuery.isLoading, repoAccessChannels.length, onClose]);
+  const otherMemberCount = React.useMemo(() => {
+    if (!rosterQuery.data) return null;
+    const viewer = (currentPubkey ?? "").toLowerCase();
+    return rosterQuery.data.filter(
+      (member) => member.pubkey.toLowerCase() !== viewer,
+    ).length;
+  }, [rosterQuery.data, currentPubkey]);
 
   const attachCandidates = React.useMemo(
     () =>
@@ -243,8 +228,6 @@ export function ProjectsScreenCreateDialogs({
       />
 
       <CreateProjectRepoDialog
-        channels={repoAccessChannels}
-        defaultChannelId={defaultRepoChannelId}
         isCreating={createRepoMutation.isPending}
         onCreate={async (input) => {
           // The new repo lands in the target project only — no new project
@@ -260,13 +243,12 @@ export function ProjectsScreenCreateDialogs({
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
-        open={kind === "repo" && repoAccessChannels.length > 0}
+        open={kind === "repo"}
+        otherMemberCount={otherMemberCount}
         projectName={repoTargetProject.name}
       />
 
       <ImportProjectRepoDialog
-        channels={repoAccessChannels}
-        defaultChannelId={defaultRepoChannelId}
         isImporting={importRepoMutation.isPending}
         onImport={async (input) => {
           const result = await importRepoMutation.mutateAsync({
@@ -280,7 +262,8 @@ export function ProjectsScreenCreateDialogs({
         onOpenChange={(open) => {
           if (!open) onClose();
         }}
-        open={kind === "repo-import" && repoAccessChannels.length > 0}
+        open={kind === "repo-import"}
+        otherMemberCount={otherMemberCount}
         ownerPubkey={currentPubkey?.toLowerCase()}
         projectName={repoTargetProject.name}
         relayOrigin={relayOrigin}

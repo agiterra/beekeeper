@@ -342,8 +342,13 @@ pub struct RepoProjectGate {
 impl RepoProjectGate {
     /// Returns `true` if `pubkey` may see this repo's events: the repo
     /// owner, the project owner, or an invited project member of any role
-    /// (viewing a project includes reading its repos). Push authority is
-    /// never derived from a project — this gate is visibility only.
+    /// (viewing a project includes reading its repos).
+    ///
+    /// This gate is the **event surface** only — which is why it resolves
+    /// `None` for a public project ("no gate to apply"). Git transport
+    /// authorization asks the opposite question ("does this roster grant?")
+    /// and uses [`crate::project_acl::get_project_role_by_coordinate`], which
+    /// is visibility-agnostic. Do not unify them.
     #[must_use]
     pub fn admits_read(&self, pubkey: &[u8]) -> bool {
         hex::encode(pubkey) == self.repo_owner_hex || self.project.admits_read(pubkey)

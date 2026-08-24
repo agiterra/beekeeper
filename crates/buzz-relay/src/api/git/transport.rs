@@ -445,37 +445,44 @@ fn hydrate_error_to_response(owner: &str, repo: &str, err: HydrateError) -> Resp
 /// SEC-005: authorize a repository *read* (ref advertisement, upload-pack).
 ///
 /// The authorization invariant is the authenticated git caller's **current
-/// active membership in the repo's bound channel**. NIP-98 alone only proves
-/// key possession — without this gate any authenticated pubkey (including a
-/// member removed from the channel) can clone channel-bound repositories.
+/// grant on the repo** — a role on its project's roster, or active membership
+/// in its bound channel. NIP-98 alone only proves key possession; without
+/// this gate any authenticated pubkey (including someone removed from the
+/// channel or the roster) can clone.
 ///
 /// Resolution follows the current authoritative announcement, the same
 /// mapping the push policy endpoint uses:
 /// 1. current live kind:30617 by `(community, owner pubkey from the URL,
 ///    d = canonical repo name)` — soft-deleted/replaced announcements do not
 ///    resolve;
-/// 2. its `["project", …]` back-reference (NIP-MP access extension phase 2):
-///    when it names a **private** project, the project's owner and invited
-///    members are allowed immediately — an additive grant so inviting
-///    someone to a private project lets them clone its code;
+/// 2. its `["project", …]` back-reference → the project's roster: **any**
+///    role admits, at any project visibility, since a viewer is read-only
+///    across the project by definition. Additive — a lookup miss or error
+///    falls through to the channel gate and never widens;
 /// 3. its `buzz-channel` tag → channel UUID;
 /// 4. [`buzz_db::Db::get_member_role`] for the caller — a read is allowed
 ///    only on `Ok(Some(role))` with a role the relay recognizes.
 ///
-/// Fail-closed: missing/deleted announcement, invalid owner, missing or
-/// malformed `buzz-channel` binding, non-member, unknown role, and every DB
+/// Note that project *visibility* never grants here: only a roster row (or
+/// the implicit creator row) returns a role, so a **public** project's repos
+/// are no more cloneable than a private one's.
+///
+/// Fail-closed: missing/deleted announcement, invalid owner, no grant on
+/// either path, malformed `buzz-channel` binding, unknown role, and every DB
 /// error all deny. There is deliberately **no repo-owner bypass**: an owner
 /// removed from the bound channel loses read access, which is the exact
 /// exploit shape this gate closes. Every denial is the same generic 404 as a
 /// nonexistent repo so membership cannot be probed through the git endpoints
-/// — with exactly one carve-out: a **never-bound** repo read by its own
-/// **announcement author** returns a 404 whose body tells the author how to
-/// bind it (issue #3527: a vanilla NIP-34 client can announce without a
-/// `buzz-channel` tag, and the repo then 404s forever with no explanation
-/// for anyone). The author already knows the repo exists — they announced it
-/// — so the remediation body leaks nothing, and only the author can rebind
-/// (kind:30617 is keyed by `(author, d)`). A *broken* binding stays generic
-/// even for the author: ambiguity fails closed.
+/// — with exactly one carve-out: a repo with **neither** a channel binding
+/// nor a project, read by its own **announcement author**, returns a 404
+/// whose body tells the author how to bind it (issue #3527: a vanilla NIP-34
+/// client can announce without either tag, and the repo then 404s forever
+/// with no explanation for anyone). The author already knows the repo exists
+/// — they announced it — so the remediation body leaks nothing, and only the
+/// author can rebind (kind:30617 is keyed by `(author, d)`). A repo that
+/// *does* name a project is legitimately unbound and gets the generic denial
+/// instead, because binding a channel is not its fix. A *broken* binding
+/// stays generic even for the author: ambiguity fails closed.
 async fn authorize_git_read(
     db: &buzz_db::Db,
     community: buzz_core::CommunityId,
@@ -513,26 +520,30 @@ async fn authorize_git_read(
         }
     };
 
-    // NIP-MP access extension phase 2: a repo whose announcement carries a
-    // `["project", …]` back-reference into a *private* project is readable by
-    // that project's owner and invited members even without bound-channel
-    // membership — inviting someone to a private project is supposed to let
-    // them clone its code. This is a purely additive grant layered ABOVE the
-    // channel gate: explicit channel members keep their access (the phase-1
-    // consent rule), pushes still authorize exclusively through the policy
-    // endpoint's channel roles, and a lookup failure simply falls through to
-    // the channel gate (never widens access). Membership in a public/unknown
-    // project grants nothing — `is_private_project_member` is a positive
-    // grant against private ACL rows only.
-    if let Some(coordinate) = buzz_core::kind::repo_project_ref(&repo_event.event) {
+    // A repo whose announcement carries a `["project", …]` back-reference is
+    // readable by anyone holding *any* role on that project's roster —
+    // including a viewer, who is read-only across the project by definition.
+    // This is a purely additive grant layered ABOVE the channel gate:
+    // explicit channel members keep their access, and a lookup failure falls
+    // through to the channel gate rather than widening.
+    //
+    // The role lookup is deliberately visibility-agnostic
+    // (`get_project_role_by_coordinate`, not `is_private_project_member`): a
+    // *public* project's roster is exactly as explicitly curated as a private
+    // one's, and a repo in a public project needs a grant path too. Public
+    // visibility still never grants by itself — only a roster row (or the
+    // implicit creator row) returns a role — so a public project's repos do
+    // not become community-cloneable.
+    let project_ref = buzz_core::kind::repo_project_ref(&repo_event.event);
+    if let Some(coordinate) = &project_ref {
         match db
-            .is_private_project_member(community, &coordinate, &caller.to_bytes())
+            .get_project_role_by_coordinate(community, coordinate, &caller.to_bytes())
             .await
         {
-            Ok(true) => return Ok(()),
-            Ok(false) => {}
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
             Err(e) => {
-                error!(repo = %repo_name, error = %e, "git read gate: project member lookup failed (fall through to channel gate)");
+                error!(repo = %repo_name, error = %e, "git read gate: project role lookup failed (fall through to channel gate)");
             }
         }
     }
@@ -546,7 +557,14 @@ async fn authorize_git_read(
             // the body differs, and only for the one identity that already
             // knows the repo exists. The body is a single verb-first line:
             // Desktop error paths that keep one line keep the instruction.
-            if repo_event.event.pubkey == *caller {
+            //
+            // Scoped to repos with no project either. A repo inside a project
+            // is *legitimately* unbound — the roster is its ACL — so telling
+            // its author to bind a channel would be advice for a problem they
+            // do not have. (Reaching here with a project ref means the author
+            // holds no role on their own repo's project, or the lookup above
+            // errored; both deny generically.)
+            if repo_event.event.pubkey == *caller && project_ref.is_none() {
                 warn!(repo = %repo_name, "git read gate: unbound repo read by its author (deny with remediation)");
                 return Err((
                     StatusCode::NOT_FOUND,
@@ -556,7 +574,7 @@ async fn authorize_git_read(
                 )
                     .into_response());
             }
-            warn!(repo = %repo_name, "git read gate: missing buzz-channel binding (deny)");
+            warn!(repo = %repo_name, "git read gate: no channel binding and no project grant (deny)");
             return Err(denied());
         }
         RepoBinding::Broken => {
@@ -3334,6 +3352,248 @@ mod sec005_read_gate_tests {
             member_keys,
             repo,
         }
+    }
+
+    // ── project-roster grants (NIP-MP) ───────────────────────────────────
+
+    struct ProjectRepoFixture {
+        db: buzz_db::Db,
+        community: buzz_core::CommunityId,
+        project_owner_keys: Keys,
+        project_dtag: String,
+        collaborator_keys: Keys,
+        viewer_keys: Keys,
+        /// Announcement author. Deliberately **off** the roster, mirroring
+        /// `setup_repo`'s no-owner-bypass posture: the roster grants read,
+        /// authorship does not.
+        repo_owner_keys: Keys,
+        owner_hex: String,
+        repo: String,
+    }
+
+    /// Community + a `kind:30621` ACL row at `visibility` + a `kind:30617`
+    /// naming it via `["project", …]` and carrying **no** `buzz-channel`
+    /// tag — the shape the add/import flows now produce.
+    async fn setup_project_repo(visibility: &str) -> ProjectRepoFixture {
+        let db = setup_db().await;
+        let host = format!("nipmp-{}.example", uuid::Uuid::new_v4().simple());
+        let community = db
+            .ensure_configured_community(&host)
+            .await
+            .expect("community")
+            .id;
+
+        let project_owner_keys = Keys::generate();
+        let collaborator_keys = Keys::generate();
+        let viewer_keys = Keys::generate();
+        let repo_owner_keys = Keys::generate();
+
+        let project_dtag = format!("proj-{}", uuid::Uuid::new_v4().simple());
+        let project_owner_pk = project_owner_keys.public_key().to_bytes().to_vec();
+        db.upsert_project_acl(
+            community,
+            &project_owner_pk,
+            &project_dtag,
+            visibility,
+            &[
+                (
+                    collaborator_keys.public_key().to_bytes().to_vec(),
+                    buzz_core::channel::ProjectRole::Collaborator,
+                ),
+                (
+                    viewer_keys.public_key().to_bytes().to_vec(),
+                    buzz_core::channel::ProjectRole::Viewer,
+                ),
+            ],
+            1,
+        )
+        .await
+        .expect("project acl");
+
+        let coordinate = format!(
+            "30621:{}:{project_dtag}",
+            project_owner_keys.public_key().to_hex()
+        );
+        let repo = format!("repo-{}", uuid::Uuid::new_v4().simple());
+        let event = announcement(
+            &repo_owner_keys,
+            vec![
+                Tag::parse(["d", &repo]).unwrap(),
+                Tag::parse(["project", &coordinate]).unwrap(),
+            ],
+        );
+        db.insert_event(community, &event, None)
+            .await
+            .expect("30617");
+
+        let owner_hex = repo_owner_keys.public_key().to_hex();
+        ProjectRepoFixture {
+            db,
+            community,
+            project_owner_keys,
+            project_dtag,
+            collaborator_keys,
+            viewer_keys,
+            repo_owner_keys,
+            owner_hex,
+            repo,
+        }
+    }
+
+    async fn assert_project_roster_read_matrix(visibility: &str) {
+        let f = setup_project_repo(visibility).await;
+
+        // Every role reads — including a viewer, who is read-only across the
+        // project by definition, and the creator, who holds no roster row.
+        for (label, keys) in [
+            ("project creator", &f.project_owner_keys),
+            ("collaborator", &f.collaborator_keys),
+            ("viewer", &f.viewer_keys),
+        ] {
+            assert!(
+                authorize_git_read(
+                    &f.db,
+                    f.community,
+                    &keys.public_key(),
+                    &f.owner_hex,
+                    &f.repo
+                )
+                .await
+                .is_ok(),
+                "{label} must be able to clone a {visibility} project's repo"
+            );
+        }
+
+        // Nobody else does. For a PUBLIC project this is the regression that
+        // matters most: visibility governs the event surface, and must never
+        // by itself make code cloneable by the whole community.
+        let stranger = Keys::generate().public_key();
+        let (status, body) = denial_parts(
+            authorize_git_read(&f.db, f.community, &stranger, &f.owner_hex, &f.repo).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body, GENERIC_DENIAL,
+            "a non-member must be denied on a {visibility} project's repo"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_project_roster_grants_at_public_visibility() {
+        assert_project_roster_read_matrix("public").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_project_roster_grants_at_private_visibility() {
+        assert_project_roster_read_matrix("private").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_withholds_bind_remediation_from_a_projected_repo() {
+        // The author of a channel-less repo normally gets the `bee repos
+        // bind` remediation body. A repo that names a project is
+        // *legitimately* unbound — its roster is the ACL — so that advice
+        // would be for a problem they do not have. This author is off the
+        // roster, so they are denied; the denial must be the generic one.
+        let f = setup_project_repo("public").await;
+        let (status, body) = denial_parts(
+            authorize_git_read(
+                &f.db,
+                f.community,
+                &f.repo_owner_keys.public_key(),
+                &f.owner_hex,
+                &f.repo,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body, GENERIC_DENIAL,
+            "a repo inside a project must never be told to bind a channel"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_denies_after_roster_removal() {
+        // The finding-005 exploit shape, on the project path: a removed
+        // member loses read immediately, not at the next republish.
+        let f = setup_project_repo("public").await;
+        let collaborator = f.collaborator_keys.public_key();
+        assert!(
+            authorize_git_read(&f.db, f.community, &collaborator, &f.owner_hex, &f.repo)
+                .await
+                .is_ok()
+        );
+
+        let project_owner_pk = f.project_owner_keys.public_key().to_bytes().to_vec();
+        f.db.remove_project_members(
+            f.community,
+            &project_owner_pk,
+            &f.project_dtag,
+            &project_owner_pk,
+            &[collaborator.to_bytes().to_vec()],
+        )
+        .await
+        .expect("remove member");
+
+        assert!(
+            authorize_git_read(&f.db, f.community, &collaborator, &f.owner_hex, &f.repo)
+                .await
+                .is_err(),
+            "a removed project member must lose read access"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn read_gate_ignores_a_project_coordinate_that_resolves_to_nothing() {
+        // NIP-MP: an unresolvable link fails open to the repo's own access
+        // rules. With no channel binding either, that means deny — but via
+        // the generic path, never a panic or an accidental grant.
+        let db = setup_db().await;
+        let host = format!("nipmp-{}.example", uuid::Uuid::new_v4().simple());
+        let community = db
+            .ensure_configured_community(&host)
+            .await
+            .expect("community")
+            .id;
+        let repo_owner_keys = Keys::generate();
+        let repo = format!("repo-{}", uuid::Uuid::new_v4().simple());
+        let dangling = format!(
+            "30621:{}:never-created",
+            Keys::generate().public_key().to_hex()
+        );
+        let event = announcement(
+            &repo_owner_keys,
+            vec![
+                Tag::parse(["d", &repo]).unwrap(),
+                Tag::parse(["project", &dangling]).unwrap(),
+            ],
+        );
+        db.insert_event(community, &event, None)
+            .await
+            .expect("30617");
+
+        let owner_hex = repo_owner_keys.public_key().to_hex();
+        let (status, body) = denial_parts(
+            authorize_git_read(
+                &db,
+                community,
+                &repo_owner_keys.public_key(),
+                &owner_hex,
+                &repo,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, GENERIC_DENIAL);
     }
 
     #[tokio::test]

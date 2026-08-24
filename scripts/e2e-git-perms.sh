@@ -18,6 +18,9 @@
 #     3. Bot1 clones, creates index.html, pushes (should succeed)
 #     4. Bot2 clones, modifies index.html, pushes (should succeed)
 #     5. Guest tries to push (should be denied)
+#     5b. Project roster grants git access with NO buzz-channel binding:
+#         bot1 (collaborator) clones + pushes, guest (viewer) clones but
+#         cannot push, and neither is a member of any channel
 #   Phase 2 — Commit Signing (NIP-GS):
 #     6. Unsigned commit pushes fine (advisory model)
 #     7. Signed commit via git-sign-nostr + verify-commit
@@ -54,6 +57,7 @@ CURL_TIMEOUT=10
 KIND_CREATE_GROUP=9007
 KIND_PUT_USER=9000
 KIND_CREATE_REPO=30617
+KIND_CREATE_PROJECT=30621
 
 # ── Output helpers ────────────────────────────────────────────────────────────
 
@@ -545,6 +549,80 @@ if echo "$PUSH_OUTPUT" | grep -qi "denied\|forbidden\|not authorized\|403\|permi
 else
     warn "Guest push failed but denial reason not found in output: $PUSH_OUTPUT"
     success "Guest push denied (non-zero exit)"
+fi
+
+# ── Test: project roster grants git access without a channel binding ─────────
+#
+# NIP-MP repository access. The repo below carries a `project` back-reference
+# and NO `buzz-channel` tag, and none of the identities involved is added to
+# any channel — so every grant here comes from the project roster alone.
+# Guest is a project *viewer*: read-only, which read and push must respect
+# separately.
+
+PROJECT_DTAG="e2e-proj-$$"
+PROJECT_COORD="${KIND_CREATE_PROJECT}:${OWNER_PUBKEY}:${PROJECT_DTAG}"
+MP_REPO_NAME="${REPO_NAME}-mp"
+
+log "Creating project ${PROJECT_DTAG} (bot1=collaborator, guest=viewer)..."
+CREATE_PROJECT=$(send_event "$OWNER_PRIVKEY" "$KIND_CREATE_PROJECT" "" \
+    "[\"d\", \"$PROJECT_DTAG\"], [\"name\", \"E2E project\"], [\"p\", \"$BOT1_PUBKEY\", \"\", \"collaborator\"], [\"p\", \"$GUEST_PUBKEY\", \"\", \"viewer\"]")
+log "  Create project: $CREATE_PROJECT"
+
+log "Creating repo ${MP_REPO_NAME} with a project link and no channel binding..."
+CREATE_MP_REPO=$(send_event "$OWNER_PRIVKEY" "$KIND_CREATE_REPO" "" \
+    "[\"d\", \"$MP_REPO_NAME\"], [\"project\", \"$PROJECT_COORD\"]")
+log "  Create repo: $CREATE_MP_REPO"
+
+for i in $(seq 1 10); do
+    if [[ -d "${REPO_ROOT}/repos/${OWNER_PUBKEY}/${MP_REPO_NAME}.git" ]]; then
+        break
+    fi
+    if [[ $i -eq 10 ]]; then
+        fail "Project repo not created at repos/${OWNER_PUBKEY}/${MP_REPO_NAME}.git within 10s"
+    fi
+    sleep 1
+done
+success "Project-scoped bare repo created on disk"
+
+MP_URL="${RELAY_HTTP}/git/${OWNER_PUBKEY}/${MP_REPO_NAME}"
+
+log "Bot1 (project collaborator): cloning and pushing..."
+MP_BOT1_DIR="$WORK_DIR/mp-bot1"
+git_clone "$BOT1_PRIVKEY" "$MP_URL" "$MP_BOT1_DIR" \
+    || fail "Collaborator clone failed (project roster should grant read)"
+echo "<h1>From the project collaborator</h1>" > "$MP_BOT1_DIR/index.html"
+git -C "$MP_BOT1_DIR" add -A
+git -C "$MP_BOT1_DIR" -c user.name="Bot1" -c user.email="bot1@e2e.test" \
+    commit -q -m "Collaborator commit"
+git -C "$MP_BOT1_DIR" branch -M main
+git_push "$BOT1_PRIVKEY" "$MP_BOT1_DIR" origin main \
+    || fail "Collaborator push failed (project roster should grant write)"
+success "Collaborator cloned and pushed with no channel binding anywhere"
+
+log "Guest (project viewer): cloning (allowed) then pushing (denied)..."
+MP_GUEST_DIR="$WORK_DIR/mp-guest"
+git_clone "$GUEST_PRIVKEY" "$MP_URL" "$MP_GUEST_DIR" \
+    || fail "Viewer clone failed (a project viewer reads the whole project)"
+success "Viewer cloned via the project roster"
+
+echo "<!-- viewer edit -->" >> "$MP_GUEST_DIR/index.html"
+git -C "$MP_GUEST_DIR" add -A
+git -C "$MP_GUEST_DIR" -c user.name="Guest" -c user.email="guest@evil.test" \
+    commit -q -m "Viewer commit"
+
+MP_PUSH_OUTPUT=$(git_push "$GUEST_PRIVKEY" "$MP_GUEST_DIR" origin main 2>&1) && \
+    fail "Viewer push succeeded (a project viewer is read-only!)"
+
+# The remediation token is reserved for repos with NO acl at all. A repo
+# inside a project must never be told to bind a channel it does not need.
+if echo "$MP_PUSH_OUTPUT" | grep -q "no_channel_binding"; then
+    fail "Viewer denial leaked the bind-a-channel remediation: $MP_PUSH_OUTPUT"
+fi
+if echo "$MP_PUSH_OUTPUT" | grep -qi "denied\|forbidden\|not authorized\|403\|permission\|project member"; then
+    success "Viewer push denied — reason confirmed, and no channel-binding misdirection"
+else
+    warn "Viewer push failed but denial reason not found in output: $MP_PUSH_OUTPUT"
+    success "Viewer push denied (non-zero exit)"
 fi
 
 # ── Final verification ────────────────────────────────────────────────────────

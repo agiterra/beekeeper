@@ -5166,6 +5166,19 @@ impl Db {
         project_acl::is_private_project_member(&self.pool, community, coordinate, pubkey).await
     }
 
+    /// The role `pubkey` holds in the project at `coordinate`, at any
+    /// visibility — the git ACL lookup. See
+    /// [`project_acl::get_project_role_by_coordinate`] for why this one does
+    /// not filter on `visibility = 'private'`.
+    pub async fn get_project_role_by_coordinate(
+        &self,
+        community: CommunityId,
+        coordinate: &str,
+        pubkey: &[u8],
+    ) -> Result<Option<project_acl::ProjectRole>> {
+        project_acl::get_project_role_by_coordinate(&self.pool, community, coordinate, pubkey).await
+    }
+
     /// Returns `true` if `pubkey` (64-char hex) is archived in `community_id`.
     #[datastore_span(name = "is_archived", system = "postgresql")]
     pub async fn is_archived(&self, community_id: CommunityId, pubkey: &str) -> Result<bool> {

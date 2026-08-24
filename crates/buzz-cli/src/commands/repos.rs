@@ -90,6 +90,9 @@ enum RepoChange {
     /// Bind (or rebind) the repo to a channel: replaces every existing
     /// `buzz-channel` tag with exactly one carrying the validated UUID.
     BindChannel(String),
+    /// Link (or relink) the repo into a project: replaces every existing
+    /// `project` tag with exactly one carrying the normalized coordinate.
+    LinkProject(String),
 }
 
 fn build_updated_repo_announcement(
@@ -97,23 +100,31 @@ fn build_updated_repo_announcement(
     change: RepoChange,
 ) -> Result<EventBuilder, CliError> {
     let repo_id = repo_id_from_event(existing)?;
-    // What to strip beyond `auth` (always stripped), and what to append.
-    let (removed_pattern, removed_channel, replacement) = match change {
+    // What to strip beyond `auth` (always stripped), and what to append. The
+    // stripped tag name is carried explicitly so a rebind replaces duplicates
+    // rather than stacking a second, ambiguous binding — the relay resolves
+    // `buzz-channel` first-tag-wins and fails closed on ambiguity.
+    let (removed_pattern, removed_tag_name, replacement) = match change {
         RepoChange::SetProtection(tag) => {
             let pattern = protection_pattern(&tag)
                 .ok_or_else(|| CliError::Other("replacement is not a protection tag".into()))?
                 .to_string();
-            (Some(pattern), false, Some(*tag))
+            (Some(pattern), None, Some(*tag))
         }
         RepoChange::RemoveProtection(pattern) => {
             RefPattern::parse(&pattern)
                 .map_err(|error| CliError::Usage(format!("invalid ref pattern: {error}")))?;
-            (Some(pattern), false, None)
+            (Some(pattern), None, None)
         }
         RepoChange::BindChannel(channel) => {
             crate::validate::validate_uuid(&channel)?;
             let tag = Tag::parse(["buzz-channel", channel.as_str()]).map_err(tag_error)?;
-            (None, true, Some(tag))
+            (None, Some("buzz-channel"), Some(tag))
+        }
+        RepoChange::LinkProject(project) => {
+            let coordinate = validate_project_coordinate(&project)?;
+            let tag = Tag::parse(["project", coordinate.as_str()]).map_err(tag_error)?;
+            (None, Some("project"), Some(tag))
         }
     };
 
@@ -124,8 +135,10 @@ fn build_updated_repo_announcement(
             if has_tag_name(tag, "auth") {
                 return false;
             }
-            if removed_channel && has_tag_name(tag, "buzz-channel") {
-                return false;
+            if let Some(name) = removed_tag_name {
+                if has_tag_name(tag, name) {
+                    return false;
+                }
             }
             removed_pattern.is_none() || protection_pattern(tag) != removed_pattern.as_deref()
         })
@@ -200,14 +213,30 @@ async fn submit_repo_update(client: &BuzzClient, builder: EventBuilder) -> Resul
     Ok(())
 }
 
-/// Build the kind:30617 announcement for `repos create`, including the
-/// `buzz-channel` binding when requested.
+/// Validate a `30621:<owner-hex>:<dtag>` project coordinate and return it in
+/// the normalized form the relay stores.
 ///
-/// Pure (no I/O) so the emitted tags are unit-testable. Exactly one
-/// validated `buzz-channel` tag is appended — the tag is the git ACL
-/// (issue #3527: without it the relay 404s every clone/fetch/push), so the
-/// UUID is shape-validated here and its existence/membership is the relay's
-/// authority at git-access time, same posture as `repos bind`.
+/// Shares [`buzz_core::kind::normalize_project_coordinate`] with the relay's
+/// ingest validation and gate lookups, so a coordinate this CLI accepts is
+/// exactly one they can resolve.
+fn validate_project_coordinate(coordinate: &str) -> Result<String, CliError> {
+    buzz_core::kind::normalize_project_coordinate(coordinate).ok_or_else(|| {
+        CliError::Usage(format!(
+            "invalid project coordinate {coordinate:?}; expected 30621:<64-hex-owner>:<project-d>"
+        ))
+    })
+}
+
+/// Build the kind:30617 announcement for `repos create`, including the
+/// `buzz-channel` binding and/or `project` back-reference when requested.
+///
+/// Pure (no I/O) so the emitted tags are unit-testable. A repository is
+/// reachable through either ACL — its project's roster or its bound
+/// channel's membership — and the relay grants the more permissive of the
+/// two. With neither, the relay 404s every clone/fetch/push (issue #3527),
+/// so both values are shape-validated here; their existence and the caller's
+/// membership are the relay's authority at git-access time, the same posture
+/// as `repos bind`.
 #[allow(clippy::too_many_arguments)]
 fn build_create_announcement(
     repo_id: &str,
@@ -217,6 +246,7 @@ fn build_create_announcement(
     web_url: Option<&str>,
     relays: &[String],
     channel: Option<&str>,
+    project: Option<&str>,
 ) -> Result<EventBuilder, CliError> {
     validate_repo_id(repo_id)?;
 
@@ -237,6 +267,10 @@ fn build_create_announcement(
         crate::validate::validate_uuid(channel)?;
         builder = builder.tag(Tag::parse(["buzz-channel", channel]).map_err(tag_error)?);
     }
+    if let Some(project) = project {
+        let coordinate = validate_project_coordinate(project)?;
+        builder = builder.tag(Tag::parse(["project", &coordinate]).map_err(tag_error)?);
+    }
     Ok(builder)
 }
 
@@ -250,6 +284,7 @@ pub async fn cmd_create_repo(
     web_url: Option<&str>,
     relays: &[String],
     channel: Option<&str>,
+    project: Option<&str>,
 ) -> Result<(), CliError> {
     let builder = build_create_announcement(
         repo_id,
@@ -259,6 +294,7 @@ pub async fn cmd_create_repo(
         web_url,
         relays,
         channel,
+        project,
     )?;
     let event = client.sign_event(builder)?;
     let owner = event.pubkey.to_hex();
@@ -390,21 +426,45 @@ async fn cmd_protect_remove(
     submit_repo_update(client, builder).await
 }
 
-/// Bind (or rebind) a repository to a channel — the fix path for issue
-/// #3527's permanently-404 repos. Publishes a read-modify-write update of
-/// the caller's own kind:30617 with exactly one `buzz-channel` tag; all
-/// other metadata (protections, name, description, future tags) is
+/// Give a repository an ACL — the fix path for issue #3527's permanently-404
+/// repos. Publishes a read-modify-write update of the caller's own
+/// kind:30617 with exactly one `buzz-channel` tag, one `project` tag, or
+/// both; all other metadata (protections, name, description, future tags) is
 /// preserved by the same machinery `repos protect` uses.
 ///
-/// The UUID is validated for *shape* only — deliberately. Channel existence
-/// and the caller's membership are the relay's authority at git-access
-/// time; a CLI-side network pre-check would just be TOCTOU with extra
-/// latency.
-async fn cmd_bind_repo(client: &BuzzClient, repo_id: &str, channel: &str) -> Result<(), CliError> {
-    let event = current_repo(client, repo_id).await?;
-    let builder =
-        build_updated_repo_announcement(&event, RepoChange::BindChannel(channel.to_string()))?;
-    submit_repo_update(client, builder).await
+/// Each update is applied as its own read-modify-write so the second reads
+/// the head the first published — otherwise the second would rebuild from a
+/// stale head and drop the first tag.
+///
+/// Values are validated for *shape* only — deliberately. Channel/project
+/// existence and the caller's membership are the relay's authority at
+/// git-access time; a CLI-side network pre-check would just be TOCTOU with
+/// extra latency.
+async fn cmd_bind_repo(
+    client: &BuzzClient,
+    repo_id: &str,
+    channel: Option<&str>,
+    project: Option<&str>,
+) -> Result<(), CliError> {
+    if channel.is_none() && project.is_none() {
+        return Err(CliError::Usage(
+            "specify --channel, --project, or both: a repository with neither is unreachable"
+                .into(),
+        ));
+    }
+    if let Some(channel) = channel {
+        let event = current_repo(client, repo_id).await?;
+        let builder =
+            build_updated_repo_announcement(&event, RepoChange::BindChannel(channel.to_string()))?;
+        submit_repo_update(client, builder).await?;
+    }
+    if let Some(project) = project {
+        let event = current_repo(client, repo_id).await?;
+        let builder =
+            build_updated_repo_announcement(&event, RepoChange::LinkProject(project.to_string()))?;
+        submit_repo_update(client, builder).await?;
+    }
+    Ok(())
 }
 
 pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), CliError> {
@@ -418,6 +478,7 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
             web,
             relays,
             channel,
+            project,
         } => {
             cmd_create_repo(
                 client,
@@ -428,12 +489,17 @@ pub async fn dispatch(cmd: crate::ReposCmd, client: &BuzzClient) -> Result<(), C
                 web.as_deref(),
                 &relays,
                 channel.as_deref(),
+                project.as_deref(),
             )
             .await
         }
         ReposCmd::Get { id, owner } => cmd_get_repo(client, &id, owner.as_deref()).await,
         ReposCmd::List { owner, limit } => cmd_list_repos(client, owner.as_deref(), limit).await,
-        ReposCmd::Bind { id, channel } => cmd_bind_repo(client, &id, &channel).await,
+        ReposCmd::Bind {
+            id,
+            channel,
+            project,
+        } => cmd_bind_repo(client, &id, channel.as_deref(), project.as_deref()).await,
         ReposCmd::Protect(command) => match command {
             ReposProtectCmd::List { id } => cmd_protect_list(client, &id).await,
             ReposProtectCmd::Set {
@@ -760,6 +826,59 @@ mod tests {
         assert!(matches!(error, crate::error::CliError::Usage(_)));
     }
 
+    #[test]
+    fn link_project_replaces_duplicates_and_leaves_the_channel_binding_alone() {
+        let channel = uuid::Uuid::new_v4().to_string();
+        let owner = Keys::generate().public_key().to_hex();
+        let coordinate = format!("30621:{owner}:new-project");
+        let existing = signed_repo(
+            vec![
+                tag(&["d", "demo"]),
+                tag(&["project", &format!("30621:{owner}:stale-one")]),
+                tag(&["project", &format!("30621:{owner}:stale-two")]),
+                tag(&["buzz-channel", &channel]),
+                tag(&["buzz-protect", "refs/heads/main", "push:admin"]),
+            ],
+            "",
+            10,
+        );
+
+        let updated =
+            build_updated_repo_announcement(&existing, RepoChange::LinkProject(coordinate.clone()))
+                .expect("build link update")
+                .sign_with_keys(&Keys::generate())
+                .expect("sign link update");
+
+        let links: Vec<_> = updated
+            .tags
+            .iter()
+            .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("project"))
+            .collect();
+        assert_eq!(links.len(), 1, "exactly one project tag survives");
+        assert_eq!(links[0].as_slice(), ["project", coordinate.as_str()]);
+        // The two ACLs are independent: relinking must not silently revoke
+        // the channel's access.
+        assert!(updated
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["buzz-channel", channel.as_str()]));
+        assert!(updated
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["buzz-protect", "refs/heads/main", "push:admin"]));
+    }
+
+    #[test]
+    fn link_project_rejects_a_malformed_coordinate() {
+        let existing = signed_repo(vec![tag(&["d", "demo"])], "", 10);
+
+        let error =
+            build_updated_repo_announcement(&existing, RepoChange::LinkProject("nope".into()))
+                .expect_err("malformed coordinate must not build an update");
+
+        assert!(matches!(error, crate::error::CliError::Usage(_)));
+    }
+
     /// Issue #3527: `repos create --channel` must emit exactly one
     /// `buzz-channel` tag so the primary create command stops producing
     /// repos the relay 404s forever.
@@ -774,6 +893,7 @@ mod tests {
             None,
             &[],
             Some(&channel),
+            None,
         )
         .expect("build create announcement")
         .sign_with_keys(&Keys::generate())
@@ -797,7 +917,7 @@ mod tests {
 
     #[test]
     fn create_without_channel_emits_no_binding_tag() {
-        let event = build_create_announcement("demo", None, None, &[], None, &[], None)
+        let event = build_create_announcement("demo", None, None, &[], None, &[], None, None)
             .expect("build create announcement")
             .sign_with_keys(&Keys::generate())
             .expect("sign create announcement");
@@ -813,9 +933,91 @@ mod tests {
 
     #[test]
     fn create_rejects_malformed_channel_uuid() {
-        let error = build_create_announcement("demo", None, None, &[], None, &[], Some("nope"))
-            .expect_err("malformed channel id must not build an announcement");
+        let error =
+            build_create_announcement("demo", None, None, &[], None, &[], Some("nope"), None)
+                .expect_err("malformed channel id must not build an announcement");
         assert!(matches!(error, crate::error::CliError::Usage(_)));
+    }
+
+    /// `repos create --project` is the channel-less path: the project's
+    /// roster is the ACL, so no `buzz-channel` tag is emitted at all.
+    #[test]
+    fn create_with_project_emits_one_normalized_project_tag_and_no_channel() {
+        let owner = Keys::generate().public_key().to_hex();
+        // Mixed case in: the relay stores and compares lowercase, so the tag
+        // must go out normalized or the coordinate never matches an ACL row.
+        let coordinate = format!("30621:{}:Demo-Project", owner.to_uppercase());
+        let event =
+            build_create_announcement("demo", None, None, &[], None, &[], None, Some(&coordinate))
+                .expect("build create announcement")
+                .sign_with_keys(&Keys::generate())
+                .expect("sign create announcement");
+
+        let links: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("project"))
+            .collect();
+        assert_eq!(links.len(), 1, "exactly one project tag");
+        assert_eq!(
+            links[0].as_slice(),
+            ["project", &format!("30621:{owner}:Demo-Project")]
+        );
+        assert!(
+            !event
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice().first().map(String::as_str) == Some("buzz-channel")),
+            "a project-scoped repo needs no channel binding"
+        );
+    }
+
+    #[test]
+    fn create_accepts_both_acls_together() {
+        let channel = uuid::Uuid::new_v4().to_string();
+        let coordinate = format!("30621:{}:proj", Keys::generate().public_key().to_hex());
+        let event = build_create_announcement(
+            "demo",
+            None,
+            None,
+            &[],
+            None,
+            &[],
+            Some(&channel),
+            Some(&coordinate),
+        )
+        .expect("build create announcement")
+        .sign_with_keys(&Keys::generate())
+        .expect("sign create announcement");
+
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["buzz-channel", channel.as_str()]));
+        assert!(event
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice() == ["project", coordinate.as_str()]));
+    }
+
+    #[test]
+    fn create_rejects_malformed_project_coordinate() {
+        for bad in [
+            "not-a-coordinate",
+            "30621:short:proj",
+            // 30617 is a repo announcement, not a project.
+            "30617:0000000000000000000000000000000000000000000000000000000000000000:proj",
+            // Empty d-tag.
+            "30621:0000000000000000000000000000000000000000000000000000000000000000:",
+        ] {
+            let error =
+                build_create_announcement("demo", None, None, &[], None, &[], None, Some(bad))
+                    .expect_err("malformed coordinate must not build an announcement");
+            assert!(
+                matches!(error, crate::error::CliError::Usage(_)),
+                "{bad:?} must be a usage error"
+            );
+        }
     }
 
     #[test]

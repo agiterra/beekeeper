@@ -66,7 +66,7 @@ partial because several session channels were inaccessible._
 | Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Owner key backed up and `/opt/buzz/.owner-key` deleted. Autodeploy tracks it, pinned to `repo_id = 1`. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
-| Unshipped locally | the `just dev` nokeyring fix, and three verified-missing session-stability fixes (§3) |
+| Unshipped locally | the `just dev` nokeyring fix, three verified-missing session-stability fixes (§3), and the project-roster git ACL (landed on `main`, not deployed — see §2) |
 | Latest assembly | `build/2026-08-21.1` — the complete verified-liveness stack, the CI-105 state-lock recovery (item 34), and the fenced-session briefing (item 35). Woodpecker #109 passed at `04a087e4a`; the live 9,119-second-old observation above is the first meaningful deployed lease acceptance. Agent Progress remains the next candidate until its ceremony completes. |
 | Built, awaiting acceptance | **Project Pulse Slice 1** — five signed commits on `wip/project-pulse` (`aced60f2`…`d235189a`, 2026-08-19): kind 44240 end to end (core contract, relay ACL on every read surface, `bee pulse` CLI, ACP digest injection, Desktop screen behind the `project-pulse` preview flag). Gated green (live e2e 11/11, desktop 5832/5832, conformance 42/42, clippy/fmt clean). Blocked on Brian's §5.8 manual acceptance (`docs/PULSE_SLICE1_ACCEPTANCE_RUNBOOK.md`); split ceremony pre-computed in `docs/PULSE_SLICE1_SPLIT_MAP.md` (since deleted
 along with the ceremony — recover from git history if ever needed). Plan: `docs/PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`. Next build queued: `docs/REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` (verified; zero file overlap with Pulse). **Shipped 2026-08-19 night as `build/2026-08-19.3`** — split onto `feature/project-pulse` + `integration/glue` and pushed to both remotes. That build shipped **without** the UX-fix pass, which was still uncommitted in `/Users/brian/Projects/buzz-uxfix` when the window closed. **The UX pass then shipped the same night as `build/2026-08-19.4`** — all 15 critique findings plus the error-card fix, folded as per-file diffs onto `feature/project-pulse` (`ebf5085c`, `877723fc`) and `integration/glue` (`db8614cc`) per the split map's EXECUTED banner, changed-line multisets verified identical (2,689 pulse-owned + 20 glue-owned lines) and `git diff wip/pulse-ux-fixes integrated-build` clean of every product hunk. Gate cited: desktop 5845/5845, fold conformance 42/42, `tsc --noEmit`, px-text guard; the 62 e2e-smoke failures were reproduced at `1ac2ac51` in a throwaway worktree and are therefore inherited, not caused by this delta — CI re-gates on push. §5.8 manual acceptance is **still owed**, and those 62 inherited smoke failures are still unexplained (§3) |
@@ -1227,6 +1227,67 @@ same morning and one left as a product question.
       at its next start, and the panel says so while the two differ. The
       default is unchanged at fifteen minutes, because raising it silently
       would trade one wrong number for another.
+
+
+### Built 2026-08-24 — project membership is the repository access signal
+
+**Landed on `main` 2026-08-24; not yet deployed.**
+
+Adding or importing a repository used to demand an "access channel", because
+the `buzz-channel` tag on the kind:30617 announcement was the only git ACL the
+relay knew. Projects already had a role-carrying roster (NIP-MP kinds
+9010/9011 → `project_acl_members`, `owner`/`collaborator`/`viewer`) and repos
+already declared their container (`["project", …]` → `git_repo_names
+.project_ref`), so the channel was a second, parallel ACL the user had to keep
+in sync by hand.
+
+The roster is now a first-class git ACL, **additive** to the channel binding:
+
+- `buzz_db::project_acl::get_project_role_by_coordinate` — the git-ACL lookup,
+  deliberately **without** the `visibility = 'private'` clause its neighbours
+  carry, because those decide whether to *hide an event surface* and this one
+  decides whether a roster *grants*. Do not unify them.
+- `api/git/policy.rs` step 7 resolves project and channel roles independently
+  and takes the more permissive (`git_perms::max_git_role`); owner → Owner,
+  collaborator → Member, viewer → no push (`git_perms::
+  git_role_for_project_role`). `buzz-protect` rules are unchanged.
+- `api/git/transport.rs` `authorize_git_read` admits **any** roster role at
+  **any** visibility, and the `bee repos bind` remediation body is now scoped
+  to repos with neither tag — a repo inside a project is legitimately unbound.
+- Desktop: the "Access channel" `<select>` is gone from the create, import,
+  and legacy add-repository dialogs, replaced by `ProjectRepoAccessNote`.
+  `accessChannelId` is optional everywhere; the legacy add-repo path now emits
+  the `project` back-reference it never had (without it those repos would have
+  become reachable by nobody).
+- CLI: `bee repos create --project`, `bee repos bind --project`, `--channel`
+  now optional on both.
+
+**Two decisions worth not re-litigating.** (1) Project *visibility* never
+grants git access — a public project's repos are no more cloneable than a
+private one's, or every repo sitting in the auto-created public `general`
+project would have silently become community-readable. (2) The channel binding
+still works and still grants, so no existing repo lost access and no migration
+was needed.
+
+**Deliberately left open.** For a *public* project the repo's kind:30617,
+relay-signed 30618 ref state, and NIP-34 patches (kind 1617 — which carry full
+diffs) are already community-readable, while `git clone` is not. Decision (1)
+keeps that gap rather than widening clone access to match it. It predates this
+change; it is recorded here because this is the first time anyone looked
+straight at it.
+
+Evidence: relay gate tests against Postgres —
+`api::git::transport::sec005_read_gate_tests` 12/12 (5 new, including
+"public project's repo is still not cloneable by a non-member") and
+`api::git::policy::tests` 5/5 (4 new). Live over real git against a local
+relay: `e2e_git` 3/3 including the new
+`git_access_follows_the_project_roster_without_a_channel_binding` — owner and
+collaborator clone and push a channel-less repo, a viewer clones but cannot
+push, a stranger is refused, and no identity is a member of any channel.
+`e2e_repo_visibility` 6/6 and `e2e_project_roles` 3/3 unregressed. `just ci`
+green (desktop 6015/6015). The `scripts/e2e-git-perms.sh` roster phase is
+written and `bash -n` clean but **was not executed** — that harness needs
+`websocket-client` and wants port 3000.
 
 ## 2a. Direction settled 2026-08-18
 

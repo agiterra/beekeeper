@@ -19,7 +19,8 @@ export type ImportProjectRepoInput = {
   /** Target container — may be the local General placeholder. */
   project: ProjectContainer;
   name: string;
-  accessChannelId: string;
+  /** Optional legacy `buzz-channel` binding; see `CreateProjectRepoInput`. */
+  accessChannelId?: string;
   /** Absolute path of the local checkout chosen by the user. */
   path: string;
   remoteStrategy: RepoRemoteStrategy;

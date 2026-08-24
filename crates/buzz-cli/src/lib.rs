@@ -1192,11 +1192,19 @@ pub enum ReposCmd {
         /// Preferred Nostr relay(s) for repo discovery — can be specified multiple times
         #[arg(long = "nostr-relay")]
         relays: Vec<String>,
-        /// Channel UUID to bind the repo to. The `buzz-channel` tag is the
-        /// git ACL: without it the relay 404s every clone/fetch/push until
-        /// the author runs `bee repos bind` (issue #3527).
+        /// Channel UUID to bind the repo to. Members of this channel get git
+        /// access at their channel role. Optional when `--project` is given.
         #[arg(long)]
         channel: Option<String>,
+        /// Project coordinate (`30621:<owner-hex>:<project-d>`) to announce
+        /// the repo into. The project's roster gets git access — owners push
+        /// as owners, collaborators as members, viewers read only.
+        ///
+        /// A repo with neither `--project` nor `--channel` has no ACL, so the
+        /// relay 404s every clone/fetch/push for everyone but its owner until
+        /// the author runs `bee repos bind` (issue #3527).
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Get a repository announcement
     Get {
@@ -1216,19 +1224,23 @@ pub enum ReposCmd {
         #[arg(long)]
         limit: Option<u32>,
     },
-    /// Bind (or rebind) one of your repositories to a channel.
+    /// Give one of your repositories an ACL — a project, a channel, or both.
     ///
-    /// The `buzz-channel` tag on the announcement is the git ACL: the relay
-    /// authorizes clone/fetch/push by membership in the bound channel. A
-    /// repo announced without it (e.g. by a vanilla NIP-34 client) returns
-    /// 404 for everyone until its author binds it here.
+    /// A repository is reachable through either its project's roster or its
+    /// bound channel's membership, and the relay grants whichever is more
+    /// permissive. A repo announced with neither (e.g. by a vanilla NIP-34
+    /// client) returns 404 for everyone until its author fixes it here.
     Bind {
         /// Repository identifier (d-tag).
         #[arg(long)]
         id: String,
         /// Channel UUID to bind. Replaces any existing binding.
         #[arg(long)]
-        channel: String,
+        channel: Option<String>,
+        /// Project coordinate (`30621:<owner-hex>:<project-d>`) to link into.
+        /// Replaces any existing link.
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Manage branch and tag protection rules on one of your repositories.
     #[command(subcommand)]

@@ -1,8 +1,13 @@
 //! Git permission types — ref patterns, protection rules, and policy evaluation inputs.
 //!
 //! This module defines the core data types for the Buzz git permission system.
-//! The permission model: channel role = repo role; `buzz-protect` tags on
-//! kind:30617 add constraints that apply to everyone (including the owner).
+//! The permission model: **channel role or project role = repo role** — a
+//! kind:30617 announcement may bind a channel (`buzz-channel`), declare a
+//! project (`["project", …]`), or both, and a pusher's effective role is the
+//! more permissive of the two grants ([`max_git_role`],
+//! [`git_role_for_project_role`]). `buzz-protect` tags on kind:30617 add
+//! constraints that apply to everyone (including the owner), whichever path
+//! the role arrived through.
 //!
 //! # Architecture
 //!
@@ -12,11 +17,15 @@
 //! push arrives → classify refs → match patterns → union rules → enforce
 //! ```
 
-use crate::channel::MemberRole;
+use crate::channel::{MemberRole, ProjectRole};
 use std::fmt;
 
 /// Machine-readable token prefixing the push-policy denial for a kind:30617
-/// announcement with no `buzz-channel` binding.
+/// announcement that grants access through **no** path at all — neither a
+/// `buzz-channel` binding nor a `["project", …]` back-reference. A repo
+/// inside a project is legitimately unbound and must never see this token:
+/// telling its pusher to bind a channel would be advice for a problem they
+/// do not have (they are simply not on the project's roster).
 ///
 /// This is a **declared cross-component contract**, not a log string. Known
 /// consumers switch on it:
@@ -451,6 +460,50 @@ pub fn default_min_role(ref_name: &str, kind: UpdateKind) -> MemberRole {
     }
 }
 
+/// The git role a project role confers on the project's repositories.
+///
+/// A repository whose kind:30617 carries a `["project", …]` back-reference
+/// authorizes against the project's curated roster *as well as* its
+/// `buzz-channel` binding — whichever grants more ([`max_git_role`]). The
+/// mapping is deliberately narrow:
+///
+/// | Project role   | Git role               | Why |
+/// |----------------|------------------------|-----|
+/// | `Owner`        | [`MemberRole::Owner`]  | Roster control over the project is the same authority a channel owner holds over its repos. |
+/// | `Collaborator` | [`MemberRole::Member`] | NIP-MP's "write into project contents" is ordinary push, not administration. |
+/// | `Viewer`       | `None`                 | Read-only across the project; grants no push. |
+///
+/// `None` means "this role grants no push", **not** "deny": the caller still
+/// consults the channel binding, which may grant independently.
+///
+/// `buzz-protect` rules are unaffected — they constrain every pusher
+/// including an owner, whichever path the role arrived through.
+pub fn git_role_for_project_role(role: ProjectRole) -> Option<MemberRole> {
+    match role {
+        ProjectRole::Owner => Some(MemberRole::Owner),
+        ProjectRole::Collaborator => Some(MemberRole::Member),
+        ProjectRole::Viewer => None,
+    }
+}
+
+/// The more permissive of two git roles held through different paths
+/// (project roster vs. bound channel).
+///
+/// The two ACLs are additive, so the effective role is the maximum: a channel
+/// Admin must not be demoted by also being a project Collaborator, and a
+/// project Owner must not be demoted by also being a channel Guest.
+///
+/// `Bot` is outside the hierarchy (`permission_level() == 0`) and callers
+/// normalize it to `Member` *before* ranking. An un-normalized `Bot` passed
+/// here loses to every other role, which is the fail-closed direction.
+pub fn max_git_role(a: MemberRole, b: MemberRole) -> MemberRole {
+    if b.permission_level() > a.permission_level() {
+        b
+    } else {
+        a
+    }
+}
+
 /// The effective constraints for a ref after unioning all matching rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveRules {
@@ -625,6 +678,65 @@ pub fn evaluate_push(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── project role → git role ──────────────────────────────────────────
+
+    #[test]
+    fn project_owner_pushes_as_owner_collaborator_as_member_viewer_never() {
+        assert_eq!(
+            git_role_for_project_role(ProjectRole::Owner),
+            Some(MemberRole::Owner)
+        );
+        assert_eq!(
+            git_role_for_project_role(ProjectRole::Collaborator),
+            Some(MemberRole::Member)
+        );
+        // A viewer is read-only across the project. Mapping them to Guest
+        // would look harmless but Guest is a *grant*, and it would satisfy
+        // any `buzz-protect` rule written as `push:guest`.
+        assert_eq!(git_role_for_project_role(ProjectRole::Viewer), None);
+    }
+
+    // ── additive grants: the maximum wins ────────────────────────────────
+
+    #[test]
+    fn max_git_role_never_demotes_either_path() {
+        // Channel Admin + project Collaborator: admin survives.
+        assert_eq!(
+            max_git_role(MemberRole::Admin, MemberRole::Member),
+            MemberRole::Admin
+        );
+        // Project Owner + channel Guest: owner survives, either order.
+        assert_eq!(
+            max_git_role(MemberRole::Guest, MemberRole::Owner),
+            MemberRole::Owner
+        );
+        assert_eq!(
+            max_git_role(MemberRole::Owner, MemberRole::Guest),
+            MemberRole::Owner
+        );
+        // Equal roles are idempotent.
+        assert_eq!(
+            max_git_role(MemberRole::Member, MemberRole::Member),
+            MemberRole::Member
+        );
+    }
+
+    #[test]
+    fn un_normalized_bot_loses_to_every_real_role() {
+        // Bot is outside the hierarchy. Callers promote it to Member before
+        // ranking; if one forgets, the fail-closed direction is that Bot
+        // never beats a real grant.
+        for other in [
+            MemberRole::Guest,
+            MemberRole::Member,
+            MemberRole::Admin,
+            MemberRole::Owner,
+        ] {
+            assert_eq!(max_git_role(MemberRole::Bot, other), other);
+            assert_eq!(max_git_role(other, MemberRole::Bot), other);
+        }
+    }
 
     #[test]
     fn pattern_parse_valid() {

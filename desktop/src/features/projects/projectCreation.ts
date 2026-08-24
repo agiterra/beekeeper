@@ -40,7 +40,13 @@ export function buildInitialProjectEventTemplates({
   projectRef,
   webUrl,
 }: {
-  accessChannelId: string;
+  /**
+   * Optional legacy `buzz-channel` binding, emitted on both the repository
+   * and the project head when supplied. Access normally comes from the
+   * project roster via the repository's `project` back-reference, so the
+   * create/import dialogs no longer collect it.
+   */
+  accessChannelId?: string;
   cloneUrl?: string;
   description?: string;
   name: string;
@@ -78,12 +84,17 @@ export function buildInitialProjectEventTemplates({
     ["d", dtag],
     ["name", normalizedName],
   ];
-  const normalizedAccessChannelId = accessChannelId.trim();
-  if (!isValidProjectChannelId(normalizedAccessChannelId)) {
-    throw new Error("Repository access channel is invalid.");
+  const normalizedAccessChannelId = accessChannelId?.trim();
+  if (normalizedAccessChannelId) {
+    // Shape-validated only when supplied: a malformed value would produce a
+    // `Broken` binding, which the relay fails closed on for everyone —
+    // strictly worse than the no-binding case it would have replaced.
+    if (!isValidProjectChannelId(normalizedAccessChannelId)) {
+      throw new Error("Repository access channel is invalid.");
+    }
+    repositoryTags.push(["buzz-channel", normalizedAccessChannelId]);
+    projectTags.push(["buzz-channel", normalizedAccessChannelId]);
   }
-  repositoryTags.push(["buzz-channel", normalizedAccessChannelId]);
-  projectTags.push(["buzz-channel", normalizedAccessChannelId]);
   if (normalizedDescription) {
     repositoryTags.push(["description", normalizedDescription]);
     projectTags.push(["description", normalizedDescription]);

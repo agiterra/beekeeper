@@ -800,3 +800,55 @@ pub async fn can_write_project_contents(
     .await?;
     Ok(row.map(|(ok,)| ok).unwrap_or(true))
 }
+
+/// The role `pubkey` holds in the project at `coordinate`, at **any**
+/// visibility — `None` when the project is unknown or the pubkey holds no
+/// role in it. The project creator is an implicit [`ProjectRole::Owner`].
+///
+/// This is the git ACL lookup: git smart-HTTP read and push authorize against
+/// the roster the project owner explicitly curated, and a *public* project's
+/// roster is exactly as explicit as a private one's. That is why this query
+/// deliberately omits the `visibility = 'private'` clause that
+/// [`is_private_project_member`], [`get_project_gate_by_coordinate`], and
+/// [`crate::git_repo::get_repo_project_gate`] all carry: for those, "public"
+/// genuinely means "no gate to apply", because they decide whether to *hide
+/// an event surface*. Here it would mean "no grant", which is the opposite
+/// question. Do not unify them.
+///
+/// Visibility still never *grants*: a public project's repositories do not
+/// become community-cloneable, because only a roster row (or the implicit
+/// creator row) returns `Some` here.
+///
+/// Indexed by `idx_project_acl_coordinate` on `(community_id, coordinate)`
+/// (`migrations/0033_project_acl.sql`).
+pub async fn get_project_role_by_coordinate(
+    pool: &PgPool,
+    community: CommunityId,
+    coordinate: &str,
+    pubkey: &[u8],
+) -> Result<Option<ProjectRole>> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        r#"
+        SELECT CASE
+                 WHEN pa.owner = $3 THEN 'owner'
+                 ELSE (
+                     SELECT pam.role FROM project_acl_members pam
+                     WHERE pam.community_id = pa.community_id
+                       AND pam.owner = pa.owner
+                       AND pam.dtag = pa.dtag
+                       AND pam.pubkey = $3
+                 )
+               END
+        FROM project_acl pa
+        WHERE pa.community_id = $1 AND pa.coordinate = $2
+        "#,
+    )
+    .bind(community.as_uuid())
+    .bind(coordinate)
+    .bind(pubkey)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row
+        .and_then(|(role,)| role)
+        .map(|role| parse_role_fail_closed(&role)))
+}

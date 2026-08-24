@@ -7,12 +7,13 @@ import {
   type ImportRepoFolderInfo,
   type RepoRemoteStrategy,
 } from "@/shared/api/projectGit";
-import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
+
+import { ProjectRepoAccessNote } from "./ProjectRepoAccessNote";
 
 const FIELD_SHELL_CLASS =
   "flex min-h-11 items-center rounded-xl border border-input bg-muted/40 px-3 transition-colors hover:border-muted-foreground/40 focus-within:border-muted-foreground/50";
@@ -44,34 +45,31 @@ function folderProblem(folder: ImportRepoFolderInfo | null): string | null {
  * point the folder's remote at the relay, push, and register the checkout.
  */
 export function ImportProjectRepoDialog({
-  channels,
-  defaultChannelId,
   isImporting,
   onImport,
   onOpenChange,
   open,
+  otherMemberCount,
   ownerPubkey,
   projectName,
   relayOrigin,
 }: {
-  channels: Channel[];
-  defaultChannelId?: string;
   isImporting: boolean;
   onImport: (input: {
     name: string;
-    accessChannelId: string;
     path: string;
     remoteStrategy: RepoRemoteStrategy;
   }) => Promise<void>;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  /** See {@link ProjectRepoAccessNote}. `null` while the roster loads. */
+  otherMemberCount: number | null;
   ownerPubkey: string | undefined;
   projectName: string;
   relayOrigin: string | null;
 }) {
   const [folder, setFolder] = React.useState<ImportRepoFolderInfo | null>(null);
   const [name, setName] = React.useState("");
-  const [selectedChannelId, setSelectedChannelId] = React.useState("");
   const [remoteStrategy, setRemoteStrategy] =
     React.useState<RepoRemoteStrategy>("set-origin");
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -80,10 +78,9 @@ export function ImportProjectRepoDialog({
     if (!open) return;
     setFolder(null);
     setName("");
-    setSelectedChannelId(defaultChannelId ?? "");
     setRemoteStrategy("set-origin");
     setErrorMessage(null);
-  }, [defaultChannelId, open]);
+  }, [open]);
 
   const dtag = projectDtagFromName(name.trim());
   const problem = folderProblem(folder);
@@ -117,11 +114,10 @@ export function ImportProjectRepoDialog({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!folder || problem || !name.trim() || !selectedChannelId) return;
+    if (!folder || problem || !name.trim()) return;
     setErrorMessage(null);
     try {
       await onImport({
-        accessChannelId: selectedChannelId,
         name: name.trim(),
         path: folder.path,
         remoteStrategy: showRemoteChoice ? remoteStrategy : "set-origin",
@@ -153,11 +149,7 @@ export function ImportProjectRepoDialog({
           <Button
             data-testid="import-project-repo-submit"
             disabled={
-              isImporting ||
-              !folder ||
-              Boolean(problem) ||
-              !name.trim() ||
-              !selectedChannelId
+              isImporting || !folder || Boolean(problem) || !name.trim()
             }
             form="import-project-repo-form"
             type="submit"
@@ -232,38 +224,10 @@ export function ImportProjectRepoDialog({
               </p>
             ) : null}
           </div>
-          <div className="space-y-1.5">
-            <label
-              className="text-sm font-medium text-foreground"
-              htmlFor="import-project-repo-channel"
-            >
-              Access channel
-            </label>
-            <div className={FIELD_SHELL_CLASS}>
-              <select
-                className={cn(FIELD_CONTROL_CLASS, "w-full")}
-                data-testid="import-project-repo-channel"
-                disabled={isImporting}
-                id="import-project-repo-channel"
-                onChange={(event) => {
-                  setSelectedChannelId(event.target.value);
-                  setErrorMessage(null);
-                }}
-                required
-                value={selectedChannelId}
-              >
-                <option value="">Select a channel</option>
-                {channels.map((channel) => (
-                  <option key={channel.id} value={channel.id}>
-                    {channel.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Members of this channel can access the repository.
-            </p>
-          </div>
+          <ProjectRepoAccessNote
+            otherMemberCount={otherMemberCount}
+            projectName={projectName}
+          />
           {showRemoteChoice ? (
             <div className="space-y-1.5">
               <span className="text-sm font-medium text-foreground">

@@ -446,3 +446,94 @@ test("a coordinate in the live head WITH a live repository head is still a concu
     /already contains.*mobile.*another session/,
   );
 });
+
+// ── project back-reference: the ACL the added repository inherits ──────────
+
+test("buildAddedRepositoryEventTemplatesFromHead back-references the project it joins", () => {
+  const OWNER = "a".repeat(64);
+  const liveHead = {
+    id: "e".repeat(64),
+    kind: 30621,
+    pubkey: OWNER,
+    created_at: 100,
+    content: "",
+    tags: [["d", "platform"]],
+  };
+
+  const templates = buildAddedRepositoryEventTemplatesFromHead({
+    existingRepositoryAddresses: [],
+    liveHead,
+    name: "Mobile",
+    ownerPubkey: OWNER,
+    repositoryHeadExists: false,
+  });
+
+  // NIP-MP claim authority reads the *repository*, not the project's forward
+  // `a` tag: without this back-reference the relay's roster gate never sees
+  // the repo, and with no channel binding either it would be reachable by
+  // nobody.
+  assert.deepEqual(templates.repository.tags, [
+    ["d", "mobile"],
+    ["name", "Mobile"],
+    ["project", `30621:${OWNER}:platform`],
+  ]);
+});
+
+test("buildAddedRepositoryEventTemplatesFromHead keeps an inherited channel alongside the project link", () => {
+  const OWNER = "a".repeat(64);
+  const accessChannelId = "11111111-1111-4111-8111-111111111111";
+  const liveHead = {
+    id: "e".repeat(64),
+    kind: 30621,
+    pubkey: OWNER,
+    created_at: 100,
+    content: "",
+    tags: [
+      ["d", "platform"],
+      ["buzz-channel", accessChannelId],
+    ],
+  };
+
+  const templates = buildAddedRepositoryEventTemplatesFromHead({
+    accessChannelId,
+    existingRepositoryAddresses: [],
+    liveHead,
+    name: "Mobile",
+    ownerPubkey: OWNER,
+    repositoryHeadExists: false,
+  });
+
+  // The two ACLs are additive — inheriting a channel must not displace the
+  // project link, and vice versa.
+  assert.deepEqual(templates.repository.tags, [
+    ["d", "mobile"],
+    ["name", "Mobile"],
+    ["project", `30621:${OWNER}:platform`],
+    ["buzz-channel", accessChannelId],
+  ]);
+});
+
+test("buildAddedRepositoryEventTemplatesFromHead still rejects a malformed inherited channel", () => {
+  const OWNER = "a".repeat(64);
+  const liveHead = {
+    id: "e".repeat(64),
+    kind: 30621,
+    pubkey: OWNER,
+    created_at: 100,
+    content: "",
+    tags: [["d", "platform"]],
+  };
+
+  assert.throws(
+    () =>
+      buildAddedRepositoryEventTemplatesFromHead({
+        accessChannelId: "not-a-uuid",
+        existingRepositoryAddresses: [],
+        liveHead,
+        name: "Mobile",
+        ownerPubkey: OWNER,
+        repositoryHeadExists: false,
+      }),
+    /access channel is invalid/,
+  );
+});

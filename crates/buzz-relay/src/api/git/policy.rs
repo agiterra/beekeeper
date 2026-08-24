@@ -6,10 +6,26 @@
 //! 1. Validates HMAC signature + 30s TTL (fail-closed)
 //! 2. Resolves kind:30617 → protection rules
 //! 3. Grants owner authority to the repo key or its verified managed-agent owner
-//! 4. Otherwise resolves the pusher's channel role via buzz-channel binding
-//! 5. Promotes Bot → Member (bots in a channel push as members)
-//! 6. Calls `buzz_core::git_perms::evaluate_push()`
-//! 7. Returns 200 (allow) or 403 (deny with reasons)
+//! 4. Otherwise resolves the pusher's role through **both** ACLs — the
+//!    project roster named by the announcement's `["project", …]` tag and the
+//!    channel named by its `buzz-channel` tag — and takes the more permissive
+//!    (promoting a channel Bot to Member first)
+//! 5. Calls `buzz_core::git_perms::evaluate_push()`
+//! 6. Returns 200 (allow) or 403 (deny with reasons)
+//!
+//! # Two additive ACLs
+//!
+//! A repository may be reachable through a project roster, a bound channel,
+//! or both. Neither narrows the other: the effective role is the maximum
+//! (`buzz_core::git_perms::max_git_role`), and a denial requires *both* to
+//! grant nothing. The project mapping lives in
+//! `buzz_core::git_perms::git_role_for_project_role` — owner → Owner,
+//! collaborator → Member, viewer → no push. `buzz-protect` rules constrain
+//! every pusher regardless of which path granted the role.
+//!
+//! The `no_channel_binding` remediation token is emitted only when the
+//! announcement carries *neither* tag; see the const docs in
+//! `buzz_core::git_perms`.
 //!
 //! # Bot Role Model
 //!
@@ -43,8 +59,8 @@ use uuid::Uuid;
 
 use buzz_core::channel::MemberRole;
 use buzz_core::git_perms::{
-    evaluate_push, parse_protection_tags, Denial, RefUpdate, UpdateKind,
-    GIT_NO_CHANNEL_BINDING_BODY,
+    evaluate_push, git_role_for_project_role, max_git_role, parse_protection_tags, Denial,
+    RefUpdate, UpdateKind, GIT_NO_CHANNEL_BINDING_BODY,
 };
 use buzz_db::EventQuery;
 
@@ -364,51 +380,99 @@ pub async fn hook_policy_check(
             }
         }
     };
-    let role = if is_repo_owner || is_managed_agent_owner {
+
+    // The repo's own `["project", …]` back-reference, if any. Read from the
+    // announcement rather than the `git_repo_names.project_ref` projection so
+    // the gate agrees with the signed event even if the projection is stale.
+    let project_ref = buzz_core::kind::repo_project_ref(&repo_event.event);
+
+    let git_role = if is_repo_owner || is_managed_agent_owner {
         MemberRole::Owner
     } else {
-        match channel_id {
-            None => {
-                warn!(repo = %req.repo_id, "hook callback: no buzz-channel binding");
-                // Declared cross-component contract — see the const docs in
-                // buzz-core::git_perms for who consumes the token and why
-                // the body also repeats the legacy phrase.
-                return (StatusCode::FORBIDDEN, GIT_NO_CHANNEL_BINDING_BODY).into_response();
-            }
-            Some(ch_id) => {
-                match state
-                    .db
-                    .get_member_role(community, ch_id, &pusher_bytes)
-                    .await
-                {
-                    Ok(Some(role_str)) => match role_str.parse::<MemberRole>() {
-                        Ok(role) => role,
-                        Err(_) => {
-                            error!(role = %role_str, "hook callback: unknown role");
-                            return (StatusCode::FORBIDDEN, "internal error").into_response();
-                        }
-                    },
-                    Ok(None) => {
-                        return (StatusCode::FORBIDDEN, "not a channel member").into_response();
-                    }
-                    Err(e) => {
-                        error!(error = %e, "hook callback: role lookup failed");
+        // Two ACLs, both additive: the project's curated roster and the bound
+        // channel's membership. Resolve each independently and take the more
+        // permissive grant — a channel Admin must not be demoted for also
+        // being a project Collaborator, nor a project Owner for also being a
+        // channel Guest. Neither granting is what denies.
+        let project_role = match &project_ref {
+            None => None,
+            Some(coordinate) => match state
+                .db
+                .get_project_role_by_coordinate(community, coordinate, &pusher_bytes)
+                .await
+            {
+                Ok(role) => role.and_then(git_role_for_project_role),
+                Err(e) => {
+                    error!(repo = %req.repo_id, error = %e, "hook callback: project role lookup failed");
+                    return (StatusCode::FORBIDDEN, "internal error").into_response();
+                }
+            },
+        };
+
+        let channel_role = match channel_id {
+            None => None,
+            Some(ch_id) => match state
+                .db
+                .get_member_role(community, ch_id, &pusher_bytes)
+                .await
+            {
+                Ok(Some(role_str)) => match role_str.parse::<MemberRole>() {
+                    // Bots are intentionally added to channels by members and
+                    // admins; for git push they are ordinary members.
+                    // Protection rules still apply. Bot is a designation
+                    // (what it is), not a permission tier (what it can do).
+                    // Normalized here rather than after ranking so an
+                    // out-of-hierarchy Bot never loses a max() it should win.
+                    Ok(MemberRole::Bot) => Some(MemberRole::Member),
+                    Ok(role) => Some(role),
+                    Err(_) => {
+                        error!(role = %role_str, "hook callback: unknown role");
                         return (StatusCode::FORBIDDEN, "internal error").into_response();
                     }
+                },
+                Ok(None) => None,
+                Err(e) => {
+                    error!(error = %e, "hook callback: role lookup failed");
+                    return (StatusCode::FORBIDDEN, "internal error").into_response();
                 }
+            },
+        };
+
+        match (project_role, channel_role) {
+            (Some(p), Some(c)) => max_git_role(p, c),
+            (Some(role), None) | (None, Some(role)) => role,
+            (None, None) => {
+                // Denial copy tells the pusher which door to knock on, and
+                // must not invent one that does not exist.
+                return match (&project_ref, channel_id) {
+                    // No door at all. Declared cross-component contract —
+                    // see the const docs in buzz-core::git_perms for who
+                    // consumes the token and why the body also repeats the
+                    // legacy phrase. Emitted ONLY here: a repo inside a
+                    // project is legitimately unbound, and telling its
+                    // pusher to bind a channel would be advice for a problem
+                    // they do not have.
+                    (None, None) => {
+                        warn!(repo = %req.repo_id, "hook callback: repo has neither a channel binding nor a project");
+                        (StatusCode::FORBIDDEN, GIT_NO_CHANNEL_BINDING_BODY).into_response()
+                    }
+                    (Some(_), None) => {
+                        (StatusCode::FORBIDDEN, "not a project member").into_response()
+                    }
+                    (None, Some(_)) => {
+                        (StatusCode::FORBIDDEN, "not a channel member").into_response()
+                    }
+                    (Some(_), Some(_)) => (
+                        StatusCode::FORBIDDEN,
+                        "not a project member or channel member",
+                    )
+                        .into_response(),
+                };
             }
         }
     };
 
-    // 8. Effective git role: bots intentionally added to a channel push as members.
-    // Protection rules (push:admin, no-force-push, require-patch, etc.) still apply.
-    // Bot is a designation (what it is), not a permission tier (what it can do).
-    let git_role = match role {
-        MemberRole::Bot => MemberRole::Member,
-        other => other,
-    };
-
-    // 9. Classify ref updates and evaluate policy.
+    // 8. Classify ref updates and evaluate policy.
     let updates: Vec<RefUpdate> = req
         .ref_updates
         .iter()
@@ -866,22 +930,46 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
         Arc::new(state)
     }
 
-    /// Announce `repo_id` with the given tags, then push to it as its own
-    /// announcement author and return the response.
-    async fn owner_push_response(
+    /// Creating `refs/heads/main` — the default operation, minimum role
+    /// `Member` (`git_perms::default_min_role`).
+    fn create_main() -> HookRefUpdate {
+        HookRefUpdate {
+            old_oid: "0".repeat(40),
+            new_oid: "2".repeat(40),
+            ref_name: "refs/heads/main".to_string(),
+            is_ancestor: false,
+        }
+    }
+
+    /// Force-pushing `refs/heads/main` — minimum role `Admin`. Used to prove
+    /// a grant carries its *tier*, not merely permission to push at all.
+    fn force_push_main() -> HookRefUpdate {
+        HookRefUpdate {
+            old_oid: "1".repeat(40),
+            new_oid: "2".repeat(40),
+            ref_name: "refs/heads/main".to_string(),
+            is_ancestor: false,
+        }
+    }
+
+    /// Announce `repo_id` with the given tags, then run the policy check for
+    /// an arbitrary pusher and ref update.
+    async fn push_response(
         state: &Arc<AppState>,
         community: buzz_core::CommunityId,
-        keys: &nostr::Keys,
+        repo_owner_keys: &nostr::Keys,
         repo_id: &str,
-        binding_tags: Vec<nostr::Tag>,
+        announcement_tags: Vec<nostr::Tag>,
+        pusher_hex: &str,
+        ref_update: HookRefUpdate,
     ) -> axum::response::Response {
         use nostr::{EventBuilder, Kind, Tag};
 
         let mut tags = vec![Tag::parse(["d", repo_id]).unwrap()];
-        tags.extend(binding_tags);
+        tags.extend(announcement_tags);
         let event = EventBuilder::new(Kind::Custom(30617), "")
             .tags(tags)
-            .sign_with_keys(keys)
+            .sign_with_keys(repo_owner_keys)
             .expect("sign 30617");
         state
             .db
@@ -889,18 +977,12 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
             .await
             .expect("insert 30617");
 
-        let owner_hex = keys.public_key().to_hex();
         let mut req = HookCallbackRequest {
             repo_id: repo_id.to_string(),
-            repo_owner: owner_hex.clone(),
+            repo_owner: repo_owner_keys.public_key().to_hex(),
             community_id: community.as_uuid().to_string(),
-            pusher_pubkey: owner_hex,
-            ref_updates: vec![HookRefUpdate {
-                old_oid: "0".repeat(40),
-                new_oid: "2".repeat(40),
-                ref_name: "refs/heads/main".to_string(),
-                is_ancestor: false,
-            }],
+            pusher_pubkey: pusher_hex.to_string(),
+            ref_updates: vec![ref_update],
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -910,6 +992,28 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
         let secret = state.config.git_hook_hmac_secret.clone();
         sign_request(&mut req, secret.as_bytes());
         hook_policy_check(State(Arc::clone(state)), Json(req)).await
+    }
+
+    /// Announce `repo_id` with the given tags, then push to it as its own
+    /// announcement author and return the response.
+    async fn owner_push_response(
+        state: &Arc<AppState>,
+        community: buzz_core::CommunityId,
+        keys: &nostr::Keys,
+        repo_id: &str,
+        binding_tags: Vec<nostr::Tag>,
+    ) -> axum::response::Response {
+        let owner_hex = keys.public_key().to_hex();
+        push_response(
+            state,
+            community,
+            keys,
+            repo_id,
+            binding_tags,
+            &owner_hex,
+            create_main(),
+        )
+        .await
     }
 
     async fn body_string(response: axum::response::Response) -> (StatusCode, String) {
@@ -983,5 +1087,305 @@ printf '%s' "$HMAC_INPUT" | openssl dgst -sha256 -hmac "{secret}" -hex 2>/dev/nu
             StatusCode::OK,
             "owner push to a never-bound repo must remain allowed (got body: {body})"
         );
+    }
+
+    // ── project-roster grants (NIP-MP) ───────────────────────────────────
+
+    struct ProjectFixture {
+        state: Arc<AppState>,
+        community: buzz_core::CommunityId,
+        coordinate: String,
+        creator: nostr::Keys,
+        collaborator: nostr::Keys,
+        viewer: nostr::Keys,
+        /// Announcement author, deliberately off the roster so the roster —
+        /// not authorship — is what these tests measure. (Pushing *as* the
+        /// author still short-circuits to Owner; that is tested above.)
+        repo_owner: nostr::Keys,
+    }
+
+    async fn project_fixture(visibility: &str) -> ProjectFixture {
+        use buzz_core::channel::ProjectRole;
+        use nostr::Keys;
+
+        let state = policy_test_state().await;
+        let host = format!("policy-mp-{}.example", uuid::Uuid::new_v4().simple());
+        let community = state
+            .db
+            .ensure_configured_community(&host)
+            .await
+            .expect("community")
+            .id;
+
+        let creator = Keys::generate();
+        let collaborator = Keys::generate();
+        let viewer = Keys::generate();
+        let repo_owner = Keys::generate();
+
+        let dtag = format!("proj-{}", uuid::Uuid::new_v4().simple());
+        state
+            .db
+            .upsert_project_acl(
+                community,
+                &creator.public_key().to_bytes(),
+                &dtag,
+                visibility,
+                &[
+                    (
+                        collaborator.public_key().to_bytes().to_vec(),
+                        ProjectRole::Collaborator,
+                    ),
+                    (viewer.public_key().to_bytes().to_vec(), ProjectRole::Viewer),
+                ],
+                1,
+            )
+            .await
+            .expect("project acl");
+
+        let coordinate = format!("30621:{}:{dtag}", creator.public_key().to_hex());
+        ProjectFixture {
+            state,
+            community,
+            coordinate,
+            creator,
+            collaborator,
+            viewer,
+            repo_owner,
+        }
+    }
+
+    fn project_tag(coordinate: &str) -> Vec<nostr::Tag> {
+        vec![nostr::Tag::parse(["project", coordinate]).unwrap()]
+    }
+
+    fn fresh_repo() -> String {
+        format!("repo-{}", uuid::Uuid::new_v4().simple())
+    }
+
+    /// The whole point of the change: a repo with **no** `buzz-channel` tag
+    /// at all is pushable by the project's roster. Owner pushes as Owner,
+    /// collaborator as Member, viewer not at all.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_grants_channel_less_repo_from_the_project_roster() {
+        let f = project_fixture("public").await;
+
+        for (label, keys) in [
+            ("project creator", &f.creator),
+            ("collaborator", &f.collaborator),
+        ] {
+            let response = push_response(
+                &f.state,
+                f.community,
+                &f.repo_owner,
+                &fresh_repo(),
+                project_tag(&f.coordinate),
+                &keys.public_key().to_hex(),
+                create_main(),
+            )
+            .await;
+            let (status, body) = body_string(response).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{label} must be able to push a channel-less repo in their project (body: {body})"
+            );
+        }
+
+        // A viewer is read-only across the project. With no channel binding
+        // to fall back on, they have no grant at all.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &f.viewer.public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, "not a project member");
+
+        // And a stranger gets the same denial — never the remediation token,
+        // which would tell them to bind a channel this repo does not need.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &nostr::Keys::generate().public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, "not a project member");
+        assert!(
+            !body.contains(buzz_core::git_perms::GIT_NO_CHANNEL_BINDING_TOKEN),
+            "a repo inside a project must never be told to bind a channel"
+        );
+    }
+
+    /// Project *visibility* is about the event surface, not about granting.
+    /// A private project's roster pushes exactly like a public one's — and
+    /// neither makes a non-member able to push.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_project_grant_is_visibility_agnostic() {
+        let f = project_fixture("private").await;
+
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &f.collaborator.public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a private project's collaborator must push too (body: {body})"
+        );
+
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            project_tag(&f.coordinate),
+            &nostr::Keys::generate().public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        assert_eq!(body_string(response).await.0, StatusCode::FORBIDDEN);
+    }
+
+    /// The two ACLs are additive and neither may demote the other. Both
+    /// directions are tested with a **force push**, which needs `Admin`, so
+    /// the assertion is about the resulting *tier* rather than about being
+    /// allowed to push at all.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_takes_the_more_permissive_of_project_and_channel() {
+        use buzz_core::channel::MemberRole;
+
+        let f = project_fixture("public").await;
+
+        // The channel is created by a third party, so the project creator can
+        // hold the Guest role here without tripping the last-owner guard.
+        let channel_creator = nostr::Keys::generate();
+        let channel_creator_pk = channel_creator.public_key().to_bytes().to_vec();
+        f.state
+            .db
+            .ensure_user(f.community, &channel_creator_pk)
+            .await
+            .expect("user");
+
+        // One channel, two members: the project's viewer joins as a channel
+        // Admin; the project's creator joins as a channel Guest.
+        let channel = uuid::Uuid::new_v4();
+        f.state
+            .db
+            .create_channel_with_id(
+                f.community,
+                channel,
+                &format!("ch-{}", channel.simple()),
+                buzz_db::channel::ChannelType::Stream,
+                buzz_db::channel::ChannelVisibility::Open,
+                None,
+                &channel_creator_pk,
+                None,
+                None,
+            )
+            .await
+            .expect("channel");
+        for (keys, role) in [
+            (&f.viewer, MemberRole::Admin),
+            (&f.creator, MemberRole::Guest),
+        ] {
+            let pk = keys.public_key().to_bytes().to_vec();
+            f.state
+                .db
+                .ensure_user(f.community, &pk)
+                .await
+                .expect("user");
+            f.state
+                .db
+                .add_member(f.community, channel, &pk, role, Some(&channel_creator_pk))
+                .await
+                .expect("member");
+        }
+
+        let both_tags = vec![
+            nostr::Tag::parse(["project", &f.coordinate]).unwrap(),
+            nostr::Tag::parse(["buzz-channel", &channel.to_string()]).unwrap(),
+        ];
+
+        // Project Viewer (no grant) + channel Admin ⇒ Admin. If the project
+        // path shadowed the channel path, this would deny.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            both_tags.clone(),
+            &f.viewer.public_key().to_hex(),
+            force_push_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a channel Admin must not be demoted by also being a project viewer (body: {body})"
+        );
+
+        // Project Owner + channel Guest ⇒ Owner. If the channel path won, or
+        // the two were min()'d, this would deny.
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            both_tags,
+            &f.creator.public_key().to_hex(),
+            force_push_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a project owner must not be demoted by also being a channel guest (body: {body})"
+        );
+    }
+
+    /// The remediation token's contract narrows but does not move: it still
+    /// fires, byte-identical, for a repo that names neither a channel nor a
+    /// project — the vanilla-NIP-34-client case from issue #3527.
+    #[tokio::test]
+    #[ignore = "requires Postgres"]
+    async fn push_gate_still_emits_the_remediation_token_for_a_repo_with_no_acl_at_all() {
+        let f = project_fixture("public").await;
+        let response = push_response(
+            &f.state,
+            f.community,
+            &f.repo_owner,
+            &fresh_repo(),
+            vec![],
+            &nostr::Keys::generate().public_key().to_hex(),
+            create_main(),
+        )
+        .await;
+        let (status, body) = body_string(response).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, GIT_NO_CHANNEL_BINDING_BODY);
     }
 }
