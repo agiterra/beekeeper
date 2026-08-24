@@ -82,11 +82,18 @@ test("a signed-out runtime offers Connect and flips ready after the login", asyn
   await page.getByTestId("channel-coding-sessions-trigger").click();
   await page.getByTestId("channel-coding-sessions-new").click();
 
-  const provider = page.getByTestId("new-coding-session-provider");
-  await expect(provider).toBeVisible();
+  // Provider and model are one control now, so a signed-out runtime shows as
+  // disabled rows inside the picker rather than a disabled `<option>`.
+  const picker = page.getByTestId("coding-session-model-picker");
+  await expect(picker).toBeVisible();
+  await picker.click();
   await expect(
-    provider.locator("option", { hasText: "(sign-in needed)" }),
-  ).toHaveCount(1, { timeout: 15_000 });
+    page
+      .getByTestId("coding-session-model-row-select")
+      .filter({ hasText: "sign-in needed" })
+      .first(),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.keyboard.press("Escape");
 
   const connect = page.getByTestId(
     "coding-session-runtime-connect-claude-claude-login",
@@ -102,9 +109,13 @@ test("a signed-out runtime offers Connect and flips ready after the login", asyn
   ).toBeVisible();
 
   // The login watch re-probes on an interval; after the mocked connect the
-  // runtimes command reports ready and the picker option re-enables.
+  // runtimes command reports ready and the rows re-enable.
+  await expect(connect).toHaveCount(0, { timeout: 20_000 });
+  await picker.click();
   await expect(
-    provider.locator("option", { hasText: "(sign-in needed)" }),
+    page
+      .getByTestId("coding-session-model-row-select")
+      .filter({ hasText: "sign-in needed" }),
   ).toHaveCount(0, { timeout: 20_000 });
-  await expect(connect).toHaveCount(0);
+  await page.keyboard.press("Escape");
 });

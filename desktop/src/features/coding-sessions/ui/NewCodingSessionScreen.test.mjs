@@ -82,8 +82,10 @@ test("the provider picker offers the catalog's models, and defers when it has no
       targets,
     }),
   );
-  assert.match(withModels, />sonnet</);
-  assert.match(withModels, />opus</);
+  // The catalog's models live in the picker's panel now; the closed trigger
+  // states the current one, and the list itself is covered by
+  // `codingSessionModelPickerModel.test.mjs`.
+  assert.match(withModels, /opus/);
   assert.doesNotMatch(withModels, /Provider default/);
 
   const uncatalogued = {
@@ -115,11 +117,13 @@ test("an empty provider list disables selection rather than pretending to offer 
     }),
   );
 
-  assert.match(markup, /No provider available/);
+  // One control now, so the empty state is a disabled trigger rather than a
+  // select holding a fake option.
   assert.match(
     markup,
-    /data-testid="new-coding-session-provider"[^>]*disabled/,
+    /data-testid="coding-session-model-picker"[^>]*disabled/,
   );
+  assert.match(markup, /Provider default/);
 });
 
 test("the auth-required state names the exact command that fixes it", () => {
@@ -239,7 +243,11 @@ test("a runtime that is not ready renders disabled with an honest hint", () => {
     ),
   );
 
-  assert.match(markup, /<option disabled[^>]*>Codex[^<]*\(sign-in needed\)</);
+  // The disabled `<option>` moved into the picker's rows when provider and
+  // model became one control; what a signed-out runtime needs on the *screen*
+  // is the remediation, and that is what this asserts. The row-level
+  // `ready`/`unavailableNote` rules are covered by
+  // `codingSessionModelPickerModel.test.mjs`.
   assert.match(markup, /codex login/);
   // The signed-out runtime's hint row carries its Connect button.
   assert.match(
@@ -247,9 +255,9 @@ test("a runtime that is not ready renders disabled with an honest hint", () => {
     /data-testid="coding-session-runtime-connect-codex-codex-login"/,
   );
   assert.match(markup, /Connect Codex/);
-  // The ready target stays selectable with no suffix ceremony.
-  assert.match(markup, /value="claude-target"/);
+  // A ready runtime contributes no remediation noise.
   assert.doesNotMatch(markup, /Claude[^<]*\(sign-in needed\)/);
+  assert.doesNotMatch(markup, /Connect Claude/);
 });
 
 test("the working-directory field names the exact reason a path will not work", () => {

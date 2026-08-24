@@ -733,7 +733,23 @@ here.
    integrations. Originally SESSION_HANDOFF_SOL §7.3.
 13. **Permission requests are auto-approved in the transport.**
     `session/request_permission` is answered `allow_once` inside the ACP read
-    loop (`acp.rs:1445`, dispatch `:1520`). No operator ever sees a prompt.
+    loop (`handle_permission_request`, `crates/buzz-acp/src/acp.rs:2194`; the
+    option is found by `kind`, never a hardcoded id). No operator ever sees a
+    prompt. **Observed live 2026-08-24**, dev provider log:
+    `acp::permission: auto-approving permission id=0 with allow_once
+    optionId="allow"`, immediately before the agent's tool call ran.
+    **Asked directly by Brian on 2026-08-24 — "how is the permission setting
+    being done in Buzz? Are we even handling that?" — and the answer is no.**
+    t3code puts a four-mode control where Buzz has nothing
+    (`CompactComposerControlsMenu.tsx:67-70`: Supervised / Auto-accept edits /
+    Auto / Full access), which is the same vocabulary this item already
+    recommended. Shipping that dropdown before the transport can honour it
+    would be a control that lies about what it enforces, so what shipped
+    instead is `CodingSessionAccessNotice`: a non-interactive row in the create
+    and add-provider surfaces that states "Full access" and, on hover, that
+    every tool call is approved automatically and there is nothing to choose
+    yet. It is a disclosure, and it is where the control goes when this item is
+    built.
     This is the root blocker for any approval story, and approvals appear
     nowhere in D1–D6. Prior art to reuse when it is picked up:
     a neutral runtime-mode vocabulary (`approval-required` /
@@ -1113,6 +1129,22 @@ same morning and one left as a product question.
       invent a choice `claude-agent-acp` never offered; and "Adapter default"
       is offered only where the adapter also published the bare id, because for
       a level-only model it would name something the provider would refuse.
+    - **Then the picker itself, which Brian asked for next**, modelled on
+      t3code's (`~/Projects/t3code/…/components/chat/ModelPickerSidebar.tsx`,
+      `modelPickerSearch.ts`) and rebuilt on Buzz primitives: provider and
+      model are one control with a provider rail, favourites, search, and ⌘N
+      hints, and Thinking stays its own control beside it. Favourites are
+      local-only and provider-scoped — pinning this machine's Codex must not
+      pin a catalog entry from another machine — and a provider whose catalog
+      has no models keeps a row, because a signed-out runtime publishes none
+      and dropping it hid the row that explains why it cannot be used.
+    - **What the adapter really publishes**, worth knowing before trusting
+      either list: the *stable* `configOptions[category=model]` carries 7 clean
+      base models (probed 2026-08-24), while the unstable `availableModels`
+      carries the effort combinations, and the desktop merges both into one
+      "unified model list, deduplicated by ID"
+      (`managed_agents/types.rs:742`). Both shapes reach the UI; the fold is
+      what makes them one list again.
 
 48. **OPEN, product decision: should a stop be a pause?** Brian, after stopping
     a Codex execution: *"why can it no longer be resumed? Should there be a
@@ -1131,6 +1163,7 @@ same morning and one left as a product question.
       handling), not a UI change. Do not build it without Brian choosing
       between "stop stays terminal and Add provider is the way forward" and
       "pause becomes a first-class lifecycle state".
+
 
 ## 2a. Direction settled 2026-08-18
 

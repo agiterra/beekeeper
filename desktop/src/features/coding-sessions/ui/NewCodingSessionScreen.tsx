@@ -38,6 +38,14 @@ import {
   resolveCodingSessionThinking,
   splitCodingSessionModelId,
 } from "@/features/coding-sessions/lib/codingSessionModelChoice";
+import {
+  readCodingSessionModelFavorites,
+  toggleCodingSessionModelFavorite,
+  writeCodingSessionModelFavorites,
+} from "@/features/coding-sessions/lib/codingSessionModelFavorites";
+import { codingSessionProviderBaseModels } from "@/features/coding-sessions/lib/codingSessionModelPickerModel";
+import { CodingSessionAccessNotice } from "@/features/coding-sessions/ui/CodingSessionAccessNotice";
+import { CodingSessionModelPicker } from "@/features/coding-sessions/ui/CodingSessionModelPicker";
 import { CodingSessionRuntimeConnect } from "./CodingSessionRuntimeConnect";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
@@ -685,16 +693,48 @@ export function NewCodingSessionProviderPicker({
 }) {
   const models = selectedTarget?.provider.allowedModels ?? [];
   // One control per decision. Codex encodes reasoning effort in the model id,
-  // so live discovery turned four models into thirty rows (§2 item 45).
+  // so live discovery (§2 item 39) turned four models into thirty rows (§2
+  // item 45); the picker lists models and this list supplies the levels.
   const choices = React.useMemo(
     () => codingSessionModelChoices(models),
     [models],
   );
   const selected = splitCodingSessionModelId(model ?? "");
   const thinkingLevels = choices.thinkingByModel.get(selected.model) ?? [];
-  // One remediation row per unavailable runtime — disabled options say what
-  // is wrong, but an <option> cannot carry a full sentence, let alone the
-  // Connect button that fixes a signed-out runtime in place.
+  const [favorites, setFavorites] = React.useState<ReadonlySet<string>>(
+    readCodingSessionModelFavorites,
+  );
+  const toggleFavorite = React.useCallback((favoriteKey: string) => {
+    setFavorites((current) => {
+      const next = toggleCodingSessionModelFavorite(current, favoriteKey);
+      writeCodingSessionModelFavorites(next);
+      return next;
+    });
+  }, []);
+  // Every target is a rail, ready or not: a signed-out runtime is exactly what
+  // a person needs to *see* to fix it, and its rows say why they are disabled.
+  const pickerProviders = React.useMemo(
+    () =>
+      targets.map((target) => ({
+        selectionKey: target.selectionKey,
+        runtime: target.provider.runtime,
+        label: formatCodingSessionProviderLabel({
+          runtime: target.provider.runtime,
+          providerInstanceRef: target.provider.providerInstanceRef,
+        }),
+        models: codingSessionProviderBaseModels(target.provider.allowedModels),
+        ready: isNewCodingSessionTargetReady(target),
+        unavailableNote:
+          target.availability?.state === "needs_auth"
+            ? "sign-in needed"
+            : target.availability?.state === "missing"
+              ? "not installed"
+              : (noteForTarget?.(target) ?? null),
+      })),
+    [noteForTarget, targets],
+  );
+  // One remediation row per unavailable runtime — a rail glyph and a disabled
+  // row say *that* something is wrong; only this says what to do about it.
   const unavailableRuntimes = [
     ...new Map(
       targets.flatMap((target) =>
@@ -716,57 +756,47 @@ export function NewCodingSessionProviderPicker({
       ),
     ).values(),
   ];
+  // Picking a model may also change provider: the rail is a filter over one
+  // list, so the two selections settle together instead of in two steps.
+  const handlePick = React.useCallback(
+    (pick: { selectionKey: string; model: string }) => {
+      if (pick.selectionKey !== selectedTarget?.selectionKey) {
+        onTargetChange(pick.selectionKey);
+      }
+      const target = targets.find(
+        (candidate) => candidate.selectionKey === pick.selectionKey,
+      );
+      const nextChoices = codingSessionModelChoices(
+        target?.provider.allowedModels ?? [],
+      );
+      onModelChange(
+        joinCodingSessionModelId(
+          pick.model,
+          resolveCodingSessionThinking(
+            nextChoices,
+            pick.model,
+            selected.thinking,
+          ),
+        ),
+      );
+    },
+    [onModelChange, onTargetChange, selected.thinking, selectedTarget, targets],
+  );
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <label
-          className="text-xs font-medium text-muted-foreground"
-          htmlFor="coding-session-provider"
-        >
-          Provider
-        </label>
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
-          data-testid="new-coding-session-provider"
-          disabled={disabled || targets.length === 0}
-          id="coding-session-provider"
-          onChange={(event) => onTargetChange(event.target.value)}
-          value={selectedTarget?.selectionKey ?? ""}
-        >
-          {targets.length === 0 ? (
-            <option value="">No provider available</option>
-          ) : null}
-          {targets.map((target) => {
-            const label = formatCodingSessionProviderLabel({
-              runtime: target.provider.runtime,
-              providerInstanceRef: target.provider.providerInstanceRef,
-            });
-            const note = noteForTarget?.(target) ?? null;
-            const suffix =
-              target.availability?.state === "needs_auth"
-                ? " (sign-in needed)"
-                : target.availability?.state === "missing"
-                  ? " (not installed)"
-                  : note
-                    ? ` (${note})`
-                    : // Without this the local provider and a catalog entry
-                      // from another (possibly long-dead) provider render as
-                      // identical options.
-                      target.isLocalProvider
-                      ? " (this computer)"
-                      : "";
-            return (
-              <option
-                disabled={!isNewCodingSessionTargetReady(target)}
-                key={target.selectionKey}
-                value={target.selectionKey}
-              >
-                {label}
-                {suffix}
-              </option>
-            );
-          })}
-        </select>
+        <span className="text-xs font-medium text-muted-foreground">
+          Provider and model
+        </span>
+        <CodingSessionModelPicker
+          disabled={disabled}
+          favorites={favorites}
+          model={selected.model === "" ? null : selected.model}
+          onModelChange={handlePick}
+          onToggleFavorite={toggleFavorite}
+          providers={pickerProviders}
+          selectionKey={selectedTarget?.selectionKey ?? null}
+        />
         {unavailableRuntimes.map((entry) => (
           <div className="flex flex-col gap-1.5" key={entry.runtime}>
             <p className="text-2xs text-muted-foreground">{entry.hint}</p>
@@ -781,41 +811,13 @@ export function NewCodingSessionProviderPicker({
           </div>
         ))}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <label
-          className="text-xs font-medium text-muted-foreground"
-          htmlFor="coding-session-model"
-        >
-          Model
-        </label>
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
-          data-testid="new-coding-session-model"
-          disabled={disabled || choices.models.length === 0}
-          id="coding-session-model"
-          onChange={(event) =>
-            onModelChange(
-              joinCodingSessionModelId(
-                event.target.value,
-                resolveCodingSessionThinking(
-                  choices,
-                  event.target.value,
-                  selected.thinking,
-                ),
-              ),
-            )
-          }
-          value={selected.model}
-        >
-          {choices.models.length === 0 ? (
-            <option value="">Provider default</option>
-          ) : null}
-          {choices.models.map((allowed) => (
-            <option key={allowed} value={allowed}>
-              {allowed}
-            </option>
-          ))}
-        </select>
+      <div className="flex shrink-0 flex-col gap-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          Access
+        </span>
+        <div className="flex h-9 items-center">
+          <CodingSessionAccessNotice />
+        </div>
       </div>
       {thinkingLevels.length > 0 ? (
         <div className="flex min-w-0 flex-col gap-2 sm:w-40">
