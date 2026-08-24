@@ -70,7 +70,7 @@ const HOST_RUNTIMES: &[HostRuntime] = &[
         driver: "goose-acp",
         adapter_commands: &["goose"],
         agent_args: &["acp"],
-        // Deliberately not opted in: the same probe against goose 
+        // Deliberately not opted in: the same probe against goose
         // answers `-32603 Internal error` (tested 2026-08-24), so discovery
         // would spend its timeout to learn nothing. Flip it when goose answers.
         discover_models: false,
@@ -161,7 +161,11 @@ pub(crate) fn runtime_probe_target(instance_ref: &str) -> Result<RuntimeProbeTar
     Ok(RuntimeProbeTarget {
         label: runtime.runtime_id,
         agent_command,
-        agent_args: runtime.agent_args.iter().map(|arg| arg.to_string()).collect(),
+        agent_args: runtime
+            .agent_args
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect(),
         needs_claude_executable: runtime.runtime_id == "claude",
     })
 }

@@ -569,10 +569,7 @@ fn each_runtime_is_probed_through_its_own_adapter() {
             assert_eq!(target.label, "codex");
             assert!(!target.needs_claude_executable);
             assert!(
-                target
-                    .agent_command
-                    .to_string_lossy()
-                    .contains("codex-acp"),
+                target.agent_command.to_string_lossy().contains("codex-acp"),
                 "codex must be probed through codex-acp, not through Claude's adapter"
             );
         }
