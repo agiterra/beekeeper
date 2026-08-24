@@ -1,19 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { projectSessionObservationLabel } from "./projectSessionObservation.ts";
+import {
+  projectSessionObservationLabel,
+  projectSessionObservationTitle,
+} from "./projectSessionObservation.ts";
 
-test("the project shelf reports metadata as history, never current liveness", () => {
+test("the shelf shows the bare status word", () => {
   assert.equal(
     projectSessionObservationLabel({ kind: "working", label: "Working" }),
-    "Reported working",
+    "Working",
   );
   assert.equal(
     projectSessionObservationLabel({ kind: "idle", label: "Idle" }),
-    "Reported idle",
+    "Idle",
   );
   assert.equal(
     projectSessionObservationLabel({ kind: "unknown", label: "Disconnected" }),
-    "Reported disconnected",
+    "Disconnected",
+  );
+});
+
+test("the provenance the word drops is kept on the hover, not deleted", () => {
+  const title = projectSessionObservationTitle({
+    kind: "working",
+    label: "Working",
+  });
+  assert.match(title, /last reported/);
+  assert.match(
+    title,
+    /not a live lease/,
+    "the shelf reads metadata; it must never be read as proof of liveness",
   );
 });

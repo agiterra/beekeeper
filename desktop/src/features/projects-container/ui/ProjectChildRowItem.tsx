@@ -33,7 +33,10 @@ import {
   projectChildLabel,
   type ProjectChildRow,
 } from "../lib/projectChildren";
-import { projectSessionObservationLabel } from "../lib/projectSessionObservation";
+import {
+  projectSessionObservationLabel,
+  projectSessionObservationTitle,
+} from "../lib/projectSessionObservation";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
 /**
@@ -163,7 +166,14 @@ export function ProjectChildRowItem({
               </span>
             ) : null}
           </span>
-          <span className="ml-1 flex shrink-0 items-center gap-1 text-2xs text-sidebar-foreground/45">
+          <span
+            className="ml-1 flex shrink-0 items-center gap-1 text-2xs text-sidebar-foreground/45"
+            title={
+              pending || settled
+                ? undefined
+                : projectSessionObservationTitle(entry.status)
+            }
+          >
             {/* A pending row has not produced a provider observation yet. */}
             {pending
               ? "Starting…"

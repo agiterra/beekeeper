@@ -691,11 +691,21 @@ test("a lease read that failed is a floor, never a quiet fleet", async ({
   );
   // The adjacent project shelf has metadata but no lease projection. It must
   // report that history neutrally instead of contradicting this panel with a
-  // green current-liveness claim in the same window.
+  // green current-liveness claim in the same window. The status word itself is
+  // bare — "Working", not "Reported working" — so the caveat it no longer
+  // spells out has to be reachable on the row's own hover.
   await expect(
     page.getByRole("region", { name: "Open Sessions" }),
   ).toBeVisible();
-  await expect(page.getByText("Reported working").first()).toBeVisible();
+  const shelfStatus = page
+    .getByRole("region", { name: "Open Sessions" })
+    .getByText("Working", { exact: true })
+    .first();
+  await expect(shelfStatus).toBeVisible();
+  await expect(shelfStatus).toHaveAttribute(
+    "title",
+    /last reported[\s\S]*not a live lease/,
+  );
   await expect(
     page.getByRole("region", { name: "Active Sessions" }),
   ).toHaveCount(0);
