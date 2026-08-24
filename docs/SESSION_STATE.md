@@ -33,7 +33,18 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
+_Last updated: 2026-08-23 night — a long live run on the dev instance against
+hive produced six findings — §2 items 39-44, each with the log line or
+`file:line` that proves it. Items 37 and 38, found earlier the same day, were
+moved into the same section out of the "Recovered 2026-08-18" block, where
+their numbers collided with items 18 and 19. All eight are the active track
+(§3). `main` is at
+`051f9771`; nothing from that run is fixed yet. Three environment facts from
+the same run are in §3a: the dev instance must launch in keyring mode, a killed
+`tauri dev` leaves vite holding its port, and prod and dev own different
+providers._
+
+_Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
 green at `62bcaa223`), hive serves Bee Keeper, and **lightyear has been rebuilt
 as a vanilla relay** with a wiped database and a rotated keypair. What remains
@@ -754,17 +765,172 @@ here.
     managed agents *into* sessions first via lane mention (no new wire
     concepts), then session executions *into* managed agents via `agentRef`
     (needs delegation grammar). D6 references the topic only abstractly.
-18. **`coding-sessions.spec.ts` "a seeded signed session is discoverable…"
+
+### Found 2026-08-23 night — the first long live run on the dev instance
+
+Six findings (items 39-44) from one session — "Testing1", in hallway, on the
+Hallway project — driven from the keyring-mode dev instance against
+`hive.agiterra.org`, with a second provider (Brian's prod app) owning some of
+its executions. Items 37 and 38 were found earlier the same day; they are moved
+here from the "Recovered 2026-08-18" block, where they had been misfiled and
+where their numbers collided with items 18 and 19.
+
+37. **`coding-sessions.spec.ts` "a seeded signed session is discoverable…"
     fails on `main`** (2026-08-23, run at `da3f181f`): the catalog entry no
     longer contains "Claude Agent Acp" — it renders
     "Fix the reconnect bug · Idle · Goal: … · Open". Either the entry dropped
-    the provider name or the assertion is stale; decide which before the
-    next smoke run reads as a regression. Inherited, not caused by
-    `fix/resumed-session-history`.
-19. **The catalog trigger counts generations, not sessions.** A resumed
+    the provider name or the assertion is stale; decide which by reading the
+    entry component, not by editing the test until it passes. Inherited, not
+    caused by `fix/resumed-session-history`.
+
+38. **The catalog trigger counts generations, not sessions.** A resumed
     session reads "Coding sessions (2)" and lists two entries that open the
-    same umbrella. The resumed-history e2e spec asserts that real count on
-    purpose; fixing the count is a separate change.
+    same umbrella. `desktop/tests/e2e/coding-sessions.spec.ts` ("a resumed
+    session renders every earlier generation") asserts that real count on
+    purpose; the fix must update the spec in the same change.
+
+39. **Codex offers exactly one model, named `default`, and every Codex
+    execution is then labelled with it.** Seen in "Add provider → Codex":
+    one option, `default`, where Claude lists real model ids; the execution
+    row then reads `Codex · default`. This is the "default label hiding the
+    real model" case `AGENTS.md` names as a first-class bug.
+    - **Where the placeholder comes from.** Both production construction
+      sites hardcode it: `desktop/src-tauri/src/session_provider/runtimes.rs:159-160`
+      (the descriptor list written to `BUZZ_CSP_RUNTIMES`) and `:219-220`
+      (the picker row). Discovery is what is supposed to replace it, and
+      only `claude` opts in — `runtimes.rs:49` vs `:58`, with codex declared
+      at `:53-58` and goose at `:61-68`.
+    - **Two discovery implementations, and only one of them is
+      driver-agnostic.** The sidecar's
+      `crates/buzz-session-provider/src/model_catalog.rs:24` iterates every
+      descriptor with `discover_models` and probes it through ACP
+      (`extract_model_config_options` / `extract_model_state`) — genuinely
+      driver-agnostic. The **desktop** command the picker calls is not:
+      `desktop/src-tauri/src/session_provider/commands.rs:71-110` returns the
+      static `"default"` for any runtime with `discover_models: false`
+      (`:82-88`) and its discovery branch resolves `claude-agent-acp` /
+      `claude-code-acp` by name (`:91-94`), with error strings to match. So
+      flipping codex's flag alone would make the picker probe **Claude's**
+      adapter and report Claude's models under Codex. The desktop branch must
+      take the runtime's own `adapter_commands`/`agent_args` first.
+    - **Correction to the handoff.** It cited
+      `crates/buzz-session-provider/src/commands.rs:602` as a production
+      fallback; that line is inside `#[cfg(test)] mod tests` (the module
+      begins at `:584`) and is a test fixture. The production placeholders are
+      the four `runtimes.rs`/desktop-`commands.rs` sites above.
+    - **The label is a second, separable bug.** An execution must display the
+      model the adapter *reported* (`extract_model_state`), not the string the
+      create requested — for every driver, including Claude.
+
+40. **Codex says the session-context MCP is not among its callable tools while
+    the transcript tells the operator that verified history is available.**
+    Both halves are in one file: the dev provider log
+    `~/Library/Application Support/io.agiterra.beekeeper.app.dev/session-provider/logs/1958c6c4….log`.
+    The Claude execution calls it — `tool_call:
+    mcp__buzz-session-context__session_overview` at line 110 (01:47:40Z). The
+    Codex execution on the same umbrella shows one `execute` (line 181,
+    01:49:55Z, a `sed` over `docs/STATUS.md`) and then, at 01:49:59Z (lines
+    281-284, streamed one token per line, which is why a plain `grep` for the
+    sentence finds nothing): *"The session-context MCP isn't currently exposed
+    among my callable tools, so I can't refresh the provider's snapshot beyond
+    the briefing you supplied."* The UI meanwhile rendered the continuity
+    marker *"Rehydrated — verified session history is available to this
+    agent"*.
+    - **Not a provider-side omission, as far as the seam goes.**
+      `crates/buzz-session-provider/src/session.rs:680` builds `mcp_servers`
+      once (from `rehydration_mcp_servers`, `:801`) and passes it to
+      `session_new_full` (`:710`, `:774`), `session_resume_full` (`:728`) and
+      `session_load_full` (`:750`) alike — no driver branch. Suspect
+      `@agentclientprotocol/codex-acp` ignores `mcpServers` on `session/new`
+      and wants the server in the generated `CODEX_CONFIG`
+      (`crates/buzz-acp/src/config.rs:739-790`, merge contract at
+      `crates/buzz-acp/src/acp.rs:261-316`).
+    - **A negative result proves nothing here.** codex-acp answers
+      unrecognized extension methods with `{}` — a JSON-RPC *success*, not
+      `-32601` (`crates/buzz-acp/src/acp.rs:200-207`, which is why
+      `steering_supported` exists as an explicit capability gate).
+    - **What closes it, and it is the only thing that closes it.** Brian's
+      instruction, 2026-08-23: *do not work around this — fix it.* So the
+      deliverable is the MCP genuinely callable from a Codex execution, proven
+      by a `tool_call: mcp__buzz-session-context__…` line in a provider log
+      from a Codex execution against hive. Changing the continuity marker's
+      wording is **not** a fix and does not close this item; it is only worth
+      doing if the transport turns out to be impossible on codex-acp's side,
+      and that finding would have to be recorded here with the evidence that
+      established it.
+
+41. **The session header reads Idle over a provider that is not running.**
+    Brian's prod app quit at 21:17 (its `session-provider` log: `shutdown
+    requested`) without publishing `disconnected`. For the next two hours the
+    Testing1 header showed **IDLE** and the composer offered Send and Stop
+    execution. Nothing could answer either one.
+    - **Cause.** `deriveCodingSessionWorkspaceStatus`
+      (`desktop/src/features/coding-sessions/lib/codingSessionWorkspaceModel.ts:220`)
+      takes exactly three inputs — the transcript, the newest signed 44223
+      `status`, and its `statusAt`. The kind-24223 lease is not among them, so
+      "the last thing this provider said" is rendered as "what is true now".
+    - **The honest model already exists one feature over.**
+      `agentLaneReportedText`
+      (`desktop/src/features/agent-progress/lib/agentProgressFormat.ts:37`)
+      states the status plainly only when `coordination ===
+      "provider_reachable"`, and otherwise says *last reported* with an age —
+      the exact distinction this header erases. That is §2 item 36's fold, and
+      §3's "do not build a third fold" applies.
+    - **Fix.** Feed lease reachability into the workspace status; with no live
+      lease the header reads "Last reported Idle · 2h ago", Send is disabled
+      with the reason "no provider is currently answering for this execution",
+      and Stop is replaced by the affordance in item 42. Wants a unit test
+      with a stale lease and an e2e case seeding metadata `running` with no
+      lease event.
+
+42. **Stop is terminal, nothing says so, and stops aimed at a dead provider
+    vanish instead of queueing visibly.** Brian pressed Stop three times on
+    the unreachable execution; each time the dialog confirmed and nothing
+    happened. When the prod app returned at 21:43 its provider drained all
+    three (`session stopped ×3`, one per command id).
+    - **The product is right and the copy is wrong.** A `stopped` execution is
+      deliberately not resumable: the composer offers **Reconnect** only for
+      `disconnected` and renders "This provider execution has ended." for
+      `stopped`
+      (`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:155-157`,
+      `:345-380`). The confirm dialog
+      (`hooks/useEndCodingSessionDialog.tsx:85-88`) says the durable session
+      and transcript stay open — true — but never says the execution cannot be
+      revived, so the operator expects a Resume button that will never appear.
+    - **Fix.** (a) Dialog: "This execution cannot be resumed. To continue the
+      work, add a provider to the session." (b) The ended banner gets an **Add
+      provider** action. (c) A command with no reachable provider surfaces as
+      pending — "Stop requested; no provider is listening" — and the same for
+      turns. `useCodingSessionResumeSettle` already implements the
+      refusal/receipt watcher for resume; extend the pattern rather than
+      inventing a second one.
+
+43. **A Codex tool row elides the shell binary as private context, and the row
+    becomes unreadable for no privacy gain.** Rendered: `Ran [elided private
+    context: 10 bytes, sha256:…] -lc "sed -n …"`. The ten bytes are the
+    interpreter path.
+    - **The guard is doing exactly what it was built to do.**
+      `sanitize_coding_session_context_text`
+      (`crates/buzz-core/src/coding_session_context.rs:869`) redacts
+      **per word**, and `contains_host_path` (`:887-920`) matches any absolute
+      unix path — so `/bin/zsh` is elided and the rest of the argv is kept
+      byte-for-byte. Nothing is mis-scoped in the predicate.
+    - **The collision is with §2 item 2**: `codex-acp` leaves `tool.input`
+      empty and puts the whole command in `tool.toolName` as prose, so a field
+      that is prose for Claude is argv for Codex and meets a redactor written
+      for prose. The fix belongs at that seam — parse the command structurally
+      for codex, or exempt an interpreter `argv[0]` — not by loosening the
+      host-path rule, which is protecting real host layout.
+
+44. **Coding-session lane messages also appear in the ordinary channel
+    timeline.** `publishCodingSessionLaneRenderableRefs`
+    (`desktop/src/features/messages/lib/codingSessionLaneVisibility.ts:104`)
+    exists, is exported, and has no production caller, so the channel timeline
+    never learns which `cs-session`-tagged kind:9 messages a lane has already
+    claimed and renders them twice. The predicate it needs is already restated
+    structurally at `:124` (`codingSessionLaneRenderableRefsFromUmbrellas`,
+    matching `umbrellaHasCollapsedHistory`). Wire the publisher from the
+    umbrella fold. Lowest impact of the seven.
 
 ## 2a. Direction settled 2026-08-18
 
@@ -779,6 +945,36 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**The active track, as of 2026-08-23 night, is the coding-session honesty pass
+— §2 items 39-44, in that order (39, 40, 41 and 42 are what a user actually
+hits; 43 and 44 are cheap).** It jumps this queue. The numbered list below is
+unchanged and resumes after it; its numbers are referenced by
+`REHYDRATION_HARDENING_IMPLEMENTATION_PLAN_2026-08-19.md` and
+`PROJECT_PULSE_TRUTH_FIRST_IMPLEMENTATION_PLAN_2026-08-19.md`, so do not
+renumber it.
+
+**The order the honesty pass is verified in, cheapest question first.** Each
+step answers a different question and none of them substitutes for the next.
+(1) `pnpm exec tsc --noEmit`, `pnpm test`, `pnpm exec biome check` from
+`desktop/`, plus `cargo test -p buzz-session-provider -p buzz-acp` — seconds.
+(2) `cd desktop && pnpm test:e2e:smoke` — this is where a UI claim is proven,
+also seconds; `coding-sessions.spec.ts` already seeds signed relay events
+through `__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__` and has genesis/create/metadata/
+transcript helpers and a two-generation case to copy. **Prove the test bites**:
+turn the fix off, rebuild, watch it go red, turn it back on — a test that was
+never red proves nothing. (3) `env -u BUZZ_DESKTOP_NOKEYRING just
+desktop-standalone` against hive, with Brian driving the UI and the agent
+reading the provider log and `bee --format compact sessions list --channel
+d244ad0a-d51d-4a2c-b98d-41795c5e9ca3` — minutes, and the only step that can
+answer an adapter question like item 40. (4) `just prod-desktop` **only** when
+Brian wants his daily driver updated: it is a 20-minute release build that
+installs over the running app, and using it to verify a UI change is what cost
+an hour on 2026-08-23 (§3a). (5) Land on a topic branch — `git commit -s`, `git
+rebase --signoff origin/main`, `just check`, `git push --force-with-lease`,
+fast-forward `main` — and **do not push to `main` while Brian is mid-test**: a
+green push makes `beekeeper-autodeploy.timer` restart the hive relay, even for
+a docs-only commit.
 
 1. **Re-test the duplicate create** (§2 item 1) on this build. The
    single-provider-instance lock shipped in `build/2026-08-18.12`; nobody has
@@ -825,6 +1021,25 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 
 ## 3a. Environment facts that cost real time (do not rediscover)
 
+- **The dev instance on this machine must run in keyring mode, whatever the
+  docs say.** `docs/local-desktop-instances.md` recommends
+  `BUZZ_DESKTOP_NOKEYRING=1` and `~/.zshrc:6` exports it, but the dev instance
+  was migrated *into* the keychain on 2026-08-22: the identity, six agent keys
+  and the hive provider key live in the `beekeeper-desktop-dev` blob and the
+  JSON records have their inline keys stripped. In file mode the app mints a
+  throwaway identity and every agent and provider comes up key-less, which
+  reads as a broken build. Launch it as `env -u BUZZ_DESKTOP_NOKEYRING just
+  desktop-standalone`. The doc still needs fixing.
+- **`pkill -f "tauri dev"` leaves vite alive** holding `BUZZ_VITE_PORT`, and
+  the next launch dies on "Port 13946 is already in use" while looking like a
+  compile failure. `lsof -ti:13946 | xargs kill` before relaunching.
+- **Prod and dev share one human identity but not one provider, and an
+  execution belongs to the provider that created it.** Human `3d3b7169…`,
+  prod provider `3728312c…`, dev provider `1958c6c4…`. Quitting the app that
+  owns an execution leaves nobody able to answer it — turns and stops sit in
+  the relay until that provider returns (§2 items 41 and 42, where three stops
+  drained two hours later). When a session stops responding, check *which*
+  provider owns it before debugging the code.
 - **`CLAUDE.md` is a symlink to `AGENTS.md`.** Editing through it modifies
   `AGENTS.md`; `git add CLAUDE.md` then stages an unchanged symlink and drops
   the edit with no error. On 2026-08-23 a branching-policy change committed as
