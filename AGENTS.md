@@ -43,6 +43,13 @@
 > rather than trusting memory, and **never hard-code a remote name in tooling**
 > — two pre-push guards did and both broke silently the day the names moved.
 > See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Remotes.
+>
+> **Pushing to `origin` needs Nostr credentials — run `just
+> install-git-credentials`.** The relay authenticates git with NIP-98, not a
+> password, so without the helper `git fetch origin` waits on a username prompt
+> that can never be answered. `bee git status` says whether it is set up.
+> The recipe writes no key material: the key file is the human's to create.
+> See [docs/INTEGRATION.md](docs/INTEGRATION.md) § Pushing to the relay.
 
 This guide is for AI agents contributing to the Buzz codebase. It covers
 agent-specific context and conventions. For general contributor info (setup,

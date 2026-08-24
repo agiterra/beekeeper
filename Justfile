@@ -84,6 +84,52 @@ down:
 ps:
     docker compose ps
 
+# Install git-credential-nostr and configure git to push to the relay's own git
+# hosting. Config is URL-scoped to the relay's /git path, so whatever already
+# serves GitHub (osxkeychain, gh, a PAT) is untouched.
+#
+# This writes NO key material. The helper reads `git config nostr.keyfile`;
+# putting your nsec there is yours to do, deliberately — see the note the
+# recipe prints when the file is missing.
+install-git-credentials relay="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="{{justfile_directory()}}/bin:$PATH"
+    RELAY="{{relay}}"
+    if [[ -z "$RELAY" ]]; then
+        # Derive from the remote rather than hard-coding a host: the relay URL
+        # differs per developer and per community, and a wrong default would
+        # write credentials scoped to a host that never sees a request.
+        RELAY="$(git remote get-url origin 2>/dev/null || true)"
+        if [[ -z "$RELAY" ]]; then
+            echo "No 'origin' remote to derive the relay URL from." >&2
+            echo "Pass one: just install-git-credentials https://relay.example" >&2
+            exit 1
+        fi
+        # Keep scheme://host[:port]; the helper scope is derived from that.
+        RELAY="$(printf '%s' "$RELAY" | sed -E 's#^([a-z]+://[^/]+).*#\1#')"
+    fi
+    # --root is load-bearing: hermit pins CARGO_HOME to
+    # {{justfile_directory()}}/.hermit/rust, so a bare `cargo install` lands the
+    # binary inside the repo, off PATH, and a `hermit clean` deletes it. Install
+    # somewhere the user's shell already looks.
+    INSTALL_ROOT="${CARGO_INSTALL_ROOT:-$HOME/.local}"
+    cargo install --quiet --path crates/git-credential-nostr --root "$INSTALL_ROOT"
+    HELPER="$INSTALL_ROOT/bin/git-credential-nostr"
+    echo "Installed $HELPER"
+    # Prefer the bare `nostr` shorthand when git can find it itself — that
+    # survives a later reinstall moving the file. Fall back to the absolute
+    # path when the install root is not on PATH, rather than writing a config
+    # entry that silently resolves to nothing.
+    if command -v git-credential-nostr >/dev/null 2>&1; then
+        cargo run --quiet -p buzz-cli -- --relay "$RELAY" git setup
+    else
+        echo "note: $INSTALL_ROOT/bin is not on PATH — pinning the absolute path instead."
+        cargo run --quiet -p buzz-cli -- --relay "$RELAY" git setup --helper "$HELPER"
+    fi
+    echo
+    cargo run --quiet -p buzz-cli -- --relay "$RELAY" git status
+
 # Tail all service logs
 logs *ARGS:
     docker compose logs -f {{ARGS}}

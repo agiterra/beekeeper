@@ -64,6 +64,8 @@ pub(crate) fn invoke_handler(
         title_bar_double_click,
         get_identity,
         get_nsec,
+        git_terminal_access_status,
+        enable_git_terminal_access,
         generate_backup_passphrase,
         create_ncryptsec_backup,
         verify_ncryptsec_backup,

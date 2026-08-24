@@ -11,6 +11,7 @@ import {
 } from "@/shared/api/projectGit";
 
 import { projectContainersQueryKey } from "./hooks";
+import { offerTerminalGitAccess } from "./offerTerminalGitAccess";
 
 export type LinkProjectRepoInput = {
   /** The already-announced repository (owned by anyone) to link. */
@@ -78,6 +79,9 @@ export function useLinkProjectRepoMutation() {
       void queryClient.invalidateQueries({
         queryKey: ["projects", "local-repositories"],
       });
+      // Linking wires the same relay remote as importing does, so it leaves a
+      // terminal in the same state: a remote it cannot authenticate to.
+      void offerTerminalGitAccess();
     },
   });
 }

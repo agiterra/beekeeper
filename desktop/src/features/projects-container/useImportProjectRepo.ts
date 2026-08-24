@@ -12,6 +12,7 @@ import { getIdentity } from "@/shared/api/tauriIdentity";
 import { KIND_REPO_ANNOUNCEMENT } from "@/shared/constants/kinds";
 
 import { projectContainersQueryKey, type ProjectContainer } from "./hooks";
+import { offerTerminalGitAccess } from "./offerTerminalGitAccess";
 import { createProjectRepo } from "./useCreateProjectRepo";
 import { ensureRealProject } from "./useGeneralProjectMigration";
 
@@ -121,6 +122,7 @@ export function useImportProjectRepoMutation() {
       void queryClient.invalidateQueries({
         queryKey: ["projects", "local-repositories"],
       });
+      void offerTerminalGitAccess();
     },
   });
 }

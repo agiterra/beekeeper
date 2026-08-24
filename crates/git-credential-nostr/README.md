@@ -10,23 +10,49 @@ NIP-98 credential helper for git — signs HTTP auth events with your Nostr key 
 ## Installation
 
 ```bash
-cargo install --path crates/git-credential-nostr
+cargo install --path crates/git-credential-nostr --root "$HOME/.local"
 ```
+
+`--root` matters inside this repo: hermit pins `CARGO_HOME` to
+`.hermit/rust`, so a bare `cargo install` puts the binary inside the working
+tree — off `PATH`, and deleted by a hermit clean.
 
 ## Setup
 
+From a Bee Keeper checkout, one command does everything below:
+
 ```bash
-# 1. Register the helper and enable per-path credentials.
-git config --global credential.helper nostr
-git config --global credential.useHttpPath true
+just install-git-credentials     # or: bee git setup
+```
+
+Both write the same three entries, and `bee git status` reports whether they
+actually work. To do it by hand:
+
+```bash
+# 1. Register the helper — SCOPED to the relay's git path.
+git config --global credential.https://relay.example/git.helper nostr
+git config --global credential.https://relay.example/git.useHttpPath true
 
 # 2. Store your nsec in a key file (must be 0600).
 mkdir -p ~/.nostr
-echo "nsec1..." > ~/.nostr/key && chmod 600 ~/.nostr/key
+printf '%s\n' "nsec1..." > ~/.nostr/key && chmod 600 ~/.nostr/key
 git config --global nostr.keyfile ~/.nostr/key
 ```
 
 That's it. Use git normally — `git clone`, `git push`, `git fetch`.
+
+### Scope it to the relay, not to everything
+
+An unscoped `credential.helper nostr` is consulted for **every** remote,
+GitHub included. This helper does decline politely when the server never sends
+a `Nostr` challenge — it prints nothing and exits 0, so git falls through to
+the next helper — but that makes your local correctness depend on how a remote
+third-party server behaves. Scoping to `<relay-origin>/git` keeps whatever
+already serves GitHub (osxkeychain, a PAT, `gh`) untouched by construction.
+
+`credential.useHttpPath` is set under the same scope on purpose: the helper
+requires it (it needs the repo path to sign the right URL), and setting it
+globally would change how credentials are matched for unrelated hosts.
 
 ## CI / CD
 

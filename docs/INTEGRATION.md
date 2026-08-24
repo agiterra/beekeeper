@@ -8,7 +8,7 @@ is the product, and upstream is merged in occasionally.
 
 | Remote | Repo | What it is |
 |---|---|---|
-| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. Needs Nostr credentials (`git-credential-nostr`). |
+| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. Needs Nostr credentials; run `just install-git-credentials`. |
 | `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | **Where `main` lives.** `main` tracks `upstream/main`; Woodpecker watches this repo, so this is what CI and the relay deploy from. |
 | `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
 
@@ -38,6 +38,55 @@ Both now resolve from what `main` tracks (`main@{upstream}`, then
 `origin/main`, then `upstream/main`), and anything touching the network in a
 hook sets `GIT_TERMINAL_PROMPT=0` so it fails fast rather than blocking. Follow
 that pattern rather than adding a third remote-name assumption.
+
+### Pushing to the relay
+
+The relay authenticates git with **NIP-98** — a signed kind:27235 event
+delivered through git's `authtype` credential capability, which needs git
+≥ 2.46. An unauthenticated request gets:
+
+```
+HTTP/2 401
+www-authenticate: Nostr realm="buzz", method="GET"
+```
+
+`git-credential-nostr` answers that challenge. It is bundled inside the desktop
+app as a Tauri sidecar, which is why the app can push and a terminal cannot —
+the app configures it per-subprocess with `GIT_CONFIG_GLOBAL=/dev/null` and the
+key in the child's environment, so nothing persists. One command sets a
+terminal up:
+
+```sh
+just install-git-credentials
+```
+
+That installs the helper to `$HOME/.local/bin` (**not** a bare `cargo install`
+— hermit pins `CARGO_HOME` inside the repo, so the binary would land in
+`.hermit/rust/bin`, off `PATH`, and a hermit clean would delete it) and writes
+three git config entries, **scoped to the relay's `/git` path** so `osxkeychain`
+keeps serving GitHub:
+
+```
+credential.https://hive.agiterra.org/git.helper       nostr
+credential.https://hive.agiterra.org/git.useHttpPath  true
+nostr.keyfile                                         ~/.nostr/key
+```
+
+It writes **no key material**. The key file is yours to create, at mode 0600,
+holding the nsec of the identity the relay knows — for
+`agiterra-beekeeper` that is the kind:30617 author, i.e. the **release**
+desktop identity. The debug build uses a different keyring service
+(`beekeeper-desktop-dev`) and therefore a different key, which is not the repo
+owner and would be denied.
+
+`bee git status` reports whether it is actually usable, and distinguishes
+"configured" from "configured and the helper still exists" — a config naming a
+helper that has been moved or deleted reads as set up and fails only at push
+time.
+
+Inside the desktop app the same setup is offered after an import or link wires
+up a Bee Keeper remote. It is an offer, never automatic: accepting writes the
+identity key to disk, and the prompt names the file first.
 
 ## Branches
 
@@ -211,6 +260,25 @@ Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
 `/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
 host; the forge is additive infrastructure.
 
+**That is being inverted, in steps.** The intent is for the relay to be
+canonical and GitHub to be a CI mirror. What blocks a straight swap is narrow
+and specific: Woodpecker needs a *forge* it can talk to — OAuth login, a repo
+and branch API, webhook delivery on push, commit-status reporting — and the
+relay's git hosting is a bespoke NIP-98-authed smart-HTTP transport with none
+of those. Its three routes are `info/refs`, `git-upload-pack` and
+`git-receive-pack`, and nothing else.
+
+Everything *downstream* of the forge is already GitHub-free and stays that way:
+`autodeploy` reads Woodpecker's sqlite and `git archive`s the local bare mirror,
+so it never talks to GitHub at all.
+
+The push notification the relay does emit is a relay-signed **kind:30618**
+NIP-34 ref-state event, published on every ref-changing push (and on repo
+creation — it is replaceable, so a listener must compare refs rather than treat
+each as new work). That, not a webhook, is what a future relay→mirror bridge
+would subscribe to. Until such a bridge exists, keeping GitHub in step is a
+push to both remotes.
+
 ### CI caching
 
 The gate/nightly rust and desktop steps run on the prebaked **`buzz-ci:N`**
@@ -259,25 +327,38 @@ reachable.
 
 ## Deploying
 
-The relay deploys itself: `buzz-autodeploy.timer` on the agincus host polls
-Woodpecker every 5 minutes, and when the newest `main` push pipeline is green it
-exports the source from the forge git mirror at that commit, builds
-`buzz-relay:<short-sha>` inside the relay instance, takes a `pg_dump` backup
-(`/opt/buzz/backup-pre-*.sql.gz`), flips `BUZZ_IMAGE` in
-`/opt/buzz/compose/.env`, and restarts with compose health-wait. An unhealthy
-relay rolls back to the previous image automatically. Red pipelines never
-deploy; a failed attempt leaves `/opt/buzz/autodeploy-failed-<short-sha>` in
-the instance so it will not rebuild in a loop (remove the marker to retry).
+The relay deploys itself. **One deployer script,
+`/usr/local/sbin/autodeploy`, serves two relays** — the config is what differs,
+so read the unit name before trusting any path below:
 
-Paper trail: `journalctl -u buzz-autodeploy` on the host,
-`/opt/buzz/deploy.log` and `/opt/buzz/build-<short-sha>.log` in the instance.
-The deployer itself lives at `/usr/local/sbin/buzz-autodeploy` on the host —
-CI has no credentials for (or access to) the prod instance; the deployer only
-pulls from Woodpecker's status DB and the read-only mirror.
+| Unit | Config | Repo | Branch | Instance |
+|---|---|---|---|---|
+| `beekeeper-autodeploy.timer` | `/etc/default/beekeeper-autodeploy` | `agiterra/beekeeper` (Woodpecker `repo_id=2`) | `main` | `hive` → `/opt/beekeeper` |
+| `buzz-autodeploy.timer` | `/etc/default/buzz-autodeploy` | `agiterra/buzz` (`repo_id=1`) | `integrated` | `lightyear` → `/opt/buzz` |
 
-**The deployer still watches the branch name `integrated`.** It and the forge
-mirror both have to be repointed at `main` and at `agiterra/beekeeper`, or
-pushes stop deploying silently. That is host-side work, not a repo change.
+`REPO_ID` is the load-bearing line in each: both repos push `main`, so an
+unpinned query returns whichever pushed most recently, and deploying the wrong
+one would come up *healthy*.
+
+Every 5 minutes it polls Woodpecker's sqlite, and when the newest push pipeline
+for its repo and branch is green it exports the source from the forge git
+mirror at that commit (`git archive`, never a network clone), builds
+`<image>:<short-sha>` inside the relay instance, takes a `pg_dump` backup
+(`$BASE/backup-pre-*.sql.gz`), flips `BUZZ_IMAGE` in `$BASE/compose/.env`, and
+restarts with compose health-wait. An unhealthy relay rolls back to the
+previous image automatically. Red pipelines never deploy; a failed attempt
+leaves `$BASE/autodeploy-failed-<short-sha>` in the instance so it will not
+rebuild in a loop (remove the marker to retry).
+
+Paper trail: `journalctl -u beekeeper-autodeploy` on the host, `$BASE/deploy.log`
+and `$BASE/build-<short-sha>.log` in the instance. CI has no credentials for (or
+access to) the prod instance; the deployer only reads Woodpecker's status DB and
+the read-only mirror.
+
+Because the mirror is fetched from GitHub on an hourly timer, and the deployer
+selects on a *Woodpecker pipeline*, a commit that reaches only the relay is
+invisible to both. That is the practical reason a relay push must be
+accompanied by a GitHub push until a relay→mirror bridge exists.
 
 `build/*` tags remain the pins for reproducing or manually rolling to a known
 build. Desktop dev runs `just desktop-standalone`.

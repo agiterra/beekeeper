@@ -1680,6 +1680,40 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   check the build actually printed `built in`. The `just desktop-standalone`
   failure that pushed the work onto the release build was itself a bug
   (`fix/standalone-keyring-service`), not a workflow gap.
+- **The relay's git hosting has no anonymous clone and no password auth.**
+  Every request — clone included — needs a NIP-98 signed event, and the pushing
+  key must be a relay member (`BUZZ_REQUIRE_RELAY_MEMBERSHIP=true` on hive).
+  There is no read-only deploy token. Anything automated that reads the repo
+  from the relay needs its own key with a roster or channel grant, not a URL.
+- **The release and dev desktop builds hold *different* identities.** Debug
+  builds use keyring service `beekeeper-desktop-dev`, release uses
+  `beekeeper-desktop` (`desktop/src-tauri/src/app_state_keyring.rs:9-18`). The
+  `agiterra-beekeeper` repo's kind:30617 author — the pubkey in the `origin`
+  URL, `6cbdf445…92b68df2` — is the **release** identity. The dev key added to
+  the relay on 2026-08-23, `npub1zxrgz5…` = `11868153…`, is not the repo owner
+  and has no push grant. Pushing from a terminal means the release key.
+- **A full-history first push to the relay would be rejected.** `size-pack` is
+  533.76 MiB (2026-08-24); `BUZZ_GIT_MAX_PACK_BYTES` defaults to 500 MB and is
+  a request body limit, and hive sets neither it nor `BUZZ_GIT_MAX_REPO_BYTES`
+  (1 GB). Push staged waypoints — `git push origin <sha>:refs/heads/main`,
+  oldest first — so each pack is a delta, or raise the caps in a deploy window.
+- **The relay's push notification is a Nostr event, not a webhook.** Every
+  ref-changing push publishes a relay-signed kind:30618 NIP-34 ref-state event
+  (`crates/buzz-relay/src/api/git/manifest_event.rs:70-114`), carrying the refs
+  and a `p` tag for the pusher. It is replaceable and is also emitted on repo
+  creation, so a listener must compare refs rather than treat each as new work.
+  There is no outbound HTTP webhook anywhere in the git path — `/hooks/{id}` is
+  an *inbound* workflow trigger, and `buzz-workflow` has no git-push trigger.
+- **Woodpecker's only GitHub coupling is its forge driver.** 3.17.0,
+  `WOODPECKER_GITHUB=true`, one `forges` row, and every `repos`/`users`/`orgs`
+  row carries `forge_id=1` — so a forge swap orphans every identity. Everything
+  downstream is already forge-agnostic: `autodeploy` reads Woodpecker's sqlite
+  and `git archive`s the local bare mirror. Pointing Woodpecker at the relay is
+  not a settings change: it needs OAuth login, a repo/branch/file API, webhook
+  delivery and commit statuses, and the relay has none of the four.
+- **`nightly.yml` in this repo has never run.** The only Woodpecker cron row is
+  `id=1, repo_id=1, branch=integrated` — the vanilla relay, on a dead branch.
+  Nothing schedules the nightly for `repo_id=2`.
 
 ## 4. Authorities — unchanged, read when the question is "why"
 

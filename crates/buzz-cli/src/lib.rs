@@ -5,6 +5,8 @@ mod error;
 mod links;
 mod validate;
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use client::BuzzClient;
 use error::CliError;
@@ -254,6 +256,10 @@ enum Cmd {
     /// Persona pack operations (local, no relay connection needed)
     #[command(subcommand)]
     Pack(PackCmd),
+    /// Configure terminal git access to the relay's git hosting
+    /// (local, no relay connection needed)
+    #[command(subcommand)]
+    Git(GitCmd),
     /// Read and drive interactive sessions on this machine (local; via the
     /// desktop session broker, gated by per-session agent consent)
     #[command(subcommand)]
@@ -2074,6 +2080,41 @@ pub enum PackCmd {
     },
 }
 
+/// Terminal git access to the relay's own git hosting.
+///
+/// The relay speaks NIP-98 over git's `authtype` credential capability, which
+/// `git-credential-nostr` answers. These commands write the git config that
+/// points git at it — scoped to the relay's `/git` path so `osxkeychain` (or
+/// whatever serves GitHub) is left alone.
+#[derive(Subcommand)]
+pub enum GitCmd {
+    /// Write the git config for terminal push/clone against the relay
+    Setup {
+        /// Path to git-credential-nostr. Defaults to finding it on PATH.
+        #[arg(long)]
+        helper: Option<PathBuf>,
+        /// Key file git-credential-nostr reads. Defaults to ~/.nostr/key.
+        #[arg(long)]
+        keyfile: Option<PathBuf>,
+        /// Which git config to write.
+        #[arg(long, value_enum, default_value = "global")]
+        scope: commands::git_setup::ConfigScope,
+        /// Also write the identity to the key file at mode 0600.
+        /// Requires BUZZ_PRIVATE_KEY; never overwrites a different identity.
+        #[arg(long)]
+        write_key: bool,
+        /// Print the commands instead of running them; changes nothing.
+        #[arg(long)]
+        print: bool,
+    },
+    /// Report whether terminal git access is configured and usable
+    Status {
+        /// Key file to check. Defaults to whatever `nostr.keyfile` names.
+        #[arg(long)]
+        keyfile: Option<PathBuf>,
+    },
+}
+
 /// Community moderation commands.
 ///
 /// The community (tenant) is selected by the relay host in `--relay` /
@@ -2484,6 +2525,39 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         };
     }
 
+    // Git setup is local-only — it writes git config and, on request, a key
+    // file. It deliberately runs before the key check below: `bee git setup`
+    // without --write-key needs no identity at all, and `bee git status` must
+    // stay usable on exactly the machine where nothing is configured yet.
+    if let Cmd::Git(ref sub) = cli.command {
+        let keys = cli
+            .private_key
+            .as_ref()
+            .map(|k| Keys::parse(k))
+            .transpose()
+            .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?;
+        return match sub {
+            GitCmd::Setup {
+                helper,
+                keyfile,
+                scope,
+                write_key,
+                print,
+            } => commands::git_setup::cmd_setup(commands::git_setup::SetupRequest {
+                relay_url: &relay_url,
+                helper: helper.clone(),
+                keyfile: keyfile.clone(),
+                scope: *scope,
+                write_key: *write_key,
+                print_only: *print,
+                keys,
+            }),
+            GitCmd::Status { keyfile } => {
+                commands::git_setup::cmd_status(&relay_url, keyfile.clone())
+            }
+        };
+    }
+
     // Session commands are local-only — they call the desktop session broker,
     // not the relay. No key/relay is required; when BUZZ_PRIVATE_KEY is present
     // the caller pubkey is passed to the broker for its audit log.
@@ -2559,6 +2633,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
+        Cmd::Git(_) => unreachable!("handled above"),
         Cmd::Session(_) => unreachable!("handled above"),
     }
 }
@@ -2652,6 +2727,7 @@ mod tests {
             "dms",
             "emoji",
             "feed",
+            "git",
             "issues",
             "media",
             "mem",
