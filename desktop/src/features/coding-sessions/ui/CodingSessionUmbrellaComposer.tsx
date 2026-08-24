@@ -19,6 +19,10 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionMentionRouting";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import {
+  UNKNOWN_CODING_SESSION_REACHABILITY,
+  type CodingSessionReachabilityResolver,
+} from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { shouldSubmitCodingSessionComposerKey } from "@/features/coding-sessions/lib/codingSessionComposerModel";
 import { Button } from "@/shared/ui/button";
@@ -42,6 +46,12 @@ type CodingSessionUmbrellaComposerProps = {
   /** The signed-in identity, for founder preflight; null while loading. */
   currentUserPubkey: string | null;
   prefill?: CodingSessionUmbrellaComposerPrefill | null;
+  /**
+   * Coordination's answer for one execution, threaded from the surface that
+   * owns the read. Defaults to "no claim", which is what a composer rendered
+   * outside a coordination-capable tree honestly knows (§2 item 41).
+   */
+  resolveReachability?: CodingSessionReachabilityResolver;
   layout?: "inline" | "stacked";
   publishLaneMessage?: typeof publishCodingSessionLaneMessage;
 };
@@ -66,6 +76,7 @@ export function CodingSessionUmbrellaComposer({
   layout = "inline",
   prefill = null,
   publishLaneMessage = publishCodingSessionLaneMessage,
+  resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   umbrella,
 }: CodingSessionUmbrellaComposerProps) {
   const participants = React.useMemo(
@@ -240,6 +251,7 @@ export function CodingSessionUmbrellaComposer({
               ? { id: prefill.id, text: prefill.text }
               : null
           }
+          resolveReachability={resolveReachability}
         />
       )}
     </div>
@@ -255,6 +267,7 @@ function ExecutionComposer({
   participant,
   prepareText,
   prefill,
+  resolveReachability,
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
   channelId: string;
@@ -264,13 +277,18 @@ function ExecutionComposer({
   participant: Extract<CodingSessionUmbrellaParticipant, { kind: "execution" }>;
   prepareText: (text: string) => string;
   prefill: { id: string; text: string } | null;
+  resolveReachability: CodingSessionReachabilityResolver;
 }) {
   const record = participant.execution.activeGeneration;
   const target = record.commandTarget;
+  // The lease, not the newest report, decides whether this composer is talking
+  // to anything (§2 item 41).
+  const reachability = resolveReachability(target);
   const status = deriveCodingSessionWorkspaceStatus(
     record.transcript,
     record.status,
     record.statusAt,
+    reachability,
   );
   const isWorking = status.kind === "working";
   const runtime = record.runtime ?? record.provider;

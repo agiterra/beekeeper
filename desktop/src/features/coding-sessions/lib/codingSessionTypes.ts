@@ -179,6 +179,21 @@ export type CodingSessionWorkspaceStatus =
    */
   | {
       kind: "unknown";
-      label: "Status unknown" | "Disconnected" | "Needs attention";
-      attention?: "disconnected" | "failed";
+      label:
+        | "Status unknown"
+        | "Disconnected"
+        | "Needs attention"
+        | "No provider answering";
+      attention?: "disconnected" | "failed" | "unreachable";
+      /**
+       * The provider's newest signed report, kept as history when coordination
+       * proves nobody is answering for this generation right now.
+       *
+       * A status is what a provider *said*; reachability is whether anything
+       * can still answer. Printing the first as the second is how a header read
+       * `Idle` for two hours over an app that had quit (§2 item 41), so when
+       * the lease says unreachable the report is demoted to this field and
+       * every surface renders it as "last reported X, N ago".
+       */
+      lastReported?: { label: string; ageSeconds: number | null };
     };

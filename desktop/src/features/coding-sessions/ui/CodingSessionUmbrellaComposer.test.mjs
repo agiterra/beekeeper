@@ -205,3 +205,40 @@ test("a session prefill selects the lane target's execution and stages its text"
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+// §2 item 41 — the composer must not offer Send into a provider that has no
+// live lease, and it must say so rather than leaving the button mysteriously
+// dead. Brian's prod app quit at 21:17 and this composer kept offering Send
+// and Stop for two hours.
+test("an unreachable provider disables the editor and explains why", () => {
+  const markup = render({
+    currentUserPubkey: FOUNDER,
+    umbrella: singleExecutionUmbrella(),
+    resolveReachability: () => ({ known: true, reachable: false }),
+  });
+  assert.match(markup, /data-testid="coding-session-composer-unreachable"/);
+  assert.match(markup, /No provider is answering for this execution/);
+  assert.match(markup, /Add a provider to the session to continue the work/);
+  const editor = markup.match(
+    /<textarea[^>]*aria-label="Coding-session instruction"[^>]*>/,
+  );
+  assert.ok(editor, "the composer editor must render");
+  assert.match(editor[0], /disabled/);
+});
+
+test("a live lease leaves the composer exactly as it was", () => {
+  const markup = render({
+    currentUserPubkey: FOUNDER,
+    umbrella: singleExecutionUmbrella(),
+    resolveReachability: () => ({ known: true, reachable: true }),
+  });
+  assert.doesNotMatch(markup, /coding-session-composer-unreachable/);
+});
+
+test("no coordination read yet claims nothing about the provider", () => {
+  const markup = render({
+    currentUserPubkey: FOUNDER,
+    umbrella: singleExecutionUmbrella(),
+  });
+  assert.doesNotMatch(markup, /coding-session-composer-unreachable/);
+});

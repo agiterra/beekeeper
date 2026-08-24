@@ -15,6 +15,7 @@ import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/u
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import { restoreCodingSessionDraft } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
+import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import type {
   CodingSessionStatus,
   CodingSessionWorkspaceStatus,
@@ -154,7 +155,19 @@ export function CodingSessionComposer({
   });
   const isDisconnected = lifecycleStatus === "disconnected";
   const isEnded = lifecycleStatus === "stopped";
-  const isUnavailable = isDisconnected || isEnded;
+  // Coordination, not the newest report: a provider whose lease has lapsed
+  // answers nothing, however recently it said `idle` (§2 item 41). Sending
+  // into that is how three stops sat unanswered for two hours.
+  const unreachableStatus =
+    controlContext?.status.kind === "unknown" &&
+    controlContext.status.attention === "unreachable"
+      ? controlContext.status
+      : null;
+  const unreachableDetail =
+    unreachableStatus === null
+      ? null
+      : codingSessionWorkspaceStatusDetail(unreachableStatus);
+  const isUnavailable = isDisconnected || isEnded || unreachableStatus !== null;
   const canSubmitText =
     canControl &&
     !isUnavailable &&
@@ -342,7 +355,16 @@ export function CodingSessionComposer({
           {visibleError}
         </p>
       ) : null}
-      {isDisconnected ? (
+      {unreachableStatus !== null ? (
+        <p
+          className="mb-2 rounded-xl border border-border/70 px-3 py-2 text-sm text-muted-foreground"
+          data-testid="coding-session-composer-unreachable"
+        >
+          {`No provider is answering for this execution${
+            unreachableDetail === null ? "" : ` — ${unreachableDetail}`
+          }. Add a provider to the session to continue the work.`}
+        </p>
+      ) : isDisconnected ? (
         <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
           <p className="text-sm text-muted-foreground">
             This provider execution is disconnected.

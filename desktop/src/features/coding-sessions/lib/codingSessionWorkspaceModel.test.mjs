@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   codingSessionUmbrellaGenerationLabel,
+  codingSessionWorkspaceStatusDetail,
   deriveCodingSessionWorkspaceStatus,
   resolveCodingSessionWorkspace,
   umbrellaHasCollapsedHistory,
@@ -616,5 +617,119 @@ test("an umbrella with nothing collapsed contributes no label", () => {
   assert.equal(
     codingSessionUmbrellaGenerationLabel(umbrellaOf([executionOf()])),
     "",
+  );
+});
+
+// §2 item 41 — a status is what a provider said; reachability is whether
+// anything can still answer. The header read IDLE for two hours over an app
+// that had quit, and the composer offered Send and Stop the whole time.
+const IDLE_TRANSCRIPT = [
+  {
+    type: "lifecycle",
+    title: "Turn result",
+    text: "ended normally",
+    timestamp: "2026-08-23T21:00:00.000Z",
+    turnId: "turn-1",
+  },
+];
+const NOW = Date.parse("2026-08-23T23:17:00.000Z");
+const REPORTED_AT = Date.parse("2026-08-23T21:17:00.000Z");
+
+test("an unreachable provider demotes Idle to a dated report", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    IDLE_TRANSCRIPT,
+    "idle",
+    REPORTED_AT,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.equal(status.kind, "unknown");
+  assert.equal(status.label, "No provider answering");
+  assert.equal(status.attention, "unreachable");
+  assert.deepEqual(status.lastReported, { label: "Idle", ageSeconds: 7_200 });
+  assert.equal(
+    codingSessionWorkspaceStatusDetail(status),
+    "last reported Idle 2h ago",
+  );
+});
+
+test("a working execution is demoted the same way — a lease, not a mood", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    [
+      {
+        type: "message",
+        title: "Assistant",
+        text: "working on it",
+        timestamp: "2026-08-23T21:16:00.000Z",
+        turnId: "turn-2",
+      },
+    ],
+    "running",
+    REPORTED_AT,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.equal(status.label, "No provider answering");
+  assert.equal(status.lastReported.label, "Working");
+});
+
+test("a live lease leaves the reported status exactly as it was", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    IDLE_TRANSCRIPT,
+    "idle",
+    REPORTED_AT,
+    { known: true, reachable: true },
+    NOW,
+  );
+  assert.deepEqual(status, { kind: "idle", label: "Idle" });
+  assert.equal(codingSessionWorkspaceStatusDetail(status), null);
+});
+
+test("an unknown reachability never demotes — absence of evidence is not evidence", () => {
+  for (const reachability of [undefined, { known: false }]) {
+    const status = deriveCodingSessionWorkspaceStatus(
+      IDLE_TRANSCRIPT,
+      "idle",
+      REPORTED_AT,
+      reachability,
+      NOW,
+    );
+    assert.deepEqual(status, { kind: "idle", label: "Idle" });
+  }
+});
+
+test("signed terminal and attention states outrank reachability", () => {
+  const stopped = deriveCodingSessionWorkspaceStatus(
+    IDLE_TRANSCRIPT,
+    "stopped",
+    REPORTED_AT,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.deepEqual(stopped, { kind: "ended", label: "Ended" });
+
+  const disconnected = deriveCodingSessionWorkspaceStatus(
+    [],
+    "disconnected",
+    REPORTED_AT,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.equal(disconnected.label, "Disconnected");
+  assert.equal(disconnected.attention, "disconnected");
+});
+
+test("a demoted status with no observation time says so rather than guessing", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    IDLE_TRANSCRIPT,
+    "idle",
+    null,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.deepEqual(status.lastReported, { label: "Idle", ageSeconds: null });
+  assert.equal(
+    codingSessionWorkspaceStatusDetail(status),
+    "last reported Idle",
   );
 });

@@ -12,6 +12,7 @@ import {
   resolveCodingSessionWorkspace,
   umbrellaHasCollapsedHistory,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
@@ -436,10 +437,13 @@ function ReadyCodingSessionWorkspace({
       messages,
       scrollContainerRef: scrollRef,
     });
+  const resolveReachability = useCodingSessionReachabilityResolver(channelId);
+  const reachability = resolveReachability(session.commandTarget);
   const status = deriveCodingSessionWorkspaceStatus(
     session.transcript,
     session.status,
     session.statusAt,
+    reachability,
   );
   const taskModel = React.useMemo(
     () => deriveCodingSessionTaskModel(session.transcript),

@@ -58,6 +58,7 @@ import {
   useCodingSessionSurfaceHostState,
   type CodingSessionSurfaceDescriptor,
 } from "./CodingSessionSurfaceHost";
+import { useCodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
@@ -113,6 +114,9 @@ export function UmbrellaCodingSessionWorkspace({
 }) {
   const identity = useIdentityQuery();
   const lane = useCodingSessionLane(channelId, umbrella.sessionRef);
+  // One coordination read for the whole umbrella; every execution composer
+  // asks it whether anything is answering for that generation (§2 item 41).
+  const resolveReachability = useCodingSessionReachabilityResolver(channelId);
   const [prefill, setPrefill] =
     React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
   const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
@@ -278,6 +282,7 @@ export function UmbrellaCodingSessionWorkspace({
                   currentUserPubkey={identity.data?.pubkey ?? null}
                   isMember={isMember}
                   prefill={prefill}
+                  resolveReachability={resolveReachability}
                   umbrella={umbrella}
                 />
               </CodingSessionColumn>

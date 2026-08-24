@@ -2,6 +2,7 @@ import {
   type CodingSessionUmbrellaCreateObservation,
   groupCodingSessionCatalog,
 } from "./codingSessionUmbrellaModel";
+import { formatCoordinationAge } from "@/shared/coordination/sessionCoordinationFormat";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionCatalogSnapshot,
@@ -217,7 +218,89 @@ function isTurnTerminator(
   );
 }
 
+/**
+ * Whether coordination proves a provider can answer for this generation.
+ *
+ * `known: false` is the honest default and covers three different things —
+ * the coordination read has not arrived, it was partial, or it never saw this
+ * generation. None of them prove absence, so none of them may demote a status.
+ */
+export type CodingSessionProviderReachability =
+  | { known: false }
+  | { known: true; reachable: boolean };
+
+/**
+ * Demote a live-sounding status to history when nothing can answer for it.
+ *
+ * The lease is the only fact in this app that establishes reachability; a
+ * 44223 status only establishes what the provider last said. `stopped` and the
+ * two attention states already describe the execution correctly on their own
+ * and are left alone — replacing "Disconnected" with "No provider answering"
+ * would lose the more specific signed fact.
+ */
+function demoteUnreachable(
+  status: CodingSessionWorkspaceStatus,
+  reachability: CodingSessionProviderReachability | undefined,
+  statusAt: CodingSessionCatalogRecord["statusAt"] | undefined,
+  nowMs: number,
+): CodingSessionWorkspaceStatus {
+  if (
+    reachability === undefined ||
+    !reachability.known ||
+    reachability.reachable
+  ) {
+    return status;
+  }
+  if (status.kind === "ended" || status.kind === "unknown") return status;
+  const ageSeconds =
+    statusAt === null || statusAt === undefined
+      ? null
+      : Math.max(0, Math.floor((nowMs - statusAt) / 1_000));
+  return {
+    kind: "unknown",
+    label: "No provider answering",
+    attention: "unreachable",
+    lastReported: { label: status.label, ageSeconds },
+  };
+}
+
+/**
+ * The clause that turns a demoted status back into a complete sentence.
+ *
+ * `null` for every status that still describes the present. When a status has
+ * been demoted, the last thing the provider said is not thrown away — it is
+ * shown *as history*, with its age, which is the distinction Agent Progress
+ * already draws (`agentLaneReportedText`) and the one this header lacked.
+ */
+export function codingSessionWorkspaceStatusDetail(
+  status: CodingSessionWorkspaceStatus,
+): string | null {
+  if (status.kind !== "unknown" || status.lastReported === undefined) {
+    return null;
+  }
+  const { label, ageSeconds } = status.lastReported;
+  return ageSeconds === null
+    ? `last reported ${label}`
+    : `last reported ${label} ${formatCoordinationAge(ageSeconds)} ago`;
+}
+
 export function deriveCodingSessionWorkspaceStatus(
+  transcript: CodingSessionCatalogRecord["transcript"],
+  lifecycleStatus?: CodingSessionCatalogRecord["status"],
+  statusAt?: CodingSessionCatalogRecord["statusAt"],
+  reachability?: CodingSessionProviderReachability,
+  nowMs: number = Date.now(),
+): CodingSessionWorkspaceStatus {
+  return demoteUnreachable(
+    deriveReportedWorkspaceStatus(transcript, lifecycleStatus, statusAt),
+    reachability,
+    statusAt,
+    nowMs,
+  );
+}
+
+/** The reported status alone — what the transcript and 44223 metadata say. */
+function deriveReportedWorkspaceStatus(
   transcript: CodingSessionCatalogRecord["transcript"],
   lifecycleStatus?: CodingSessionCatalogRecord["status"],
   statusAt?: CodingSessionCatalogRecord["statusAt"],

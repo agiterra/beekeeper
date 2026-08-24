@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
@@ -111,6 +112,11 @@ export function CodingSessionHeader({
   taskRailOpen = false,
 }: CodingSessionHeaderProps) {
   const title = sessionTitle?.trim() || "Coding session";
+  // A demoted status carries its own history clause; the badge states both so
+  // the header never presents a stale report as the current condition.
+  const statusDetail = codingSessionWorkspaceStatusDetail(status);
+  const statusText =
+    statusDetail === null ? status.label : `${status.label} · ${statusDetail}`;
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
   const linkedProject = onOpenProject ? projectName?.trim() || null : null;
   const contextLabels = uniqueNonemptyLabels([
@@ -184,9 +190,10 @@ export function CodingSessionHeader({
         </p>
       </div>
       <Badge
-        aria-label={`Session status: ${sessionClosed ? "Closed" : status.label}`}
+        aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
         className={cn("gap-1.5", compact && "px-2")}
-        title={sessionClosed ? "Closed" : status.label}
+        data-testid="coding-session-status-badge"
+        title={sessionClosed ? "Closed" : statusText}
         variant="outline"
       >
         <span
@@ -207,12 +214,12 @@ export function CodingSessionHeader({
         />
         {compact ? (
           <span className="sr-only">
-            {sessionClosed ? "Closed" : status.label}
+            {sessionClosed ? "Closed" : statusText}
           </span>
         ) : sessionClosed ? (
           "Closed"
         ) : (
-          status.label
+          statusText
         )}
       </Badge>
       <Popover>
