@@ -10,7 +10,11 @@ export function getCodingSessionComposerState({
 }) {
   return {
     canSend: isMember && text.trim().length > 0,
-    primaryLabel: isWorking ? "Stop" : "Send",
+    // "Interrupt", never "Stop": the composer also carries **Stop execution**,
+    // which is terminal and cannot be undone. Two adjacent buttons both
+    // reading Stop is how an operator ends an execution while meaning to end a
+    // turn (asked about live, 2026-08-24).
+    primaryLabel: isWorking ? "Interrupt" : "Send",
     sendLabel: isWorking ? "Steer" : "Send",
     showStopAction: isWorking,
     showAuthorityFailure: !isMember,

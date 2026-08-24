@@ -499,13 +499,13 @@ export function CodingSessionComposer({
                 onClick={() => void handleStop()}
                 title={
                   canInterrupt
-                    ? "Stop the current turn"
-                    : "Stop is unavailable for this session."
+                    ? "Interrupt only the current turn"
+                    : "Current-turn interrupt is unavailable for this provider."
                 }
                 type="button"
                 variant="outline"
               >
-                Stop
+                Interrupt
               </Button>
             ) : null}
             {canSessionStop && !isDisconnected ? (

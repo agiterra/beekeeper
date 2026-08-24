@@ -32,7 +32,10 @@ test("stacked composer keeps the editor and authorized actions in separate rows"
   assert.match(markup, /data-testid="coding-session-composer-primary"/);
   assert.match(markup, />Steer</);
   assert.match(markup, /data-testid="coding-session-composer-stop"/);
-  assert.match(markup, />Stop</);
+  // The turn-level control is "Interrupt"; "Stop execution" is the terminal
+  // one and must not share its verb (asked about live, 2026-08-24).
+  assert.match(markup, />Interrupt</);
+  assert.doesNotMatch(markup, />Stop</);
 });
 
 test("inline composer remains the default for existing panel surfaces", () => {

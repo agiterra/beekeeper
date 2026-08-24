@@ -33,15 +33,15 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-24, early morning — the coding-session honesty pass
-landed on `fix/codex-context-mcp-surface`. §2 items 37, 38, 39, 41, 42 and 43
-are fixed with tests that were watched fail; item 40 was closed live on hive
-(a Codex execution called the context MCP at 03:12Z) and its premise corrected;
-item 44's premise was wrong and is corrected rather than coded around. What is
-**not** done: nothing has been observed live on hive for items 37-39 and 41-43
-— the dev instance was not rebuilt after these commits, so every claim about
-them rests on unit, component and mock-bridge e2e evidence. §3a carries three
-environment facts from the run that produced them._
+_Last updated: 2026-08-24, morning — the honesty pass is on `main` (§2 items
+37, 38, 39, 41, 42, 43 fixed; 40 closed live; 44's premise corrected), and the
+dev instance has now been rebuilt on it and driven against hive. **Item 41 is
+confirmed working live.** That pass found four more (§2 items 45-48): the
+umbrella header read ENDED over four live executions, two composer chips were
+identical, Codex's model list became thirty model×effort rows, and "Stop" named
+two different actions. The first three are fixed; item 48 — whether a stop
+should be a pause — is a product decision waiting on Brian. Still unobserved
+live: items 37, 38, 39's picker, 42 and 43._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -1071,6 +1071,66 @@ where their numbers collided with items 18 and 19.
       `refreshChannelWindowMessages` is the seam; if it does not, the product
       is behaving as designed and the item is a documentation fix, not a code
       one. Not changed on speculation.
+
+### Found 2026-08-24 in the first live pass on the fixed build
+
+Brian rebuilt the dev instance on the honesty-pass commits and drove Testing1
+against hive. Item 41 was confirmed working. Four new findings, three fixed the
+same morning and one left as a product question.
+
+45. **The session header read ENDED over four live executions.** Testing1
+    showed **ENDED** beside "5 executions" while one was answering turns.
+    Provider log: the newest execution (`16e36197`) was stopped at 11:04:36Z,
+    and `deriveUmbrellaStatus`
+    (`desktop/src/features/coding-sessions/lib/codingSessionUmbrellaModel.ts`)
+    fell through to "the most recently active execution's status" — so one
+    per-execution stop ended the whole umbrella on screen. Same class as item
+    41: a fact about one part rendered as a fact about the whole.
+    - **Fixed.** Activity still outranks quiet and quiet outranks terminal, but
+      the fall-through now picks the newest execution that has *not* ended.
+      Only an umbrella whose every execution stopped reads ended.
+
+46. **Two composer chips nobody could tell apart.** `Send to Codex · default ·
+    1958c6c4…9644`, twice. The disambiguator appends the *signer*, which
+    separates executions across providers and says nothing within one.
+    - **Fixed** by falling through to the head of each execution's own
+      provider-minted session id when the signer still collides.
+    - **Not a bug, and worth remembering:** those two chips really do say
+      `default`. They are executions created before item 39 landed, and their
+      signed metadata says `default` because that is what the provider
+      published at the time. History is not rewritten; only new executions
+      carry the reported model.
+
+47. **One dropdown for two decisions.** With discovery on, Codex's model list
+    became thirty rows — `gpt-5.4`, `gpt-5.4[low]`, `gpt-5.4[medium]`,
+    `gpt-5.4[high]`, `gpt-5.4[xhigh]`, and the same for five other families —
+    because codex encodes reasoning effort in the model id. Brian: "this needs
+    to be fixed so that the 'thinking' level is a separate dropdown."
+    - **Fixed** with `codingSessionModelChoice.ts`: Model and Thinking are
+      separate controls over the same published ids, recombining to exactly the
+      id the adapter listed. Two rules keep it honest — `opus[1m]` does **not**
+      split, because that bracket is a context window and splitting it would
+      invent a choice `claude-agent-acp` never offered; and "Adapter default"
+      is offered only where the adapter also published the bare id, because for
+      a level-only model it would name something the provider would refuse.
+
+48. **OPEN, product decision: should a stop be a pause?** Brian, after stopping
+    a Codex execution: *"why can it no longer be resumed? Should there be a
+    pause and a stop?"*
+    - **Half of it was naming, and that half is fixed.** The composer carried
+      two adjacent buttons both reading **Stop** — one interrupting the current
+      turn, one ending the execution forever. The turn-level control is now
+      **Interrupt** everywhere (the immersive deck already called it that).
+    - **The rest is a real question.** A stopped execution is terminal by
+      ruling R27, and the composer offers Reconnect only for `disconnected`.
+      Nothing technical forbids resuming one: `session/resume` reattaches by
+      cursor, which is exactly what the disconnected path already does. A
+      **pause** would be a deliberate move into that same reconnectable state —
+      release the provider process, keep the execution resumable — and it needs
+      a new lifecycle action on the wire (command, receipt, ACL, provider
+      handling), not a UI change. Do not build it without Brian choosing
+      between "stop stays terminal and Add provider is the way forward" and
+      "pause becomes a first-class lifecycle state".
 
 ## 2a. Direction settled 2026-08-18
 
