@@ -733,3 +733,17 @@ test("a demoted status with no observation time says so rather than guessing", (
     "last reported Idle",
   );
 });
+
+test("a report from seconds ago reads as English, not 'just now ago'", () => {
+  const status = deriveCodingSessionWorkspaceStatus(
+    IDLE_TRANSCRIPT,
+    "idle",
+    NOW - 5_000,
+    { known: true, reachable: false },
+    NOW,
+  );
+  assert.equal(
+    codingSessionWorkspaceStatusDetail(status),
+    "last reported Idle just now",
+  );
+});

@@ -279,9 +279,14 @@ export function codingSessionWorkspaceStatusDetail(
     return null;
   }
   const { label, ageSeconds } = status.lastReported;
-  return ageSeconds === null
-    ? `last reported ${label}`
-    : `last reported ${label} ${formatCoordinationAge(ageSeconds)} ago`;
+  if (ageSeconds === null) return `last reported ${label}`;
+  const age = formatCoordinationAge(ageSeconds);
+  // The shared formatter says "just now" for anything under a minute, which
+  // does not take an "ago" — a provider that died seconds after its last
+  // report is the ordinary case here, not an edge one.
+  return age === "just now"
+    ? `last reported ${label} just now`
+    : `last reported ${label} ${age} ago`;
 }
 
 export function deriveCodingSessionWorkspaceStatus(
