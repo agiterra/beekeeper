@@ -319,7 +319,10 @@ export function ChannelCodingSessionList({
               sessionRef={authority.sessionRef}
               variant="catalog"
             />
-            <div className="mt-2 flex items-center justify-end gap-1.5">
+            <div
+              className="mt-2 flex items-center justify-end gap-1.5"
+              data-testid="channel-coding-session-actions"
+            >
               <Button
                 aria-label={`Open ${displayName}`}
                 data-testid="channel-coding-session-open"

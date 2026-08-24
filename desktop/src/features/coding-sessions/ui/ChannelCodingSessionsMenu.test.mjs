@@ -144,8 +144,17 @@ test("channel session list forwards only the clicked exact generation ids", () =
     onPopout: (generationId) => poppedOut.push(generationId),
   });
   const rows = element.props.children;
-  const newestActions = rows[0].props.children[2].props.children;
-  const olderActions = rows[1].props.children[2].props.children;
+  // Found structurally, not by index: a row grew a history line between the
+  // status and the actions (§2 item 38), and an index-addressed child silently
+  // pointed at that instead.
+  const actionsOf = (row) =>
+    row.props.children.find(
+      (child) =>
+        child &&
+        child.props?.["data-testid"] === "channel-coding-session-actions",
+    ).props.children;
+  const newestActions = actionsOf(rows[0]);
+  const olderActions = actionsOf(rows[1]);
 
   newestActions[0].props.onClick();
   olderActions[1].props.onClick();
