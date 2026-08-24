@@ -894,16 +894,28 @@ where their numbers collided with items 18 and 19.
       pinned by `a_codex_bootstrap_names_the_code_mode_path_and_a_claude_one
       _does_not` plus assertions in the two transport tests; disabling the
       note turns two tests red.
-    - **Still owed, and it is the part no test can supply.** The live failure
-      was **not reproduced**: in eight offline runs with the live package, the
-      live briefing and the live model settings, Codex called
-      `mcp.buzz-session-context.session_overview` every time, with and without
-      the new note. So the note is an improvement to an honest-but-misleading
-      report, not a proven cause. The open question is why the live execution
-      declined to. Answer it with one live Codex execution on the dev instance
-      against hive — a `tool_call: mcp.buzz-session-context.…` line in the
-      provider log closes it; the same "not among my callable tools" sentence,
-      now with the note delivered, reopens it against a different cause.
+    - **Closed live, 2026-08-24 03:12-03:13Z, and the fix is not what closed
+      it.** Brian drove a Codex execution on the dev instance against hive.
+      Provider log, same file as the original finding: session opened
+      `03:12:19` (`continuity=Rehydrated bootstrap_transport=Some(FirstTurn)`,
+      followed by the codex model WARN), then
+      `03:12:52.793636Z tool_call: mcp.buzz-session-context.session_overview
+      (execute)` and `03:13:44.194656Z tool_call:
+      mcp.buzz-session-context.session_history (execute)`. The agent answered
+      both questions from verified history — including "the first user message
+      was ping" — and the continuity marker's claim was true.
+      **That app predates the briefing note**, so the note is not why it
+      worked: the tools were always reachable, and eight offline runs with the
+      live package and model settings called them with and without the note.
+      What remains of this item is only the false self-report the note targets
+      — a Codex execution asked *whether* it has the MCP still answers from its
+      function list, where MCP tools never appear. The live failure of
+      2026-08-23 was never reproduced and no longer has a suspected mechanism
+      beyond that.
+    - **Two things this run also showed.** The Codex tool rows arrive as kind
+      `execute`, not as tool calls (relevant to item 43's row rendering), and
+      the header still read `Coding session idle` under a live, answering
+      provider — item 41, seen from the other side.
 
 41. **The session header reads Idle over a provider that is not running.**
     Brian's prod app quit at 21:17 (its `session-provider` log: `shutdown
