@@ -259,6 +259,78 @@ function reviewEvents(): RelayEvent[] {
   return [metadata, transcript];
 }
 
+/**
+ * A resume: the provider reconnects to its native session and publishes
+ * under the SAME `cs-target` minus generation — one execution, generation 2.
+ * The gen-1 turn above is then collapsed history, not a second execution.
+ */
+const RESUMED_TARGET = { ...TARGET, generation: 2 };
+const RESUMED_TARGET_KEY = buildCodingSessionTargetKey(RESUMED_TARGET);
+
+function resumedGenerationEvents(): RelayEvent[] {
+  const metadata = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_METADATA,
+      created_at: BASE_CREATED_AT + 30,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csm-v", CODING_SESSION_METADATA_TAG_VERSION],
+        ["cs-target", RESUMED_TARGET_KEY],
+        ["csm-key", codingSessionMetadataSemanticKey(RESUMED_TARGET)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
+        session: RESUMED_TARGET,
+        projectRef: null,
+        repoRef: null,
+        title: "Fix the reconnect bug",
+        agentRef: null,
+        provider: "claude-agent-acp",
+        runtime: "claude-agent-acp",
+        model: "sonnet",
+        status: "running",
+        branch: null,
+        capabilities: {
+          threadTurnStart: true,
+          threadTurnInterrupt: true,
+          threadSteer: true,
+          context: false,
+          diff: false,
+          plan: true,
+        },
+        sessionRef: SESSION_REF,
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
+  const transcript = finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_TRANSCRIPT,
+      created_at: BASE_CREATED_AT + 31,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cst-v", CODING_SESSION_TRANSCRIPT_TAG_VERSION],
+        ["cs-target", RESUMED_TARGET_KEY],
+        ["cst-seq", "1"],
+        ["cst-key", codingSessionTranscriptSemanticKey(RESUMED_TARGET, 1)],
+      ],
+      content: JSON.stringify({
+        schema: BUZZ_CODING_SESSION_TRANSCRIPT_SCHEMA,
+        session: RESUMED_TARGET,
+        eventSeq: 1,
+        timestamp: BASE_TIMESTAMP_MS + 31_000,
+        turnId: "resumed-turn",
+        item: {
+          kind: "user_prompt",
+          content: "What was the first input I sent this session?",
+        },
+      }),
+    },
+    PROVIDER_SECRET,
+  ) as unknown as RelayEvent;
+  return [metadata, transcript];
+}
+
 function goalEvent(): RelayEvent {
   const built = buildCodingSessionGoalEvent({
     channelId: CHANNEL_ID,
@@ -538,6 +610,57 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   await waitForAnimations(page);
   await workspace.screenshot({
     path: "test-results/screenshots/session-agents-collapsed.png",
+  });
+});
+
+test("a resumed session renders every earlier generation, not just the newest", async ({
+  page,
+}) => {
+  await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
+  await page.evaluate(
+    ({ channelName, events }) => {
+      const seed = window.__BUZZ_E2E_SEED_MOCK_SIGNED_EVENT__;
+      if (!seed) throw new Error("signed-event seeding hook is missing");
+      for (const event of events) seed({ channelName, event });
+    },
+    {
+      channelName: CHANNEL_NAME,
+      events: [...seededEvents(), ...resumedGenerationEvents()],
+    },
+  );
+
+  // The catalog trigger counts generations, so a resume reads as two here.
+  // That count is the trusted-ingress assertion; the grouping is proven below
+  // by which surface opens.
+  const trigger = page.getByTestId("channel-coding-sessions-trigger");
+  await expect(trigger).toHaveAttribute("aria-label", "Coding sessions (2)", {
+    timeout: 15_000,
+  });
+  await trigger.click();
+  await page.getByTestId("channel-coding-session-open").first().click();
+
+  // One execution with collapsed history routes to the umbrella surface —
+  // the only view that renders prior generations. The flat tree used to win
+  // here and showed generation 2 alone over an empty timeline.
+  const workspace = page.getByTestId("coding-session-umbrella-workspace");
+  await expect(workspace).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("coding-session-header")).toContainText(
+    "generation 2 · 1 earlier",
+  );
+
+  const timeline = page.getByTestId("coding-session-umbrella-timeline");
+  await expect(timeline).toContainText("Fix the reconnect bug");
+  await expect(timeline).toContainText("Reconnect now recovers cleanly.");
+  await expect(timeline).toContainText(
+    "What was the first input I sent this session?",
+  );
+  const blocks = page.getByTestId("coding-session-umbrella-turn-block");
+  await expect(blocks).toHaveCount(2);
+  await expect(blocks.first()).toContainText("generation 1");
+  await expect(blocks.last()).toContainText("generation 2");
+  await waitForAnimations(page);
+  await workspace.screenshot({
+    path: "test-results/screenshots/session-resumed-history.png",
   });
 });
 

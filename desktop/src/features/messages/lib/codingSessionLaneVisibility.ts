@@ -118,19 +118,25 @@ export function publishCodingSessionLaneRenderableRefs(
  * Mirrors the two conditions the surface itself uses: an umbrella has a lane
  * only when it claimed a `sessionRef` (`codingSessionUmbrellaModel`'s "Session"
  * participant) and it renders the umbrella workspace at all
- * (`CodingSessionWorkspace`'s `executions.length > 1` branch). An umbrella of
- * one shows no lane, so its tagged chat must stay in the channel timeline.
+ * (`umbrellaHasCollapsedHistory`: more than one execution, OR one execution
+ * carrying prior generations — a resumed session). An umbrella with nothing
+ * collapsed shows no lane, so its tagged chat must stay in the channel
+ * timeline. The predicate is restated structurally here rather than imported
+ * so this module stays free of the coding-sessions model graph.
  */
 export function codingSessionLaneRenderableRefsFromUmbrellas(
   umbrellas: readonly {
     sessionRef: string | null;
-    executions: readonly unknown[];
+    executions: readonly { priorGenerations: readonly unknown[] }[];
   }[],
 ): Set<string> {
   const refs = new Set<string>();
   for (const umbrella of umbrellas) {
     if (umbrella.sessionRef === null) continue;
-    if (umbrella.executions.length <= 1) continue;
+    const rendersUmbrella =
+      umbrella.executions.length > 1 ||
+      umbrella.executions.some((e) => e.priorGenerations.length > 0);
+    if (!rendersUmbrella) continue;
     refs.add(umbrella.sessionRef);
   }
   return refs;

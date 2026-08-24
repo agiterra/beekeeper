@@ -276,6 +276,27 @@ test("a create observation resolves the implicit umbrella's founder and operator
   assert.equal(umbrella.foreignAttachmentCount, 0);
 });
 
+test("the composer participant list: a resumed single execution offers the Session lane", () => {
+  // A resume adds a generation to the SAME execution. The umbrella surface
+  // renders for it (prior generations are collapsed history), so the lane it
+  // shows must also be addressable from the composer.
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF }),
+    record({
+      sessionRef: SESSION_REF,
+      target: { ...CLAUDE_TARGET, generation: 2 },
+      lastEventAt: "2026-08-12T11:00:00.000Z",
+    }),
+  ]);
+  assert.equal(umbrella.executions.length, 1);
+  assert.equal(umbrella.executions[0].priorGenerations.length, 1);
+  const participants = listCodingSessionUmbrellaParticipants(umbrella);
+  assert.deepEqual(
+    participants.map((p) => p.kind),
+    ["execution", "session"],
+  );
+});
+
 test("the composer participant list: N=1 offers only the execution, N>1 adds the Session lane", () => {
   const single = groupCodingSessionCatalog([
     record({ sessionRef: SESSION_REF }),

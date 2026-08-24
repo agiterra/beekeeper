@@ -138,6 +138,32 @@ export type CodingSessionUmbrellaParticipant =
     }
   | { kind: "session"; sessionRef: string; label: "Session" };
 
+/**
+ * Does this umbrella hold history the single-generation tree cannot show?
+ *
+ * The umbrella surface is the only view that renders `priorGenerations`, and
+ * it was routed to on execution count alone. That misses the commonest way a
+ * session acquires history: a resume, which adds a generation to the *same*
+ * execution rather than a second execution. The result was a resumed session
+ * rendering its newest generation only — a transcript that looked erased when
+ * every earlier turn was present, verified, and already in the ingress store.
+ *
+ * Generations count for the same reason executions do: both are collapsed
+ * history the flat tree drops on the floor. Every surface that mirrors "does
+ * this umbrella render the umbrella workspace" must ask this, not count
+ * executions — the participant roster and lane visibility both do.
+ */
+export function umbrellaHasCollapsedHistory(
+  umbrella: CodingSessionUmbrellaRecord,
+): boolean {
+  return (
+    umbrella.executions.length > 1 ||
+    umbrella.executions.some(
+      (execution) => execution.priorGenerations.length > 0,
+    )
+  );
+}
+
 export function listCodingSessionUmbrellaParticipants(
   umbrella: CodingSessionUmbrellaRecord,
 ): CodingSessionUmbrellaParticipant[] {
@@ -162,7 +188,10 @@ export function listCodingSessionUmbrellaParticipants(
         execution,
       };
     });
-  if (umbrella.sessionRef !== null && umbrella.executions.length > 1) {
+  // The Session lane exists whenever the umbrella workspace renders — a
+  // resumed single execution included. Counting executions here left a resumed
+  // session with a visible lane the composer could not address.
+  if (umbrella.sessionRef !== null && umbrellaHasCollapsedHistory(umbrella)) {
     participants.push({
       kind: "session",
       sessionRef: umbrella.sessionRef,

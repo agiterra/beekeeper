@@ -98,14 +98,20 @@ test("publishing reports real changes so callers can re-project once", () => {
 });
 
 test("only an umbrella that renders a lane contributes a renderable ref", () => {
+  const fresh = { priorGenerations: [] };
+  const resumed = { priorGenerations: [{}] };
+  const RESUMED_REF = "resumed-ref";
   const refs = codingSessionLaneRenderableRefsFromUmbrellas([
-    { sessionRef: SESSION_REF, executions: [{}, {}] },
-    // An umbrella of one renders no lane, so its tagged chat stays in chat.
-    { sessionRef: OTHER_REF, executions: [{}] },
+    { sessionRef: SESSION_REF, executions: [fresh, fresh] },
+    // An umbrella of one fresh execution renders no lane, so its tagged chat
+    // stays in chat.
+    { sessionRef: OTHER_REF, executions: [fresh] },
+    // A resumed single execution renders the umbrella surface, lane included.
+    { sessionRef: RESUMED_REF, executions: [resumed] },
     // Implicit (pre-Step-4) umbrellas have no lane at all.
-    { sessionRef: null, executions: [{}, {}] },
+    { sessionRef: null, executions: [fresh, fresh] },
   ]);
-  assert.deepEqual([...refs], [SESSION_REF]);
+  assert.deepEqual([...refs], [SESSION_REF, RESUMED_REF]);
 });
 
 test("unread and the channel timeline never disagree about a lane message", () => {

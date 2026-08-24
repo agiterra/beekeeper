@@ -133,29 +133,9 @@ export function resolveUmbrellaForGeneration(
   return null;
 }
 
-/**
- * Does this umbrella hold history the single-generation tree cannot show?
- *
- * The umbrella surface is the only view that renders `priorGenerations`, and
- * it was routed to on execution count alone. That misses the commonest way a
- * session acquires history: a resume, which adds a generation to the *same*
- * execution rather than a second execution. The result was a resumed session
- * rendering its newest generation only — a transcript that looked erased when
- * every earlier turn was present, verified, and already in the ingress store.
- *
- * Generations count for the same reason executions do: both are collapsed
- * history the flat tree drops on the floor.
- */
-export function umbrellaHasCollapsedHistory(
-  umbrella: CodingSessionUmbrellaRecord,
-): boolean {
-  return (
-    umbrella.executions.length > 1 ||
-    umbrella.executions.some(
-      (execution) => execution.priorGenerations.length > 0,
-    )
-  );
-}
+// Routing predicate lives beside the umbrella model so the participant roster
+// and the workspace branch cannot drift apart; re-exported for the surface.
+export { umbrellaHasCollapsedHistory } from "./codingSessionUmbrellaModel";
 
 /**
  * The umbrella header's context label.
