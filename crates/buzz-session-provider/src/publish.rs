@@ -646,6 +646,42 @@ mod tests {
         assert_eq!(sink.published.lock().expect("lock").len(), 1);
     }
 
+    /// The runtime loop waits on this value instead of a fixed tick, so its
+    /// three states are load-bearing: nothing queued must park the arm, a fresh
+    /// row must be eligible *now* rather than at the next timer edge, and a
+    /// failed row must hold the arm off for its backoff instead of spinning.
+    #[tokio::test]
+    async fn the_next_delay_distinguishes_empty_eligible_and_backing_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let keys = Keys::generate();
+        let signer = keys.public_key().to_hex();
+        let mut outbox = Outbox::open(dir.path(), &signer).expect("open");
+        assert_eq!(outbox.next_retry_delay(), None, "an empty outbox parks");
+
+        outbox
+            .enqueue(44225, "key-1", Priority::Normal, signed(&keys, "a"))
+            .expect("enqueue");
+        assert_eq!(
+            outbox.next_retry_delay(),
+            Some(Duration::ZERO),
+            "a queued row is eligible immediately, not on the next tick"
+        );
+
+        let down = RecordingSink {
+            fail: true,
+            ..RecordingSink::default()
+        };
+        assert_eq!(outbox.flush_one(&down).await.expect("flush"), 0);
+        assert!(outbox.next_retry_delay().expect("delay") > Duration::ZERO);
+
+        let sink = RecordingSink::default();
+        while outbox.pending_len() > 0 {
+            tokio::time::sleep(outbox.next_retry_delay().expect("delay")).await;
+            outbox.flush_one(&sink).await.expect("flush");
+        }
+        assert_eq!(outbox.next_retry_delay(), None);
+    }
+
     #[test]
     fn backoff_grows_and_is_capped() {
         assert_eq!(backoff(1), RETRY_BASE);

@@ -98,8 +98,13 @@ use session::{
 };
 use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
 
-/// How often the outbox is drained when nothing else is happening.
-const OUTBOX_TICK: Duration = Duration::from_secs(2);
+/// How often the catalog is re-read and idle housekeeping runs.
+///
+/// Deliberately *not* the outbox's cadence. A queued event is delivered as soon
+/// as it is eligible (see the `next_publish_delay` arm of the runtime loop):
+/// tying delivery to this tick meant a person's own prompt echo waited whole
+/// seconds behind a timer that exists to hot-reload a config file.
+const RUNTIME_TICK: Duration = Duration::from_secs(2);
 /// Floor between two verified-context refreshes for one execution.
 ///
 /// A turn costs seconds to minutes, so one bounded relay fetch plus
@@ -223,11 +228,14 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
     provider.backfill_authority_chains(&rest).await;
 
     let publisher = relay.event_publisher();
-    let mut ticker = tokio::time::interval(OUTBOX_TICK);
+    let mut ticker = tokio::time::interval(RUNTIME_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut lease_ticker = lease::renewal_interval();
 
     loop {
+        // Read before the select so the borrow ends here: what the loop needs
+        // is a plain duration, not a live view of the outbox.
+        let publish_delay = provider.next_publish_delay();
         tokio::select! {
             // Safety-critical ordering: once a slow durable ACK returns, both
             // clocks may be overdue. Biased selection makes the lease renewal
@@ -282,14 +290,22 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                 if let Err(error) = provider.refresh_catalog(false) {
                     tracing::error!(target: "csp", "catalog refresh failed: {error}");
                 }
-                if let Err(error) = provider.flush_one(&publisher).await {
-                    tracing::error!(target: "csp", "outbox flush failed: {error}");
-                }
                 if let Err(error) = provider.queue_initial_live_leases() {
                     tracing::error!(target: "csp::lease", "initial lease construction failed: {error}");
                 }
                 if let Err(error) = provider.flush_pending_leases(&publisher).await {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
+                }
+            }
+            // Last on purpose. Delivery is still one row per pass — a slow relay
+            // ACK must not multiply across the backlog — but the *wait* between
+            // passes is the queue's own eligibility, not a timer, so a burst
+            // drains at relay speed instead of one row every RUNTIME_TICK. An
+            // empty outbox yields `None`, which parks this arm forever, and a
+            // failed publish yields its backoff, so neither case spins.
+            _ = sleep_for(publish_delay) => {
+                if let Err(error) = provider.flush_one(&publisher).await {
+                    tracing::error!(target: "csp", "outbox flush failed: {error}");
                 }
             }
         }
@@ -329,6 +345,15 @@ async fn bounded_drain<T>(
     drain: impl std::future::Future<Output = T>,
 ) -> Result<T, tokio::time::error::Elapsed> {
     tokio::time::timeout(timeout, drain).await
+}
+
+/// Wait `delay`, or never — `None` is "there is nothing to wait *for*", which
+/// must park a `select!` arm rather than fire it in a loop.
+async fn sleep_for(delay: Option<Duration>) {
+    match delay {
+        Some(delay) => tokio::time::sleep(delay).await,
+        None => std::future::pending().await,
+    }
 }
 
 fn prepare_terminal_stop<T>(
@@ -2780,6 +2805,15 @@ impl Provider {
 
     async fn flush_one<S: EventSink>(&mut self, sink: &S) -> anyhow::Result<usize> {
         Ok(self.outbox.flush_one(sink).await?)
+    }
+
+    /// How long the runtime should wait before its next delivery pass.
+    ///
+    /// `Some(ZERO)` when a row is eligible right now, `Some(backoff)` while a
+    /// failed row waits out its retry, and `None` when there is nothing queued
+    /// — which the loop turns into a parked arm rather than a poll.
+    pub fn next_publish_delay(&self) -> Option<Duration> {
+        self.outbox.next_retry_delay()
     }
 
     /// Read-only access to durable state, for tests and diagnostics.

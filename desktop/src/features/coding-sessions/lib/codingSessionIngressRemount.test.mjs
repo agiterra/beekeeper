@@ -20,7 +20,7 @@
  *    session that exists and is still streaming.
  */
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 
 import { JSDOM } from "jsdom";
 import {
@@ -60,6 +60,17 @@ before(() => {
     window: dom.window,
     __TAURI_INTERNALS__: tauriInternals,
   });
+});
+
+// Display-scope ingress stores are kept warm across mounts on purpose (that is
+// what makes a session switch instant), which makes them shared state between
+// these tests: every case here uses the same channel and the same allowlist, so
+// one test's verified events would otherwise be another's starting condition.
+beforeEach(async () => {
+  const { resetCodingSessionIngressStores } = await import(
+    "./codingSessionIngressStoreCache.ts"
+  );
+  resetCodingSessionIngressStores();
 });
 
 after(() => dom.window.close());
@@ -627,4 +638,103 @@ test("the umbrella conversation lane rides out the same back-pressure", async ()
 
   unmount();
   queryClient.clear();
+});
+
+/**
+ * Leaving a session and coming back must not re-earn what is already known.
+ *
+ * Every coding session lives in its own transport channel, so switching
+ * sessions changes the ingress scope. When the scope owned its store outright,
+ * a return threw away every verified event and paid for a live subscribe *and*
+ * a history fetch before the workspace could resolve the routed generation —
+ * which `resolveCodingSessionWorkspace` renders as a "Loading" screen. Flipping
+ * between two open sessions paid it on every flip.
+ */
+test("returning to a session paints its verified facts before the relay answers", async () => {
+  const { createEvent, metadataEvent, receiptEvent } =
+    await buildRelayHistory();
+  const useBothIngressHooks = await loadHooks();
+  const { queryClient, renderHook, settleUntil, wrapper } =
+    await reactHarness();
+
+  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+
+  const warm = {
+    fetchEvents: async () => [createEvent, receiptEvent, metadataEvent],
+    subscribeLive: async () => () => {},
+    subscribeToReconnects: () => () => {},
+  };
+  const first = renderHook(() => useBothIngressHooks(warm), { wrapper });
+  await settleUntil(
+    () => first.result.current.trusted.metadata.length === 1,
+    "the first visit to verify this session's facts",
+  );
+  first.unmount();
+
+  // The second visit is given a relay that never answers: no history, no live
+  // fence, ever. Anything on screen can only have come from the retained,
+  // already-verified store.
+  let historyCalls = 0;
+  const silent = {
+    fetchEvents: async () => {
+      historyCalls += 1;
+      return new Promise(() => {});
+    },
+    subscribeLive: () => new Promise(() => {}),
+    subscribeToReconnects: () => () => {},
+  };
+  const second = renderHook(() => useBothIngressHooks(silent), { wrapper });
+
+  assert.equal(
+    second.result.current.trusted.metadata.length,
+    1,
+    "the session's facts must be on the very first render, not after a fetch",
+  );
+  assert.equal(
+    second.result.current.trusted.metadata[0].metadata.session.sessionId,
+    TARGET.sessionId,
+  );
+  // Still honest about the catch-up: nothing was subscribed while this scope
+  // was away, so the surface is painting retained facts *while* the refresh
+  // runs — not instead of it.
+  assert.equal(second.result.current.trusted.isLoading, true);
+  assert.equal(historyCalls, 0, "no relay read has resolved yet");
+
+  second.unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
+});
+
+test("a scope never visited before has nothing to paint and says so", async () => {
+  const useBothIngressHooks = await loadHooks();
+  const { queryClient, renderHook, settleUntil, wrapper } =
+    await reactHarness();
+
+  ipcHandlers.set("get_global_agent_config", async () => TRUSTED_CONFIG);
+
+  const silent = {
+    fetchEvents: () => new Promise(() => {}),
+    subscribeLive: () => new Promise(() => {}),
+    subscribeToReconnects: () => () => {},
+  };
+  const { result, unmount } = renderHook(() => useBothIngressHooks(silent), {
+    wrapper,
+  });
+  await settleUntil(
+    () => result.current.trusted.authorityErrorMessage === null,
+    "the local allowlist to load",
+  );
+
+  assert.equal(result.current.trusted.metadata.length, 0);
+  // The distinction that matters: an empty catalog that is *loading* renders as
+  // a wait, while an empty catalog at rest renders as "this generation is not
+  // in the relay catalog" — a flat contradiction for a session the person just
+  // clicked. Nothing here has answered, so the honest report is the wait, held
+  // for as long as the relay stays silent.
+  assert.equal(result.current.trusted.isLoading, true);
+  assert.equal(result.current.trusted.errorMessage, null);
+
+  unmount();
+  queryClient.clear();
+  ipcHandlers.clear();
 });

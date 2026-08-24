@@ -19,9 +19,11 @@ export type CodingSessionTurnRefusalOptions = {
   /**
    * Put the refused words back where the person can edit and resend them. The
    * composer clears its editor on send, so without this a refusal costs them
-   * the message they wrote.
+   * the message they wrote. `commandId` identifies the turn that was refused,
+   * so the composer can also retire the optimistic row it is still showing for
+   * it — a refused turn has no echo coming.
    */
-  restoreDraft: (text: string) => void;
+  restoreDraft: (text: string, commandId: string) => void;
   /** Ingress transport seam; production passes nothing. */
   client?: CodingSessionIngressClient;
 };
@@ -75,7 +77,7 @@ export function useCodingSessionTurnRefusal({
     (turn: WatchedCodingSessionTurn, refusal: CodingSessionCommandRefusal) => {
       setWatched((current) => forgetCodingSessionTurn(current, turn.commandId));
       setError(formatCodingSessionTurnRefusal(refusal));
-      restoreDraft(turn.draft);
+      restoreDraft(turn.draft, turn.commandId);
     },
     [restoreDraft],
   );

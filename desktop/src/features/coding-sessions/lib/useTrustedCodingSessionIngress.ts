@@ -31,6 +31,10 @@ import {
   type TrustedCodingSessionIngressSnapshot,
 } from "./codingSessionTrustedIngress";
 import {
+  acquireCodingSessionIngressStore,
+  peekCodingSessionIngressStore,
+} from "./codingSessionIngressStoreCache";
+import {
   fanOutObservedCodingSessionEvents,
   subscribeToObservedCodingSessionEvents,
 } from "./codingSessionObservedEvents";
@@ -259,8 +263,37 @@ export function useTrustedCodingSessionIngress(
       : null;
   const storeIdentity = `${authorityIdentity}|${stableChannelIdentity}`;
   const requestIdentity = `${storeIdentity}|${commandId ?? ""}|${providerAuthorityPubkey ?? ""}`;
+  // Keep the verified store warm for scopes a person navigates *back* to.
+  // Every coding session is its own transport channel, so switching sessions
+  // changes the scope — and discarding the store meant paying for a live
+  // subscribe and a history fetch, behind a "Loading" screen, every time.
+  //
+  // A command-scoped ingress is excluded on purpose: it waits on exactly one
+  // command id and then unmounts for good, so retaining its store buys nothing
+  // and would only widen what a one-shot wait can see.
+  const retainStore = commandId === null;
+  /**
+   * What a display scope shows before its own effect has run — on first mount
+   * and again after a scope change. Two things are true at that moment and both
+   * have to be said: this client may already hold verified facts for the scope
+   * (paint them), and it has definitely not subscribed or refetched for it yet
+   * (`isLoading`). Without the second half an empty catalog reads as settled,
+   * and the workspace renders "this generation is not in the relay catalog" for
+   * a session the person just clicked.
+   *
+   * Command scopes keep the plain empty snapshot: they wait on one command id,
+   * hold no navigable history, and their consumers read `isLoading` as a claim
+   * about that one command.
+   */
+  const pendingScopeSnapshot = (): TrustedCodingSessionIngressHookSnapshot => ({
+    ...emptySnapshot(authorityIdentity, requestIdentity, initialLifecycle),
+    ...retainedIngressSnapshot(storeIdentity, stableChannelIds),
+    isLoading: true,
+  });
   const [snapshot, setSnapshot] = React.useState(() =>
-    emptySnapshot(authorityIdentity, requestIdentity, initialLifecycle),
+    retainStore
+      ? pendingScopeSnapshot()
+      : emptySnapshot(authorityIdentity, requestIdentity, initialLifecycle),
   );
   const storeRef = React.useRef<{
     identity: string;
@@ -268,13 +301,17 @@ export function useTrustedCodingSessionIngress(
   } | null>(null);
 
   React.useEffect(() => {
-    if (storeRef.current?.identity !== storeIdentity) {
+    if (!retainStore && storeRef.current?.identity !== storeIdentity) {
       storeRef.current = {
         identity: storeIdentity,
         store: new TrustedCodingSessionIngressStore(),
       };
     }
-    const store = storeRef.current.store;
+    const store = retainStore
+      ? acquireCodingSessionIngressStore(storeIdentity)
+      : // Non-null by construction: the branch above minted one for this exact
+        // identity. Falling back keeps a future edit from reading `null`.
+        (storeRef.current?.store ?? new TrustedCodingSessionIngressStore());
     // A staged pop-out snapshot is a head start, never a grant: it only enters
     // the store when it was minted under this window's own authority
     // identity, and every event still runs the full classifier.
@@ -370,7 +407,14 @@ export function useTrustedCodingSessionIngress(
     let cancelled = false;
     let unsubscribeLive: (() => void) | null = null;
     let liveSubscribePending = false;
-    let historyLoading = false;
+    // True from the first publish, not from `onAttemptStart`. A history request
+    // always follows `establishLive()` — on both the resolve and the reject
+    // path — so the window between arming the scope and that request starting
+    // is part of the first load. Publishing `isLoading: false` across it told
+    // every consumer the catalog had settled while it was still empty, which is
+    // what made a session switch flash "this generation is not in the relay
+    // catalog" before the spinner it should have shown all along.
+    let historyLoading = true;
     let historyError: string | null = null;
     let liveError: string | null = null;
     let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -544,14 +588,44 @@ export function useTrustedCodingSessionIngress(
     persistenceCacheKey,
     providerAuthorityPubkey,
     requestIdentity,
+    retainStore,
     stableChannelIds,
     storeIdentity,
   ]);
 
-  return snapshot.authorityIdentity === authorityIdentity &&
+  if (
+    snapshot.authorityIdentity === authorityIdentity &&
     snapshot.scopeIdentity === requestIdentity
-    ? snapshot
+  ) {
+    return snapshot;
+  }
+  // The scope changed and this render is ahead of the effect that will serve
+  // it — the same moment as first mount, so it gets the same answer.
+  return retainStore
+    ? pendingScopeSnapshot()
     : emptySnapshot(authorityIdentity, requestIdentity, initialLifecycle);
+}
+
+/**
+ * The already-verified contents of a warm store for this scope, if any.
+ *
+ * Read-only and creation-free: render must not mint a store, and "no store
+ * yet" is a real answer — it is the first visit to this scope.
+ */
+function retainedIngressSnapshot(
+  storeIdentity: string,
+  channelIds: readonly string[],
+): Partial<TrustedCodingSessionIngressHookSnapshot> {
+  const store = peekCodingSessionIngressStore(storeIdentity);
+  if (!store || channelIds.length === 0) return {};
+  return {
+    ...store.snapshot(channelIds),
+    retainedRawEvents: (scope) => store.retainedRawEvents(scope),
+    lifecycleFor: (forChannelId, forCommandId, forAuthorityPubkey) =>
+      isExactProviderAuthorityPubkey(forAuthorityPubkey)
+        ? store.resolveLifecycle(forChannelId, forCommandId, forAuthorityPubkey)
+        : null,
+  };
 }
 
 /**

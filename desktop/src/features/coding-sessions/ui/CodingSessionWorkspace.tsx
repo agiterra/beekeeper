@@ -2,7 +2,10 @@ import * as React from "react";
 import { ArrowDown, CircleAlert } from "lucide-react";
 import { toast } from "sonner";
 
-import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  buildCodingSessionTargetKey,
+  codingSessionTargetSupportsInterrupt,
+} from "@/features/coding-sessions/lib/codingSessionCommand";
 import { deriveTranscriptItemBlockIds } from "@/features/agents/ui/agentSessionTranscriptGrouping";
 import type { CodingSessionPopoutBootstrap } from "@/features/coding-sessions/lib/codingSessionBootstrap";
 import type { CodingSessionSurface } from "@/features/coding-sessions/lib/codingSessionRoute";
@@ -59,6 +62,10 @@ import {
   deriveCodingSessionTaskRailOpen,
 } from "./CodingSessionTaskRail";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import {
+  CodingSessionPendingTurnList,
+  useVisibleCodingSessionPendingTurns,
+} from "./CodingSessionPendingTurns";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import {
@@ -414,6 +421,21 @@ function ReadyCodingSessionWorkspace({
     session.transcript,
     currentUserPubkey,
   );
+  const commandTargetKey = React.useMemo(
+    () =>
+      session.commandTarget
+        ? buildCodingSessionTargetKey(session.commandTarget)
+        : null,
+    [session.commandTarget],
+  );
+  // Turns published from this client that the provider has not echoed yet.
+  // Resolved here rather than inside the row list because the transcript's
+  // "No conversation yet" empty state has to yield to them.
+  const pendingTurns = useVisibleCodingSessionPendingTurns({
+    channelId,
+    echoes: session.transcript,
+    targetKey: commandTargetKey,
+  });
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? session.title;
   const canRename =
@@ -624,14 +646,24 @@ function ReadyCodingSessionWorkspace({
             ref={scrollRef}
           >
             <CodingSessionColumn className="min-h-full pt-7 pb-44">
-              <div className="min-w-0" ref={contentRef}>
-                <CodingSessionTranscript
-                  currentUserPubkey={currentUserPubkey}
-                  generationId={generationId}
-                  isWorking={isWorking}
-                  items={session.transcript}
-                  operatorProfiles={operatorProfiles}
-                  scrollRef={scrollRef}
+              <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
+                {/* "No conversation yet" is false the moment a turn is in
+                    flight, so the empty state stands down for the pending row
+                    rather than sitting above it. */}
+                {session.transcript.length > 0 ||
+                pendingTurns.turns.length === 0 ? (
+                  <CodingSessionTranscript
+                    currentUserPubkey={currentUserPubkey}
+                    generationId={generationId}
+                    isWorking={isWorking}
+                    items={session.transcript}
+                    operatorProfiles={operatorProfiles}
+                    scrollRef={scrollRef}
+                  />
+                ) : null}
+                <CodingSessionPendingTurnList
+                  now={pendingTurns.now}
+                  turns={pendingTurns.turns}
                 />
               </div>
             </CodingSessionColumn>
@@ -678,6 +710,7 @@ function ReadyCodingSessionWorkspace({
                     runtimeLabel,
                     status,
                   }}
+                  currentUserPubkey={currentUserPubkey}
                   immersive
                   isMember={isMember}
                   onAddProvider={onAddProvider}

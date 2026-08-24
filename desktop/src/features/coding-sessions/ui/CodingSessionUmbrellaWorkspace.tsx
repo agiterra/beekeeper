@@ -51,6 +51,7 @@ import {
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
+import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import {
@@ -421,14 +422,44 @@ export function CodingSessionUmbrellaTimelineView({
     return () => window.clearTimeout(handle);
   }, [revealed]);
 
+  // Turns published from this client that their execution has not echoed yet.
+  // Newest thing in the session by construction, so they close the narrative;
+  // each is labelled with its execution because this surface has several.
+  const pendingTurns = (
+    <>
+      {umbrella.executions.map((execution) => {
+        const target = execution.activeGeneration.commandTarget;
+        return (
+          <CodingSessionPendingTurns
+            channelId={channelId}
+            echoes={execution.activeGeneration.transcript}
+            key={execution.executionKey}
+            targetKey={target ? buildCodingSessionTargetKey(target) : null}
+            targetLabel={
+              umbrella.executions.length > 1
+                ? (labelsByExecutionKey.get(execution.executionKey) ?? null)
+                : null
+            }
+          />
+        );
+      })}
+    </>
+  );
+
   if (entries.length === 0) {
     return (
-      <p
-        className="py-10 text-center text-sm text-muted-foreground"
-        data-testid="coding-session-umbrella-timeline-empty"
+      <div
+        className="flex flex-col gap-7"
+        data-testid="coding-session-umbrella-timeline"
       >
-        No activity in this session yet.
-      </p>
+        <p
+          className="py-10 text-center text-sm text-muted-foreground"
+          data-testid="coding-session-umbrella-timeline-empty"
+        >
+          No activity in this session yet.
+        </p>
+        {pendingTurns}
+      </div>
     );
   }
 
@@ -484,6 +515,7 @@ export function CodingSessionUmbrellaTimelineView({
           />
         );
       })}
+      {pendingTurns}
     </div>
   );
 }

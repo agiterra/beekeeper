@@ -235,6 +235,7 @@ export function CodingSessionUmbrellaComposer({
         <ExecutionComposer
           authority={authority}
           channelId={channelId}
+          currentUserPubkey={currentUserPubkey}
           isMember={isMember}
           // Keyed by explicit selection: the editor holds its draft in local
           // state, so without a fresh instance per hand-picked participant a
@@ -265,6 +266,7 @@ export function CodingSessionUmbrellaComposer({
 function ExecutionComposer({
   authority,
   channelId,
+  currentUserPubkey,
   isMember,
   layout,
   onAddProvider,
@@ -276,6 +278,7 @@ function ExecutionComposer({
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
   channelId: string;
+  currentUserPubkey: string | null;
   isMember: boolean;
   layout: "inline" | "stacked";
   onAddProvider?: () => void;
@@ -332,6 +335,7 @@ function ExecutionComposer({
         runtimeLabel,
         status,
       }}
+      currentUserPubkey={currentUserPubkey}
       immersive
       isMember={isMember}
       isWorking={isWorking}

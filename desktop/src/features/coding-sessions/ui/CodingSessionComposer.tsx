@@ -2,11 +2,17 @@ import * as React from "react";
 import { CircleHelp, ShieldCheck, Square } from "lucide-react";
 
 import {
+  buildCodingSessionTargetKey,
   createCodingSessionCommandId,
   publishCodingSessionCommand,
   publishCodingSessionInterrupt,
   type CodingSessionCommandTarget,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
+import {
+  forgetPendingCodingSessionTurn,
+  markPendingCodingSessionTurnPublished,
+  recordPendingCodingSessionTurn,
+} from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import {
   createCodingSessionLifecycleCommandId,
   publishCodingSessionResume,
@@ -48,6 +54,13 @@ type CodingSessionComposerProps = {
     runtimeLabel: string | null;
     status: CodingSessionWorkspaceStatus;
   };
+  /**
+   * The signed-in identity, stamped onto the optimistic row this composer shows
+   * while a sent turn waits for the provider's echo. `null` (the default) just
+   * means the row cannot tell two operators' identical messages apart; it never
+   * blocks sending.
+   */
+  currentUserPubkey?: string | null;
   immersive?: boolean;
   isMember: boolean;
   isWorking: boolean;
@@ -79,6 +92,8 @@ type CodingSessionComposerProps = {
    */
   prefill?: { id: string; text: string } | null;
   providerAuthorityPubkey?: string | null;
+  /** Publish seam; production passes nothing. */
+  publishCommand?: typeof publishCodingSessionCommand;
   /** Display name for the stop-execution confirm; falls back to "this session". */
   sessionLabel?: string | null;
   target: CodingSessionCommandTarget;
@@ -93,6 +108,7 @@ export function CodingSessionComposer({
   canSteer = true,
   channelId,
   controlContext,
+  currentUserPubkey = null,
   immersive = false,
   isMember,
   isWorking,
@@ -104,6 +120,7 @@ export function CodingSessionComposer({
   prepareText,
   prefill = null,
   providerAuthorityPubkey = null,
+  publishCommand = publishCodingSessionCommand,
   sessionLabel = null,
   target,
   variant = "panel",
@@ -135,9 +152,17 @@ export function CodingSessionComposer({
     channelId,
     providerAuthorityPubkey,
   });
-  const restoreRefusedDraft = React.useCallback((refused: string) => {
-    setText((current) => restoreCodingSessionDraft(current, refused));
-  }, []);
+  const restoreRefusedDraft = React.useCallback(
+    (refused: string, refusedCommandId?: string) => {
+      setText((current) => restoreCodingSessionDraft(current, refused));
+      // The optimistic row for this turn is waiting on an echo that a refusal
+      // guarantees will never come; the words are back in the editor instead.
+      if (refusedCommandId) {
+        forgetPendingCodingSessionTurn(channelId, refusedCommandId);
+      }
+    },
+    [channelId],
+  );
   // A sent turn the provider refuses (an operator it has not granted) answers
   // with a receipt and nothing else; without this watch the message the person
   // typed disappears with no explanation at all.
@@ -193,20 +218,40 @@ export function CodingSessionComposer({
     // Keep the person's own words, not the prepared wire text: a refusal has
     // to hand back exactly what they typed, routing handle and all.
     const draft = text;
+    const commandId = createCodingSessionCommandId();
+    // Clear and record *before* awaiting the relay. Neither the empty editor
+    // nor the pending row is a claim about delivery — the row says "Sending…"
+    // until the relay answers — and both are undone below if the publish
+    // fails, which is the only outcome where the words were never sent.
+    setText("");
+    recordPendingCodingSessionTurn({
+      channelId,
+      targetKey: buildCodingSessionTargetKey(target),
+      commandId,
+      text: preparedText,
+      operatorPubkey: currentUserPubkey,
+      recordedAt: Date.now(),
+      published: false,
+    });
     setPendingAction("send");
     setError(null);
     try {
-      const published = await publishCodingSessionCommand({
+      const published = await publishCommand({
         channelId,
-        commandId: createCodingSessionCommandId(),
+        commandId,
         target,
         text: preparedText,
       });
-      setText("");
+      markPendingCodingSessionTurnPublished(channelId, published.commandId);
       // Acceptance by the relay is not consent from the provider. The receipt
       // that refuses this turn is keyed to this command id and nothing else.
       watchTurn({ commandId: published.commandId, draft });
     } catch (submitError) {
+      forgetPendingCodingSessionTurn(channelId, commandId);
+      // The words never left this machine, so they belong back in the editor —
+      // same rule the refusal path already follows, including its handling of
+      // a person who has started typing again.
+      restoreRefusedDraft(draft);
       setError(
         submitError instanceof Error
           ? submitError.message
@@ -218,8 +263,11 @@ export function CodingSessionComposer({
   }, [
     canSubmitText,
     channelId,
+    currentUserPubkey,
     isSending,
     preparedText,
+    publishCommand,
+    restoreRefusedDraft,
     target,
     text,
     watchTurn,

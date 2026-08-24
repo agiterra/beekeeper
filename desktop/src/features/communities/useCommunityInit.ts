@@ -38,6 +38,8 @@ import { resetSidebarRelayConnectionCardState } from "@/features/sidebar/ui/useS
 import { clearMarkdownNodeCache } from "@/shared/ui/markdown/nodeCache";
 import { resetCodingSessionPopoutBootstrapCache } from "@/features/coding-sessions/lib/codingSessionBootstrap";
 import { resetPendingCodingSessionLifecycle } from "@/features/coding-sessions/lib/codingSessionPendingLifecycle";
+import { resetPendingCodingSessionTurns } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
+import { resetCodingSessionIngressStores } from "@/features/coding-sessions/lib/codingSessionIngressStoreCache";
 import { resetProjectPulseState } from "@/features/project-pulse";
 import { resetVideoPlayerState } from "@/shared/ui/videoPlayerState";
 import { relaySelfQueryKey } from "@/features/moderation/lib/relaySelf";
@@ -92,6 +94,15 @@ async function resetCommunityState({
   // across a community switch would synthesize rows for sessions the new
   // relay never saw.
   resetPendingCodingSessionLifecycle();
+  // Same reasoning one channel down: a turn published to the old relay can only
+  // ever be echoed by the old relay, so carrying its optimistic row across
+  // would hang an unanswerable "waiting for the provider" over a new community.
+  resetPendingCodingSessionTurns();
+  // Ingress stores are kept warm across session switches so a return paints
+  // instantly. They are scoped to a relay's channel ids and verified against
+  // that relay's authority, so a community switch must drop every one of them
+  // rather than let the new relay's scopes collide with the old relay's facts.
+  resetCodingSessionIngressStores();
   // Which coding-session conversation lanes are openable is per-relay: keeping
   // the old community's refs would hide chat in the new one (channel ids are
   // UUIDs, but a hidden message with no lane to render in is the one outcome
