@@ -573,6 +573,116 @@ for (const width of WIDTHS) {
   });
 }
 
+/**
+ * Session padding, as the settings panel offers it.
+ *
+ * The measure is typographic and stays where it is; what this setting spends
+ * is the margin between the measure and the window edge. The failure worth
+ * guarding is not the number — it is one surface taking the new gutter while
+ * another keeps the old one, which is how the transcript and the composer
+ * drifted apart the first time. So each choice is checked on every surface at
+ * once, at a viewport past the `sm` breakpoint where the wider step applies.
+ */
+const GUTTERS = [
+  { choice: "full", px: 32 },
+  { choice: "light", px: 16 },
+  { choice: "none", px: 10 },
+] as const;
+
+for (const { choice, px } of GUTTERS) {
+  test(`the ${choice} gutter is ${px}px on every session surface at once`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // Before installMockBridge: the preference reads localStorage when its
+    // module loads, and the bridge is what triggers the React mount.
+    await page.addInitScript((stored) => {
+      window.localStorage.setItem("buzz.codingSessions.gutter", stored);
+    }, choice);
+    const workspace = await openSession(page);
+    await waitForAnimations(page);
+
+    // The narrative measure is 48rem or, with no side surface open, 72rem —
+    // and the goal pill wears the measure classes itself rather than wrapping
+    // in a CodingSessionColumn. Find the measure box by either signature so
+    // this reads the gutter, not one particular layout.
+    const MEASURE = "[data-coding-session-column],.max-w-3xl,.max-w-6xl";
+    const gutters = await page.evaluate((measure) => {
+      const pad = (el: Element | null | undefined) => {
+        if (!el) return null;
+        const style = getComputedStyle(el);
+        return {
+          left: Number.parseFloat(style.paddingLeft),
+          right: Number.parseFloat(style.paddingRight),
+        };
+      };
+      const box = (selector: string) =>
+        document.querySelector(selector)?.closest(measure) ?? null;
+      // The gutter hangs on the ancestor of the measure box, never on it.
+      const outer = (selector: string) => pad(box(selector)?.parentElement);
+      const edges = (selector: string) => {
+        const el = box(selector);
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return {
+          left: Math.round(rect.left * 100) / 100,
+          right: Math.round(rect.right * 100) / 100,
+        };
+      };
+      return {
+        composer: outer('[data-testid="coding-session-composer"]'),
+        goalPill: outer('[data-testid="coding-session-goal-workspace"]'),
+        transcript: outer('[data-testid="coding-session-transcript"]'),
+        founderLine: pad(
+          document.querySelector('[data-testid="coding-session-founded-by"]'),
+        ),
+        edges: {
+          composer: edges('[data-testid="coding-session-composer"]'),
+          goalPill: edges('[data-testid="coding-session-goal-workspace"]'),
+          transcript: edges('[data-testid="coding-session-transcript"]'),
+        },
+      };
+    }, MEASURE);
+
+    const expected = { left: px, right: px };
+    expect(gutters.transcript).toEqual(expected);
+    expect(gutters.composer).toEqual(expected);
+    expect(gutters.goalPill).toEqual(expected);
+    // Null when this fixture's genesis did not resolve; a present line must
+    // still share the gutter rather than keeping a hardcoded copy of Full.
+    if (gutters.founderLine) expect(gutters.founderLine).toEqual(expected);
+
+    // Whatever the measure resolves to, all three surfaces land on it.
+    expect(gutters.edges.composer).toEqual(gutters.edges.transcript);
+    expect(gutters.edges.goalPill).toEqual(gutters.edges.transcript);
+    const result = await audit(page);
+    expect(result.escapees).toEqual([]);
+    expect(result.pageScrollsSideways).toBe(false);
+
+    // Where the choice is actually visible. While the session is wider than
+    // its measure the gutter is slack — the column is centred either way.
+    // Narrow the window and the margin is what sets the edges, so the
+    // transcript widens as the gutter shrinks.
+    await page.setViewportSize({ width: 820, height: 900 });
+    await waitForAnimations(page);
+    const narrow = await page.evaluate((measure) => {
+      const transcript = document.querySelector(
+        '[data-testid="coding-session-transcript"]',
+      ) as HTMLElement;
+      const column = transcript.closest(measure) as HTMLElement;
+      const scroller = column.parentElement as HTMLElement;
+      return {
+        column: Math.round(column.getBoundingClientRect().width),
+        available: Math.round(scroller.getBoundingClientRect().width),
+      };
+    }, MEASURE);
+    expect(narrow.column).toBe(narrow.available - 2 * px);
+    // eslint-disable-next-line no-console
+    console.log(`GUTTER ${choice} ${JSON.stringify({ ...gutters, narrow })}`);
+    await workspace.screenshot({ path: `${SHOTS}/gutter-${choice}.png` });
+  });
+}
+
 test("the wide code line scrolls inside its own block", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await openSession(page);

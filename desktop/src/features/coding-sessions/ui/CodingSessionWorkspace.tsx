@@ -49,9 +49,9 @@ import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { cn } from "@/shared/lib/cn";
 
+import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
-  CODING_SESSION_COLUMN_GUTTER,
   CodingSessionColumn,
 } from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
@@ -394,6 +394,7 @@ function ReadyCodingSessionWorkspace({
   surface: CodingSessionSurface;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
+  const gutter = useCodingSessionColumnGutter();
   const workspaceRef = React.useRef<HTMLElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -618,7 +619,7 @@ function ReadyCodingSessionWorkspace({
           aria-label="Session transcript"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
-          <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
+          <div className={cn(gutter, "pb-2")}>
             <CodingSessionGoalPill
               channelId={channelId}
               currentUserPubkey={currentUserPubkey}
@@ -631,7 +632,7 @@ function ReadyCodingSessionWorkspace({
           <div
             className={cn(
               "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
-              CODING_SESSION_COLUMN_GUTTER,
+              gutter,
             )}
             onScroll={onScroll}
             ref={scrollRef}
@@ -683,12 +684,7 @@ function ReadyCodingSessionWorkspace({
             </div>
           ) : null}
           {session.commandTarget && !sessionClosed ? (
-            <div
-              className={cn(
-                CODING_SESSION_COMPOSER_DOCK_CLASS,
-                CODING_SESSION_COLUMN_GUTTER,
-              )}
-            >
+            <div className={cn(CODING_SESSION_COMPOSER_DOCK_CLASS, gutter)}>
               <CodingSessionColumn
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}

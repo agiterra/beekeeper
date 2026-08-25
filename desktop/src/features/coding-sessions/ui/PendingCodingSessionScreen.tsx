@@ -12,10 +12,8 @@ import {
   pendingCodingSessionWorkspaceStatus,
   type NewCodingSessionHostPhase,
 } from "../lib/newCodingSessionModel";
-import {
-  CODING_SESSION_COLUMN_GUTTER,
-  CodingSessionColumn,
-} from "./CodingSessionColumn";
+import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
+import { CodingSessionColumn } from "./CodingSessionColumn";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { ProviderLoginNeeded } from "./NewCodingSessionProviderPicker";
 
@@ -71,6 +69,7 @@ export function PendingCodingSessionScreen({
   /** Return to the form with the transaction retained (workdir remediation). */
   onEditRequest: () => void;
 }) {
+  const gutter = useCodingSessionColumnGutter();
   const failureCode =
     lifecycle?.state === "failed" ? lifecycle.error.code : undefined;
   const initialTurn = transaction.input.initialTurn;
@@ -105,7 +104,7 @@ export function PendingCodingSessionScreen({
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
-          CODING_SESSION_COLUMN_GUTTER,
+          gutter,
         )}
       >
         <CodingSessionColumn className="flex flex-1 flex-col gap-6 py-6">

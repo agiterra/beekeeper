@@ -1,5 +1,6 @@
 import { CodingSessionCapacityCard } from "@/features/coding-sessions/ui/CodingSessionCapacityCard";
 import { CodingSessionNamingCard } from "@/features/coding-sessions/ui/CodingSessionNamingCard";
+import { CodingSessionPaddingCard } from "@/features/coding-sessions/ui/CodingSessionPaddingCard";
 
 import {
   SettingsOptionGroup,
@@ -23,6 +24,13 @@ export function CodingSessionsSettingsPanel() {
         title="Session names"
       >
         <CodingSessionNamingCard />
+      </SettingsOptionGroup>
+      <SettingsOptionGroup
+        data-testid="settings-coding-session-padding-group"
+        description="How much of the window a session spends on its left and right margins. Applies to the transcript and the composer together, on this computer only."
+        title="Session padding"
+      >
+        <CodingSessionPaddingCard />
       </SettingsOptionGroup>
     </SettingsOptionGroupList>
   );

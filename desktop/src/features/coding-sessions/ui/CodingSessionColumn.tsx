@@ -23,17 +23,6 @@ export const CODING_SESSION_COLUMN_CLASS = "mx-auto w-full min-w-0 max-w-3xl";
 export const CODING_SESSION_COLUMN_EXPANDED_CLASS = "max-w-6xl";
 
 /**
- * Gutter padding for the surface that *contains* a {@link CodingSessionColumn}.
- *
- * Padding belongs on the outer surface, never on the measure box. Put it
- * inside and the measure silently shrinks by the padding, so a transcript
- * written as `max-w-3xl px-5` no longer lines up with a composer written as
- * `px-5 > max-w-3xl` — which is exactly how the transcript text and the
- * composer edge drifted 20–32px out of register.
- */
-export const CODING_SESSION_COLUMN_GUTTER = "px-5 sm:px-8";
-
-/**
  * Fixed composer dock with a fade that ends before interactive content begins.
  *
  * The old gradient covered the dock itself, leaving participant chips and
@@ -47,9 +36,16 @@ export const CODING_SESSION_COMPOSER_DOCK_CLASS =
 /**
  * Centers `children` in the coding-session reading measure.
  *
- * Apply {@link CODING_SESSION_COLUMN_GUTTER} to the ancestor that owns the
- * viewport edge (the scroll container, the composer overlay, the header row);
- * pass only vertical rhythm and layout classes here.
+ * Apply `useCodingSessionColumnGutter()` (see
+ * `../lib/codingSessionGutterPreference`) to the ancestor that owns the
+ * viewport edge — the scroll container, the composer overlay, the goal row —
+ * and pass only vertical rhythm and layout classes here. The gutter is the
+ * person's to set, but where it hangs is not: padding belongs on the outer
+ * surface, never on the measure box. Put it inside and the measure silently
+ * shrinks by the padding, so a transcript written as `max-w-3xl px-5` no
+ * longer lines up with a composer written as `px-5 > max-w-3xl` — which is
+ * exactly how the transcript text and the composer edge drifted out of
+ * register.
  */
 export function CodingSessionColumn({
   children,

@@ -9,9 +9,13 @@ import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_CLASS,
   CODING_SESSION_COLUMN_EXPANDED_CLASS,
-  CODING_SESSION_COLUMN_GUTTER,
   CodingSessionColumn,
 } from "./CodingSessionColumn.tsx";
+import {
+  CODING_SESSION_GUTTER_CLASSES,
+  CODING_SESSION_GUTTER_OPTIONS,
+  DEFAULT_CODING_SESSION_GUTTER,
+} from "../lib/codingSessionGutterPreference.ts";
 
 function source(name) {
   return readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
@@ -58,8 +62,39 @@ test("the gutter lives outside the measure, never inside it", () => {
   // `max-w-3xl px-5` silently narrows the measure by the padding, which is how
   // the transcript text and the composer edge drifted out of register.
   assert.doesNotMatch(CODING_SESSION_COLUMN_CLASS, /(^|\s)p[xlrs]?-/);
-  assert.match(CODING_SESSION_COLUMN_GUTTER, /\bpx-5\b/);
-  assert.match(CODING_SESSION_COLUMN_GUTTER, /\bsm:px-8\b/);
+});
+
+test("Full is the default gutter, unchanged from before the setting existed", () => {
+  assert.equal(DEFAULT_CODING_SESSION_GUTTER, "full");
+  assert.match(CODING_SESSION_GUTTER_CLASSES.full, /\bpx-5\b/);
+  assert.match(CODING_SESSION_GUTTER_CLASSES.full, /\bsm:px-8\b/);
+});
+
+test("Light is half of Full, and None is a flat 10px at every width", () => {
+  // px-2.5 is 0.625rem — 10px at default zoom, and rem so it still tracks
+  // Cmd +/- like the measure does.
+  assert.equal(CODING_SESSION_GUTTER_CLASSES.light, "px-2.5 sm:px-4");
+  assert.equal(CODING_SESSION_GUTTER_CLASSES.none, "px-2.5");
+  assert.doesNotMatch(CODING_SESSION_GUTTER_CLASSES.none, /\bsm:/);
+});
+
+test("every offered choice is named, described, and has classes to apply", () => {
+  // A choice with no description is the failure this setting exists to avoid:
+  // the difference between the three is a measurement, stated in the page.
+  const values = CODING_SESSION_GUTTER_OPTIONS.map((option) => option.value);
+  assert.deepEqual(values, ["full", "light", "none"]);
+  for (const option of CODING_SESSION_GUTTER_OPTIONS) {
+    assert.ok(option.label.length > 0, `${option.value} needs a label`);
+    assert.ok(
+      option.description.length > 0,
+      `${option.value} needs a description`,
+    );
+    assert.match(CODING_SESSION_GUTTER_CLASSES[option.value], /\bpx-/);
+  }
+  assert.deepEqual(
+    Object.keys(CODING_SESSION_GUTTER_CLASSES).sort(),
+    [...values].sort(),
+  );
 });
 
 test("the column composes an extra className onto the measure", () => {
@@ -98,12 +133,14 @@ test("transcript and composer sit in the same gutter, so their edges register", 
     "CodingSessionUmbrellaWorkspace.tsx",
   ]) {
     const text = source(name);
-    // Transcript scroller and composer overlay both take the gutter constant;
-    // neither hardcodes its own horizontal padding.
-    const gutterUses = text.match(/CODING_SESSION_COLUMN_GUTTER/g) ?? [];
+    // Transcript scroller and composer overlay both take the chosen gutter;
+    // neither hardcodes its own horizontal padding. One `const gutter =` plus
+    // the three surfaces that spread it.
+    assert.match(text, /useCodingSessionColumnGutter\(\)/);
+    const gutterUses = text.match(/\bgutter\b/g) ?? [];
     assert.ok(
-      gutterUses.length >= 3,
-      `${name}: expected transcript, composer, and goal row to share the gutter (found ${gutterUses.length})`,
+      gutterUses.length >= 4,
+      `${name}: expected transcript, composer, and goal row to share the gutter (found ${gutterUses.length - 1} uses)`,
     );
     assert.doesNotMatch(
       text,
@@ -132,6 +169,19 @@ test("the composer dock is opaque before any chip or control begins", () => {
   ]) {
     assert.match(source(name), /CODING_SESSION_COMPOSER_DOCK_CLASS/);
     assert.doesNotMatch(source(name), /via-background\/85/);
+  }
+});
+
+test("no session surface keeps a private copy of the Full gutter", () => {
+  // CodingSessionFounderLine spelled out `px-5 … sm:px-8` instead of taking
+  // the constant, so it would have stayed at Full while everything below it
+  // moved — a stripe of margin nothing else shared.
+  for (const name of [...CALL_SITES, "CodingSessionFounderLine.tsx"]) {
+    const text = source(name);
+    assert.ok(
+      !(/\bpx-5\b/.test(text) && /\bsm:px-8\b/.test(text)),
+      `${name}: use useCodingSessionColumnGutter(), not a literal px-5 sm:px-8`,
+    );
   }
 });
 

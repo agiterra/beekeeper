@@ -2,6 +2,9 @@ import * as React from "react";
 
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
+import { cn } from "@/shared/lib/cn";
+
+import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
 
 /** Minimal provenance line for sessions whose linked genesis resolved. */
 export function CodingSessionFounderLine({
@@ -13,6 +16,7 @@ export function CodingSessionFounderLine({
   genesisRef: string | null;
   variant?: "label" | "line";
 }) {
+  const gutter = useCodingSessionColumnGutter();
   const pubkeys = React.useMemo(
     () => (founderPubkey && genesisRef ? [founderPubkey] : []),
     [founderPubkey, genesisRef],
@@ -25,7 +29,10 @@ export function CodingSessionFounderLine({
   }
   return (
     <div
-      className="border-b border-border/50 px-5 py-2 text-xs text-muted-foreground sm:px-8"
+      className={cn(
+        "border-b border-border/50 py-2 text-xs text-muted-foreground",
+        gutter,
+      )}
       data-genesis-ref={genesisRef}
       data-testid="coding-session-founded-by"
     >
