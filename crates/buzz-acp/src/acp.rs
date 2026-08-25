@@ -10,7 +10,7 @@
 
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
 use crate::observer::{ObserverContext, ObserverHandle};
@@ -21,6 +21,95 @@ use crate::usage::{
 /// Maximum allowed size of a single NDJSON line from the agent's stdout.
 /// Lines exceeding this limit are rejected to prevent OOM from rogue agents.
 const MAX_LINE_SIZE: usize = 10_000_000; // 10 MB
+
+/// Lines of adapter stderr retained for the failure report.
+const STDERR_TAIL_LINES: usize = 200;
+/// Longest single stderr line retained; longer ones keep their head.
+const STDERR_TAIL_LINE_BYTES: usize = 2_048;
+
+/// The tail of an agent's stderr, bounded in both directions.
+///
+/// An adapter's stderr is unbounded output from a process this host does not
+/// control, so it is never accumulated whole: the buffer keeps the most recent
+/// [`STDERR_TAIL_LINES`] lines and truncates any line past
+/// [`STDERR_TAIL_LINE_BYTES`]. The tail is the useful part — a crash explains
+/// itself in its last lines, not its first.
+#[derive(Debug, Default)]
+pub struct StderrTail {
+    lines: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+
+impl StderrTail {
+    fn push(&self, line: &str) {
+        let mut kept = line.trim_end().to_owned();
+        if kept.len() > STDERR_TAIL_LINE_BYTES {
+            // Cut on a char boundary so the retained head stays valid UTF-8.
+            let mut cut = STDERR_TAIL_LINE_BYTES;
+            while cut > 0 && !kept.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            kept.truncate(cut);
+            kept.push_str("…[truncated]");
+        }
+        let Ok(mut lines) = self.lines.lock() else {
+            // A poisoned lock means a reader panicked mid-tail. Diagnostics are
+            // not worth propagating a panic into the session's control path.
+            return;
+        };
+        if lines.len() == STDERR_TAIL_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(kept);
+    }
+
+    /// The retained lines, oldest first. Empty when the adapter said nothing.
+    pub fn lines(&self) -> Vec<String> {
+        self.lines
+            .lock()
+            .map(|lines| lines.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The retained tail as one block, or `None` when nothing was captured.
+    ///
+    /// `None` rather than an empty string so a caller can tell "the adapter
+    /// printed nothing" apart from "there is a report here", and omit the
+    /// section entirely rather than showing an empty heading.
+    pub fn joined(&self) -> Option<String> {
+        let lines = self.lines();
+        (!lines.is_empty()).then(|| lines.join("\n"))
+    }
+}
+
+/// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
+///
+/// Both halves matter: the re-emission is what keeps the harness terminal's
+/// behaviour after the switch from `Stdio::inherit`, and the tail is what makes
+/// the same output available to a session that failed hours ago on a machine
+/// nobody was watching.
+fn drain_stderr(stderr: ChildStderr, tail: std::sync::Arc<StderrTail>) {
+    tokio::spawn(async move {
+        let mut reader = FramedRead::new(stderr, LinesCodec::new_with_max_length(MAX_LINE_SIZE));
+        while let Some(next) = reader.next().await {
+            match next {
+                Ok(line) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    tracing::info!(target: "acp::stderr", "{line}");
+                    tail.push(&line);
+                }
+                // A line past the cap or invalid UTF-8 is the adapter
+                // misbehaving on a channel we only observe. Note it and keep
+                // reading: abandoning the drain would block the child once the
+                // pipe filled, turning a cosmetic fault into a hang.
+                Err(error) => {
+                    tracing::debug!(target: "acp::stderr", "unreadable stderr line: {error}");
+                }
+            }
+        }
+    });
+}
 
 /// An MCP server configuration passed to `session/new`.
 ///
@@ -228,6 +317,16 @@ pub struct AcpClient {
     /// Normalized adapter identity from `initialize` (`agentInfo.name`, else
     /// `serverInfo.name`). `"unknown"` until `initialize` answers.
     agent_name: String,
+    /// Bounded tail of the adapter's stderr, filled by a background reader.
+    stderr_tail: std::sync::Arc<StderrTail>,
+    /// Adapter build from `initialize` (`agentInfo.version`, else
+    /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
+    ///
+    /// Kept because the adapter is the moving part in this stack — its turn
+    /// lifecycle changed repeatedly across 0.4x → 0.7x — so "which build was
+    /// this?" is the first question any stalled-turn report has to answer, and
+    /// the name alone cannot.
+    agent_version: Option<String>,
     /// ACP protocol version reported by the adapter at `initialize`. `1` until
     /// `initialize` answers, matching the pool's own default for adapters that
     /// omit the field.
@@ -611,6 +710,18 @@ impl AcpClient {
             .take()
             .ok_or_else(|| AcpError::Protocol("failed to open agent stdout".into()))?;
 
+        // Absent stderr is not fatal: the adapter is still usable, we just have
+        // no diagnostics from it. Failing the spawn over a missing diagnostic
+        // channel would trade a working session for a better error message.
+        let stderr_tail = std::sync::Arc::new(StderrTail::default());
+        match child.stderr.take() {
+            Some(stderr) => drain_stderr(stderr, std::sync::Arc::clone(&stderr_tail)),
+            None => tracing::warn!(
+                target: "acp::stderr",
+                "agent stderr was not captured; its diagnostics are unavailable"
+            ),
+        }
+
         Ok(Self {
             child,
             stdin,
@@ -631,7 +742,9 @@ impl AcpClient {
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            stderr_tail,
             agent_name: "unknown".to_owned(),
+            agent_version: None,
             protocol_version: 1,
         })
     }
@@ -655,8 +768,14 @@ impl AcpClient {
         cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // Inherit stderr so agent logs are visible in the harness terminal.
-            .stderr(Stdio::inherit())
+            // Piped, not inherited. Inheriting put the adapter's diagnostics on
+            // the harness's own stderr, which is fine when a person is watching
+            // a terminal and useless everywhere else — the desktop app writes
+            // no log file, so the one artifact that explains a failed session
+            // went nowhere. The reader task below re-emits every line through
+            // `tracing`, so a terminal still shows them, and keeps the tail for
+            // the failure report.
+            .stderr(Stdio::piped())
             // Ensure the child is killed when the AcpClient is dropped (best-effort).
             // Callers MUST still call shutdown().await for guaranteed cleanup.
             .kill_on_drop(true);
@@ -802,6 +921,7 @@ impl AcpClient {
             .pointer("/agentCapabilities/sessionCapabilities/resume")
             .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false));
         self.agent_name = normalized_agent_name(&result);
+        self.agent_version = reported_agent_version(&result);
         self.protocol_version = result["protocolVersion"].as_u64().unwrap_or(1) as u32;
         tracing::debug!(target: "acp::init", "initialize response: {result}");
         Ok(result)
@@ -1140,6 +1260,16 @@ impl AcpClient {
     /// name — the capability gates key on the package identity.
     pub fn agent_name(&self) -> &str {
         &self.agent_name
+    }
+
+    /// The tail of the adapter's stderr captured so far.
+    pub fn stderr_tail(&self) -> &StderrTail {
+        &self.stderr_tail
+    }
+
+    /// Adapter build recorded at `initialize`, or `None` if it reported none.
+    pub fn agent_version(&self) -> Option<&str> {
+        self.agent_version.as_deref()
     }
 
     /// ACP protocol version recorded at `initialize` (`1` when unreported).
@@ -2500,6 +2630,25 @@ pub fn normalized_agent_name(init_result: &serde_json::Value) -> String {
         .to_ascii_lowercase()
 }
 
+/// Adapter build from an `initialize` response, verbatim.
+///
+/// Reads `agentInfo.version`, falling back to `serverInfo.version`, mirroring
+/// [`normalized_agent_name`]'s fallback. Unlike the name this is **not**
+/// normalized: a version is an opaque token to be reported back exactly as the
+/// adapter stated it, and lowercasing or trimming it would only invent a
+/// difference between what we display and what the adapter said. Blank strings
+/// are reported as absent, since an adapter that sends `""` has told us
+/// nothing.
+pub fn reported_agent_version(init_result: &serde_json::Value) -> Option<String> {
+    init_result
+        .get("agentInfo")
+        .or_else(|| init_result.get("serverInfo"))
+        .and_then(|info| info.get("version"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 /// How to switch to a particular model on a session.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "type")]
@@ -3066,6 +3215,94 @@ mod tests {
             "the adapter compares with `=== true`, so a stringified or numeric \
              truthy value is not accepted"
         );
+    }
+
+    /// The version is reported back, not normalized.
+    ///
+    /// `normalized_agent_name` lowercases and trims because it feeds equality
+    /// gates. A version feeds a human reading a stall report, so the only
+    /// correct transformation is none: `"0.70.0-rc.1+Build"` must survive
+    /// intact, and an adapter that volunteers `""` has told us nothing rather
+    /// than told us its version is empty.
+    #[test]
+    fn the_adapter_version_is_reported_verbatim_or_not_at_all() {
+        assert_eq!(
+            reported_agent_version(&serde_json::json!({
+                "agentInfo": { "name": "claude-agent-acp", "version": "0.70.0-rc.1+Build" }
+            }))
+            .as_deref(),
+            Some("0.70.0-rc.1+Build"),
+        );
+        // Same fallback chain as the name, so the two never disagree about
+        // which object they described.
+        assert_eq!(
+            reported_agent_version(&serde_json::json!({
+                "serverInfo": { "version": "1.6.2" }
+            }))
+            .as_deref(),
+            Some("1.6.2"),
+        );
+        for silent in [
+            serde_json::json!({ "agentInfo": { "name": "x" } }),
+            serde_json::json!({ "agentInfo": { "version": "" } }),
+            serde_json::json!({ "agentInfo": { "version": 70 } }),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(
+                reported_agent_version(&silent),
+                None,
+                "an adapter that reported no usable version must read as absent: {silent}"
+            );
+        }
+    }
+
+    /// The tail is bounded in both directions, and keeps the *end*.
+    ///
+    /// An adapter in a crash loop can print without limit, so neither the line
+    /// count nor any single line may grow unbounded. Which end survives is the
+    /// substantive half: a process explains its death in its last lines, so
+    /// dropping the oldest is what makes the buffer worth keeping at all.
+    #[test]
+    fn the_stderr_tail_keeps_the_most_recent_lines_within_a_fixed_bound() {
+        let tail = StderrTail::default();
+        for i in 0..(STDERR_TAIL_LINES * 3) {
+            tail.push(&format!("line {i}"));
+        }
+        let lines = tail.lines();
+        assert_eq!(lines.len(), STDERR_TAIL_LINES, "the tail must stay bounded");
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some(format!("line {}", STDERR_TAIL_LINES * 3 - 1).as_str()),
+            "the newest line must survive"
+        );
+        assert!(
+            !lines.iter().any(|line| line == "line 0"),
+            "the oldest line must have been dropped"
+        );
+    }
+
+    /// A single enormous line is truncated on a char boundary.
+    ///
+    /// The naive `truncate` panics mid-codepoint, which would take down the
+    /// reader task and silently stop draining the pipe — the failure mode is a
+    /// blocked child, not a lost log line, so it is worth a test of its own.
+    #[test]
+    fn an_enormous_stderr_line_is_truncated_without_splitting_a_character() {
+        let tail = StderrTail::default();
+        tail.push(&"é".repeat(STDERR_TAIL_LINE_BYTES));
+        let lines = tail.lines();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with("…[truncated]"));
+        assert!(lines[0].len() <= STDERR_TAIL_LINE_BYTES + "…[truncated]".len());
+    }
+
+    /// Nothing captured reads as absent, not as an empty report.
+    #[test]
+    fn an_empty_stderr_tail_is_reported_as_nothing_rather_than_a_blank_block() {
+        let tail = StderrTail::default();
+        assert_eq!(tail.joined(), None);
+        tail.push("boom");
+        assert_eq!(tail.joined().as_deref(), Some("boom"));
     }
 
     #[test]

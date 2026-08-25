@@ -168,6 +168,14 @@ pub struct SessionStartup {
     pub observer: ObserverHandle,
     /// Effective model, when one could be established.
     pub model: Option<String>,
+    /// Adapter build reported at `initialize`, or `None` when it reported none.
+    ///
+    /// Host-local, deliberately: the published metadata is an exact-key
+    /// contract and this is a diagnostic, not a fact about the session. It goes
+    /// to the startup log and into the message of any turn this provider has to
+    /// close on the adapter's behalf, which is where the question "which build
+    /// was this?" actually gets asked.
+    pub agent_version: Option<String>,
     /// Whether the adapter recovered its prior context.
     pub continuity: SessionContinuity,
     /// How the rehydration continuity bootstrap was delivered, or `None` when
@@ -573,6 +581,7 @@ async fn start_agent(
         .await
         .map_err(|error| classify_startup_error(&error, "initialize the agent"))
     {
+        log_agent_stderr(&client, &request.target.session_id, "initialize the agent");
         client.shutdown().await;
         return Err(failure);
     }
@@ -583,6 +592,7 @@ async fn start_agent(
         Ok(opened) => opened,
         Err(error) => {
             let failure = classify_startup_error(&error, "open an agent session");
+            log_agent_stderr(&client, &request.target.session_id, "open an agent session");
             client.shutdown().await;
             return Err(failure);
         }
@@ -598,6 +608,8 @@ async fn start_agent(
         session_id = %request.target.session_id,
         continuity = ?continuity,
         bootstrap_transport = ?bootstrap_transport,
+        agent = %client.agent_name(),
+        agent_version = client.agent_version().unwrap_or("unreported"),
         "ACP session opened"
     );
 
@@ -609,12 +621,14 @@ async fn start_agent(
     let model = apply_model(&mut client, &response, request.model.as_deref())
         .await
         .or_else(|| buzz_acp::acp::reported_model(&response.raw));
+    let agent_version = client.agent_version().map(str::to_owned);
     Ok((
         client,
         SessionStartup {
             acp_session_id: response.session_id,
             observer: observer.clone(),
             model,
+            agent_version,
             continuity,
             bootstrap_transport,
             pending_briefing,
@@ -928,6 +942,29 @@ async fn apply_model(
 /// adapter's message. It is deliberately generous — misreading a genuine auth
 /// failure as a generic outage sends the operator hunting a phantom bug, while
 /// the reverse only shows a slightly wrong hint.
+/// Write the adapter's captured stderr to the host log after a failed startup.
+///
+/// Deliberately not folded into the [`CreateFailure`] message. That message is
+/// operator-facing and may travel; adapter stderr is unredacted output from a
+/// process running on this host, and a startup failure is exactly when it is
+/// most likely to be quoting a path, an argv, or a credential it choked on.
+/// Logging keeps it where the person debugging the machine can read it without
+/// widening who can.
+fn log_agent_stderr(client: &AcpClient, session_id: &str, what: &str) {
+    match client.stderr_tail().joined() {
+        Some(tail) => tracing::error!(
+            target: "csp::session",
+            %session_id,
+            "agent stderr after failing to {what}:\n{tail}"
+        ),
+        None => tracing::error!(
+            target: "csp::session",
+            %session_id,
+            "failed to {what}; the agent printed nothing to stderr"
+        ),
+    }
+}
+
 pub fn classify_startup_error(error: &AcpError, what: &str) -> CreateFailure {
     let message = error.to_string();
     let looks_like_auth = match error {
