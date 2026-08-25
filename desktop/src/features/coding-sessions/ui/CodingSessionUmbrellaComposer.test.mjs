@@ -130,17 +130,15 @@ test("N=1: no participant selector, exactly today's single-target composer", () 
   assert.match(markup, /data-testid="coding-session-composer"/);
 });
 
-test("N>1: selector lists each execution plus the Session lane", () => {
+test("N>1: recipient routing collapses into one human-readable control", () => {
   const markup = render({
     currentUserPubkey: FOUNDER,
     umbrella: multiExecutionUmbrella(),
   });
   assert.match(markup, /data-testid="coding-session-participant-selector"/);
-  assert.match(markup, /Claude · claude-opus-5/);
-  assert.match(markup, /Codex · gpt-5\.3-codex/);
-  assert.match(markup, />Session</);
-  // Default selection is the most recently active execution, not the lane.
-  assert.match(markup, /aria-pressed="true"[^>]*data-participant="execution:/);
+  assert.match(markup, /Send to Claude · Claude Opus 5/);
+  assert.doesNotMatch(markup, /claude-opus-5/);
+  assert.doesNotMatch(markup, /coding-session-participant-execution/);
 });
 
 test("founder keeps the execution composer; the selection defaults sticky to the live execution", () => {
@@ -157,15 +155,8 @@ test("non-founders get honestly disabled execution targets, with the lane still 
     currentUserPubkey: TEAMMATE,
     umbrella: multiExecutionUmbrella({ creates: foundedCreates(FOUNDER) }),
   });
-  // Execution chips disabled with the reason; Session chip enabled.
-  assert.match(
-    markup,
-    /data-testid="coding-session-participant-execution"[^>]*disabled/,
-  );
-  assert.doesNotMatch(
-    markup,
-    /data-testid="coding-session-participant-session"[^>]*disabled/,
-  );
+  // The picker remains available so the member can switch to Session.
+  assert.match(markup, /coding-session-participant-picker-trigger/);
   assert.match(markup, /data-testid="coding-session-umbrella-composer-gated"/);
   assert.match(markup, /Only the session founder/);
 });
@@ -193,18 +184,9 @@ test("a session prefill selects the lane target's execution and stages its text"
     },
     umbrella,
   });
-  assert.match(
-    markup,
-    new RegExp(
-      `aria-pressed="true"[^>]*data-participant="execution:${escapeRegExp(codexKey)}"`,
-    ),
-  );
+  assert.match(markup, /Send to Codex · GPT-5\.3 Codex/);
   assert.match(markup, /From Claude \(this session\)/);
 });
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // §2 item 41 — the composer must not offer Send into a provider that has no
 // live lease, and it must say so rather than leaving the button mysteriously

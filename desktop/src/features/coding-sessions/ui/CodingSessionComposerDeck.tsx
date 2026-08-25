@@ -43,6 +43,7 @@ type CodingSessionComposerDeckProps = {
   onSessionStop: () => void;
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   primaryDisabled: boolean;
+  recipientControl?: React.ReactNode;
 };
 
 /** The compact, provider-neutral footer inside the full-screen composer. */
@@ -64,6 +65,7 @@ export function CodingSessionComposerDeck({
   onSessionStop,
   pendingAction,
   primaryDisabled,
+  recipientControl,
 }: CodingSessionComposerDeckProps) {
   const model = context?.model
     ? formatCodingSessionModelDisplay(context.model)
@@ -90,57 +92,59 @@ export function CodingSessionComposerDeck({
       className="flex min-h-14 min-w-0 items-center gap-2 px-4 pb-3"
       data-testid="coding-session-control-deck"
     >
-      <div className="flex min-w-0 items-center text-xs text-muted-foreground">
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              aria-label="Show execution identity"
-              className="flex min-w-0 items-center gap-2 rounded-lg py-1.5 pr-3 text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              data-testid="coding-session-control-identity"
-              type="button"
-            >
-              <span className="grid size-5 shrink-0 place-items-center rounded-full border border-border/80 bg-muted/40">
-                <Bot aria-hidden className="size-3" />
-              </span>
-              <span className="max-w-52 truncate">{identityLabel}</span>
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-72" side="top">
-            <p className="text-sm font-medium">Execution identity</p>
-            <dl className="mt-3 grid gap-2 text-xs">
-              {context?.providerLabel ? (
+      <div className="flex min-w-0 items-center text-sm text-muted-foreground">
+        {recipientControl ?? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                aria-label="Show execution identity"
+                className="flex min-w-0 items-center gap-2 rounded-lg py-1.5 pr-3 text-foreground/75 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid="coding-session-control-identity"
+                type="button"
+              >
+                <span className="grid size-5 shrink-0 place-items-center rounded-full border border-border/80 bg-muted/40">
+                  <Bot aria-hidden className="size-3" />
+                </span>
+                <span className="max-w-52 truncate">{identityLabel}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72" side="top">
+              <p className="text-sm font-medium">Execution identity</p>
+              <dl className="mt-3 grid gap-2 text-xs">
+                {context?.providerLabel ? (
+                  <ComposerDefinition
+                    label="Provider"
+                    value={context.providerLabel}
+                  />
+                ) : null}
+                {context?.runtimeLabel ? (
+                  <ComposerDefinition
+                    label="Runtime"
+                    value={context.runtimeLabel}
+                  />
+                ) : null}
+                {modelName ? (
+                  <ComposerDefinition label="Model" value={modelName} />
+                ) : null}
+                {traits ? (
+                  <ComposerDefinition label="Model traits" value={traits} />
+                ) : null}
                 <ComposerDefinition
-                  label="Provider"
-                  value={context.providerLabel}
+                  label="Capabilities"
+                  value={
+                    availableCapabilities.length > 0
+                      ? availableCapabilities.join(", ")
+                      : "Not declared"
+                  }
                 />
-              ) : null}
-              {context?.runtimeLabel ? (
-                <ComposerDefinition
-                  label="Runtime"
-                  value={context.runtimeLabel}
-                />
-              ) : null}
-              {modelName ? (
-                <ComposerDefinition label="Model" value={modelName} />
-              ) : null}
-              {traits ? (
-                <ComposerDefinition label="Model traits" value={traits} />
-              ) : null}
-              <ComposerDefinition
-                label="Capabilities"
-                value={
-                  availableCapabilities.length > 0
-                    ? availableCapabilities.join(", ")
-                    : "Not declared"
-                }
-              />
-            </dl>
-            <p className="mt-3 text-xs text-muted-foreground">
-              This identifies the signed execution. Its model and traits are
-              fixed for this execution.
-            </p>
-          </PopoverContent>
-        </Popover>
+              </dl>
+              <p className="mt-3 text-xs text-muted-foreground">
+                This identifies the signed execution. Its model and traits are
+                fixed for this execution.
+              </p>
+            </PopoverContent>
+          </Popover>
+        )}
 
         <ComposerDeckSeparator />
 

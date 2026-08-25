@@ -15,6 +15,11 @@ import {
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  codingSessionUmbrellaParticipantKey,
+  defaultCodingSessionUmbrellaParticipantKey,
+} from "@/features/coding-sessions/lib/codingSessionUmbrellaComposerModel";
+import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import {
   buildUmbrellaTimeline,
@@ -36,11 +41,13 @@ import { deriveCodingSessionChangedFiles } from "@/features/coding-sessions/lib/
 import {
   codingSessionUmbrellaGenerationLabel,
   codingSessionWireWorkspaceStatus,
+  deriveCodingSessionWorkspaceStatus,
 } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { useCodingSessionLane } from "@/features/coding-sessions/useCodingSessionLane";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
+import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
@@ -54,6 +61,8 @@ import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
+import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
+import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import {
   CodingSessionSurfaceHost,
@@ -119,10 +128,52 @@ export function UmbrellaCodingSessionWorkspace({
   // One coordination read for the whole umbrella; every execution composer
   // asks it whether anything is answering for that generation (§2 item 41).
   const resolveReachability = useCodingSessionReachabilityResolver(channelId);
-  const [prefill, setPrefill] =
-    React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
   const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
   const isNarrow = bodyWidthPx > 0 && bodyWidthPx < 960;
+  const composerParticipants = React.useMemo(
+    () => listCodingSessionUmbrellaParticipants(umbrella),
+    [umbrella],
+  );
+  const [composerParticipantKey, setComposerParticipantKey] = React.useState<
+    string | null
+  >(() => defaultCodingSessionUmbrellaParticipantKey(composerParticipants));
+  const composerParticipant =
+    composerParticipants.find(
+      (participant) =>
+        codingSessionUmbrellaParticipantKey(participant) ===
+        composerParticipantKey,
+    ) ??
+    composerParticipants.find(
+      (participant) => participant.kind === "execution",
+    ) ??
+    null;
+  const composerRecord =
+    composerParticipant?.kind === "execution"
+      ? composerParticipant.execution.activeGeneration
+      : null;
+  const composerStatus = composerRecord
+    ? deriveCodingSessionWorkspaceStatus(
+        composerRecord.transcript,
+        composerRecord.status,
+        composerRecord.statusAt,
+        resolveReachability(composerRecord.commandTarget),
+      )
+    : null;
+  const composerTaskModel = React.useMemo(
+    () =>
+      composerRecord
+        ? deriveCodingSessionTaskModel(composerRecord.transcript)
+        : null,
+    [composerRecord],
+  );
+  const composerTaskDock = useCodingSessionTaskDock({
+    isNarrow,
+    isWorking: composerStatus?.kind === "working",
+    model: composerTaskModel,
+    transcript: composerRecord?.transcript ?? [],
+  });
+  const [prefill, setPrefill] =
+    React.useState<CodingSessionUmbrellaComposerPrefill | null>(null);
   // Observed changes across every execution the umbrella narrative renders —
   // prior generations included, in the same order the timeline ingests them.
   const changedFiles = React.useMemo(
@@ -172,10 +223,7 @@ export function UmbrellaCodingSessionWorkspace({
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),
     [surfaces],
   );
-  // The umbrella surface keeps its historical default: agents visible on open.
-  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds, {
-    initialTab: "agents",
-  });
+  const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
   const narrativeExpanded = surfaceHost.activeTab === null;
   const surfaceHostId = React.useId();
   const [renameOpen, setRenameOpen] = React.useState(false);
@@ -203,6 +251,7 @@ export function UmbrellaCodingSessionWorkspace({
       <div className="shrink-0" data-testid="coding-session-authority-summary">
         <CodingSessionHeader
           channelName={channelName}
+          compact={isNarrow}
           generationLabel={codingSessionUmbrellaGenerationLabel(umbrella)}
           onAddProvider={onAddProvider}
           onBack={onBack}
@@ -212,7 +261,18 @@ export function UmbrellaCodingSessionWorkspace({
           onRename={canRename ? () => setRenameOpen(true) : undefined}
           onReopenSession={onReopenSession}
           peopleCount={peopleCount}
-          onToggleSurface={(id) => surfaceHost.toggle(id)}
+          onToggleTaskRail={
+            composerTaskDock.activeModel
+              ? () => {
+                  surfaceHost.close();
+                  composerTaskDock.toggle();
+                }
+              : undefined
+          }
+          onToggleSurface={(id) => {
+            composerTaskDock.close();
+            surfaceHost.toggle(id);
+          }}
           providerAuthorityPubkey={focusedExecution.signerPubkey}
           sessionTitle={authoritativeTitle}
           sessionClosed={sessionClosed}
@@ -225,21 +285,13 @@ export function UmbrellaCodingSessionWorkspace({
             count: surfaceEntry.count ?? 0,
             active: surfaceHost.activeTab === surfaceEntry.id,
           }))}
+          taskCount={composerTaskDock.activeModel?.tasks.length ?? 0}
+          taskRailOpen={composerTaskDock.open}
         />
         <CodingSessionFounderLine
           founderPubkey={umbrella.founderPubkey}
           genesisRef={umbrella.genesisRef}
         />
-        <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
-          <CodingSessionGoalPill
-            channelId={channelId}
-            currentUserPubkey={currentUserPubkey}
-            founderPubkey={umbrella.founderPubkey}
-            goal={goal}
-            sessionRef={umbrella.sessionRef}
-            workspaceExpanded={narrativeExpanded}
-          />
-        </div>
       </div>
       {umbrella.sessionRef ? (
         <CodingSessionNameDialog
@@ -255,6 +307,16 @@ export function UmbrellaCodingSessionWorkspace({
           aria-label="Umbrella session narrative"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
+          <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
+            <CodingSessionGoalPill
+              channelId={channelId}
+              currentUserPubkey={currentUserPubkey}
+              founderPubkey={umbrella.founderPubkey}
+              goal={goal}
+              sessionRef={umbrella.sessionRef}
+              workspaceExpanded={narrativeExpanded}
+            />
+          </div>
           <div
             className={cn(
               "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
@@ -262,7 +324,10 @@ export function UmbrellaCodingSessionWorkspace({
             )}
           >
             <CodingSessionColumn
-              className="min-h-full pt-7 pb-64"
+              className={cn(
+                "min-h-full pt-7",
+                composerTaskDock.open && !isNarrow ? "pb-[34rem]" : "pb-48",
+              )}
               expanded={narrativeExpanded}
             >
               <CodingSessionUmbrellaTimelineView
@@ -286,12 +351,22 @@ export function UmbrellaCodingSessionWorkspace({
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}
               >
+                {composerTaskDock.open && !isNarrow ? (
+                  <div className="-mb-6">
+                    <CodingSessionTaskRail
+                      model={composerTaskDock.activeModel}
+                      onClose={composerTaskDock.close}
+                      variant="dock"
+                    />
+                  </div>
+                ) : null}
                 <CodingSessionUmbrellaComposer
                   acceptedOperators={acceptedOperators}
                   channelId={channelId}
                   currentUserPubkey={identity.data?.pubkey ?? null}
                   isMember={isMember}
                   onAddProvider={onAddProvider}
+                  onSelectedParticipantChange={setComposerParticipantKey}
                   prefill={prefill}
                   resolveReachability={resolveReachability}
                   umbrella={umbrella}
@@ -312,6 +387,26 @@ export function UmbrellaCodingSessionWorkspace({
           />
         ) : null}
       </div>
+      {isNarrow ? (
+        <Sheet
+          onOpenChange={(open) =>
+            open ? composerTaskDock.show() : composerTaskDock.close()
+          }
+          open={composerTaskDock.open}
+        >
+          <SheetContent
+            aria-describedby={undefined}
+            className="w-[min(90vw,22rem)] max-w-none p-0"
+            side="right"
+          >
+            <SheetTitle className="sr-only">Session plan</SheetTitle>
+            <CodingSessionTaskRail
+              model={composerTaskDock.activeModel}
+              variant="sheet"
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </main>
   );
 }

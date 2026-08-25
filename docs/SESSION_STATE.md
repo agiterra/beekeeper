@@ -1394,6 +1394,14 @@ written and `bash -n` clean but **was not executed** — that harness needs
       occupies the side, with both values rem-based so Cmd +/- preserves the
       reading measure. The Goal bar now lives inside the shrinking narrative
       section rather than remaining centered across the hidden flank.
+    - Multi-provider umbrellas use that same surface instead of leaving their
+      routing chips and instructions above it. The recipient is a compact
+      human-labelled control inside the composer; its menu keeps execution
+      targets visible but honestly disabled without control authority, and the
+      Session lane remains available. Selecting an execution also selects the
+      signed active Tasks attachment for that execution. Umbrellas now open
+      with no side surface, then contract only when Agents, Changes, or People
+      is requested.
     - Evidence: 47 focused composer/task/context tests; all 6,166 desktop unit
       tests; the three-view transcript narrative screenshot workflow; and the
       width workflow at 1100/1280/1920/2560/3440px, with a side surface and at

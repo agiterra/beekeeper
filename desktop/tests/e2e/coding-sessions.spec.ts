@@ -590,7 +590,42 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   const workspace = page.getByTestId("coding-session-umbrella-workspace");
   const host = page.getByTestId("coding-session-surface-host");
   await expect(workspace).toBeVisible({ timeout: 15_000 });
-  // The umbrella opens on the Agents surface of the shared host.
+  // A shared session opens as a clean narrative; secondary surfaces contract
+  // it only when the person asks for one.
+  await expect(host).toHaveCount(0);
+  await expect(page.getByTestId("coding-session-mention-hint")).toHaveCount(0);
+  const recipient = page.getByTestId(
+    "coding-session-participant-picker-trigger",
+  );
+  const initialRecipient = (await recipient.textContent()) ?? "";
+  await expect(recipient).toContainText(/Claude|Codex/);
+  await recipient.click();
+  const executionRecipients = page.getByTestId(
+    "coding-session-participant-execution",
+  );
+  await expect(executionRecipients).toHaveCount(2);
+  await expect(executionRecipients.filter({ hasText: "Claude" })).toContainText(
+    "Claude Code · Sonnet",
+  );
+  await expect(executionRecipients.filter({ hasText: "Codex" })).toContainText(
+    "Codex · GPT-5.6 Sol",
+  );
+  // This fixture is deliberately a viewer: targets that imply agent control
+  // stay visible but disabled, while the truthful session lane remains usable.
+  await expect(executionRecipients.nth(0)).toBeDisabled();
+  await expect(executionRecipients.nth(1)).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(recipient).toHaveText(initialRecipient);
+  await waitForAnimations(page);
+  await workspace.screenshot({
+    path: "test-results/screenshots/session-composer-wide.png",
+  });
+
+  await recipient.click();
+  await page.getByTestId("coding-session-participant-session").click();
+  await expect(recipient).toContainText("Session");
+
+  await page.getByTestId("coding-session-surface-toggle-agents").click();
   await expect(host).toContainText("All agents");
   await expect(host).toContainText("Claude");
   await expect(host).toContainText("Codex");

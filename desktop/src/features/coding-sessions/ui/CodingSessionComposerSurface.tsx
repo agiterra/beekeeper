@@ -42,6 +42,7 @@ type ComposerSurfaceProps = {
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   providerAuthorityPubkey: string | null;
   queuedDraft: string | null;
+  recipientControl?: React.ReactNode;
   sendLabel: string;
   showAuthorityFailure: boolean;
   showStopAction: boolean;
@@ -84,6 +85,7 @@ export function CodingSessionComposerSurface({
   pendingAction,
   providerAuthorityPubkey,
   queuedDraft,
+  recipientControl,
   sendLabel,
   showAuthorityFailure,
   showStopAction,
@@ -137,7 +139,7 @@ export function CodingSessionComposerSurface({
       <div
         className={cn(
           immersive
-            ? "relative z-10 overflow-hidden rounded-3xl border border-border/80 bg-background shadow-[0_18px_60px_-24px_rgba(0,0,0,0.75)]"
+            ? "relative z-10 overflow-hidden rounded-3xl border border-border/35 bg-muted/35 shadow-[0_18px_60px_-24px_rgba(0,0,0,0.75)]"
             : "flex gap-2",
           !immersive && (layout === "stacked" ? "flex-col" : "items-end"),
         )}
@@ -147,7 +149,7 @@ export function CodingSessionComposerSurface({
           className={cn(
             "min-h-16 min-w-0 flex-1 resize-y text-foreground caret-primary",
             immersive &&
-              "block min-h-28 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-2 shadow-none focus-visible:ring-0",
+              "block min-h-24 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-1 shadow-none focus-visible:ring-0",
             !immersive &&
               variant === "floating" &&
               "border-0 bg-transparent shadow-none",
@@ -206,6 +208,7 @@ export function CodingSessionComposerSurface({
             onSessionStop={onSessionStop}
             pendingAction={pendingAction}
             primaryDisabled={!canSubmitText || isSending}
+            recipientControl={recipientControl}
           />
         )}
       </div>

@@ -73,6 +73,8 @@ type CodingSessionComposerProps = {
    */
   prefill?: { id: string; text: string } | null;
   providerAuthorityPubkey?: string | null;
+  /** Optional recipient picker rendered inside the immersive control deck. */
+  recipientControl?: React.ReactNode;
   /** Publish seam; production passes nothing. */
   publishCommand?: typeof publishCodingSessionCommand;
   /** Display name for the stop-execution confirm; falls back to "this session". */
@@ -102,6 +104,7 @@ export function CodingSessionComposer({
   prepareText,
   prefill = null,
   providerAuthorityPubkey = null,
+  recipientControl,
   publishCommand = publishCodingSessionCommand,
   sessionLabel = null,
   target,
@@ -449,6 +452,7 @@ export function CodingSessionComposer({
         pendingAction={pendingAction}
         providerAuthorityPubkey={providerAuthorityPubkey}
         queuedDraft={queuedDraft?.draft ?? null}
+        recipientControl={recipientControl}
         sendLabel={state.sendLabel}
         showAuthorityFailure={state.showAuthorityFailure}
         showStopAction={state.showStopAction}

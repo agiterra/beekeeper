@@ -18,10 +18,17 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 
 before(() => {
   Object.assign(globalThis, {
+    CustomEvent: dom.window.CustomEvent,
     document: dom.window.document,
     Element: dom.window.Element,
+    Event: dom.window.Event,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
     IS_REACT_ACT_ENVIRONMENT: true,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
     window: dom.window,
   });
 });
@@ -109,12 +116,18 @@ async function mount(records) {
     ...testing,
     editor: () => screen.getByLabelText("Coding-session instruction"),
     pressed: () =>
-      screen
-        .getByTestId("coding-session-umbrella-composer")
-        .querySelector('[aria-pressed="true"]')?.textContent ?? "",
+      screen.getByTestId("coding-session-participant-picker-trigger")
+        .textContent ?? "",
     hint: () => screen.queryByTestId("coding-session-mention-hint"),
     sendDisabled: () =>
       screen.getByTestId("coding-session-composer-primary").disabled,
+    openPicker: async () => {
+      await testing.act(async () => {
+        fireEvent.click(
+          screen.getByTestId("coding-session-participant-picker-trigger"),
+        );
+      });
+    },
     type: async (value) => {
       await testing.act(async () => {
         fireEvent.change(screen.getByLabelText("Coding-session instruction"), {
@@ -130,7 +143,7 @@ test("a leading handle moves the selector and keeps the draft it was typed in", 
   try {
     // The selector starts on the most recently active execution (Claude).
     assert.match(view.pressed(), /Claude/);
-    assert.match(view.hint().textContent, /Start a message with @/);
+    assert.equal(view.hint(), null);
 
     await view.type("@codex rerun the failing fixture");
     assert.match(view.pressed(), /Codex/);
@@ -138,7 +151,8 @@ test("a leading handle moves the selector and keeps the draft it was typed in", 
     assert.equal(view.editor().value, "@codex rerun the failing fixture");
     // And the deck now describes Codex, not Claude — the target really moved.
     assert.match(
-      view.screen.getByTestId("coding-session-control-identity").textContent,
+      view.screen.getByTestId("coding-session-participant-picker-trigger")
+        .textContent,
       /GPT-5\.3 Codex/,
     );
     assert.match(view.hint().textContent, /Sending to Codex/);
@@ -174,7 +188,7 @@ test("a mid-sentence handle is prose and never retargets", async () => {
     await view.type("ask @codex whether the fixture is flaky");
     assert.match(view.pressed(), /Claude/);
     assert.equal(view.sendDisabled(), false);
-    assert.match(view.hint().textContent, /Start a message with @/);
+    assert.equal(view.hint(), null);
   } finally {
     view.cleanup();
   }
@@ -185,7 +199,7 @@ test("an unknown handle says nothing and changes nothing", async () => {
   try {
     await view.type("@gemini take a look");
     assert.match(view.pressed(), /Claude/);
-    assert.match(view.hint().textContent, /Start a message with @/);
+    assert.equal(view.hint(), null);
     assert.equal(view.editor().value, "@gemini take a look");
   } finally {
     view.cleanup();
@@ -227,6 +241,7 @@ test("picking a participant by hand still starts a clean draft", async () => {
   try {
     await view.type("@codex rerun the failing fixture");
     assert.match(view.pressed(), /Codex/);
+    await view.openPicker();
     const [first, second] = view.screen.getAllByTestId(
       "coding-session-participant-execution",
     );
