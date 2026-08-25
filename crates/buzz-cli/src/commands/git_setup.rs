@@ -157,17 +157,33 @@ pub fn default_keyfile() -> Result<PathBuf, CliError> {
     Ok(home.join(".nostr").join("key"))
 }
 
-/// The three config entries that make terminal git access work.
-pub fn config_entries(scope: &str, helper: &str, keyfile: &Path) -> Vec<(String, String)> {
+/// The config entries that make terminal git access work.
+///
+/// Each key carries a *list* of values, because the helper entry needs two.
+/// The empty first value resets the helper list for this URL scope: git
+/// otherwise **appends** a scoped helper to whatever the system and global
+/// configs already named. On this machine `/opt/homebrew/etc/gitconfig` sets
+/// `credential.helper = osxkeychain`, so relay requests ran both helpers —
+/// nostr answered correctly, then osxkeychain tried to `store` an ephemeral
+/// credential and every successful operation printed
+/// `fatal: failed to store: -1`. A "fatal" over a request that worked is worse
+/// than noise; it sends you looking for a failure that did not happen.
+///
+/// `desktop/src-tauri/src/commands/project_git_exec.rs` does the same reset for
+/// the same reason.
+pub fn config_entries(scope: &str, helper: &str, keyfile: &Path) -> Vec<(String, Vec<String>)> {
     vec![
-        (format!("credential.{scope}.helper"), helper.to_string()),
+        (
+            format!("credential.{scope}.helper"),
+            vec![String::new(), helper.to_string()],
+        ),
         (
             format!("credential.{scope}.useHttpPath"),
-            "true".to_string(),
+            vec!["true".to_string()],
         ),
         (
             "nostr.keyfile".to_string(),
-            keyfile.to_string_lossy().replace('\\', "/"),
+            vec![keyfile.to_string_lossy().replace('\\', "/")],
         ),
     ]
 }
@@ -299,19 +315,53 @@ pub fn write_keyfile(path: &Path, keys: &Keys) -> Result<bool, CliError> {
     Ok(true)
 }
 
-fn git_config_set(scope: ConfigScope, key: &str, value: &str) -> Result<(), CliError> {
-    let output = Command::new("git")
-        .args(["config", scope.flag(), key, value])
+/// Set `key` to exactly `values`, replacing whatever was there.
+///
+/// `--unset-all` first, then `--add` per value: plain `git config key value`
+/// replaces only a single value and errors on a multi-valued key, so re-running
+/// setup would either fail or silently append a second helper each time.
+fn git_config_set(scope: ConfigScope, key: &str, values: &[String]) -> Result<(), CliError> {
+    // Exit 5 is "nothing to unset", which is the normal first-run state.
+    let unset = Command::new("git")
+        .args(["config", scope.flag(), "--unset-all", key])
         .output()
         .map_err(|e| CliError::Usage(format!("cannot run git: {e}")))?;
-    if !output.status.success() {
+    if !unset.status.success() && unset.status.code() != Some(5) {
         return Err(CliError::Usage(format!(
-            "git config {} {key} failed: {}",
+            "git config {} --unset-all {key} failed: {}",
             scope.flag(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            String::from_utf8_lossy(&unset.stderr).trim()
         )));
     }
+    for value in values {
+        let output = Command::new("git")
+            .args(["config", scope.flag(), "--add", key, value])
+            .output()
+            .map_err(|e| CliError::Usage(format!("cannot run git: {e}")))?;
+        if !output.status.success() {
+            return Err(CliError::Usage(format!(
+                "git config {} --add {key} failed: {}",
+                scope.flag(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+    }
     Ok(())
+}
+
+/// Last value of a possibly multi-valued key — the one git resolves to.
+fn git_config_get_last(key: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["config", "--get-all", key])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .map(str::to_string)
 }
 
 fn git_config_get(key: &str) -> Option<String> {
@@ -350,8 +400,14 @@ pub fn cmd_setup(request: SetupRequest<'_>) -> Result<(), CliError> {
     let entries = config_entries(&scope_url, &helper, &keyfile);
 
     if request.print_only {
-        for (key, value) in &entries {
-            println!("git config {} '{key}' '{value}'", request.scope.flag());
+        for (key, values) in &entries {
+            println!("git config {} --unset-all '{key}'", request.scope.flag());
+            for value in values {
+                println!(
+                    "git config {} --add '{key}' '{value}'",
+                    request.scope.flag()
+                );
+            }
         }
         if request.write_key {
             println!(
@@ -378,8 +434,8 @@ pub fn cmd_setup(request: SetupRequest<'_>) -> Result<(), CliError> {
         }
     }
 
-    for (key, value) in &entries {
-        git_config_set(request.scope, key, value)?;
+    for (key, values) in &entries {
+        git_config_set(request.scope, key, values)?;
     }
     println!("Configured {} for {scope_url}.", request.scope.flag());
 
@@ -393,7 +449,10 @@ pub fn cmd_setup(request: SetupRequest<'_>) -> Result<(), CliError> {
                 keyfile.display(),
                 keys.public_key().to_hex()
             );
-            println!("Terminal git access is ready.");
+            // Not "ready" — see cmd_status. Local config being complete says
+            // nothing about whether the relay accepts this key.
+            println!("Local config is complete. Run `bee git check` to confirm");
+            println!("the relay accepts this key.");
         }
         Ok(None) => {
             println!();
@@ -413,7 +472,9 @@ pub fn cmd_setup(request: SetupRequest<'_>) -> Result<(), CliError> {
 
 pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliError> {
     let scope_url = credential_scope(relay_url)?;
-    let configured_helper = git_config_get(&format!("credential.{scope_url}.helper"));
+    // Multi-valued by design (empty reset, then the helper). The last entry is
+    // the one git ends up using.
+    let configured_helper = git_config_get_last(&format!("credential.{scope_url}.helper"));
     let configured_path = git_config_get(&format!("credential.{scope_url}.useHttpPath"));
     let configured_keyfile = git_config_get("nostr.keyfile");
     // Report the *effective* key file, falling back to the default the setup
@@ -738,6 +799,23 @@ mod tests {
         assert!(credential_scope("   ").is_err());
         assert!(credential_scope("file:///etc/passwd").is_err());
         assert!(credential_scope("not a url").is_err());
+    }
+
+    #[test]
+    fn the_helper_entry_resets_the_scoped_list_before_adding_itself() {
+        // Without the empty first value git APPENDS to the system/global
+        // helper list, so osxkeychain also runs and its `store` failure prints
+        // `fatal: failed to store: -1` over a request that actually succeeded.
+        let entries = config_entries(
+            "https://hive.agiterra.org/git",
+            "nostr",
+            Path::new("/home/a/.nostr/key"),
+        );
+        let (_, helper_values) = entries
+            .iter()
+            .find(|(key, _)| key.ends_with(".helper"))
+            .expect("a helper entry");
+        assert_eq!(helper_values, &vec![String::new(), "nostr".to_string()]);
     }
 
     #[test]

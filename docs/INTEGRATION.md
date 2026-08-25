@@ -67,10 +67,19 @@ three git config entries, **scoped to the relay's `/git` path** so `osxkeychain`
 keeps serving GitHub:
 
 ```
+credential.https://hive.agiterra.org/git.helper       ""      <- resets the list
 credential.https://hive.agiterra.org/git.helper       nostr
 credential.https://hive.agiterra.org/git.useHttpPath  true
 nostr.keyfile                                         ~/.nostr/key
 ```
+
+The empty first value is load-bearing. A scoped helper is **appended** to
+whatever the system and global configs already named, and on macOS
+`/opt/homebrew/etc/gitconfig` sets `credential.helper = osxkeychain`. Without
+the reset, both helpers run: nostr answers correctly, then osxkeychain tries to
+`store` an ephemeral credential and every *successful* relay operation prints
+`fatal: failed to store: -1`. A "fatal" over a request that worked sends you
+hunting a failure that never happened.
 
 It writes **no key material**. The key file is yours to create, at mode 0600,
 holding the nsec of the identity the relay knows — for
