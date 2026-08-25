@@ -426,7 +426,17 @@ fn build_client_capabilities() -> serde_json::Value {
             // Non-standard extension used by claude-agent-acp to advertise the
             // exact terminal login argv for subscription auth. Unknown `_meta`
             // keys are ignored by other adapters.
-            "terminal-auth": true
+            "terminal-auth": true,
+            // claude-agent-acp strips `text` and `thinking` blocks out of a
+            // subagent's `session/update` frames unless the client declares
+            // this capability (its `supportsSubagentTranscript`, which tests
+            // `_meta["subagent-transcript"] === true` exactly). Undeclared, a
+            // subagent that reasons for minutes without calling a tool puts
+            // *nothing* on the wire, so the turn's only activity is the
+            // `tool_call` that launched it and the idle deadline counts down
+            // through work that is progressing normally. Declaring it makes the
+            // subagent's work visible to the operator and legible to the timer.
+            "subagent-transcript": true
         }
     })
 }
@@ -3029,6 +3039,32 @@ mod tests {
             msg["params"]["clientCapabilities"]["_meta"]["goose"]["customNotifications"].as_bool(),
             Some(true),
             "goose customNotifications capability must be advertised"
+        );
+    }
+
+    /// The key and the type, both pinned.
+    ///
+    /// claude-agent-acp reads this as
+    /// `capabilities?._meta?.["subagent-transcript"] === true` — a strict
+    /// identity check, so the hyphenated spelling and a real JSON boolean are
+    /// both load-bearing. `"true"`, `1`, or a camelCased key all silently fail
+    /// the check and take the subagent's prose off the wire again, which is a
+    /// regression no other assertion in this file would catch.
+    #[test]
+    fn the_subagent_transcript_capability_is_advertised_as_a_strict_boolean() {
+        let caps = build_client_capabilities();
+        let declared = &caps["_meta"]["subagent-transcript"];
+        assert_eq!(
+            declared.as_bool(),
+            Some(true),
+            "subagent transcript capability must be advertised, or a thinking \
+             subagent puts nothing on the wire and the idle deadline counts \
+             down through healthy work"
+        );
+        assert!(
+            declared.is_boolean(),
+            "the adapter compares with `=== true`, so a stringified or numeric \
+             truthy value is not accepted"
         );
     }
 
