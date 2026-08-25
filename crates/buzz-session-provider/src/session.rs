@@ -122,6 +122,9 @@ pub struct CreateRequest {
     pub agent_env: Vec<(String, String)>,
     /// Per-turn silence budget.
     pub idle_timeout: Duration,
+    /// Budget for silence after the turn has finished answering, or `None` when
+    /// disabled.
+    pub answer_stall_timeout: Option<Duration>,
     /// Per-turn wall-clock ceiling.
     pub max_turn_duration: Duration,
     /// Idle window before the subprocess is reclaimed.
@@ -493,6 +496,7 @@ impl SessionManager {
             observer,
             translator: TranscriptTranslator::new(request.include_thoughts),
             first_turn_preamble: startup.pending_briefing.clone(),
+            agent_version: startup.agent_version.clone(),
         };
         tokio::spawn(actor.run(rx, shutdown_rx));
         Ok(StartedSession {
@@ -575,6 +579,7 @@ async fn start_agent(
 
     client.set_observer(Some(observer.clone()), 0);
     client.set_observer_context(context_for(Some(request.channel_id), None, None));
+    client.set_answer_stall_timeout(request.answer_stall_timeout);
 
     if let Err(failure) = client
         .initialize()
@@ -1000,6 +1005,9 @@ struct SessionActor {
     acp_session_id: String,
     session_id: String,
     idle_timeout: Duration,
+    /// Adapter build, named in any turn this provider has to close on the
+    /// adapter's behalf.
+    agent_version: Option<String>,
     max_turn_duration: Duration,
     idle_shutdown: Duration,
     events: mpsc::Sender<SessionEvent>,
@@ -1238,7 +1246,9 @@ impl SessionActor {
             PromptInterruption::Completed(Ok(stop_reason)) => {
                 (TurnOutcome::Completed { stop_reason }, None)
             }
-            PromptInterruption::Completed(Err(error)) => self.recover_from_turn_error(error).await,
+            PromptInterruption::Completed(Err(error)) => {
+                self.recover_from_turn_error(error, &turn_id).await
+            }
             PromptInterruption::Interrupted | PromptInterruption::Shutdown => {
                 match self
                     .client
@@ -1296,9 +1306,88 @@ impl SessionActor {
         }
     }
 
+    /// Close a turn whose answer arrived but whose prompt was never resolved.
+    ///
+    /// The adapter holds a prompt open while a Task subagent is live and, when
+    /// the subagent ends, nothing re-checks whether the hold can be released —
+    /// so the turn sits finished-but-unresolved with no timer of its own. Its
+    /// documented way out is a `session/cancel`, which is what this sends: a
+    /// nudge, not a kill. The work is already done; we are only collecting the
+    /// acknowledgement the adapter owed us.
+    ///
+    /// The nudge usually works, and when it does the turn is reported
+    /// **completed** — the answer is real, the operator can act on it. What it
+    /// is not reported as is *clean*: the status item says the provider had to
+    /// close it, because a turn that silently reads Completed over a prompt the
+    /// adapter dropped hides the defect from the person best placed to report
+    /// it, and there is nothing in the record afterwards to notice it by.
+    async fn nudge_stalled_turn(
+        &mut self,
+        quiet: Duration,
+        turn_id: &str,
+    ) -> (TurnOutcome, Option<String>) {
+        let adapter = match self.agent_version.as_deref() {
+            Some(version) => format!("{} {version}", self.client.agent_name()),
+            None => self.client.agent_name().to_owned(),
+        };
+        tracing::warn!(
+            target: "csp::session",
+            session_id = %self.session_id,
+            %adapter,
+            "answer stalled for {quiet:?}; nudging the adapter with session/cancel"
+        );
+
+        let nudged = self
+            .client
+            .cancel_with_cleanup_grace(&self.acp_session_id, CANCEL_GRACE)
+            .await;
+
+        match nudged {
+            Ok(stop_reason) => {
+                // The record has to carry this. The second element of the
+                // return pair means "the agent is gone" and tears the session
+                // down, so the disclosure goes where it belongs — an item in
+                // the turn, beside the answer it qualifies.
+                // Renderers cap a status at 200 characters, so this says the
+                // three things that do not fit anywhere else and stops: which
+                // adapter, that it never resolved, and that the answer stands.
+                emit_items(
+                    &self.events,
+                    &self.session_id,
+                    turn_id,
+                    vec![crate::payload::status_item(&format!(
+                        "answer_stall_recovered: {adapter} answered but never resolved this \
+                         prompt; Bee Keeper closed the turn after {quiet:?}. The answer above \
+                         is complete."
+                    ))],
+                )
+                .await;
+                (TurnOutcome::Completed { stop_reason }, None)
+            }
+            Err(error) => {
+                let note = format!(
+                    "{adapter} answered but never resolved this prompt, and did not respond to \
+                     being cancelled ({error}). Bee Keeper closed the turn after {quiet:?}; the \
+                     answer above is complete."
+                );
+                (
+                    TurnOutcome::Failed {
+                        message: note,
+                        agent_gone: matches!(error, AcpError::AgentExited),
+                    },
+                    None,
+                )
+            }
+        }
+    }
+
     /// Turn a failed prompt into an outcome, cancelling first when the agent is
     /// merely slow rather than dead.
-    async fn recover_from_turn_error(&mut self, error: AcpError) -> (TurnOutcome, Option<String>) {
+    async fn recover_from_turn_error(
+        &mut self,
+        error: AcpError,
+        turn_id: &str,
+    ) -> (TurnOutcome, Option<String>) {
         let message = error.to_string();
         match error {
             AcpError::AgentExited | AcpError::Io(_) => (
@@ -1308,14 +1397,26 @@ impl SessionActor {
                 },
                 Some(message),
             ),
+            AcpError::AnswerStall(quiet) => self.nudge_stalled_turn(quiet, turn_id).await,
             AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } => {
                 // The turn is over as far as the operator is concerned, but the
                 // agent may still be working; drain it so the next turn starts
                 // from a quiet process.
-                let _ = self
+                let drained = self
                     .client
                     .cancel_with_cleanup_grace(&self.acp_session_id, CANCEL_GRACE)
                     .await;
+                // An agent that ignored the cancel is a different situation
+                // from one that stopped cleanly — the next turn inherits a
+                // process that is still working — and reporting them
+                // identically hid that. Say which happened.
+                let message = match drained {
+                    Err(AcpError::CancelDrainTimeout(grace)) => format!(
+                        "{message}; the agent did not stop within {}s of being cancelled",
+                        grace.as_secs()
+                    ),
+                    _ => message,
+                };
                 (
                     TurnOutcome::Failed {
                         message,
@@ -1513,6 +1614,37 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// Reproduces the claude-agent-acp subagent hold: answers the prompt in
+    /// full, finishes its tool call, and then never sends the response.
+    ///
+    /// Distinct from [`STALLING_AGENT`], which never answers at all — that is a
+    /// hung agent, and only an operator interrupt gets out of it. This one is
+    /// *finished*, which is the case the stall watch exists for.
+    ///
+    /// This is the shape that matters — not a hung agent, a *finished* one
+    /// whose acknowledgement never came. It answers `session/cancel` the way
+    /// the adapter's own escape hatch does, so the nudge has something to
+    /// recover.
+    pub(crate) const ANSWERED_BUT_UNRESOLVED_AGENT: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentInfo":{"name":"claude-agent-acp","version":"0.70.0"}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      PROMPT_ID="$id"
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"tool_call","toolCallId":"task-1","title":"Task"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"task-1","status":"completed"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Yes - done."}}}}\n'
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$PROMPT_ID" ;;
+  esac
+done
+"#;
+
     /// Refuses `session/new` with an authentication error.
     pub(crate) const UNAUTHENTICATED_AGENT: &str = r#"
 while IFS= read -r line; do
@@ -1606,6 +1738,7 @@ done
             agent_args: Vec::new(),
             agent_env: Vec::new(),
             idle_timeout: Duration::from_secs(5),
+            answer_stall_timeout: None,
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
@@ -1790,6 +1923,113 @@ done
             other => panic!("expected a finished turn, got {other:?}"),
         }
         manager.shutdown("s1");
+    }
+
+    /// The whole fix, end to end, against an agent that reproduces the bug.
+    ///
+    /// The turn must come back **Completed** — the answer is real and the
+    /// operator can act on it — within the stall budget rather than the idle
+    /// one, and the record must say the provider had to close it. All three
+    /// matter: finishing late is the bug, reporting it as a clean turn hides
+    /// the defect, and reporting it as a failure throws away a good answer.
+    #[tokio::test]
+    async fn a_turn_the_adapter_never_resolves_is_recovered_with_its_answer_intact() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(
+            dir.path(),
+            "unresolved-agent",
+            ANSWERED_BUT_UNRESOLVED_AGENT,
+        );
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+
+        let mut create = request(agent, dir.path());
+        create.answer_stall_timeout = Some(Duration::from_millis(200));
+        // Far above the stall budget: if the watch failed to arm, this test
+        // would fail on an idle timeout instead, naming the actual regression.
+        create.idle_timeout = Duration::from_secs(20);
+        create.max_turn_duration = Duration::from_secs(60);
+
+        manager.create(create).await.expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: None,
+            })
+            .expect("deliver");
+
+        let started = std::time::Instant::now();
+        let mut items = Vec::new();
+        let outcome = loop {
+            match next_event(&mut rx).await {
+                SessionEvent::TranscriptItems { items: batch, .. } => items.extend(batch),
+                SessionEvent::TurnFinished { outcome, .. } => break outcome,
+                _ => {}
+            }
+        };
+
+        assert_eq!(
+            outcome,
+            TurnOutcome::Completed {
+                stop_reason: StopReason::Cancelled
+            },
+            "the nudge recovered a real stop reason, so the turn is complete"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the turn must end on the stall budget, not the idle one"
+        );
+
+        let text: Vec<&str> = items
+            .iter()
+            .filter(|item| item["kind"] == "assistant_text")
+            .filter_map(|item| item["text"].as_str())
+            .collect();
+        assert!(
+            text.iter().any(|line| line.contains("Yes - done.")),
+            "the answer must survive the recovery; got {text:?}"
+        );
+
+        let disclosed = items
+            .iter()
+            .filter(|item| item["kind"] == "status")
+            .filter_map(|item| item["status"].as_str())
+            .any(|status| status.contains("answer_stall_recovered"));
+        assert!(
+            disclosed,
+            "a turn Bee Keeper had to close must say so, or the defect is \
+             invisible to the person who could report it; got {items:#?}"
+        );
+
+        manager.shutdown("s1");
+    }
+
+    /// The disclosure has to survive the renderer that shows it.
+    ///
+    /// An unrecognized status is displayed verbatim and truncated at 200
+    /// characters, so a message that overruns loses its tail — which is where
+    /// "the answer above is complete" lives, the one line that tells the
+    /// operator not to re-run the turn. Asserted with the longest realistic
+    /// adapter identity rather than the shortest.
+    #[test]
+    fn the_stall_disclosure_fits_the_two_hundred_character_status_row() {
+        let adapter = "claude-agent-acp 0.70.0-nightly.20260825+darwin-arm64";
+        let quiet = Duration::from_secs(120);
+        let disclosure = format!(
+            "answer_stall_recovered: {adapter} answered but never resolved this prompt; \
+             Bee Keeper closed the turn after {quiet:?}. The answer above is complete."
+        );
+        assert!(
+            disclosure.len() <= 200,
+            "the status row truncates at 200 characters; this is {} — the tail that says \
+             the answer stands would be cut",
+            disclosure.len()
+        );
+        assert!(disclosure.contains("answer_stall_recovered"));
+        assert!(disclosure.ends_with("The answer above is complete."));
     }
 
     #[tokio::test]

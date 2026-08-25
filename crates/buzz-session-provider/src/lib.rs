@@ -963,6 +963,7 @@ impl Provider {
                 .map(|env| (env.name.clone(), env.value.clone()))
                 .collect(),
             idle_timeout: self.config.idle_timeout,
+            answer_stall_timeout: self.config.answer_stall_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
@@ -1400,6 +1401,7 @@ impl Provider {
                 .map(|env| (env.name.clone(), env.value.clone()))
                 .collect(),
             idle_timeout: self.config.idle_timeout,
+            answer_stall_timeout: self.config.answer_stall_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
             include_thoughts: self.config.include_thoughts,
@@ -3304,6 +3306,7 @@ mod tests {
             max_sessions: 2,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
+            answer_stall_timeout: Some(Duration::from_secs(120)),
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             command_horizon: Duration::from_secs(86_400),

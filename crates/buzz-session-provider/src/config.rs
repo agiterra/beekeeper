@@ -51,6 +51,18 @@ pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 /// Default per-turn wall-clock ceiling, mirroring the buzz-acp harness.
 pub const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
+/// Default budget for silence *after* a turn has finished answering.
+///
+/// Not a second idle timeout. It arms only once the agent has streamed prose
+/// and every tool call it opened has reported terminal — a shape in which the
+/// SDK result normally follows within milliseconds. Two minutes is generous
+/// against that, leaving room for a slow first token on a cold cache, while
+/// still ending a dropped prompt in a fraction of the fifteen-minute silence
+/// budget the idle timer has to reserve for genuinely long tools.
+///
+/// `0` disables the watch, leaving the idle timer as the only backstop.
+/// Override with `BUZZ_CSP_ANSWER_STALL_TIMEOUT`.
+pub const DEFAULT_ANSWER_STALL_TIMEOUT_SECS: u64 = 120;
 /// Default age past which an unseen command is treated as history, not intent.
 pub const DEFAULT_COMMAND_HORIZON_SECS: u64 = 86_400;
 /// Number of hex characters of the provider pubkey used as the default instance id.
@@ -100,6 +112,9 @@ pub struct Config {
     pub session_idle_shutdown: Duration,
     /// Per-turn silence budget passed to `session/prompt`.
     pub idle_timeout: Duration,
+    /// Budget for silence after the turn has finished answering, or `None` when
+    /// disabled. See [`DEFAULT_ANSWER_STALL_TIMEOUT_SECS`].
+    pub answer_stall_timeout: Option<Duration>,
     /// Per-turn wall-clock ceiling passed to `session/prompt`.
     pub max_turn_duration: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` transcript items.
@@ -161,6 +176,30 @@ impl Config {
             "BUZZ_CSP_MAX_TURN_DURATION",
             DEFAULT_MAX_TURN_DURATION_SECS,
         )?;
+        // The harness validates this pair (`buzz-acp/src/config.rs`); this side
+        // never did, so an idle budget at or above the wall-clock ceiling made
+        // the idle guard unreachable — it can only fire if it comes first.
+        // Silently having no silence guard is worse than being told the numbers
+        // are contradictory.
+        if idle_timeout >= max_turn_duration {
+            return Err(ConfigError::Invalid {
+                name: "BUZZ_CSP_IDLE_TIMEOUT",
+                reason: format!(
+                    "must be less than BUZZ_CSP_MAX_TURN_DURATION ({}s), otherwise the idle \
+                     guard can never fire; got {}s",
+                    max_turn_duration.as_secs(),
+                    idle_timeout.as_secs(),
+                ),
+            });
+        }
+        let answer_stall_timeout = match parse_secs(
+            &lookup,
+            "BUZZ_CSP_ANSWER_STALL_TIMEOUT",
+            DEFAULT_ANSWER_STALL_TIMEOUT_SECS,
+        )? {
+            zero if zero.is_zero() => None,
+            timeout => Some(timeout),
+        };
         let command_horizon = parse_secs(
             &lookup,
             "BUZZ_CSP_COMMAND_HORIZON_SECS",
@@ -181,6 +220,7 @@ impl Config {
             session_idle_shutdown,
             idle_timeout,
             max_turn_duration,
+            answer_stall_timeout,
             include_thoughts,
             command_horizon,
         })
@@ -415,6 +455,61 @@ mod tests {
 
     fn load(vars: &HashMap<&'static str, String>) -> Result<Config, ConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
+    }
+
+    /// An idle budget that can never fire is a configuration error, not a
+    /// silent loss of the guard.
+    ///
+    /// The guard only fires if it comes before the wall-clock ceiling, so
+    /// setting it at or above that ceiling removes the silence guard entirely
+    /// while looking like it raised it. The harness has always rejected this
+    /// pair; this side accepted it.
+    #[test]
+    fn an_idle_budget_that_could_never_fire_is_refused() {
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_IDLE_TIMEOUT", "7200".to_owned());
+        vars.insert("BUZZ_CSP_MAX_TURN_DURATION", "7200".to_owned());
+        assert!(
+            matches!(
+                load(&vars),
+                Err(ConfigError::Invalid {
+                    name: "BUZZ_CSP_IDLE_TIMEOUT",
+                    ..
+                })
+            ),
+            "an idle budget at the wall-clock ceiling must be refused"
+        );
+
+        vars.insert("BUZZ_CSP_IDLE_TIMEOUT", "7199".to_owned());
+        assert!(load(&vars).is_ok(), "one second under the ceiling is fine");
+    }
+
+    /// The stall watch defaults on, and `0` is how it is turned off.
+    ///
+    /// `0` has to mean *disabled* rather than "fire immediately", which is what
+    /// a bare `Duration::from_secs(0)` would do — it would end every turn the
+    /// instant it finished answering.
+    #[test]
+    fn the_answer_stall_budget_defaults_on_and_zero_disables_it() {
+        let config = load(&minimal()).expect("minimal env should load");
+        assert_eq!(
+            config.answer_stall_timeout,
+            Some(Duration::from_secs(DEFAULT_ANSWER_STALL_TIMEOUT_SECS)),
+        );
+
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_ANSWER_STALL_TIMEOUT", "0".to_owned());
+        assert_eq!(
+            load(&vars).expect("zero should load").answer_stall_timeout,
+            None,
+            "zero must disable the watch, not arm it at zero"
+        );
+
+        vars.insert("BUZZ_CSP_ANSWER_STALL_TIMEOUT", "45".to_owned());
+        assert_eq!(
+            load(&vars).expect("should load").answer_stall_timeout,
+            Some(Duration::from_secs(45)),
+        );
     }
 
     #[test]
