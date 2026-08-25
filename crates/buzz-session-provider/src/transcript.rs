@@ -115,6 +115,23 @@ impl TranscriptTranslator {
         let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
             return Vec::new();
         };
+        if is_subagent_attributed(update) {
+            // Buzz declares the `subagent-transcript` client capability, so
+            // claude-agent-acp stops stripping a subagent's prose and thinking
+            // and sends those frames stamped with the Task call that owns them.
+            // We want them *on the wire* — every parsed line resets the read
+            // loop's idle deadline, which is what keeps a long, quiet subagent
+            // from being killed as a stalled turn — but they must not reach the
+            // published record through this path. Folding them into the
+            // top-level buffers would interleave a subagent's narration with
+            // the agent's own with no way to tell them apart afterwards, and
+            // this record is an archive: that is corruption, not a rendering
+            // bug. Attributing them properly needs an item kind the clients can
+            // render (today an unknown `kind` degrades to "no payload content
+            // is surfaced"), so until that contract exists the honest handling
+            // is to carry the liveness and publish nothing.
+            return Vec::new();
+        }
         if USAGE_UPDATE_VARIANTS.contains(&kind) {
             // Only the last one per turn is published: a running counter emitted
             // per token is noise, and the final value is the one that is true.
@@ -397,6 +414,21 @@ fn plan_item(update: &Value) -> Value {
     json!({ "kind": "plan", "entries": entries, "text": bound_text(&text, MAX_TOOL_CONTENT_BYTES) })
 }
 
+/// Whether this update describes a subagent's work rather than the agent's own.
+///
+/// claude-agent-acp stamps `_meta.claudeCode.parentToolUseId` onto every frame
+/// produced inside a Task subagent, naming the tool call that spawned it, and
+/// uses the same field to decide what counts as the turn's own answer. `_meta`
+/// rides on the `update` object itself, not on the notification's `params`.
+fn is_subagent_attributed(update: &Value) -> bool {
+    update
+        .get("_meta")
+        .and_then(|meta| meta.get("claudeCode"))
+        .and_then(|claude| claude.get("parentToolUseId"))
+        .and_then(Value::as_str)
+        .is_some_and(|parent| !parent.is_empty())
+}
+
 /// Whether a `tool_call_update` reports a terminal status.
 fn terminal_status(update: &Value) -> Option<&str> {
     match update.get("status").and_then(Value::as_str) {
@@ -590,6 +622,16 @@ mod tests {
 
     fn update(value: Value) -> Value {
         value
+    }
+
+    /// A prose chunk produced *inside* a Task subagent, stamped the way
+    /// claude-agent-acp stamps it.
+    fn subagent_chunk(parent_tool_use_id: &str, text: &str) -> Value {
+        update(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": text },
+            "_meta": { "claudeCode": { "parentToolUseId": parent_tool_use_id } },
+        }))
     }
 
     fn kinds(items: &[Value]) -> Vec<&str> {
@@ -817,6 +859,97 @@ mod tests {
         assert!(translator
             .on_update(&json!({ "no": "discriminator" }))
             .is_empty());
+    }
+
+    /// The regression that declaring `subagent-transcript` would otherwise
+    /// introduce.
+    ///
+    /// Before the capability, the adapter filtered a subagent's prose out
+    /// itself and this case could not arise. Now the frames arrive, and if they
+    /// fell through to the normal `agent_message_chunk` arm the subagent's
+    /// narration would be concatenated into the same buffer as the agent's own
+    /// and flushed as one indistinguishable block. The assertion is on the
+    /// *seam*: the two top-level chunks must still meet exactly, with nothing
+    /// of the subagent's between them.
+    #[test]
+    fn a_subagents_prose_never_lands_in_the_agents_own_narrative() {
+        let mut translator = TranscriptTranslator::new(true);
+        translator.on_update(&chunk("I will delegate this. "));
+        assert!(
+            translator
+                .on_update(&subagent_chunk("t-parent", "Reading forty files…"))
+                .is_empty(),
+            "a subagent chunk must publish nothing on its own"
+        );
+        translator.on_update(&subagent_chunk("t-parent", " and forty more."));
+        let items = translator.close_turn();
+
+        assert_eq!(kinds(&items), vec!["assistant_text"]);
+        assert_eq!(
+            items[0]["text"], "I will delegate this. ",
+            "the subagent's narration leaked into the agent's own text"
+        );
+    }
+
+    /// Every frame kind a subagent can produce is covered, not just prose.
+    ///
+    /// A subagent's tool calls are the noisiest of these — an unguarded
+    /// `tool_call` arm would also register the child's `toolCallId` in the
+    /// pairing maps, so a later top-level result could resolve against a
+    /// subagent's call.
+    #[test]
+    fn subagent_attribution_is_honoured_for_every_frame_kind() {
+        let mut translator = TranscriptTranslator::new(true);
+        for kind in [
+            "agent_message_chunk",
+            "agent_thought_chunk",
+            "tool_call",
+            "tool_call_update",
+            "plan",
+        ] {
+            let mut frame = json!({
+                "sessionUpdate": kind,
+                "toolCallId": "child-1",
+                "title": "child work",
+                "status": "completed",
+                "content": { "type": "text", "text": "child prose" },
+                "entries": [],
+            });
+            frame["_meta"]["claudeCode"]["parentToolUseId"] = json!("t-parent");
+            assert!(
+                translator.on_update(&update(frame)).is_empty(),
+                "subagent-attributed `{kind}` must not be published"
+            );
+        }
+        assert!(
+            translator.close_turn().is_empty(),
+            "nothing from a subagent may survive to the turn's close"
+        );
+    }
+
+    /// The guard keys on a *present, non-empty* parent id and nothing else, so
+    /// an adapter that sends `_meta` without one cannot silently blank the
+    /// agent's own transcript.
+    #[test]
+    fn an_empty_or_absent_parent_id_leaves_a_frame_top_level() {
+        let mut translator = TranscriptTranslator::new(true);
+        let mut empty_parent = json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "still mine" },
+        });
+        empty_parent["_meta"]["claudeCode"]["parentToolUseId"] = json!("");
+        translator.on_update(&update(empty_parent));
+
+        let mut unrelated_meta = json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": " and mine" },
+        });
+        unrelated_meta["_meta"]["claudeCode"]["toolName"] = json!("Task");
+        translator.on_update(&update(unrelated_meta));
+
+        let items = translator.close_turn();
+        assert_eq!(kinds(&items), vec!["assistant_text"]);
+        assert_eq!(items[0]["text"], "still mine and mine");
     }
 
     /// An oversized tool input must stay an *object*: the consumer feeds it
