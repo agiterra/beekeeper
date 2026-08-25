@@ -265,6 +265,13 @@ pub struct Config {
     pub git_max_repos_per_pubkey: u32,
     /// Maximum concurrent git subprocess operations. Default: 20.
     pub git_max_concurrent_ops: usize,
+    /// NIP-98 freshness window for the git transport, in seconds. Default: 600.
+    ///
+    /// Wider than the ±60 s the rest of the HTTP surface uses, because git
+    /// mints one token at `GET info/refs` and reuses it for the `POST` that
+    /// follows pre-push hooks and pack building. Never below
+    /// [`buzz_auth::nip98::TIMESTAMP_TOLERANCE_SECS`].
+    pub git_nip98_tolerance_secs: u64,
     /// HMAC secret for git pre-receive hook callbacks.
     /// Used to authenticate internal policy endpoint requests.
     pub git_hook_hmac_secret: String,
@@ -849,6 +856,22 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(100);
+        // NIP-98 freshness window for the git transport only. The default
+        // ±60 s is right for a request/response API and wrong for git: the
+        // credential helper is invoked once, at `GET info/refs`, and the same
+        // header is reused for the `POST` that follows *after* pre-push hooks
+        // and pack building. Ten minutes covers a slow hook or a large pack;
+        // it is also exactly how long an observed token stays replayable, so
+        // lower it if the deployment can afford to.
+        // A value below the API-wide floor is clamped up to it, not silently
+        // swapped for the default: an operator who asks for 30 should get the
+        // tightest window the relay will honour, and be able to see that they
+        // got it, rather than quietly receiving 600.
+        let git_nip98_tolerance_secs: u64 = std::env::var("BUZZ_GIT_NIP98_TOLERANCE_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|value| value.max(buzz_auth::nip98::TIMESTAMP_TOLERANCE_SECS))
+            .unwrap_or(600);
         let git_max_concurrent_ops: usize = std::env::var("BUZZ_GIT_MAX_CONCURRENT_OPS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -1033,6 +1056,7 @@ impl Config {
             git_pack_cache_max_concurrent_populations,
             git_max_repos_per_pubkey,
             git_max_concurrent_ops,
+            git_nip98_tolerance_secs,
             git_hook_hmac_secret,
             push_executor_key_id,
             push_gateway_delivery_url,

@@ -57,6 +57,37 @@ exact-path, method-bound contract. A probe signed the strict way will be
 rejected by the git endpoints. This is the practical reason the debt is worth
 documenting now even though it is not being repaid.
 
+## The sibling: the freshness window (2026-08-24)
+
+The same credential-helper contract breaks the *timestamp* check too, and this
+one is not defence-in-depth — it stops pushes outright.
+
+Git invokes the helper once per authentication challenge, at the ref
+advertisement (`GET info/refs`). That is when the token is minted. Git then does
+everything else — runs `pre-push`, enumerates and compresses the pack — and only
+then sends `POST git-receive-pack` carrying the same header. Under `buzz-auth`'s
+±60 s window, anything slow in that gap makes the push fail **deterministically**:
+
+- Observed here: a `pre-push` hook running the desktop test suite took **99.9 s**,
+  putting the token 40 s past expiry. Every push to hive died with
+  `error: RPC failed; HTTP 401` / `send-pack: unexpected disconnect`. The same
+  push with `--no-verify` succeeded instantly — the only variable was elapsed time.
+- Not hook-specific: pack building for a large repository does the same thing.
+  With `BUZZ_GIT_MAX_PACK_BYTES` at 500 MB, a pack that takes over a minute to
+  produce is unpushable regardless of hooks.
+
+The fix is `verify_nip98_event_within`, called from the git transport with
+`git_nip98_tolerance_secs` (`BUZZ_GIT_NIP98_TOLERANCE_SECS`, default **600 s**).
+The rest of the HTTP surface keeps ±60 s; values below 60 are clamped up.
+
+**This widens the escalation window described above.** The token's lifetime is
+exactly how long an observed token stays replayable, and because the method is
+not bound, a captured read token is a write token for that span — now ten
+minutes rather than one. The `u` tag still binds it to one repository on one
+community host, and it still only crosses TLS. Anyone repaying the method
+binding should treat the window as part of the same repair, not a separate one:
+per-service tokens would let the write window shrink back below the read one.
+
 ## If it is ever repaid
 
 Options, roughly in increasing order of disruption: scope the signed URL per

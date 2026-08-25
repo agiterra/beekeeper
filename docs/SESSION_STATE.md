@@ -1713,6 +1713,17 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   osxkeychain tried to store an ephemeral credential. Write the helper as a
   two-value list with an empty reset first (`--unset-all` then `--add` per
   value; plain `git config key value` errors on a multi-valued key).
+- **A push to the relay fails deterministically if anything slow sits between
+  the ref advertisement and the pack upload.** Git mints its NIP-98 token at
+  `GET info/refs`, then runs `pre-push` and builds the pack, then sends
+  `POST git-receive-pack` with that same header. Under the ±60 s window a 99.9 s
+  pre-push hook (desktop-test alone is ~100 s) made every push die with
+  `RPC failed; HTTP 401`; `--no-verify` succeeded instantly, elapsed time being
+  the only variable. Fixed 2026-08-24 by `BUZZ_GIT_NIP98_TOLERANCE_SECS`
+  (default 600 s) on the git routes only — but note this **widens the read→write
+  replay window** documented in `docs/git-nip98-method-binding.md`, because that
+  transport does not bind the HTTP method. A large pack that takes over a minute
+  to build would have hit the same wall with no hook involved.
 - **`Keys::parse` accepts any 64 hex characters as a secret key**, so pasting a
   *public* key hex into `~/.nostr/key` yields a valid-looking, entirely
   different identity that every local check reports as fine — `6cbdf445…`

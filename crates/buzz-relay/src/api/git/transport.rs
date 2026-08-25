@@ -152,7 +152,8 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // level without protocol changes. The token is repo-scoped, not service-scoped.
         //
         // Security is still provided by:
-        // - ±60s timestamp window (limits replay)
+        // - bounded timestamp window (limits replay) — `git_nip98_tolerance_secs`,
+        //   default 600s, NOT the ±60s the rest of the HTTP surface uses
         // - HTTPS in production (prevents token theft)
         // - Pre-receive hook for push authorization (role + protection rules)
         // - Endpoint routing (clone/push are different HTTP paths)
@@ -163,7 +164,7 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // then reuses the token for POST (pack data). Method binding can't work here.
         //
         // Security is provided by: service-binding in the URL (clone vs push scoped),
-        // ±60s timestamp, and the pre-receive hook for push authorization.
+        // the bounded timestamp window, and the pre-receive hook for push authorization.
         // We pass the method from the event itself so verify_nip98_event always accepts.
         let event_method = serde_json::from_str::<serde_json::Value>(&event_json)
             .ok()
@@ -180,22 +181,37 @@ impl axum::extract::FromRequestParts<Arc<AppState>> for GitAuth {
         // SECURITY: method intentionally not verified for git routes. The tautological
         // check (event.method == event.method) is deliberate — see comment block above.
         // Git's credential protocol signs once with GET and reuses for POST. The URL tag
-        // provides the real security boundary (±60s timestamp + URL lock + HTTPS).
+        // provides the real security boundary (bounded timestamp + URL lock + HTTPS).
 
         // body=None: can't buffer streaming pack data to verify payload hash.
-        // Token is time-bounded (±60s) and URL-locked — acceptable trade-off.
-        let pubkey =
-            buzz_auth::nip98::verify_nip98_event(&event_json, &expected_url, &event_method, None)
-                .map_err(|e| {
-                warn!(error = %e, "git NIP-98 auth failed");
-                (StatusCode::UNAUTHORIZED, "NIP-98 auth failed").into_response()
-            })?;
+        // Token is time-bounded and URL-locked — acceptable trade-off.
+        //
+        // The window is `git_nip98_tolerance_secs` (default 600), not the ±60s
+        // the rest of the HTTP surface uses, and the difference is forced by the
+        // same credential-helper contract that defeats method binding above.
+        // Git mints the token at `GET info/refs`, then runs pre-push hooks and
+        // builds the pack, and only then sends `POST git-receive-pack` with that
+        // same header. Under ±60s a slow push fails *deterministically*: on
+        // 2026-08-24 a 99.9s pre-push hook made every push to this relay die
+        // with `RPC failed; HTTP 401`, and pack building for a large repository
+        // does the same with no hook at all.
+        let pubkey = buzz_auth::nip98::verify_nip98_event_within(
+            &event_json,
+            &expected_url,
+            &event_method,
+            None,
+            state.config.git_nip98_tolerance_secs,
+        )
+        .map_err(|e| {
+            warn!(error = %e, "git NIP-98 auth failed");
+            (StatusCode::UNAUTHORIZED, "NIP-98 auth failed").into_response()
+        })?;
 
         // NOTE: NIP-98 event-ID dedup intentionally NOT implemented here.
         // Git's credential protocol reuses one signed token across multiple requests
         // in a session (info_refs GET → upload-pack/receive-pack POST). Rejecting
         // replayed event IDs would break normal clone/push operations.
-        // The ±60s timestamp window + URL scoping + HTTPS transport provide sufficient
+        // The bounded timestamp window + URL scoping + HTTPS transport provide sufficient
         // replay protection for v1. Per-request signing requires protocol changes.
 
         let event: nostr::Event = serde_json::from_str(&event_json)

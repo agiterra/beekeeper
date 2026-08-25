@@ -29,7 +29,11 @@ use url::Url;
 
 use crate::error::AuthError;
 
-const TIMESTAMP_TOLERANCE_SECS: u64 = 60;
+/// Default freshness window: a token must be signed within ±60 s of server time.
+///
+/// The right default for a request/response API, where signing and sending are
+/// milliseconds apart.
+pub const TIMESTAMP_TOLERANCE_SECS: u64 = 60;
 
 /// Verify a NIP-98 HTTP Auth event (kind:27235).
 ///
@@ -58,6 +62,44 @@ pub fn verify_nip98_event(
     expected_method: &str,
     body: Option<&[u8]>,
 ) -> Result<nostr::PublicKey, AuthError> {
+    verify_nip98_event_within(
+        event_json,
+        expected_url,
+        expected_method,
+        body,
+        TIMESTAMP_TOLERANCE_SECS,
+    )
+}
+
+/// [`verify_nip98_event`] with an explicit freshness window.
+///
+/// Exists for the **git transport**, for a structural reason rather than a
+/// preference. Git invokes a credential helper once per authentication
+/// challenge and reuses the resulting `Authorization` header for the whole
+/// operation: it fetches the ref advertisement first (`GET info/refs` — that is
+/// what mints the token), then does everything else — runs `pre-push`,
+/// enumerates and compresses the pack — and only then sends
+/// `POST git-receive-pack` carrying that same, now-aged header.
+///
+/// Under ±60 s a slow push therefore fails *deterministically*, not flakily.
+/// Observed on 2026-08-24: a `pre-push` hook running the desktop test suite took
+/// 99.9 s and every push to the relay died with `RPC failed; HTTP 401`. Pack
+/// building for a large repository does the same with no hook involved.
+///
+/// The cost is real and worth stating: the window is exactly how long an
+/// observed token stays replayable. Because the git transport deliberately does
+/// not bind the HTTP method (`docs/git-nip98-method-binding.md` — the sibling of
+/// this debt, from the same credential-helper contract), a captured read token
+/// is a write token for that long, and widening the window widens that. What
+/// still holds: the `u` tag binds the token to one repository on one community
+/// host, and the token only ever crosses TLS.
+pub fn verify_nip98_event_within(
+    event_json: &str,
+    expected_url: &str,
+    expected_method: &str,
+    body: Option<&[u8]>,
+    tolerance_secs: u64,
+) -> Result<nostr::PublicKey, AuthError> {
     // 1. Parse JSON.
     let event: Event = serde_json::from_str(event_json)
         .map_err(|e| AuthError::Nip98Invalid(format!("event JSON parse error: {e}")))?;
@@ -74,13 +116,13 @@ pub fn verify_nip98_event(
     buzz_core::verify_event(&event)
         .map_err(|_| AuthError::Nip98Invalid("invalid Schnorr signature".to_string()))?;
 
-    // 4. Verify created_at within ±60 seconds of now.
+    // 4. Verify created_at within ±tolerance_secs of now.
     let now = Timestamp::now().as_secs();
     let event_ts = event.created_at.as_secs();
     let delta = now.abs_diff(event_ts);
-    if delta > TIMESTAMP_TOLERANCE_SECS {
+    if delta > tolerance_secs {
         return Err(AuthError::Nip98Invalid(format!(
-            "event timestamp outside ±{TIMESTAMP_TOLERANCE_SECS}s window (delta: {delta}s)"
+            "event timestamp outside ±{tolerance_secs}s window (delta: {delta}s)"
         )));
     }
 
@@ -213,6 +255,50 @@ mod tests {
         let json = make_nip98_event(&keys, TEST_URL, TEST_METHOD, None, Some(old_ts));
         let result = verify_nip98_event(&json, TEST_URL, TEST_METHOD, None);
         assert!(matches!(result, Err(AuthError::Nip98Invalid(_))));
+    }
+
+    /// The regression this window exists for.
+    ///
+    /// Git mints its token at `GET info/refs`, then runs pre-push hooks and
+    /// builds the pack before sending `POST git-receive-pack` with that same
+    /// header. On 2026-08-24 a 99.9s hook put the token 40s past the ±60s
+    /// window and every push to the relay failed with `RPC failed; HTTP 401`.
+    /// A push is not flaky under this — it is impossible.
+    #[test]
+    fn a_token_older_than_a_slow_pre_push_hook_still_authenticates_git() {
+        let keys = Keys::generate();
+        let minted = Timestamp::from(Timestamp::now().as_secs().saturating_sub(100));
+        let json = make_nip98_event(&keys, TEST_URL, TEST_METHOD, None, Some(minted));
+
+        assert!(
+            verify_nip98_event(&json, TEST_URL, TEST_METHOD, None).is_err(),
+            "the default API window must stay tight — widening it everywhere is not the fix"
+        );
+        assert_eq!(
+            verify_nip98_event_within(&json, TEST_URL, TEST_METHOD, None, 600).unwrap(),
+            keys.public_key()
+        );
+    }
+
+    /// Widened is not unbounded. The window is exactly how long an observed
+    /// token stays replayable, and the git transport does not bind the method,
+    /// so a stale token must still eventually stop working.
+    #[test]
+    fn the_widened_window_still_expires() {
+        let keys = Keys::generate();
+        let ancient = Timestamp::from(Timestamp::now().as_secs().saturating_sub(601));
+        let json = make_nip98_event(&keys, TEST_URL, TEST_METHOD, None, Some(ancient));
+        assert!(verify_nip98_event_within(&json, TEST_URL, TEST_METHOD, None, 600).is_err());
+    }
+
+    /// Clock skew cuts both ways: a client running fast must not be able to
+    /// mint a token that outlives the window.
+    #[test]
+    fn a_future_dated_token_is_rejected_by_the_same_bound() {
+        let keys = Keys::generate();
+        let ahead = Timestamp::from(Timestamp::now().as_secs().saturating_add(601));
+        let json = make_nip98_event(&keys, TEST_URL, TEST_METHOD, None, Some(ahead));
+        assert!(verify_nip98_event_within(&json, TEST_URL, TEST_METHOD, None, 600).is_err());
     }
 
     #[test]
