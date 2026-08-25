@@ -447,7 +447,14 @@ export function NewCodingSessionForm({
   return (
     <>
       <div
-        className="flex max-h-[65vh] min-h-0 flex-col gap-5 overflow-y-auto"
+        // `overflow-y-auto` clips the x-axis as well — CSS has no way to
+        // scroll one axis and leave the other visible — so a `w-full` child
+        // sits exactly on the clip edge and loses its side borders, and the
+        // textarea's 1px focus ring (which draws *outside* its border box)
+        // disappears entirely. One pixel of horizontal padding gives them
+        // somewhere to land; the matching negative margin keeps the fields
+        // aligned with the footer outside this box.
+        className="-mx-px flex max-h-[65vh] min-h-0 flex-col gap-5 overflow-y-auto px-px"
         data-testid="new-coding-session-form"
       >
         {projectContext ? (
