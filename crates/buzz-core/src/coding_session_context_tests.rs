@@ -666,3 +666,27 @@ fn a_quoted_absolute_path_is_still_a_host_path() {
         assert!(!sanitized.contains("/etc/shadow"), "{sanitized}");
     }
 }
+
+/// Live, 2026-08-24 (second pass): "…signing a challenge with the user's Nostr
+/// private key (secp256k1) and having the remote verify…" lost its curve name.
+/// The bare-space form has no separator to key on, so it leans on the shape of
+/// the next token — and a parenthetical full of digits looks exactly like an
+/// opaque value while being the commonest way prose qualifies these nouns.
+#[test]
+fn a_parenthetical_after_a_credential_word_is_prose() {
+    for text in [
+        "signing with the user's Nostr private key (secp256k1) and verifying it",
+        "the token (JWT) is minted per request",
+        "an api key [redacted by the vendor] arrived",
+    ] {
+        assert_eq!(
+            sanitize_coding_session_context_text(text),
+            text,
+            "an aside is not a value"
+        );
+    }
+
+    // The separator forms are unaffected: those carry their own evidence.
+    let assigned = sanitize_coding_session_context_text("token=(hunter2)");
+    assert!(!assigned.contains("hunter2"), "{assigned}");
+}

@@ -1060,7 +1060,11 @@ fn find_credential_value(line: &str) -> Option<CredentialValue> {
                 }
             }
             // `is`/`was`/a bare space: only the next token can be the value,
-            // and only if it looks like one.
+            // and only if it looks like one — and never a parenthetical, which
+            // is how prose qualifies a noun rather than how anyone writes a
+            // secret. "private key (secp256k1)" lost its curve name to the
+            // digit test on 2026-08-24; asides like that are the common case
+            // after exactly these words.
             for separator in [" is ", " was ", " "] {
                 let Some(rest) = tail.strip_prefix(separator) else {
                     continue;
@@ -1068,7 +1072,8 @@ fn find_credential_value(line: &str) -> Option<CredentialValue> {
                 let padding = rest.len() - rest.trim_start().len();
                 let start = after + separator.len() + padding;
                 let token = line[start..].split_whitespace().next().unwrap_or_default();
-                if looks_like_credential_value(token) {
+                let parenthetical = token.starts_with(['(', '[', '{']);
+                if !parenthetical && looks_like_credential_value(token) {
                     return Some(CredentialValue::NextToken { at: start });
                 }
                 break;
