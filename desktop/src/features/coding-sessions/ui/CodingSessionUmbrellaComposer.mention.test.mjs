@@ -139,7 +139,7 @@ test("a leading handle moves the selector and keeps the draft it was typed in", 
     // And the deck now describes Codex, not Claude — the target really moved.
     assert.match(
       view.screen.getByTestId("coding-session-control-identity").textContent,
-      /gpt-5\.3-codex/,
+      /GPT-5\.3 Codex/,
     );
     assert.match(view.hint().textContent, /Sending to Codex/);
     assert.match(view.hint().textContent, /@codex is removed from the prompt/);

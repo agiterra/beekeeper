@@ -19,10 +19,13 @@ export type CodingSessionTask = {
   id: string;
   text: string;
   status: CodingSessionTaskStatus;
+  /** Signed elapsed time from this turn's first plan to first completion. */
+  elapsedMs?: number;
 };
 
 export type CodingSessionTaskModel = {
   sourceItemId: string;
+  turnId: string | null;
   timestamp: string;
   tasks: CodingSessionTask[];
   completedCount: number;
@@ -38,6 +41,7 @@ type TaskInput = {
 
 type TaskSnapshot = {
   sourceItemId: string;
+  turnId: string | null;
   timestamp: string;
   tasks: TaskInput[];
   explanation: string | null;
@@ -63,12 +67,17 @@ export function deriveCodingSessionTaskModel(
     const snapshot = extractTaskSnapshot(transcript[index]);
     if (!snapshot) continue;
 
-    const tasks = buildStableTasks(snapshot.tasks);
+    const tasks = attachSignedTaskElapsed(
+      buildStableTasks(snapshot.tasks),
+      transcript,
+      snapshot,
+    );
     const completedCount = tasks.filter(
       (task) => task.status === "completed",
     ).length;
     return {
       sourceItemId: snapshot.sourceItemId,
+      turnId: snapshot.turnId,
       timestamp: snapshot.timestamp,
       tasks,
       completedCount,
@@ -92,6 +101,7 @@ function extractTaskSnapshot(item: TranscriptItem): TaskSnapshot | null {
     return tasks
       ? {
           sourceItemId: item.id,
+          turnId: item.turnId ?? null,
           timestamp: item.timestamp,
           tasks,
           explanation: extractMarkdownExplanation(item.text),
@@ -112,6 +122,7 @@ function extractTaskSnapshot(item: TranscriptItem): TaskSnapshot | null {
     const explanation = readExplanation(item.args);
     return {
       sourceItemId: item.id,
+      turnId: item.turnId ?? null,
       timestamp: item.timestamp,
       tasks,
       explanation,
@@ -130,6 +141,7 @@ function extractTaskSnapshot(item: TranscriptItem): TaskSnapshot | null {
     const explanation = readExplanation(item.args);
     return {
       sourceItemId: item.id,
+      turnId: item.turnId ?? null,
       timestamp: item.timestamp,
       tasks,
       explanation,
@@ -141,6 +153,7 @@ function extractTaskSnapshot(item: TranscriptItem): TaskSnapshot | null {
   return resultTasks
     ? {
         sourceItemId: item.id,
+        turnId: item.turnId ?? null,
         timestamp: item.timestamp,
         tasks: resultTasks,
         explanation: null,
@@ -376,6 +389,43 @@ function buildStableTasks(inputs: TaskInput[]): CodingSessionTask[] {
       text: input.text,
       status: input.status,
     };
+  });
+}
+
+function attachSignedTaskElapsed(
+  tasks: CodingSessionTask[],
+  transcript: TranscriptItem[],
+  latest: TaskSnapshot,
+): CodingSessionTask[] {
+  if (!latest.turnId || !tasks.some((task) => task.status === "completed")) {
+    return tasks;
+  }
+
+  const snapshots: TaskSnapshot[] = [];
+  for (const item of transcript) {
+    const snapshot = extractTaskSnapshot(item);
+    if (snapshot?.turnId === latest.turnId) snapshots.push(snapshot);
+    if (snapshot?.sourceItemId === latest.sourceItemId) break;
+  }
+  const startedAt = Date.parse(snapshots[0]?.timestamp ?? "");
+  if (!Number.isFinite(startedAt)) return tasks;
+
+  const completedAt = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    const observedAt = Date.parse(snapshot.timestamp);
+    if (!Number.isFinite(observedAt)) continue;
+    for (const task of buildStableTasks(snapshot.tasks)) {
+      if (task.status === "completed" && !completedAt.has(task.id)) {
+        completedAt.set(task.id, observedAt);
+      }
+    }
+  }
+
+  return tasks.map((task) => {
+    if (task.status !== "completed") return task;
+    const finishedAt = completedAt.get(task.id);
+    if (finishedAt === undefined || finishedAt < startedAt) return task;
+    return { ...task, elapsedMs: finishedAt - startedAt };
   });
 }
 

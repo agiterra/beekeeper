@@ -20,6 +20,7 @@ import { resolveCodingSessionUmbrellaComposerAuthority } from "@/features/coding
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
 import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import { deriveCodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import {
@@ -56,12 +57,8 @@ import {
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
 import { useCodingSessionExport } from "./useCodingSessionExport";
-import {
-  codingSessionTaskRailPreferenceKey,
-  type CodingSessionTaskRailPreference,
-  CodingSessionTaskRail,
-  deriveCodingSessionTaskRailOpen,
-} from "./CodingSessionTaskRail";
+import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
+import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
 import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import {
   CodingSessionPendingTurnList,
@@ -472,6 +469,10 @@ function ReadyCodingSessionWorkspace({
     () => deriveCodingSessionTaskModel(session.transcript),
     [session.transcript],
   );
+  const contextWindow = React.useMemo(
+    () => deriveCodingSessionContextWindow(session.transcript),
+    [session.transcript],
+  );
   const changedFiles = React.useMemo(
     () => deriveCodingSessionChangedFiles(session.transcript),
     [session.transcript],
@@ -506,31 +507,14 @@ function ReadyCodingSessionWorkspace({
   );
   const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
   const surfaceHostId = React.useId();
-  const taskRailPreferenceKey = React.useMemo(
-    () => codingSessionTaskRailPreferenceKey(channelId, generationId),
-    [channelId, generationId],
-  );
-  const [taskRailPreference, setTaskRailPreference] =
-    React.useState<CodingSessionTaskRailPreference>(() =>
-      readTaskRailPreference(taskRailPreferenceKey),
-    );
-  const taskRailOpen = deriveCodingSessionTaskRailOpen({
-    hasPlan: taskModel !== null,
+  const isWorking = status.kind === "working";
+  const taskDock = useCodingSessionTaskDock({
     isNarrow,
-    preference: taskRailPreference,
+    isWorking,
+    model: taskModel,
+    transcript: session.transcript,
   });
   const narrativeExpanded = surfaceHost.activeTab === null;
-  const isWorking = status.kind === "working";
-
-  const setTaskRailOpen = React.useCallback(
-    (open: boolean | ((current: boolean) => boolean)) => {
-      const nextOpen = typeof open === "function" ? open(taskRailOpen) : open;
-      const preference = nextOpen ? "open" : "closed";
-      setTaskRailPreference(preference);
-      writeTaskRailPreference(taskRailPreferenceKey, preference);
-    },
-    [taskRailOpen, taskRailPreferenceKey],
-  );
 
   // The project a session belongs to is resolved by the same rule the projects
   // sidebar files it under, so the crumb and the sidebar always agree.
@@ -586,12 +570,16 @@ function ReadyCodingSessionWorkspace({
           onPopout={surface === "main" ? handlePopout : undefined}
           onRename={canRename ? () => setRenameOpen(true) : undefined}
           onReopenSession={onReopenSession}
-          onToggleTaskRail={() => {
-            surfaceHost.close();
-            setTaskRailOpen((open) => !open);
-          }}
+          onToggleTaskRail={
+            taskDock.activeModel
+              ? () => {
+                  surfaceHost.close();
+                  taskDock.toggle();
+                }
+              : undefined
+          }
           onToggleSurface={(id) => {
-            setTaskRailOpen(false);
+            taskDock.close();
             surfaceHost.toggle(id);
           }}
           projectName={owningProject?.name ?? null}
@@ -608,23 +596,13 @@ function ReadyCodingSessionWorkspace({
             count: surfaceEntry.count ?? 0,
             active: surfaceHost.activeTab === surfaceEntry.id,
           }))}
-          taskCount={taskModel?.tasks.length ?? 0}
-          taskRailOpen={taskRailOpen}
+          taskCount={taskDock.activeModel?.tasks.length ?? 0}
+          taskRailOpen={taskDock.open}
         />
         <CodingSessionFounderLine
           founderPubkey={founderPubkey}
           genesisRef={genesisRef}
         />
-        <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
-          <CodingSessionGoalPill
-            channelId={channelId}
-            currentUserPubkey={currentUserPubkey}
-            founderPubkey={founderPubkey}
-            goal={goal}
-            sessionRef={sessionRef}
-            workspaceExpanded={narrativeExpanded}
-          />
-        </div>
       </div>
       {sessionRef ? (
         <CodingSessionNameDialog
@@ -640,6 +618,16 @@ function ReadyCodingSessionWorkspace({
           aria-label="Session transcript"
           className="relative flex min-w-0 flex-1 flex-col overflow-hidden"
         >
+          <div className={cn(CODING_SESSION_COLUMN_GUTTER, "pb-2")}>
+            <CodingSessionGoalPill
+              channelId={channelId}
+              currentUserPubkey={currentUserPubkey}
+              founderPubkey={founderPubkey}
+              goal={goal}
+              sessionRef={sessionRef}
+              workspaceExpanded={narrativeExpanded}
+            />
+          </div>
           <div
             className={cn(
               "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
@@ -651,7 +639,7 @@ function ReadyCodingSessionWorkspace({
             <CodingSessionColumn
               className={cn(
                 "min-h-full pt-7",
-                taskRailOpen && !isNarrow ? "pb-[34rem]" : "pb-44",
+                taskDock.open && !isNarrow ? "pb-[34rem]" : "pb-44",
               )}
               expanded={narrativeExpanded}
             >
@@ -705,11 +693,11 @@ function ReadyCodingSessionWorkspace({
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}
               >
-                {taskRailOpen && !isNarrow ? (
+                {taskDock.open && !isNarrow ? (
                   <div className="-mb-6">
                     <CodingSessionTaskRail
-                      model={taskModel}
-                      onClose={() => setTaskRailOpen(false)}
+                      model={taskDock.activeModel}
+                      onClose={taskDock.close}
                       variant="dock"
                     />
                   </div>
@@ -732,6 +720,7 @@ function ReadyCodingSessionWorkspace({
                       runtimeLabel,
                       status,
                     }}
+                    contextWindow={contextWindow}
                     currentUserPubkey={currentUserPubkey}
                     immersive
                     isMember={isMember}
@@ -765,14 +754,20 @@ function ReadyCodingSessionWorkspace({
         ) : null}
       </div>
       {isNarrow ? (
-        <Sheet onOpenChange={setTaskRailOpen} open={taskRailOpen}>
+        <Sheet
+          onOpenChange={(open) => (open ? taskDock.show() : taskDock.close())}
+          open={taskDock.open}
+        >
           <SheetContent
             aria-describedby={undefined}
             className="w-[min(90vw,22rem)] max-w-none p-0"
             side="right"
           >
             <SheetTitle className="sr-only">Session plan</SheetTitle>
-            <CodingSessionTaskRail model={taskModel} variant="sheet" />
+            <CodingSessionTaskRail
+              model={taskDock.activeModel}
+              variant="sheet"
+            />
           </SheetContent>
         </Sheet>
       ) : null}
@@ -838,27 +833,6 @@ function CodingSessionWorkspaceState({
 
 function shortGenerationId(value: string): string {
   return value.length <= 28 ? value : `${value.slice(0, 28)}…`;
-}
-
-function readTaskRailPreference(key: string): CodingSessionTaskRailPreference {
-  if (typeof window === "undefined") return null;
-  try {
-    const value = window.sessionStorage.getItem(key);
-    return value === "open" || value === "closed" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeTaskRailPreference(
-  key: string,
-  preference: Exclude<CodingSessionTaskRailPreference, null>,
-) {
-  try {
-    window.sessionStorage.setItem(key, preference);
-  } catch {
-    // Storage can be unavailable in hardened webviews; local state still works.
-  }
 }
 
 const NARROW_CODING_SESSION_WORKSPACE_WIDTH = 960;

@@ -324,7 +324,9 @@ async function audit(page: Page): Promise<WidthAudit> {
       '[data-testid="coding-session-transcript"]',
     ) as HTMLElement | null;
     if (!transcript) throw new Error("transcript missing");
-    const column = transcript.closest(".max-w-3xl") as HTMLElement | null;
+    const column = transcript.closest(
+      "[data-coding-session-column]",
+    ) as HTMLElement | null;
     if (!column) throw new Error("reading column missing");
     const columnRect = column.getBoundingClientRect();
 
@@ -488,10 +490,8 @@ async function openSession(page: Page) {
 
 /**
  * 1100 is the width where the alignment question has teeth. Above ~1130 the
- * 48rem cap binds for every surface, so a transcript written `px-8 > max-w-3xl`
- * and a composer written `px-4 > max-w-3xl` land on the same 768px box and the
- * padding mismatch is invisible. Below it, padding is what sets the width, and
- * the two disagree.
+ * expanded measure starts binding. It catches both edge alignment and the
+ * responsive rule: 72rem while no side surface is open, 48rem while one is.
  */
 const WIDTHS = [1100, 1280, 1920, 2560, 3440] as const;
 
@@ -523,7 +523,9 @@ for (const width of WIDTHS) {
       const transcript = document.querySelector(
         '[data-testid="coding-session-transcript"]',
       ) as HTMLElement;
-      const column = transcript.closest(".max-w-3xl") as HTMLElement;
+      const column = transcript.closest(
+        "[data-coding-session-column]",
+      ) as HTMLElement;
       const r = column.getBoundingClientRect();
       return {
         x: Math.max(0, Math.floor(r.left - 48)),
@@ -558,16 +560,16 @@ for (const width of WIDTHS) {
       "content wider than its box must live in a scrollable box",
     ).toEqual([]);
     expect(result.pageScrollsSideways).toBe(false);
-    // 48rem at the default 16px root, or narrower when the window is the
-    // binding constraint. Never wider — the measure is typographic.
-    expect(result.measure.column).toBeLessThanOrEqual(768);
-    if (width >= 1280) expect(result.measure.column).toBe(768);
+    // With no side surface open the transcript earns the wider 72rem reading
+    // measure; the viewport remains the binding constraint at smaller widths.
+    expect(result.measure.column).toBeLessThanOrEqual(1152);
+    if (width >= 1920) expect(result.measure.column).toBe(1152);
     // The goal pill, the transcript and the composer are one column. Whichever
     // constraint binds, it must bind identically for all three.
     expect(result.edges.composer).toEqual(result.edges.column);
     expect(result.edges.goalPill).toEqual(result.edges.column);
     expect(result.affordance.codeBlocksOverflowing).toBeGreaterThan(0);
-    expect(result.affordance.tablesOverflowing).toBeGreaterThan(0);
+    // Tables may fit naturally once the clear workspace expands to 72rem.
   });
 }
 
@@ -616,6 +618,20 @@ test("the wide code line scrolls inside its own block", async ({ page }) => {
     .screenshot({ path: `${SHOTS}/1920-codeblock-wrapped.png` });
 });
 
+test("opening a side surface returns the transcript to its 48rem measure", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await openSession(page);
+  await page.getByTestId("coding-session-surface-toggle-changes").click();
+  await waitForAnimations(page);
+
+  const withSurface = await audit(page);
+  expect(withSurface.measure.column).toBe(768);
+  expect(withSurface.edges.composer).toEqual(withSurface.edges.column);
+  expect(withSurface.edges.goalPill).toEqual(withSurface.edges.column);
+});
+
 test("the measure scales with root font size, so Cmd+ widens the column", async ({
   page,
 }) => {
@@ -623,7 +639,7 @@ test("the measure scales with root font size, so Cmd+ widens the column", async 
   const workspace = await openSession(page);
   const base = await audit(page);
   expect(base.measure.rootFontSize).toBe(16);
-  expect(base.measure.column).toBe(768);
+  expect(base.measure.column).toBe(1152);
 
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "24px";
@@ -631,7 +647,7 @@ test("the measure scales with root font size, so Cmd+ widens the column", async 
   await waitForAnimations(page);
   const zoomed = await audit(page);
   expect(zoomed.measure.rootFontSize).toBe(24);
-  expect(zoomed.measure.column).toBe(1152); // 48rem × 24px
+  expect(zoomed.measure.column).toBe(1728); // 72rem × 24px
   expect(zoomed.escapees).toEqual([]);
   await workspace.screenshot({ path: `${SHOTS}/3440-zoomed-24px.png` });
   // eslint-disable-next-line no-console
@@ -677,7 +693,7 @@ test("expanded tool output wraps inside the column instead of being cut", async 
     .first()
     .evaluate((el) => {
       const box = el.getBoundingClientRect();
-      const column = el.closest(".max-w-3xl") as HTMLElement;
+      const column = el.closest("[data-coding-session-column]") as HTMLElement;
       return {
         overspill: Math.round(box.right - column.getBoundingClientRect().right),
         lines: Math.round(

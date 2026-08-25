@@ -17,34 +17,11 @@ import type {
   CodingSessionTaskModel,
   CodingSessionTaskStatus,
 } from "@/features/coding-sessions/lib/codingSessionTaskModel";
+import { formatCodingSessionDuration } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
 import { cn } from "@/shared/lib/cn";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
 
 export const CODING_SESSION_TASK_RAIL_ID = "coding-session-task-rail";
-const CODING_SESSION_TASK_RAIL_PREFERENCE_PREFIX =
-  "buzz.coding-session.task-rail";
-
-export type CodingSessionTaskRailPreference = "open" | "closed" | null;
-
-export function codingSessionTaskRailPreferenceKey(
-  channelId: string,
-  generationId: string,
-): string {
-  return `${CODING_SESSION_TASK_RAIL_PREFERENCE_PREFIX}:${encodeURIComponent(channelId)}:${encodeURIComponent(generationId)}`;
-}
-
-export function deriveCodingSessionTaskRailOpen({
-  hasPlan,
-  isNarrow,
-  preference,
-}: {
-  hasPlan: boolean;
-  isNarrow: boolean;
-  preference: CodingSessionTaskRailPreference;
-}): boolean {
-  if (preference !== null) return preference === "open";
-  return hasPlan && !isNarrow;
-}
 
 type TaskRailLoadState = "ready" | "loading" | "error";
 
@@ -284,6 +261,10 @@ function CodingSessionTaskDockRow({ task }: { task: CodingSessionTask }) {
       </span>
       {active ? (
         <span className="shrink-0 text-2xs text-muted-foreground/60">now</span>
+      ) : task.status === "completed" && task.elapsedMs !== undefined ? (
+        <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/55">
+          {formatCodingSessionDuration(task.elapsedMs)}
+        </span>
       ) : null}
     </li>
   );

@@ -1,5 +1,4 @@
 import * as React from "react";
-import { CircleHelp, ShieldCheck, Square } from "lucide-react";
 
 import {
   buildCodingSessionTargetKey,
@@ -21,19 +20,12 @@ import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/u
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import { restoreCodingSessionDraft } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
-import { formatCodingSessionModelDisplay } from "@/features/coding-sessions/lib/codingSessionLabels";
+import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
-import type {
-  CodingSessionStatus,
-  CodingSessionWorkspaceStatus,
-} from "@/features/coding-sessions/lib/codingSessionTypes";
-import {
-  getCodingSessionComposerState,
-  shouldSubmitCodingSessionComposerKey,
-} from "@/features/coding-sessions/lib/codingSessionComposerModel";
-import { Button } from "@/shared/ui/button";
-import { Textarea } from "@/shared/ui/textarea";
-import { cn } from "@/shared/lib/cn";
+import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { getCodingSessionComposerState } from "@/features/coding-sessions/lib/codingSessionComposerModel";
+import type { CodingSessionComposerControlContext } from "./CodingSessionComposerDeck";
+import { CodingSessionComposerSurface } from "./CodingSessionComposerSurface";
 
 type CodingSessionComposerProps = {
   canInterrupt: boolean;
@@ -41,20 +33,8 @@ type CodingSessionComposerProps = {
   authorityReason?: string | null;
   canSteer?: boolean;
   channelId: string;
-  controlContext?: {
-    capabilities: {
-      threadTurnStart: boolean;
-      threadTurnInterrupt: boolean;
-      threadSteer: boolean;
-      context: boolean;
-      diff: boolean;
-      plan: boolean;
-    } | null;
-    model: string | null;
-    providerLabel: string | null;
-    runtimeLabel: string | null;
-    status: CodingSessionWorkspaceStatus;
-  };
+  contextWindow?: CodingSessionContextWindow | null;
+  controlContext?: CodingSessionComposerControlContext;
   /**
    * The signed-in identity, stamped onto the optimistic row this composer shows
    * while a sent turn waits for the provider's echo. `null` (the default) just
@@ -108,6 +88,7 @@ export function CodingSessionComposer({
   canControl = true,
   canSteer = true,
   channelId,
+  contextWindow = null,
   controlContext,
   currentUserPubkey = null,
   immersive = false,
@@ -126,6 +107,7 @@ export function CodingSessionComposer({
   target,
   variant = "panel",
 }: CodingSessionComposerProps) {
+  const editorRef = React.useRef<HTMLTextAreaElement>(null);
   const [text, setText] = React.useState(prefill?.text ?? "");
   const [appliedPrefillId, setAppliedPrefillId] = React.useState<string | null>(
     prefill?.id ?? null,
@@ -185,6 +167,18 @@ export function CodingSessionComposer({
   React.useEffect(() => {
     onTextChange?.(text);
   }, [onTextChange, text]);
+  React.useLayoutEffect(() => {
+    if (!immersive || !editorRef.current) return;
+    const editor = editorRef.current;
+    const rootSize = Number.parseFloat(
+      window.getComputedStyle(document.documentElement).fontSize,
+    );
+    const maxHeight = (Number.isFinite(rootSize) ? rootSize : 16) * 12;
+    editor.style.height = "auto";
+    editor.style.height = `${Math.min(editor.scrollHeight, maxHeight)}px`;
+    editor.style.overflowY =
+      editor.scrollHeight > maxHeight ? "auto" : "hidden";
+  });
   const preparedText = (prepareText ? prepareText(text) : text).trim();
   const state = getCodingSessionComposerState({
     isMember,
@@ -418,471 +412,54 @@ export function CodingSessionComposer({
   ]);
 
   return (
-    <div
-      className={cn(
-        variant === "floating"
-          ? "rounded-3xl border border-border/70 bg-background/95 p-3 shadow-lg backdrop-blur-xl"
-          : "border-t border-border/70 bg-background px-3 py-3",
-      )}
-      data-layout={layout}
-      data-mode={immersive ? "immersive" : "compact"}
-      data-testid="coding-session-composer"
-    >
-      {state.showAuthorityFailure ? (
-        <p
-          className="mb-2 text-sm text-muted-foreground"
-          data-testid="coding-session-composer-membership-failure"
-        >
-          Join this channel for native control. Compatibility control also
-          requires an allowlisted operator.
-        </p>
-      ) : null}
-      {isUngovernedSession ? (
-        <p
-          className="mb-2 text-xs text-muted-foreground"
-          data-testid="coding-session-ungoverned-hint"
-        >
-          ungoverned — adopt to govern.
-        </p>
-      ) : null}
-      {!canControl ? (
-        <p
-          className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground"
-          data-testid="coding-session-composer-authority-gated"
-        >
-          {authorityReason ??
-            "Only the session founder can control this session."}
-        </p>
-      ) : null}
-      {/* A refused reconnect (a stale generation, a provider that never
-          answered) or a refused turn (an operator this provider has not
-          granted) is a signed fact about this composer's own command — it
-          shares the composer's error line rather than disappearing. */}
-      {visibleError ? (
-        <p
-          className="mb-2 text-sm text-destructive"
-          data-testid="coding-session-composer-error"
-        >
-          {visibleError}
-        </p>
-      ) : null}
-      {queuedDraft ? (
-        <div
-          className="mb-2 flex items-center gap-3 rounded-xl bg-muted/40 px-3 py-2 text-xs"
-          data-testid="coding-session-composer-queued"
-        >
-          <p className="min-w-0 flex-1 truncate text-muted-foreground">
-            <span className="font-medium text-foreground/80">
-              Next turn queued:
-            </span>{" "}
-            {queuedDraft.draft}
-          </p>
-          <button
-            className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-            onClick={() => {
-              const queued = queuedDraft;
-              setQueuedDraft(null);
-              restoreRefusedDraft(queued.draft);
-            }}
-            type="button"
-          >
-            Cancel
-          </button>
-        </div>
-      ) : null}
-      {unreachableStatus !== null ? (
-        <div
-          className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2"
-          data-testid="coding-session-composer-unreachable"
-        >
-          <p className="text-sm text-muted-foreground">
-            {`No provider is answering for this execution${
-              unreachableDetail === null ? "" : ` — ${unreachableDetail}`
-            }. Add a provider to the session to continue the work.`}
-          </p>
-          {onAddProvider ? (
-            <Button
-              className="shrink-0"
-              data-testid="coding-session-composer-add-provider"
-              onClick={onAddProvider}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Add provider
-            </Button>
-          ) : null}
-        </div>
-      ) : isDisconnected ? (
-        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2">
-          <p className="text-sm text-muted-foreground">
-            This provider execution is disconnected.
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              data-testid="coding-session-composer-resume"
-              disabled={
-                !canControl ||
-                !isMember ||
-                !providerAuthorityPubkey ||
-                isSending
-              }
-              onClick={() => void handleResume()}
-              size="sm"
-              type="button"
-            >
-              {isResuming ? "Reconnecting…" : "Reconnect"}
-            </Button>
-            <Button
-              data-testid="coding-session-composer-session-stop"
-              disabled={!canSessionStop || isSending}
-              onClick={requestSessionEnd}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Stop execution
-            </Button>
-          </div>
-        </div>
-      ) : isEnded ? (
-        <div
-          className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2"
-          data-testid="coding-session-composer-ended"
-        >
-          <p className="text-sm text-muted-foreground">
-            This provider execution has ended and cannot be resumed.
-          </p>
-          {onAddProvider ? (
-            <Button
-              className="shrink-0"
-              data-testid="coding-session-composer-add-provider"
-              onClick={onAddProvider}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Add provider
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-      <div
-        className={cn(
-          "flex gap-2",
-          !immersive && (layout === "stacked" ? "flex-col" : "items-end"),
-        )}
-      >
-        <Textarea
-          aria-label="Coding-session instruction"
-          className={cn(
-            "min-h-16 min-w-0 flex-1 resize-y text-foreground caret-primary",
-            immersive && "min-h-12",
-            variant === "floating" && "border-0 bg-transparent shadow-none",
-          )}
-          disabled={editorDisabled}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (shouldSubmitCodingSessionComposerKey(event)) {
-              event.preventDefault();
-              if (canSubmitText) void handlePrimaryAction();
-            }
-          }}
-          placeholder={
-            isEnded
-              ? "This execution has ended."
-              : isDisconnected
-                ? "Reconnect this execution to continue…"
-                : immersive && isWorking && !canSteer
-                  ? "Write the next turn…"
-                  : isWorking
-                    ? "Steer this coding session…"
-                    : "Send a message…"
-          }
-          value={text}
-        />
-        {!immersive ? (
-          <div
-            className={cn(
-              "flex shrink-0 flex-wrap items-center justify-end gap-2",
-              layout === "stacked" && "w-full",
-            )}
-            data-testid="coding-session-composer-actions"
-          >
-            <Button
-              data-testid="coding-session-composer-primary"
-              disabled={!canSubmitText || isSending}
-              onClick={() => void handlePrimaryAction()}
-              type="button"
-            >
-              {state.sendLabel}
-            </Button>
-            {state.showStopAction ? (
-              <Button
-                data-testid="coding-session-composer-stop"
-                disabled={
-                  !canControl || !isMember || !canInterrupt || isSending
-                }
-                onClick={() => void handleStop()}
-                title={
-                  canInterrupt
-                    ? "Interrupt only the current turn"
-                    : "Current-turn interrupt is unavailable for this provider."
-                }
-                type="button"
-                variant="outline"
-              >
-                Interrupt
-              </Button>
-            ) : null}
-            {canSessionStop && !isDisconnected ? (
-              <Button
-                data-testid="coding-session-composer-session-stop"
-                disabled={isSending}
-                onClick={requestSessionEnd}
-                title="Stop this provider execution; the session stays open."
-                type="button"
-                variant="outline"
-              >
-                Stop execution
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {immersive ? (
-        <ImmersiveCodingSessionControlDeck
-          canInterrupt={canInterrupt}
-          canControl={canControl}
-          canSessionStop={canSessionStop}
-          canSteer={canSteer}
-          context={controlContext}
-          isMember={isMember}
-          isWorking={isWorking}
-          isUnavailable={isUnavailable}
-          onInterrupt={() => void handleStop()}
-          onSessionStop={requestSessionEnd}
-          onPrimary={() => void handlePrimaryAction()}
-          pendingAction={pendingAction}
-          primaryDisabled={!canSubmitText || isSending}
-        />
-      ) : null}
+    <>
+      <CodingSessionComposerSurface
+        authorityReason={authorityReason}
+        canControl={canControl}
+        canInterrupt={canInterrupt}
+        canSessionStop={canSessionStop}
+        canSteer={canSteer}
+        canSubmitText={canSubmitText}
+        context={controlContext}
+        contextWindow={contextWindow}
+        editorDisabled={editorDisabled}
+        editorRef={editorRef}
+        error={visibleError}
+        immersive={immersive}
+        isDisconnected={isDisconnected}
+        isEnded={isEnded}
+        isMember={isMember}
+        isResuming={isResuming}
+        isSending={isSending}
+        isUnavailable={isUnavailable}
+        isUngovernedSession={isUngovernedSession}
+        isWorking={isWorking}
+        layout={layout}
+        onAddProvider={onAddProvider}
+        onCancelQueued={() => {
+          if (!queuedDraft) return;
+          setQueuedDraft(null);
+          restoreRefusedDraft(queuedDraft.draft);
+        }}
+        onInterrupt={() => void handleStop()}
+        onPrimary={() => void handlePrimaryAction()}
+        onReconnect={() => void handleResume()}
+        onSessionStop={requestSessionEnd}
+        onTextChange={setText}
+        pendingAction={pendingAction}
+        providerAuthorityPubkey={providerAuthorityPubkey}
+        queuedDraft={queuedDraft?.draft ?? null}
+        sendLabel={state.sendLabel}
+        showAuthorityFailure={state.showAuthorityFailure}
+        showStopAction={state.showStopAction}
+        text={text}
+        unreachable={unreachableStatus !== null}
+        unreachableDetail={unreachableDetail}
+        variant={variant}
+      />
       {endDialog.dialog}
       {resumeWatcher}
       {turnRefusalWatcher}
-    </div>
+    </>
   );
-}
-
-function ImmersiveCodingSessionControlDeck({
-  canInterrupt,
-  canControl,
-  canSessionStop,
-  canSteer,
-  context,
-  isMember,
-  isWorking,
-  isUnavailable,
-  onInterrupt,
-  onSessionStop,
-  onPrimary,
-  pendingAction,
-  primaryDisabled,
-}: {
-  canInterrupt: boolean;
-  canControl: boolean;
-  canSessionStop: boolean;
-  canSteer: boolean;
-  context: CodingSessionComposerProps["controlContext"];
-  isMember: boolean;
-  isWorking: boolean;
-  isUnavailable: boolean;
-  onInterrupt: () => void;
-  onSessionStop: () => void;
-  onPrimary: () => void;
-  pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
-  primaryDisabled: boolean;
-}) {
-  const availableCapabilities = context
-    ? capabilityLabels(context.capabilities)
-    : [];
-  const capabilityDescription =
-    availableCapabilities.length > 0
-      ? `Provider capabilities: ${availableCapabilities.join(", ")}.`
-      : "Live steer and interrupt capabilities have not been declared.";
-  return (
-    <div
-      className="mt-1 flex h-10 min-w-0 items-center gap-2 overflow-hidden border-t border-border/60 px-1 pt-1 whitespace-nowrap"
-      data-testid="coding-session-control-deck"
-    >
-      <ControlDeckIdentity context={context} />
-      <span
-        className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground"
-        data-testid="coding-session-control-authority"
-        title="Signed channel membership authorizes command publication; provider capability gates still apply."
-      >
-        <ShieldCheck aria-hidden className="size-3.5" />
-        <span aria-hidden>{isMember ? "Member" : "View only"}</span>
-        <span className="sr-only">
-          {isMember ? "Signed channel member" : "View only"}
-        </span>
-      </span>
-      <span
-        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground"
-        data-testid="coding-session-control-capabilities"
-        title={`${controlProvenance(context)} ${capabilityDescription}`}
-      >
-        <CircleHelp aria-hidden className="size-3.5" />
-        <span className="sr-only">
-          Session control provenance. {capabilityDescription}
-        </span>
-      </span>
-      <div
-        className="ml-auto flex shrink-0 items-center gap-1.5"
-        data-testid="coding-session-composer-actions"
-      >
-        {isUnavailable ? null : isWorking ? (
-          <>
-            <Button
-              data-testid={
-                canSteer
-                  ? "coding-session-composer-steer"
-                  : "coding-session-composer-queue"
-              }
-              disabled={primaryDisabled}
-              onClick={onPrimary}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {pendingAction === "send"
-                ? "Sending…"
-                : canSteer
-                  ? "Steer"
-                  : "Queue"}
-            </Button>
-            <Button
-              data-testid="coding-session-composer-interrupt"
-              disabled={
-                !canControl ||
-                !isMember ||
-                !canInterrupt ||
-                pendingAction !== null
-              }
-              onClick={onInterrupt}
-              size="sm"
-              title={
-                canInterrupt
-                  ? "Interrupt only the current turn"
-                  : "Current-turn interrupt is unavailable for this provider."
-              }
-              type="button"
-              variant="destructive"
-            >
-              <Square className="fill-current" />
-              {pendingAction === "interrupt" ? "Interrupting…" : "Interrupt"}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              data-testid="coding-session-composer-primary"
-              disabled={primaryDisabled}
-              onClick={onPrimary}
-              size="sm"
-              type="button"
-            >
-              {pendingAction === "send" ? "Sending…" : "Send"}
-            </Button>
-            {canSessionStop ? (
-              <Button
-                aria-label="Stop execution"
-                className="text-muted-foreground hover:text-destructive"
-                data-testid="coding-session-composer-session-stop"
-                disabled={pendingAction !== null}
-                onClick={onSessionStop}
-                size="icon"
-                title="Stop this provider execution; the session stays open."
-                type="button"
-                variant="ghost"
-              >
-                <Square />
-              </Button>
-            ) : null}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ControlDeckIdentity({
-  context,
-}: {
-  context: CodingSessionComposerProps["controlContext"];
-}) {
-  const model = context?.model
-    ? formatCodingSessionModelDisplay(context.model)
-    : null;
-  const values = [
-    ["provider", context?.providerLabel ?? context?.runtimeLabel],
-    ["model", model?.model],
-    ["thinking", model?.thinking],
-    ["context", model?.context],
-  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
-  if (values.length === 0) return null;
-  return (
-    <span
-      className="inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-foreground/80"
-      data-testid="coding-session-control-identity"
-      title={controlProvenance(context)}
-    >
-      {values.map(([kind, value], index) => (
-        <React.Fragment key={kind}>
-          {index > 0 ? (
-            <span aria-hidden className="text-border">
-              /
-            </span>
-          ) : null}
-          <span className="max-w-36 truncate">{value}</span>
-        </React.Fragment>
-      ))}
-    </span>
-  );
-}
-
-function controlProvenance(
-  context: CodingSessionComposerProps["controlContext"],
-): string {
-  if (!context) return "Signed session target.";
-  const model = context.model
-    ? formatCodingSessionModelDisplay(context.model)
-    : null;
-  return [
-    context.providerLabel ? `Provider: ${context.providerLabel}.` : null,
-    context.runtimeLabel ? `Runtime: ${context.runtimeLabel}.` : null,
-    model
-      ? `Model: ${[model.model, model.thinking, model.context]
-          .filter((value): value is string => Boolean(value))
-          .join(" · ")}.`
-      : null,
-  ]
-    .filter((value): value is string => value !== null)
-    .join(" ");
-}
-
-function capabilityLabels(
-  capabilities: NonNullable<
-    CodingSessionComposerProps["controlContext"]
-  >["capabilities"],
-): string[] {
-  if (!capabilities) return [];
-  return [
-    capabilities.threadTurnStart ? "Turns" : null,
-    capabilities.threadSteer ? "Steer" : null,
-    capabilities.threadTurnInterrupt ? "Interrupt" : null,
-    capabilities.context ? "Context" : null,
-    capabilities.diff ? "Diff" : null,
-    capabilities.plan ? "Plan" : null,
-  ].filter((value): value is string => value !== null);
 }
