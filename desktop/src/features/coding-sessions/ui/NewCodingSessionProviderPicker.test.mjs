@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { NewCodingSessionProviderPicker } from "./NewCodingSessionScreen.tsx";
+import { NewCodingSessionProviderPicker } from "./NewCodingSessionProviderPicker.tsx";
 
 /** The shape the screen builds from a provider catalog entry. */
 function target(allowedModels) {

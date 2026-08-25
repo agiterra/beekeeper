@@ -50,6 +50,7 @@ import { useAutoRestartPolicy } from "@/features/agents/lib/useAutoRestartPolicy
 import { usePersonaSync } from "@/features/agents/lib/usePersonaSync";
 import { useAgentObserverIngestion } from "@/features/agents/useAgentObserverIngestion";
 import { AgentManagementDialogs } from "@/features/agents/ui/AgentManagementDialogs";
+import { NewCodingSessionDialogHost } from "@/features/coding-sessions/ui/NewCodingSessionDialogHost";
 import { RequestedAgentCreateDialogs } from "@/features/agents/ui/RequestedAgentCreateDialogs";
 import {
   usePresenceSession,
@@ -910,6 +911,7 @@ export function AppShell() {
                 )}
                 <RequestedAgentCreateDialogs />
                 <AgentManagementDialogs />
+                <NewCodingSessionDialogHost />
                 <AppShellOverlays
                   activeChannel={managedChannel}
                   browseDialogType={browseDialogType}

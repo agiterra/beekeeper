@@ -234,6 +234,22 @@ pub(crate) fn build_git_auth_config_for_keys(keys: &Keys) -> Result<GitAuthConfi
     })
 }
 
+/// A git configuration for operations that never touch a remote.
+///
+/// `worktree add`, `rev-parse`, and friends need the same hardening every
+/// other invocation gets — no inherited global config, no repo-local hooks —
+/// but they must not carry the identity nsec: there is nothing for a
+/// credential helper to authenticate, and an env-borne key is worth removing
+/// wherever it is not needed.
+pub(crate) fn build_local_git_auth_config() -> Result<GitAuthConfig, String> {
+    Ok(GitAuthConfig {
+        git_path: resolve_command("git").ok_or_else(|| "git was not found on PATH".to_string())?,
+        credential_helper: None,
+        nsec: String::new(),
+        allow_file_transport: false,
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn build_test_git_auth_config() -> Result<GitAuthConfig, String> {
     let mut auth = build_git_auth_config_for_keys(&Keys::generate())?;

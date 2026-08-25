@@ -17,7 +17,7 @@ import {
   CodingSessionColumn,
 } from "./CodingSessionColumn";
 import { CodingSessionHeader } from "./CodingSessionHeader";
-import { ProviderLoginNeeded } from "./NewCodingSessionScreen";
+import { ProviderLoginNeeded } from "./NewCodingSessionProviderPicker";
 
 type PendingLifecycle = Parameters<
   typeof newCodingSessionStatusMessage

@@ -101,6 +101,6 @@ test("transcript and composer sit in the same gutter, so their edges register", 
 test("the new-session form keeps its own narrower measure", () => {
   // A form wants a shorter measure than a transcript; t3code's analogue is
   // narrower still. Deliberately not routed through the column.
-  const text = source("NewCodingSessionScreen.tsx");
+  const text = source("NewCodingSessionDialog.tsx");
   assert.match(text, /max-w-2xl/);
 });

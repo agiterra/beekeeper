@@ -35,7 +35,7 @@ import {
 import {
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
-} from "./NewCodingSessionScreen";
+} from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 

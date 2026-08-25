@@ -370,6 +370,17 @@ export function useNewCodingSessionCreate({
       initialTurn: string | null;
       workdir: string | null;
       /**
+       * The directory to *remember* for next time, when it differs from the
+       * one the session runs in.
+       *
+       * A worktree create runs the session in a directory that did not exist
+       * a moment ago. Promoting that to the head of the recent list would
+       * prefill the next session with the last one's worktree — and then a
+       * worktree of a worktree. What a person actually returns to is the
+       * checkout the worktree came from, so that is what is stored.
+       */
+      rememberWorkdir?: string | null;
+      /**
        * Join an existing umbrella instead of founding one (design §B): the
        * create carries the umbrella's ref, so the provider mints a new
        * execution inside the same session. Omit to mint a fresh umbrella.
@@ -411,7 +422,9 @@ export function useNewCodingSessionCreate({
             commandId,
             path: input.workdir,
           });
-          await recordCodingSessionWorkdirUse(input.workdir);
+          await recordCodingSessionWorkdirUse(
+            input.rememberWorkdir ?? input.workdir,
+          );
         }
 
         // Strict membership on 442xx means a provider that joins after the

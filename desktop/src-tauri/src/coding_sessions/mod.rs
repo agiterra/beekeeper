@@ -5,11 +5,14 @@
 //! must not meet: a working directory names a person's disk, and putting one
 //! into an event would publish it to every member of the channel forever.
 //!
-//! Today that is exactly one thing — the working-directory store — but the
+//! The working-directory store was the first of these; the git worktree a
+//! session may run in, and the model that names it, are the same shape. The
 //! module boundary is the point. Anything else that is machine-local and
-//! session-shaped belongs beside it, on the same side of that line.
+//! session-shaped belongs beside them, on the same side of that line.
 
+pub(crate) mod naming;
 pub(crate) mod workdir_store;
+pub(crate) mod worktree;
 
 #[cfg(test)]
 mod workdir_store_tests;

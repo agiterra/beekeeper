@@ -52,7 +52,7 @@ mod profile;
 mod project_git;
 mod project_git_branches;
 mod project_git_diff;
-mod project_git_exec;
+pub(crate) mod project_git_exec;
 mod project_git_merge_error;
 mod project_git_push;
 mod project_git_recipient_notes;

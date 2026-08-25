@@ -8,10 +8,13 @@ import { acpAuthMethodsQueryKey } from "@/features/agents/hooks";
 import {
   NewCodingSessionChannelPicker,
   NewCodingSessionProjectDestination,
+} from "./NewCodingSessionDialog.tsx";
+import {
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
-} from "./NewCodingSessionScreen.tsx";
+} from "./NewCodingSessionProviderPicker.tsx";
 import { describeWorkdirProblem } from "./NewCodingSessionWorkdirField.tsx";
+import { WorktreePlanNote } from "./NewCodingSessionWorktreeField.tsx";
 
 /**
  * The Connect button reads the ACP auth-methods query, so anything rendering
@@ -301,6 +304,62 @@ test("the working-directory field names the exact reason a path will not work", 
     }),
     null,
   );
+});
+
+test("the worktree note names the exact directory and branch", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(WorktreePlanNote, {
+      plan: {
+        repoRoot: "/Users/x/Code/beekeeper",
+        path: "/Users/x/Code/beekeeper.worktrees/fix-the-timeout",
+        branch: "fix-the-timeout",
+        slug: "fix-the-timeout",
+        disambiguated: false,
+        problem: null,
+      },
+    }),
+  );
+
+  assert.match(markup, /Creates/);
+  assert.match(markup, /beekeeper.worktrees\/fix-the-timeout/);
+  assert.match(markup, /on branch/);
+});
+
+test("a disambiguated worktree says the name was taken rather than quietly renaming", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(WorktreePlanNote, {
+      plan: {
+        repoRoot: "/Users/x/Code/beekeeper",
+        path: "/Users/x/Code/beekeeper.worktrees/fix-the-timeout-9a3f",
+        branch: "fix-the-timeout-9a3f",
+        slug: "fix-the-timeout-9a3f",
+        disambiguated: true,
+        problem: null,
+      },
+    }),
+  );
+
+  assert.match(markup, /That name was taken/);
+  assert.match(markup, /fix-the-timeout-9a3f/);
+});
+
+test("a worktree that cannot be planned says why instead of showing a path", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(WorktreePlanNote, {
+      plan: {
+        repoRoot: null,
+        path: null,
+        branch: null,
+        slug: null,
+        disambiguated: false,
+        problem: "That working directory is not a git checkout.",
+      },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-worktree-problem"/);
+  assert.match(markup, /not a git checkout/);
+  assert.doesNotMatch(markup, /Creates/);
 });
 
 test("the project destination card never names the transport channel", () => {

@@ -7,11 +7,18 @@ import {
   useCreateChannelMutation,
 } from "@/features/channels/hooks";
 import {
-  NewCodingSessionScreen,
+  NewCodingSessionDialog,
   type NewCodingSessionProjectContext,
-} from "@/features/coding-sessions/ui/NewCodingSessionScreen";
+} from "@/features/coding-sessions/ui/NewCodingSessionDialog";
 import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 
 import {
   partitionChannels,
@@ -37,14 +44,18 @@ import { ensureRealProject } from "../useGeneralProjectMigration";
 /**
  * The create flow, with the project already answered.
  *
- * Everything about creating a session is the standalone screen's job; this
+ * Everything about creating a session is the standalone dialog's job; this
  * wrapper only supplies the two facts a project adds — which coordinate to sign
  * into the create, and which channel the transcript lives in — and knows how to
  * bring that channel into existence when the project has never had one.
  */
-export function ProjectNewCodingSessionScreen({
+export function ProjectNewCodingSessionDialog({
+  onOpenChange,
+  open,
   projectId,
 }: {
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
   projectId: string;
 }) {
   const { projects, reposByProject, unclaimedRepos } = useProjectContainers();
@@ -189,11 +200,30 @@ export function ProjectNewCodingSessionScreen({
   );
 
   if (!projectContext) {
+    // A dialog that silently declines to open reads as a broken button. Say
+    // what happened instead, in the surface the click asked for.
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-muted-foreground">Project not found.</p>
-      </div>
+      <Dialog onOpenChange={onOpenChange} open={open}>
+        <DialogContent
+          className="max-w-md"
+          data-testid="project-new-coding-session-missing"
+        >
+          <DialogHeader>
+            <DialogTitle>Project not found</DialogTitle>
+            <DialogDescription>
+              This project is no longer available on this community, so there is
+              nowhere to put a new session.
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
     );
   }
-  return <NewCodingSessionScreen projectContext={projectContext} />;
+  return (
+    <NewCodingSessionDialog
+      onOpenChange={onOpenChange}
+      open={open}
+      projectContext={projectContext}
+    />
+  );
 }

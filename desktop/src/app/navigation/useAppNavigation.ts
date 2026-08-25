@@ -8,6 +8,10 @@ import {
 
 import { cacheSearchHitEvent } from "@/app/navigation/searchHitEventCache";
 import { resolveSearchHitDestination } from "@/app/navigation/resolveSearchHitDestination";
+import {
+  openNewCodingSessionDialog,
+  openNewProjectCodingSessionDialog,
+} from "@/features/coding-sessions/newCodingSessionDialogStore";
 import type { SearchHit } from "@/shared/api/types";
 
 type NavigationBehavior = {
@@ -254,30 +258,29 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  /**
+   * Creating a session opens a dialog rather than navigating.
+   *
+   * It stays on this hook anyway: every caller already reaches for
+   * `useAppNavigation` to start one, and routing the intent through the same
+   * funnel is what keeps a single dialog from being opened two ways. The
+   * `behavior` argument is accepted and ignored — a modal has no history
+   * entry to replace and no new window to open into.
+   */
   const goNewCodingSession = React.useCallback(
-    (channelId?: string, behavior?: NavigationBehavior) =>
-      commitNavigation(
-        {
-          to: "/coding-sessions/new",
-          search: channelId ? { channelId } : {},
-        },
-        behavior,
-      ),
-    [commitNavigation],
+    async (channelId?: string, _behavior?: NavigationBehavior) => {
+      openNewCodingSessionDialog(channelId ?? null);
+    },
+    [],
   );
 
-  /** The project-scoped create flow: the project is decided by the route, and
+  /** The project-scoped create flow: the project is decided by the caller, and
    * the session's channel is derived from it rather than chosen. */
   const goNewProjectCodingSession = React.useCallback(
-    (projectId: string, behavior?: NavigationBehavior) =>
-      commitNavigation(
-        {
-          to: "/projects/$projectId/sessions/new",
-          params: { projectId },
-        },
-        behavior,
-      ),
-    [commitNavigation],
+    async (projectId: string, _behavior?: NavigationBehavior) => {
+      openNewProjectCodingSessionDialog(projectId);
+    },
+    [],
   );
 
   const goNewMessage = React.useCallback(
