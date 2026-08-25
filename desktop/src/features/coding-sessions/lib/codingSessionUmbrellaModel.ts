@@ -192,9 +192,13 @@ export function listCodingSessionUmbrellaParticipants(
   const participants: CodingSessionUmbrellaParticipant[] =
     umbrella.executions.map((execution, index) => {
       const label = signerLabels[index];
+      // When the signer did not separate them either, it is provably the same
+      // for every colliding row — so it identifies nothing and is dropped
+      // rather than stacked in front of the id that does the work. Live, that
+      // read `Claude · sonnet · 1958c6c4…9644 · 2655de24` three times over.
       const disambiguated =
         (signerCounts.get(label) ?? 0) > 1
-          ? `${label} · ${executionShortId(execution)}`
+          ? `${labels[index]} · ${executionShortId(execution)}`
           : label;
       return {
         kind: "execution",

@@ -575,4 +575,13 @@ test("two same-signer executions get chips a person can tell apart", () => {
     labels.some((label) => label.includes("39977bdf")),
     labels.join(" / "),
   );
+  // The signer is identical across the collision, so it distinguishes nothing
+  // and must not be stacked in front of the id that does. Seen live as
+  // `Claude · sonnet · 1958c6c4…9644 · 2655de24`, three times over.
+  for (const label of labels) {
+    assert.ok(
+      !label.includes("\u2026"),
+      `a signer that identifies nothing survived: ${label}`,
+    );
+  }
 });
