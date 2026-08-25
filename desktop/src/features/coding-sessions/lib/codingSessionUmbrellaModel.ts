@@ -11,7 +11,10 @@
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { encodeStructuredKey } from "./codingSessionKeys";
-import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
+import {
+  formatCodingSessionModelSummary,
+  formatCodingSessionRuntimeLabel,
+} from "./codingSessionLabels";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionExecution,
@@ -526,5 +529,7 @@ function executionLabel(execution: CodingSessionExecution): string {
   const runtime =
     record.runtime ?? record.commandTarget?.driver ?? "coding session";
   const runtimeLabel = formatCodingSessionRuntimeLabel(runtime);
-  return record.model ? `${runtimeLabel} · ${record.model}` : runtimeLabel;
+  return record.model
+    ? `${runtimeLabel} · ${formatCodingSessionModelSummary(record.model)}`
+    : runtimeLabel;
 }

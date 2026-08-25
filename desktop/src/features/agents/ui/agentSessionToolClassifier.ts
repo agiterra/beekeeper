@@ -14,6 +14,7 @@ import {
   asRecord,
   getToolString,
   getToolStringList,
+  parseToolResultDisplayValue,
 } from "./agentSessionUtils";
 
 type ToolItem = Extract<TranscriptItem, { type: "tool" }>;
@@ -102,10 +103,54 @@ const TOOL_CLASS_LABELS: Record<AgentActivityRenderClass, string> = {
 };
 
 const providers: ToolClassifierProvider[] = [
+  classifySessionContextTool,
   classifyLoadSkillTool,
   classifyDeveloperHarnessTool,
   classifyBuzzTool,
 ];
+
+function classifySessionContextTool(
+  input: ToolClassificationInput,
+): AgentActivityDescriptor | null {
+  const operation = [input.toolName, input.title, input.buzzToolName]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeToolNameText)
+    .find((value) =>
+      ["session_history", "session_overview", "search_session"].some(
+        (candidate) =>
+          value === candidate ||
+          value.endsWith(`_${candidate}`) ||
+          value.includes(`buzz_session_context_${candidate}`),
+      ),
+    );
+  if (!operation) return null;
+
+  const result = asRecord(parseToolResultDisplayValue(input.result));
+  const available = result.availableHistoryItems;
+  const returned = result.returned;
+  const count =
+    typeof available === "number" && Number.isFinite(available)
+      ? available
+      : typeof returned === "number" && Number.isFinite(returned)
+        ? returned
+        : null;
+  const label = operation.includes("session_history")
+    ? "Session history"
+    : operation.includes("search_session")
+      ? "Searched session"
+      : "Session overview";
+  const preview =
+    count === null ? null : `· ${count} item${count === 1 ? "" : "s"}`;
+
+  return {
+    renderClass: "generic",
+    label,
+    preview,
+    action: { verb: label, object: preview },
+    source: "mcp",
+    groupKey: `session-context:${operation}`,
+  };
+}
 
 export function classifyTool(
   input: ToolClassificationInput,

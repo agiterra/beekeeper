@@ -19,6 +19,9 @@ import { cn } from "@/shared/lib/cn";
  */
 export const CODING_SESSION_COLUMN_CLASS = "mx-auto w-full min-w-0 max-w-3xl";
 
+/** Width used when no secondary rail is sharing the workspace. */
+export const CODING_SESSION_COLUMN_EXPANDED_CLASS = "max-w-6xl";
+
 /**
  * Gutter padding for the surface that *contains* a {@link CodingSessionColumn}.
  *
@@ -31,6 +34,17 @@ export const CODING_SESSION_COLUMN_CLASS = "mx-auto w-full min-w-0 max-w-3xl";
 export const CODING_SESSION_COLUMN_GUTTER = "px-5 sm:px-8";
 
 /**
+ * Fixed composer dock with a fade that ends before interactive content begins.
+ *
+ * The old gradient covered the dock itself, leaving participant chips and
+ * controls on an 85%-opaque background with transcript text visibly running
+ * behind them. The dock is now solid; a separate pseudo-element fades only the
+ * strip immediately above it.
+ */
+export const CODING_SESSION_COMPOSER_DOCK_CLASS =
+  "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-background pb-4 before:pointer-events-none before:absolute before:inset-x-0 before:bottom-full before:h-8 before:bg-linear-to-b before:from-transparent before:to-background before:content-['']";
+
+/**
  * Centers `children` in the coding-session reading measure.
  *
  * Apply {@link CODING_SESSION_COLUMN_GUTTER} to the ancestor that owns the
@@ -40,10 +54,18 @@ export const CODING_SESSION_COLUMN_GUTTER = "px-5 sm:px-8";
 export function CodingSessionColumn({
   children,
   className,
+  expanded = false,
   ...props
-}: React.ComponentPropsWithoutRef<"div">) {
+}: React.ComponentPropsWithoutRef<"div"> & { expanded?: boolean }) {
   return (
-    <div className={cn(CODING_SESSION_COLUMN_CLASS, className)} {...props}>
+    <div
+      className={cn(
+        CODING_SESSION_COLUMN_CLASS,
+        expanded && CODING_SESSION_COLUMN_EXPANDED_CLASS,
+        className,
+      )}
+      {...props}
+    >
       {children}
     </div>
   );

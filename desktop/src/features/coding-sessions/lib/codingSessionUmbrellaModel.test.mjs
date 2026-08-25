@@ -333,6 +333,19 @@ test("the composer participant list: N=1 offers only the execution, N>1 adds the
   assert.equal(participants[2].label, "Session");
 });
 
+test("participant labels split reasoning effort out of the raw model id", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({
+      sessionRef: SESSION_REF,
+      runtime: "codex",
+      model: "gpt-5.6-terra[low]",
+    }),
+  ]);
+  const [participant] = listCodingSessionUmbrellaParticipants(umbrella);
+  assert.equal(participant.label, "Codex · gpt-5.6-terra · Low");
+  assert.doesNotMatch(participant.label, /\[low\]/);
+});
+
 test("colliding participant labels disambiguate by signer prefix", () => {
   const [umbrella] = groupCodingSessionCatalog([
     record({ sessionRef: SESSION_REF }),

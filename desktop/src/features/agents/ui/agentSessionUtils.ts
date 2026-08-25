@@ -45,11 +45,12 @@ export function getResultArray(
 export function formatCodeValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return value;
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return value;
-  }
+  const parsed = parseToolResultValue(trimmed);
+  if (parsed === null) return value;
+  const display = unwrapMcpTextContent(parsed);
+  return typeof display === "string"
+    ? display
+    : JSON.stringify(display, null, 2);
 }
 
 export type ShellToolOutput = {
@@ -161,7 +162,7 @@ function getOptionalString(
 
 /** Format a millisecond duration; negative input yields null. */
 export function formatDurationMs(ms: number): string | null {
-  if (ms < 0) return null;
+  if (ms <= 0) return null;
   const totalSeconds = ms / 1000;
   if (totalSeconds < 60) {
     return totalSeconds < 10
@@ -197,6 +198,27 @@ export function parseToolResultValue(result: string): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * MCP transports often wrap a tool's JSON response in
+ * `{ content: [{ type: "text", text: "{...}" }] }`. The transcript should
+ * show the response, not that transport envelope. Only unwrap the unambiguous
+ * one-text-block shape; mixed or rich content remains visible as published.
+ */
+export function unwrapMcpTextContent(value: unknown): unknown {
+  const record = asRecord(value);
+  const content = record.content;
+  if (!Array.isArray(content) || content.length !== 1) return value;
+  const block = asRecord(content[0]);
+  if (block.type !== "text" || typeof block.text !== "string") return value;
+  return parseToolResultValue(block.text) ?? block.text;
+}
+
+/** Parse a result and remove its one-block MCP text envelope for presentation. */
+export function parseToolResultDisplayValue(result: string): unknown {
+  const parsed = parseToolResultValue(result);
+  return parsed === null ? null : unwrapMcpTextContent(parsed);
 }
 
 /**
@@ -275,7 +297,7 @@ export function formatDuration(
   const end = new Date(endIso).getTime();
   if (Number.isNaN(start) || Number.isNaN(end)) return null;
   const ms = end - start;
-  if (ms < 0) return null;
+  if (ms <= 0) return null;
   const totalSeconds = ms / 1000;
   if (totalSeconds < 60) {
     return totalSeconds < 10

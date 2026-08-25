@@ -21,6 +21,7 @@ import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/u
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
 import { restoreCodingSessionDraft } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
+import { formatCodingSessionModelDisplay } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import type {
   CodingSessionStatus,
@@ -138,6 +139,10 @@ export function CodingSessionComposer({
   const [pendingAction, setPendingAction] = React.useState<
     "send" | "interrupt" | "resume" | "stop" | null
   >(null);
+  const [queuedDraft, setQueuedDraft] = React.useState<{
+    draft: string;
+    preparedText: string;
+  } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // A reconnect is only finished when the provider's receipt names the
   // generation it resumed into; until then this composer is as busy as it is
@@ -201,81 +206,129 @@ export function CodingSessionComposer({
       ? null
       : codingSessionWorkspaceStatusDetail(unreachableStatus);
   const isUnavailable = isDisconnected || isEnded || unreachableStatus !== null;
-  const canSubmitText =
+  const canPublishText =
     canControl &&
     !isUnavailable &&
     state.canSend &&
     (!immersive || !isWorking || canSteer);
-  const editorDisabled =
-    !canControl ||
-    !isMember ||
-    isSending ||
-    isUnavailable ||
-    (immersive && isWorking && !canSteer);
+  const canQueueText =
+    canControl &&
+    !isUnavailable &&
+    state.canSend &&
+    immersive &&
+    isWorking &&
+    !canSteer &&
+    queuedDraft === null;
+  const canSubmitText = canPublishText || canQueueText;
+  const editorDisabled = !canControl || !isMember || isSending || isUnavailable;
+
+  const publishPreparedText = React.useCallback(
+    async ({
+      draft,
+      preparedText: textToPublish,
+    }: {
+      draft: string;
+      preparedText: string;
+    }) => {
+      if (isSending) return;
+      const commandId = createCodingSessionCommandId();
+      // Clear and record *before* awaiting the relay. Neither the empty editor
+      // nor the pending row is a claim about delivery — the row says "Sending…"
+      // until the relay answers — and both are undone below if the publish
+      // fails, which is the only outcome where the words were never sent.
+      recordPendingCodingSessionTurn({
+        channelId,
+        targetKey: buildCodingSessionTargetKey(target),
+        commandId,
+        text: textToPublish,
+        operatorPubkey: currentUserPubkey,
+        recordedAt: Date.now(),
+        published: false,
+      });
+      setPendingAction("send");
+      setError(null);
+      try {
+        const published = await publishCommand({
+          channelId,
+          commandId,
+          target,
+          text: textToPublish,
+        });
+        markPendingCodingSessionTurnPublished(channelId, published.commandId);
+        // Acceptance by the relay is not consent from the provider. The receipt
+        // that refuses this turn is keyed to this command id and nothing else.
+        watchTurn({ commandId: published.commandId, draft });
+      } catch (submitError) {
+        forgetPendingCodingSessionTurn(channelId, commandId);
+        // The words never left this machine, so they belong back in the editor —
+        // same rule the refusal path already follows, including its handling of
+        // a person who has started typing again.
+        restoreRefusedDraft(draft);
+        setError(
+          submitError instanceof Error
+            ? submitError.message
+            : "Unable to send coding-session command.",
+        );
+      } finally {
+        setPendingAction(null);
+      }
+    },
+    [
+      channelId,
+      currentUserPubkey,
+      isSending,
+      publishCommand,
+      restoreRefusedDraft,
+      target,
+      watchTurn,
+    ],
+  );
 
   const submit = React.useCallback(async () => {
-    if (!canSubmitText || isSending) return;
+    if (!canPublishText || isSending) return;
     // Keep the person's own words, not the prepared wire text: a refusal has
     // to hand back exactly what they typed, routing handle and all.
     const draft = text;
-    const commandId = createCodingSessionCommandId();
-    // Clear and record *before* awaiting the relay. Neither the empty editor
-    // nor the pending row is a claim about delivery — the row says "Sending…"
-    // until the relay answers — and both are undone below if the publish
-    // fails, which is the only outcome where the words were never sent.
     setText("");
-    recordPendingCodingSessionTurn({
-      channelId,
-      targetKey: buildCodingSessionTargetKey(target),
-      commandId,
-      text: preparedText,
-      operatorPubkey: currentUserPubkey,
-      recordedAt: Date.now(),
-      published: false,
-    });
-    setPendingAction("send");
-    setError(null);
-    try {
-      const published = await publishCommand({
-        channelId,
-        commandId,
-        target,
-        text: preparedText,
-      });
-      markPendingCodingSessionTurnPublished(channelId, published.commandId);
-      // Acceptance by the relay is not consent from the provider. The receipt
-      // that refuses this turn is keyed to this command id and nothing else.
-      watchTurn({ commandId: published.commandId, draft });
-    } catch (submitError) {
-      forgetPendingCodingSessionTurn(channelId, commandId);
-      // The words never left this machine, so they belong back in the editor —
-      // same rule the refusal path already follows, including its handling of
-      // a person who has started typing again.
-      restoreRefusedDraft(draft);
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Unable to send coding-session command.",
-      );
-    } finally {
-      setPendingAction(null);
-    }
+    await publishPreparedText({ draft, preparedText });
+  }, [canPublishText, isSending, preparedText, publishPreparedText, text]);
+
+  const queueNextTurn = React.useCallback(() => {
+    if (!canQueueText) return;
+    setQueuedDraft({ draft: text, preparedText });
+    setText("");
+  }, [canQueueText, preparedText, text]);
+
+  React.useEffect(() => {
+    if (
+      isWorking ||
+      isUnavailable ||
+      isSending ||
+      !canControl ||
+      !isMember ||
+      queuedDraft === null
+    )
+      return;
+    const next = queuedDraft;
+    setQueuedDraft(null);
+    void publishPreparedText(next);
   }, [
-    canSubmitText,
-    channelId,
-    currentUserPubkey,
     isSending,
-    preparedText,
-    publishCommand,
-    restoreRefusedDraft,
-    target,
-    text,
-    watchTurn,
+    isUnavailable,
+    isWorking,
+    canControl,
+    isMember,
+    publishPreparedText,
+    queuedDraft,
   ]);
 
   const handlePrimaryAction = React.useCallback(async () => {
+    if (canQueueText) {
+      queueNextTurn();
+      return;
+    }
     await submit();
-  }, [submit]);
+  }, [canQueueText, queueNextTurn, submit]);
 
   const handleStop = React.useCallback(async () => {
     if (!canControl || !isMember || !canInterrupt || isSending) return;
@@ -413,6 +466,30 @@ export function CodingSessionComposer({
           {visibleError}
         </p>
       ) : null}
+      {queuedDraft ? (
+        <div
+          className="mb-2 flex items-center gap-3 rounded-xl bg-muted/40 px-3 py-2 text-xs"
+          data-testid="coding-session-composer-queued"
+        >
+          <p className="min-w-0 flex-1 truncate text-muted-foreground">
+            <span className="font-medium text-foreground/80">
+              Next turn queued:
+            </span>{" "}
+            {queuedDraft.draft}
+          </p>
+          <button
+            className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => {
+              const queued = queuedDraft;
+              setQueuedDraft(null);
+              restoreRefusedDraft(queued.draft);
+            }}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
       {unreachableStatus !== null ? (
         <div
           className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-border/70 px-3 py-2"
@@ -508,7 +585,7 @@ export function CodingSessionComposer({
           onKeyDown={(event) => {
             if (shouldSubmitCodingSessionComposerKey(event)) {
               event.preventDefault();
-              if (canSubmitText) void submit();
+              if (canSubmitText) void handlePrimaryAction();
             }
           }}
           placeholder={
@@ -517,8 +594,10 @@ export function CodingSessionComposer({
               : isDisconnected
                 ? "Reconnect this execution to continue…"
                 : immersive && isWorking && !canSteer
-                  ? "Current turn in progress…"
-                  : "Steer this coding session…"
+                  ? "Write the next turn…"
+                  : isWorking
+                    ? "Steer this coding session…"
+                    : "Send a message…"
           }
           value={text}
         />
@@ -583,9 +662,9 @@ export function CodingSessionComposer({
           isUnavailable={isUnavailable}
           onInterrupt={() => void handleStop()}
           onSessionStop={requestSessionEnd}
-          onSteer={() => void handlePrimaryAction()}
+          onPrimary={() => void handlePrimaryAction()}
           pendingAction={pendingAction}
-          steerDisabled={!canSubmitText || isSending}
+          primaryDisabled={!canSubmitText || isSending}
         />
       ) : null}
       {endDialog.dialog}
@@ -606,9 +685,9 @@ function ImmersiveCodingSessionControlDeck({
   isUnavailable,
   onInterrupt,
   onSessionStop,
-  onSteer,
+  onPrimary,
   pendingAction,
-  steerDisabled,
+  primaryDisabled,
 }: {
   canInterrupt: boolean;
   canControl: boolean;
@@ -620,9 +699,9 @@ function ImmersiveCodingSessionControlDeck({
   isUnavailable: boolean;
   onInterrupt: () => void;
   onSessionStop: () => void;
-  onSteer: () => void;
+  onPrimary: () => void;
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
-  steerDisabled: boolean;
+  primaryDisabled: boolean;
 }) {
   const availableCapabilities = context
     ? capabilityLabels(context.capabilities)
@@ -636,7 +715,6 @@ function ImmersiveCodingSessionControlDeck({
       className="mt-1 flex h-10 min-w-0 items-center gap-2 overflow-hidden border-t border-border/60 px-1 pt-1 whitespace-nowrap"
       data-testid="coding-session-control-deck"
     >
-      <ControlDeckStatus context={context} isWorking={isWorking} />
       <ControlDeckIdentity context={context} />
       <span
         className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground"
@@ -665,18 +743,24 @@ function ImmersiveCodingSessionControlDeck({
       >
         {isUnavailable ? null : isWorking ? (
           <>
-            {canSteer ? (
-              <Button
-                data-testid="coding-session-composer-steer"
-                disabled={steerDisabled}
-                onClick={onSteer}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                {pendingAction === "send" ? "Steering…" : "Steer"}
-              </Button>
-            ) : null}
+            <Button
+              data-testid={
+                canSteer
+                  ? "coding-session-composer-steer"
+                  : "coding-session-composer-queue"
+              }
+              disabled={primaryDisabled}
+              onClick={onPrimary}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {pendingAction === "send"
+                ? "Sending…"
+                : canSteer
+                  ? "Steer"
+                  : "Queue"}
+            </Button>
             <Button
               data-testid="coding-session-composer-interrupt"
               disabled={
@@ -703,8 +787,8 @@ function ImmersiveCodingSessionControlDeck({
           <>
             <Button
               data-testid="coding-session-composer-primary"
-              disabled={steerDisabled}
-              onClick={onSteer}
+              disabled={primaryDisabled}
+              onClick={onPrimary}
               size="sm"
               type="button"
             >
@@ -712,15 +796,17 @@ function ImmersiveCodingSessionControlDeck({
             </Button>
             {canSessionStop ? (
               <Button
+                aria-label="Stop execution"
+                className="text-muted-foreground hover:text-destructive"
                 data-testid="coding-session-composer-session-stop"
                 disabled={pendingAction !== null}
                 onClick={onSessionStop}
-                size="sm"
+                size="icon"
                 title="Stop this provider execution; the session stays open."
                 type="button"
-                variant="outline"
+                variant="ghost"
               >
-                Stop execution
+                <Square />
               </Button>
             ) : null}
           </>
@@ -730,59 +816,19 @@ function ImmersiveCodingSessionControlDeck({
   );
 }
 
-function ControlDeckStatus({
-  context,
-  isWorking,
-}: {
-  context: CodingSessionComposerProps["controlContext"];
-  isWorking: boolean;
-}) {
-  const status: CodingSessionWorkspaceStatus =
-    context?.status ??
-    (isWorking
-      ? { kind: "working", label: "Working" }
-      : { kind: "unknown", label: "Status unknown" });
-  return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium",
-        status.kind === "working" &&
-          "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-        status.kind === "idle" &&
-          "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-        status.kind === "unknown" &&
-          (status.attention
-            ? // Lifecycle says this execution is not usable; the deck must not
-              // read as calm while the banner above offers Reconnect.
-              "bg-destructive/10 text-destructive"
-            : "text-muted-foreground"),
-      )}
-      data-attention={
-        status.kind === "unknown" ? (status.attention ?? undefined) : undefined
-      }
-      data-status={status.kind}
-      data-testid="coding-session-control-status"
-    >
-      <span
-        aria-hidden
-        className={cn(
-          "size-1.5 rounded-full bg-current",
-          status.kind === "working" && "motion-safe:animate-pulse",
-        )}
-      />
-      {status.label}
-    </span>
-  );
-}
-
 function ControlDeckIdentity({
   context,
 }: {
   context: CodingSessionComposerProps["controlContext"];
 }) {
+  const model = context?.model
+    ? formatCodingSessionModelDisplay(context.model)
+    : null;
   const values = [
     ["provider", context?.providerLabel ?? context?.runtimeLabel],
-    ["model", context?.model],
+    ["model", model?.model],
+    ["thinking", model?.thinking],
+    ["context", model?.context],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]));
   if (values.length === 0) return null;
   return (
@@ -809,10 +855,17 @@ function controlProvenance(
   context: CodingSessionComposerProps["controlContext"],
 ): string {
   if (!context) return "Signed session target.";
+  const model = context.model
+    ? formatCodingSessionModelDisplay(context.model)
+    : null;
   return [
     context.providerLabel ? `Provider: ${context.providerLabel}.` : null,
     context.runtimeLabel ? `Runtime: ${context.runtimeLabel}.` : null,
-    context.model ? `Model: ${context.model}.` : null,
+    model
+      ? `Model: ${[model.model, model.thinking, model.context]
+          .filter((value): value is string => Boolean(value))
+          .join(" · ")}.`
+      : null,
   ]
     .filter((value): value is string => value !== null)
     .join(" ");

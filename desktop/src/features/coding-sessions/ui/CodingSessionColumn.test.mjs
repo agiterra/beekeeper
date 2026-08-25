@@ -6,7 +6,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_CLASS,
+  CODING_SESSION_COLUMN_EXPANDED_CLASS,
   CODING_SESSION_COLUMN_GUTTER,
   CodingSessionColumn,
 } from "./CodingSessionColumn.tsx";
@@ -37,6 +39,19 @@ test("the measure box carries min-w-0 so wide content scrolls instead of clippin
   assert.match(CODING_SESSION_COLUMN_CLASS, /\bmin-w-0\b/);
   assert.match(CODING_SESSION_COLUMN_CLASS, /\bw-full\b/);
   assert.match(CODING_SESSION_COLUMN_CLASS, /\bmx-auto\b/);
+});
+
+test("a hidden side surface gives the narrative the wider workspace measure", () => {
+  const expanded = renderToStaticMarkup(
+    React.createElement(
+      CodingSessionColumn,
+      { expanded: true, "data-testid": "column" },
+      "body",
+    ),
+  );
+  assert.match(CODING_SESSION_COLUMN_EXPANDED_CLASS, /\bmax-w-6xl\b/);
+  assert.match(expanded, /\bmax-w-6xl\b/);
+  assert.doesNotMatch(expanded, /\bmax-w-3xl\b/);
 });
 
 test("the gutter lives outside the measure, never inside it", () => {
@@ -95,6 +110,28 @@ test("transcript and composer sit in the same gutter, so their edges register", 
       /absolute inset-x-0 bottom-0 z-20[^"]*\bpx-4\b/,
       `${name}: the composer overlay must not keep its own px-4 gutter`,
     );
+  }
+});
+
+test("the composer dock is opaque before any chip or control begins", () => {
+  // §2 item 52.1: the previous 85%-opaque gradient covered the composer
+  // itself, so transcript text showed through the participant chip row. The
+  // fade now lives entirely above a solid dock.
+  assert.match(CODING_SESSION_COMPOSER_DOCK_CLASS, /\bbg-background\b/);
+  assert.match(CODING_SESSION_COMPOSER_DOCK_CLASS, /before:bottom-full/);
+  assert.match(CODING_SESSION_COMPOSER_DOCK_CLASS, /before:h-8/);
+  assert.match(CODING_SESSION_COMPOSER_DOCK_CLASS, /before:from-transparent/);
+  assert.match(CODING_SESSION_COMPOSER_DOCK_CLASS, /before:to-background/);
+  assert.doesNotMatch(
+    CODING_SESSION_COMPOSER_DOCK_CLASS,
+    /via-background|bg-background\//,
+  );
+  for (const name of [
+    "CodingSessionWorkspace.tsx",
+    "CodingSessionUmbrellaWorkspace.tsx",
+  ]) {
+    assert.match(source(name), /CODING_SESSION_COMPOSER_DOCK_CLASS/);
+    assert.doesNotMatch(source(name), /via-background\/85/);
   }
 });
 

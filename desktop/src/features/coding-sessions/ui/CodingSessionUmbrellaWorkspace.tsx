@@ -45,6 +45,7 @@ import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import {
+  CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_GUTTER,
   CodingSessionColumn,
 } from "./CodingSessionColumn";
@@ -175,6 +176,7 @@ export function UmbrellaCodingSessionWorkspace({
   const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds, {
     initialTab: "agents",
   });
+  const narrativeExpanded = surfaceHost.activeTab === null;
   const surfaceHostId = React.useId();
   const [renameOpen, setRenameOpen] = React.useState(false);
   const authoritativeTitle = sessionName?.content ?? umbrella.title;
@@ -235,6 +237,7 @@ export function UmbrellaCodingSessionWorkspace({
             founderPubkey={umbrella.founderPubkey}
             goal={goal}
             sessionRef={umbrella.sessionRef}
+            workspaceExpanded={narrativeExpanded}
           />
         </div>
       </div>
@@ -258,7 +261,10 @@ export function UmbrellaCodingSessionWorkspace({
               CODING_SESSION_COLUMN_GUTTER,
             )}
           >
-            <CodingSessionColumn className="min-h-full pt-7 pb-64">
+            <CodingSessionColumn
+              className="min-h-full pt-7 pb-64"
+              expanded={narrativeExpanded}
+            >
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 currentUserPubkey={currentUserPubkey}
@@ -272,11 +278,14 @@ export function UmbrellaCodingSessionWorkspace({
           {!sessionClosed ? (
             <div
               className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background pt-8 pb-4",
+                CODING_SESSION_COMPOSER_DOCK_CLASS,
                 CODING_SESSION_COLUMN_GUTTER,
               )}
             >
-              <CodingSessionColumn className="pointer-events-auto">
+              <CodingSessionColumn
+                className="pointer-events-auto"
+                expanded={narrativeExpanded}
+              >
                 <CodingSessionUmbrellaComposer
                   acceptedOperators={acceptedOperators}
                   channelId={channelId}
@@ -587,7 +596,7 @@ function UmbrellaTurnBlock({
   return (
     <article
       className={cn(
-        "relative py-1 transition-colors",
+        "group/turn relative border-t border-border/40 pt-5 pb-1 first:border-t-0 first:pt-1 transition-colors",
         isHighlighted &&
           "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
       )}
@@ -673,7 +682,7 @@ function UmbrellaTurnBlock({
       />
       {completed && source && handoffTargets.length > 0 ? (
         <footer
-          className="mt-2 flex flex-wrap items-center gap-1.5"
+          className="absolute right-0 bottom-0 flex translate-y-1/2 flex-wrap items-center gap-1.5 rounded-full bg-background/95 p-1 opacity-0 shadow-sm transition-opacity group-focus-within/turn:opacity-100 group-hover/turn:opacity-100"
           data-testid="coding-session-umbrella-handoff-actions"
         >
           {handoffTargets.map((execution) => (

@@ -1,5 +1,11 @@
 import * as React from "react";
-import { ChevronDown, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  CircleAlert,
+  LoaderCircle,
+  Wrench,
+} from "lucide-react";
 
 import { ToolItem } from "@/features/agents/ui/AgentSessionToolItem";
 import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
@@ -351,46 +357,81 @@ const CodingSessionTurn = React.memo(function CodingSessionTurn({
   turn: CodingSessionTranscriptTurn;
 }) {
   const settledWork = React.useMemo(() => findSettledWorkRun(turn), [turn]);
+  const activeNarrative = React.useMemo(
+    () => (turn.isWorking ? buildActiveTurnNarrative(turn.entries) : null),
+    [turn.entries, turn.isWorking],
+  );
+  const renderEntry = (
+    entry: CodingSessionTranscriptEntry,
+    keyPrefix = "entry",
+  ) => (
+    <CodingSessionEntry
+      disclosureScope={`turn:${turn.id}`}
+      entry={entry}
+      generationId={generationId}
+      key={`${keyPrefix}:${entry.kind === "item" ? entry.item.id : entry.id}`}
+      onDisclosureOpenChange={onDisclosureOpenChange}
+      openDisclosures={openDisclosures}
+    />
+  );
 
   return (
     <section
-      className="content-visibility-auto flex flex-col gap-2.5"
+      className="content-visibility-auto flex flex-col gap-2.5 border-t border-border/40 pt-5 first:border-t-0 first:pt-0"
       data-message-id={`turn:${turn.id}`}
       data-testid="coding-session-turn"
       data-turn-id={turn.id}
     >
-      {turn.entries.map((entry, index) => {
-        if (settledWork && index === settledWork.startIndex) {
-          return (
-            <CodingSessionWorkedFold
-              completion={turn.completion}
-              disclosureId={`turn:${turn.id}:worked`}
-              entries={settledWork.entries}
-              generationId={generationId}
-              key={`worked:${turn.id}`}
-              onOpenChange={onDisclosureOpenChange}
-              open={openDisclosures.has(`turn:${turn.id}:worked`)}
-              openDisclosures={openDisclosures}
-            />
-          );
-        }
-        if (settledWork?.hiddenIndexes.has(index)) {
-          return null;
-        }
-        return (
-          <CodingSessionEntry
-            disclosureScope={`turn:${turn.id}`}
-            entry={entry}
-            generationId={generationId}
-            key={entry.kind === "item" ? entry.item.id : entry.id}
-            onDisclosureOpenChange={onDisclosureOpenChange}
-            openDisclosures={openDisclosures}
+      {activeNarrative ? (
+        <>
+          {activeNarrative.prompts.map((entry) => renderEntry(entry, "prompt"))}
+          <CodingSessionWorking
+            startedAt={turn.startedAt}
+            stepLabel={activeNarrative.currentStep}
           />
-        );
-      })}
-      {turn.isWorking ? (
-        <CodingSessionWorking startedAt={turn.startedAt} />
-      ) : null}
+          {activeNarrative.plan
+            ? renderEntry(activeNarrative.plan, "plan")
+            : null}
+          {activeNarrative.plan || activeNarrative.work.length > 0 ? (
+            <div
+              className="flex flex-col gap-1 py-0.5"
+              data-testid="coding-session-work-log"
+            >
+              <p className="text-2xs font-medium text-muted-foreground">
+                Work Log
+              </p>
+              {activeNarrative.plan ? (
+                <p className="flex min-h-7 items-center gap-2 px-0.5 text-sm text-muted-foreground">
+                  <Check className="size-3.5 shrink-0" />
+                  <span>Plan updated</span>
+                </p>
+              ) : null}
+              {activeNarrative.work.map((entry) => renderEntry(entry, "work"))}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        turn.entries.map((entry, index) => {
+          if (settledWork && index === settledWork.startIndex) {
+            return (
+              <CodingSessionWorkedFold
+                completion={turn.completion}
+                disclosureId={`turn:${turn.id}:worked`}
+                entries={settledWork.entries}
+                generationId={generationId}
+                key={`worked:${turn.id}`}
+                onOpenChange={onDisclosureOpenChange}
+                open={openDisclosures.has(`turn:${turn.id}:worked`)}
+                openDisclosures={openDisclosures}
+              />
+            );
+          }
+          if (settledWork?.hiddenIndexes.has(index)) {
+            return null;
+          }
+          return renderEntry(entry);
+        })
+      )}
       {turn.completion ? (
         <CodingSessionTurnCompletion
           completion={turn.completion}
@@ -415,6 +456,43 @@ const CodingSessionTurn = React.memo(function CodingSessionTurn({
     </section>
   );
 });
+
+function buildActiveTurnNarrative(entries: CodingSessionTranscriptEntry[]) {
+  const prompts: CodingSessionTranscriptEntry[] = [];
+  const work: CodingSessionTranscriptEntry[] = [];
+  let plan: CodingSessionTranscriptEntry | null = null;
+  let planModel: ReturnType<typeof deriveCodingSessionTaskModel> = null;
+
+  for (const entry of entries) {
+    if (
+      entry.kind === "item" &&
+      entry.item.type === "message" &&
+      entry.item.role === "user"
+    ) {
+      prompts.push(entry);
+      continue;
+    }
+    const candidate =
+      entry.kind === "item" ? deriveCodingSessionTaskModel([entry.item]) : null;
+    if (candidate) {
+      plan = entry;
+      planModel = candidate;
+      continue;
+    }
+    work.push(entry);
+  }
+
+  const currentTask =
+    planModel?.tasks.find((task) => task.status === "in_progress") ??
+    planModel?.tasks.find((task) => task.status !== "completed") ??
+    null;
+  return {
+    currentStep: currentTask?.text ?? null,
+    plan,
+    prompts,
+    work,
+  };
+}
 
 const CodingSessionEntry = React.memo(function CodingSessionEntry({
   disclosureScope,

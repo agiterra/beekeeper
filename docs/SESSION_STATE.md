@@ -1346,6 +1346,35 @@ written and `bash -n` clean but **was not executed** — that harness needs
     10. *`Send` and `Stop execution` are neighbours* at the same weight, one of
         them terminal.
 
+    **Implemented on `fix/full-screen-session-ux` (2026-08-25):** the composer
+    dock is opaque with its fade entirely above it; the narrative and composer
+    expand from 48rem to 72rem only while no Agents/Changes surface is open;
+    the latest signed plan now drives both the compact inline plan + Work Log
+    and a T3-style Tasks sheet attached above the composer instead of a side
+    rail. The empty goal is a small action. Turn boundaries have separators.
+    Session-context MCP results unwrap their one-text-block transport envelope
+    and summarize as `Session history · N items`; exact-zero durations are
+    omitted. Packed model ids are decoded everywhere the session labels them
+    (`gpt-5.6-terra · Low`, not `gpt-5.6-terra[low]`). The composer no longer
+    repeats the header's Idle/Working state, completed-turn handoff chips are
+    revealed only on hover/focus, and terminal execution stop is an icon action
+    rather than a peer of Send. Evidence: the focused desktop tests plus the
+    three-view Playwright workflow in
+    `coding-session-transcript-narrative-screenshots.spec.ts`; its collapsed
+    task, expanded task, and opened Changes views are pixel-distinct.
+
+53. **A running turn no longer locks the full-screen editor** (live comparison
+    with T3 Code, 2026-08-25). The old composer disabled its textarea whenever
+    the provider did not declare `threadSteer`, conflating “cannot inject into
+    this turn” with “cannot write the next one.” The editor now stays available:
+    a steer-capable provider still offers `Steer`; otherwise the action reads
+    `Queue`, stores the draft locally without publishing a command or optimistic
+    row, and publishes exactly once when the current turn settles. The queued
+    row is explicit and cancellable. `CodingSessionComposer.optimistic.test.mjs`
+    proves the relay sees zero commands while the turn is working and one after
+    the state becomes idle; the wide E2E screenshot proves the editor is enabled
+    in that state.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -1360,12 +1389,12 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-**The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
-item 52's ten points, in that order.** The first four are contained (the
-composer's leaking overlay, the raw JSON tool result, the flanking dead space,
-and the raw identifiers the picker already fixed elsewhere); the rest are
-hierarchy and action-weight work. Everything below is the previous track, kept
-because its live confirmations are still owed.
+**The active track as of 2026-08-25 night is live confirmation of the
+full-screen UI/UX pass — §2 items 52–53.** The implementation, focused
+wide-screen E2E workflow, and repository-wide `just ci` gate are green. It is
+landed on `fix/full-screen-session-ux`; only confirmation in the live desktop
+against hive remains. Everything below is the previous track, kept because its
+live confirmations are still owed.
 
 **The previous track was the coding-session honesty pass — §2 items 37-44. As of
 2026-08-24 the code is done and the live confirmation is not.** Six items are
