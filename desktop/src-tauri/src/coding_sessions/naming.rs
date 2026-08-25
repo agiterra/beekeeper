@@ -390,6 +390,40 @@ async fn name_via_openai_compatible(
     clean_generated_name(text).ok_or_else(|| "the model answered with no name".to_string())
 }
 
+/// Run one naming request against an explicit configuration.
+///
+/// Separate from the stored record so the settings surface can try what is
+/// *in its fields* rather than what was last saved — the two differ exactly
+/// when someone is fixing a URL, which is when a test is worth having.
+async fn name_with(
+    provider: CodingSessionNamingProvider,
+    base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
+    first_message: &str,
+) -> Result<String, String> {
+    if provider == CodingSessionNamingProvider::Off || model.is_empty() {
+        return Err("no naming model is configured".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(NAMING_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| format!("could not build an HTTP client: {error}"))?;
+    match provider {
+        CodingSessionNamingProvider::Off => unreachable!("checked above"),
+        CodingSessionNamingProvider::Anthropic => {
+            let Some(api_key) = api_key else {
+                return Err("the Anthropic API needs an API key".to_string());
+            };
+            name_via_anthropic(&client, model, api_key, first_message).await
+        }
+        CodingSessionNamingProvider::OpenAiCompatible => {
+            validate_base_url(base_url)?;
+            name_via_openai_compatible(&client, base_url, model, api_key, first_message).await
+        }
+    }
+}
+
 /// Ask the configured model for a short name for this first message.
 ///
 /// Errors are returned rather than swallowed so the dialog can say *why* a
@@ -406,37 +440,86 @@ pub async fn generate_coding_session_name(
         return Err("there is no first message to name".to_string());
     }
     let record = load_record(&app)?;
-    if record.provider == CodingSessionNamingProvider::Off {
-        return Err("no naming model is configured".to_string());
-    }
-    if record.model.is_empty() {
-        return Err("no naming model is configured".to_string());
-    }
-    let api_key = stored_api_key(&record);
-    let client = reqwest::Client::builder()
-        .timeout(NAMING_REQUEST_TIMEOUT)
-        .build()
-        .map_err(|error| format!("could not build an HTTP client: {error}"))?;
-    match record.provider {
-        CodingSessionNamingProvider::Off => unreachable!("checked above"),
-        CodingSessionNamingProvider::Anthropic => {
-            let Some(api_key) = api_key else {
-                return Err("the Anthropic API needs an API key".to_string());
-            };
-            name_via_anthropic(&client, &record.model, &api_key, &first_message).await
-        }
-        CodingSessionNamingProvider::OpenAiCompatible => {
-            validate_base_url(&record.base_url)?;
-            name_via_openai_compatible(
-                &client,
-                &record.base_url,
-                &record.model,
-                api_key.as_deref(),
-                &first_message,
-            )
-            .await
-        }
-    }
+    name_with(
+        record.provider,
+        &record.base_url,
+        &record.model,
+        stored_api_key(&record).as_deref(),
+        &first_message,
+    )
+    .await
+}
+
+/// The message a test sends.
+///
+/// A fixed, obviously-synthetic sentence, and never anything the person has
+/// written: pressing Test to find out whether an endpoint works should not be
+/// the moment a real first message leaves the machine. It is also long enough
+/// and specific enough that a working model returns a recognisably *derived*
+/// title rather than a generic one, which is what makes the result readable
+/// as a yes.
+pub const NAMING_TEST_MESSAGE: &str =
+    "The relay rejects a git push that takes longer than sixty seconds, because the \
+     credential helper's token has already expired by the time the push finishes.";
+
+/// What one test run produced.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionNamingTest {
+    /// The sample that was sent, so the surface can show what left the machine.
+    pub sent: String,
+    /// The name that came back, cleaned exactly as a real one would be.
+    pub name: String,
+    /// Round trip in milliseconds.
+    ///
+    /// Reported because this call repeats every few seconds while someone
+    /// writes: a namer that takes eight seconds technically works and is
+    /// still the wrong choice, and no other surface would ever show that.
+    pub elapsed_ms: u64,
+}
+
+/// Try a naming configuration without storing it.
+///
+/// `api_key` is the same three-state value [`set_coding_session_naming_settings`]
+/// takes: `None` means "use the stored key", so a test of an unchanged
+/// configuration does not require re-typing it.
+#[tauri::command]
+pub async fn test_coding_session_naming(
+    app: AppHandle,
+    provider: CodingSessionNamingProvider,
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Result<CodingSessionNamingTest, String> {
+    let record = load_record(&app)?;
+    let base_url = base_url
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .unwrap_or(record.base_url.clone());
+    let model = model
+        .map(|value| value.trim().to_string())
+        .unwrap_or(record.model.clone());
+    let api_key = match api_key {
+        Some(key) if !key.trim().is_empty() => Some(key.trim().to_string()),
+        // An explicitly emptied field means "no key", which is a valid
+        // configuration for a local model — not a reason to fall back to a
+        // stored one the person is in the middle of clearing.
+        Some(_) => None,
+        None => stored_api_key(&record),
+    };
+    let started = std::time::Instant::now();
+    let name = name_with(
+        provider,
+        &base_url,
+        &model,
+        api_key.as_deref(),
+        NAMING_TEST_MESSAGE,
+    )
+    .await?;
+    Ok(CodingSessionNamingTest {
+        sent: NAMING_TEST_MESSAGE.to_string(),
+        name,
+        elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+    })
 }
 
 #[cfg(test)]

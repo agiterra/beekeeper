@@ -67,3 +67,35 @@ export async function generateCodingSessionName(
 ): Promise<string> {
   return invokeTauri<string>("generate_coding_session_name", { firstMessage });
 }
+
+export type CodingSessionNamingTest = {
+  /** The sample that was sent — never anything the person wrote. */
+  sent: string;
+  name: string;
+  /** Round trip in milliseconds. This call repeats every few seconds in the
+   * create dialog, so how long it takes is part of whether it is usable. */
+  elapsedMs: number;
+};
+
+/**
+ * Try a configuration without storing it.
+ *
+ * Everything is optional except the provider: an omitted field falls back to
+ * what is stored, which is what makes "test the key I saved last week
+ * against the model I just typed" work. An explicitly empty `apiKey` means
+ * no key — the right configuration for a local model, and not the same thing
+ * as omitting it.
+ */
+export async function testCodingSessionNaming(input: {
+  provider: CodingSessionNamingProvider;
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}): Promise<CodingSessionNamingTest> {
+  return invokeTauri<CodingSessionNamingTest>("test_coding_session_naming", {
+    provider: input.provider,
+    baseUrl: input.baseUrl ?? null,
+    model: input.model ?? null,
+    apiKey: input.apiKey ?? null,
+  });
+}

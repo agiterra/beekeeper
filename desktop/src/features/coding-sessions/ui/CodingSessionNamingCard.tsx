@@ -4,11 +4,14 @@ import * as React from "react";
 import {
   getCodingSessionNamingSettings,
   setCodingSessionNamingSettings,
+  testCodingSessionNaming,
   type CodingSessionNamingProvider,
   type CodingSessionNamingSettings,
 } from "@/shared/api/tauriCodingSessionNaming";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { cn } from "@/shared/lib/cn";
+import { codingSessionNamingTestSummary } from "../lib/codingSessionNamingTest";
 
 export const codingSessionNamingQueryKey = ["coding-session-naming"] as const;
 
@@ -62,6 +65,25 @@ export function CodingSessionNamingCard() {
     },
   });
 
+  /**
+   * Try what is in the fields, without saving it.
+   *
+   * Testing the *stored* configuration would be the easy version and the
+   * useless one: the moment a test is worth pressing is the moment the URL
+   * in the box is not the URL on disk.
+   */
+  const tryIt = useMutation({
+    mutationFn: (next: CodingSessionNamingSettings) =>
+      testCodingSessionNaming({
+        provider: next.provider,
+        baseUrl: next.baseUrl,
+        model: next.model,
+        // Omitted means "use the stored key"; the field being blank while a
+        // key is on file is the unchanged case, not a request to drop it.
+        ...(apiKey.length > 0 ? { apiKey } : {}),
+      }),
+  });
+
   /** Delete the stored key without touching anything else. */
   const forgetKey = useMutation({
     mutationFn: (provider: CodingSessionNamingProvider) =>
@@ -79,6 +101,17 @@ export function CodingSessionNamingCard() {
       : failure instanceof Error
         ? failure.message
         : String(failure);
+
+  const testSummary = codingSessionNamingTestSummary({
+    error:
+      tryIt.error === null || tryIt.error === undefined
+        ? null
+        : tryIt.error instanceof Error
+          ? tryIt.error.message
+          : String(tryIt.error),
+    isPending: tryIt.isPending,
+    result: tryIt.data ?? null,
+  });
 
   const patch = React.useCallback(
     (change: Partial<CodingSessionNamingSettings>) =>
@@ -223,6 +256,18 @@ export function CodingSessionNamingCard() {
         >
           {save.isPending ? "Saving…" : "Save"}
         </Button>
+        {current.provider !== "off" ? (
+          <Button
+            data-testid="coding-session-naming-test"
+            disabled={tryIt.isPending || current.model.trim().length === 0}
+            onClick={() => tryIt.mutate(current)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {tryIt.isPending ? "Testing…" : "Test"}
+          </Button>
+        ) : null}
         {current.hasApiKey && current.provider !== "off" ? (
           <Button
             data-testid="coding-session-naming-forget-key"
@@ -241,6 +286,38 @@ export function CodingSessionNamingCard() {
           </p>
         ) : null}
       </div>
+
+      {testSummary.headline ? (
+        <div
+          className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+          data-testid="coding-session-naming-test-result"
+          role="status"
+        >
+          <p
+            className={cn(
+              "text-sm",
+              testSummary.tone === "failed"
+                ? "text-destructive"
+                : "text-foreground",
+            )}
+          >
+            {testSummary.headline}
+          </p>
+          {testSummary.tone === "ok" && testSummary.detail ? (
+            <p className="text-2xs text-muted-foreground">
+              {testSummary.detail}
+            </p>
+          ) : null}
+          {/* What was sent, verbatim. A test that quietly used the person's
+              own draft would be the one thing this card promises it never
+              does, so the sample is shown rather than described. */}
+          {tryIt.data ? (
+            <p className="text-2xs text-muted-foreground">
+              Sent a fixed sample, not anything you wrote: “{tryIt.data.sent}”
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -426,6 +426,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::naming::coding_session_naming_settings,
         coding_sessions::naming::set_coding_session_naming_settings,
         coding_sessions::naming::generate_coding_session_name,
+        coding_sessions::naming::test_coding_session_naming,
         commands::coding_session_export::begin_coding_session_transcript_export,
         commands::coding_session_export::write_coding_session_transcript_export,
     ]

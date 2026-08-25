@@ -195,6 +195,58 @@ async fn an_unreachable_endpoint_says_where_it_could_not_reach() {
     assert!(failure.contains("127.0.0.1:1"), "{failure}");
 }
 
+#[tokio::test]
+async fn a_test_run_sends_the_fixed_sample_and_nothing_a_person_wrote() {
+    let (base_url, seen) = stub_openai_server("Fix the push timeout").await;
+
+    let name = name_with(
+        CodingSessionNamingProvider::OpenAiCompatible,
+        &base_url,
+        "llama3.2",
+        None,
+        NAMING_TEST_MESSAGE,
+    )
+    .await
+    .expect("name");
+    assert_eq!(name, "Fix the push timeout");
+
+    let request = seen.lock().expect("seen").clone().expect("a request");
+    // The sample is what travels. This is the promise the settings card makes
+    // about pressing Test, and it is worth a test of its own.
+    assert!(request.contains("credential helper"), "{request}");
+}
+
+#[tokio::test]
+async fn an_unconfigured_namer_is_refused_before_any_request_is_built() {
+    for (provider, model) in [
+        (CodingSessionNamingProvider::Off, "llama3.2"),
+        // A provider with no model named is not configured either — reaching
+        // an endpoint with an empty model would be a 400 dressed up as a
+        // network problem.
+        (CodingSessionNamingProvider::OpenAiCompatible, ""),
+        (CodingSessionNamingProvider::Anthropic, ""),
+    ] {
+        let failure = name_with(provider, "http://127.0.0.1:1/v1", model, None, "anything")
+            .await
+            .expect_err("refused");
+        assert_eq!(failure, "no naming model is configured");
+    }
+}
+
+#[tokio::test]
+async fn anthropic_without_a_key_says_so_rather_than_failing_at_the_wire() {
+    let failure = name_with(
+        CodingSessionNamingProvider::Anthropic,
+        "",
+        "claude-opus-5",
+        None,
+        NAMING_TEST_MESSAGE,
+    )
+    .await
+    .expect_err("refused");
+    assert!(failure.contains("needs an API key"), "{failure}");
+}
+
 #[test]
 fn the_provider_names_survive_a_round_trip() {
     for (provider, wire) in [
