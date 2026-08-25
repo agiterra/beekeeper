@@ -81,6 +81,154 @@ impl StderrTail {
     }
 }
 
+/// Which of the read loop's deadlines is nearest, decided before sleeping so
+/// the classification cannot be changed by scheduler jitter after the fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeadlineKind {
+    Idle,
+    AnswerStall,
+    Hard,
+}
+
+impl DeadlineKind {
+    /// The error this expiry means, with the warning that explains it.
+    ///
+    /// Both expiry sites — the pre-select check and the sleep arm — go through
+    /// here. They were duplicated blocks before there was a third deadline to
+    /// get wrong in two places.
+    fn into_error(
+        self,
+        idle_timeout: std::time::Duration,
+        stall_watch: &AnswerStallWatch,
+        last_activity_at: tokio::time::Instant,
+    ) -> AcpError {
+        match self {
+            Self::Idle => {
+                tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
+                AcpError::IdleTimeout(idle_timeout)
+            }
+            Self::AnswerStall => {
+                let quiet = stall_watch.timeout.unwrap_or_default();
+                tracing::warn!(
+                    "answer stall ({quiet:?}) — the agent finished answering with no tool \
+                     in flight and never resolved the prompt"
+                );
+                AcpError::AnswerStall(quiet)
+            }
+            Self::Hard => {
+                let silence =
+                    tokio::time::Instant::now().saturating_duration_since(last_activity_at);
+                tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
+                AcpError::HardTimeout { silence }
+            }
+        }
+    }
+}
+
+/// Watches a turn for the signature of an adapter that has stopped answering.
+///
+/// The idle deadline is a *silence* budget, and silence is normal: a build, a
+/// test suite, a subagent thinking can all legitimately say nothing for
+/// minutes. So it is sized for the worst legitimate case and cannot be
+/// tightened without killing healthy turns.
+///
+/// This watches for something else — the shape of a turn that is already over.
+/// Once the agent has streamed prose at the top level and every tool call it
+/// opened has reported a terminal status, there is nothing left for it to be
+/// doing: the SDK result follows within milliseconds. Silence *there* is not
+/// slow work, it is a prompt that will never be answered, and it can be given a
+/// far shorter budget than the idle timer without endangering anything.
+///
+/// Subagent-attributed frames are excluded from every part of this. A
+/// subagent's prose is not the turn's answer — claude-agent-acp makes the same
+/// distinction on the same field when it decides what counts as answer
+/// delivery — and a subagent's tool calls belong to the Task call that is
+/// already counted at the top level.
+#[derive(Debug)]
+struct AnswerStallWatch {
+    /// `None` disables the watch entirely.
+    timeout: Option<std::time::Duration>,
+    /// Whether top-level prose has been seen this turn.
+    answer_streamed: bool,
+    /// Tool calls opened at the top level and not yet terminal.
+    tools_in_flight: std::collections::HashSet<String>,
+    /// Armed deadline, or `None` when the signature does not currently hold.
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl AnswerStallWatch {
+    fn new(timeout: Option<std::time::Duration>) -> Self {
+        Self {
+            timeout,
+            answer_streamed: false,
+            tools_in_flight: std::collections::HashSet::new(),
+            deadline: None,
+        }
+    }
+
+    /// Fold one inbound message in, then re-evaluate the deadline.
+    ///
+    /// Called for every line, not just `session/update`s: any line at all is
+    /// activity, and while the signature holds it pushes the deadline back. The
+    /// watch therefore measures silence *after* the answer, which is the thing
+    /// that is actually anomalous.
+    fn observe(&mut self, msg: &serde_json::Value, now: tokio::time::Instant) {
+        if self.timeout.is_none() {
+            return;
+        }
+        if msg.get("method").and_then(|m| m.as_str()) == Some("session/update") {
+            let update = &msg["params"]["update"];
+            if !update_is_subagent_attributed(update) {
+                match update.get("sessionUpdate").and_then(|k| k.as_str()) {
+                    Some("agent_message_chunk") => self.answer_streamed = true,
+                    Some("tool_call") => {
+                        if let Some(id) = update.get("toolCallId").and_then(|v| v.as_str()) {
+                            self.tools_in_flight.insert(id.to_owned());
+                        }
+                    }
+                    Some("tool_call_update") => {
+                        let terminal = matches!(
+                            update.get("status").and_then(|v| v.as_str()),
+                            Some("completed" | "failed")
+                        );
+                        if terminal {
+                            if let Some(id) = update.get("toolCallId").and_then(|v| v.as_str()) {
+                                self.tools_in_flight.remove(id);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.rearm(now);
+    }
+
+    fn rearm(&mut self, now: tokio::time::Instant) {
+        let armed = self.answer_streamed && self.tools_in_flight.is_empty();
+        self.deadline = match (armed, self.timeout) {
+            (true, Some(timeout)) => Some(now + timeout),
+            _ => None,
+        };
+    }
+
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        self.deadline
+    }
+}
+
+/// Whether a `session/update`'s payload describes a subagent's work.
+///
+/// claude-agent-acp stamps `_meta.claudeCode.parentToolUseId` — on the `update`
+/// object, not the notification's `params` — onto every frame produced inside a
+/// Task subagent.
+fn update_is_subagent_attributed(update: &serde_json::Value) -> bool {
+    update
+        .pointer("/_meta/claudeCode/parentToolUseId")
+        .and_then(|v| v.as_str())
+        .is_some_and(|parent| !parent.is_empty())
+}
+
 /// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
 ///
 /// Both halves matter: the re-emission is what keeps the harness terminal's
@@ -187,6 +335,16 @@ pub enum AcpError {
 
     #[error("Hard turn timeout exceeded (silence {silence:?})")]
     HardTimeout { silence: std::time::Duration },
+
+    /// The agent answered and then never resolved the prompt.
+    ///
+    /// Distinct from [`IdleTimeout`](Self::IdleTimeout) on purpose: an idle
+    /// timeout means "we do not know what it is doing", and this means "we know
+    /// it is finished and the response never came". They call for different
+    /// words to the operator and a different presumption about the work, so
+    /// they must not collapse into one error.
+    #[error("Agent finished answering but never resolved the prompt ({0:?} after the answer)")]
+    AnswerStall(std::time::Duration),
 
     #[error("Agent did not stop within {0:?} after cancellation")]
     CancelDrainTimeout(std::time::Duration),
@@ -319,6 +477,10 @@ pub struct AcpClient {
     agent_name: String,
     /// Bounded tail of the adapter's stderr, filled by a background reader.
     stderr_tail: std::sync::Arc<StderrTail>,
+    /// How long a turn may stay silent *after* it has finished answering before
+    /// the host stops waiting. `None` disables the watch. See
+    /// [`AnswerStallWatch`].
+    answer_stall_timeout: Option<std::time::Duration>,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
     ///
@@ -743,6 +905,7 @@ impl AcpClient {
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
             stderr_tail,
+            answer_stall_timeout: None,
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1188,9 +1351,14 @@ impl AcpClient {
                 self.last_prompt_id = None;
                 self.current_hard_deadline = None;
             }
-            Err(AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. }) => {
+            Err(
+                AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } | AcpError::AnswerStall(_),
+            ) => {
                 // Leave last_prompt_id and current_hard_deadline set —
-                // caller will invoke cancel_with_cleanup.
+                // caller will invoke cancel_with_cleanup. An answer stall needs
+                // this most of all: the cancel is not cleanup there, it is the
+                // adapter's own way out of the hold, and it cannot be sent
+                // against a prompt id we have already forgotten.
             }
             Err(_) => {
                 self.last_prompt_id = None;
@@ -1260,6 +1428,16 @@ impl AcpClient {
     /// name — the capability gates key on the package identity.
     pub fn agent_name(&self) -> &str {
         &self.agent_name
+    }
+
+    /// Set how long a turn may stay silent after answering before the host
+    /// gives up on the adapter resolving it. `None` disables the watch.
+    ///
+    /// Opt-in rather than defaulted so the managed-agent pool, whose turns have
+    /// different shapes and its own supervision, is unaffected until someone
+    /// decides it should be.
+    pub fn set_answer_stall_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.answer_stall_timeout = timeout;
     }
 
     /// The tail of the adapter's stderr captured so far.
@@ -1745,16 +1923,25 @@ impl AcpClient {
         let mut idle_deadline = now + idle_timeout;
         let mut hard_deadline = hard_deadline;
         let mut last_activity_at = now;
+        let mut stall_watch = AnswerStallWatch::new(self.answer_stall_timeout);
 
         loop {
             // Determine which deadline fires first BEFORE sleeping — this is
             // the classification we'll use on timeout, immune to scheduler jitter.
-            let idle_fires_first = idle_deadline < hard_deadline;
-            let next_deadline = if idle_fires_first {
-                idle_deadline
+            // The stall deadline is only present while the turn actually looks
+            // finished, so most iterations still choose between two.
+            let mut next_deadline = idle_deadline.min(hard_deadline);
+            let mut expiry = if idle_deadline < hard_deadline {
+                DeadlineKind::Idle
             } else {
-                hard_deadline
+                DeadlineKind::Hard
             };
+            if let Some(stall_deadline) = stall_watch.deadline() {
+                if stall_deadline < next_deadline {
+                    next_deadline = stall_deadline;
+                    expiry = DeadlineKind::AnswerStall;
+                }
+            }
 
             // Pre-select deadline check — required by Max's review. Under
             // `biased`, a continuously-ready reader arm wins every poll and
@@ -1771,14 +1958,7 @@ impl AcpClient {
                     // normal dispatch handles redelivery).
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
-                if idle_fires_first {
-                    tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                    return Err(AcpError::IdleTimeout(idle_timeout));
-                } else {
-                    let silence = Instant::now().saturating_duration_since(last_activity_at);
-                    tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                    return Err(AcpError::HardTimeout { silence });
-                }
+                return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at));
             }
 
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
@@ -1892,14 +2072,7 @@ impl AcpClient {
                     if let Some((_, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
-                    if idle_fires_first {
-                        tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                        return Err(AcpError::IdleTimeout(idle_timeout));
-                    } else {
-                        let silence = Instant::now().saturating_duration_since(last_activity_at);
-                        tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                        return Err(AcpError::HardTimeout { silence });
-                    }
+                    return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at));
                 }
             };
 
@@ -1962,6 +2135,7 @@ impl AcpClient {
                     let activity_now = Instant::now();
                     idle_deadline = activity_now + idle_timeout;
                     last_activity_at = activity_now;
+                    stall_watch.observe(&msg, activity_now);
 
                     // Steer response routing must come BEFORE the prompt
                     // response check: a steer response is a regular
@@ -4179,6 +4353,179 @@ mod tests {
         );
         assert!(elapsed < std::time::Duration::from_secs(5));
         assert!(matches!(result, Err(AcpError::IdleTimeout(_))));
+    }
+
+    /// One `session/update` line for the scripted-stream stall tests.
+    ///
+    /// Built rather than written out so the four tests below cannot drift into
+    /// disagreeing about the frame shape they are asserting on.
+    fn stall_frame(update: serde_json::Value) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": { "update": update },
+        })
+        .to_string()
+    }
+
+    fn top_level_prose() -> String {
+        stall_frame(serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "done" },
+        }))
+    }
+
+    fn task_call_opened() -> String {
+        stall_frame(serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "Task",
+        }))
+    }
+
+    fn task_call_completed() -> String {
+        stall_frame(serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "status": "completed",
+        }))
+    }
+
+    fn subagent_prose() -> String {
+        stall_frame(serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": "child" },
+            "_meta": { "claudeCode": { "parentToolUseId": "t1" } },
+        }))
+    }
+
+    /// The reported failure, reproduced: the answer streams, the tool finishes,
+    /// and the prompt response never comes.
+    ///
+    /// The turn must end on the *stall* budget, not the idle one, and must say
+    /// which — the point is that the operator learns the adapter dropped the
+    /// prompt rather than that "the agent went quiet".
+    #[tokio::test]
+    async fn a_turn_that_answers_and_then_never_resolves_ends_on_the_stall_budget() {
+        let script = format!(
+            "echo '{}'; echo '{}'; echo '{}'; sleep 10",
+            task_call_opened(),
+            task_call_completed(),
+            top_level_prose(),
+        );
+        let mut client = spawn_script(&script).await;
+        client.set_answer_stall_timeout(Some(std::time::Duration::from_millis(150)));
+
+        let max_dur = std::time::Duration::from_secs(30);
+        let started = std::time::Instant::now();
+        let result = client
+            .read_until_response_with_idle_timeout(
+                "test",
+                999,
+                // An idle budget far larger than the stall budget: without the
+                // stall watch this would sit here for the full ten seconds and
+                // then fail on the wrong error.
+                std::time::Duration::from_secs(10),
+                tokio::time::Instant::now() + max_dur,
+                max_dur,
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AcpError::AnswerStall(_))),
+            "expected an answer stall, got {result:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the stall budget must fire long before the idle budget"
+        );
+    }
+
+    /// The guard must not arm while the agent is still working.
+    ///
+    /// This is the consequential direction: a tool call that runs longer than
+    /// the stall budget — a build, a test suite, a subagent — must be left to
+    /// the idle budget alone.
+    #[tokio::test]
+    async fn an_unfinished_tool_call_is_never_treated_as_a_stall() {
+        let script = format!(
+            "echo '{}'; echo '{}'; sleep 10",
+            top_level_prose(),
+            task_call_opened(),
+        );
+        let mut client = spawn_script(&script).await;
+        client.set_answer_stall_timeout(Some(std::time::Duration::from_millis(100)));
+
+        let max_dur = std::time::Duration::from_secs(30);
+        let result = client
+            .read_until_response_with_idle_timeout(
+                "test",
+                999,
+                std::time::Duration::from_millis(400),
+                tokio::time::Instant::now() + max_dur,
+                max_dur,
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout(_))),
+            "a tool still in flight must fall to the idle budget, got {result:?}"
+        );
+    }
+
+    /// A subagent's prose is not the turn's answer.
+    ///
+    /// Were it counted, a subagent narrating its work would arm the watch while
+    /// its Task call is still legitimately running, and the guard would kill
+    /// exactly the turns it exists to protect.
+    #[tokio::test]
+    async fn a_subagents_prose_does_not_arm_the_stall_watch() {
+        let script = format!(
+            "echo '{}'; for i in $(seq 1 10); do echo '{}'; sleep 0.05; done; sleep 10",
+            task_call_opened(),
+            subagent_prose(),
+        );
+        let mut client = spawn_script(&script).await;
+        client.set_answer_stall_timeout(Some(std::time::Duration::from_millis(100)));
+
+        let max_dur = std::time::Duration::from_secs(30);
+        let result = client
+            .read_until_response_with_idle_timeout(
+                "test",
+                999,
+                std::time::Duration::from_millis(400),
+                tokio::time::Instant::now() + max_dur,
+                max_dur,
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout(_))),
+            "subagent prose must not count as the turn's answer, got {result:?}"
+        );
+    }
+
+    /// The watch is opt-in, and off by default.
+    #[tokio::test]
+    async fn the_stall_watch_does_nothing_until_it_is_configured() {
+        let script = format!("echo '{}'; sleep 10", top_level_prose());
+        let mut client = spawn_script(&script).await;
+
+        let max_dur = std::time::Duration::from_secs(30);
+        let result = client
+            .read_until_response_with_idle_timeout(
+                "test",
+                999,
+                std::time::Duration::from_millis(200),
+                tokio::time::Instant::now() + max_dur,
+                max_dur,
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(AcpError::IdleTimeout(_))),
+            "an unconfigured client must behave exactly as before, got {result:?}"
+        );
     }
 
     #[tokio::test]

@@ -240,6 +240,7 @@ mod tests {
             max_sessions: 4,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
+            answer_stall_timeout: Some(Duration::from_secs(120)),
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             command_horizon: Duration::from_secs(86_400),
