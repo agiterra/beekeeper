@@ -5,14 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CodingSessionHeader } from "./CodingSessionHeader.tsx";
 import {
-  codingSessionTaskRailPreferenceKey,
   CODING_SESSION_TASK_RAIL_ID,
   CodingSessionTaskRail,
-  deriveCodingSessionTaskRailOpen,
 } from "./CodingSessionTaskRail.tsx";
 
 const activeModel = {
   sourceItemId: "plan-1",
+  turnId: "turn-1",
   timestamp: "2026-07-30T12:00:00.000Z",
   completedCount: 1,
   explanation: "Rendering the latest signed plan from this session.",
@@ -37,58 +36,6 @@ const activeModel = {
     },
   ],
 };
-
-test("empty plan rail stays closed until a plan exists or the exact session is opened", () => {
-  assert.equal(
-    deriveCodingSessionTaskRailOpen({
-      hasPlan: false,
-      isNarrow: false,
-      preference: null,
-    }),
-    false,
-  );
-  assert.equal(
-    deriveCodingSessionTaskRailOpen({
-      hasPlan: true,
-      isNarrow: false,
-      preference: null,
-    }),
-    true,
-  );
-  assert.equal(
-    deriveCodingSessionTaskRailOpen({
-      hasPlan: false,
-      isNarrow: false,
-      preference: "open",
-    }),
-    true,
-  );
-  assert.equal(
-    deriveCodingSessionTaskRailOpen({
-      hasPlan: true,
-      isNarrow: false,
-      preference: "closed",
-    }),
-    false,
-  );
-  assert.equal(
-    deriveCodingSessionTaskRailOpen({
-      hasPlan: true,
-      isNarrow: true,
-      preference: null,
-    }),
-    false,
-  );
-
-  assert.notEqual(
-    codingSessionTaskRailPreferenceKey("channel-1", "generation-1"),
-    codingSessionTaskRailPreferenceKey("channel-1", "generation-2"),
-  );
-  assert.notEqual(
-    codingSessionTaskRailPreferenceKey("channel-1", "generation-1"),
-    codingSessionTaskRailPreferenceKey("channel-2", "generation-1"),
-  );
-});
 
 test("task rail renders bounded provider-neutral states and completion summary", () => {
   const markup = renderToStaticMarkup(

@@ -64,6 +64,7 @@ export function CodingSessionColumn({
         expanded && CODING_SESSION_COLUMN_EXPANDED_CLASS,
         className,
       )}
+      data-coding-session-column=""
       {...props}
     >
       {children}

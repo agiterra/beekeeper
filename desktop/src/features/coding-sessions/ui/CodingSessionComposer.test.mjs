@@ -85,25 +85,19 @@ test("immersive working composer uses one compact truthful control row", () => {
 
   assert.match(markup, /data-mode="immersive"/);
   assert.match(markup, /data-testid="coding-session-control-deck"/);
-  assert.match(markup, /whitespace-nowrap/);
+  assert.match(markup, /rounded-3xl/);
+  assert.match(markup, /resize-none/);
   assert.doesNotMatch(markup, /flex-wrap/);
   assert.doesNotMatch(markup, /coding-session-control-status/);
   assert.doesNotMatch(markup, />Working</);
-  assert.match(markup, />Anthropic</);
-  assert.match(markup, />claude-opus-5</);
+  assert.match(markup, /Anthropic · Claude Opus 5/);
   assert.match(markup, />High</);
   assert.doesNotMatch(markup, /claude-opus-5\[high\]/);
-  assert.match(markup, /Runtime: Claude Code/);
-  assert.match(markup, /Signed channel member/);
-  assert.match(markup, />Member</);
-  assert.match(
-    markup,
-    /Provider capabilities: Turns, Steer, Interrupt, Context, Diff, Plan/,
-  );
+  assert.match(markup, />Can control</);
   assert.match(markup, /coding-session-composer-steer/);
-  assert.match(markup, />Steer</);
+  assert.match(markup, /aria-label="Steer current turn"/);
   assert.match(markup, /coding-session-composer-interrupt/);
-  assert.match(markup, />Interrupt</);
+  assert.match(markup, /aria-label="Interrupt current turn"/);
   assert.doesNotMatch(markup, /coding-session-composer-primary/);
 });
 
@@ -130,12 +124,9 @@ test("immersive idle composer leaves status to the header and shows send", () =>
 
   assert.doesNotMatch(markup, /coding-session-control-status/);
   assert.doesNotMatch(markup, />Idle</);
-  assert.match(
-    markup,
-    /Live steer and interrupt capabilities have not been declared/,
-  );
+  assert.match(markup, /OpenAI · GPT-5\.6/);
   assert.match(markup, /coding-session-composer-primary/);
-  assert.match(markup, />Send</);
+  assert.match(markup, /aria-label="Send message"/);
   assert.doesNotMatch(markup, /coding-session-composer-interrupt/);
 });
 
@@ -213,11 +204,10 @@ test("immersive controls fail closed when authority and interrupt capability are
   );
 
   assert.match(markup, />View only</);
-  assert.match(markup, /Provider capabilities: Turns, Diff/);
-  assert.doesNotMatch(markup, /Provider capabilities: Turns, Diff, Plan/);
+  assert.match(markup, />Provider runtime</);
   assert.doesNotMatch(markup, /coding-session-composer-steer/);
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, />Interrupt</);
+  assert.match(markup, /aria-label="Queue next turn"/);
   assert.match(markup, /Current-turn interrupt is unavailable/);
   assert.match(markup, /coding-session-composer-interrupt[^>]*disabled=""/);
 });
@@ -242,7 +232,7 @@ test("a running turn without live steer keeps the editor open and offers Queue",
     /aria-label="Coding-session instruction"[^>]*disabled=""/,
   );
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, />Queue</);
+  assert.match(markup, /aria-label="Queue next turn"/);
 });
 
 test("founder authority gates send, interrupt, resume, and stop together", () => {
@@ -260,8 +250,12 @@ test("founder authority gates send, interrupt, resume, and stop together", () =>
       variant: "floating",
     }),
   );
-  assert.match(working, /coding-session-composer-authority-gated/);
-  assert.match(working, /Only the session founder/);
+  assert.doesNotMatch(working, /coding-session-composer-authority-gated/);
+  assert.match(working, />View only</);
+  assert.match(
+    working,
+    /placeholder="View only — ask for collaborator access\."/,
+  );
   assert.match(working, /coding-session-composer-interrupt[^>]*disabled=""/);
   assert.match(
     working,
@@ -289,7 +283,7 @@ test("founder authority gates send, interrupt, resume, and stop together", () =>
   );
 });
 
-test("legacy sessions retain controls with an honest ungoverned hint", () => {
+test("legacy sessions retain controls without adding a warning above the editor", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {
       canControl: true,
@@ -303,11 +297,45 @@ test("legacy sessions retain controls with an honest ungoverned hint", () => {
       variant: "floating",
     }),
   );
-  assert.match(markup, /coding-session-ungoverned-hint/);
-  assert.match(markup, />ungoverned — adopt to govern\.</);
+  assert.doesNotMatch(markup, /coding-session-ungoverned-hint/);
+  assert.match(markup, />Can control</);
   assert.doesNotMatch(markup, /coding-session-composer-authority-gated/);
   assert.doesNotMatch(
     markup,
     /aria-label="Coding-session instruction"[^>]*disabled=""/,
   );
+});
+
+test("signed context usage earns a meter; missing telemetry does not", () => {
+  const withUsage = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      contextWindow: {
+        usedTokens: 75_000,
+        maxTokens: 100_000,
+        usedPercentage: 75,
+      },
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(withUsage, /coding-session-context-window/);
+  assert.match(withUsage, /aria-label="Context window 75% used"/);
+
+  const withoutUsage = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: false,
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.doesNotMatch(withoutUsage, /coding-session-context-window/);
 });

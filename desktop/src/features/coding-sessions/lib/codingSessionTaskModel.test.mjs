@@ -14,6 +14,7 @@ function tool({
   result = "",
   toolName,
   timestamp = "2026-07-30T12:00:00.000Z",
+  turnId,
 }) {
   return {
     id,
@@ -35,6 +36,7 @@ function tool({
     timestamp,
     startedAt: timestamp,
     completedAt: timestamp,
+    turnId,
   };
 }
 
@@ -247,6 +249,27 @@ test("stable IDs survive status changes and task reordering", () => {
     first.tasks.find((task) => task.text === "Beta").id,
     second.tasks.find((task) => task.text === "Beta").id,
   );
+});
+
+test("completed tasks derive elapsed time only from signed snapshots in their turn", () => {
+  const model = deriveCodingSessionTaskModel([
+    tool({
+      id: "plan-1",
+      timestamp: "2026-07-30T12:00:00.000Z",
+      toolName: "update_plan",
+      turnId: "turn-1",
+      args: { plan: [{ step: "Inspect", status: "in_progress" }] },
+    }),
+    tool({
+      id: "plan-2",
+      timestamp: "2026-07-30T12:03:59.000Z",
+      toolName: "update_plan",
+      turnId: "turn-1",
+      args: { plan: [{ step: "Inspect", status: "completed" }] },
+    }),
+  ]);
+
+  assert.equal(model.tasks[0].elapsedMs, 239_000);
 });
 
 test("bounds task count and task text from signed transcript data", () => {

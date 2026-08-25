@@ -1375,6 +1375,30 @@ written and `bash -n` clean but **was not executed** — that harness needs
     the state becomes idle; the wide E2E screenshot proves the editor is enabled
     in that state.
 
+55. **The active plan and composer now behave as one turn-scoped work surface**
+    (T3 Code comparison, 2026-08-25). The floating composer is a solid surface
+    with one borderless editor and one quiet control row: the provider/model
+    identity and access label open explanatory popovers; model traits are
+    informational rather than fake selectors; execution stop is terminal and
+    lives under More; and a context meter appears only when a signed
+    `Context Window Updated` item supplies real token use. Send/Queue/Steer and
+    interrupt retain the existing authority and capability gates.
+    - The Tasks attachment is derived only from the newest signed plan in the
+      currently running transcript turn. A stale, untraceable, completed, or
+      idle plan cannot pin itself above the composer. Closing dismisses that
+      turn's attachment; a newer signed turn may open its own. Completed rows
+      retain elapsed time derived from same-turn signed plan snapshots, and the
+      active row reads `now`. Completion releases the attachment automatically.
+    - The Goal bar, transcript, task attachment, and composer share one measure:
+      72rem while the workspace is clear, 48rem while Agents or Observed changes
+      occupies the side, with both values rem-based so Cmd +/- preserves the
+      reading measure. The Goal bar now lives inside the shrinking narrative
+      section rather than remaining centered across the hidden flank.
+    - Evidence: 47 focused composer/task/context tests; all 6,166 desktop unit
+      tests; the three-view transcript narrative screenshot workflow; and the
+      width workflow at 1100/1280/1920/2560/3440px, with a side surface and at
+      24px root zoom. The repository-wide `just ci` gate passed on 2026-08-25.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -1390,7 +1414,7 @@ than replace them, and it is not started.
 ## 3. Next — one track at a time, in this order
 
 **The active track as of 2026-08-25 night is live confirmation of the
-full-screen UI/UX pass — §2 items 52–53.** The implementation, focused
+full-screen UI/UX pass — §2 items 52–53 and 55.** The implementation, focused
 wide-screen E2E workflow, and repository-wide `just ci` gate are green. It is
 landed on `fix/full-screen-session-ux`; only confirmation in the live desktop
 against hive remains. Everything below is the previous track, kept because its
