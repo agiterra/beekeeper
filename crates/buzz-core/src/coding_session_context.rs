@@ -895,10 +895,13 @@ pub fn sanitize_coding_session_context_text(value: &str) -> String {
     for segment in without_blocks.split_inclusive(char::is_whitespace) {
         let word = segment.trim_end_matches(char::is_whitespace);
         let trailing = &segment[word.len()..];
-        if is_context_elision_marker(word) {
-            // Already redacted upstream (a key block): never re-wrap it.
+        if is_context_elision_marker(word) || is_credential_mask(word) {
+            // Already redacted upstream: never redact a redaction.
             sanitized.push_str(word);
-        } else if contains_host_path(word) || contains_shaped_secret(word) {
+        } else if contains_shaped_secret(word) {
+            // A credential is masked, not hashed: see `mask_credential_value`.
+            sanitized.push_str(&mask_credential_value(word));
+        } else if contains_host_path(word) {
             sanitized.push_str(&context_elision_marker(&Value::String(word.to_owned())));
         } else {
             sanitized.push_str(word);
@@ -1100,13 +1103,13 @@ fn redact_credential_assignment_line(line: &str) -> String {
         }
     };
     let payload = &line[start..start + payload_len];
-    if payload.is_empty() || is_context_elision_marker(payload) {
+    if payload.is_empty() || is_context_elision_marker(payload) || is_credential_mask(payload) {
         return line.to_owned();
     }
     format!(
         "{}{}{}",
         &line[..start],
-        context_elision_marker(&Value::String(payload.to_owned())),
+        mask_credential_value(payload),
         &line[start + payload_len..]
     )
 }
@@ -1222,6 +1225,70 @@ fn sensitive_context_key(key: &str) -> bool {
             | "resumecursor"
             | "acpsessionid"
     )
+}
+
+/// Fixed-width mask, so the redaction never states a length.
+///
+/// A byte count is a hint about the secret. For a machine-generated token it
+/// is a harmless one; for `password: hunter2` it says the password is seven
+/// characters, which is a real gift. The mask is therefore always the same
+/// width regardless of what it replaced.
+const CREDENTIAL_MASK: &str = "••••••••";
+
+/// Characters of a machine-shaped token shown after the mask.
+///
+/// Four, the convention every card receipt and cloud console uses, and only
+/// for a token whose *shape* proves it is machine-generated: `ghp_` plus 36
+/// base62 characters leaves 62^32 possibilities after revealing four, which is
+/// not a search anyone runs. A human password has no such floor — its search
+/// space is a dictionary — so nothing is revealed for a value whose shape says
+/// nothing (see [`mask_credential_value`]).
+const CREDENTIAL_TAIL_CHARS: usize = 4;
+/// Shortest token whose tail may be shown; below this the tail is too much of it.
+const CREDENTIAL_TAIL_MIN_LEN: usize = 24;
+
+/// Replace a secret with a mask that says what it was, not what it is.
+///
+/// The old marker was `[elided private context: N bytes, sha256:…]` for every
+/// redaction. Two problems, both worse for credentials than for paths: it
+/// published a **crackable digest** — sha256 of a human password is a
+/// dictionary attack, not a secret — and it stated the length. It also drowned
+/// the sentence it sat in, which is how a mid-sentence redaction became hard
+/// to even notice (2026-08-24).
+///
+/// A known prefix is kept because it is a public format tag, not secret
+/// material: `ghp_`, `nsec1`, `AKIA` say *what kind of credential leaked*,
+/// which is exactly what a person reading the transcript needs in order to go
+/// rotate the right thing.
+fn mask_credential_value(value: &str) -> String {
+    // `contains_shaped_secret` looks past a `KEY=` to find the shape, so the
+    // mask has to as well — otherwise `token=ghp_…` masks the variable name
+    // along with its value and the reader loses which one leaked.
+    if let Some((key, secret)) = value.split_once('=') {
+        if !key.is_empty() && !secret.is_empty() {
+            return format!("{key}={}", mask_credential_value(secret));
+        }
+    }
+    let trimmed = value.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    let prefix = SHAPED_SECRET_PREFIXES
+        .iter()
+        .find(|prefix| lowered.starts_with(*prefix))
+        .map(|prefix| &trimmed[..prefix.len()]);
+    match prefix {
+        Some(prefix) if trimmed.len() >= CREDENTIAL_TAIL_MIN_LEN => {
+            let tail_start = trimmed.len() - CREDENTIAL_TAIL_CHARS;
+            format!("{prefix}{CREDENTIAL_MASK}{}", &trimmed[tail_start..])
+        }
+        Some(prefix) => format!("{prefix}{CREDENTIAL_MASK}"),
+        // Shape says nothing, so nothing is said: this may be a password.
+        None => CREDENTIAL_MASK.to_string(),
+    }
+}
+
+/// Is this text already a credential mask? Masks are never re-masked.
+fn is_credential_mask(value: &str) -> bool {
+    value.contains(CREDENTIAL_MASK)
 }
 
 fn context_elision_marker(value: &Value) -> String {

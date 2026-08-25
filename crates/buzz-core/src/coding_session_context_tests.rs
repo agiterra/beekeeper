@@ -522,7 +522,7 @@ fn a_value_beside_a_credential_word_still_goes() {
         "{sanitized}"
     );
     assert!(
-        sanitized.contains("[elided private context: "),
+        sanitized.contains("\u{2022}\u{2022}\u{2022}\u{2022}"),
         "{sanitized}"
     );
     assert!(sanitized.starts_with("export"), "{sanitized}");
@@ -689,4 +689,53 @@ fn a_parenthetical_after_a_credential_word_is_prose() {
     // The separator forms are unaffected: those carry their own evidence.
     let assigned = sanitize_coding_session_context_text("token=(hunter2)");
     assert!(!assigned.contains("hunter2"), "{assigned}");
+}
+
+/// What a redaction may say about what it hid.
+///
+/// The old marker published `sha256:` of the value and its byte count. For a
+/// host path that is mostly harmless; for `password: hunter2` it is a
+/// dictionary attack and a length hint, signed into a channel. A credential is
+/// therefore masked at a fixed width with no digest — and the only thing kept
+/// is the *format tag*, which is public documentation and is what tells a
+/// person which credential to go and rotate.
+#[test]
+fn a_masked_credential_states_its_kind_and_nothing_else() {
+    let long = sanitize_coding_session_context_text("token=ghp_0123456789abcdefghijklmnopqrs");
+    assert!(long.contains("ghp_"), "{long}");
+    assert!(long.ends_with("pqrs"), "the last four identify it: {long}");
+    assert!(!long.contains("sha256"), "no crackable digest: {long}");
+    assert!(!long.contains("bytes"), "no length hint: {long}");
+    assert!(!long.contains("0123456789"), "{long}");
+
+    // Shape says nothing, so nothing is revealed — this may be a password, and
+    // four characters of a dictionary word is most of the answer.
+    let unknown = sanitize_coding_session_context_text("password: hunter2");
+    assert!(
+        unknown.ends_with("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"),
+        "{unknown}"
+    );
+    assert!(!unknown.contains("er2"), "{unknown}");
+
+    // A short shaped token gets its tag but no tail: the tail would be too
+    // much of it.
+    let short = sanitize_coding_session_context_text("token=sk-abcdefghijkl");
+    assert!(short.contains("sk-"), "{short}");
+    assert!(!short.contains("ijkl"), "{short}");
+
+    // Two secrets of different lengths mask identically: no length leaks.
+    assert_eq!(
+        sanitize_coding_session_context_text("password: a1b2c3d4"),
+        sanitize_coding_session_context_text("password: a1b2c3d4e5f6g7h8"),
+    );
+}
+
+/// A mask is never masked again: projecting a package twice must not grow it.
+#[test]
+fn redaction_is_idempotent() {
+    let once = sanitize_coding_session_context_text("password: hunter2");
+    assert_eq!(sanitize_coding_session_context_text(&once), once);
+
+    let token = sanitize_coding_session_context_text("token=ghp_0123456789abcdefghijklmnopqrs");
+    assert_eq!(sanitize_coding_session_context_text(&token), token);
 }
