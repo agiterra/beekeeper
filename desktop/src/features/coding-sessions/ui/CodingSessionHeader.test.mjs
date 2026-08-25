@@ -251,3 +251,20 @@ test("a session no project claims shows no crumb at all", () => {
   assert.doesNotMatch(markup, /coding-session-project-crumb/);
   assert.match(markup, />generation 2</);
 });
+
+test("header separates reasoning effort from the adapter's raw model id", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      channelName: "Hive Sessions",
+      generationLabel: "Generation 1",
+      model: "gpt-5.6-terra[low]",
+      onBack() {},
+      runtimeLabel: "Codex",
+      sessionTitle: "Readable session labels",
+      status: { kind: "working", label: "Working" },
+    }),
+  );
+
+  assert.match(markup, /gpt-5\.6-terra · Low/);
+  assert.doesNotMatch(markup, /gpt-5\.6-terra\[low\]/);
+});

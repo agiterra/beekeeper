@@ -20,12 +20,14 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 
 import { CODING_SESSION_COLUMN_CLASS } from "./CodingSessionColumn";
+import { CODING_SESSION_COLUMN_EXPANDED_CLASS } from "./CodingSessionColumn";
 
 export function CodingSessionGoalPill({
   channelId,
   currentUserPubkey,
   founderPubkey,
   goal,
+  workspaceExpanded = false,
   sessionRef,
   variant = "workspace",
 }: {
@@ -33,6 +35,8 @@ export function CodingSessionGoalPill({
   currentUserPubkey: string | null;
   founderPubkey: string | null;
   goal: CodingSessionGoal | null;
+  /** Matches the transcript/composer when no secondary rail is open. */
+  workspaceExpanded?: boolean;
   sessionRef: string | null;
   variant?: "workspace" | "catalog";
 }) {
@@ -76,31 +80,52 @@ export function CodingSessionGoalPill({
             ? "mt-2 flex min-w-0 items-start gap-1.5 rounded-md bg-primary/8 px-2 py-1.5 text-xs"
             : cn(
                 CODING_SESSION_COLUMN_CLASS,
-                "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2",
+                workspaceExpanded && CODING_SESSION_COLUMN_EXPANDED_CLASS,
+                goal
+                  ? "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2"
+                  : "flex items-center",
               )
         }
         data-testid={`coding-session-goal-${variant}`}
       >
-        <Target className="mt-0.5 size-3.5 shrink-0 text-primary" />
-        <p className="min-w-0 flex-1 text-foreground">
-          <span className="font-medium">Goal:</span>{" "}
-          <span className={compact ? "line-clamp-2" : "whitespace-pre-wrap"}>
-            {goal?.content ?? "Add a goal for this session"}
-          </span>
-        </p>
-        {canEdit ? (
+        {!goal && !compact ? (
           <Button
-            aria-label={goal ? "Edit session goal" : "Add session goal"}
-            className="shrink-0"
-            data-testid={`coding-session-goal-edit-${variant}`}
+            className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+            data-testid="coding-session-goal-add-workspace"
             onClick={() => setOpen(true)}
-            size="icon-xs"
+            size="sm"
             type="button"
             variant="ghost"
           >
-            <Pencil />
+            <Target className="size-3.5" />
+            Add goal
           </Button>
-        ) : null}
+        ) : (
+          <>
+            <Target className="mt-0.5 size-3.5 shrink-0 text-primary" />
+            <p className="min-w-0 flex-1 text-foreground">
+              <span className="font-medium">Goal:</span>{" "}
+              <span
+                className={compact ? "line-clamp-2" : "whitespace-pre-wrap"}
+              >
+                {goal?.content ?? "Add a goal for this session"}
+              </span>
+            </p>
+            {canEdit ? (
+              <Button
+                aria-label={goal ? "Edit session goal" : "Add session goal"}
+                className="shrink-0"
+                data-testid={`coding-session-goal-edit-${variant}`}
+                onClick={() => setOpen(true)}
+                size="icon-xs"
+                type="button"
+                variant="ghost"
+              >
+                <Pencil />
+              </Button>
+            ) : null}
+          </>
+        )}
       </div>
       {canEdit ? (
         <Dialog onOpenChange={setOpen} open={open}>

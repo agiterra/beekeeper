@@ -105,6 +105,9 @@ test("renders the latest plan snapshot as a compact expandable narrative row", a
   assert.match(markup, /Implement/);
   assert.match(markup, />1\/3</);
   assert.match(markup, /data-plan-state="active"/);
+  assert.match(markup, /Working for/);
+  assert.match(markup, /Work Log/);
+  assert.match(markup, /Plan updated/);
   assert.doesNotMatch(markup, /transcript-tool-item/);
   assert.doesNotMatch(markup, /Working in order/);
 });
@@ -174,6 +177,7 @@ test("renders a settled turn with recent work visible in the narrative", async (
   assert.match(markup, />You</);
   assert.match(markup, /bg-muted/);
   assert.match(markup, /data-transcript-renderer="static"/);
+  assert.match(markup, /first:border-t-0/);
   assert.match(markup, /Fix the reconnect bug/);
   assert.match(markup, /coding-session-assistant-message/);
   assert.match(markup, /Reconnect now recovers cleanly/);

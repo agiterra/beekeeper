@@ -7,6 +7,7 @@ import {
   getToolDurationDisplay,
   isInlineImageData,
   parseShellToolOutput,
+  parseToolResultDisplayValue,
   parseToolResultValue,
 } from "./agentSessionUtils.ts";
 
@@ -39,6 +40,7 @@ test("isInlineImageData rejects relay-relative and absolute media URLs", () => {
 
 test("formatDurationMs returns null for negative input", () => {
   assert.equal(formatDurationMs(-1), null);
+  assert.equal(formatDurationMs(0), null);
 });
 
 test("formatDurationMs renders sub-10s with one decimal", () => {
@@ -93,6 +95,31 @@ test("parseToolResultValue returns null for invalid JSON", () => {
   assert.equal(parseToolResultValue("not json {"), null);
 });
 
+test("parseToolResultDisplayValue unwraps a one-block MCP text envelope", () => {
+  const result = JSON.stringify({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ availableHistoryItems: 47, items: [] }),
+      },
+    ],
+  });
+  assert.deepEqual(parseToolResultDisplayValue(result), {
+    availableHistoryItems: 47,
+    items: [],
+  });
+});
+
+test("parseToolResultDisplayValue preserves mixed MCP content", () => {
+  const result = JSON.stringify({
+    content: [
+      { type: "text", text: "one" },
+      { type: "text", text: "two" },
+    ],
+  });
+  assert.deepEqual(parseToolResultDisplayValue(result), JSON.parse(result));
+});
+
 test("parseShellToolOutput extracts stdout from a shell result envelope", () => {
   assert.deepEqual(
     parseShellToolOutput(
@@ -132,6 +159,17 @@ test("getToolDurationDisplay prefers start/complete timestamps", () => {
   assert.equal(
     getToolDurationDisplay({ startedAt, completedAt, result: "" }),
     "2.0s",
+  );
+});
+
+test("getToolDurationDisplay hides an exact-zero timestamp duration", () => {
+  assert.equal(
+    getToolDurationDisplay({
+      startedAt: "2026-08-25T00:00:00.000Z",
+      completedAt: "2026-08-25T00:00:00.000Z",
+      result: "",
+    }),
+    null,
   );
 });
 

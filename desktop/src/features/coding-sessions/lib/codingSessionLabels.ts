@@ -6,6 +6,8 @@
  * session it merely reads without pulling in the whole creation surface.
  */
 
+import { splitCodingSessionModelId } from "./codingSessionModelChoice";
+
 export function formatCodingSessionRuntimeLabel(runtime: string): string {
   const normalized = runtime.trim().toLowerCase().replaceAll("_", "-");
   if (normalized === "claude-agent-acp" || normalized === "claude-code") {
@@ -56,4 +58,34 @@ export function formatCodingSessionProviderLabel(input: {
   return instanceLabel.length > 0
     ? `${runtimeLabel} · ${instanceLabel}`
     : runtimeLabel;
+}
+
+export type CodingSessionModelDisplay = {
+  model: string;
+  thinking: string | null;
+  context: string | null;
+};
+
+/** Decode the adapter's packed model id into human-facing dimensions. */
+export function formatCodingSessionModelDisplay(
+  modelId: string,
+): CodingSessionModelDisplay {
+  const parsed = splitCodingSessionModelId(modelId);
+  return {
+    model: parsed.model,
+    thinking: parsed.thinking ? titleCaseLabel(parsed.thinking) : null,
+    context: parsed.context ? parsed.context.toUpperCase() : null,
+  };
+}
+
+/** A compact label for places that cannot render the dimensions separately. */
+export function formatCodingSessionModelSummary(modelId: string): string {
+  const display = formatCodingSessionModelDisplay(modelId);
+  return [display.model, display.thinking, display.context]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+}
+
+function titleCaseLabel(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1).toLowerCase()}`;
 }

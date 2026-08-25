@@ -111,22 +111,22 @@ export function CodingSessionActiveTool({
 
 export function CodingSessionWorking({
   startedAt,
+  stepLabel = null,
 }: {
   startedAt: string | null;
+  stepLabel?: string | null;
 }) {
   const elapsed = useLiveCodingSessionDuration(startedAt);
   return (
     <div
-      className="flex items-center gap-2 py-1 text-sm text-muted-foreground"
+      className="border-b border-border/60 px-0.5 pt-1 pb-2 text-sm text-muted-foreground tabular-nums"
       data-testid="coding-session-working"
       role="status"
     >
-      <span aria-hidden className="inline-flex items-center gap-[3px]">
-        <span className="size-1 rounded-full bg-muted-foreground/40 animate-pulse" />
-        <span className="size-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:200ms]" />
-        <span className="size-1 rounded-full bg-muted-foreground/40 animate-pulse [animation-delay:400ms]" />
-      </span>
       <span>{elapsed ? `Working for ${elapsed}` : "Working…"}</span>
+      {stepLabel ? (
+        <span className="ml-2 text-muted-foreground/60">· {stepLabel}</span>
+      ) : null}
     </div>
   );
 }
@@ -143,6 +143,7 @@ function useLiveCodingSessionDuration(startedAt: string | null): string | null {
   if (!startedAt) return null;
   const start = Date.parse(startedAt);
   if (!Number.isFinite(start)) return null;
+  if (now <= start) return null;
   return formatCodingSessionDuration(Math.max(0, now - start));
 }
 

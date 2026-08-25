@@ -175,6 +175,26 @@ test("task rail fills a focus-managed sheet without retaining desktop width", ()
   assert.doesNotMatch(markup, /w-80 border-l/);
 });
 
+test("desktop tasks dock cleanly above the composer instead of taking a side rail", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionTaskRail, {
+      model: activeModel,
+      onClose() {},
+      variant: "dock",
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-task-dock"/);
+  assert.match(markup, /data-variant="dock"/);
+  assert.match(markup, />Tasks</);
+  assert.match(markup, /1\/3/);
+  assert.match(markup, /Build the Buzz rail/);
+  assert.match(markup, />now</);
+  assert.match(markup, /aria-label="Close session tasks"/);
+  assert.doesNotMatch(markup, /w-80 border-l/);
+  assert.doesNotMatch(markup, /role="progressbar"/);
+});
+
 test("header exposes an accessible Plan toggle tied to the exact rail", () => {
   const openMarkup = renderToStaticMarkup(
     React.createElement(CodingSessionHeader, {

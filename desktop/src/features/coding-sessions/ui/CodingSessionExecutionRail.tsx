@@ -1,7 +1,10 @@
 import * as React from "react";
 import { Bot, Users } from "lucide-react";
 
-import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import {
+  formatCodingSessionModelSummary,
+  formatCodingSessionRuntimeLabel,
+} from "@/features/coding-sessions/lib/codingSessionLabels";
 import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import type {
   CodingSessionExecution,
@@ -199,7 +202,10 @@ function ExecutionDetail({
         <ExecutionFact label="Generation" value={record.label} />
         <ExecutionFact label="Runtime" value={runtimeLabel(execution)} />
         {record.model ? (
-          <ExecutionFact label="Model" value={record.model} />
+          <ExecutionFact
+            label="Model"
+            value={formatCodingSessionModelSummary(record.model)}
+          />
         ) : null}
         <ExecutionFact
           label="Last activity"
@@ -233,7 +239,12 @@ function ExecutionCard({ execution }: { execution: CodingSessionExecution }) {
             </span>
           </div>
           <p className="mt-0.5 truncate text-2xs text-muted-foreground">
-            {[runtimeLabel(execution), record.model]
+            {[
+              runtimeLabel(execution),
+              record.model
+                ? formatCodingSessionModelSummary(record.model)
+                : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </p>

@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 
+import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
@@ -118,6 +119,7 @@ export function CodingSessionHeader({
   const statusText =
     statusDetail === null ? status.label : `${status.label} · ${statusDetail}`;
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
+  const modelLabel = model ? formatCodingSessionModelSummary(model) : null;
   const linkedProject = onOpenProject ? projectName?.trim() || null : null;
   const contextLabels = uniqueNonemptyLabels([
     // A linked project is rendered on its own so it stays clickable; only an
@@ -125,7 +127,7 @@ export function CodingSessionHeader({
     linkedProject ? null : projectName,
     repoName,
     runtimeLabel,
-    model,
+    modelLabel,
     conciseGenerationLabel,
   ]);
 

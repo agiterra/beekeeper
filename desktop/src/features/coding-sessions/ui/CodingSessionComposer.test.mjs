@@ -70,7 +70,7 @@ test("immersive working composer uses one compact truthful control row", () => {
           diff: true,
           plan: true,
         },
-        model: "claude-opus-5",
+        model: "claude-opus-5[high]",
         providerLabel: "Anthropic",
         runtimeLabel: "Claude Code",
         status: { kind: "working", label: "Working" },
@@ -87,10 +87,12 @@ test("immersive working composer uses one compact truthful control row", () => {
   assert.match(markup, /data-testid="coding-session-control-deck"/);
   assert.match(markup, /whitespace-nowrap/);
   assert.doesNotMatch(markup, /flex-wrap/);
-  assert.match(markup, /data-status="working"/);
-  assert.match(markup, />Working</);
+  assert.doesNotMatch(markup, /coding-session-control-status/);
+  assert.doesNotMatch(markup, />Working</);
   assert.match(markup, />Anthropic</);
   assert.match(markup, />claude-opus-5</);
+  assert.match(markup, />High</);
+  assert.doesNotMatch(markup, /claude-opus-5\[high\]/);
   assert.match(markup, /Runtime: Claude Code/);
   assert.match(markup, /Signed channel member/);
   assert.match(markup, />Member</);
@@ -105,7 +107,7 @@ test("immersive working composer uses one compact truthful control row", () => {
   assert.doesNotMatch(markup, /coding-session-composer-primary/);
 });
 
-test("immersive idle composer shows send and distinct idle status without stop", () => {
+test("immersive idle composer leaves status to the header and shows send", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {
       canInterrupt: true,
@@ -126,8 +128,8 @@ test("immersive idle composer shows send and distinct idle status without stop",
     }),
   );
 
-  assert.match(markup, /data-status="idle"/);
-  assert.match(markup, />Idle</);
+  assert.doesNotMatch(markup, /coding-session-control-status/);
+  assert.doesNotMatch(markup, />Idle</);
   assert.match(
     markup,
     /Live steer and interrupt capabilities have not been declared/,
@@ -214,9 +216,33 @@ test("immersive controls fail closed when authority and interrupt capability are
   assert.match(markup, /Provider capabilities: Turns, Diff/);
   assert.doesNotMatch(markup, /Provider capabilities: Turns, Diff, Plan/);
   assert.doesNotMatch(markup, /coding-session-composer-steer/);
+  assert.match(markup, /coding-session-composer-queue/);
   assert.match(markup, />Interrupt</);
   assert.match(markup, /Current-turn interrupt is unavailable/);
   assert.match(markup, /coding-session-composer-interrupt[^>]*disabled=""/);
+});
+
+test("a running turn without live steer keeps the editor open and offers Queue", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      canSteer: false,
+      channelId: "channel-1",
+      immersive: true,
+      isMember: true,
+      isWorking: true,
+      target,
+      variant: "floating",
+    }),
+  );
+
+  assert.match(markup, /placeholder="Write the next turn…"/);
+  assert.doesNotMatch(
+    markup,
+    /aria-label="Coding-session instruction"[^>]*disabled=""/,
+  );
+  assert.match(markup, /coding-session-composer-queue/);
+  assert.match(markup, />Queue</);
 });
 
 test("founder authority gates send, interrupt, resume, and stop together", () => {

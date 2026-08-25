@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   OctagonAlert,
   TriangleAlert,
+  X,
 } from "lucide-react";
 
 import type {
@@ -50,12 +51,24 @@ type TaskRailLoadState = "ready" | "loading" | "error";
 export function CodingSessionTaskRail({
   loadState = "ready",
   model,
+  onClose,
   variant = "inline",
 }: {
   loadState?: TaskRailLoadState;
   model: CodingSessionTaskModel | null;
-  variant?: "inline" | "sheet";
+  onClose?: () => void;
+  variant?: "dock" | "inline" | "sheet";
 }) {
+  if (variant === "dock") {
+    return (
+      <CodingSessionTaskDock
+        loadState={loadState}
+        model={model}
+        onClose={onClose}
+      />
+    );
+  }
+
   const completedTasks =
     model?.tasks.filter((task) => task.status === "completed") ?? [];
   const openTasks =
@@ -174,6 +187,105 @@ export function CodingSessionTaskRail({
         </div>
       ) : null}
     </aside>
+  );
+}
+
+function CodingSessionTaskDock({
+  loadState,
+  model,
+  onClose,
+}: {
+  loadState: TaskRailLoadState;
+  model: CodingSessionTaskModel | null;
+  onClose?: () => void;
+}) {
+  return (
+    <aside
+      aria-label="Session tasks"
+      className="max-h-[min(48vh,28rem)] overflow-y-auto rounded-t-3xl border border-border/70 bg-background px-5 pt-4 pb-10 shadow-lg"
+      data-testid="coding-session-task-dock"
+      data-variant="dock"
+      id={CODING_SESSION_TASK_RAIL_ID}
+    >
+      <header className="mb-3 flex h-7 items-center gap-2">
+        <ListChecks aria-hidden className="size-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Tasks</h2>
+        {model && model.tasks.length > 0 ? (
+          <span className="text-sm tabular-nums text-muted-foreground">
+            {model.completedCount}/{model.tasks.length}
+          </span>
+        ) : null}
+        {onClose ? (
+          <button
+            aria-label="Close session tasks"
+            className="ml-auto inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden className="size-4" />
+          </button>
+        ) : null}
+      </header>
+      {loadState === "loading" ? (
+        <TaskRailLoadingState />
+      ) : loadState === "error" ? (
+        <TaskRailEmptyState
+          description="Bee Keeper could not read the latest signed plan."
+          icon="error"
+          title="Tasks unavailable"
+        />
+      ) : !model ? (
+        <TaskRailEmptyState
+          description="Signed plan updates will appear here."
+          title="No tasks yet"
+        />
+      ) : model.tasks.length === 0 ? (
+        <TaskRailEmptyState
+          description="The latest signed plan contains no tasks."
+          title="No tasks"
+        />
+      ) : (
+        <ol aria-label="Session tasks" className="space-y-0.5">
+          {model.tasks.map((task) => (
+            <CodingSessionTaskDockRow key={task.id} task={task} />
+          ))}
+        </ol>
+      )}
+    </aside>
+  );
+}
+
+function CodingSessionTaskDockRow({ task }: { task: CodingSessionTask }) {
+  const Icon = taskStatusIcon(task.status);
+  const active = task.status === "in_progress";
+  return (
+    <li
+      className={cn(
+        "flex min-h-9 items-start gap-3 rounded-lg px-1.5 py-1.5 text-sm",
+        active ? "text-foreground" : "text-muted-foreground/65",
+      )}
+      data-status={task.status}
+    >
+      <Icon
+        aria-label={statusLabel(task.status)}
+        className={cn(
+          "mt-0.5 size-3.5 shrink-0",
+          active && "text-primary",
+          task.status === "completed" && "text-emerald-500/70",
+        )}
+      />
+      <span
+        className={cn(
+          "min-w-0 flex-1 wrap-break-word",
+          active && "font-medium",
+        )}
+      >
+        {task.text}
+      </span>
+      {active ? (
+        <span className="shrink-0 text-2xs text-muted-foreground/60">now</span>
+      ) : null}
+    </li>
   );
 }
 

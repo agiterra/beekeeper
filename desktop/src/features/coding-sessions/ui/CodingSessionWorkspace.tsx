@@ -49,6 +49,7 @@ import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { cn } from "@/shared/lib/cn";
 
 import {
+  CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_GUTTER,
   CodingSessionColumn,
 } from "./CodingSessionColumn";
@@ -518,6 +519,7 @@ function ReadyCodingSessionWorkspace({
     isNarrow,
     preference: taskRailPreference,
   });
+  const narrativeExpanded = surfaceHost.activeTab === null;
   const isWorking = status.kind === "working";
 
   const setTaskRailOpen = React.useCallback(
@@ -620,6 +622,7 @@ function ReadyCodingSessionWorkspace({
             founderPubkey={founderPubkey}
             goal={goal}
             sessionRef={sessionRef}
+            workspaceExpanded={narrativeExpanded}
           />
         </div>
       </div>
@@ -645,7 +648,13 @@ function ReadyCodingSessionWorkspace({
             onScroll={onScroll}
             ref={scrollRef}
           >
-            <CodingSessionColumn className="min-h-full pt-7 pb-44">
+            <CodingSessionColumn
+              className={cn(
+                "min-h-full pt-7",
+                taskRailOpen && !isNarrow ? "pb-[34rem]" : "pb-44",
+              )}
+              expanded={narrativeExpanded}
+            >
               <div className="flex min-w-0 flex-col gap-5" ref={contentRef}>
                 {/* "No conversation yet" is false the moment a turn is in
                     flight, so the empty state stands down for the pending row
@@ -688,48 +697,59 @@ function ReadyCodingSessionWorkspace({
           {session.commandTarget && !sessionClosed ? (
             <div
               className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-b from-transparent via-background/85 to-background pt-8 pb-4",
+                CODING_SESSION_COMPOSER_DOCK_CLASS,
                 CODING_SESSION_COLUMN_GUTTER,
               )}
             >
-              <CodingSessionColumn className="pointer-events-auto">
-                <CodingSessionComposer
-                  authorityReason={composerAuthority.reason}
-                  canInterrupt={
-                    codingSessionTargetSupportsInterrupt(
-                      session.commandTarget,
-                    ) && session.capabilities?.threadTurnInterrupt !== false
-                  }
-                  canControl={composerAuthority.canPromptExecutions}
-                  canSteer={session.capabilities?.threadSteer === true}
-                  channelId={channelId}
-                  controlContext={{
-                    capabilities: session.capabilities,
-                    model: session.model,
-                    providerLabel,
-                    runtimeLabel,
-                    status,
-                  }}
-                  currentUserPubkey={currentUserPubkey}
-                  immersive
-                  isMember={isMember}
-                  onAddProvider={onAddProvider}
-                  isWorking={isWorking}
-                  isUngovernedSession={composerAuthority.isUngovernedSession}
-                  lifecycleStatus={session.status}
-                  layout={isNarrow ? "stacked" : "inline"}
-                  providerAuthorityPubkey={session.providerAuthorityPubkey}
-                  sessionLabel={session.title}
-                  target={session.commandTarget}
-                  variant="floating"
-                />
+              <CodingSessionColumn
+                className="pointer-events-auto"
+                expanded={narrativeExpanded}
+              >
+                {taskRailOpen && !isNarrow ? (
+                  <div className="-mb-6">
+                    <CodingSessionTaskRail
+                      model={taskModel}
+                      onClose={() => setTaskRailOpen(false)}
+                      variant="dock"
+                    />
+                  </div>
+                ) : null}
+                <div className="relative z-10">
+                  <CodingSessionComposer
+                    authorityReason={composerAuthority.reason}
+                    canInterrupt={
+                      codingSessionTargetSupportsInterrupt(
+                        session.commandTarget,
+                      ) && session.capabilities?.threadTurnInterrupt !== false
+                    }
+                    canControl={composerAuthority.canPromptExecutions}
+                    canSteer={session.capabilities?.threadSteer === true}
+                    channelId={channelId}
+                    controlContext={{
+                      capabilities: session.capabilities,
+                      model: session.model,
+                      providerLabel,
+                      runtimeLabel,
+                      status,
+                    }}
+                    currentUserPubkey={currentUserPubkey}
+                    immersive
+                    isMember={isMember}
+                    onAddProvider={onAddProvider}
+                    isWorking={isWorking}
+                    isUngovernedSession={composerAuthority.isUngovernedSession}
+                    lifecycleStatus={session.status}
+                    layout={isNarrow ? "stacked" : "inline"}
+                    providerAuthorityPubkey={session.providerAuthorityPubkey}
+                    sessionLabel={session.title}
+                    target={session.commandTarget}
+                    variant="floating"
+                  />
+                </div>
               </CodingSessionColumn>
             </div>
           ) : null}
         </section>
-        {!isNarrow && taskRailOpen ? (
-          <CodingSessionTaskRail model={taskModel} />
-        ) : null}
         {surfaceHost.activeTab !== null ? (
           <CodingSessionSurfaceHost
             activeSurfaceId={surfaceHost.activeTab}

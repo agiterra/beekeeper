@@ -49,7 +49,15 @@ function signed(kind: number, seq: number, content: unknown, tags: string[][]) {
   ) as unknown as RelayEvent;
 }
 
-function metadata(): RelayEvent {
+function metadata({
+  canSteer = true,
+  model = "sonnet",
+  status = "completed",
+}: {
+  canSteer?: boolean;
+  model?: string;
+  status?: "completed" | "running";
+} = {}): RelayEvent {
   const payload = {
     schema: BUZZ_CODING_SESSION_METADATA_SCHEMA,
     session,
@@ -59,13 +67,13 @@ function metadata(): RelayEvent {
     agentRef: null,
     provider: "claude-agent-acp",
     runtime: "claude-agent-acp",
-    model: "sonnet",
-    status: "completed",
+    model,
+    status,
     branch: "feature/reconnect-recovery",
     capabilities: {
       threadTurnStart: true,
       threadTurnInterrupt: true,
-      threadSteer: true,
+      threadSteer: canSteer,
       context: false,
       diff: true,
       plan: true,
@@ -166,7 +174,7 @@ function events(): RelayEvent[] {
 
 function planEvents(): RelayEvent[] {
   return [
-    metadata(),
+    metadata({ canSteer: false, model: "sonnet[high]", status: "running" }),
     transcript(1, {
       kind: "user_prompt",
       content: "Make reconnect recovery observable.",
@@ -192,6 +200,32 @@ function planEvents(): RelayEvent[] {
         { content: "Add focused verification", status: "in_progress" },
         { content: "Capture the final UI", status: "pending" },
       ],
+    }),
+    transcript(5, {
+      kind: "tool_call",
+      tool: {
+        toolName: "mcp.buzz-session-context.session_history",
+        toolId: "session-history",
+        input: {},
+      },
+    }),
+    transcript(6, {
+      kind: "tool_result",
+      toolId: "session-history",
+      toolName: "mcp.buzz-session-context.session_history",
+      content: JSON.stringify({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              availableHistoryItems: 47,
+              returned: 20,
+              items: [],
+            }),
+          },
+        ],
+      }),
+      isError: false,
     }),
   ];
 }
@@ -307,10 +341,26 @@ test("captures the latest plan snapshot collapsed and expanded", async ({
   page,
 }) => {
   const workspace = await openSeededSession(page, planEvents());
+  const taskDock = page.getByTestId("coding-session-task-dock");
+  await expect(taskDock).toBeVisible();
+  await expect(taskDock).toContainText("Tasks");
+  await expect(taskDock).toContainText("2/4");
+  await expect(taskDock).toContainText("now");
+  await expect(page.getByTestId("coding-session-composer-queue")).toBeVisible();
+  await expect(page.getByLabel("Coding-session instruction")).toBeEnabled();
   const plan = page.getByTestId("coding-session-inline-plan");
   await expect(plan).toHaveCount(1);
   await expect(plan).toContainText("Add focused verification");
   await expect(plan).toContainText("2/4");
+  await expect(page.getByText("Work Log")).toBeVisible();
+  await expect(page.getByText("Plan updated")).toBeVisible();
+  await expect(
+    page.getByText("Session history", { exact: false }),
+  ).toBeVisible();
+  await expect(workspace).not.toContainText(
+    "mcp.buzz-session-context.session_history",
+  );
+  await expect(workspace).not.toContainText("0.0s");
   await waitForAnimations(page);
   await workspace.screenshot({ path: `${SHOTS}/03-plan-collapsed.png` });
 

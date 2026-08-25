@@ -264,6 +264,8 @@ test("completed blocks offer Send to the other execution", async () => {
   assert.match(markup, /data-testid="coding-session-umbrella-send-to"/);
   assert.match(markup, /Send to.*Codex · gpt-5\.3-codex/s);
   assert.match(markup, /Send to.*Claude · claude-opus-5/s);
+  assert.match(markup, /group-hover\/turn:opacity-100/);
+  assert.match(markup, /opacity-0/);
 });
 
 function handoffPromptFor(link) {

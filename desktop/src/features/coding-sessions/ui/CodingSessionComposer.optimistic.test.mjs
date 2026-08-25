@@ -178,3 +178,77 @@ test("a failed publish returns the words and retires the pending row", async () 
     cleanup();
   }
 });
+
+test("a prompt composed during a non-steerable turn waits, then publishes", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const store = await loadStore();
+  const published = [];
+  const baseProps = {
+    canInterrupt: true,
+    canSteer: false,
+    channelId: CHANNEL_ID,
+    currentUserPubkey: OPERATOR,
+    immersive: true,
+    isMember: true,
+    target: TARGET,
+    variant: "floating",
+    publishCommand: async (input) => {
+      published.push(input);
+      return {
+        eventId: "queued-event",
+        kind: 44220,
+        commandId: input.commandId,
+      };
+    },
+  };
+
+  try {
+    let view;
+    await act(async () => {
+      view = render(
+        React.createElement(CodingSessionComposer, {
+          ...baseProps,
+          isWorking: true,
+        }),
+      );
+    });
+    const editor = screen.getByLabelText("Coding-session instruction");
+    assert.equal(editor.disabled, false);
+    await act(async () => {
+      fireEvent.change(editor, {
+        target: { value: "check the second failure next" },
+      });
+      fireEvent.click(screen.getByTestId("coding-session-composer-queue"));
+    });
+
+    assert.equal(
+      published.length,
+      0,
+      "a running provider must not get the turn",
+    );
+    assert.equal(store.readPendingCodingSessionTurns().length, 0);
+    assert.match(
+      screen.getByTestId("coding-session-composer-queued").textContent,
+      /check the second failure next/,
+    );
+
+    await act(async () => {
+      view.rerender(
+        React.createElement(CodingSessionComposer, {
+          ...baseProps,
+          isWorking: false,
+        }),
+      );
+    });
+    await waitFor(() => assert.equal(published.length, 1));
+    assert.equal(published[0].text, "check the second failure next");
+    assert.equal(store.readPendingCodingSessionTurns().length, 1);
+    assert.equal(screen.queryByTestId("coding-session-composer-queued"), null);
+  } finally {
+    cleanup();
+  }
+});

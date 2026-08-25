@@ -174,6 +174,32 @@ test("classifyTool promotes buzz CLI shell commands to relay operations", () => 
   assert.equal(descriptor.groupKey, "buzz-cli:channels.get");
 });
 
+test("classifyTool humanizes session history and counts its unwrapped result", () => {
+  const descriptor = classifyTool({
+    title: "mcp.buzz-session-context.session_history",
+    toolName: "mcp.buzz-session-context.session_history",
+    buzzToolName: null,
+    args: {},
+    result: JSON.stringify({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ availableHistoryItems: 47, items: [] }),
+        },
+      ],
+    }),
+    isError: false,
+  });
+
+  assert.equal(descriptor.label, "Session history");
+  assert.equal(descriptor.preview, "· 47 items");
+  assert.deepEqual(descriptor.action, {
+    verb: "Session history",
+    object: "· 47 items",
+  });
+  assert.equal(descriptor.source, "mcp");
+});
+
 test("classifyTool falls back once to a generic descriptor", () => {
   const descriptor = classifyTool({
     title: "Mystery",
