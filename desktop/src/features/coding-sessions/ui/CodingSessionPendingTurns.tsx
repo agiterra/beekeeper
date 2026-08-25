@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CircleAlert, LoaderCircle } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 
 import {
   clearPendingCodingSessionTurns,
@@ -63,8 +63,8 @@ export function useVisibleCodingSessionPendingTurns({
  * Rendered *below* the signed transcript, never inside it: these rows are this
  * machine's own claim about what it published, and the transcript is the
  * provider's. They mirror the prompt bubble's shape so the conversation reads
- * continuously, and are dimmed and labelled so no one mistakes one for a fact
- * the session has actually recorded.
+ * continuously, but say nothing about normal delivery: the message is what the
+ * person just sent, while the session's own status announces work beginning.
  */
 export function CodingSessionPendingTurnList({
   now,
@@ -131,11 +131,13 @@ function CodingSessionPendingTurnRow({
 }) {
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
+  const caption = describePendingCodingSessionTurn(state);
   return (
     <div
       className="group flex flex-col items-end gap-1"
       data-pending-state={state}
       data-role="user-message"
+      data-target-label={targetLabel ?? undefined}
       data-testid="coding-session-pending-turn"
     >
       <div
@@ -146,41 +148,31 @@ function CodingSessionPendingTurnRow({
       >
         <Markdown content={turn.text.trim() || " "} mediaInset />
       </div>
-      <p
-        className={cn(
-          "inline-flex items-center gap-1 pe-1 text-2xs",
-          stalled ? "text-destructive" : "text-muted-foreground",
-        )}
-        data-testid="coding-session-pending-turn-status"
-      >
-        {stalled ? (
+      {caption === null ? null : (
+        <p
+          className="inline-flex items-center gap-1 pe-1 text-2xs text-destructive"
+          data-testid="coding-session-pending-turn-status"
+        >
           <CircleAlert aria-hidden className="size-3" />
-        ) : (
-          <LoaderCircle
-            aria-hidden
-            className="size-3 animate-spin motion-reduce:animate-none"
-          />
-        )}
-        {describePendingCodingSessionTurn(state, targetLabel)}
-      </p>
+          {caption}
+        </p>
+      )}
     </div>
   );
 }
 
 /**
- * Say what is true at each step and nothing more. "Sending" means the relay has
- * not answered; "Sent" means it has, and that the provider has not. The stalled
- * copy is deliberately blunt: the turn may simply never be picked up, and a
- * spinner that never resolves is the version of this that lies.
+ * What a row in flight says about itself — usually nothing.
+ *
+ * The first version spun a loader and narrated the relay/provider boundary.
+ * Both were accurate infrastructure details and the wrong frame for the
+ * conversation. Silence stops only once it would become a lie: a published
+ * turn that nobody has picked up long after they should have.
  */
 export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
-  targetLabel: string | null,
-): string {
-  const suffix = targetLabel ? ` to ${targetLabel}` : "";
-  if (state === "sending") return `Sending${suffix}…`;
-  if (state === "waiting") return `Sent${suffix} — waiting for the provider…`;
-  return `Sent${suffix}, but no provider has picked this turn up yet.`;
+): string | null {
+  return state === "stalled" ? "Not picked up yet" : null;
 }
 
 /**

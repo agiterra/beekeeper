@@ -33,15 +33,12 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-24, morning — the honesty pass is on `main` (§2 items
-37, 38, 39, 41, 42, 43 fixed; 40 closed live; 44's premise corrected), and the
-dev instance has now been rebuilt on it and driven against hive. **Item 41 is
-confirmed working live.** That pass found four more (§2 items 45-48): the
-umbrella header read ENDED over four live executions, two composer chips were
-identical, Codex's model list became thirty model×effort rows, and "Stop" named
-two different actions. The first three are fixed; item 48 — whether a stop
-should be a pause — is a product decision waiting on Brian. Still unobserved
-live: items 37, 38, 39's picker, 42 and 43._
+_Last updated: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
+rebuild, the session ceiling and silent-turn budget as settings, and the
+redaction rework) are fixed and pushed through CI #24; items 51-52 are the
+composer responsiveness fix and the full-screen UI critique that comes next.
+**Five commits are unpushed** and the dev instance was last rebuilt at
+01:44Z with all of them. `main` is `88d64ea3` on both remotes._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -1289,6 +1286,66 @@ green (desktop 6015/6015). The `scripts/e2e-git-perms.sh` roster phase is
 written and `bash -n` clean but **was not executed** — that harness needs
 `websocket-client` and wants port 3000.
 
+### Found 2026-08-25 — the responsiveness pass, and the UI critique behind it
+
+51. **A sent turn took two round trips to appear, so the composer looked
+    broken.** "There is a lag prior to seeing my messages appear on the screen
+    — I'm thinking because this is to the relay and back?" It is longer than
+    that: a transcript renders signed facts, and the user's own message is a
+    kind-44225 `user_prompt` published by the **provider**. The path is sign →
+    44220 → relay → provider receives and starts the turn → provider publishes
+    the item → relay → verify → project → render. Unbounded when the provider
+    is busy or reconnecting.
+    - **Fixed** by `codingSessionPendingTurns.ts` plus
+      `CodingSessionPendingTurns.tsx`: the editor empties before any await
+      (restoring the draft if the publish fails), and the turn shows
+      immediately in a row that lives **outside** the signed narrative —
+      the umbrella timeline's invariant is that facts from different signers
+      never merge, and a row nobody has signed is not one of those facts.
+    - **Settling has no id to key on.** A signed prompt carries content and
+      operator, not the command id that caused it, so a pending record is
+      consumed by the first signed prompt with matching text and operator — one
+      record per arriving item, so the same sentence sent twice settles in
+      order. A failed publish removes the row, restores the draft, and puts the
+      relay's error by the composer; silence expires after three minutes.
+      Registered in `resetCommunityState()`.
+    - **The row says nothing about itself.** The first version spun a loader
+      and said "waiting for the provider to start the turn"; both true, both
+      the wrong frame — they made the moment about our plumbing when the person
+      is waiting on an agent to think. It now speaks only where silence would
+      lie: a failed publish, and a turn nobody picked up after ten seconds
+      ("Not picked up yet"). Nothing claims the model is thinking, because
+      nothing knows that.
+
+52. **The full-screen session needs a design pass. The critique, so it is not
+    re-derived** (from a screenshot, 2026-08-25, ordered by severity):
+    1. *The composer's gradient overlay leaks the transcript through it* —
+       `via-background/85` in `CodingSessionUmbrellaWorkspace.tsx:274` renders
+       text at 15% behind the chip row, which reads as overlapping content
+       rather than a fade.
+    2. *A raw, double-escaped JSON blob opens the transcript* — an MCP tool
+       result whose `content[0].text` is itself a JSON string, `\n` literals
+       and all, occupying ~40% of the first screen. Wants a one-line summary
+       ("Session history · 47 items") expanding to parsed content.
+    3. *Two thirds of a 3456px window is empty.* The 48rem measure is right for
+       prose and matches t3code — but t3code fills the flanks. Agents, Observed
+       changes and People are built surfaces hiding behind header buttons; at
+       this width they should be open beside the transcript.
+    4. *Raw identifiers the picker already fixed elsewhere* —
+       `mcp.buzz-session-context.session_history` as a tool title,
+       `gpt-5.6-terra[low]` in chips and the composer footer. The same session
+       says it both ways.
+    5. *`0.0s` on every tool call*, which reads as "did not run".
+    6. *The same fact three times*: header `IDLE`, composer footer `Idle`,
+       transcript "Coding session idle".
+    7. *Two chip systems forty pixels apart* — `⇄ Send to Claude · …`
+       mid-transcript and the participant row above the composer.
+    8. *An empty goal is the largest element on screen.*
+    9. *Turn boundaries are invisible* — user bubble, reasoning, tools and
+       completion flow together with only the cost line separating them.
+    10. *`Send` and `Stop execution` are neighbours* at the same weight, one of
+        them terminal.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -1303,7 +1360,14 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-**The active track was the coding-session honesty pass — §2 items 37-44. As of
+**The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
+item 52's ten points, in that order.** The first four are contained (the
+composer's leaking overlay, the raw JSON tool result, the flanking dead space,
+and the raw identifiers the picker already fixed elsewhere); the rest are
+hierarchy and action-weight work. Everything below is the previous track, kept
+because its live confirmations are still owed.
+
+**The previous track was the coding-session honesty pass — §2 items 37-44. As of
 2026-08-24 the code is done and the live confirmation is not.** Six items are
 fixed behind tests, item 40 is closed by a live tool call on hive, item 44's
 premise was corrected. **What is owed is one pass on the dev instance against

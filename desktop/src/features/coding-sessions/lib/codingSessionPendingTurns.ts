@@ -9,9 +9,8 @@
  *
  * This store closes that gap without touching the trust boundary. A pending
  * turn is never merged into a catalog record's transcript and is never dressed
- * up as a signed fact — it renders as its own clearly-local row that says what
- * is actually true at each step ("Sending…", then waiting on the provider), and
- * disappears the moment the provider's verified echo arrives to replace it.
+ * up as a signed fact. It renders as its own clearly-local row and disappears
+ * the moment the provider's verified echo arrives to replace it.
  *
  * Like {@link ./codingSessionPendingLifecycle}, this is not persistence: it
  * survives neither reload nor community switch (reset via
@@ -44,11 +43,10 @@ export type PendingCodingSessionTurn = {
 /**
  * When a published turn stops reading as in-flight.
  *
- * Matched to `CODING_SESSION_TURN_REFUSAL_DEADLINE_MS`: past that point the
- * provider has neither refused the turn nor begun it, and a spinner would be
- * claiming progress nobody has evidence of.
+ * Long enough that the ordinary case never gains a caption, but short enough
+ * that a provider which never picks the turn up does not look normal.
  */
-export const PENDING_CODING_SESSION_TURN_STALL_MS = 20_000;
+export const PENDING_CODING_SESSION_TURN_STALL_MS = 10_000;
 
 /**
  * When a pending row is dropped outright.
