@@ -2107,9 +2107,23 @@ pub enum GitCmd {
         #[arg(long)]
         print: bool,
     },
-    /// Report whether terminal git access is configured and usable
+    /// Report whether terminal git access is configured locally.
+    ///
+    /// Local only — it cannot say whether the relay accepts the key. Use
+    /// `bee git check` for that.
     Status {
         /// Key file to check. Defaults to whatever `nostr.keyfile` names.
+        #[arg(long)]
+        keyfile: Option<PathBuf>,
+    },
+    /// Ask the relay what this key can actually do: relay membership, and
+    /// which repositories it can read over git.
+    ///
+    /// Uses the key `git-credential-nostr` itself would use
+    /// (`$NOSTR_PRIVATE_KEY`, else `git config nostr.keyfile`) — not
+    /// `BUZZ_PRIVATE_KEY` — so the verdict is about the identity git presents.
+    Check {
+        /// Key file to test. Defaults to whatever `nostr.keyfile` names.
         #[arg(long)]
         keyfile: Option<PathBuf>,
     },
@@ -2554,6 +2568,14 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             }),
             GitCmd::Status { keyfile } => {
                 commands::git_setup::cmd_status(&relay_url, keyfile.clone())
+            }
+            GitCmd::Check { keyfile } => {
+                commands::git_setup::cmd_check(
+                    &relay_url,
+                    keyfile.clone(),
+                    matches!(cli.format, OutputFormat::Compact),
+                )
+                .await
             }
         };
     }

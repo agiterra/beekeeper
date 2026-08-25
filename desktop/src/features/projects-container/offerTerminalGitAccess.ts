@@ -27,7 +27,7 @@ export async function offerTerminalGitAccess(): Promise<void> {
     // like a failed one.
     return;
   }
-  if (status.ready) return;
+  if (status.configured) return;
 
   const keyfile = status.keyfile ?? "your home directory";
   toast("Terminal git access isn't set up", {
@@ -41,8 +41,14 @@ export async function offerTerminalGitAccess(): Promise<void> {
       onClick: () => {
         void enableGitTerminalAccess()
           .then((next) => {
-            if (next.ready) {
-              toast.success(`Terminal git access enabled (${next.keyfile}).`);
+            if (next.configured) {
+              // Deliberately not "ready" — this says the local config is
+              // complete, which is all the app can know without asking the
+              // relay. `bee git check` is what answers the rest.
+              toast.success(
+                `Terminal git access configured (${next.keyfile}). ` +
+                  `Run \`bee git check\` to confirm the relay accepts this key.`,
+              );
             } else {
               // Say which half is missing rather than claiming success.
               toast.error(

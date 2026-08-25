@@ -79,10 +79,31 @@ desktop identity. The debug build uses a different keyring service
 (`beekeeper-desktop-dev`) and therefore a different key, which is not the repo
 owner and would be denied.
 
-`bee git status` reports whether it is actually usable, and distinguishes
-"configured" from "configured and the helper still exists" — a config naming a
-helper that has been moved or deleted reads as set up and fails only at push
-time.
+Two commands report on it, and the split is deliberate:
+
+- **`bee git status`** — local only. Says whether the three pieces are in
+  place, and distinguishes *configured* from *configured and the helper still
+  exists*: a config naming a helper that has been moved or deleted reads as set
+  up and fails only at push time. It reports `configured`, never `ready` —
+  nothing local can know whether the relay accepts the key.
+- **`bee git check`** — asks the relay. Reports relay membership and, for each
+  visible repository, whether this key can read it over git. It loads the key
+  the way the *helper* does (`$NOSTR_PRIVATE_KEY`, else `nostr.keyfile`), not
+  from `BUZZ_PRIVATE_KEY`, so the verdict is about the identity git presents.
+
+The membership answer comes from probing a repo path that cannot exist: the
+relay checks NIP-98 and membership in the request extractor, before resolving
+the repository, so 403 means "not a member" and 404 means "member, no such
+repo". Per-repo access is reported as `no-grant-or-missing` when the answer is
+404, because the relay returns 404 for both a missing repo and a denied read —
+on purpose, so membership is not probeable — and pretending to tell them apart
+would be a guess.
+
+**A pasted public key is the failure mode to watch for.** `Keys::parse` accepts
+any 64 hex characters as a *secret* key, so pasting a pubkey hex into the key
+file yields a valid-looking, entirely different identity, and every local check
+reports success. The bech32 `npub1…` form is rejected outright; the hex form is
+not decidable locally, which is the reason `bee git check` exists.
 
 Inside the desktop app the same setup is offered after an import or link wires
 up a Bee Keeper remote. It is an offer, never automatic: accepting writes the

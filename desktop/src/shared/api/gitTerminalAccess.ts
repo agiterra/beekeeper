@@ -24,8 +24,14 @@ export type GitTerminalAccessStatus = {
   keyfile_present: boolean;
   keyfile_pubkey: string | null;
   keyfile_problem: string | null;
-  /** All three in place. Anything less means pushes fail. */
-  ready: boolean;
+  /**
+   * All three local pieces are in place. **Not** a promise that pushes work —
+   * the relay still has to accept the key, and it is entirely possible to be
+   * fully configured with an identity the relay rejects with a 403.
+   */
+  configured: boolean;
+  /** What to do next, in words, given the state above. */
+  next: string;
   pinned_helper: string;
   pinned_helper_present: boolean;
 };

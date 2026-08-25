@@ -204,13 +204,56 @@ fn read_keyfile(path: &Path) -> Result<Option<Keys>, CliError> {
     }
     let raw = std::fs::read_to_string(path)
         .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", path.display())))?;
-    let keys = Keys::parse(raw.trim()).map_err(|e| {
+    let trimmed = raw.trim();
+    // A pasted `npub1...` is a public key where a secret was wanted. It is the
+    // one shape of that mistake which is decidable, so it gets a real message
+    // instead of a parse error. The 64-hex form of the same mistake is NOT
+    // decidable — every 32-byte value is a plausible secret key — which is why
+    // `bee git check` exists to ask the relay instead of guessing.
+    if trimmed.starts_with("npub1") {
+        return Err(CliError::Key(format!(
+            "{} holds an npub, which is a *public* key. The key file needs the \
+             matching nsec.",
+            path.display()
+        )));
+    }
+    let keys = Keys::parse(trimmed).map_err(|e| {
         CliError::Key(format!(
             "{} does not hold a usable key: {e}",
             path.display()
         ))
     })?;
     Ok(Some(keys))
+}
+
+/// Load the key exactly as `git-credential-nostr` does: `$NOSTR_PRIVATE_KEY`
+/// first, then `git config nostr.keyfile`.
+///
+/// Reproducing the helper's precedence is the whole point. A check that read
+/// `BUZZ_PRIVATE_KEY` instead would test a different identity than the one git
+/// actually presents, and could report success while every push failed.
+fn helper_effective_keys(keyfile: Option<&Path>) -> Result<(Keys, String), CliError> {
+    if let Ok(env_key) = std::env::var("NOSTR_PRIVATE_KEY") {
+        if !env_key.trim().is_empty() {
+            let keys = Keys::parse(env_key.trim())
+                .map_err(|e| CliError::Key(format!("NOSTR_PRIVATE_KEY is not a key: {e}")))?;
+            return Ok((keys, "NOSTR_PRIVATE_KEY".to_string()));
+        }
+    }
+    let path = match keyfile {
+        Some(path) => path.to_path_buf(),
+        None => match git_config_get("nostr.keyfile") {
+            Some(configured) => PathBuf::from(configured),
+            None => default_keyfile()?,
+        },
+    };
+    match read_keyfile(&path)? {
+        Some(keys) => Ok((keys, path.to_string_lossy().to_string())),
+        None => Err(CliError::Usage(format!(
+            "no key: {} does not exist and NOSTR_PRIVATE_KEY is unset",
+            path.display()
+        ))),
+    }
 }
 
 /// Write `keys` to `path` at mode 0600, refusing to replace a different identity.
@@ -399,7 +442,11 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
         },
     };
 
-    let ready = helper_ok == Some(true)
+    // NOT "ready". This says the three local pieces are in place — it cannot
+    // say the relay accepts the key, and reporting `ready: true` over a 403 is
+    // exactly the kind of comfortable guess this project treats as a bug.
+    // `bee git check` is the one that asks.
+    let configured = helper_ok == Some(true)
         && configured_path.as_deref() == Some("true")
         && key_pubkey.is_some();
 
@@ -415,13 +462,237 @@ pub fn cmd_status(relay_url: &str, keyfile: Option<PathBuf>) -> Result<(), CliEr
         "keyfile_present": key_present,
         "keyfile_pubkey": key_pubkey,
         "keyfile_problem": key_problem,
-        "ready": ready,
+        "configured": configured,
+        // Deliberately absent: anything named `ready`. Whether a push works is
+        // a question for the relay — run `bee git check`.
+        "next": if configured {
+            "run `bee git check` to confirm the relay accepts this key"
+        } else {
+            "run `bee git setup`"
+        },
     });
     println!(
         "{}",
         serde_json::to_string_pretty(&report).unwrap_or_default()
     );
     Ok(())
+}
+
+/// Probe outcome for one repository.
+struct RepoProbe {
+    repo_id: String,
+    owner: String,
+    status: u16,
+    access: &'static str,
+    detail: Option<String>,
+}
+
+/// Classify a git `info/refs` response.
+///
+/// The relay answers a denied read with **404, not 403** — deliberately, so
+/// membership is not probeable by a stranger. That means "not found" and "you
+/// have no grant" are the same wire response and must not be reported as if we
+/// could tell them apart.
+fn classify_probe(status: u16, body: &str) -> (&'static str, Option<String>) {
+    match status {
+        200 => ("read", None),
+        401 => ("auth-rejected", Some(body.trim().to_string())),
+        403 => (
+            "denied",
+            Some(if body.trim().is_empty() {
+                "forbidden".to_string()
+            } else {
+                body.trim().to_string()
+            }),
+        ),
+        404 => (
+            "no-grant-or-missing",
+            Some("the relay returns 404 for both; it will not distinguish them".to_string()),
+        ),
+        _ => (
+            "unexpected",
+            Some(format!("HTTP {status}: {}", body.trim())),
+        ),
+    }
+}
+
+/// Sign the repo-root URL the credential helper signs.
+///
+/// `git-credential-nostr` strips `/info/refs`, `/git-upload-pack` and
+/// `/git-receive-pack` and signs the repo root, because git invokes a helper
+/// once per challenge and reuses the header across the GET and the POST. A
+/// probe signed for the exact path would be rejected where real git succeeds —
+/// see docs/git-nip98-method-binding.md.
+fn repo_root_url(relay_origin: &str, owner: &str, repo: &str) -> String {
+    format!("{relay_origin}/git/{owner}/{repo}")
+}
+
+/// Ask the relay what this key can actually do.
+pub async fn cmd_check(
+    relay_url: &str,
+    keyfile: Option<PathBuf>,
+    compact: bool,
+) -> Result<(), CliError> {
+    let scope = credential_scope(relay_url)?;
+    let origin = scope.strip_suffix("/git").unwrap_or(&scope).to_string();
+    let (keys, key_source) = helper_effective_keys(keyfile.as_deref())?;
+    let pubkey = keys.public_key().to_hex();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| CliError::Other(e.to_string()))?;
+
+    let probe = |url: String, keys: Keys, http: reqwest::Client| async move {
+        let signed = repo_root_from_refs_url(&url);
+        let auth = crate::client::sign_nip98(&keys, "GET", &signed, None)?;
+        let response = http
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(CliError::Network)?;
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        Ok::<_, CliError>((status, body))
+    };
+
+    // Membership oracle. The relay checks NIP-98 and relay membership in the
+    // request extractor, *before* it resolves the repository — so a repo that
+    // cannot exist still separates the two answers cleanly:
+    //   403 -> the key is not a relay member
+    //   404 -> the key is a member; this repo just isn't there
+    // That makes membership answerable without needing any repo to exist.
+    let sentinel = format!(
+        "{}/info/refs?service=git-upload-pack",
+        repo_root_url(&origin, &pubkey, "membership-probe-does-not-exist")
+    );
+    let (sentinel_status, sentinel_body) = probe(sentinel, keys.clone(), http.clone()).await?;
+    let is_member = match sentinel_status {
+        403 => false,
+        404 | 200 => true,
+        _ => {
+            return Err(CliError::Other(format!(
+                "membership probe returned an unexpected HTTP {sentinel_status}: {}",
+                sentinel_body.trim()
+            )))
+        }
+    };
+
+    // Repository inventory. Announcements the key cannot read simply do not come
+    // back, so this is already "repos visible to this key" — but visibility of
+    // the announcement and git read access are separate gates, so each one is
+    // still probed rather than assumed.
+    let mut probes: Vec<RepoProbe> = Vec::new();
+    if is_member {
+        let client =
+            crate::client::BuzzClient::new(relay_url.to_string(), keys.clone(), None, None)?;
+        let raw = client
+            .query(&serde_json::json!({ "kinds": [30617], "limit": 500 }))
+            .await?;
+        let events: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
+        let mut seen = std::collections::BTreeSet::new();
+        for event in events {
+            let author = event
+                .get("pubkey")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_lowercase();
+            let dtag = event
+                .get("tags")
+                .and_then(|t| t.as_array())
+                .and_then(|tags| {
+                    tags.iter().find_map(|tag| {
+                        let tag = tag.as_array()?;
+                        (tag.first()?.as_str()? == "d").then(|| tag.get(1)?.as_str())?
+                    })
+                })
+                .unwrap_or_default()
+                .to_string();
+            if author.len() != 64 || dtag.is_empty() || !seen.insert((author.clone(), dtag.clone()))
+            {
+                continue;
+            }
+            let url = format!(
+                "{}/info/refs?service=git-upload-pack",
+                repo_root_url(&origin, &author, &dtag)
+            );
+            let (status, body) = probe(url, keys.clone(), http.clone()).await?;
+            let (access, detail) = classify_probe(status, &body);
+            probes.push(RepoProbe {
+                repo_id: dtag,
+                owner: author,
+                status,
+                access,
+                detail,
+            });
+        }
+    }
+
+    let readable = probes.iter().filter(|p| p.access == "read").count();
+    let report = serde_json::json!({
+        "relay": origin,
+        "pubkey": pubkey,
+        "key_source": key_source,
+        "relay_member": is_member,
+        "repos_probed": probes.len(),
+        "repos_readable": readable,
+        "repos": probes.iter().map(|p| serde_json::json!({
+            "repo_id": p.repo_id,
+            "owner": p.owner,
+            "access": p.access,
+            "http_status": p.status,
+            "detail": p.detail,
+        })).collect::<Vec<_>>(),
+    });
+
+    if compact {
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("relay   {origin}");
+    println!("key     {pubkey}  (from {key_source})");
+    if !is_member {
+        println!(
+            "member  NO — the relay rejects this key: {}",
+            sentinel_body.trim()
+        );
+        println!();
+        println!("Nothing below can work until this key is a relay member.");
+        println!("Every git request is gated on it, clone included.");
+        return Ok(());
+    }
+    println!("member  yes");
+    println!();
+    if probes.is_empty() {
+        println!("No repository announcements are visible to this key.");
+        return Ok(());
+    }
+    println!("{:<34} {:<20} OWNER", "REPO", "ACCESS");
+    for entry in &probes {
+        println!(
+            "{:<34} {:<20} {}",
+            entry.repo_id,
+            entry.access,
+            &entry.owner[..16.min(entry.owner.len())]
+        );
+    }
+    println!();
+    println!("{readable} of {} readable over git.", probes.len());
+    println!("`no-grant-or-missing` is the relay's single answer for both — it does");
+    println!("not distinguish them, so neither does this.");
+    Ok(())
+}
+
+/// Strip the git service suffix so the signed URL matches the helper's.
+fn repo_root_from_refs_url(url: &str) -> String {
+    let without_query = url.split('?').next().unwrap_or(url);
+    for suffix in ["/info/refs", "/git-upload-pack", "/git-receive-pack"] {
+        if let Some(root) = without_query.strip_suffix(suffix) {
+            return root.to_string();
+        }
+    }
+    without_query.to_string()
 }
 
 #[cfg(test)]
@@ -495,6 +766,71 @@ mod tests {
         let error = resolve_helper(Some(Path::new("/nonexistent/git-credential-nostr")))
             .expect_err("a missing helper must not be accepted");
         assert!(error.to_string().contains("is not a file"));
+    }
+
+    #[test]
+    fn probe_signs_the_repo_root_like_the_credential_helper_does() {
+        // The helper strips the service suffix and signs the repo root, because
+        // git reuses one Authorization header across the GET and the POST. A
+        // probe that signed the exact path would be rejected where real git
+        // succeeds. See docs/git-nip98-method-binding.md.
+        let root = "https://hive.agiterra.org/git/abc/repo";
+        for url in [
+            format!("{root}/info/refs?service=git-upload-pack"),
+            format!("{root}/info/refs?service=git-receive-pack"),
+            format!("{root}/git-upload-pack"),
+            format!("{root}/git-receive-pack"),
+        ] {
+            assert_eq!(repo_root_from_refs_url(&url), root, "for {url}");
+        }
+    }
+
+    #[test]
+    fn a_denied_read_is_never_reported_as_a_missing_repo() {
+        // The relay answers both with 404 on purpose, so that membership cannot
+        // be probed by a stranger. Reporting either one alone would be a guess.
+        let (access, detail) = classify_probe(404, "repository not found");
+        assert_eq!(access, "no-grant-or-missing");
+        assert!(detail.unwrap().contains("will not distinguish"));
+    }
+
+    #[test]
+    fn probe_classification_separates_membership_from_access() {
+        assert_eq!(classify_probe(200, "").0, "read");
+        assert_eq!(
+            classify_probe(403, "restricted: not a relay member").0,
+            "denied"
+        );
+        assert_eq!(
+            classify_probe(401, "missing Authorization header").0,
+            "auth-rejected"
+        );
+        assert_eq!(classify_probe(500, "boom").0, "unexpected");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_npub_in_the_key_file_is_named_as_the_mistake_it_is() {
+        // Keys::parse accepts any 64 hex chars as a secret, so pasting a public
+        // key yields a valid-looking, completely wrong identity that every
+        // local check reports as fine. The bech32 form is the one case that can
+        // be caught locally — so it is.
+        let dir = std::env::temp_dir().join(format!("bee-npub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("key");
+        std::fs::write(
+            &path,
+            "npub1zxrgz5aeerdm7ku2x4j7j0gkj47a88nd9kvdfs8r26z0hwq493ussvhnev\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = read_keyfile(&path).expect_err("an npub is not a secret key");
+        assert!(error.to_string().contains("public"), "got: {error}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
