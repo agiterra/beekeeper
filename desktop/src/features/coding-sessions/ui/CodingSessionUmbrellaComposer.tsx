@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ArrowUp, Bot, Check, ChevronDown, MessagesSquare } from "lucide-react";
 
 import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { publishCodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionLanePublish";
@@ -14,10 +15,16 @@ import {
 import {
   resolveCodingSessionMention,
   stripCodingSessionMentionForTarget,
-  suggestCodingSessionMentionHandles,
   type CodingSessionMentionResolution,
 } from "@/features/coding-sessions/lib/codingSessionMentionRouting";
-import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import {
+  formatCodingSessionModelDisplay,
+  formatCodingSessionRuntimeLabel,
+} from "@/features/coding-sessions/lib/codingSessionLabels";
+import {
+  codingSessionModelDisplayName,
+  codingSessionTraitsSummary,
+} from "@/features/coding-sessions/lib/codingSessionModelDisplay";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import {
   UNKNOWN_CODING_SESSION_REACHABILITY,
@@ -25,10 +32,10 @@ import {
 } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { shouldSubmitCodingSessionComposerKey } from "@/features/coding-sessions/lib/codingSessionComposerModel";
-import { Button } from "@/shared/ui/button";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionComposer } from "./CodingSessionComposer";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 /** A staged handoff: select the target execution and pre-load its editor. */
 export type CodingSessionUmbrellaComposerPrefill = {
@@ -56,6 +63,7 @@ type CodingSessionUmbrellaComposerProps = {
   resolveReachability?: CodingSessionReachabilityResolver;
   layout?: "inline" | "stacked";
   publishLaneMessage?: typeof publishCodingSessionLaneMessage;
+  onSelectedParticipantChange?: (participantKey: string | null) => void;
 };
 
 /**
@@ -79,6 +87,7 @@ export function CodingSessionUmbrellaComposer({
   onAddProvider,
   prefill = null,
   publishLaneMessage = publishCodingSessionLaneMessage,
+  onSelectedParticipantChange,
   resolveReachability = UNKNOWN_CODING_SESSION_REACHABILITY,
   umbrella,
 }: CodingSessionUmbrellaComposerProps) {
@@ -132,6 +141,9 @@ export function CodingSessionUmbrellaComposer({
     null;
   const selectedParticipantKey =
     selected === null ? null : codingSessionUmbrellaParticipantKey(selected);
+  React.useEffect(() => {
+    onSelectedParticipantChange?.(selectedParticipantKey);
+  }, [onSelectedParticipantChange, selectedParticipantKey]);
 
   const mention = resolveCodingSessionMention({ participants, text: draft });
   if (
@@ -145,13 +157,13 @@ export function CodingSessionUmbrellaComposer({
     // people *about* the agents, and prose there must stay prose.
     setSelectedKey(mention.participantKey);
   }
-  const mentionHint = describeCodingSessionMention(
-    mention,
-    suggestCodingSessionMentionHandles(participants),
-  );
+  const mentionHint = describeCodingSessionMention(mention);
   const showMentionHint =
     participants.length > 1 &&
     selected?.kind === "execution" &&
+    (mention.kind === "match" ||
+      mention.kind === "ambiguous" ||
+      mention.kind === "unavailable") &&
     mentionHint.length > 0;
   const prepareText = React.useCallback(
     (text: string) =>
@@ -162,49 +174,18 @@ export function CodingSessionUmbrellaComposer({
       }),
     [participants, selectedParticipantKey],
   );
+  const recipientControl =
+    participants.length > 1 ? (
+      <CodingSessionParticipantPicker
+        authority={authority}
+        onSelect={selectParticipant}
+        participants={participants}
+        selected={selected}
+      />
+    ) : undefined;
 
   return (
     <div data-testid="coding-session-umbrella-composer">
-      {participants.length > 1 ? (
-        <fieldset
-          aria-label="Send to"
-          className="mb-2 flex flex-wrap items-center gap-1.5"
-          data-testid="coding-session-participant-selector"
-        >
-          {participants.map((participant) => {
-            const key = codingSessionUmbrellaParticipantKey(participant);
-            const isSelected =
-              selected !== null &&
-              codingSessionUmbrellaParticipantKey(selected) === key;
-            const gated =
-              participant.kind === "execution" &&
-              !authority.canPromptExecutions;
-            return (
-              <button
-                aria-pressed={isSelected}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                  isSelected
-                    ? "border-primary/50 bg-primary/10 text-foreground"
-                    : "border-border/70 text-muted-foreground hover:text-foreground",
-                  gated && "cursor-not-allowed opacity-60",
-                )}
-                data-participant={key}
-                data-testid={`coding-session-participant-${
-                  participant.kind === "execution" ? "execution" : "session"
-                }`}
-                disabled={gated}
-                key={key}
-                onClick={() => selectParticipant(key)}
-                title={gated ? (authority.reason ?? undefined) : undefined}
-                type="button"
-              >
-                {participant.label}
-              </button>
-            );
-          })}
-        </fieldset>
-      ) : null}
       {showMentionHint ? (
         <p
           // Where a typed handle is about to send is not something to discover
@@ -222,15 +203,19 @@ export function CodingSessionUmbrellaComposer({
           channelId={channelId}
           isMember={isMember}
           publishLaneMessage={publishLaneMessage}
+          recipientControl={recipientControl}
           sessionRef={selected.sessionRef}
         />
       ) : !authority.canPromptExecutions ? (
-        <p
-          className="rounded-3xl border border-border/70 bg-background/95 p-4 text-sm text-muted-foreground shadow-lg backdrop-blur-xl"
+        <div
+          className="rounded-3xl border border-border/35 bg-muted/35 p-4 shadow-lg"
           data-testid="coding-session-umbrella-composer-gated"
         >
-          {authority.reason}
-        </p>
+          <p className="text-sm text-muted-foreground">{authority.reason}</p>
+          <div className="mt-4 flex min-h-10 items-center">
+            {recipientControl}
+          </div>
+        </div>
       ) : (
         <ExecutionComposer
           authority={authority}
@@ -256,6 +241,7 @@ export function CodingSessionUmbrellaComposer({
               ? { id: prefill.id, text: prefill.text }
               : null
           }
+          recipientControl={recipientControl}
           resolveReachability={resolveReachability}
         />
       )}
@@ -274,6 +260,7 @@ function ExecutionComposer({
   participant,
   prepareText,
   prefill,
+  recipientControl,
   resolveReachability,
 }: {
   authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
@@ -286,6 +273,7 @@ function ExecutionComposer({
   participant: Extract<CodingSessionUmbrellaParticipant, { kind: "execution" }>;
   prepareText: (text: string) => string;
   prefill: { id: string; text: string } | null;
+  recipientControl?: React.ReactNode;
   resolveReachability: CodingSessionReachabilityResolver;
 }) {
   const record = participant.execution.activeGeneration;
@@ -346,10 +334,136 @@ function ExecutionComposer({
       prepareText={prepareText}
       prefill={prefill}
       providerAuthorityPubkey={participant.execution.signerPubkey}
+      recipientControl={recipientControl}
       target={target}
       variant="floating"
     />
   );
+}
+
+function CodingSessionParticipantPicker({
+  authority,
+  onSelect,
+  participants,
+  selected,
+}: {
+  authority: ReturnType<typeof resolveCodingSessionUmbrellaComposerAuthority>;
+  onSelect: (participantKey: string) => void;
+  participants: readonly CodingSessionUmbrellaParticipant[];
+  selected: CodingSessionUmbrellaParticipant | null;
+}) {
+  const selectedPresentation = selected
+    ? participantPresentation(selected)
+    : { title: "Choose recipient", detail: null };
+  return (
+    <div data-testid="coding-session-participant-selector">
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            aria-label={`Send to ${selectedPresentation.title}`}
+            className="flex min-w-0 max-w-72 items-center gap-2 rounded-lg py-1.5 pr-2 text-foreground/80 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="coding-session-participant-picker-trigger"
+            type="button"
+          >
+            {selected?.kind === "session" ? (
+              <MessagesSquare aria-hidden className="size-4 shrink-0" />
+            ) : (
+              <Bot aria-hidden className="size-4 shrink-0" />
+            )}
+            <span className="truncate">{selectedPresentation.title}</span>
+            <ChevronDown aria-hidden className="size-3.5 shrink-0 opacity-60" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-96 max-w-[calc(100vw-2rem)] p-2"
+          side="top"
+        >
+          <p className="px-2 pt-1 pb-2 text-xs font-medium text-muted-foreground">
+            Send to
+          </p>
+          <div className="grid gap-1">
+            {participants.map((participant) => {
+              const key = codingSessionUmbrellaParticipantKey(participant);
+              const isSelected =
+                selected !== null &&
+                codingSessionUmbrellaParticipantKey(selected) === key;
+              const gated =
+                participant.kind === "execution" &&
+                !authority.canPromptExecutions;
+              const presentation = participantPresentation(participant);
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  className="flex min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-45"
+                  data-participant={key}
+                  data-testid={`coding-session-participant-${
+                    participant.kind === "execution" ? "execution" : "session"
+                  }`}
+                  disabled={gated}
+                  key={key}
+                  onClick={() => onSelect(key)}
+                  title={gated ? (authority.reason ?? undefined) : undefined}
+                  type="button"
+                >
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted">
+                    {participant.kind === "session" ? (
+                      <MessagesSquare aria-hidden className="size-4" />
+                    ) : (
+                      <Bot aria-hidden className="size-4" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">
+                      {presentation.title}
+                    </span>
+                    {presentation.detail ? (
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        {presentation.detail}
+                      </span>
+                    ) : null}
+                  </span>
+                  <Check
+                    aria-hidden
+                    className={cn(
+                      "size-4 shrink-0 text-primary",
+                      !isSelected && "invisible",
+                    )}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">
+            A leading @name also routes an agent prompt.
+          </p>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+function participantPresentation(
+  participant: CodingSessionUmbrellaParticipant,
+): { title: string; detail: string | null } {
+  if (participant.kind === "session") {
+    return { title: "Session", detail: "Everyone in this session" };
+  }
+  const record = participant.execution.activeGeneration;
+  const runtime =
+    record.runtime ?? record.provider ?? record.commandTarget?.driver;
+  const runtimeLabel = runtime
+    ? formatCodingSessionRuntimeLabel(runtime)
+    : "Agent";
+  if (!record.model) return { title: runtimeLabel, detail: null };
+  const model = formatCodingSessionModelDisplay(record.model);
+  return {
+    title: `${runtimeLabel} · ${codingSessionModelDisplayName(model.model)}`,
+    detail: codingSessionTraitsSummary({
+      thinking: model.thinking,
+      context: model.context,
+    }),
+  };
 }
 
 /**
@@ -361,7 +475,6 @@ function ExecutionComposer({
  */
 function describeCodingSessionMention(
   mention: CodingSessionMentionResolution,
-  handles: readonly { handle: string }[],
 ): string {
   switch (mention.kind) {
     case "match":
@@ -371,11 +484,7 @@ function describeCodingSessionMention(
     case "unavailable":
       return `@${mention.raw} is ${mention.label}, but ${mention.reason}, so it stays plain text.`;
     default:
-      return handles.length === 0
-        ? ""
-        : `Start a message with ${handles
-            .map((entry) => `@${entry.handle}`)
-            .join(" or ")} to address one directly.`;
+      return "";
   }
 }
 
@@ -388,11 +497,13 @@ function CodingSessionLaneComposer({
   channelId,
   isMember,
   publishLaneMessage,
+  recipientControl,
   sessionRef,
 }: {
   channelId: string;
   isMember: boolean;
   publishLaneMessage: typeof publishCodingSessionLaneMessage;
+  recipientControl?: React.ReactNode;
   sessionRef: string;
 }) {
   const [text, setText] = React.useState("");
@@ -424,38 +535,47 @@ function CodingSessionLaneComposer({
 
   return (
     <div
-      className="rounded-3xl border border-border/70 bg-background/95 p-3 shadow-lg backdrop-blur-xl"
+      className="overflow-hidden rounded-3xl border border-border/35 bg-muted/35 shadow-lg"
       data-testid="coding-session-lane-composer"
     >
-      {error ? <p className="mb-2 text-sm text-destructive">{error}</p> : null}
-      <div className="flex items-end gap-2">
-        <Textarea
-          aria-label="Session conversation message"
-          className="min-h-12 min-w-0 flex-1 resize-y border-0 bg-transparent shadow-none"
-          disabled={!isMember || isSending}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (shouldSubmitCodingSessionComposerKey(event)) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-          placeholder="Message everyone in this session…"
-          value={text}
-        />
-        <Button
+      {error ? (
+        <p className="px-4 pt-3 text-sm text-destructive">{error}</p>
+      ) : null}
+      <Textarea
+        aria-label="Session conversation message"
+        className="block min-h-24 w-full resize-none rounded-none border-0 bg-transparent px-4 pt-4 pb-1 shadow-none focus-visible:ring-0"
+        disabled={!isMember || isSending}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (shouldSubmitCodingSessionComposerKey(event)) {
+            event.preventDefault();
+            void submit();
+          }
+        }}
+        placeholder="Message everyone in this session…"
+        value={text}
+      />
+      <div className="flex min-h-14 items-center gap-3 px-4 pb-3 text-sm text-muted-foreground">
+        {recipientControl}
+        <span className="hidden sm:inline">Visible to everyone</span>
+        <button
+          aria-label={isSending ? "Sending" : "Send session message"}
+          className="ml-auto grid size-9 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-30"
           data-testid="coding-session-lane-send"
           disabled={!canSend}
           onClick={() => void submit()}
-          size="sm"
           type="button"
         >
-          {isSending ? "Sending…" : "Send"}
-        </Button>
+          {isSending ? (
+            <span
+              aria-hidden
+              className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+            />
+          ) : (
+            <ArrowUp aria-hidden className="size-4" />
+          )}
+        </button>
       </div>
-      <p className="mt-1 px-1 text-2xs text-muted-foreground">
-        Visible to the whole channel; scoped to this session for new clients.
-      </p>
     </div>
   );
 }

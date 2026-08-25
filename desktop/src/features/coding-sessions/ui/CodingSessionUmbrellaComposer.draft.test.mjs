@@ -19,10 +19,17 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 
 before(() => {
   Object.assign(globalThis, {
+    CustomEvent: dom.window.CustomEvent,
     document: dom.window.document,
     Element: dom.window.Element,
+    Event: dom.window.Event,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
     IS_REACT_ACT_ENVIRONMENT: true,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
     window: dom.window,
   });
 });
@@ -113,6 +120,11 @@ test("a draft typed for one execution never survives a participant switch", asyn
     });
 
     const editor = () => screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId("coding-session-participant-picker-trigger"),
+      );
+    });
     const participants = screen.getAllByTestId(
       "coding-session-participant-execution",
     );
@@ -121,9 +133,8 @@ test("a draft typed for one execution never survives a participant switch", asyn
     // The selector starts on the most recently active execution (Claude).
     assert.equal(
       screen
-        .getByTestId("coding-session-umbrella-composer")
-        .querySelector('[aria-pressed="true"]')
-        ?.textContent?.includes("Claude"),
+        .getByTestId("coding-session-participant-picker-trigger")
+        .textContent?.includes("Claude"),
       true,
     );
 
@@ -144,7 +155,17 @@ test("a draft typed for one execution never survives a participant switch", asyn
 
     await act(async () => {
       fireEvent.click(
-        second.getAttribute("aria-pressed") === "true" ? first : second,
+        screen.getByTestId("coding-session-participant-picker-trigger"),
+      );
+    });
+    const reopenedParticipants = screen.getAllByTestId(
+      "coding-session-participant-execution",
+    );
+    await act(async () => {
+      fireEvent.click(
+        reopenedParticipants.find(
+          (participant) => participant.getAttribute("aria-pressed") !== "true",
+        ),
       );
     });
     // And switching back does not resurrect the abandoned draft either — the
