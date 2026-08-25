@@ -1149,18 +1149,32 @@ fn contains_host_path(word: &str) -> bool {
         return false;
     }
     let lowered = candidate.to_ascii_lowercase();
+    // A leading `/`, or one that starts a *quoted* absolute path (`="/etc/x"`,
+    // `(/var/log)`). The delimiter alone is not enough: an agent explaining a
+    // command writes `` `get`/`store`/`erase` ``, where the slash sits between
+    // two code spans and names no path at all. That elided a clause out of the
+    // middle of a live answer on 2026-08-24, so the character *after* the
+    // slash has to look like a path segment too.
     let unix_absolute = candidate.char_indices().any(|(index, character)| {
-        character == '/'
-            && (index == 0
-                || candidate[..index]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|previous| {
-                        matches!(
-                            previous,
-                            '=' | '(' | '[' | '{' | ',' | ';' | '\'' | '"' | '`'
-                        )
-                    }))
+        if character != '/' {
+            return false;
+        }
+        let starts_segment = candidate[index + 1..].chars().next().is_some_and(|next| {
+            next.is_ascii_alphanumeric() || matches!(next, '.' | '_' | '-' | '~')
+        });
+        if !starts_segment {
+            return false;
+        }
+        index == 0
+            || candidate[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|previous| {
+                    matches!(
+                        previous,
+                        '=' | '(' | '[' | '{' | ',' | ';' | '\'' | '"' | '`'
+                    )
+                })
     });
     unix_absolute
         || candidate.starts_with("~/")

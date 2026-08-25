@@ -628,3 +628,41 @@ fn a_tool_named_after_credentials_is_not_redacted() {
     let text = "Ran git-credential-nostr; the push retried once and succeeded.";
     assert_eq!(sanitize_coding_session_context_text(text), text);
 }
+
+/// Live, 2026-08-24: an agent explaining `git-credential-nostr` had a clause
+/// elided out of the middle of its answer — `` `get`/`store`/`erase`) `` —
+/// because a `/` preceded by a backtick read as the start of a quoted absolute
+/// path. Inline code spans are how an agent names commands, so this fired
+/// exactly where the answer was most technical.
+#[test]
+fn inline_code_spans_are_not_host_paths() {
+    for text in [
+        "reading key-value pairs over stdin/stdout for `get`/`store`/`erase`)",
+        "either `--force`/`-f` works",
+        "the `a`/`b` split",
+    ] {
+        assert_eq!(
+            sanitize_coding_session_context_text(text),
+            text,
+            "a slash between code spans names no path"
+        );
+    }
+}
+
+/// …and the quoted-path form it exists for still goes.
+#[test]
+fn a_quoted_absolute_path_is_still_a_host_path() {
+    for text in [
+        "CWD=\"/Users/brian/Projects/beekeeper\"",
+        "look in (/Users/brian/secrets)",
+        "the file at '/etc/shadow' is root-only",
+    ] {
+        let sanitized = sanitize_coding_session_context_text(text);
+        assert!(
+            sanitized.contains("[elided private context: "),
+            "{text} → {sanitized}"
+        );
+        assert!(!sanitized.contains("/Users/brian"), "{sanitized}");
+        assert!(!sanitized.contains("/etc/shadow"), "{sanitized}");
+    }
+}
