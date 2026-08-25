@@ -8,14 +8,42 @@ is the product, and upstream is merged in occasionally.
 
 | Remote | Repo | What it is |
 |---|---|---|
-| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. Needs Nostr credentials; run `just install-git-credentials`. |
-| `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | **Where `main` lives.** `main` tracks `upstream/main`; Woodpecker watches this repo, so this is what CI and the relay deploy from. |
+| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. **`main` tracks `origin/main`**, and this is where you push. Needs Nostr credentials; run `just install-git-credentials`. |
+| `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | GitHub. Still what **Woodpecker watches**, so it is what CI and the relay deploy from — kept in step as `origin`'s second push URL, not by pushing here separately. |
 | `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
 
 This is not the arrangement described before 2026-08-24, when `origin` was the
 GitHub repo and there was no `upstream`. Both names moved at once, so anything
 you remember about which is which is probably stale — `git remote -v` is the
 only reliable answer.
+
+### One push, two destinations
+
+`origin` fetches from the relay and pushes to **both** the relay and GitHub:
+
+```sh
+git remote set-url --add --push origin "$(git remote get-url origin)"
+git remote set-url --add --push origin https://github.com/agiterra/beekeeper.git
+git branch -u origin/main main
+```
+
+Order matters — the first `--add --push` replaces the implicit push URL, so the
+relay has to be added explicitly too or it stops receiving pushes. Check with
+`git remote get-url --push --all origin`; both must be listed.
+
+This is per-clone config in `.git/config`, not something the repo carries. A
+fresh clone needs it again.
+
+The honest limit: the two pushes are **sequential, not atomic**. Git reports a
+failure per URL, so divergence is visible rather than silent — but a push that
+reaches the relay and fails at GitHub leaves a commit that will not build,
+because Woodpecker only sees GitHub. `git rev-parse origin/main upstream/main`
+is the one-line check.
+
+Why the relay is the fetch side: it is measurably faster from here (~190 ms
+against GitHub's ~400 ms), and the pre-push guards resolve their base from
+`main@{upstream}`, so they run on every push. Both were verified against the
+relay base after the switch.
 
 There is deliberately **no `block/buzz` remote**. `vanilla` already carries
 that history, so a second path to the same commits earned nothing and cost 827

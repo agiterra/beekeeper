@@ -1692,11 +1692,34 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   URL, `6cbdf445…92b68df2` — is the **release** identity. The dev key added to
   the relay on 2026-08-23, `npub1zxrgz5…` = `11868153…`, is not the repo owner
   and has no push grant. Pushing from a terminal means the release key.
-- **A full-history first push to the relay would be rejected.** `size-pack` is
-  533.76 MiB (2026-08-24); `BUZZ_GIT_MAX_PACK_BYTES` defaults to 500 MB and is
-  a request body limit, and hive sets neither it nor `BUZZ_GIT_MAX_REPO_BYTES`
-  (1 GB). Push staged waypoints — `git push origin <sha>:refs/heads/main`,
-  oldest first — so each pack is a delta, or raise the caps in a deploy window.
+- **The relay already held most of this repo's history, so the first push was
+  1 MiB, not 534.** `size-pack` is 533.76 MiB and `BUZZ_GIT_MAX_PACK_BYTES`
+  defaults to 500 MB (a request body limit), which looked like a blocker until
+  `git ls-remote` showed the relay already carrying `ci/docs-only-path-filter`
+  at `9da3042d1` — pushed by the desktop import, which pushes whatever branch
+  is checked out. `main` was a 468-object delta from the merge base. **If a
+  cold push is ever needed** (a new repo, a fresh relay), stage waypoints —
+  `git push origin <sha>:refs/heads/main`, oldest first — so each pack is a
+  delta, or raise the caps in a deploy window. `BUZZ_GIT_MAX_REPO_BYTES`
+  defaults to 1 GB, which this repo is over halfway through.
+- **`main` landed on the relay on 2026-08-24** at `c2a341acf`, the orphan
+  `ci/docs-only-path-filter` was deleted, and **HEAD followed to `main` on its
+  own** — the relay derives HEAD from the manifest, there is no default-branch
+  setting to change.
+- **A scoped `credential.<url>.helper` is appended to the helper list, not
+  substituted for it.** `/opt/homebrew/etc/gitconfig` sets
+  `credential.helper = osxkeychain` system-wide, so relay requests ran both
+  helpers and every *successful* one printed `fatal: failed to store: -1` when
+  osxkeychain tried to store an ephemeral credential. Write the helper as a
+  two-value list with an empty reset first (`--unset-all` then `--add` per
+  value; plain `git config key value` errors on a multi-valued key).
+- **`Keys::parse` accepts any 64 hex characters as a secret key**, so pasting a
+  *public* key hex into `~/.nostr/key` yields a valid-looking, entirely
+  different identity that every local check reports as fine — `6cbdf445…`
+  pasted as a secret derives `508b1975…`. The bech32 `npub1…` form is rejected
+  by name; the hex form is not decidable locally, which is why `bee git check`
+  asks the relay instead. Hex and nsec are equally acceptable to the helper;
+  nsec is preferable only because `npub`/`nsec` are visibly different.
 - **The relay's push notification is a Nostr event, not a webhook.** Every
   ref-changing push publishes a relay-signed kind:30618 NIP-34 ref-state event
   (`crates/buzz-relay/src/api/git/manifest_event.rs:70-114`), carrying the refs
