@@ -36,6 +36,14 @@ pub const STATE_VERSION: u32 = 1;
 
 const STATE_FILE: &str = "state.json";
 const COMMANDS_FILE: &str = "commands.jsonl";
+/// Append-only record of `commandId`s this provider answered with a refusal.
+///
+/// Separate from [`COMMANDS_FILE`] because the two answer different questions.
+/// A *consumed* command started a turn and must never start a second one. A
+/// *refused* command never ran and never will: remembering it stops a relay
+/// redelivery from publishing a byte-identical `turn_refused` a second time,
+/// which is the difference between a refusal and a stutter.
+const REFUSALS_FILE: &str = "refusals.jsonl";
 /// Single-instance lock file. See [`acquire_state_dir_lock`].
 pub const LOCK_FILE: &str = "provider.lock";
 
@@ -300,6 +308,7 @@ pub struct StateStore {
     dir: PathBuf,
     snapshot: Snapshot,
     commands: HashSet<String>,
+    refusals: HashSet<String>,
 }
 
 impl StateStore {
@@ -311,7 +320,7 @@ impl StateStore {
     pub fn open(dir: &Path, command_retention_secs: u64) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
         restrict_directory(dir)?;
-        for file in [STATE_FILE, COMMANDS_FILE] {
+        for file in [STATE_FILE, COMMANDS_FILE, REFUSALS_FILE] {
             restrict_file_if_present(&dir.join(file))?;
         }
         let snapshot = load_snapshot(&dir.join(STATE_FILE))?;
@@ -319,6 +328,7 @@ impl StateStore {
             dir: dir.to_path_buf(),
             snapshot,
             commands: HashSet::new(),
+            refusals: HashSet::new(),
         };
         store.load_commands(command_retention_secs)?;
         Ok(store)
@@ -345,9 +355,52 @@ impl StateStore {
         self.commands.contains(command_id)
     }
 
-    /// Record a command as consumed, durably, before any side effect runs.
+    /// Record a command as consumed, durably, at the moment its side effect
+    /// *begins*.
+    ///
+    /// For a turn that is the point the turn starts running, not the point it
+    /// was accepted into the mailbox. A command accepted and not yet started is
+    /// deliberately absent from this ledger: a crash before it ran leaves it
+    /// unconsumed, so the replay from the channel watermark re-delivers it and
+    /// the turn is not lost. See [`crate::Provider::handle_session_event`]'s
+    /// `TurnStarted` arm.
     pub fn consume_command(&mut self, command_id: &str, at: u64) -> io::Result<()> {
-        if !self.commands.insert(command_id.to_owned()) {
+        Self::append_ledger_record(
+            &self.dir.join(COMMANDS_FILE),
+            &mut self.commands,
+            command_id,
+            at,
+        )
+    }
+
+    /// Whether this command was already answered with a refusal.
+    pub fn is_command_refused(&self, command_id: &str) -> bool {
+        self.refusals.contains(command_id)
+    }
+
+    /// Record a command as refused, durably, before its refusal is published.
+    ///
+    /// A refused command never ran, so it must not be *consumed* — consumed
+    /// means "this one started". It must also never be answered twice: the
+    /// outbox fences duplicates only within one process lifetime, so without a
+    /// durable set a restart plus a relay redelivery republishes the same
+    /// refusal under the same semantic key.
+    pub fn record_refusal(&mut self, command_id: &str, at: u64) -> io::Result<()> {
+        Self::append_ledger_record(
+            &self.dir.join(REFUSALS_FILE),
+            &mut self.refusals,
+            command_id,
+            at,
+        )
+    }
+
+    fn append_ledger_record(
+        path: &Path,
+        seen: &mut HashSet<String>,
+        command_id: &str,
+        at: u64,
+    ) -> io::Result<()> {
+        if !seen.insert(command_id.to_owned()) {
             return Ok(());
         }
         let record = CommandRecord {
@@ -358,9 +411,8 @@ impl StateStore {
             let mut options = OpenOptions::new();
             options.create(true).append(true);
             restrict_new_file(&mut options);
-            let path = self.dir.join(COMMANDS_FILE);
-            let mut file = options.open(&path)?;
-            restrict_file(&path)?;
+            let mut file = options.open(path)?;
+            restrict_file(path)?;
             // The whole line — payload and newline — goes down in a single
             // `write` call on an O_APPEND handle, so even a second writer (a bug
             // the state-dir lock exists to prevent) could not tear it in half.
@@ -370,7 +422,7 @@ impl StateStore {
             file.sync_all()
         })();
         if result.is_err() {
-            self.commands.remove(command_id);
+            seen.remove(command_id);
         }
         result
     }
@@ -475,8 +527,15 @@ impl StateStore {
     }
 
     fn load_commands(&mut self, retention_secs: u64) -> io::Result<()> {
-        let path = self.dir.join(COMMANDS_FILE);
-        let file = match File::open(&path) {
+        let dir = self.dir.clone();
+        Self::load_ledger(&dir.join(COMMANDS_FILE), &mut self.commands, retention_secs)?;
+        Self::load_ledger(&dir.join(REFUSALS_FILE), &mut self.refusals, retention_secs)
+    }
+
+    /// Load one append-only `commandId` ledger, dropping records past the
+    /// freshness horizon and rewriting the file when anything was dropped.
+    fn load_ledger(path: &Path, seen: &mut HashSet<String>, retention_secs: u64) -> io::Result<()> {
+        let file = match File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -491,7 +550,7 @@ impl StateStore {
             }
             match serde_json::from_str::<CommandRecord>(&line) {
                 Ok(record) if record.at >= cutoff => {
-                    if self.commands.insert(record.command_id.clone()) {
+                    if seen.insert(record.command_id.clone()) {
                         kept.push(record);
                     } else {
                         dropped = true;
@@ -510,7 +569,7 @@ impl StateStore {
                 body.push_str(&serde_json::to_string(record)?);
                 body.push('\n');
             }
-            atomic_write(&path, body.as_bytes())?;
+            atomic_write(path, body.as_bytes())?;
         }
         Ok(())
     }

@@ -5731,6 +5731,7 @@ mod tests {
             command_id: "cmd-1".into(),
             target: cs_target(),
             action: buzz_core::coding_session_command::CodingSessionAction::ThreadTurnStart {
+                deliver: buzz_core::coding_session_command::CodingSessionDelivery::Boundary,
                 text: "Ship it".into(),
             },
         }
@@ -6352,6 +6353,8 @@ mod tests {
             ReceiptStatus::TurnStarted,
             ReceiptStatus::TurnDropped,
             ReceiptStatus::TurnRefused,
+            ReceiptStatus::TurnDegraded,
+            ReceiptStatus::InterruptDelivered,
         ];
         let mut stage_keys: Vec<String> = stages
             .iter()
@@ -6383,6 +6386,22 @@ mod tests {
                 ),
             ]
         );
+
+        // A downgraded steer publishes `turn_degraded` and then `turn_queued`
+        // for the same command; keyed by `commandId` alone the second would
+        // fence the first out and the operator would never learn their steer
+        // was not honoured.
+        assert_ne!(
+            coding_session_turn_receipt_semantic_key("turn-1", ReceiptStatus::TurnDegraded),
+            coding_session_turn_receipt_semantic_key("turn-1", ReceiptStatus::TurnQueued)
+        );
+        assert!(build_coding_session_turn_receipt(
+            channel,
+            "turn-1",
+            ReceiptStatus::InterruptDelivered,
+            "{}"
+        )
+        .is_ok());
 
         // A lifecycle status has one outcome and must never be published on
         // the per-stage key.

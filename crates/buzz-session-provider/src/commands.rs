@@ -9,14 +9,14 @@
 //! through the shared `buzz_core::coding_session_command` type, so the
 //! provider and the relay can never disagree about what is valid.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use uuid::Uuid;
 
 use buzz_core::coding_session_command::{
-    CodingSessionAction, CodingSessionCommandPayload, CodingSessionTarget,
+    CodingSessionAction, CodingSessionCommandPayload, CodingSessionDelivery, CodingSessionTarget,
 };
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, CodingSessionLifecycleAction,
@@ -36,7 +36,8 @@ use crate::state::StateStore;
 /// command was meant for it and can name what the operator addressed — which
 /// is exactly the difference between an ignore that owes the operator a
 /// visible refusal and one that must stay silent. `NotAddressed`,
-/// `AlreadyConsumed`, `PastHorizon`, and `Malformed` carry nothing because
+/// `AlreadyConsumed`, `AlreadyRefused`, `AlreadyAccepted`, `PastHorizon`, and
+/// `Malformed` carry nothing because
 /// answering them would be cross-provider chatter, a duplicate answer, or a
 /// claim about a command this provider cannot read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +46,14 @@ pub enum Ignored {
     NotAddressed,
     /// This `commandId` was already consumed.
     AlreadyConsumed,
+    /// This `commandId` was already answered with a refusal, durably. Silent
+    /// for the same reason as `AlreadyConsumed`: a second byte-identical
+    /// refusal is a stutter, not information.
+    AlreadyRefused,
+    /// This `commandId` is already in this process's mailbox, accepted and not
+    /// yet started. Silent: the operator has its `turn_queued` and the turn is
+    /// going to run — a relay redelivery must not queue it twice.
+    AlreadyAccepted,
     /// Older than the freshness horizon and never seen — history, not intent.
     PastHorizon,
     /// Content did not decode against the contract.
@@ -96,9 +105,12 @@ impl Ignored {
     /// already answered.
     pub fn refusal(&self) -> Option<TurnRefusal<'_>> {
         match self {
-            Self::NotAddressed | Self::AlreadyConsumed | Self::PastHorizon | Self::Malformed(_) => {
-                None
-            }
+            Self::NotAddressed
+            | Self::AlreadyConsumed
+            | Self::AlreadyRefused
+            | Self::AlreadyAccepted
+            | Self::PastHorizon
+            | Self::Malformed(_) => None,
             Self::UnknownTarget { command_id, target } => Some(TurnRefusal {
                 command_id,
                 target,
@@ -219,6 +231,10 @@ pub enum TurnDecision {
         target: CodingSessionTarget,
         /// Operator-entered turn text.
         text: String,
+        /// The delivery class the sender asked for. Authority for it has
+        /// already been checked here: an `interrupt` that reaches this variant
+        /// was signed by the founder.
+        deliver: CodingSessionDelivery,
     },
     /// Cancel the in-flight turn of a live session.
     Interrupt {
@@ -251,6 +267,14 @@ pub struct CommandContext<'a> {
     pub state: &'a StateStore,
     /// Host-local working-directory map, freshly read.
     pub projects: &'a ProjectsFile,
+    /// `commandId`s this process has accepted into a mailbox and not yet run.
+    ///
+    /// Consumption now happens when a turn *starts*, so the durable ledger
+    /// cannot answer "is this already on its way" for the window between
+    /// accept and start. This set can, and it is deliberately in-memory: after
+    /// a restart the mailbox is empty, and every unstarted command genuinely
+    /// does need re-delivering.
+    pub in_flight: &'a HashMap<String, crate::InFlightTurn>,
 }
 
 impl CommandContext<'_> {
@@ -472,6 +496,12 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     if context.state.is_command_consumed(&command.command_id) {
         return TurnDecision::Ignore(Ignored::AlreadyConsumed);
     }
+    if context.state.is_command_refused(&command.command_id) {
+        return TurnDecision::Ignore(Ignored::AlreadyRefused);
+    }
+    if context.in_flight.contains_key(&command.command_id) {
+        return TurnDecision::Ignore(Ignored::AlreadyAccepted);
+    }
     if context.past_horizon(created_at) {
         return TurnDecision::Ignore(Ignored::PastHorizon);
     }
@@ -504,10 +534,28 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     }
 
     match command.action {
-        TurnAction::Start { text } => TurnDecision::Start {
+        // Interrupt-class delivery cancels work someone else may be watching,
+        // so it stays with the founder in this slice. A granted operator can
+        // still steer and still queue; what it cannot do is stop a running
+        // turn by sending a new one. Refusing out loud (rather than silently
+        // downgrading to boundary) is the point: a control that quietly does
+        // something milder than it says is the class of lie this project
+        // treats as a bug.
+        TurnAction::Start {
+            deliver: CodingSessionDelivery::Interrupt,
+            ..
+        } if !operator_owns_session(record, context.operator_pubkey) => TurnDecision::Fail {
+            command_id: command.command_id,
+            target: command.target,
+            message: "only the session founder may send an interrupt-class turn; \
+                      send it as boundary or steer, or ask the founder to interrupt"
+                .into(),
+        },
+        TurnAction::Start { text, deliver } => TurnDecision::Start {
             command_id: command.command_id,
             target: command.target,
             text,
+            deliver,
         },
         TurnAction::Interrupt => TurnDecision::Interrupt {
             command_id: command.command_id,
@@ -559,6 +607,8 @@ pub enum TurnAction {
     Start {
         /// The prompt.
         text: String,
+        /// How the sender asked for it to be delivered.
+        deliver: CodingSessionDelivery,
     },
     /// Cancel the in-flight turn.
     Interrupt,
@@ -570,7 +620,9 @@ pub fn decode_turn_command(content: &str) -> Result<TurnCommand, String> {
         .map_err(|error| format!("malformed coding-session command payload: {error}"))?;
     payload.validate()?;
     let action = match payload.action {
-        CodingSessionAction::ThreadTurnStart { text } => TurnAction::Start { text },
+        CodingSessionAction::ThreadTurnStart { text, deliver } => {
+            TurnAction::Start { text, deliver }
+        }
         CodingSessionAction::ThreadTurnInterrupt => TurnAction::Interrupt,
     };
     Ok(TurnCommand {
@@ -734,7 +786,16 @@ mod tests {
             active_session_count: state.live_session_count(),
             state,
             projects,
+            in_flight: no_commands_in_flight(),
         }
+    }
+
+    /// The empty accepted-not-started set, leaked once so every decision test
+    /// can borrow it for `'a` without threading a local through each call.
+    fn no_commands_in_flight() -> &'static HashMap<String, crate::InFlightTurn> {
+        static EMPTY: std::sync::OnceLock<HashMap<String, crate::InFlightTurn>> =
+            std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashMap::new)
     }
 
     fn create_content(command_id: &str, project_ref: &str, authority: &str) -> String {
@@ -1514,7 +1575,8 @@ mod tests {
         assert_eq!(
             start.action,
             TurnAction::Start {
-                text: "do the thing".into()
+                text: "do the thing".into(),
+                deliver: CodingSessionDelivery::Boundary,
             }
         );
         let interrupt =
@@ -1600,5 +1662,159 @@ mod tests {
             file.resolve("other", None, channel).as_deref(),
             Some(dir.path())
         );
+    }
+
+    /// `turn_content` with an explicit delivery class.
+    fn turn_content_delivering(
+        command_id: &str,
+        session_id: &str,
+        generation: u64,
+        deliver: &str,
+    ) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-command/v1","commandId":"{command_id}","target":{{"driver":"claude-agent-acp","instanceId":"instance-1","sessionId":"{session_id}","generation":{generation}}},"action":{{"type":"thread.turn.start","text":"do the thing","deliver":"{deliver}"}}}}"#
+        )
+    }
+
+    /// The class the sender asked for reaches the decision intact, and a
+    /// command that names none means `boundary` — the behaviour that existed
+    /// before the field did.
+    #[test]
+    fn a_turns_delivery_class_survives_the_decision() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .insert_session(session("s1", dir.path()))
+            .expect("insert");
+        let projects = ProjectsFile::default();
+        let context = ctx(&state, &projects, 1_000);
+
+        for (wire, expected) in [
+            ("boundary", CodingSessionDelivery::Boundary),
+            ("steer", CodingSessionDelivery::Steer),
+            ("interrupt", CodingSessionDelivery::Interrupt),
+        ] {
+            match decide_turn(
+                &context,
+                1_000,
+                &turn_content_delivering(&format!("turn-{wire}"), "s1", 1, wire),
+            ) {
+                TurnDecision::Start { deliver, .. } => assert_eq!(deliver, expected),
+                other => panic!("{wire} was not a start: {other:?}"),
+            }
+        }
+
+        match decide_turn(&context, 1_000, &turn_content("turn-default", "s1", 1)) {
+            TurnDecision::Start { deliver, .. } => {
+                assert_eq!(deliver, CodingSessionDelivery::Boundary);
+            }
+            other => panic!("expected a boundary start, got {other:?}"),
+        }
+
+        // A class this build has never heard of is not guessed at.
+        assert!(matches!(
+            decide_turn(
+                &context,
+                1_000,
+                &turn_content_delivering("turn-unknown-class", "s1", 1, "cancel")
+            ),
+            TurnDecision::Ignore(Ignored::Malformed(_))
+        ));
+    }
+
+    /// Interrupt-class delivery stops work someone else may be watching, so it
+    /// stays with the founder. A granted operator who asks for it is refused
+    /// out loud rather than quietly downgraded — a control that silently does
+    /// something milder than it says is the kind of lie this project treats as
+    /// a bug.
+    #[test]
+    fn interrupt_class_delivery_is_founder_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let grantee = "ef".repeat(32);
+        let mut governed = session("s1", dir.path());
+        governed.genesis_ref = Some("12".repeat(32));
+        governed.granted_operators = [grantee.clone()].into_iter().collect();
+        governed.authority_seq = 1;
+        state.insert_session(governed).expect("insert");
+        let projects = ProjectsFile::default();
+
+        let as_grantee = ctx_as(&state, &projects, 1_000, &grantee);
+        match decide_turn(
+            &as_grantee,
+            1_000,
+            &turn_content_delivering("turn-grantee-interrupt", "s1", 1, "interrupt"),
+        ) {
+            TurnDecision::Fail { command_id, .. } => {
+                assert_eq!(command_id, "turn-grantee-interrupt");
+            }
+            other => panic!("a granted operator must not interrupt: {other:?}"),
+        }
+        // Everything else the grantee could already do is untouched.
+        for class in ["boundary", "steer"] {
+            assert!(
+                matches!(
+                    decide_turn(
+                        &as_grantee,
+                        1_000,
+                        &turn_content_delivering(&format!("turn-grantee-{class}"), "s1", 1, class)
+                    ),
+                    TurnDecision::Start { .. }
+                ),
+                "{class} must still be allowed"
+            );
+        }
+
+        let as_founder = ctx(&state, &projects, 1_000);
+        assert!(matches!(
+            decide_turn(
+                &as_founder,
+                1_000,
+                &turn_content_delivering("turn-founder-interrupt", "s1", 1, "interrupt")
+            ),
+            TurnDecision::Start {
+                deliver: CodingSessionDelivery::Interrupt,
+                ..
+            }
+        ));
+    }
+
+    /// A command already answered — consumed, refused, or sitting in a mailbox
+    /// waiting to run — is never answered a second time.
+    #[test]
+    fn a_command_already_answered_is_silent_on_redelivery() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        state
+            .insert_session(session("s1", dir.path()))
+            .expect("insert");
+        state.consume_command("turn-ran", 1_000).expect("consume");
+        state.record_refusal("turn-refused", 1_000).expect("refuse");
+        let projects = ProjectsFile::default();
+        let mut in_flight = HashMap::new();
+        in_flight.insert(
+            "turn-waiting".to_owned(),
+            crate::InFlightTurn {
+                channel_id: Uuid::nil(),
+                session_id: "s1".to_owned(),
+                target: turn_target("s1", 1),
+                created_at: 1_000,
+            },
+        );
+        let mut context = ctx(&state, &projects, 1_000);
+        context.in_flight = &in_flight;
+
+        for (command_id, expected) in [
+            ("turn-ran", Ignored::AlreadyConsumed),
+            ("turn-refused", Ignored::AlreadyRefused),
+            ("turn-waiting", Ignored::AlreadyAccepted),
+        ] {
+            let decision = decide_turn(&context, 1_000, &turn_content(command_id, "s1", 1));
+            assert_eq!(decision, TurnDecision::Ignore(expected.clone()));
+            assert!(
+                expected.refusal().is_none(),
+                "{command_id} must not be answered twice"
+            );
+        }
     }
 }
