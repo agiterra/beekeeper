@@ -450,6 +450,17 @@ impl SessionHandle {
         })
     }
 
+    /// Free slots in this session's mailbox, right now.
+    ///
+    /// The provider's run loop is the only producer, so a count read here is
+    /// the count the very next `deliver` gets. That is what lets a delivery
+    /// class needing *two* sends — an interrupt-class turn, which is a cancel
+    /// followed by the turn that replaces the cancelled one — decide to do
+    /// neither rather than half of it.
+    pub fn free_slots(&self) -> usize {
+        self.tx.capacity()
+    }
+
     /// Whether the actor is still running.
     pub fn is_live(&self) -> bool {
         !self.tx.is_closed()
@@ -563,6 +574,29 @@ impl SessionManager {
     /// Handle for a live session, if it is still running.
     pub fn handle(&self, session_id: &str) -> Option<&SessionHandle> {
         self.live.get(session_id)
+    }
+
+    /// Replace a session's handle with one whose mailbox the test owns.
+    ///
+    /// The only way to hold a mailbox at a chosen depth: a real actor drains
+    /// `rx` continuously except while a cancel is draining, so a test that
+    /// wanted a full mailbox would have to win a race against `CANCEL_GRACE`.
+    #[cfg(test)]
+    pub(crate) fn attach_test_handle(
+        &mut self,
+        session_id: &str,
+        tx: mpsc::Sender<SessionCommand>,
+    ) -> watch::Receiver<bool> {
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        self.live.insert(
+            session_id.to_owned(),
+            SessionHandle {
+                session_id: session_id.to_owned(),
+                tx,
+                shutdown,
+            },
+        );
+        shutdown_rx
     }
 
     /// Exact session ids whose actor channel is still open.
