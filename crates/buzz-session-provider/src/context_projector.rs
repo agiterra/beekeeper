@@ -68,6 +68,13 @@ pub const MAX_CONTEXT_SOURCE_EVENTS: usize = 16_384;
 pub const MAX_CONTEXT_SOURCE_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 /// Current relay-side maximum rows returned for one standard Nostr filter.
 const RELAY_QUERY_PAGE_LIMIT: usize = 1_000;
+/// Maximum pages one paged control partition walks before it fails closed.
+///
+/// A control partition must be complete or refused, so it is paged rather than
+/// clamped at one relay page. The cap keeps a pathological channel from turning
+/// one projection into an unbounded crawl; reaching it is the same fact as the
+/// old single-page clamp and takes the same closed path.
+const MAX_CONTROL_PARTITION_PAGES: usize = 32;
 
 /// One accepted authority-chain link, including both cryptographic witnesses.
 #[derive(Debug, Clone)]
@@ -242,10 +249,13 @@ struct Grant {
 ///
 /// This is the create-flow entry point. Control facts are queried in separate
 /// kind partitions so transcript volume cannot starve genesis or authority
-/// links. A saturated control partition fails closed. A saturated transcript
-/// partition is retained only with explicit incomplete-source provenance.
-/// Callers may serialize the result for a private MCP adapter; this function
-/// performs no filesystem writes.
+/// links, and each control partition is walked to exhaustion rather than
+/// clamped at one relay page — kind 44224 alone grows by two receipts per turn,
+/// so a single page of it stops covering a busy channel's creates long before
+/// the channel is old. A control partition that cannot be exhausted fails
+/// closed. The transcript partition still takes one page and is retained only
+/// with explicit incomplete-source provenance. Callers may serialize the result
+/// for a private MCP adapter; this function performs no filesystem writes.
 pub async fn fetch_and_project_session_context(
     rest: &RestClient,
     request: &ContextProjectionRequest,
@@ -275,16 +285,16 @@ pub async fn fetch_and_project_session_context(
         KIND_SYSTEM_MESSAGE,
     ] {
         let partition = query_kind_partition(rest, request.channel_id, kind).await?;
-        if partition.len() == RELAY_QUERY_PAGE_LIMIT {
+        if partition.saturated {
             if kind == KIND_CODING_SESSION_TRANSCRIPT {
                 transcript_complete = false;
             } else {
                 return Err(ContextProjectionError::Bound(format!(
-                    "relay kind-{kind} partition reached its {RELAY_QUERY_PAGE_LIMIT}-row clamp; refusing potentially incomplete authority/linkage facts"
+                    "relay kind-{kind} partition could not be exhausted within {MAX_CONTROL_PARTITION_PAGES} pages of {RELAY_QUERY_PAGE_LIMIT} rows; refusing potentially incomplete authority/linkage facts"
                 )));
             }
         }
-        for event in partition {
+        for event in partition.events {
             if ids.insert(event.id) {
                 events.push(event);
             }
@@ -331,20 +341,126 @@ pub fn project_session_context_events(
     )
 }
 
+/// One kind partition as collected, and whether its source was exhausted.
+struct KindPartition {
+    /// The events kept for the fact set.
+    events: Vec<Event>,
+    /// True when collection stopped at a bound rather than at the partition's
+    /// end, so what it holds may be missing older facts.
+    saturated: bool,
+}
+
+/// Whether an event from `kind`'s partition is a fact this projection reads.
+///
+/// Kind 44224 carries two vocabularies and only one of them is a linkage fact.
+/// Turn-stage receipts are published per turn — at least two for every prompt —
+/// so a channel that has run any real work has a 44224 partition that is almost
+/// entirely turn traffic, all of which [`receipt_for_command`] discards anyway.
+/// Dropping them as the pages arrive is what stops that traffic from crowding
+/// the lifecycle receipts the create chain is proved from out of the fact set.
+fn partition_event_is_projection_fact(kind: u32, event: &Event) -> bool {
+    if kind != KIND_CODING_SESSION_LIFECYCLE_RECEIPT {
+        return true;
+    }
+    // A receipt this projector cannot parse is kept, not filtered: naming a
+    // receipt malformed is `receipt_for_command`'s job, and it can only do it
+    // for a receipt it was given.
+    serde_json::from_str::<LifecycleReceipt>(&event.content)
+        .map(|receipt| !receipt.status.is_turn_stage())
+        .unwrap_or(true)
+}
+
+/// Walk one kind partition newest-first until it is exhausted or bounded.
+///
+/// `fetch_page` receives the exclusive-in-effect `until` cursor (a second-
+/// granular `created_at`; the relay's own bound is inclusive, so pages overlap
+/// by at least one row and duplicates are dropped here). A full page whose rows
+/// this collector has all seen cannot advance the cursor — a page's worth of
+/// events sharing one second is a wall, not an end — so it reports saturated
+/// rather than looping.
+async fn collect_kind_partition<F, Fut>(
+    kind: u32,
+    page_limit: usize,
+    max_pages: usize,
+    mut fetch_page: F,
+) -> Result<KindPartition, ContextProjectionError>
+where
+    F: FnMut(Option<u64>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<Event>, ContextProjectionError>>,
+{
+    let mut events = Vec::new();
+    let mut seen = HashSet::new();
+    let mut until: Option<u64> = None;
+    for _ in 0..max_pages {
+        let page = fetch_page(until).await?;
+        let page_was_full = page.len() >= page_limit;
+        let mut oldest: Option<u64> = None;
+        let mut fresh = 0usize;
+        for event in page {
+            let created_at = event.created_at.as_secs();
+            oldest = Some(oldest.map_or(created_at, |low: u64| low.min(created_at)));
+            if !seen.insert(event.id) {
+                continue;
+            }
+            fresh += 1;
+            if partition_event_is_projection_fact(kind, &event) {
+                events.push(event);
+            }
+        }
+        match oldest {
+            Some(oldest) if page_was_full && fresh > 0 => until = Some(oldest),
+            Some(_) if page_was_full => break,
+            _ => {
+                return Ok(KindPartition {
+                    events,
+                    saturated: false,
+                })
+            }
+        }
+    }
+    Ok(KindPartition {
+        events,
+        saturated: true,
+    })
+}
+
 async fn query_kind_partition(
     rest: &RestClient,
     channel_id: Uuid,
     kind: u32,
-) -> Result<Vec<Event>, ContextProjectionError> {
-    use nostr::{Alphabet, Filter, Kind, SingleLetterTag};
+) -> Result<KindPartition, ContextProjectionError> {
+    // A control partition must be complete or refused, so it pages. The
+    // transcript partition is allowed to be incomplete and says so in the
+    // package's provenance, so it stays at one page.
+    let max_pages = if kind == KIND_CODING_SESSION_TRANSCRIPT {
+        1
+    } else {
+        MAX_CONTROL_PARTITION_PAGES
+    };
+    collect_kind_partition(kind, RELAY_QUERY_PAGE_LIMIT, max_pages, |until| {
+        query_kind_partition_page(rest, channel_id, kind, until)
+    })
+    .await
+}
 
-    let filter = Filter::new()
+async fn query_kind_partition_page(
+    rest: &RestClient,
+    channel_id: Uuid,
+    kind: u32,
+    until: Option<u64>,
+) -> Result<Vec<Event>, ContextProjectionError> {
+    use nostr::{Alphabet, Filter, Kind, SingleLetterTag, Timestamp};
+
+    let mut filter = Filter::new()
         .kind(Kind::Custom(kind as u16))
         .custom_tags(
             SingleLetterTag::lowercase(Alphabet::H),
             [channel_id.to_string()],
         )
         .limit(RELAY_QUERY_PAGE_LIMIT);
+    if let Some(until) = until {
+        filter = filter.until(Timestamp::from_secs(until));
+    }
     let value = rest
         .query(&[filter])
         .await
@@ -2009,6 +2125,158 @@ mod tests {
         let package = project_session_context_events(&request, &events)
             .expect("turn receipts must not break the create chain");
         assert_eq!(package.history.len(), 4);
+    }
+
+    /// One relay page of newest-first rows, as the relay's inclusive `until`
+    /// bound would return it.
+    fn receipt_page(partition: &[Event], until: Option<u64>, page_limit: usize) -> Vec<Event> {
+        partition
+            .iter()
+            .filter(|event| match until {
+                Some(until) => event.created_at.as_secs() <= until,
+                None => true,
+            })
+            .take(page_limit)
+            .cloned()
+            .collect()
+    }
+
+    /// Kind 44224 stopped being one receipt per generation: a turn publishes at
+    /// least `turn_queued` and `turn_started`, so a channel that has run real
+    /// work has a receipt partition that is almost entirely turn traffic. One
+    /// relay page of it no longer reaches that channel's creates — and a
+    /// single-page read turns that into a hard `Bound` refusal, i.e. every
+    /// later create/resume in a busy channel silently loses its verified
+    /// context. The partition is paged now, and turn receipts never enter the
+    /// fact set at all.
+    #[tokio::test]
+    async fn a_receipt_partition_of_turn_traffic_still_yields_the_lifecycle_receipt() {
+        let provider = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "provider-host-1".into(),
+            session_id: "session-1".into(),
+            generation: 1,
+        };
+        let mut partition = Vec::new();
+        for (created_at, command_id, receipt) in [
+            (
+                50u64,
+                "turn-3",
+                LifecycleReceipt::turn_started("turn-3", &target, "t3"),
+            ),
+            (
+                40,
+                "turn-2",
+                LifecycleReceipt::turn_queued("turn-2", &target),
+            ),
+            (
+                30,
+                "turn-1",
+                LifecycleReceipt::turn_started("turn-1", &target, "t1"),
+            ),
+        ] {
+            let content = serde_json::to_string(&receipt).unwrap();
+            partition.push(
+                build_coding_session_turn_receipt(channel_id, command_id, receipt.status, &content)
+                    .unwrap()
+                    .custom_created_at(Timestamp::from_secs(created_at))
+                    .sign_with_keys(&provider)
+                    .unwrap(),
+            );
+        }
+        let created = LifecycleReceipt::created("create-1", &target);
+        let created_content = serde_json::to_string(&created).unwrap();
+        partition.push(
+            build_coding_session_lifecycle_receipt(channel_id, "create-1", &created_content)
+                .unwrap()
+                .custom_created_at(Timestamp::from_secs(20))
+                .sign_with_keys(&provider)
+                .unwrap(),
+        );
+        let oldest = LifecycleReceipt::turn_queued("turn-0", &target);
+        let oldest_content = serde_json::to_string(&oldest).unwrap();
+        partition.push(
+            build_coding_session_turn_receipt(channel_id, "turn-0", oldest.status, &oldest_content)
+                .unwrap()
+                .custom_created_at(Timestamp::from_secs(10))
+                .sign_with_keys(&provider)
+                .unwrap(),
+        );
+
+        let clamped =
+            collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 1, |until| {
+                let rows = receipt_page(&partition, until, 2);
+                async move { Ok(rows) }
+            })
+            .await
+            .unwrap();
+        assert!(
+            clamped.saturated,
+            "one page of a turn-dominated receipt partition is not the whole partition"
+        );
+        assert!(
+            clamped.events.is_empty(),
+            "the newest page of that partition holds no lifecycle receipt at all"
+        );
+
+        let paged = collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 8, |until| {
+            let rows = receipt_page(&partition, until, 2);
+            async move { Ok(rows) }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !paged.saturated,
+            "the partition is exhausted, so nothing is missing"
+        );
+        assert_eq!(
+            paged.events.len(),
+            1,
+            "only the lifecycle receipt is a projection fact"
+        );
+        assert_eq!(
+            tag_value(&paged.events[0], "csl-command").as_deref(),
+            Some("create-1")
+        );
+    }
+
+    /// A page's worth of events sharing one second cannot advance a
+    /// second-granular cursor. That is a wall, not an end, and a control
+    /// partition that hits it must fail closed rather than loop or lie.
+    #[tokio::test]
+    async fn a_partition_that_cannot_advance_its_cursor_reports_saturated() {
+        let provider = Keys::generate();
+        let channel_id = Uuid::new_v4();
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "provider-host-1".into(),
+            session_id: "session-1".into(),
+            generation: 1,
+        };
+        let mut partition = Vec::new();
+        for command_id in ["create-1", "create-2"] {
+            let receipt = LifecycleReceipt::created(command_id, &target);
+            let content = serde_json::to_string(&receipt).unwrap();
+            partition.push(
+                build_coding_session_lifecycle_receipt(channel_id, command_id, &content)
+                    .unwrap()
+                    .custom_created_at(Timestamp::from_secs(7))
+                    .sign_with_keys(&provider)
+                    .unwrap(),
+            );
+        }
+
+        let collected =
+            collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 8, |until| {
+                let rows = receipt_page(&partition, until, 2);
+                async move { Ok(rows) }
+            })
+            .await
+            .unwrap();
+        assert!(collected.saturated);
+        assert_eq!(collected.events.len(), 2);
     }
 
     #[test]
