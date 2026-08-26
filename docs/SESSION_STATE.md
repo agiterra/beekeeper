@@ -61,10 +61,13 @@ above); `main` is identical on the relay and GitHub, fed by the bridge._
 
 _Previously: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
 rebuild, the session ceiling and silent-turn budget as settings, and the
-redaction rework) are fixed and pushed through CI #24; items 51-52 are the
-composer responsiveness fix and the full-screen UI critique that comes next.
-**Five commits are unpushed** and the dev instance was last rebuilt at
-01:44Z with all of them. `main` is `88d64ea3` on both remotes._
+redaction rework) are fixed and pushed through CI #24; items 51-53 and 55-57
+are the full-screen session pass (landed on `main` as `b2298102` on
+2026-08-26 after a rebase onto Andy's shelf fix), item 54 records the Claude
+background-shell / unresolved-prompt failure, and item 59 (renumbered from a
+colliding 51) is Andy's fifteen-minute hang. The 2026-08-26 mirror-inversion
+commit rewrote this block from an older copy and dropped items 52-impl
+through 57; restored the same day from `b2298102`._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -1251,11 +1254,246 @@ same morning and one left as a product question.
       default is unchanged at fifteen minutes, because raising it silently
       would trade one wrong number for another.
     - **Amended 2026-08-25, re-amended 2026-08-26.** Some of these turns were
-      not slow at all — see item 51. A silence budget cannot distinguish work
+      not slow at all — see item 59. A silence budget cannot distinguish work
       in progress from a prompt the adapter dropped, and both were landing
       here. Two of the six turns in the measured session were the latter.
 
-51. **A coding session hung for fifteen minutes after it had already
+51. **A sent turn took two round trips to appear, so the composer looked
+    broken.** "There is a lag prior to seeing my messages appear on the screen
+    — I'm thinking because this is to the relay and back?" It is longer than
+    that: a transcript renders signed facts, and the user's own message is a
+    kind-44225 `user_prompt` published by the **provider**. The path is sign →
+    44220 → relay → provider receives and starts the turn → provider publishes
+    the item → relay → verify → project → render. Unbounded when the provider
+    is busy or reconnecting.
+    - **Fixed** by `codingSessionPendingTurns.ts` plus
+      `CodingSessionPendingTurns.tsx`: the editor empties before any await
+      (restoring the draft if the publish fails), and the turn shows
+      immediately in a row that lives **outside** the signed narrative —
+      the umbrella timeline's invariant is that facts from different signers
+      never merge, and a row nobody has signed is not one of those facts.
+    - **Settling has no id to key on.** A signed prompt carries content and
+      operator, not the command id that caused it, so a pending record is
+      consumed by the first signed prompt with matching text and operator — one
+      record per arriving item, so the same sentence sent twice settles in
+      order. A failed publish removes the row, restores the draft, and puts the
+      relay's error by the composer; silence expires after three minutes.
+      Registered in `resetCommunityState()`.
+    - **The row says nothing about itself.** The first version spun a loader
+      and said "waiting for the provider to start the turn"; both true, both
+      the wrong frame — they made the moment about our plumbing when the person
+      is waiting on an agent to think. It now speaks only where silence would
+      lie: a failed publish, and a turn nobody picked up after ten seconds
+      ("Not picked up yet"). Nothing claims the model is thinking, because
+      nothing knows that.
+
+52. **The full-screen session needs a design pass. The critique, so it is not
+    re-derived** (from a screenshot, 2026-08-25, ordered by severity):
+    1. *The composer's gradient overlay leaks the transcript through it* —
+       `via-background/85` in `CodingSessionUmbrellaWorkspace.tsx:274` renders
+       text at 15% behind the chip row, which reads as overlapping content
+       rather than a fade.
+    2. *A raw, double-escaped JSON blob opens the transcript* — an MCP tool
+       result whose `content[0].text` is itself a JSON string, `\n` literals
+       and all, occupying ~40% of the first screen. Wants a one-line summary
+       ("Session history · 47 items") expanding to parsed content.
+    3. *Two thirds of a 3456px window is empty.* The 48rem measure is right for
+       prose and matches t3code — but t3code fills the flanks. Agents, Observed
+       changes and People are built surfaces hiding behind header buttons; at
+       this width they should be open beside the transcript.
+    4. *Raw identifiers the picker already fixed elsewhere* —
+       `mcp.buzz-session-context.session_history` as a tool title,
+       `gpt-5.6-terra[low]` in chips and the composer footer. The same session
+       says it both ways.
+    5. *`0.0s` on every tool call*, which reads as "did not run".
+    6. *The same fact three times*: header `IDLE`, composer footer `Idle`,
+       transcript "Coding session idle".
+    7. *Two chip systems forty pixels apart* — `⇄ Send to Claude · …`
+       mid-transcript and the participant row above the composer.
+    8. *An empty goal is the largest element on screen.*
+    9. *Turn boundaries are invisible* — user bubble, reasoning, tools and
+       completion flow together with only the cost line separating them.
+    10. *`Send` and `Stop execution` are neighbours* at the same weight, one of
+        them terminal.
+
+    **Implemented on `fix/full-screen-session-ux` (2026-08-25):** the composer
+    dock is opaque with its fade entirely above it; the narrative and composer
+    expand from 48rem to 72rem only while no Agents/Changes surface is open;
+    the latest signed plan now drives both the compact inline plan + Work Log
+    and a T3-style Tasks sheet attached above the composer instead of a side
+    rail. The empty goal is a small action. Turn boundaries have separators.
+    Session-context MCP results unwrap their one-text-block transport envelope
+    and summarize as `Session history · N items`; exact-zero durations are
+    omitted. Packed model ids are decoded everywhere the session labels them
+    (`gpt-5.6-terra · Low`, not `gpt-5.6-terra[low]`). The composer no longer
+    repeats the header's Idle/Working state, completed-turn handoff chips are
+    revealed only on hover/focus, and terminal execution stop is an icon action
+    rather than a peer of Send. Evidence: the focused desktop tests plus the
+    three-view Playwright workflow in
+    `coding-session-transcript-narrative-screenshots.spec.ts`; its collapsed
+    task, expanded task, and opened Changes views are pixel-distinct.
+
+53. **A running turn no longer locks the full-screen editor** (live comparison
+    with T3 Code, 2026-08-25). The old composer disabled its textarea whenever
+    the provider did not declare `threadSteer`, conflating “cannot inject into
+    this turn” with “cannot write the next one.” The editor now stays available:
+    a steer-capable provider still offers `Steer`; otherwise the action reads
+    `Queue`, stores the draft locally without publishing a command or optimistic
+    row, and publishes exactly once when the current turn settles. The queued
+    row is explicit and cancellable. `CodingSessionComposer.optimistic.test.mjs`
+    proves the relay sees zero commands while the turn is working and one after
+    the state becomes idle; the wide E2E screenshot proves the editor is enabled
+    in that state.
+
+54. **OPEN: Claude background shell completed, but the following ACP prompt
+    never resolved until Bee Keeper cancelled it.** Andy's shared session is
+    channel `7df9fd91-0066-461c-bc6b-5f49c6bb9a16`, session
+    `ecde2480-c334-491d-ad6f-c8685e22ee02`, generation 1, signed projection
+    `4b6fd011e70b1323…c150f4312b9` (`claude-agent-acp`, title "Rebuild Bee
+    Keeper"). The signed kind-44225 sequence separates two failures that look
+    like one spinner:
+    - Turn 1 launched `scripts/local-prod-build.sh HEAD` as a Claude Terminal
+      background command. Its tool result explicitly said "You will be
+      notified when it completes" (event seq 20), but the ACP turn then ended
+      successfully after 41,422 ms (seq 27). That promise is not a Bee Keeper
+      capability: a detached shell can outlive the prompt, and neither ACP nor
+      the adapter creates a new person-visible turn when it exits. The current
+      adapter's background-subagent hold deliberately excludes background
+      shells because a server can live forever; its own fix records this as an
+      out-of-scope, out-of-turn episode
+      ([claude-agent-acp #870](https://github.com/agentclientprotocol/claude-agent-acp/commit/7a70f82739e085014cad878f08513cdef7b7fe16)).
+    - The build itself was healthy. When Andy asked "Is it done?" 41m 50s
+      later, Claude immediately emitted two Terminal calls and two successful
+      results (seq 29-32); the captured build output says `Finished release`,
+      bundle OK, installed, exit code 0. Then the adapter emitted **nothing for
+      934,726 ms**. At Bee Keeper's configured 900s silence boundary the
+      provider sent `session/cancel`; only during that cancellation drain did
+      Claude flush the complete "Yes — done" answer (seq 33), followed 19 ms
+      later by the honest terminal result `Idle timeout — no agent activity
+      for 900s` (seq 35). This is the exact wire shape independently reported
+      upstream: streamed output, no response to `session/prompt`, response only
+      after `session/cancel`
+      ([claude-agent-acp #970](https://github.com/agentclientprotocol/claude-agent-acp/issues/970)).
+    - A second upstream Claude SDK report now names the preceding trigger:
+      background-task notifications can sit queued in streaming-input mode
+      until a later user message wakes the session
+      ([claude-code #88378](https://github.com/anthropics/claude-code/issues/88378)).
+      That is consistent with this session, but the signed transcript does not
+      carry Andy's installed adapter/SDK versions or provider stderr, so it is
+      an inference, not yet the proven local root cause.
+    - **Do not "fix" this by only raising the silence budget.** That merely
+      moves an unresolved ACP request farther away; Bee Keeper's timeout and
+      cancellation did the useful thing here and preserved both the late answer
+      and the fact that its turn failed. Next evidence: on Andy's machine record
+      `claude-agent-acp` and Claude Code versions plus raw ACP/provider stderr,
+      then reproduce once on the latest released adapter. Product follow-up:
+      never let an agent promise a proactive report for a detached shell unless
+      the session has a real session-level background-work lifecycle to deliver
+      it.
+
+55. **The active plan and composer now behave as one turn-scoped work surface**
+    (T3 Code comparison, 2026-08-25). The floating composer is a solid surface
+    with one borderless editor and one quiet control row: the provider/model
+    identity and access label open explanatory popovers; model traits are
+    informational rather than fake selectors; execution stop is terminal and
+    lives under More; and a context meter appears only when a signed
+    `Context Window Updated` item supplies real token use. Send/Queue/Steer and
+    interrupt retain the existing authority and capability gates.
+    - The Tasks attachment is derived only from the newest signed plan in the
+      currently running transcript turn. A stale, untraceable, completed, or
+      idle plan cannot pin itself above the composer. Closing dismisses that
+      turn's attachment; a newer signed turn may open its own. Completed rows
+      retain elapsed time derived from same-turn signed plan snapshots, and the
+      active row reads `now`. Completion releases the attachment automatically.
+    - The Goal bar, transcript, task attachment, and composer share one measure:
+      72rem while the workspace is clear, 48rem while Agents or Observed changes
+      occupies the side, with both values rem-based so Cmd +/- preserves the
+      reading measure. The Goal bar now lives inside the shrinking narrative
+      section rather than remaining centered across the hidden flank.
+    - Multi-provider umbrellas use that same surface instead of leaving their
+      routing chips and instructions above it. The recipient is a compact
+      human-labelled control inside the composer; its menu keeps execution
+      targets visible but honestly disabled without control authority, and the
+      Session lane remains available. Selecting an execution also selects the
+      signed active Tasks attachment for that execution. Umbrellas now open
+      with no side surface, then contract only when Agents, Changes, or People
+      is requested.
+    - Evidence: 47 focused composer/task/context tests; all 6,166 desktop unit
+      tests; the three-view transcript narrative screenshot workflow; and the
+    width workflow at 1100/1280/1920/2560/3440px, with a side surface and at
+    24px root zoom. The repository-wide `just ci` gate passed on 2026-08-25.
+
+56. **A multi-agent session now reads as one attributed story, not one
+    agent's log with the others hidden behind a count** (T3 Code-informed pass,
+    2026-08-25). The signed flat timeline remains the record; presentation now
+    makes each execution legible without splitting it into tabs or swimlanes.
+    - Every execution has a stable accent used by its header chip, turn rail,
+      sticky provenance, and handoff actions. Sticky provenance exists only in
+      the merged multi-agent read, where the author can otherwise scroll away;
+      it is bounded by its turn block and uses an opaque surface.
+    - The header execution chips are the focus control. Selecting Codex folds
+      other agents' turns to attributed one-line summaries in their original
+      positions; people, handoffs, and lifecycle facts are never hidden.
+      Selecting the chip again returns to All. Focus and the composer's
+      recipient deliberately share identity styling but no state, so reading
+      Claude cannot retarget a draft and choosing a recipient cannot hide the
+      passage being handed off.
+    - The T3-style **Active Work** attachment is the current work surface for
+      every execution that is actually working. It shows only a current signed
+      plan when one exists, says truthfully when no plan was published, and
+      collapses to nothing when all executions are idle or complete. Dismissal
+      is scoped to the current work fingerprint; newer work can reopen it.
+    - A completed turn ends with an always-visible boundary naming its author,
+      signed duration/cost when supplied, and explicit Reply / Send-to actions.
+      Assistant prose is back on the app's `text-base` chat ramp. The goal is
+      under the session title, founder provenance moved into Info, and the
+      Agents / Changes / People controls form one responsive surface switcher.
+    - Multi-agent sessions automatically open Agents beside the narrative only
+      when the available body is at least 1920px. Laptops and single-agent
+      sessions keep the clean full-width transcript; narrow layouts compact
+      the header and retain the execution chips below the goal.
+    - Workspace-contained absolute paths are relativized before the provider
+      signs transcript context. Anything still private remains fail-closed but
+      renders as a compact `Private context · N bytes` chip whose tooltip keeps
+      the digest, rather than shredding the answer with inline hashes.
+    - Evidence: 6,175 desktop unit tests; 31 focused core sanitizer tests plus
+      the provider signing-boundary test; the seven-session E2E workflow and
+      the two-view surface-host workflow, including focus without recipient
+      mutation and 2560px Agents auto-open; all captured states are pixel-
+    distinct. The repository-wide `just ci` gate passed on 2026-08-25.
+
+57. **The multi-agent controls now preserve the story instead of competing
+    with it** (T3 Code comparison plus the four-execution UXV1 transcript,
+    2026-08-25). The crowded row of one chip per execution and a second
+    aggregate status badge is one compact `N agents · M working` control. Its
+    popover is the place to focus an execution or open full agent detail; the
+    working state has a restrained breathing accent derived from signed
+    activity, so the session feels alive without inventing progress.
+    - Focus remains a reading mode, never a routing mode. Choosing an agent
+      shows a small `Viewing …` notice above the narrative with an explicit
+      release action, leaves the composer recipient unchanged, and scrolls the
+      filtered transcript to its latest content instead of stranding the
+      reader near the first matching turn.
+    - The composer makes routing persistent and explicit as `Send to …`, with
+      the same execution accent and the participant's exact disambiguated
+      label. Completed turns now keep only `Reply` plus one `Send to…` menu;
+      empty folded turns no longer manufacture a generic `Signed execution
+      activity` row.
+    - T3's moving-highlight treatment is adapted for `Thinking`, but its truth
+      boundary is Bee Keeper's: it appears only after a signed running turn
+      exists and before any signed plan, tool, answer, or error becomes visible.
+      The optimistic unsent row remains silent. Breathing and text-sweep
+      animation both become static under reduced motion.
+    - Evidence: 62 focused component tests; both focused surface-host E2Es;
+      the five-test coding-session E2E; and nine pixel-distinct medium, narrow,
+      focused, surface-open, and ultrawide screenshots. The focus E2E starts at
+      the top, selects Codex, proves the viewport is within 8px of the bottom,
+      and proves the composer recipient did not change. The repository-wide
+      `just ci` gate passed on 2026-08-25: 6,177 desktop tests, 2,681 Tauri
+      tests, every mobile test, all workspace tests, and desktop/web production
+      builds are green.
+
+59. **A coding session hung for fifteen minutes after it had already
     answered.** Andy: the answer finishes, "but nothing triggers the main
     thread to run again". Confirmed against the live transcript — see the
     measurement bullet below, which also **rules out the subagent cause this
@@ -1318,7 +1556,7 @@ same morning and one left as a product question.
       budget**, so the two clocks are indistinguishable by duration alone. It
       is not deterministic: the turn between the two stalls ("Ok to push.")
       completed in 149s with the same background task live. Deciding this needs
-      the adapter stderr and raw SDK frames that item 51's own step 1 now
+      the adapter stderr and raw SDK frames that item 59's own step 1 now
       captures and that were not running on 2026-08-24 — so the next stall,
       not this one, is the one that will name the cause.
     - **The earlier reading was wrong, and worth recording as wrong.** The
@@ -1528,64 +1766,6 @@ written and `bash -n` clean but **was not executed** — that harness needs
 `websocket-client` and wants port 3000.
 
 ### Found 2026-08-25 — the responsiveness pass, and the UI critique behind it
-
-51. **A sent turn took two round trips to appear, so the composer looked
-    broken.** "There is a lag prior to seeing my messages appear on the screen
-    — I'm thinking because this is to the relay and back?" It is longer than
-    that: a transcript renders signed facts, and the user's own message is a
-    kind-44225 `user_prompt` published by the **provider**. The path is sign →
-    44220 → relay → provider receives and starts the turn → provider publishes
-    the item → relay → verify → project → render. Unbounded when the provider
-    is busy or reconnecting.
-    - **Fixed** by `codingSessionPendingTurns.ts` plus
-      `CodingSessionPendingTurns.tsx`: the editor empties before any await
-      (restoring the draft if the publish fails), and the turn shows
-      immediately in a row that lives **outside** the signed narrative —
-      the umbrella timeline's invariant is that facts from different signers
-      never merge, and a row nobody has signed is not one of those facts.
-    - **Settling has no id to key on.** A signed prompt carries content and
-      operator, not the command id that caused it, so a pending record is
-      consumed by the first signed prompt with matching text and operator — one
-      record per arriving item, so the same sentence sent twice settles in
-      order. A failed publish removes the row, restores the draft, and puts the
-      relay's error by the composer; silence expires after three minutes.
-      Registered in `resetCommunityState()`.
-    - **The row says nothing about itself.** The first version spun a loader
-      and said "waiting for the provider to start the turn"; both true, both
-      the wrong frame — they made the moment about our plumbing when the person
-      is waiting on an agent to think. It now speaks only where silence would
-      lie: a failed publish, and a turn nobody picked up after ten seconds
-      ("Not picked up yet"). Nothing claims the model is thinking, because
-      nothing knows that.
-
-52. **The full-screen session needs a design pass. The critique, so it is not
-    re-derived** (from a screenshot, 2026-08-25, ordered by severity):
-    1. *The composer's gradient overlay leaks the transcript through it* —
-       `via-background/85` in `CodingSessionUmbrellaWorkspace.tsx:274` renders
-       text at 15% behind the chip row, which reads as overlapping content
-       rather than a fade.
-    2. *A raw, double-escaped JSON blob opens the transcript* — an MCP tool
-       result whose `content[0].text` is itself a JSON string, `\n` literals
-       and all, occupying ~40% of the first screen. Wants a one-line summary
-       ("Session history · 47 items") expanding to parsed content.
-    3. *Two thirds of a 3456px window is empty.* The 48rem measure is right for
-       prose and matches t3code — but t3code fills the flanks. Agents, Observed
-       changes and People are built surfaces hiding behind header buttons; at
-       this width they should be open beside the transcript.
-    4. *Raw identifiers the picker already fixed elsewhere* —
-       `mcp.buzz-session-context.session_history` as a tool title,
-       `gpt-5.6-terra[low]` in chips and the composer footer. The same session
-       says it both ways.
-    5. *`0.0s` on every tool call*, which reads as "did not run".
-    6. *The same fact three times*: header `IDLE`, composer footer `Idle`,
-       transcript "Coding session idle".
-    7. *Two chip systems forty pixels apart* — `⇄ Send to Claude · …`
-       mid-transcript and the participant row above the composer.
-    8. *An empty goal is the largest element on screen.*
-    9. *Turn boundaries are invisible* — user bubble, reasoning, tools and
-       completion flow together with only the cost line separating them.
-    10. *`Send` and `Stop execution` are neighbours* at the same weight, one of
-        them terminal.
 
 ## 2a. Direction settled 2026-08-18
 
