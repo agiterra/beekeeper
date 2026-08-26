@@ -144,6 +144,29 @@ void main() {
       expect(snapshot.truncatedAt1000, isFalse);
       expect(snapshot.sessions, hasLength(1));
     });
+
+    test('a full lease page is not a truncated history', () async {
+      // 24223 leases are read at limit 1000 and are never paginated (D2): a
+      // provider republishes one every few seconds, so a busy channel fills
+      // that page routinely. "History truncated at 1000 events" is a claim
+      // about the transcript the page shows, which a full lease snapshot
+      // cannot support.
+      final session = _FakeRelaySession(
+        events: [
+          ..._liveSession(),
+          for (var index = 0; index < codingSessionHistoryPageLimit; index++)
+            leaseEvent(leaseSequence: index + 1, createdAt: 1400 + index),
+        ],
+      );
+      final container = _container(session);
+      addTearDown(container.dispose);
+
+      final snapshot = await _start(container);
+
+      expect(snapshot.truncatedAt1000, isFalse);
+      expect(snapshot.sessions, hasLength(1));
+      expect(snapshot.leasesRead, isTrue);
+    });
   });
 
   group('live reads', () {

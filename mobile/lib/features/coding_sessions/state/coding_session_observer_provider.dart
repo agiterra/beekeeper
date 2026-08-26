@@ -193,7 +193,16 @@ class CodingSessionChannelObserverNotifier
       final filter = filters[index];
       final page = pages[index];
       if (page == null) continue;
-      if (identical(filter, leaseFilter)) _leasesRead = true;
+      if (identical(filter, leaseFilter)) {
+        // A lease snapshot is not history. D2 reads 24223 at limit 1000 and
+        // never paginates it, and a provider republishes its lease every few
+        // seconds, so a busy channel fills that page as a matter of course.
+        // Counting it as truncation would print a claim about the transcript
+        // the page shows that the lease read cannot support.
+        _leasesRead = true;
+        _store.addAll(page);
+        continue;
+      }
       if (filter.kinds.contains(EventKind.codingSessionAuthorityTransition) ||
           filter.kinds.contains(EventKind.relayReceipt)) {
         // Read because the contract's filter set says so, folded by nothing.
