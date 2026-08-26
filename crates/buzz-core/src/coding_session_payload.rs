@@ -2069,9 +2069,14 @@ mod tests {
         assert!(decode_coding_session_lifecycle_receipt(&contradictory.to_string()).is_err());
     }
 
-    /// A generation fold must ignore every turn stage, including the two new
-    /// ones: an interrupt receipt does not end a generation, and a degraded
-    /// turn does not start one.
+    /// `with_thread_steer` changes exactly one capability and nothing else.
+    ///
+    /// Scope, stated because the previous comment here did not: this pins the
+    /// override, not the generation fold. Whether a consumer ignores turn
+    /// stages when folding a generation's status is that consumer's test —
+    /// `buzz-cli`'s `a_turn_receipt_does_not_confirm_or_change_the_status_of_a_
+    /// known_target`, which is where that guarantee was in fact broken while
+    /// this comment claimed to cover it.
     #[test]
     fn per_execution_thread_steer_overrides_only_that_capability() {
         let base = Capabilities::v1_claude();
