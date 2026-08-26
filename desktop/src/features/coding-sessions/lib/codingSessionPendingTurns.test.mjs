@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   formatPendingCodingSessionTurnAge,
+  heldPendingCodingSessionTurns,
   markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnQueued,
   MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
@@ -401,4 +402,34 @@ test("the age a held row shows counts seconds before it counts minutes", () => {
   assert.equal(formatPendingCodingSessionTurnAge(3_599_000), "59m");
   assert.equal(formatPendingCodingSessionTurnAge(3_600_000), "1h");
   assert.equal(formatPendingCodingSessionTurnAge(-1), "0s");
+});
+
+test("the rows a remounting composer must adopt are the held ones, with the draft", () => {
+  // The other half of "a held row outlives the TTL": the watch that is now the
+  // only thing able to retire it lives in a component, so a composer coming
+  // back has to be able to find these again. Held only — an unheld row still
+  // expires on its own — and scoped to one execution.
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-held", text: "run it", draft: "@builder run it" }),
+  );
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-held");
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-degraded" }));
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-degraded");
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-unheld" }));
+  markPendingCodingSessionTurnPublished(CHANNEL, "csc-unheld");
+  recordPendingCodingSessionTurn(
+    turn({ commandId: "csc-elsewhere", targetKey: OTHER_TARGET }),
+  );
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-elsewhere");
+
+  const held = heldPendingCodingSessionTurns(CHANNEL, TARGET);
+  assert.deepEqual(
+    held.map((entry) => entry.commandId),
+    ["csc-held", "csc-degraded"],
+  );
+  // The person's own words, not the wire text: an umbrella composer strips a
+  // routing handle before publishing, and it is the draft that goes back in
+  // the editor.
+  assert.equal(held[0].draft, "@builder run it");
+  assert.deepEqual(heldPendingCodingSessionTurns("other-channel", TARGET), []);
 });

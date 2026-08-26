@@ -166,6 +166,10 @@ export function CodingSessionComposer({
     channelId,
     providerAuthorityPubkey,
     restoreDraft: restoreRefusedDraft,
+    // Turns this execution's provider is still holding are adopted on mount:
+    // a queued turn outlives this component, and its terminal receipt has to
+    // land on something.
+    targetKey: buildCodingSessionTargetKey(target),
   });
   const isSending = pendingAction !== null || isResuming;
   const visibleError = error ?? resumeError ?? turnRefusalError;
@@ -234,6 +238,10 @@ export function CodingSessionComposer({
         targetKey: buildCodingSessionTargetKey(target),
         commandId,
         text: textToPublish,
+        // The raw draft rides the row, not just the watcher: a composer that
+        // remounts while the provider still holds this turn has to be able to
+        // hand these exact words back if it is dropped.
+        draft,
         operatorPubkey: currentUserPubkey,
         recordedAt: Date.now(),
         published: false,

@@ -99,6 +99,9 @@ test("the editor clears and the turn is pending before the relay answers", async
     const pending = store.readPendingCodingSessionTurns();
     assert.equal(pending.length, 1);
     assert.equal(pending[0].text, "run the tests");
+    // The raw draft rides the row so a composer that remounts while the
+    // provider still holds this turn can hand these words back.
+    assert.equal(pending[0].draft, "run the tests");
     assert.equal(pending[0].channelId, CHANNEL_ID);
     assert.equal(pending[0].targetKey, buildCodingSessionTargetKey(TARGET));
     assert.equal(pending[0].operatorPubkey, OPERATOR);

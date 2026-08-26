@@ -99,7 +99,11 @@ const FOREIGN_MEMBER_CONFIG = {
   "allowed-bridge-pubkeys": [],
 };
 
-async function harness({ config = TRUSTED_CONFIG } = {}) {
+async function harness({
+  config = TRUSTED_CONFIG,
+  history = [],
+  targetKey,
+} = {}) {
   const { act, render } = await import("@testing-library/react");
   const React = (await import("react")).default;
   const { QueryClient, QueryClientProvider } = await import(
@@ -107,6 +111,9 @@ async function harness({ config = TRUSTED_CONFIG } = {}) {
   );
   const { restoreCodingSessionDraft } = await import(
     "../lib/codingSessionTurnRefusal.ts"
+  );
+  const { forgetPendingCodingSessionTurn } = await import(
+    "../lib/codingSessionPendingTurns.ts"
   );
   const { useCodingSessionTurnRefusal } = await import(
     "./useCodingSessionTurnRefusal.tsx"
@@ -116,7 +123,7 @@ async function harness({ config = TRUSTED_CONFIG } = {}) {
 
   const liveSubscriptions = [];
   const client = {
-    fetchEvents: async () => [],
+    fetchEvents: async () => history,
     subscribeLive: async (filter, onEvent) => {
       const subscription = { filter, onEvent, closed: false };
       liveSubscriptions.push(subscription);
@@ -132,14 +139,19 @@ async function harness({ config = TRUSTED_CONFIG } = {}) {
     // Exactly the composer's wiring: sending clears the editor, and only a
     // refusal ever puts words back into it.
     const [text, setText] = React.useState("");
-    const restoreDraft = React.useCallback((refused) => {
+    // Exactly the composer's `restoreRefusedDraft`: the words come back and
+    // the optimistic row they belonged to is retired.
+    const restoreDraft = React.useCallback((refused, refusedCommandId) => {
       setText((current) => restoreCodingSessionDraft(current, refused));
+      if (refusedCommandId)
+        forgetPendingCodingSessionTurn(CHANNEL_ID, refusedCommandId);
     }, []);
     const refusal = useCodingSessionTurnRefusal({
       channelId: CHANNEL_ID,
       client,
       providerAuthorityPubkey: PROVIDER_PUBKEY,
       restoreDraft,
+      targetKey,
     });
     state.isWatching = refusal.watcher !== null;
     state.typeInto = setText;
@@ -729,5 +741,65 @@ test("holding five turns at once does not silence the first of them", async () =
   assert.equal(scope.draft(), `draft for ${held[0]}`);
 
   resetPendingCodingSessionTurns();
+  scope.teardown();
+});
+
+const TARGET_KEY = "coding-session/v1|claude-agent-acp|instance|session|1";
+
+test("a turn the provider is holding is watched again when the composer remounts", async () => {
+  // The hazard this pins: a held row is exempt from the pending TTL *and* from
+  // the refusal deadline, so the watch is the only thing left that can retire
+  // it — and the watch lives in a component. Unmount the composer (switch
+  // execution, close the panel, remount on a community switch) while a queued
+  // turn waits behind an hour of work, let the execution die, and the
+  // `turn_dropped` arrives with nobody listening: the row reads "Queued by the
+  // provider" forever and the person's words are never given back.
+  const store = await import("../lib/codingSessionPendingTurns.ts");
+  store.resetPendingCodingSessionTurns();
+  store.recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: TARGET_KEY,
+    commandId: TURN_COMMAND_ID,
+    text: "run the whole suite",
+    draft: "run the whole suite",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: true,
+  });
+  store.markPendingCodingSessionTurnQueued(CHANNEL_ID, TURN_COMMAND_ID);
+
+  const queued = await turnStageEvent({ status: "turn_queued" });
+  const dropped = await turnStageEvent({
+    status: "turn_dropped",
+    error: {
+      code: "NO_LIVE_EXECUTION",
+      message: "this execution has no live process",
+    },
+  });
+  // The queued receipt is on the relay, which is where a remounted watch finds
+  // it — that is what keeps the refusal deadline disarmed.
+  const scope = await harness({ history: [queued], targetKey: TARGET_KEY });
+
+  // Nothing was sent from this mount, and the turn is watched anyway.
+  assert.equal(scope.state.isWatching, true);
+  assert.equal(scope.liveSubscriptions.length, 1);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(dropped);
+  });
+  await scope.settle();
+
+  assert.equal(
+    scope.error(),
+    "Turn dropped (NO_LIVE_EXECUTION): this execution has no live process",
+  );
+  assert.equal(scope.draft(), "run the whole suite");
+  assert.deepEqual(
+    store.readPendingCodingSessionTurns(),
+    [],
+    "a terminal receipt retires the row it was published for, watcher or not",
+  );
+
+  store.resetPendingCodingSessionTurns();
   scope.teardown();
 });
