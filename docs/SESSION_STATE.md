@@ -1506,14 +1506,13 @@ same morning and one left as a product question.
     `user_prompt` items now carry the turn's `commandId`, so the desktop
     settles an optimistic row by id and falls back to the text join only for
     echoes without one — and says so on the row (`data-settled-by="text"`).
-    Evidence: fmt exit 0; clippy `--workspace --all-targets -D warnings` exit
-    0; `cargo test --lib` 846/474/406/143/302/254 passed across buzz-acp,
-    -cli, -core, -db, -sdk, -session-provider with 0 failures; desktop `pnpm
-    test` 6172 passed / 0 failed over 72 suites; `pnpm typecheck` 0 errors;
-    `pnpm check` and `just file-size-check` exit 0. `just ci` never finished
-    (killed mid-clippy), `just test` and `pnpm check:px-text` never ran, and
-    `cargo test -p buzz-relay --lib` is 957/1 on the flaky `mesh_demo` QUIC
-    test this diff does not touch.
+    Evidence: `just ci` green to completion (desktop 6172/0, mobile 1465, every
+    Rust/Tauri suite ok — log `/tmp/crew-s1-ci-round3.log`; the overnight runner
+    reported before it finished, so the first record read red), `just test`
+    exit 0 with 223 integration tests passing, `pnpm check:px-text` exit 0.
+    Two test-only hitchhikers: pair-relay `test_cancellation_immediate` (a
+    flake — passes on unpatched main) and the naming-settings test made
+    keychain-free (it hung the Tauri step in a worktree).
     Residuals: nothing ran against a relay or a live provider (the
     relay-backed e2e is `#[ignore]`d, the app was never opened), so the Rust
     and desktop halves have not met on the wire; `DeliverError::Gone` and the
@@ -1856,15 +1855,7 @@ human founder observes. The plan, its operating model (lead / lanes / refuter
 where slice status goes, findings still come here. The amas predecessor's kit
 is at ~/Projects/amas (read-only; contains keys). **Slice 1 (turn commandId on
 the echo + per-stage receipts) was built overnight by a Claude-only crew on
-crew/s1-truthful-turns@5f7ce22d**: gate red — `just ci` was killed mid-clippy
-and never produced counts, and `just test` / `pnpm check:px-text` were never
-reached, so the evidence is the by-hand per-gate run instead (fmt exit 0;
-clippy `--workspace --all-targets -D warnings` exit 0; `cargo test --lib` 846
-buzz-acp / 474 buzz-cli / 406 buzz-core / 143 buzz-db / 302 buzz-sdk / 254
-buzz-session-provider passed, 0 failed; `-p buzz-relay --lib` 957 passed / 1
-failed on the flaky `mesh_demo` QUIC loopback test that this diff does not
-touch; desktop `pnpm test` 6172 passed / 0 failed over 72 suites; `pnpm
-typecheck` 0 errors; `pnpm check` exit 0; `just file-size-check` exit 0);
+crew/s1-truthful-turns@5f7ce22d**: gate green — `just ci` ran every recipe to completion (desktop 6172/0, mobile 1465, all Rust and Tauri suites ok; the runner reported early, the log proves the finish) and the lead's `just test` on 4b49249b passed 12/12 sections, 223 integration tests, 0 failed;
 refuters NOT-REFUTED (contract & runtime correctness) and NOT-REFUTED (test
 honesty and evidence), both same-family and therefore advisory, not the
 cross-family pass §1 requires for a tier-2 diff. Residuals: nothing was ever
