@@ -1062,11 +1062,19 @@ impl Provider {
                         operator_pubkey,
                         content: event.content.clone(),
                     });
-                    // The watermark must not step over a command still waiting
-                    // to be delivered.
-                    if let Some(ceiling) = self.watermark_ceiling(channel_id) {
-                        self.state.record_watermark(channel_id, ceiling)?;
-                    }
+                    // No watermark write at all. `watermark_ceiling` is a
+                    // clamp, not an advance — a `min` over the turns this
+                    // channel still owes, which now includes the command
+                    // pushed three lines above — so for the *first* held
+                    // command of a replayed burst it equals that command's own
+                    // `created_at`, and `record_watermark` only ever moves
+                    // forward. Writing it here would walk the floor over every
+                    // older command the relay has not served yet, and stored
+                    // REQ results arrive newest-first, so older is exactly what
+                    // comes next. `deliver_held_commands` writes the correct
+                    // clamped marks when the window closes; until then this
+                    // channel's floor stays put, which is the same reasoning
+                    // the non-44220 path below already applies.
                     return Ok(());
                 }
                 self.on_turn(channel_id, created_at, &operator_pubkey, &event.content)
@@ -9366,6 +9374,66 @@ mod tests {
                 .watermark(channel_id)
                 .is_none_or(|mark| mark <= held_at),
             "the replay floor must still reach a command this provider is holding"
+        );
+    }
+
+    /// The first held turn of a replayed burst must not push the channel floor
+    /// past the older turns still queued behind it.
+    ///
+    /// `watermark_ceiling` is a *clamp*, not an advance: it is a `min` over
+    /// the turns this channel still owes, and the command being held is one of
+    /// them, so for the first arrival of a burst the ceiling equals that
+    /// command's own `created_at`. Writing it as a watermark walks the floor
+    /// over every older command the relay has not served yet — and the relay
+    /// serves stored REQ results newest-first
+    /// (`crates/buzz-db/src/event.rs`'s `created_at DESC, id ASC`), so older is
+    /// exactly what arrives next. A death inside the 1.5 s window then loses
+    /// those turns with no receipt, no ledger entry and no log line, which is
+    /// the silent loss D2 exists to remove.
+    #[tokio::test]
+    async fn a_replay_window_holds_the_watermark_against_an_older_turn_behind_a_newer_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        let older_at = now_secs() + 10;
+        let newer_at = older_at + 3;
+        provider.open_replay_window(channel_id);
+        // Newest first, which is the order the relay actually serves.
+        provider
+            .handle_command_event(
+                channel_id,
+                &turn_event_at(channel_id, "turn-newer", &target, "second", newer_at),
+            )
+            .await
+            .expect("handle");
+        provider
+            .handle_command_event(
+                channel_id,
+                &turn_event_at(channel_id, "turn-older", &target, "first", older_at),
+            )
+            .await
+            .expect("handle");
+
+        assert!(
+            provider
+                .state()
+                .watermark(channel_id)
+                .is_none_or(|mark| mark <= older_at),
+            "the replay floor must still reach the older turn this provider is holding"
         );
     }
 
