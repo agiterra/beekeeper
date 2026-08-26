@@ -72,9 +72,13 @@ projects the querying human may not be a member of.
 ## The CLI surface
 
 `bee sessions` covers the questions that come up most, and resolves generations
-the same way the desktop app does (a receipt confirms a generation exists; the
-newest metadata wins, with a same-second burst broken on event id). Use it when
-you want the CLI and the app to agree.
+the same way the desktop app does (a **lifecycle** receipt confirms a
+generation exists; the newest metadata wins, with a same-second burst broken
+on event id). A **turn** receipt (`turn_queued`/`turn_started`/`turn_dropped`/
+`turn_refused`, [NIP-CSL](nips/NIP-CSL.md) fork amendment 7) is the deliberate
+exception — it never creates, confirms, or ends a generation, so it plays no
+part in this resolution. Use the CLI when you want the CLI and the app to
+agree.
 
 ```
 bee sessions list       --channel <uuid>

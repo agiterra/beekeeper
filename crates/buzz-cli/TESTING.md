@@ -530,6 +530,61 @@ bee sessions transcript --channel "$CHANNEL_ID" --session no-such-session 2>&1; 
 # exit: 1
 ```
 
+#### 6.13.1 Turn-stage receipts (kind 44224, D4 / NIP-CSL §"turn-stage receipts") — NOT YET RUN LIVE
+
+**Status: not yet observed live.** This block documents how to observe the four
+turn-stage `kind:44224` receipts (`turn_queued`, `turn_started`, `turn_dropped`,
+`turn_refused`) once a provider that publishes them is running end-to-end
+(Slice 1, Lanes 1A/1B of `docs/CREW_SESSIONS_PLAN.md`). Nothing below has been
+run against a live relay as of this writing — it is the intended procedure,
+not a verified result.
+
+No `bee sessions` subcommand surfaces raw receipt events directly today —
+`sessions list`/`sessions transcript` deliberately never create or confirm a
+generation from a turn receipt (see `resolve_sessions` in
+`crates/buzz-cli/src/commands/sessions.rs`, and NIP-CSL's "turn-stage
+receipts" section), and this lane's brief is read-side decoding, not a new
+subcommand (`bee sessions send`/`create`/`inbox` land in Slice 4). To watch
+the raw events, use the same `POST /query` bridge and direct-SQL routes
+`docs/coding-session-analysis.md` documents for every other kind:
+
+```json
+{ "kinds": [44224], "#h": ["<channel-uuid>"] }
+```
+
+```sql
+SELECT id, pubkey, created_at, content::jsonb
+FROM events
+WHERE kind = 44224
+  AND deleted_at IS NULL
+  AND tags @> '[["h", "<channel-uuid>"]]'::jsonb
+ORDER BY created_at, id;
+```
+
+What to check in `content`, once a live 44220 turn command produces receipts:
+
+- `status` is one of `turn_queued`, `turn_started`, `turn_dropped`,
+  `turn_refused` (the six lifecycle statuses — `created`, `resumed`, `stopped`,
+  etc. — are the separate, existing vocabulary).
+- Exactly six keys (`schema`, `commandId`, `status`, `session`, `error`,
+  `turnId`) for `turn_started`; exactly five (no `turnId` key at all) for the
+  other three.
+- `session` names the exact target the causing `kind:44220` command addressed,
+  for all four statuses — never `null`.
+- `error` is `null` for `turn_queued`/`turn_started`; `{"code":"QUEUE_FULL",...}`
+  for `turn_dropped`; one of `UNAUTHORIZED_OPERATOR`/`UNKNOWN_TARGET`/
+  `STALE_GENERATION`/`SESSION_CLOSED` for `turn_refused`.
+- `commandId` matches the `commandId` of the `kind:44220` command that
+  provoked it, and (per NIP-CST) the same `commandId` should appear on the
+  `kind:44225` `user_prompt` item the corresponding `turn_started` opened.
+- `bee sessions list`/`bee sessions transcript` must not change their answer
+  (status, `confirmed`) for a target whose only new event is a turn receipt —
+  this is exactly what `a_turn_receipt_for_an_unknown_target_creates_no_row`
+  and `a_turn_receipt_does_not_confirm_or_change_the_status_of_a_known_target`
+  pin in `crates/buzz-cli/src/commands/sessions.rs`, against synthetic events;
+  running the same check against a live relay is the residual this block
+  leaves open.
+
 ---
 
 ## 7. Error Path Testing
@@ -673,3 +728,4 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 64 | `sessions transcript` | ☐ | `--target` and `--session`; md turns + tool outcomes; jsonl seq numerically ordered |
 | 65 | `sessions tools` | ☐ | Call/error counts, error rate, `itemKinds` incl. `other`; `--target` narrows |
 | 66 | `sessions export` | ☐ | Files + manifest.json; non-empty `--out` refused with exit 1 |
+| 67 | turn-stage receipts (kind 44224, §6.13.1) | ☐ | NOT YET RUN LIVE — `sessions list`/`transcript` unaffected by a turn receipt on an otherwise-known or unknown target |
