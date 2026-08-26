@@ -157,6 +157,15 @@ class _MissingSession extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (snapshot.isDisconnected) {
+      return _CodingSessionMessage(
+        key: const ValueKey('coding-session-disconnected'),
+        icon: LucideIcons.plugZap,
+        title: codingSessionDisconnectedLabel,
+        detail: codingSessionDisconnectedDetail,
+        onRetry: onRetry,
+      );
+    }
     if (snapshot.isLoadingFirstRead) {
       return ListView(
         key: const ValueKey('coding-session-loading'),
@@ -171,41 +180,62 @@ class _MissingSession extends StatelessWidget {
         ],
       );
     }
-    return ListView(
+    return _CodingSessionMessage(
       key: const ValueKey('coding-session-missing'),
-      padding: const EdgeInsets.fromLTRB(Grid.gutter, Grid.xxl, Grid.gutter, 0),
-      children: [
-        Icon(
-          LucideIcons.triangleAlert,
-          size: 32,
-          color: context.colors.onSurfaceVariant,
-        ),
-        const SizedBox(height: Grid.twelve),
-        Text(
-          'This session is not in the current read',
-          textAlign: TextAlign.center,
-          style: context.textTheme.titleSmall,
-        ),
-        const SizedBox(height: Grid.half),
-        Text(
+      icon: LucideIcons.triangleAlert,
+      title: 'This session is not in the current read',
+      detail:
           snapshot.lastError ??
-              'Nothing this device accepted names it. It may be outside the '
-                  'history that was fetched, or its facts were refused.',
-          textAlign: TextAlign.center,
-          style: context.textTheme.bodySmall?.copyWith(
-            color: context.colors.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: Grid.xs),
-        Center(
-          child: TextButton.icon(
-            key: const ValueKey('coding-session-retry'),
-            onPressed: onRetry,
-            icon: const Icon(LucideIcons.refreshCw, size: 16),
-            label: const Text('Retry'),
-          ),
-        ),
-      ],
+          'Nothing this device accepted names it. It may be outside the '
+              'history that was fetched, or its facts were refused.',
+      onRetry: onRetry,
     );
   }
+}
+
+/// A full-height message with a Retry, kept scrollable for pull-to-refresh.
+class _CodingSessionMessage extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final Future<void> Function() onRetry;
+
+  const _CodingSessionMessage({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(Grid.gutter, Grid.xxl, Grid.gutter, 0),
+    children: [
+      Icon(icon, size: 32, color: context.colors.onSurfaceVariant),
+      const SizedBox(height: Grid.twelve),
+      Text(
+        title,
+        textAlign: TextAlign.center,
+        style: context.textTheme.titleSmall,
+      ),
+      const SizedBox(height: Grid.half),
+      Text(
+        detail,
+        textAlign: TextAlign.center,
+        style: context.textTheme.bodySmall?.copyWith(
+          color: context.colors.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: Grid.xs),
+      Center(
+        child: TextButton.icon(
+          key: const ValueKey('coding-session-retry'),
+          onPressed: onRetry,
+          icon: const Icon(LucideIcons.refreshCw, size: 16),
+          label: const Text('Retry'),
+        ),
+      ),
+    ],
+  );
 }

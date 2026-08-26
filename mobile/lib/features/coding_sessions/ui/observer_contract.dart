@@ -83,10 +83,23 @@ class CodingSessionObserverSnapshot {
   });
 
   /// True while the first read for this channel is still outstanding.
+  ///
+  /// [CodingSessionObserverConnection.idle] is deliberately excluded: the
+  /// notifier reports idle when the relay session is *not connected*, and
+  /// nothing is being read then. Presenting that as loading left an offline
+  /// device under a "Reading coding sessions" spinner forever — see
+  /// [isDisconnected].
   bool get isLoadingFirstRead =>
       sessions.isEmpty &&
-      (connection == CodingSessionObserverConnection.idle ||
-          connection == CodingSessionObserverConnection.connecting);
+      connection == CodingSessionObserverConnection.connecting;
+
+  /// True when this community's relay session is down and nothing was read.
+  ///
+  /// With sessions in hand the pages keep showing them (stale facts beat a
+  /// blank page); with none, the honest statement is that the device is not
+  /// connected, not that the read is still coming.
+  bool get isDisconnected =>
+      sessions.isEmpty && connection == CodingSessionObserverConnection.idle;
 
   /// True when the read failed and there is nothing to show instead.
   bool get hasBlockingError =>
@@ -143,6 +156,14 @@ class CodingSessionObserverSnapshot {
     return null;
   }
 }
+
+/// What the pages say when this community's relay session is not connected.
+const codingSessionDisconnectedLabel = 'Not connected to this community';
+
+/// The line under [codingSessionDisconnectedLabel].
+const codingSessionDisconnectedDetail =
+    'Nothing is being read while the connection is down. Retry once the '
+    'community is back.';
 
 /// The read-side binding the pages consume.
 ///

@@ -92,6 +92,17 @@ class _CodingSessionsBody extends StatelessWidget {
         onRetry: onRetry,
       );
     }
+    if (snapshot.isDisconnected) {
+      // Not "no sessions" and not "still loading": the relay session for this
+      // community is down and nothing is being read.
+      return _CodingSessionsMessage(
+        key: const ValueKey('coding-sessions-disconnected'),
+        icon: LucideIcons.plugZap,
+        title: codingSessionDisconnectedLabel,
+        detail: codingSessionDisconnectedDetail,
+        onRetry: onRetry,
+      );
+    }
     if (snapshot.isLoadingFirstRead) {
       return const _CodingSessionsLoading();
     }

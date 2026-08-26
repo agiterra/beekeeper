@@ -195,6 +195,35 @@ void main() {
     expect(binding.refreshCount, 1);
   });
 
+  // A relay session that is not connected reports `idle`. Folding that into
+  // "first read in flight" left an offline device under a spinner labelled
+  // "Reading coding sessions" forever, with nothing being read and nothing on
+  // screen saying so.
+  testWidgets('a disconnected community is stated, not spun on', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: const [],
+        connection: CodingSessionObserverConnection.idle,
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-sessions-disconnected')),
+      findsOneWidget,
+    );
+    expect(find.text('Not connected to this community'), findsOneWidget);
+    expect(find.byKey(const ValueKey('coding-sessions-loading')), findsNothing);
+    expect(find.text('No coding sessions in this channel'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('coding-sessions-retry')));
+    await tester.pump();
+    expect(binding.refreshCount, 1);
+  });
+
   testWidgets('a read that has not returned is not an empty channel', (
     tester,
   ) async {

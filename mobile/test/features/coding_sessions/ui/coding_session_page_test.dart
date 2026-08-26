@@ -426,6 +426,30 @@ void main() {
     expect(binding.refreshCount, 1);
   });
 
+  testWidgets('a disconnected community is stated, not spun on', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: const [],
+        connection: CodingSessionObserverConnection.idle,
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-session-disconnected')),
+      findsOneWidget,
+    );
+    expect(find.text('Not connected to this community'), findsOneWidget);
+    expect(find.byKey(const ValueKey('coding-session-loading')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('coding-session-retry')));
+    await tester.pump();
+    expect(binding.refreshCount, 1);
+  });
+
   testWidgets('resolves a session by its execution key', (tester) async {
     final binding = FakeObserverBinding(testSnapshot());
     final executionKey = testTarget().executionKey;
