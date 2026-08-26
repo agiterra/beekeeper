@@ -55,7 +55,7 @@ void main() {
     );
   });
 
-  testWidgets('marks a closed session', (tester) async {
+  testWidgets('marks a closed session as closed by a member', (tester) async {
     final binding = FakeObserverBinding(
       testSnapshot(sessions: [testUmbrella(closed: true)]),
     );
@@ -66,7 +66,11 @@ void main() {
       find.byKey(const ValueKey('coding-session-closed-badge')),
       findsOneWidget,
     );
-    expect(find.text('Closed'), findsOneWidget);
+    // The session page hedges this same fact ("Closed by a member of this
+    // channel") because v1 accepts any member's 44230. A bare "Closed" here
+    // would be the stronger claim the observer cannot make.
+    expect(find.text('Closed by a member'), findsOneWidget);
+    expect(find.text('Closed'), findsNothing);
   });
 
   testWidgets('shows the empty state when the read returned no sessions', (

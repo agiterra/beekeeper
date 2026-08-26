@@ -89,24 +89,35 @@ class _SessionCard extends StatelessWidget {
   }
 }
 
+/// The closed marker, stating who the observer can say closed the session.
+///
+/// v1 accepts the newest 44230 from any member of the channel, which is what
+/// the session header says out loud ("Closed by a member of this channel").
+/// A bare "Closed" here would be the stronger claim — that the session's own
+/// founder ended it — and the read cannot support it.
 class _ClosedBadge extends StatelessWidget {
   const _ClosedBadge();
 
   @override
-  Widget build(BuildContext context) => Container(
-    key: const ValueKey('coding-session-closed-badge'),
-    padding: const EdgeInsets.symmetric(
-      horizontal: Grid.xxs,
-      vertical: Grid.quarter,
-    ),
-    decoration: BoxDecoration(
-      color: context.colors.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(Radii.full),
-    ),
-    child: Text(
-      'Closed',
-      style: context.textTheme.labelSmall?.copyWith(
-        color: context.colors.onSurfaceVariant,
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Closed by a member of this channel',
+    child: Container(
+      key: const ValueKey('coding-session-closed-badge'),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Grid.xxs,
+        vertical: Grid.quarter,
+      ),
+      decoration: BoxDecoration(
+        color: context.colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(Radii.full),
+      ),
+      child: Text(
+        'Closed by a member',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: context.textTheme.labelSmall?.copyWith(
+          color: context.colors.onSurfaceVariant,
+        ),
       ),
     ),
   );
