@@ -430,6 +430,7 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
         if (_createBelongs(create, sessionRef, members)) create,
     ];
     final founder = resolveCodingSessionFounder(
+      sessionRef: sessionRef,
       creates: ownCreates,
       genesesByEventId: genesesByEventId,
     );
@@ -494,10 +495,17 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
 /// Resolve the founder of one umbrella from the creates that belong to it.
 ///
 /// A create that names a genesis anchors the session to that exact 44226,
-/// resolved by event id — the genesis's own session tag is never a selector.
+/// resolved by event id — the genesis's own session tag is never a *selector*,
+/// but it still has to agree: a genesis that founded [sessionRef] founds this
+/// umbrella, and a genesis that founded some other session founds nothing
+/// here. Without that check a create naming a stranger's genesis would hand
+/// this session the most confident founder label the UI has for someone who
+/// founded nothing.
+///
 /// Two creates naming different geneses is a dispute the observer refuses to
 /// settle.
 CodingSessionFounder resolveCodingSessionFounder({
+  required String? sessionRef,
   required Iterable<CodingSessionCreate> creates,
   Map<String, CodingSessionGenesis> genesesByEventId = const {},
 }) {
@@ -515,7 +523,11 @@ CodingSessionFounder resolveCodingSessionFounder({
   }
   if (genesisRefs.length == 1) {
     final genesis = genesesByEventId[genesisRefs.single];
-    if (genesis == null) return CodingSessionFounder.unresolved;
+    // Unreadable, or readable and anchoring a different umbrella: either way
+    // this session has no genesis-backed founder to show.
+    if (genesis == null || genesis.sessionRef != sessionRef) {
+      return CodingSessionFounder.unresolved;
+    }
     return CodingSessionFounder(
       pubkey: genesis.founderPubkey,
       resolution: CodingSessionFounderResolution.genesis,

@@ -287,6 +287,7 @@ void main() {
   group('founder resolution', () {
     test('a genesis-naming create resolves the founder by event id', () {
       final founder = resolveCodingSessionFounder(
+        sessionRef: sessionRefA,
         creates: [
           _create(
             commandId: 'cmd-1',
@@ -306,6 +307,7 @@ void main() {
 
     test('two distinct genesisRefs are a conflict with no founder', () {
       final founder = resolveCodingSessionFounder(
+        sessionRef: sessionRefA,
         creates: [
           _create(
             commandId: 'cmd-1',
@@ -333,6 +335,7 @@ void main() {
 
     test('no genesisRef falls back to the earliest create signer', () {
       final founder = resolveCodingSessionFounder(
+        sessionRef: sessionRefA,
         creates: [
           _create(
             commandId: 'cmd-2',
@@ -354,13 +357,45 @@ void main() {
 
     test('no readable create leaves the founder unresolved', () {
       expect(
-        resolveCodingSessionFounder(creates: const []).resolution,
+        resolveCodingSessionFounder(
+          sessionRef: sessionRefA,
+          creates: const [],
+        ).resolution,
         CodingSessionFounderResolution.unresolved,
+      );
+    });
+
+    test('a genesis anchoring another session never founds this one', () {
+      final founder = resolveCodingSessionFounder(
+        sessionRef: sessionRefA,
+        creates: [
+          _create(
+            commandId: 'cmd-1',
+            sessionRef: sessionRefA,
+            genesisRef: genesisEventIdB,
+          ),
+        ],
+        genesesByEventId: {
+          genesisEventIdB: decodeCodingSessionGenesis(
+            genesisEvent(
+              eventId: genesisEventIdB,
+              sessionRef: sessionRefB,
+              pubkey: otherFounderPubkey,
+            ),
+          ).value!,
+        },
+      );
+      expect(founder.resolution, CodingSessionFounderResolution.unresolved);
+      expect(
+        founder.pubkey,
+        isNull,
+        reason: 'the named genesis founded a different session',
       );
     });
 
     test('a named genesis nobody published stays unresolved', () {
       final founder = resolveCodingSessionFounder(
+        sessionRef: sessionRefA,
         creates: [
           _create(
             commandId: 'cmd-1',
