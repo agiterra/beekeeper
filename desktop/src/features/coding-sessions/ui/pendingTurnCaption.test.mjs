@@ -25,8 +25,17 @@ test("silence stops where it would become a lie", () => {
   );
 });
 
+test("a turn the provider queued says exactly that", () => {
+  // Not "working", not "thinking": the provider signed for the turn and put
+  // it behind whatever it is already doing.
+  assert.equal(
+    describePendingCodingSessionTurn("queued"),
+    "Queued by the provider",
+  );
+});
+
 test("nothing claims the model is thinking", () => {
-  for (const state of ["sending", "waiting", "stalled"]) {
+  for (const state of ["sending", "queued", "waiting", "stalled"]) {
     const caption = describePendingCodingSessionTurn(state);
     if (caption === null) continue;
     assert.doesNotMatch(caption, /thinking|working|generating/i, caption);

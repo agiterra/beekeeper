@@ -248,6 +248,48 @@ async function refusalEvent({
   );
 }
 
+/** A per-stage turn receipt, keyed the way the publish queue fences it. */
+async function turnStageEvent({
+  commandId = TURN_COMMAND_ID,
+  status,
+  secret = PROVIDER_SECRET,
+  error = null,
+} = {}) {
+  const { KIND_CODING_SESSION_LIFECYCLE_RECEIPT } = await import(
+    "@/shared/constants/kinds.ts"
+  );
+  const {
+    CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    codingSessionReceiptSemanticKey,
+  } = await import("../lib/codingSessionTrustedIngress.ts");
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: 1_800_000_001,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", commandId],
+        ["csl-key", codingSessionReceiptSemanticKey(commandId, status)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId,
+        status,
+        session: {
+          driver: "claude-agent-acp",
+          instanceId: "0123456789abcdef",
+          sessionId: "11111111-2222-3333-4444-555555555555",
+          generation: 1,
+        },
+        error,
+      }),
+    },
+    secret,
+  );
+}
+
 test("a refused turn says so and gives the person their words back", async () => {
   const scope = await harness();
   const receipt = await refusalEvent();
@@ -270,7 +312,10 @@ test("a refused turn says so and gives the person their words back", async () =>
   });
   await scope.settle();
 
-  assert.equal(scope.error(), `Turn refused: ${REFUSAL_MESSAGE}`);
+  assert.equal(
+    scope.error(),
+    `Turn refused (UNAUTHORIZED_OPERATOR): ${REFUSAL_MESSAGE}`,
+  );
   assert.equal(scope.draft(), "ship the release notes");
   assert.equal(scope.state.isWatching, false);
 
@@ -307,7 +352,10 @@ test("a member whose machine runs no such provider still hears the refusal", asy
   await scope.settle();
 
   // Before the deadline could expire the watch in silence.
-  assert.equal(scope.error(), `Turn refused: ${REFUSAL_MESSAGE}`);
+  assert.equal(
+    scope.error(),
+    `Turn refused (UNAUTHORIZED_OPERATOR): ${REFUSAL_MESSAGE}`,
+  );
   assert.equal(scope.draft(), "take over this session");
   assert.equal(scope.state.isWatching, false);
 
@@ -360,5 +408,111 @@ test("a turn nobody refuses stops being watched, silently", async () => {
   assert.equal(scope.draft(), "");
   assert.equal(scope.state.isWatching, false);
 
+  scope.teardown();
+});
+
+test("a dropped turn is returned to the person as a drop, not a refusal", async () => {
+  const scope = await harness();
+  const dropped = await turnStageEvent({
+    status: "turn_dropped",
+    error: { code: "QUEUE_FULL", message: "the session queue is full" },
+  });
+
+  await scope.act(async () => {
+    scope.state.typeInto("and then run the linter");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  assert.equal(scope.draft(), "");
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(dropped);
+  });
+  await scope.settle();
+
+  assert.equal(
+    scope.error(),
+    "Turn dropped (QUEUE_FULL): the session queue is full",
+  );
+  assert.equal(scope.draft(), "and then run the linter");
+  assert.equal(scope.state.isWatching, false);
+
+  scope.teardown();
+});
+
+test("a turn refused for a stale generation names that code", async () => {
+  const scope = await harness();
+  const refused = await turnStageEvent({
+    status: "turn_refused",
+    error: {
+      code: "STALE_GENERATION",
+      message: "this execution has been superseded",
+    },
+  });
+
+  await scope.act(async () => {
+    scope.state.typeInto("keep going");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(refused);
+  });
+  await scope.settle();
+
+  assert.equal(
+    scope.error(),
+    "Turn refused (STALE_GENERATION): this execution has been superseded",
+  );
+  assert.equal(scope.draft(), "keep going");
+
+  scope.teardown();
+});
+
+test("a queued turn marks its optimistic row without touching the editor", async () => {
+  const {
+    markPendingCodingSessionTurnPublished,
+    readPendingCodingSessionTurns,
+    recordPendingCodingSessionTurn,
+    resetPendingCodingSessionTurns,
+  } = await import("../lib/codingSessionPendingTurns.ts");
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const queued = await turnStageEvent({ status: "turn_queued" });
+
+  recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: "coding-session/v1|whatever",
+    commandId: TURN_COMMAND_ID,
+    text: "run the tests",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: false,
+  });
+  markPendingCodingSessionTurnPublished(CHANNEL_ID, TURN_COMMAND_ID);
+
+  await scope.act(async () => {
+    scope.state.typeInto("run the tests");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(queued);
+  });
+  await scope.settle();
+
+  assert.equal(readPendingCodingSessionTurns()[0].queuedByProvider, true);
+  // Queued is not refused: nothing goes back into the editor and no error
+  // line appears.
+  assert.equal(scope.error(), null);
+  assert.equal(scope.draft(), "");
+
+  resetPendingCodingSessionTurns();
   scope.teardown();
 });

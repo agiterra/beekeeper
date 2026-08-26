@@ -1,5 +1,7 @@
 /**
- * Pure adapter: signed 44225 transcript envelopes -> `TranscriptItem[]`.
+ * Pure adapter: signed 44225 transcript envelopes ->
+ * `CodingSessionProjectedTranscriptItem[]` (the renderer's `TranscriptItem`
+ * plus the coding-session `commandId` join key).
  *
  * This is the seam between the coding-session wire contract and Buzz's mature
  * agent-transcript renderer. No React, no I/O, no side effects.
@@ -14,7 +16,6 @@
  * instead of throwing or being dropped.
  */
 
-import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
 import { isRecord, safeString, toIsoTimestamp } from "./codingSessionDefensive";
 import { encodeStructuredKey } from "./codingSessionKeys";
 import {
@@ -25,12 +26,13 @@ import {
   buildToolResultItem,
   type CodingSessionBridgeSource,
   type CodingSessionItemIdentity as Identity,
+  type CodingSessionProjectedTranscriptItem,
   finalizeCodingSessionItem as finalize,
   toolIdFromToolCall,
   toolIdFromToolResult,
 } from "./codingSessionTranscriptItems";
 
-export type { CodingSessionBridgeSource };
+export type { CodingSessionBridgeSource, CodingSessionProjectedTranscriptItem };
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -82,7 +84,7 @@ export type ProjectCodingSessionTranscriptOptions = {
 export function projectCodingSessionTranscript(
   envelopes: unknown,
   options: ProjectCodingSessionTranscriptOptions = {},
-): TranscriptItem[] {
+): CodingSessionProjectedTranscriptItem[] {
   if (!Array.isArray(envelopes)) {
     return [];
   }
@@ -97,7 +99,7 @@ export function projectCodingSessionTranscript(
 export function projectCodingSessionTranscriptItem(
   envelope: unknown,
   options: ProjectCodingSessionTranscriptOptions = {},
-): TranscriptItem {
+): CodingSessionProjectedTranscriptItem {
   try {
     const intermediate = toIntermediate(envelope, options);
     if (intermediate.kind === "fallback") {
@@ -124,11 +126,11 @@ export function projectCodingSessionTranscriptItem(
 function projectCodingSessionTranscriptUnsafe(
   envelopes: unknown[],
   options: ProjectCodingSessionTranscriptOptions,
-): TranscriptItem[] {
+): CodingSessionProjectedTranscriptItem[] {
   const projected = assignSyntheticTurnPresentation(
     envelopes.map((envelope) => toIntermediate(envelope, options)),
   );
-  const result: TranscriptItem[] = [];
+  const result: CodingSessionProjectedTranscriptItem[] = [];
   const pendingToolCalls = new Map<
     string,
     {
@@ -327,7 +329,7 @@ type IntermediateEnvelope =
       item: unknown;
       ctx: Identity;
     }
-  | { kind: "fallback"; item: TranscriptItem };
+  | { kind: "fallback"; item: CodingSessionProjectedTranscriptItem };
 
 function toIntermediate(
   envelopeRaw: unknown,
@@ -458,7 +460,7 @@ function buildFallbackItem(
   eventSeq: number | null,
   timestamp: string,
   channelId: string | null,
-): TranscriptItem {
+): CodingSessionProjectedTranscriptItem {
   return {
     id: buildFallbackId(raw, eventSeq),
     type: "lifecycle",

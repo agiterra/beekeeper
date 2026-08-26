@@ -25,7 +25,8 @@ import {
   CODING_SESSION_METADATA_TAG_VERSION,
   type CodingSessionLifecycleReceipt,
   codingSessionMetadataSemanticKey,
-  lifecycleReceiptSemanticKey,
+  codingSessionReceiptSemanticKey,
+  isCodingSessionTurnReceipt,
   parseBuzzCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads";
@@ -39,20 +40,36 @@ import {
   type TrustedCodingSessionTranscriptEntry,
 } from "./codingSessionTranscriptPresentation";
 import {
+  CodingSessionTurnReceiptIndex,
+  compareStoredValueFreshness,
+  type CodingSessionTurnProgress,
+  type ReceiptBucket,
+  resolveImmutableReceipt,
+  type StoredValue,
+} from "./codingSessionTurnReceiptIndex";
+import {
   hasTagNamed,
   isExactProviderAuthorityPubkey,
   normalizePubkey,
   parseExactTags,
 } from "./codingSessionWireDecode";
 
+export type { CodingSessionTurnProgress } from "./codingSessionTurnReceiptIndex";
 export {
   BUZZ_CODING_SESSION_METADATA_SCHEMA,
   type BuzzCodingSessionMetadataV1,
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
+  CODING_SESSION_TURN_RECEIPT_STATUSES,
   type CodingSessionLifecycleReceipt,
+  type CodingSessionLifecycleReceiptStatus,
   codingSessionMetadataSemanticKey,
+  codingSessionReceiptSemanticKey,
+  type CodingSessionTurnReceipt,
+  type CodingSessionTurnReceiptStatus,
+  isCodingSessionTurnReceipt,
+  isCodingSessionTurnReceiptStatus,
   lifecycleReceiptSemanticKey,
   parseBuzzCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
@@ -145,12 +162,26 @@ export type CodingSessionLifecycleResolution =
 /**
  * The provider's signed refusal of one command — its code and its own words.
  *
- * A turn is refused (unauthorized operator, for one) with the same 44224
- * receipt shape a lifecycle command is refused with, but nothing about a turn
- * is a lifecycle transition: there is no target to establish and no metadata to
- * wait for, so the only fact worth reading back is the error.
+ * A turn is refused (unauthorized operator, a stale generation, a session
+ * already closed) or dropped (the provider's queue was full) with the same
+ * 44224 receipt shape a lifecycle command is refused with, but nothing about a
+ * turn is a lifecycle transition: there is no target to establish and no
+ * metadata to wait for, so the only fact worth reading back is the error.
  */
-export type CodingSessionCommandRefusal = { code: string; message: string };
+export type CodingSessionCommandRefusal = {
+  code: string;
+  message: string;
+  /**
+   * How the provider ended this turn, when it said so per stage.
+   *
+   * `"refused"` is a decision about the sender or the target (an operator it
+   * has not granted, a generation that has moved on); `"dropped"` is the
+   * provider's own queue overflowing with the turn already accepted. The two
+   * deserve different words, so the composer is told which it is. Absent on
+   * the pre-stage `failed` receipt shape, which said only "no".
+   */
+  outcome?: "refused" | "dropped";
+};
 
 /**
  * The target of a resolution that established a usable session, or `null`.
@@ -223,18 +254,6 @@ export type TrustedIngressClassification =
   | { kind: "rejected-author" }
   | { kind: "invalid-signature" };
 
-type StoredValue<T> = {
-  eventId: string;
-  createdAt: number;
-  signerPubkey: string;
-  canonicalPayload: string;
-  value: T;
-};
-
-type ReceiptBucket = Map<
-  string,
-  StoredValue<Readonly<CodingSessionLifecycleReceipt>>
->;
 type MetadataBucket = Map<
   string,
   StoredValue<Readonly<BuzzCodingSessionMetadataV1>>
@@ -322,7 +341,11 @@ export function classifyTrustedCodingSessionIngressEvent(
     if (
       !receipt ||
       tags[2] !== receipt.commandId ||
-      tags[3] !== lifecycleReceiptSemanticKey(receipt.commandId)
+      // Per-stage for a turn receipt, single-field for a lifecycle one: the
+      // tag must match the key the publish queue actually fenced on, or the
+      // producer and this reader disagree about what is a duplicate.
+      tags[3] !==
+        codingSessionReceiptSemanticKey(receipt.commandId, receipt.status)
     ) {
       return { kind: "malformed" };
     }
@@ -418,6 +441,8 @@ export function classifyTrustedCodingSessionIngressEvent(
 /** In-memory verified ingress store. It owns no community-global state. */
 export class TrustedCodingSessionIngressStore {
   private readonly receipts = new Map<string, ReceiptBucket>();
+  /** Turn receipts, kept apart — see `codingSessionTurnReceiptIndex.ts`. */
+  private readonly turnReceipts = new CodingSessionTurnReceiptIndex();
   private readonly metadata = new Map<string, StoredMetadataBucket>();
   private readonly transcripts = new Map<string, StoredTranscriptBucket>();
   private readonly rawEvents = new Map<string, Map<string, RelayEvent>>();
@@ -468,6 +493,25 @@ export class TrustedCodingSessionIngressStore {
       this.dispositions.set(event.id, classified.kind);
       switch (classified.kind) {
         case "receipt": {
+          if (isCodingSessionTurnReceipt(classified.receipt)) {
+            this.turnReceipts.record(
+              classified.channelId,
+              classified.receipt.commandId,
+              classified.receipt.status,
+              {
+                eventId: event.id,
+                createdAt: event.created_at,
+                signerPubkey: classified.signerPubkey,
+                canonicalPayload: classified.canonicalPayload,
+                value: classified.receipt,
+              },
+            );
+            // Deliberately not retained as a raw event: the pop-out bootstrap
+            // replays the bytes that establish a generation, and a turn
+            // receipt establishes none. Retaining them would evict the
+            // metadata that does, for a fact no bootstrap reads.
+            break;
+          }
           const key = compositeKey(
             classified.channelId,
             classified.receipt.commandId,
@@ -675,6 +719,13 @@ export class TrustedCodingSessionIngressStore {
     );
   }
 
+  /**
+   * One command's generation lifecycle, from the lifecycle receipts alone.
+   *
+   * Turn receipts cannot reach this: they live in their own index, so a
+   * `turn_refused` never fails a generation and a `turn_queued` never creates
+   * one. A turn is an event inside a generation, never a change to it.
+   */
   resolveLifecycle(
     channelId: string,
     commandId: string,
@@ -759,16 +810,22 @@ export class TrustedCodingSessionIngressStore {
   }
 
   /**
-   * Read one turn command's refusal, or `null` if it was not refused.
+   * Read the outcome that cost one turn its run, or `null` if it still has one.
    *
-   * Turn receipts are one-sided by design: a refused turn publishes a `failed`
-   * 44224 keyed to the turn's own command id, a turn that ran publishes none
-   * (its transcript items are the signal), and a turn addressed to some other
-   * provider's session is ignored in silence — several providers watch one
-   * channel and must not answer commands they do not own. So the honest
-   * reading is binary, and every gate the lifecycle path applies applies here:
-   * an exact provider authority, that authority's own signature, and a single
-   * agreeing payload (a disagreement is a conflict, never a refusal).
+   * Three shapes say it. A provider that publishes per-stage receipts refuses
+   * with `turn_refused` (the operator, the target, or the generation) or drops
+   * with `turn_dropped` (its own queue overflowed). A provider from before
+   * those statuses existed says the same thing with a plain lifecycle
+   * `failed`, and that reading stays — the point of the fallback is a member
+   * on a newer client talking to an older provider, which is the ordinary
+   * case during a rollout.
+   *
+   * Silence still means the turn is alive: a turn that ran publishes no
+   * failure, and a turn addressed to some other provider's session is ignored
+   * without a word, because several providers watch one channel. Every gate
+   * the lifecycle path applies applies here: an exact provider authority, that
+   * authority's own signature, and a single agreeing payload (a disagreement
+   * is a conflict, never a refusal).
    */
   resolveTurnRefusal(
     channelId: string,
@@ -776,6 +833,12 @@ export class TrustedCodingSessionIngressStore {
     providerAuthorityPubkey: string,
   ): CodingSessionCommandRefusal | null {
     if (!isExactProviderAuthorityPubkey(providerAuthorityPubkey)) return null;
+    const staged = this.turnReceipts.resolveFailure(
+      channelId,
+      commandId,
+      providerAuthorityPubkey,
+    );
+    if (staged) return staged;
     const receiptBucket = this.receipts.get(compositeKey(channelId, commandId));
     if (!receiptBucket || receiptBucket.size === 0) return null;
     const receipt = resolveImmutableReceipt(
@@ -787,6 +850,27 @@ export class TrustedCodingSessionIngressStore {
     // composer may claim, exactly as they are for a lifecycle command.
     if (receipt?.status !== "failed") return null;
     return receipt.error;
+  }
+
+  /**
+   * How far a sent turn got, from its own per-stage receipts.
+   *
+   * `turn_started` outranks `turn_queued` because it is the later fact about
+   * the same turn, not a competing claim. A provider that publishes neither
+   * (every provider before this contract) reports `null`, and the surfaces
+   * that read this say nothing rather than guessing a stage.
+   */
+  resolveTurnProgress(
+    channelId: string,
+    commandId: string,
+    providerAuthorityPubkey: string,
+  ): CodingSessionTurnProgress | null {
+    if (!isExactProviderAuthorityPubkey(providerAuthorityPubkey)) return null;
+    return this.turnReceipts.resolveProgress(
+      channelId,
+      commandId,
+      providerAuthorityPubkey,
+    );
   }
 
   private retainRawEvent(
@@ -817,18 +901,6 @@ function resolveImmutableTranscript(bucket: TranscriptBucket): {
     value: records.sort(compareStoredValueFreshness)[0] ?? null,
     conflictCount: Math.max(0, payloads.size - 1),
   };
-}
-
-function resolveImmutableReceipt(
-  bucket: ReceiptBucket,
-  providerAuthorityPubkey: string,
-): Readonly<CodingSessionLifecycleReceipt> | null | undefined {
-  const records = [...bucket.values()].filter(
-    (record) => record.signerPubkey === providerAuthorityPubkey,
-  );
-  if (records.length === 0) return undefined;
-  const payloads = new Set(records.map((record) => record.canonicalPayload));
-  return payloads.size === 1 ? records[0].value : null;
 }
 
 /**
@@ -867,17 +939,6 @@ function resolveNewestMetadata(
     conflictCount: Math.max(0, payloads.size - 1),
     matchedCount: records.length,
   };
-}
-
-function compareStoredValueFreshness<T>(
-  left: StoredValue<T>,
-  right: StoredValue<T>,
-): number {
-  return (
-    right.createdAt - left.createdAt ||
-    left.signerPubkey.localeCompare(right.signerPubkey) ||
-    left.eventId.localeCompare(right.eventId)
-  );
 }
 
 function generationKey(scope: CodingSessionGenerationScope): string {

@@ -3,6 +3,7 @@ import { CircleAlert } from "lucide-react";
 
 import {
   clearPendingCodingSessionTurns,
+  noteTextSettledCodingSessionEchoes,
   pendingCodingSessionTurnKey,
   pendingCodingSessionTurnState,
   resolvePendingCodingSessionTurns,
@@ -42,7 +43,7 @@ export function useVisibleCodingSessionPendingTurns({
   const resolved = React.useMemo(
     () =>
       targetKey === null
-        ? { visible: [], consumedKeys: [] }
+        ? { visible: [], consumedKeys: [], settlements: [] }
         : resolvePendingCodingSessionTurns(
             pending,
             { channelId, targetKey },
@@ -56,6 +57,15 @@ export function useVisibleCodingSessionPendingTurns({
   React.useEffect(() => {
     clearPendingCodingSessionTurns(consumedKeys);
   }, [consumedKeys]);
+  // So is remembering which of them were only guessed at from their words.
+  const settlements = resolved.settlements;
+  React.useEffect(() => {
+    const echoIds = settlements
+      .filter((settlement) => settlement.by === "text")
+      .map((settlement) => settlement.echoId)
+      .filter((echoId): echoId is string => echoId !== undefined);
+    noteTextSettledCodingSessionEchoes(echoIds);
+  }, [settlements]);
   return { turns: resolved.visible, now };
 }
 
@@ -150,10 +160,13 @@ function CodingSessionPendingTurnRow({
       </div>
       {caption === null ? null : (
         <p
-          className="inline-flex items-center gap-1 pe-1 text-2xs text-destructive"
+          className={cn(
+            "inline-flex items-center gap-1 pe-1 text-2xs",
+            stalled ? "text-destructive" : "text-muted-foreground",
+          )}
           data-testid="coding-session-pending-turn-status"
         >
-          <CircleAlert aria-hidden className="size-3" />
+          {stalled ? <CircleAlert aria-hidden className="size-3" /> : null}
           {caption}
         </p>
       )}
@@ -167,11 +180,14 @@ function CodingSessionPendingTurnRow({
  * The first version spun a loader and narrated the relay/provider boundary.
  * Both were accurate infrastructure details and the wrong frame for the
  * conversation. Silence stops only once it would become a lie: a published
- * turn that nobody has picked up long after they should have.
+ * turn that nobody has picked up long after they should have, or one the
+ * provider has signed for and parked behind other work. "Queued" is stated
+ * plainly and not dressed up as progress — the turn has not started.
  */
 export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
 ): string | null {
+  if (state === "queued") return "Queued by the provider";
   return state === "stalled" ? "Not picked up yet" : null;
 }
 

@@ -20,6 +20,7 @@ import {
   type CodingSessionTranscriptEntry,
   type CodingSessionTranscriptTurn,
 } from "@/features/coding-sessions/lib/codingSessionTranscriptModel";
+import { useTextSettledCodingSessionEchoes } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-sessions/lib/codingSessionPromptAttribution";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
@@ -69,7 +70,17 @@ type CodingSessionTranscriptProps = {
 const CodingSessionPromptAttributionContext = React.createContext<{
   currentUserPubkey: string | null;
   profiles: UserProfileLookup | undefined;
-}>({ currentUserPubkey: null, profiles: undefined });
+  /**
+   * Verified prompt echoes that retired one of this client's optimistic rows
+   * on their words alone, because the provider named no command id. The
+   * message says so rather than presenting a guess as a match.
+   */
+  textSettledEchoIds: ReadonlySet<string>;
+}>({
+  currentUserPubkey: null,
+  profiles: undefined,
+  textSettledEchoIds: new Set(),
+});
 
 const GENERIC_AGENT_IDENTITY = {
   agentAvatarUrl: null,
@@ -99,12 +110,14 @@ export function CodingSessionTranscript({
   scrollRef,
 }: CodingSessionTranscriptProps) {
   const model = useStableCodingSessionTranscriptModel(items, isWorking);
+  const textSettledEchoIds = useTextSettledCodingSessionEchoes();
   const promptAttribution = React.useMemo(
     () => ({
       currentUserPubkey: currentUserPubkey ?? null,
       profiles: operatorProfiles,
+      textSettledEchoIds,
     }),
-    [currentUserPubkey, operatorProfiles],
+    [currentUserPubkey, operatorProfiles, textSettledEchoIds],
   );
   const rows = React.useMemo(
     () => buildCodingSessionTranscriptRows(model),
@@ -584,11 +597,21 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
         operatorPubkey: item.operatorPubkey,
         profiles: promptAttribution.profiles,
       });
+      // Only ever true for a provider that stamps no command id on its echo:
+      // this client matched the message to what it sent by comparing the
+      // words, which two identical messages defeat.
+      const settledByText = promptAttribution.textSettledEchoIds.has(item.id);
       return (
         <div
           className="group flex flex-col items-end gap-1"
           data-role="user-message"
+          data-settled-by={settledByText ? "text" : undefined}
           data-testid="coding-session-user-message"
+          title={
+            settledByText
+              ? "Matched to the turn you sent by its text — this provider's echo named no command id."
+              : undefined
+          }
         >
           <div className="min-w-0 max-w-[80%] rounded-2xl bg-muted px-4 py-3 text-base leading-6 text-foreground shadow-sm ring-1 ring-border/40">
             <Markdown content={item.text.trim() || " "} mediaInset />

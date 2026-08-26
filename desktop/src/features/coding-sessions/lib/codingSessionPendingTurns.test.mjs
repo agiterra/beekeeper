@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  markPendingCodingSessionTurnQueued,
   MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
   PENDING_CODING_SESSION_TURN_STALL_MS,
   PENDING_CODING_SESSION_TURN_TTL_MS,
@@ -13,6 +14,8 @@ import {
   readPendingCodingSessionTurns,
   recordPendingCodingSessionTurn,
   resetPendingCodingSessionTurns,
+  noteTextSettledCodingSessionEchoes,
+  readTextSettledCodingSessionEchoes,
   resolvePendingCodingSessionTurns,
 } from "./codingSessionPendingTurns.ts";
 
@@ -36,6 +39,19 @@ function turn(overrides = {}) {
 
 function promptEcho(text, operatorPubkey = OPERATOR) {
   return { type: "message", role: "user", text, operatorPubkey };
+}
+
+/** The echo a provider on the per-stage contract publishes: it names its turn. */
+function namedEcho(commandId, text = "run the tests", overrides = {}) {
+  return {
+    id: `item-${commandId}`,
+    type: "message",
+    role: "user",
+    text,
+    operatorPubkey: OPERATOR,
+    commandId,
+    ...overrides,
+  };
 }
 
 test.afterEach(() => resetPendingCodingSessionTurns());
@@ -210,4 +226,113 @@ test("another execution's rows are not evicted by a busy one", () => {
     ).length,
     1,
   );
+});
+
+test("the same sentence sent twice settles by command id, not by order", () => {
+  const pending = [
+    turn({ commandId: "csc-1" }),
+    turn({ commandId: "csc-2", recordedAt: 1_100 }),
+  ];
+  // The provider echoes the *second* turn first. Text matching cannot tell
+  // these apart and would retire the first row, leaving the wrong message
+  // duplicated on screen until the second echo arrived.
+  const resolved = resolvePendingCodingSessionTurns(
+    pending,
+    { channelId: CHANNEL, targetKey: TARGET },
+    [namedEcho("csc-2")],
+    1_200,
+  );
+  assert.equal(resolved.visible.length, 1);
+  assert.equal(resolved.visible[0].commandId, "csc-1");
+  assert.deepEqual(resolved.consumedKeys, [
+    pendingCodingSessionTurnKey(pending[1]),
+  ]);
+  assert.deepEqual(resolved.settlements, [
+    {
+      key: pendingCodingSessionTurnKey(pending[1]),
+      commandId: "csc-2",
+      by: "commandId",
+      echoId: "item-csc-2",
+    },
+  ]);
+});
+
+test("an echo naming another command does not retire this row", () => {
+  const pending = [turn({ commandId: "csc-1" })];
+  const resolved = resolvePendingCodingSessionTurns(
+    pending,
+    { channelId: CHANNEL, targetKey: TARGET },
+    // Identical words, a different command: another operator's turn, or this
+    // client's own earlier one replayed. Neither is an answer to this row.
+    [namedEcho("csc-other")],
+    1_200,
+  );
+  assert.equal(resolved.visible.length, 1);
+  assert.deepEqual(resolved.consumedKeys, []);
+  assert.deepEqual(resolved.settlements, []);
+});
+
+test("text is the join only for an echo that names no command", () => {
+  const pending = [turn({ commandId: "csc-1" })];
+  const resolved = resolvePendingCodingSessionTurns(
+    pending,
+    { channelId: CHANNEL, targetKey: TARGET },
+    [{ ...promptEcho("run the tests"), id: "item-legacy" }],
+    1_200,
+  );
+  assert.deepEqual(resolved.visible, []);
+  assert.deepEqual(resolved.settlements, [
+    {
+      key: pendingCodingSessionTurnKey(pending[0]),
+      commandId: "csc-1",
+      by: "text",
+      echoId: "item-legacy",
+    },
+  ]);
+});
+
+test("a named echo is claimed by its own row before a guess can take it", () => {
+  const pending = [
+    turn({ commandId: "csc-1" }),
+    turn({ commandId: "csc-2", recordedAt: 1_100 }),
+  ];
+  // One old-style echo and one named echo, with the named one belonging to the
+  // second row. Matching in row order without the two passes would let the
+  // first row swallow the named echo by text and strand the second.
+  const resolved = resolvePendingCodingSessionTurns(
+    pending,
+    { channelId: CHANNEL, targetKey: TARGET },
+    [namedEcho("csc-2"), { ...promptEcho("run the tests"), id: "item-legacy" }],
+    1_200,
+  );
+  assert.deepEqual(resolved.visible, []);
+  const settledBy = new Map(
+    resolved.settlements.map((entry) => [entry.commandId, entry.by]),
+  );
+  assert.equal(settledBy.get("csc-2"), "commandId");
+  assert.equal(settledBy.get("csc-1"), "text");
+});
+
+test("a queued turn says it is queued, not that it stalled", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-q" }));
+  markPendingCodingSessionTurnPublished(CHANNEL, "csc-q");
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-q");
+  const [stored] = readPendingCodingSessionTurns();
+  assert.equal(stored.queuedByProvider, true);
+  assert.equal(pendingCodingSessionTurnState(stored, 1_000), "queued");
+  assert.equal(
+    pendingCodingSessionTurnState(
+      stored,
+      1_000 + PENDING_CODING_SESSION_TURN_STALL_MS + 1,
+    ),
+    "queued",
+  );
+});
+
+test("text-only settlements are remembered so the message can disclose them", () => {
+  assert.equal(readTextSettledCodingSessionEchoes().size, 0);
+  noteTextSettledCodingSessionEchoes(["item-legacy"]);
+  assert.equal(readTextSettledCodingSessionEchoes().has("item-legacy"), true);
+  resetPendingCodingSessionTurns();
+  assert.equal(readTextSettledCodingSessionEchoes().size, 0);
 });

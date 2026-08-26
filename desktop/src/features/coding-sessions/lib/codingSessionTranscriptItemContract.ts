@@ -25,6 +25,19 @@ export type CodingSessionKnownTranscriptItemV1 = { [key: string]: unknown } & (
       steered?: boolean;
       attachmentCount?: number;
       /**
+       * The `commandId` of the 44220 `thread.turn.start` that started this
+       * turn — the join between what an operator sent and what the provider
+       * echoed back.
+       *
+       * Additive and genuinely optional. A provider from before this contract
+       * omits it, and so does every item that no command started; for the
+       * initial turn embedded in a 44221 create the provider stamps the
+       * *create's* commandId, so every operator-originated prompt is
+       * joinable. Bounded exactly like a 44220 commandId: non-blank, at most
+       * 256 bytes, no control characters.
+       */
+      commandId?: string;
+      /**
        * The operator the provider verified before running the turn, as
        * 64-character lowercase hex. Additive: items published before the
        * provider stamped attribution simply omit it.
