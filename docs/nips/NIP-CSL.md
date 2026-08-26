@@ -36,10 +36,12 @@ Provider-neutral rendering after creation uses the signed
 > 6. **Liveness is an ephemeral lease, not metadata freshness.** Kind 24223
 >    proves recent provider reachability for one exact generation. It does not
 >    replace durable metadata and is never written to Postgres.
-> 7. **A `kind:44220` turn command gets its own receipts.** `turn_queued`,
->    `turn_started`, `turn_dropped`, `turn_refused` — keyed by `commandId` and
->    `status` together, never confirming or ending a generation on their own.
->    See "Fork amendment: turn-stage receipts" below.
+> 7. **A turn gets its own receipts.** `turn_queued`, `turn_started`,
+>    `turn_dropped`, `turn_refused` — keyed by `commandId` and `status`
+>    together, never confirming or ending a generation on their own. Their
+>    `commandId` normally names a `kind:44220` turn command, but for the
+>    initial turn embedded in a `kind:44221` `session.create` it names that
+>    **create**. See "Fork amendment: turn-stage receipts" below.
 
 ## Wire contract
 
@@ -312,8 +314,7 @@ transcript remain independently verifiable facts.
 
 ### Fork amendment: turn-stage receipts
 
-A `kind:44220` [NIP-CSC](NIP-CSC.md) turn command (`thread.turn.start`,
-`thread.turn.interrupt`) gets its own receipts, distinct from the six
+A [NIP-CSC](NIP-CSC.md) turn gets its own receipts, distinct from the six
 lifecycle statuses above, so an operator or a sibling agent can watch a turn
 land without polling the transcript. Four statuses:
 
@@ -332,11 +333,24 @@ object (`schema`, `commandId`, `status`, `session`, `error`) — no `turnId` key
 at all, present or `null`, for any of the three. `turn_started` has exactly
 six keys: the five plus `turnId`.
 
-`session` is the target the `kind:44220` command addressed — `driver`,
-`instanceId`, `sessionId`, `generation` — for **all four** turn statuses,
-including `turn_refused`/`turn_dropped`: unlike a failed `session.create`
-receipt, a turn receipt's session is never `null`, because the command that
-provoked it already named an exact generation.
+`commandId` names the signed command that caused the turn, and that command is
+one of **two** kinds. Normally it is a `kind:44220` `thread.turn.start` or
+`thread.turn.interrupt`. For the initial turn embedded in a `kind:44221`
+`session.create`'s `initialTurn` there is no `kind:44220`, so the provider
+publishes that turn's stage receipts under the **create's own** `commandId` —
+which is what makes the first prompt joinable to the command that asked for it
+(see [NIP-CST](NIP-CST.md)). A consumer MUST resolve a turn receipt's
+`commandId` against both kinds and MUST NOT reject a `turn_started` whose
+`commandId` names a `kind:44221` as a malformed cross-kind receipt. It follows
+that one create's `commandId` can carry both a lifecycle receipt (`created`)
+and turn receipts; the `status` discriminates them, and the semantic key keeps
+them distinct on the wire.
+
+`session` is the target the command addressed — `driver`, `instanceId`,
+`sessionId`, `generation` — for **all four** turn statuses, including
+`turn_refused`/`turn_dropped`: unlike a failed `session.create` receipt, a turn
+receipt's session is never `null`, because by the time a turn receipt is
+published the exact generation is known.
 
 `error` is `null` for `turn_queued` and `turn_started`. For `turn_dropped` it
 is `{ "code": "QUEUE_FULL", "message": "..." }`. For `turn_refused` it is one

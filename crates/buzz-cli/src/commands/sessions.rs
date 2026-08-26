@@ -890,12 +890,13 @@ fn render_item(item: &Value, result_by_id: &HashMap<String, bool>) -> String {
     match kind {
         "user_prompt" => {
             let content = item_text(item, "content").unwrap_or_default();
-            // `commandId` is present whenever the turn was started by a
-            // 44220 command (absent only for the initial turn embedded in a
-            // create, which is attributed via the create's own commandId
-            // upstream) — see NIP-CST. Rendered as a short footnote so a
-            // reader can join this line back to its `thread.turn.start`
-            // without the prose growing.
+            // `commandId` is present whenever an operator command started the
+            // turn: the 44220 `thread.turn.start` for an ordinary turn, or the
+            // 44221 create's own commandId for the initial turn embedded in a
+            // create — so the id must be resolved against both kinds, and
+            // absence marks an older provider rather than a create-embedded
+            // turn (see NIP-CST). Rendered as a short footnote so a reader can
+            // join this line back to its command without the prose growing.
             let command_note = item_text(item, "commandId")
                 .map(|command_id| format!(" _(cmd `{command_id}`)_"))
                 .unwrap_or_default();
