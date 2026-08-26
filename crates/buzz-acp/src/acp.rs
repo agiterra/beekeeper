@@ -101,25 +101,49 @@ impl DeadlineKind {
         idle_timeout: std::time::Duration,
         stall_watch: &AnswerStallWatch,
         last_activity_at: tokio::time::Instant,
+        wire: &TurnWire,
     ) -> AcpError {
+        // One snapshot for every arm: the diagnosis is the same set of facts
+        // whichever budget expired, and taking it once means the three cannot
+        // disagree about what the wire had done.
+        let summary = Box::new(wire.summarize(tokio::time::Instant::now(), stall_watch));
         match self {
             Self::Idle => {
-                tracing::warn!("idle timeout ({idle_timeout:?}) — no agent activity");
-                AcpError::IdleTimeout(idle_timeout)
+                tracing::warn!(
+                    target: "acp::stall",
+                    "idle timeout ({idle_timeout:?}) — {}",
+                    summary.one_line()
+                );
+                AcpError::IdleTimeout {
+                    timeout: idle_timeout,
+                    wire: summary,
+                }
             }
             Self::AnswerStall => {
                 let quiet = stall_watch.timeout.unwrap_or_default();
                 tracing::warn!(
+                    target: "acp::stall",
                     "answer stall ({quiet:?}) — the agent finished answering with no tool \
-                     in flight and never resolved the prompt"
+                     in flight and never resolved the prompt — {}",
+                    summary.one_line()
                 );
-                AcpError::AnswerStall(quiet)
+                AcpError::AnswerStall {
+                    quiet,
+                    wire: summary,
+                }
             }
             Self::Hard => {
                 let silence =
                     tokio::time::Instant::now().saturating_duration_since(last_activity_at);
-                tracing::warn!("hard turn timeout exceeded (silence {silence:?})");
-                AcpError::HardTimeout { silence }
+                tracing::warn!(
+                    target: "acp::stall",
+                    "hard turn timeout exceeded (silence {silence:?}) — {}",
+                    summary.one_line()
+                );
+                AcpError::HardTimeout {
+                    silence,
+                    wire: summary,
+                }
             }
         }
     }
@@ -229,6 +253,196 @@ fn update_is_subagent_attributed(update: &serde_json::Value) -> bool {
         .is_some_and(|parent| !parent.is_empty())
 }
 
+/// What crossed the wire during one turn, accumulated as it happens.
+///
+/// This exists because a published transcript records when Buzz *flushed* an
+/// item, not when the frame arrived. Agent prose is buffered to a size, tool,
+/// or turn-end boundary, so a turn that answered at +52s and then went silent
+/// is indistinguishable, in the archive, from one that answered at +952s. The
+/// only way anyone had to tell them apart was to subtract the idle budget from
+/// the turn span by hand — which is how the 2026-08-24 stall was eventually
+/// read, an hour later than it needed to be.
+///
+/// Recorded per turn and reported on abnormal endings only. A turn that
+/// resolved normally has no unanswered question for this to answer, and an
+/// extra item on every turn of every transcript is a cost paid forever for a
+/// diagnosis wanted rarely.
+#[derive(Debug, Clone)]
+struct TurnWire {
+    started_at: tokio::time::Instant,
+    frames: u64,
+    bytes: u64,
+    first_frame_at: Option<tokio::time::Instant>,
+    last_frame_at: Option<tokio::time::Instant>,
+    last_frame_kind: Option<String>,
+    subagent_frames: u64,
+    kinds: std::collections::BTreeMap<String, u64>,
+}
+
+impl TurnWire {
+    fn new(started_at: tokio::time::Instant) -> Self {
+        Self {
+            started_at,
+            frames: 0,
+            bytes: 0,
+            first_frame_at: None,
+            last_frame_at: None,
+            last_frame_kind: None,
+            subagent_frames: 0,
+            kinds: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Classify one inbound message into the bucket a reader would look for.
+    ///
+    /// `session/update` frames are named by their `sessionUpdate` kind, which
+    /// is the distinction that matters when reading a stall; everything else
+    /// keeps its JSON-RPC identity so an unanswered agent-initiated request is
+    /// visible as itself rather than as "other".
+    fn classify(msg: &serde_json::Value) -> String {
+        match msg.get("method").and_then(|m| m.as_str()) {
+            Some("session/update") => msg["params"]["update"]
+                .get("sessionUpdate")
+                .and_then(|k| k.as_str())
+                .unwrap_or("session/update")
+                .to_owned(),
+            Some(other) => other.to_owned(),
+            None if msg.get("id").is_some() => "response".to_owned(),
+            None => "unknown".to_owned(),
+        }
+    }
+
+    fn record(&mut self, msg: &serde_json::Value, bytes: usize, now: tokio::time::Instant) {
+        let kind = Self::classify(msg);
+        self.frames += 1;
+        self.bytes += bytes as u64;
+        self.first_frame_at.get_or_insert(now);
+        self.last_frame_at = Some(now);
+        if msg.get("method").and_then(|m| m.as_str()) == Some("session/update")
+            && update_is_subagent_attributed(&msg["params"]["update"])
+        {
+            self.subagent_frames += 1;
+        }
+        *self.kinds.entry(kind.clone()).or_default() += 1;
+        self.last_frame_kind = Some(kind);
+    }
+
+    /// Freeze the running tally into the reportable shape.
+    ///
+    /// `quiet_for` and the offsets are resolved against `now` here rather than
+    /// stored as instants, so the summary can outlive the turn and cross into
+    /// the provider without carrying a clock with it.
+    fn summarize(
+        &self,
+        now: tokio::time::Instant,
+        stall_watch: &AnswerStallWatch,
+    ) -> TurnWireSummary {
+        TurnWireSummary {
+            frames: self.frames,
+            bytes: self.bytes,
+            subagent_frames: self.subagent_frames,
+            turn_elapsed: now.saturating_duration_since(self.started_at),
+            first_frame_offset: self
+                .first_frame_at
+                .map(|at| at.saturating_duration_since(self.started_at)),
+            last_frame_offset: self
+                .last_frame_at
+                .map(|at| at.saturating_duration_since(self.started_at)),
+            last_frame_kind: self.last_frame_kind.clone(),
+            quiet_for: self
+                .last_frame_at
+                .map(|at| now.saturating_duration_since(at))
+                .unwrap_or_else(|| now.saturating_duration_since(self.started_at)),
+            tools_in_flight: stall_watch.tools_in_flight.len(),
+            answer_streamed: stall_watch.answer_streamed,
+            kinds: self.kinds.clone(),
+        }
+    }
+}
+
+/// A turn's wire activity, frozen at the moment something went wrong.
+///
+/// Carried inside the timeout errors so the failure explains itself, and handed
+/// to the provider so an abnormal turn can publish the same facts to a reader
+/// who was never near the machine.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TurnWireSummary {
+    /// Frames parsed from the agent's stdout this turn.
+    pub frames: u64,
+    /// Bytes of those frames, before parsing.
+    pub bytes: u64,
+    /// How many of `frames` were attributed to a subagent.
+    pub subagent_frames: u64,
+    /// Wall time from the prompt write to this snapshot.
+    pub turn_elapsed: std::time::Duration,
+    /// When the first frame arrived, relative to the prompt write.
+    pub first_frame_offset: Option<std::time::Duration>,
+    /// When the last frame arrived, relative to the prompt write.
+    pub last_frame_offset: Option<std::time::Duration>,
+    /// `sessionUpdate` kind — or JSON-RPC method — of that last frame.
+    pub last_frame_kind: Option<String>,
+    /// How long the wire had been quiet when this was taken.
+    pub quiet_for: std::time::Duration,
+    /// Top-level tool calls opened and never reported terminal.
+    pub tools_in_flight: usize,
+    /// Whether top-level prose had streamed before the silence.
+    pub answer_streamed: bool,
+    /// Frame counts by kind.
+    pub kinds: std::collections::BTreeMap<String, u64>,
+}
+
+impl TurnWireSummary {
+    /// The two or three kinds worth naming, most frequent first.
+    ///
+    /// Bounded because the one consumer that renders this has a 200-character
+    /// row and a long tail of one-off kinds would push the load-bearing facts
+    /// out of it.
+    pub fn top_kinds(&self, limit: usize) -> Vec<(String, u64)> {
+        let mut pairs: Vec<(String, u64)> =
+            self.kinds.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        pairs.truncate(limit);
+        pairs
+    }
+
+    /// A one-line rendering: what arrived, when it stopped, and what was owed.
+    pub fn one_line(&self) -> String {
+        let last = match (&self.last_frame_kind, self.last_frame_offset) {
+            (Some(kind), Some(offset)) => format!("last {kind} at +{:.1}s", offset.as_secs_f64()),
+            _ => "no frames arrived".to_owned(),
+        };
+        let kinds = self
+            .top_kinds(3)
+            .into_iter()
+            .map(|(k, n)| format!("{k} {n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{} frames/{} KiB over {:.0}s; {last}; quiet {:.1}s; {} tools in flight; answer {}{}{}",
+            self.frames,
+            self.bytes / 1024,
+            self.turn_elapsed.as_secs_f64(),
+            self.quiet_for.as_secs_f64(),
+            self.tools_in_flight,
+            if self.answer_streamed {
+                "streamed"
+            } else {
+                "not streamed"
+            },
+            if self.subagent_frames > 0 {
+                format!("; {} subagent frames", self.subagent_frames)
+            } else {
+                String::new()
+            },
+            if kinds.is_empty() {
+                String::new()
+            } else {
+                format!("; {kinds}")
+            },
+        )
+    }
+}
+
 /// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
 ///
 /// Both halves matter: the re-emission is what keeps the harness terminal's
@@ -330,11 +544,19 @@ pub enum AcpError {
     #[error("Agent process exited unexpectedly")]
     AgentExited,
 
-    #[error("Idle timeout — no agent activity for {0:?}")]
-    IdleTimeout(std::time::Duration),
+    #[error("Idle timeout — no agent activity for {timeout:?} [{}]", wire.one_line())]
+    IdleTimeout {
+        timeout: std::time::Duration,
+        /// What the wire had actually done when the budget ran out. Boxed to
+        /// keep `AcpError` small — it is returned by value on every hot path.
+        wire: Box<TurnWireSummary>,
+    },
 
-    #[error("Hard turn timeout exceeded (silence {silence:?})")]
-    HardTimeout { silence: std::time::Duration },
+    #[error("Hard turn timeout exceeded (silence {silence:?}) [{}]", wire.one_line())]
+    HardTimeout {
+        silence: std::time::Duration,
+        wire: Box<TurnWireSummary>,
+    },
 
     /// The agent answered and then never resolved the prompt.
     ///
@@ -343,8 +565,14 @@ pub enum AcpError {
     /// it is finished and the response never came". They call for different
     /// words to the operator and a different presumption about the work, so
     /// they must not collapse into one error.
-    #[error("Agent finished answering but never resolved the prompt ({0:?} after the answer)")]
-    AnswerStall(std::time::Duration),
+    #[error(
+        "Agent finished answering but never resolved the prompt ({quiet:?} after the answer) [{}]",
+        wire.one_line()
+    )]
+    AnswerStall {
+        quiet: std::time::Duration,
+        wire: Box<TurnWireSummary>,
+    },
 
     #[error("Agent did not stop within {0:?} after cancellation")]
     CancelDrainTimeout(std::time::Duration),
@@ -1352,7 +1580,9 @@ impl AcpClient {
                 self.current_hard_deadline = None;
             }
             Err(
-                AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } | AcpError::AnswerStall(_),
+                AcpError::IdleTimeout { .. }
+                | AcpError::HardTimeout { .. }
+                | AcpError::AnswerStall { .. },
             ) => {
                 // Leave last_prompt_id and current_hard_deadline set —
                 // caller will invoke cancel_with_cleanup. An answer stall needs
@@ -1924,6 +2154,7 @@ impl AcpClient {
         let mut hard_deadline = hard_deadline;
         let mut last_activity_at = now;
         let mut stall_watch = AnswerStallWatch::new(self.answer_stall_timeout);
+        let mut wire = TurnWire::new(now);
 
         loop {
             // Determine which deadline fires first BEFORE sleeping — this is
@@ -1958,7 +2189,7 @@ impl AcpClient {
                     // normal dispatch handles redelivery).
                     let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                 }
-                return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at));
+                return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at, &wire));
             }
 
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
@@ -2072,7 +2303,12 @@ impl AcpClient {
                     if let Some((_, _, ack_tx)) = pending_steer.take() {
                         let _ = ack_tx.send(crate::pool::SteerAck::PromptCompletedNeutral);
                     }
-                    return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at));
+                    return Err(expiry.into_error(
+                    idle_timeout,
+                    &stall_watch,
+                    last_activity_at,
+                    &wire,
+                ));
                 }
             };
 
@@ -2136,6 +2372,7 @@ impl AcpClient {
                     idle_deadline = activity_now + idle_timeout;
                     last_activity_at = activity_now;
                     stall_watch.observe(&msg, activity_now);
+                    wire.record(&msg, trimmed.len(), activity_now);
 
                     // Steer response routing must come BEFORE the prompt
                     // response check: a steer response is a regular
@@ -3943,7 +4180,10 @@ mod tests {
 
     #[test]
     fn idle_timeout_error_includes_duration() {
-        let err = AcpError::IdleTimeout(std::time::Duration::from_secs(320));
+        let err = AcpError::IdleTimeout {
+            timeout: std::time::Duration::from_secs(320),
+            wire: Box::new(TurnWireSummary::default()),
+        };
         let msg = err.to_string();
         assert!(
             msg.contains("320"),
@@ -3955,12 +4195,162 @@ mod tests {
     fn hard_timeout_error_display() {
         let err = AcpError::HardTimeout {
             silence: std::time::Duration::from_secs(120),
+            wire: Box::new(TurnWireSummary::default()),
         };
         let msg = err.to_string();
         assert!(
             msg.contains("Hard turn timeout"),
             "HardTimeout display: {msg}"
         );
+    }
+
+    /// The whole point of carrying the summary is that nobody should have to
+    /// subtract the budget from the span by hand to learn when the wire went
+    /// quiet. If the numbers stop reaching the message, that is back.
+    #[test]
+    fn a_timeout_says_when_the_wire_actually_went_quiet() {
+        let err = AcpError::IdleTimeout {
+            timeout: std::time::Duration::from_secs(870),
+            wire: Box::new(TurnWireSummary {
+                frames: 47,
+                bytes: 18 * 1024,
+                subagent_frames: 0,
+                turn_elapsed: std::time::Duration::from_secs(952),
+                first_frame_offset: Some(std::time::Duration::from_millis(300)),
+                last_frame_offset: Some(std::time::Duration::from_millis(52_100)),
+                last_frame_kind: Some("agent_message_chunk".into()),
+                quiet_for: std::time::Duration::from_secs(900),
+                tools_in_flight: 0,
+                answer_streamed: true,
+                kinds: std::collections::BTreeMap::new(),
+            }),
+        };
+        let msg = err.to_string();
+        for expected in [
+            "last agent_message_chunk at +52.1s",
+            "0 tools in flight",
+            "answer streamed",
+            "47 frames",
+        ] {
+            assert!(
+                msg.contains(expected),
+                "a stalled turn must report {expected:?} without arithmetic: {msg}"
+            );
+        }
+    }
+
+    /// The three deadlines report the same shape. A reader should not have to
+    /// learn which words a given budget happens to use.
+    #[test]
+    fn every_deadline_reports_the_same_diagnostics() {
+        let wire = || {
+            Box::new(TurnWireSummary {
+                frames: 3,
+                last_frame_kind: Some("tool_call_update".into()),
+                last_frame_offset: Some(std::time::Duration::from_secs(9)),
+                ..TurnWireSummary::default()
+            })
+        };
+        for err in [
+            AcpError::IdleTimeout {
+                timeout: std::time::Duration::from_secs(870),
+                wire: wire(),
+            },
+            AcpError::HardTimeout {
+                silence: std::time::Duration::from_secs(30),
+                wire: wire(),
+            },
+            AcpError::AnswerStall {
+                quiet: std::time::Duration::from_secs(120),
+                wire: wire(),
+            },
+        ] {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("last tool_call_update at +9.0s"),
+                "every deadline should name the last frame: {msg}"
+            );
+        }
+    }
+
+    /// A long tail of one-off frame kinds must not push the load-bearing facts
+    /// past the renderer's row limit.
+    #[test]
+    fn the_kind_census_is_bounded_to_the_frequent_few() {
+        let mut kinds = std::collections::BTreeMap::new();
+        for (i, n) in [90u64, 80, 70, 60, 50, 40].into_iter().enumerate() {
+            kinds.insert(format!("kind_{i}"), n);
+        }
+        let summary = TurnWireSummary {
+            kinds,
+            ..TurnWireSummary::default()
+        };
+        let top = summary.top_kinds(3);
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0], ("kind_0".to_owned(), 90));
+        assert_eq!(top[2], ("kind_2".to_owned(), 70));
+        let line = summary.one_line();
+        assert!(
+            !line.contains("kind_3"),
+            "census must stop at the limit: {line}"
+        );
+    }
+
+    /// `classify` is what makes a stall readable at a glance, so the mapping
+    /// from wire shape to bucket name is pinned rather than incidental.
+    #[test]
+    fn frames_are_classified_by_what_a_reader_would_look_for() {
+        let cases = [
+            (
+                serde_json::json!({
+                    "method": "session/update",
+                    "params": {"update": {"sessionUpdate": "agent_message_chunk"}}
+                }),
+                "agent_message_chunk",
+            ),
+            (
+                serde_json::json!({"method": "session/request_permission", "id": 4}),
+                "session/request_permission",
+            ),
+            (serde_json::json!({"id": 7, "result": {}}), "response"),
+            (serde_json::json!({"jsonrpc": "2.0"}), "unknown"),
+        ];
+        for (msg, expected) in cases {
+            assert_eq!(TurnWire::classify(&msg), expected, "for {msg}");
+        }
+    }
+
+    /// A subagent's frames count as activity but are not the turn's answer.
+    /// Reporting them separately is what stops "47 frames arrived" from
+    /// reading as "the agent was working" when all 47 came from a subagent.
+    #[test]
+    fn subagent_frames_are_counted_apart() {
+        let now = tokio::time::Instant::now();
+        let mut wire = TurnWire::new(now);
+        wire.record(
+            &serde_json::json!({
+                "method": "session/update",
+                "params": {"update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "_meta": {"claudeCode": {"parentToolUseId": "toolu_parent"}}
+                }}
+            }),
+            120,
+            now,
+        );
+        wire.record(
+            &serde_json::json!({
+                "method": "session/update",
+                "params": {"update": {"sessionUpdate": "agent_message_chunk"}}
+            }),
+            80,
+            now,
+        );
+        let summary = wire.summarize(now, &AnswerStallWatch::new(None));
+        assert_eq!(summary.frames, 2);
+        assert_eq!(summary.subagent_frames, 1);
+        assert_eq!(summary.bytes, 200);
+        assert!(summary.one_line().contains("1 subagent frames"));
     }
 
     async fn spawn_script(script: &str) -> AcpClient {
@@ -4080,7 +4470,7 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "expected IdleTimeout, got {result:?}"
         );
     }
@@ -4151,7 +4541,7 @@ mod tests {
         // 10 messages × 50ms = ~500ms of activity, then idle timeout fires after 200ms more
         assert!(elapsed >= std::time::Duration::from_millis(400));
         assert!(elapsed < std::time::Duration::from_secs(3));
-        assert!(matches!(result, Err(AcpError::IdleTimeout(_))));
+        assert!(matches!(result, Err(AcpError::IdleTimeout { .. })));
     }
 
     #[tokio::test]
@@ -4233,7 +4623,7 @@ mod tests {
             .read_until_response_with_idle_timeout("test", 999, idle, hard_deadline, max_dur)
             .await;
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "idle should fire before hard when idle << hard, got {result:?}"
         );
     }
@@ -4352,7 +4742,7 @@ mod tests {
             "keepalive should reset idle past the deadline; elapsed only {elapsed:?}"
         );
         assert!(elapsed < std::time::Duration::from_secs(5));
-        assert!(matches!(result, Err(AcpError::IdleTimeout(_))));
+        assert!(matches!(result, Err(AcpError::IdleTimeout { .. })));
     }
 
     /// One `session/update` line for the scripted-stream stall tests.
@@ -4432,7 +4822,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AcpError::AnswerStall(_))),
+            matches!(result, Err(AcpError::AnswerStall { .. })),
             "expected an answer stall, got {result:?}"
         );
         assert!(
@@ -4468,7 +4858,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "a tool still in flight must fall to the idle budget, got {result:?}"
         );
     }
@@ -4500,7 +4890,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "subagent prose must not count as the turn's answer, got {result:?}"
         );
     }
@@ -4523,7 +4913,7 @@ mod tests {
             .await;
 
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "an unconfigured client must behave exactly as before, got {result:?}"
         );
     }
@@ -4563,7 +4953,7 @@ mod tests {
         );
         assert!(elapsed < std::time::Duration::from_secs(2));
         assert!(
-            matches!(result, Err(AcpError::IdleTimeout(_))),
+            matches!(result, Err(AcpError::IdleTimeout { .. })),
             "expected IdleTimeout after silence, got {result:?}"
         );
     }
@@ -4986,7 +5376,7 @@ mod tests {
 
         // Read loop exit shape: IdleTimeout (no agent activity).
         assert!(
-            matches!(read_result, Err(AcpError::IdleTimeout(_))),
+            matches!(read_result, Err(AcpError::IdleTimeout { .. })),
             "expected IdleTimeout once steer was acked + script stayed silent, got {read_result:?}"
         );
 
@@ -5059,7 +5449,7 @@ mod tests {
         assert!(
             matches!(
                 read_result,
-                Err(AcpError::IdleTimeout(_)) | Err(AcpError::AgentExited)
+                Err(AcpError::IdleTimeout { .. }) | Err(AcpError::AgentExited)
             ),
             "expected IdleTimeout or AgentExited after steer ack, got {read_result:?}"
         );

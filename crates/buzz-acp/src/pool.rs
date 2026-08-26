@@ -1989,7 +1989,7 @@ pub async fn run_prompt_task(
                     );
                     return;
                 }
-                Err(AcpError::IdleTimeout(_)) => {
+                Err(AcpError::IdleTimeout { .. }) => {
                     tracing::warn!(
                         target: "pool::session",
                         "initial_message idle timeout ({}s) for channel {cid} — cancelling",
@@ -2043,7 +2043,7 @@ pub async fn run_prompt_task(
                     );
                     return;
                 }
-                Err(AcpError::HardTimeout { silence }) => {
+                Err(AcpError::HardTimeout { silence, .. }) => {
                     let recently_active = silence < RECENT_ACTIVITY_WINDOW;
                     tracing::error!(
                         target: "pool::session",
@@ -2522,7 +2522,7 @@ pub async fn run_prompt_task(
                 requeue_batch_if_queue(&ctx, batch),
             );
         }
-        Err(AcpError::IdleTimeout(_)) => {
+        Err(AcpError::IdleTimeout { .. }) => {
             tracing::warn!(
                 target: "pool::prompt",
                 "idle timeout ({}s) — cancelling session {session_id}",
@@ -2609,7 +2609,7 @@ pub async fn run_prompt_task(
                 }
             }
         }
-        Err(AcpError::HardTimeout { silence }) => {
+        Err(AcpError::HardTimeout { silence, .. }) => {
             let recently_active = silence < RECENT_ACTIVITY_WINDOW;
             tracing::error!(
                 target: "pool::prompt",
@@ -3808,7 +3808,7 @@ fn classify_control_cancel_failure(
 ) -> ControlCancelFailure {
     let (outcome, invalidate_all) = match error {
         AcpError::AgentExited => (PromptOutcome::AgentExited, true),
-        AcpError::IdleTimeout(_) => (PromptOutcome::Timeout(TimeoutKind::Idle), false),
+        AcpError::IdleTimeout { .. } => (PromptOutcome::Timeout(TimeoutKind::Idle), false),
         AcpError::CancelDrainTimeout(grace) => (PromptOutcome::CancelDrainTimeout(grace), false),
         // Defense in depth: this bounded cancellation API is documented to
         // translate its own HardTimeout into CancelDrainTimeout, so this arm
@@ -6756,6 +6756,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
                 name: "unexpected HardTimeout cannot become Timeout(Hard)",
                 error: || AcpError::HardTimeout {
                     silence: Duration::from_secs(300),
+                    wire: Box::new(crate::acp::TurnWireSummary::default()),
                 },
                 signal: ControlSignal::Steer,
                 expected_outcome: "CancelDrainTimeout",
@@ -6783,7 +6784,10 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             },
             Case {
                 name: "IdleTimeout maps to Timeout(Idle)",
-                error: || AcpError::IdleTimeout(Duration::from_secs(30)),
+                error: || AcpError::IdleTimeout {
+                    timeout: Duration::from_secs(30),
+                    wire: Box::new(crate::acp::TurnWireSummary::default()),
+                },
                 signal: ControlSignal::Steer,
                 expected_outcome: "Timeout(Idle)",
                 batch_preserved: true,

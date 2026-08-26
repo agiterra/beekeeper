@@ -29,6 +29,7 @@ use tokio::sync::broadcast;
 
 use buzz_acp::acp::{
     AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, StopReason, SystemPromptTransport,
+    TurnWireSummary,
 };
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
@@ -1321,6 +1322,26 @@ impl SessionActor {
     /// close it, because a turn that silently reads Completed over a prompt the
     /// adapter dropped hides the defect from the person best placed to report
     /// it, and there is nothing in the record afterwards to notice it by.
+    /// Publish one row saying what actually crossed the wire this turn.
+    ///
+    /// Abnormal endings only. On a healthy turn the item answers a question
+    /// nobody asked, and every transcript would carry one forever; on a turn
+    /// that timed out it is the difference between "the agent was quiet" and
+    /// "the agent answered at +52s and then went quiet", which is the whole
+    /// diagnosis.
+    async fn emit_wire_summary(&self, turn_id: &str, wire: &TurnWireSummary) {
+        emit_items(
+            &self.events,
+            &self.session_id,
+            turn_id,
+            vec![crate::payload::status_item(&fit_status_row(&format!(
+                "turn_wire: {}",
+                wire.one_line()
+            )))],
+        )
+        .await;
+    }
+
     async fn nudge_stalled_turn(
         &mut self,
         quiet: Duration,
@@ -1389,6 +1410,12 @@ impl SessionActor {
         turn_id: &str,
     ) -> (TurnOutcome, Option<String>) {
         let message = error.to_string();
+        // Publish what the wire did before publishing what Buzz decided about
+        // it. A reader who was never near the machine gets the same facts the
+        // local log has, and gets them in the order that explains the verdict.
+        if let Some(wire) = turn_wire_of(&error) {
+            self.emit_wire_summary(turn_id, wire).await;
+        }
         match error {
             AcpError::AgentExited | AcpError::Io(_) => (
                 TurnOutcome::Failed {
@@ -1397,8 +1424,8 @@ impl SessionActor {
                 },
                 Some(message),
             ),
-            AcpError::AnswerStall(quiet) => self.nudge_stalled_turn(quiet, turn_id).await,
-            AcpError::IdleTimeout(_) | AcpError::HardTimeout { .. } => {
+            AcpError::AnswerStall { quiet, .. } => self.nudge_stalled_turn(quiet, turn_id).await,
+            AcpError::IdleTimeout { .. } | AcpError::HardTimeout { .. } => {
                 // The turn is over as far as the operator is concerned, but the
                 // agent may still be working; drain it so the next turn starts
                 // from a quiet process.
@@ -1433,6 +1460,43 @@ impl SessionActor {
                 None,
             ),
         }
+    }
+}
+
+/// Longest status row the desktop transcript renders before truncating.
+///
+/// Kept here as a named constant because two separate rows now have to fit it,
+/// and the failure mode is silent — an over-long row still publishes, it just
+/// loses its tail, which is where the reassuring half of a disclosure lives.
+const STATUS_ROW_LIMIT: usize = 200;
+
+/// Trim a status row to what the renderer will actually show.
+///
+/// Truncation is on a character boundary and marked, so a cut row reads as cut
+/// rather than as a row that happened to end mid-word.
+fn fit_status_row(row: &str) -> String {
+    if row.chars().count() <= STATUS_ROW_LIMIT {
+        return row.to_owned();
+    }
+    let keep: String = row
+        .chars()
+        .take(STATUS_ROW_LIMIT.saturating_sub(1))
+        .collect();
+    format!("{keep}…")
+}
+
+/// The wire snapshot an error carries, if it carries one.
+///
+/// Only the three deadline errors do. `CancelDrainTimeout` and the transport
+/// errors are raised somewhere other than the read loop, so there is no turn
+/// tally to report and inventing an empty one would publish a row claiming
+/// zero frames arrived.
+fn turn_wire_of(error: &AcpError) -> Option<&TurnWireSummary> {
+    match error {
+        AcpError::IdleTimeout { wire, .. }
+        | AcpError::HardTimeout { wire, .. }
+        | AcpError::AnswerStall { wire, .. } => Some(wire),
+        _ => None,
     }
 }
 
@@ -2004,7 +2068,91 @@ done
              invisible to the person who could report it; got {items:#?}"
         );
 
+        // The wire row is the half of the record that survives leaving this
+        // machine: whoever reads the published transcript later gets the same
+        // frame tally and quiet-onset the local log had.
+        let wire = items
+            .iter()
+            .filter(|item| item["kind"] == "status")
+            .filter_map(|item| item["status"].as_str())
+            .find(|status| status.starts_with("turn_wire: "))
+            .unwrap_or_else(|| panic!("no wire summary published; got {items:#?}"));
+        assert!(
+            wire.contains("answer streamed"),
+            "the row must record that the answer had already streamed — that is \
+             what separates this from a slow turn: {wire}"
+        );
+        assert!(
+            wire.contains("0 tools in flight"),
+            "the row must record that nothing was outstanding: {wire}"
+        );
+        assert!(
+            wire.chars().count() <= STATUS_ROW_LIMIT,
+            "the wire row must fit the renderer; {} chars",
+            wire.chars().count()
+        );
+
         manager.shutdown("s1");
+    }
+
+    /// A healthy turn does not carry a diagnostic it has no use for.
+    ///
+    /// Every turn of every session is published and kept, so a row emitted
+    /// unconditionally is a permanent cost paid for an answer wanted rarely.
+    #[tokio::test]
+    async fn a_turn_that_ends_normally_publishes_no_wire_summary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "normal-agent", GOOD_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        manager
+            .create(request(agent, dir.path()))
+            .await
+            .expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: None,
+            })
+            .expect("deliver");
+
+        let mut items = Vec::new();
+        loop {
+            match next_event(&mut rx).await {
+                SessionEvent::TranscriptItems { items: batch, .. } => items.extend(batch),
+                SessionEvent::TurnFinished { .. } => break,
+                _ => {}
+            }
+        }
+        let rows: Vec<&str> = items
+            .iter()
+            .filter_map(|item| item["status"].as_str())
+            .filter(|status| status.starts_with("turn_wire: "))
+            .collect();
+        assert!(
+            rows.is_empty(),
+            "a clean turn should carry no wire diagnostic; got {rows:?}"
+        );
+        manager.shutdown("s1");
+    }
+
+    /// The row is built from an unbounded tally, so it has to be trimmed to
+    /// what the renderer shows rather than trusted to fit.
+    #[test]
+    fn an_over_long_wire_row_is_cut_on_a_character_boundary() {
+        let row = format!("turn_wire: {}", "é".repeat(400));
+        let fitted = fit_status_row(&row);
+        assert_eq!(fitted.chars().count(), STATUS_ROW_LIMIT);
+        assert!(
+            fitted.ends_with('…'),
+            "a cut row must read as cut: {fitted}"
+        );
+        // The assertion that matters is that this did not panic slicing a
+        // multi-byte character in half.
+        assert!(fitted.starts_with("turn_wire: "));
     }
 
     /// The disclosure has to survive the renderer that shows it.

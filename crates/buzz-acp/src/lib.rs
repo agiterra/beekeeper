@@ -8620,7 +8620,10 @@ mod error_outcome_emission_tests {
 
     #[tokio::test]
     async fn application_error_emits_exactly_one_feed_event() {
-        let app = AcpError::IdleTimeout(std::time::Duration::from_secs(1));
+        let app = AcpError::IdleTimeout {
+            timeout: std::time::Duration::from_secs(1),
+            wire: Box::new(crate::acp::TurnWireSummary::default()),
+        };
         assert_eq!(turn_errors_emitted_for(PromptOutcome::Error(app)).await, 1);
     }
 

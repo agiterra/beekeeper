@@ -20,11 +20,18 @@ use crate::filter::SubscriptionRule;
 ///
 /// Sized for slow turns where the agent may go silent on its outer ACP channel
 /// while running long sub-tools (e.g. a buzz-agent running another agent, or
-/// codex/claude doing multi-minute single tool calls). 900s gives 300s of
+/// codex/claude doing multi-minute single tool calls). It gives ~270s of
 /// breathing room above the 600s max shell timeout, so legitimate long-running
 /// tool calls don't race the idle deadline.
+///
+/// **870, not 900, on purpose.** Claude Code's `Monitor` tool defaults to a
+/// 900000ms budget, and a turn killed at 900s could have been ended by either
+/// clock — the durations were indistinguishable, which cost a full forensic
+/// pass on the 2026-08-24 "project repo access" session before the ambiguity
+/// was even noticed. An off-round budget makes every future timeout name its
+/// own owner from the duration alone. Do not round it back.
 /// Override via `--idle-timeout` / `BUZZ_ACP_IDLE_TIMEOUT`.
-pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
+pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 870;
 
 /// Default absolute wall-clock cap per agent turn (2 hours).
 /// Override via `--max-turn-duration` / `BUZZ_ACP_MAX_TURN_DURATION`.
@@ -2636,9 +2643,15 @@ channels = "ALL"
     // ── Idle timeout constant + guard (PR #935) ───────────────────────────────
 
     #[test]
-    fn default_idle_timeout_is_900_seconds() {
-        // Lock the constant value so accidental changes are caught.
-        assert_eq!(DEFAULT_IDLE_TIMEOUT_SECS, 900);
+    fn the_idle_budget_cannot_be_confused_with_claude_codes_monitor() {
+        // Locked deliberately off the round number: Claude Code's Monitor tool
+        // budget is 900_000ms, and while ours was also 900s a timed-out turn
+        // could not be attributed to a clock by its duration.
+        assert_eq!(DEFAULT_IDLE_TIMEOUT_SECS, 870);
+        assert_ne!(
+            DEFAULT_IDLE_TIMEOUT_SECS, 900,
+            "an idle budget equal to Monitor's makes every timeout ambiguous"
+        );
     }
 
     #[test]
