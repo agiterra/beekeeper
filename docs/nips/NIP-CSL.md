@@ -428,13 +428,26 @@ codes in use today are documented, not enforced:
   and the command is dropped as `QUEUE_FULL_TURN_KEPT`. The
   queue-overflow case already publishes a `turn_dropped` transcript item, and
   this receipt is additive to that item, not a replacement for it. The
-  `NO_LIVE_EXECUTION` case must not consume the command: dropping a turn *and*
-  marking it delivered is the silent loss this contract exists to remove.
+  `NO_LIVE_EXECUTION` case must not *consume* the command — dropping a turn and
+  marking it delivered is the silent loss this contract exists to remove — but
+  it MUST record it as refused. Those are two ledgers answering two questions:
+  "did it run" (no) and "has it been answered" (yes, terminally). Recording the
+  refusal is what stops a relay redelivery republishing a byte-identical
+  `turn_dropped`, and what lets the channel watermark move past a command
+  nothing is waiting on. **It is not redeliverable**: see the `turn_dropped`
+  status above — a resume mints a new generation the replayed command no longer
+  addresses, so the sender has to send it again.
 - `turn_started` — when the run loop actually begins the turn, carrying the
   `turnId` the provider mints for it. **This is also the point the command is
-  consumed** — never on receipt — so a provider that dies with turns waiting
-  replays them from its watermark on restart, in `(created_at, id)` order,
-  and each one runs exactly once.
+  consumed** — never on receipt — so a turn that was accepted and never started
+  is still unconsumed when the process dies, and a restart replays every such
+  command from its watermark in `(created_at, id)` order and answers each one
+  exactly once. *Answers*, not runs: whether a replayed turn runs depends on
+  what is live when it arrives, and after a crash the executions died with the
+  process, so the replay is typically answered `turn_dropped` /
+  `NO_LIVE_EXECUTION` (above). What consume-at-start guarantees is that no
+  accepted turn disappears without an answer — not that every accepted turn
+  eventually runs.
 - `interrupt_delivered` — when a `thread.turn.interrupt` caused a cancel to be
   issued to a turn the provider is running or has taken custody of. A provider
   answers this from what it holds, not from a lagging fold of its own session
