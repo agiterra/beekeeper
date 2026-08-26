@@ -130,6 +130,14 @@ pub struct Config {
     /// frames are the adapter's unredacted internals and they are wanted for
     /// one investigation at a time. See `BUZZ_CSP_EMIT_RAW_SDK_FRAMES`.
     pub emit_raw_sdk_frames: bool,
+    /// How long this host keeps its own note of the host paths it redacted out
+    /// of published transcripts, so an operator can read one back on the
+    /// machine that produced it.
+    ///
+    /// Never covers credentials — that gate is in `buzz-core`, where the
+    /// redaction is decided. See `BUZZ_CSP_REDACTION_RETENTION_DAYS`; `0`
+    /// disables recording and sweeps away anything already written.
+    pub redaction_retention: crate::redaction_vault::RetentionPolicy,
     /// Age past which an unseen command is ignored rather than acted on.
     pub command_horizon: Duration,
 }
@@ -218,6 +226,9 @@ impl Config {
         )?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
+        let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
+            lookup(crate::redaction_vault::RetentionPolicy::ENV_VAR).as_deref(),
+        );
 
         Ok(Self {
             keys,
@@ -235,6 +246,7 @@ impl Config {
             answer_stall_timeout,
             include_thoughts,
             emit_raw_sdk_frames,
+            redaction_retention,
             command_horizon,
         })
     }

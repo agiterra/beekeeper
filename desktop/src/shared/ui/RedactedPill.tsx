@@ -11,6 +11,10 @@ import {
   type RedactionMarker,
   type RedactionSegment,
 } from "@/shared/lib/redactionMarker";
+import {
+  type ResolvedRedaction,
+  useResolvedRedaction,
+} from "@/shared/ui/redactionDictionary";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 /**
@@ -104,7 +108,17 @@ export function ElisionPill({
   );
 }
 
-/** `ElisionPill` for a redaction marker parsed out of published text. */
+/**
+ * `ElisionPill` for a redaction marker parsed out of published text — or, on
+ * the machine that produced the transcript, the value itself.
+ *
+ * The provider redacts before signing, so the plaintext exists only here. When
+ * this machine's vault can answer, showing the operator their own path back is
+ * the whole point. What it must never do is let them forget that what they are
+ * reading is *not* what the channel shows — hence the badge, which is not
+ * decoration: it is the only signal that this view is privileged, and it is
+ * plain text so it survives a copy-paste into a message.
+ */
 export function RedactedPill({
   className,
   interactive = true,
@@ -114,6 +128,17 @@ export function RedactedPill({
   interactive?: boolean;
   marker: RedactionMarker;
 }) {
+  const resolved = useResolvedRedaction(marker.digest);
+  if (resolved) {
+    return (
+      <RevealedRedaction
+        className={className}
+        interactive={interactive}
+        marker={marker}
+        resolved={resolved}
+      />
+    );
+  }
   return (
     <ElisionPill
       bytes={marker.bytes}
@@ -122,6 +147,63 @@ export function RedactedPill({
       digest={marker.digest}
       interactive={interactive}
     />
+  );
+}
+
+function RevealedRedaction({
+  className,
+  interactive,
+  marker,
+  resolved,
+}: {
+  className?: string;
+  interactive: boolean;
+  marker: RedactionMarker;
+  resolved: ResolvedRedaction;
+}) {
+  const badge = (
+    <span
+      className={cn(
+        "ml-1 inline-flex select-none items-baseline gap-1 rounded-sm px-1 py-px align-baseline",
+        "bg-amber-500/10 font-medium text-2xs text-amber-700 dark:text-amber-400",
+      )}
+      data-redaction-revealed-badge=""
+    >
+      <EyeOff aria-hidden className="size-3 self-center" />
+      redacted for other viewers
+    </span>
+  );
+
+  return (
+    <span
+      className={cn("wrap-anywhere", className)}
+      data-redaction-revealed=""
+      data-redaction-digest={marker.digest}
+    >
+      {resolved.plaintext}
+      {interactive ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{badge}</TooltipTrigger>
+          <TooltipContent className="max-w-xs">
+            <div className="space-y-1">
+              <p>
+                Only you see this. Everyone else in the channel sees a digest —
+                the value was removed before the transcript was signed.
+              </p>
+              <p className="wrap-anywhere font-mono text-2xs opacity-80">
+                sha256:{marker.digest}
+              </p>
+              <p className="text-2xs opacity-70">
+                Recovered from this machine&rsquo;s own record ({resolved.class}
+                ). It expires with the session.
+              </p>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        badge
+      )}
+    </span>
   );
 }
 

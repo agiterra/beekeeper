@@ -1,7 +1,6 @@
 # Context redaction: readable markers and a local plaintext dictionary
 
-**Status:** design agreed 2026-08-26 (Andy). Part 1 landed in full; Part 2 not
-started.
+**Status:** design agreed 2026-08-26 (Andy). Both parts landed 2026-08-26.
 **Owner surface:** coding-session transcripts (kinds 44222/44223) and any
 channel timeline that renders them.
 
@@ -328,6 +327,63 @@ and is deliberately out of scope for v1.
 
 ---
 
+## 3a. What Part 2 actually looks like
+
+Built as designed, with these details settled during implementation.
+
+**The recording redactor.** `sanitize_coding_session_context_content_recording`
+in `buzz-core` is the recording twin, and `sanitize_coding_session_context_content`
+is now a thin wrapper over the same walk — one implementation, so the published
+transcript and the host's record cannot drift on what counts as private. The
+non-recording path threads a `RedactionLog::off()`, which materializes **no**
+plaintext copy: the validator call sites (`:399`, `:689`, `:765`, `:820`,
+`:1260`) sanitize-and-compare on every item, and they must not clone a secret
+just to drop it.
+
+`RedactionClass` is assigned by the rule that caught the value, and
+`is_recoverable()` is the single gate — enforced at production, not at
+persistence, so no caller can opt out by forgetting to filter. `sensitive_context_key`
+now returns `Option<RedactionClass>`, which is where `resumeCursor` and
+`acpSessionId` split off from the credential keys.
+
+**The vault.** `crates/buzz-session-provider/src/redaction_vault.rs`, following
+`context_store.rs`: 0700 dirs, 0600 files, symlink-refusing, session ids proven
+to be one safe path component before anything opens. `append` re-checks
+`is_recoverable()` belt-and-braces, so a future caller hand-building a
+`Redaction` still cannot write a credential.
+
+Wired at `fit_item_recording` → `Provider::enqueue_transcript`, with a
+per-session digest set (`Provider::recorded_redactions`) so a home directory
+redacted out of every item writes one line, not one per item. **A vault error
+never fails a publish** — the transcript is the product; a full disk costs a
+warning and an unresolved pill.
+
+**Expiry**, all three reapers as specified: `forget_redactions` on stop (not on
+resume — there the session continues and the note is still wanted),
+`sweep_redaction_vault` at startup for age and size, and `sweep_orphans` for
+files no live session record owns. `BUZZ_CSP_REDACTION_RETENTION_DAYS=0` does
+not merely stop writing: it sweeps away what is already there.
+
+**Lookup.** `coding_session_resolve_redactions` in the Tauri surface, bounded at
+512 digests, refusing unless `provider_pubkey` is an identity this desktop
+provisioned for the active relay. A remote session returns an empty map rather
+than an error — it is an ordinary state, not a failure.
+
+**The client hook is deliberately not React Query.** A digest names one fixed
+value read from a local file; there is no server state, nothing to refetch, and
+nothing to retry. `useQuery` also needs a `QueryClientProvider`, and
+`CodingSessionTranscript` is deliberately renderable from static markup so its
+behaviour can be asserted without one — wiring React Query in broke 60 existing
+tests. `useRedactionDictionary` is an effect plus a module-level cache,
+registered in `resetCommunityState()` because a provider identity is minted per
+relay.
+
+One bug worth recording, because it is the kind that hides: the effect first
+depended on the `scope` *object*. Every render rebuilt an equal scope, so the
+cleanup fired and cancelled the in-flight lookup before it could land, while
+`askedScopes` prevented a retry — the value never resolved, silently. The effect
+now keys on `scopeKey`, a string, and reads the scope through a ref.
+
 ## 4. Sequencing
 
 **Part 1 first, and it stands alone.** Client-only, ships to every viewer
@@ -359,7 +415,7 @@ BUZZ_SCREENSHOT_BASE_URL=http://127.0.0.1:4273 \
 BUZZ_E2E_PORT=4273 pnpm exec playwright test --project=smoke <spec>
 ```
 
-## 4b. What Part 1 is verified by
+## 4b. What the work is verified by
 
 - `desktop/src/shared/lib/redactionMarker.test.mjs` — the parser, including
   every shape it must refuse.
@@ -373,6 +429,30 @@ BUZZ_E2E_PORT=4273 pnpm exec playwright test --project=smoke <spec>
   footnote, including one that goes through `render_markdown` end to end,
   because unit-testing the condenser alone still passes with it unhooked
   (verified by unhooking it and watching only that test fail).
+
+Part 2:
+
+- `crates/buzz-core/src/coding_session_context_tests.rs` — the recording twin
+  redacts byte-for-byte identically to the pure one; **no secret class is ever
+  recorded**; a path and a secret on one line are classified separately;
+  re-redacting an already-redacted item records nothing. Verified by making
+  `is_recoverable()` return `true` and watching three of them fail.
+- `crates/buzz-session-provider/src/redaction_vault.rs` — 13 tests: resolve by
+  digest, cross-session isolation, a hand-built secret still refused, a
+  traversing session id failing closed, 0700/0600, a partial final line, the
+  age reaper, the session cap, the orphan sweep, and retention disabled
+  removing what already exists.
+- `crates/buzz-session-provider/src/lib.rs` — end to end through
+  `enqueue_transcript`: a host path is unreadable on the wire and readable from
+  this machine's vault, a credential is neither. Verified by unhooking
+  `record_redactions` and watching only the reachability test fail.
+- `desktop/src/features/coding-sessions/lib/redactionDigests.test.mjs` — which
+  digests are collected, and the refusals: two signers, two sessions, or no
+  attribution means there is no single machine to ask.
+- `desktop/tests/e2e/coding-session-elision-screenshots.spec.ts` — the revealed
+  state with its badge, the credential still a pill beside it, another
+  machine's transcript resolving nothing, and no vault at all resolving
+  nothing without ever saying "expired".
 
 ## 5. Tests that must be watched fail
 

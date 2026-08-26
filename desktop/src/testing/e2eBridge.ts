@@ -290,6 +290,22 @@ type E2eConfig = {
       providerPubkey?: string;
       instanceId?: string;
     };
+    /**
+     * This machine's redaction vault, keyed by digest.
+     *
+     * Absent means the vault answers nothing, which is what every machine
+     * other than the one that signed the transcript sees. Specs that want the
+     * revealed state opt in, exactly as the host does.
+     */
+    codingSessionRedactionVault?: Record<
+      string,
+      { class: string; plaintext: string }
+    >;
+    /**
+     * The provider pubkey this desktop is treated as having provisioned. Only
+     * a transcript signed by it resolves anything — the locality gate.
+     */
+    codingSessionRedactionLocalPubkey?: string;
     /** Host runtime table for `coding_session_provider_runtimes`. */
     codingSessionProviderRuntimes?: RawCodingSessionProviderRuntime[];
     /**
@@ -12634,6 +12650,29 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return branches;
+      }
+      case "coding_session_resolve_redactions": {
+        // Mirrors the host's two gates: the signer must be this machine's own
+        // provider, and only recorded digests come back. Everything else
+        // resolves to nothing — which is not a claim about why.
+        const request = payload as {
+          digests?: string[];
+          providerPubkey?: string;
+          sessionId?: string;
+        };
+        const vault = activeConfig?.mock?.codingSessionRedactionVault;
+        const localPubkey =
+          activeConfig?.mock?.codingSessionRedactionLocalPubkey;
+        if (!vault || !localPubkey || request.providerPubkey !== localPubkey) {
+          return {};
+        }
+        const resolved: Record<string, { class: string; plaintext: string }> =
+          {};
+        for (const digest of request.digests ?? []) {
+          const entry = vault[digest];
+          if (entry) resolved[digest] = entry;
+        }
+        return resolved;
       }
       case "coding_session_capacity_settings": {
         // Mirrors the host: stored values, the provider's own defaults, and

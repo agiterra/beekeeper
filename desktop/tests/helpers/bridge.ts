@@ -208,6 +208,16 @@ type MockBridgeOptions = {
     providerPubkey?: string;
     instanceId?: string;
   };
+  /**
+   * This machine's redaction vault, keyed by digest. Absent = the vault
+   * answers nothing, which is what every machine but the signer's sees.
+   */
+  codingSessionRedactionVault?: Record<
+    string,
+    { class: string; plaintext: string }
+  >;
+  /** The provider pubkey this desktop counts as its own — the locality gate. */
+  codingSessionRedactionLocalPubkey?: string;
   /** Host runtime table for the coding-session create flow. */
   codingSessionProviderRuntimes?: Record<string, unknown>[];
   /** Runtime table once a mocked connect (sign-in) has completed. */

@@ -410,6 +410,7 @@ pub(crate) fn invoke_handler(
         session_provider::commands::provision_coding_session_provider,
         session_provider::commands::ensure_coding_session_provider_running,
         session_provider::commands::stop_coding_session_provider,
+        session_provider::commands::coding_session_resolve_redactions,
         session_provider::commands::coding_session_provider_models,
         session_provider::commands::coding_session_provider_runtimes,
         commands::coding_session_popout::stage_coding_session_popout_bootstrap,

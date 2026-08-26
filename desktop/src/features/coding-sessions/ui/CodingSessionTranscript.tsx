@@ -25,7 +25,9 @@ import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/cod
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
 import { RedactedText } from "@/shared/ui/RedactedPill";
+import { RedactionDictionaryContext } from "@/shared/ui/redactionDictionary";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
+import { useRedactionDictionary } from "../useRedactionDictionary";
 import {
   CodingSessionActiveTool,
   CodingSessionChangedFilesCard,
@@ -100,6 +102,10 @@ export function CodingSessionTranscript({
   scrollRef,
 }: CodingSessionTranscriptProps) {
   const model = useStableCodingSessionTranscriptModel(items, isWorking);
+  // Only ever non-empty on the machine whose provider signed these items; see
+  // `useRedactionDictionary`. A context rather than a prop because the pill
+  // that reads it is produced inside cached markdown element trees.
+  const redactions = useRedactionDictionary(items);
   const promptAttribution = React.useMemo(
     () => ({
       currentUserPubkey: currentUserPubkey ?? null,
@@ -176,38 +182,40 @@ export function CodingSessionTranscript({
     rows.length > CODING_SESSION_VIRTUALIZATION_THRESHOLD && scrollRef;
 
   return (
-    <CodingSessionPromptAttributionContext.Provider value={promptAttribution}>
-      <div
-        aria-label="Live coding-session conversation"
-        aria-live="off"
-        data-transcript-renderer={shouldVirtualize ? "virtualized" : "static"}
-        data-testid="coding-session-transcript"
-        role="log"
-      >
-        {shouldVirtualize ? (
-          <VirtualizedList
-            estimateSize={averageEstimatedRowSize}
-            getItemKey={getCodingSessionTranscriptRowKey}
-            innerClassName="w-full"
-            items={rows}
-            overscan={6}
-            renderItem={(row) => <div className="pb-5">{renderRow(row)}</div>}
-            scrollRef={scrollRef}
-          />
-        ) : (
-          <div className="flex flex-col gap-5">{rows.map(renderRow)}</div>
-        )}
-        <span
-          aria-atomic="true"
-          aria-live="polite"
-          className="sr-only"
-          data-testid="coding-session-live-status"
-          role="status"
+    <RedactionDictionaryContext.Provider value={redactions}>
+      <CodingSessionPromptAttributionContext.Provider value={promptAttribution}>
+        <div
+          aria-label="Live coding-session conversation"
+          aria-live="off"
+          data-transcript-renderer={shouldVirtualize ? "virtualized" : "static"}
+          data-testid="coding-session-transcript"
+          role="log"
         >
-          {isWorking ? "Coding session working" : "Coding session idle"}
-        </span>
-      </div>
-    </CodingSessionPromptAttributionContext.Provider>
+          {shouldVirtualize ? (
+            <VirtualizedList
+              estimateSize={averageEstimatedRowSize}
+              getItemKey={getCodingSessionTranscriptRowKey}
+              innerClassName="w-full"
+              items={rows}
+              overscan={6}
+              renderItem={(row) => <div className="pb-5">{renderRow(row)}</div>}
+              scrollRef={scrollRef}
+            />
+          ) : (
+            <div className="flex flex-col gap-5">{rows.map(renderRow)}</div>
+          )}
+          <span
+            aria-atomic="true"
+            aria-live="polite"
+            className="sr-only"
+            data-testid="coding-session-live-status"
+            role="status"
+          >
+            {isWorking ? "Coding session working" : "Coding session idle"}
+          </span>
+        </div>
+      </CodingSessionPromptAttributionContext.Provider>
+    </RedactionDictionaryContext.Provider>
   );
 }
 

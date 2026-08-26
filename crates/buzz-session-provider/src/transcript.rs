@@ -44,6 +44,8 @@ use std::path::Path;
 
 use buzz_core::coding_session_context::{
     sanitize_coding_session_context_content, sanitize_coding_session_context_content_for_workspace,
+    sanitize_coding_session_context_content_recording,
+    sanitize_coding_session_context_content_recording_for_workspace, Redaction,
 };
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -326,6 +328,45 @@ pub fn fit_item_for_workspace(
         sanitize_coding_session_context_content_for_workspace(&item, workspace_root),
         overhead,
         max_envelope_bytes,
+    )
+}
+
+/// [`fit_item`], reporting the recoverable redactions it made.
+///
+/// The publish path uses this so the host can keep a private note of what it
+/// removed from its own transcripts (see [`crate::redaction_vault`]). Only
+/// recoverable classes are ever reported — a credential is redacted identically
+/// and never named, and that gate lives in `buzz-core` where the redaction is
+/// decided, not here.
+///
+/// The returned redactions describe the item *before* size-fitting, which is
+/// correct: fitting can truncate a marker's surrounding text but never changes
+/// a marker, so every digest reported still names something a reader can meet.
+pub fn fit_item_recording(
+    item: Value,
+    overhead: usize,
+    max_envelope_bytes: usize,
+) -> (Value, Vec<Redaction>) {
+    let (sanitized, redactions) = sanitize_coding_session_context_content_recording(&item);
+    (
+        shrink_item(sanitized, overhead, max_envelope_bytes),
+        redactions,
+    )
+}
+
+/// [`fit_item_recording`] with the execution checkout available for safe path
+/// relativization, exactly as [`fit_item_for_workspace`] applies it.
+pub fn fit_item_recording_for_workspace(
+    item: Value,
+    overhead: usize,
+    max_envelope_bytes: usize,
+    workspace_root: &Path,
+) -> (Value, Vec<Redaction>) {
+    let (sanitized, redactions) =
+        sanitize_coding_session_context_content_recording_for_workspace(&item, workspace_root);
+    (
+        shrink_item(sanitized, overhead, max_envelope_bytes),
+        redactions,
     )
 }
 

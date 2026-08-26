@@ -162,9 +162,28 @@ function elisionEvents(): RelayEvent[] {
   ];
 }
 
+/**
+ * This machine's redaction vault, as the host would answer it. Keyed by the
+ * same digests the seeded markers carry — that digest is the only join.
+ */
+const LOCAL_VAULT = {
+  [HOME_DIGEST]: {
+    class: "host-path",
+    plaintext: "/Users/andy/.config/git/credentials",
+  },
+  [SHELL_DIGEST]: { class: "host-path", plaintext: "/opt/homebrew/bin/zsh" },
+  // Deliberately absent: TOKEN_DIGEST. A credential is redacted identically
+  // and never recorded, so even the machine that redacted it cannot read it
+  // back — the pill stays.
+};
+
 async function openSeededSession(
   page: import("@playwright/test").Page,
   seeded: RelayEvent[],
+  vault?: {
+    localPubkey: string;
+    entries: Record<string, { class: string; plaintext: string }>;
+  },
 ) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMockBridge(page, {
@@ -174,6 +193,12 @@ async function openSeededSession(
       model: null,
       "allowed-bridge-pubkeys": [{ pubkey, label: "Screenshot provider" }],
     },
+    ...(vault
+      ? {
+          codingSessionRedactionLocalPubkey: vault.localPubkey,
+          codingSessionRedactionVault: vault.entries,
+        }
+      : {}),
   });
   await page.goto("/");
   await page.getByTestId(`channel-${channelName}`).click();
@@ -269,4 +294,69 @@ test("hovering a pill reveals the digest it stands for", async ({ page }) => {
     path: `${SHOTS}/03-digest-tooltip.png`,
     clip: { x: 300, y: 120, width: 900, height: 420 },
   });
+});
+
+test("on the machine that redacted it, the operator sees the value and a badge", async ({
+  page,
+}) => {
+  // The provider redacts before signing, so the plaintext only ever existed
+  // here. Showing it back is the point; the badge is what stops the operator
+  // forgetting that this view is not what the channel shows.
+  const workspace = await openSeededSession(page, elisionEvents(), {
+    localPubkey: pubkey,
+    entries: LOCAL_VAULT,
+  });
+
+  const revealed = page.locator("[data-redaction-revealed]");
+  await expect(revealed.first()).toBeVisible({ timeout: 15_000 });
+  await expect(revealed.first()).toContainText(
+    "/Users/andy/.config/git/credentials",
+  );
+  await expect(
+    revealed.first().locator("[data-redaction-revealed-badge]"),
+  ).toContainText("redacted for other viewers");
+
+  // The credential was redacted identically and never recorded, so even here
+  // it stays a pill. This is the leak direction, in the UI.
+  await expect(
+    page.locator('[data-elision-cause="redaction"]', {
+      hasText: "redacted 42 B",
+    }),
+  ).toHaveCount(1);
+  await expect(page.locator("body")).not.toContainText("ghp_");
+
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/04-revealed-locally.png` });
+});
+
+test("a transcript signed by another machine's provider resolves nothing", async ({
+  page,
+}) => {
+  // Same vault, same digests — but this desktop did not provision that signer,
+  // so the locality gate refuses. Two machines can legitimately redact the same
+  // path, and resolving one against the other would be a fabrication.
+  await openSeededSession(page, elisionEvents(), {
+    localPubkey: "f".repeat(64),
+    entries: LOCAL_VAULT,
+  });
+
+  await expect(page.locator("[data-redaction-pill]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator("[data-redaction-revealed]")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(
+    "/Users/andy/.config/git/credentials",
+  );
+});
+
+test("with no vault at all, every marker stays a pill", async ({ page }) => {
+  // Expired, never recorded, and "not this machine" are indistinguishable, and
+  // all three render the same. The UI never labels a state it cannot prove.
+  await openSeededSession(page, elisionEvents());
+
+  await expect(page.locator("[data-redaction-pill]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.locator("[data-redaction-revealed]")).toHaveCount(0);
+  await expect(page.getByText("expired", { exact: false })).toHaveCount(0);
 });

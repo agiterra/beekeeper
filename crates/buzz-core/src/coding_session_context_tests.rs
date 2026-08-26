@@ -676,6 +676,36 @@ fn inline_code_spans_are_not_host_paths() {
     }
 }
 
+// ── Recording redactions for the host's own operator ─────────────────────────
+//
+// The vault these feed exists so an operator can read back a path on their own
+// machine. Everything here is about the *leak direction*: a secret redacted is
+// a secret never recorded, and that must hold structurally rather than by every
+// caller remembering to filter.
+
+/// The recording twin must redact byte for byte identically. If these two ever
+/// disagree, the published transcript and the host's own record have drifted on
+/// what counts as private, which is the failure the shared implementation
+/// exists to prevent.
+#[test]
+fn recording_redacts_exactly_what_the_pure_redactor_redacts() {
+    for value in [
+        serde_json::json!({ "text": "read /Users/andy/Code/thing.rs then ran it" }),
+        serde_json::json!({ "token": "abc", "resumeCursor": "cursor-9" }),
+        serde_json::json!({ "text": "export GITHUB_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaa" }),
+        serde_json::json!({ "text": "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n" }),
+        serde_json::json!({ "text": "password hunter2 is in the config" }),
+        serde_json::json!({ "text": "nothing private here at all" }),
+    ] {
+        let (recorded, _) = sanitize_coding_session_context_content_recording(&value);
+        assert_eq!(
+            recorded,
+            sanitize_coding_session_context_content(&value),
+            "{value}"
+        );
+    }
+}
+
 /// …and the quoted-path form it exists for still goes.
 #[test]
 fn a_quoted_absolute_path_is_still_a_host_path() {
@@ -765,4 +795,130 @@ fn redaction_is_idempotent() {
 
     let token = sanitize_coding_session_context_text("token=ghp_0123456789abcdefghijklmnopqrs");
     assert_eq!(sanitize_coding_session_context_text(&token), token);
+}
+
+#[test]
+fn a_host_path_is_recorded_with_the_digest_its_marker_carries() {
+    let value = serde_json::json!({ "text": "read /Users/andy/Code/thing.rs then ran it" });
+    let (sanitized, log) = sanitize_coding_session_context_content_recording(&value);
+
+    assert_eq!(log.len(), 1, "{log:?}");
+    let entry = &log[0];
+    assert_eq!(entry.class, RedactionClass::HostPath);
+    assert_eq!(entry.plaintext, "/Users/andy/Code/thing.rs");
+    // The join is the digest and nothing else: no new wire field, so a reader
+    // on this machine can match a published marker to its own record.
+    let rendered = sanitized["text"].as_str().unwrap();
+    assert!(
+        rendered.contains(&format!("sha256:{}]", entry.digest)),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("{} bytes", entry.bytes)),
+        "{rendered}"
+    );
+}
+
+/// The whole gate, stated as a test: every class that names a credential is
+/// redacted and **never** written down.
+#[test]
+fn no_secret_class_is_ever_recorded() {
+    let cases = [
+        // shaped secret
+        "my key is ghp_aaaaaaaaaaaaaaaaaaaaaaaa here",
+        "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq and more",
+        // credential assignment
+        "GITHUB_TOKEN=ghp_bbbbbbbbbbbbbbbbbbbbbbbb",
+        "password hunter2 is in the config",
+        "api key is sk-cccccccccccccccccccc",
+        // key block
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
+    ];
+    for text in cases {
+        let value = serde_json::json!({ "text": text });
+        let (sanitized, log) = sanitize_coding_session_context_content_recording(&value);
+        assert!(
+            sanitized != value,
+            "the case must actually be redacted: {text}"
+        );
+        assert!(log.is_empty(), "recorded a secret for {text}: {log:?}");
+    }
+
+    // Same for a value caught by its key rather than its shape.
+    for key in [
+        "privateKey",
+        "password",
+        "authorization",
+        "cookie",
+        "token",
+        "apiKey",
+        "accessToken",
+        "buzzAuthTag",
+    ] {
+        let value = serde_json::json!({ key: "s3cr3t-value-goes-here" });
+        let (_, log) = sanitize_coding_session_context_content_recording(&value);
+        assert!(log.is_empty(), "recorded a secret under {key}: {log:?}");
+    }
+}
+
+/// Opaque provider bookkeeping is private, not secret — and it is exactly what
+/// an operator needs when a session stalls.
+#[test]
+fn structural_bookkeeping_is_recoverable_but_still_redacted_on_the_wire() {
+    let value = serde_json::json!({ "resumeCursor": "cursor-9", "acpSessionId": "acp-7" });
+    let (sanitized, log) = sanitize_coding_session_context_content_recording(&value);
+
+    assert!(sanitized["resumeCursor"]
+        .as_str()
+        .unwrap()
+        .starts_with("[elided private context: "));
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert!(log
+        .iter()
+        .all(|entry| entry.class == RedactionClass::Structural));
+    let plaintexts: Vec<&str> = log.iter().map(|entry| entry.plaintext.as_str()).collect();
+    assert!(plaintexts.contains(&"cursor-9"), "{plaintexts:?}");
+    assert!(plaintexts.contains(&"acp-7"), "{plaintexts:?}");
+}
+
+#[test]
+fn only_host_paths_and_structural_bookkeeping_are_recoverable() {
+    for class in [RedactionClass::HostPath, RedactionClass::Structural] {
+        assert!(class.is_recoverable(), "{class:?}");
+    }
+    for class in [
+        RedactionClass::SecretKey,
+        RedactionClass::KeyBlock,
+        RedactionClass::ShapedSecret,
+        RedactionClass::CredentialAssignment,
+    ] {
+        assert!(!class.is_recoverable(), "{class:?}");
+    }
+}
+
+/// A path beside a secret must not rescue the secret, and the secret must not
+/// suppress the path: two rules, two independent outcomes, one line.
+#[test]
+fn a_path_and_a_secret_on_one_line_are_classified_separately() {
+    let value = serde_json::json!({
+        "text": "wrote /Users/andy/.netrc with token=ghp_dddddddddddddddddddd today"
+    });
+    let (_, log) = sanitize_coding_session_context_content_recording(&value);
+
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert_eq!(log[0].class, RedactionClass::HostPath);
+    assert_eq!(log[0].plaintext, "/Users/andy/.netrc");
+}
+
+/// Redaction is idempotent, so re-sanitizing a published item must not invent a
+/// second record of a value whose plaintext is already gone.
+#[test]
+fn re_redacting_an_already_redacted_item_records_nothing() {
+    let value = serde_json::json!({ "text": "read /Users/andy/Code/thing.rs" });
+    let (once, first) = sanitize_coding_session_context_content_recording(&value);
+    assert_eq!(first.len(), 1);
+
+    let (twice, second) = sanitize_coding_session_context_content_recording(&once);
+    assert_eq!(twice, once);
+    assert!(second.is_empty(), "{second:?}");
 }

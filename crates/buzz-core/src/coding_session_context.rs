@@ -836,7 +836,7 @@ impl CodingSessionContextHistoryItem {
 /// by the surrounding history item, so an authorized reader can distinguish a
 /// deliberate handoff elision from absent source data.
 pub fn sanitize_coding_session_context_content(value: &Value) -> Value {
-    sanitize_coding_session_context_content_with_workspace(value, None)
+    sanitize_content(value, None, &mut RedactionLog::off())
 }
 
 /// Redact a transcript item after making paths inside `workspace_root`
@@ -850,29 +850,58 @@ pub fn sanitize_coding_session_context_content_for_workspace(
     value: &Value,
     workspace_root: &Path,
 ) -> Value {
-    sanitize_coding_session_context_content_with_workspace(value, Some(workspace_root))
+    sanitize_content(value, Some(workspace_root), &mut RedactionLog::off())
 }
 
-fn sanitize_coding_session_context_content_with_workspace(
+/// Redact one item **and report what was redacted**.
+///
+/// Same redaction, byte for byte — this is the recording twin of
+/// [`sanitize_coding_session_context_content`], not a second implementation, so
+/// the published transcript and the host's own record cannot drift apart on
+/// what counts as private.
+///
+/// Only *recoverable* classes appear in the returned log (see
+/// [`RedactionClass::is_recoverable`]). A secret is redacted exactly as before
+/// and is never reported, because a caller that persists this log must not be
+/// able to persist a credential by accident: the guarantee is structural, not a
+/// filtering step every caller has to remember.
+pub fn sanitize_coding_session_context_content_recording(value: &Value) -> (Value, Vec<Redaction>) {
+    sanitize_content_recording(value, None)
+}
+
+/// [`sanitize_coding_session_context_content_recording`] with workspace paths
+/// made repository-relative first, exactly as
+/// [`sanitize_coding_session_context_content_for_workspace`] does.
+pub fn sanitize_coding_session_context_content_recording_for_workspace(
+    value: &Value,
+    workspace_root: &Path,
+) -> (Value, Vec<Redaction>) {
+    sanitize_content_recording(value, Some(workspace_root))
+}
+
+fn sanitize_content_recording(
     value: &Value,
     workspace_root: Option<&Path>,
-) -> Value {
+) -> (Value, Vec<Redaction>) {
+    let mut log = RedactionLog::recording();
+    let sanitized = sanitize_content(value, workspace_root, &mut log);
+    (sanitized, log.into_entries())
+}
+
+fn sanitize_content(value: &Value, workspace_root: Option<&Path>, log: &mut RedactionLog) -> Value {
     match value {
         Value::Object(object) => Value::Object(
             object
                 .iter()
                 .map(|(key, nested)| {
-                    let value = if sensitive_context_key(key) {
+                    let value = if let Some(class) = sensitive_context_key(key) {
                         if nested.as_str().is_some_and(is_context_elision_marker) {
                             nested.clone()
                         } else {
-                            Value::String(context_elision_marker(nested))
+                            Value::String(elide(nested, class, log))
                         }
                     } else {
-                        sanitize_coding_session_context_content_with_workspace(
-                            nested,
-                            workspace_root,
-                        )
+                        sanitize_content(nested, workspace_root, log)
                     };
                     (key.clone(), value)
                 })
@@ -881,14 +910,12 @@ fn sanitize_coding_session_context_content_with_workspace(
         Value::Array(values) => Value::Array(
             values
                 .iter()
-                .map(|nested| {
-                    sanitize_coding_session_context_content_with_workspace(nested, workspace_root)
-                })
+                .map(|nested| sanitize_content(nested, workspace_root, log))
                 .collect(),
         ),
         Value::String(text) => Value::String(match workspace_root {
-            Some(root) => sanitize_coding_session_context_text_for_workspace(text, root),
-            None => sanitize_coding_session_context_text(text),
+            Some(root) => sanitize_text(&relativize_workspace_paths(text, root), log),
+            None => sanitize_text(text, log),
         }),
         _ => value.clone(),
     }
@@ -965,7 +992,11 @@ fn relativize_workspace_paths(value: &str, workspace_root: &Path) -> String {
 /// is left alone. Every shape the old rule caught is still caught; what
 /// changed is that catching one no longer costs the whole message.
 pub fn sanitize_coding_session_context_text(value: &str) -> String {
-    let without_blocks = redact_key_blocks(value);
+    sanitize_text(value, &mut RedactionLog::off())
+}
+
+fn sanitize_text(value: &str, log: &mut RedactionLog) -> String {
+    let without_blocks = redact_key_blocks(value, log);
     let mut sanitized = String::with_capacity(without_blocks.len());
     for segment in without_blocks.split_inclusive(char::is_whitespace) {
         let word = segment.trim_end_matches(char::is_whitespace);
@@ -977,7 +1008,7 @@ pub fn sanitize_coding_session_context_text(value: &str) -> String {
             // A credential is masked, not hashed: see `mask_credential_value`.
             sanitized.push_str(&mask_credential_value(word));
         } else if contains_host_path(word) {
-            sanitized.push_str(&context_elision_marker(&Value::String(word.to_owned())));
+            sanitized.push_str(&elide_str(word, RedactionClass::HostPath, log));
         } else {
             sanitized.push_str(word);
         }
@@ -987,7 +1018,7 @@ pub fn sanitize_coding_session_context_text(value: &str) -> String {
 }
 
 /// PEM-style blocks, redacted whole.
-fn redact_key_blocks(value: &str) -> String {
+fn redact_key_blocks(value: &str, log: &mut RedactionLog) -> String {
     const BEGIN: &str = "-----BEGIN";
     const END_MARK: &str = "-----END";
     let mut out = String::with_capacity(value.len());
@@ -1010,7 +1041,7 @@ fn redact_key_blocks(value: &str) -> String {
             None => tail.len(),
         };
         let block = &tail[..block_end];
-        out.push_str(&context_elision_marker(&Value::String(block.to_owned())));
+        out.push_str(&elide_str(block, RedactionClass::KeyBlock, log));
         rest = &tail[block_end..];
     }
 }
@@ -1081,8 +1112,7 @@ const CREDENTIAL_KEYS: &[&str] = &[
 /// this whole function exists to undo.
 fn redact_credential_assignments(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
-    for (index, line) in value.split_inclusive('\n').enumerate() {
-        let _ = index;
+    for line in value.split_inclusive('\n') {
         out.push_str(&redact_credential_assignment_line(line));
     }
     out
@@ -1272,34 +1302,28 @@ fn contains_host_path(word: &str) -> bool {
             && matches!(candidate.as_bytes()[2], b'\\' | b'/'))
 }
 
-fn sensitive_context_key(key: &str) -> bool {
+/// Which rule, if any, claims a value by the name of the key holding it — and
+/// therefore whether that value could ever be shown back to its own operator.
+///
+/// `resumecursor` and `acpsessionid` sit apart from the rest deliberately: they
+/// are opaque provider bookkeeping, private to the host but not *secret*, and
+/// they are exactly what an operator needs when a session stalls. Everything
+/// else on this list names a credential.
+fn sensitive_context_key(key: &str) -> Option<RedactionClass> {
     let normalized = key
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect::<String>();
-    matches!(
-        normalized.as_str(),
-        "privatekey"
-            | "secretkey"
-            | "signingkey"
-            | "nostrprivatekey"
-            | "buzzprivatekey"
-            | "buzzauthtag"
-            | "relayauthtoken"
-            | "password"
-            | "passwd"
-            | "authorization"
-            | "cookie"
-            | "credential"
-            | "credentials"
-            | "apikey"
-            | "accesstoken"
-            | "authtoken"
-            | "token"
-            | "resumecursor"
-            | "acpsessionid"
-    )
+    match normalized.as_str() {
+        "resumecursor" | "acpsessionid" => Some(RedactionClass::Structural),
+        "privatekey" | "secretkey" | "signingkey" | "nostrprivatekey" | "buzzprivatekey"
+        | "buzzauthtag" | "relayauthtoken" | "password" | "passwd" | "authorization" | "cookie"
+        | "credential" | "credentials" | "apikey" | "accesstoken" | "authtoken" | "token" => {
+            Some(RedactionClass::SecretKey)
+        }
+        _ => None,
+    }
 }
 
 /// Fixed-width mask, so the redaction never states a length.
@@ -1366,12 +1390,131 @@ fn is_credential_mask(value: &str) -> bool {
     value.contains(CREDENTIAL_MASK)
 }
 
-fn context_elision_marker(value: &Value) -> String {
+/// Why a value was redacted — and, structurally, whether it may be recorded.
+///
+/// The class is decided **by the rule that caught the value**, not by
+/// re-inspecting the plaintext afterwards. A later reader would have to guess;
+/// the redactor knows for free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RedactionClass {
+    /// An absolute path, `~/…`, or a Windows/UNC path — this machine's layout.
+    HostPath,
+    /// Opaque provider bookkeeping named by its key (`resumeCursor`,
+    /// `acpSessionId`). Private to the host; not a credential.
+    Structural,
+    /// A value held under a key that names a credential.
+    SecretKey,
+    /// A PEM-style `-----BEGIN … -----END …` block.
+    KeyBlock,
+    /// A token with a recognisable secret shape (`nsec1…`, `ghp_…`, `AKIA…`).
+    ShapedSecret,
+    /// The value side of `token=…` / `password: …` / `api key is …`.
+    CredentialAssignment,
+}
+
+impl RedactionClass {
+    /// May this class's plaintext be written to the host's own vault?
+    ///
+    /// **Only host layout and opaque bookkeeping.** Showing an operator their
+    /// own home directory discloses nothing they do not already know; writing a
+    /// redacted credential to disk in plaintext would create a liability
+    /// strictly worse than the readability problem the vault exists to solve.
+    ///
+    /// This is the single gate. It is enforced where redactions are produced
+    /// rather than where they are persisted, so no caller can opt out of it by
+    /// forgetting to filter.
+    pub fn is_recoverable(self) -> bool {
+        matches!(self, Self::HostPath | Self::Structural)
+    }
+}
+
+/// One recoverable redaction, as the host may record it for its own operator.
+///
+/// Never published, never placed in an agent environment. The `digest` is the
+/// same one the published marker carries, which is what lets a reader on this
+/// machine join the two without any new wire field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Redaction {
+    /// SHA-256 of the value's JSON encoding, lowercase hex, no `sha256:` prefix.
+    pub digest: String,
+    /// Serialized JSON byte count — the number the marker reports.
+    pub bytes: usize,
+    /// The rule that caught it. Always a recoverable class.
+    pub class: RedactionClass,
+    /// The value as it was before redaction. A string value is recorded as
+    /// itself; anything else as its compact JSON encoding.
+    pub plaintext: String,
+}
+
+/// Collects recoverable redactions, or discards everything.
+///
+/// `off()` is the validating path — [`sanitize_coding_session_context_content`]
+/// is called as a sanitize-and-compare check in half a dozen places, and it
+/// must not materialize a plaintext copy of anything it redacts just to drop
+/// it. Nothing is cloned unless someone asked to record.
+struct RedactionLog {
+    entries: Option<Vec<Redaction>>,
+}
+
+impl RedactionLog {
+    fn off() -> Self {
+        Self { entries: None }
+    }
+
+    fn recording() -> Self {
+        Self {
+            entries: Some(Vec::new()),
+        }
+    }
+
+    fn into_entries(self) -> Vec<Redaction> {
+        self.entries.unwrap_or_default()
+    }
+
+    fn record(&mut self, class: RedactionClass, digest: &str, bytes: usize, plaintext: &Value) {
+        let Some(entries) = self.entries.as_mut() else {
+            return;
+        };
+        if !class.is_recoverable() {
+            return;
+        }
+        entries.push(Redaction {
+            digest: digest.to_owned(),
+            bytes,
+            class,
+            plaintext: match plaintext {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            },
+        });
+    }
+}
+
+/// Redact one value, recording it when its class allows.
+fn elide(value: &Value, class: RedactionClass, log: &mut RedactionLog) -> String {
+    let (marker, digest, bytes) = context_elision_marker_parts(value);
+    log.record(class, &digest, bytes, value);
+    marker
+}
+
+/// [`elide`] for a value that is known to be a string.
+fn elide_str(text: &str, class: RedactionClass, log: &mut RedactionLog) -> String {
+    elide(&Value::String(text.to_owned()), class, log)
+}
+
+fn context_elision_marker_parts(value: &Value) -> (String, String, usize) {
     let encoded = serde_json::to_vec(value).unwrap_or_default();
-    format!(
-        "[elided private context: {} bytes, sha256:{}]",
+    let digest = hex::encode(Sha256::digest(&encoded));
+    (
+        format!(
+            "[elided private context: {} bytes, sha256:{}]",
+            encoded.len(),
+            digest
+        ),
+        digest,
         encoded.len(),
-        hex::encode(Sha256::digest(&encoded))
     )
 }
 

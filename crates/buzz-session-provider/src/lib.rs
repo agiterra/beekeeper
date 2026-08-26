@@ -42,6 +42,7 @@ mod model_catalog;
 pub mod payload;
 pub mod publish;
 mod reachability;
+pub mod redaction_vault;
 pub mod session;
 pub mod state;
 pub mod transcript;
@@ -417,6 +418,15 @@ pub struct Provider {
     /// [`session::SessionEvent::WorktreeObserved`]. Absent, like a `None`
     /// reachability result, means "not checked."
     git_reachability: HashMap<String, reachability::ReachabilityFact>,
+    /// Digests this process has already written to a session's redaction vault.
+    ///
+    /// The same home directory is redacted out of nearly every item, so without
+    /// this the vault would grow a line per item for one value. Memory-only and
+    /// per-process on purpose: after a restart the worst case is that a digest
+    /// is appended a second time, which the reader tolerates (last line wins on
+    /// an identical value) and the size caps bound. Persisting it would buy a
+    /// duplicate-free file at the cost of a second thing to expire.
+    recorded_redactions: HashMap<String, HashSet<String>>,
     /// Shared HTTP client for relay REST calls made off the event loop
     /// (currently: [`Provider::spawn_git_probe`]'s reachability check).
     ///
@@ -502,6 +512,7 @@ impl Provider {
             git_probes: HashMap::new(),
             git_probe_generation: HashMap::new(),
             git_reachability: HashMap::new(),
+            recorded_redactions: HashMap::new(),
             rest_client: None,
             relay_self: None,
             context_refresh: HashMap::new(),
@@ -559,6 +570,7 @@ impl Provider {
                 "leftover verified-context packages could not be swept: {error}"
             );
         }
+        self.sweep_redaction_vault();
         let orphans: Vec<(String, String)> = self
             .state
             .sessions()
@@ -1555,6 +1567,10 @@ impl Provider {
         }
         self.sessions.shutdown(&plan.target.session_id);
         self.discard_context_packages(&plan.target.session_id);
+        // Stop is terminal, so the operator will not be reading this
+        // transcript's redactions back. A resume deliberately does *not* do
+        // this: there the session continues and the note is still wanted.
+        self.forget_redactions(&plan.target.session_id);
         let receipt = LifecycleReceipt::stopped(&plan.command_id, &plan.target);
         if let Err(error) = self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt) {
             completion_errors.push(format!("enqueue stopped receipt: {error}"));
@@ -2414,15 +2430,16 @@ impl Provider {
             serde_json::Value::Null,
         ))?
         .len();
-        let item = match workspace_root {
-            Some(root) => transcript::fit_item_for_workspace(
+        let (item, redactions) = match workspace_root {
+            Some(root) => transcript::fit_item_recording_for_workspace(
                 item,
                 overhead,
                 MAX_TRANSCRIPT_CONTENT_BYTES,
                 &root,
             ),
-            None => transcript::fit_item(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES),
+            None => transcript::fit_item_recording(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES),
         };
+        self.record_redactions(&target.session_id, &redactions, timestamp);
         let envelope = TranscriptEnvelope::new(target, event_seq, timestamp, turn_id, item);
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?
@@ -2434,6 +2451,110 @@ impl Provider {
             event,
         )?;
         Ok(Some(event_seq))
+    }
+
+    /// Note the recoverable redactions this item carried, for this host only.
+    ///
+    /// **Never fails a publish.** The transcript is the product; the vault is a
+    /// local convenience, so a full disk, a hostile symlink, or a vault at its
+    /// cap costs a warning and an unresolved pill — never a dropped transcript
+    /// item. That asymmetry is the whole reason this is not `?`-propagated.
+    fn record_redactions(
+        &mut self,
+        session_id: &str,
+        redactions: &[buzz_core::coding_session_context::Redaction],
+        timestamp: i64,
+    ) {
+        if redactions.is_empty() || !self.config.redaction_retention.enabled() {
+            return;
+        }
+        let seen = self
+            .recorded_redactions
+            .entry(session_id.to_owned())
+            .or_default();
+        let fresh: Vec<_> = redactions
+            .iter()
+            .filter(|redaction| seen.insert(redaction.digest.clone()))
+            .cloned()
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        if let Err(error) = redaction_vault::append(
+            &self.config.state_dir,
+            session_id,
+            &fresh,
+            timestamp,
+            self.config.redaction_retention,
+        ) {
+            tracing::warn!(
+                session_id,
+                %error,
+                "could not record redactions for local lookup; transcript is unaffected"
+            );
+        }
+    }
+
+    /// Run the age, size, and orphan reapers over the redaction vault.
+    ///
+    /// Called at startup and on a timer. Best-effort for the same reason the
+    /// context-package sweep is: a state directory that refuses the sweep costs
+    /// disk, not correctness.
+    ///
+    /// The orphan pass is the startup counterpart to [`Self::forget_redactions`]
+    /// — a provider killed mid-session never ran the stop path, and its note
+    /// would otherwise sit there until the age reaper reached it. "Live" means
+    /// a durable session record survived, which is exactly the set that can
+    /// still be resumed and read.
+    pub fn sweep_redaction_vault(&mut self) {
+        match redaction_vault::sweep(
+            &self.config.state_dir,
+            self.config.redaction_retention,
+            SystemTime::now(),
+        ) {
+            Ok(outcome) if outcome.expired > 0 || outcome.oversize > 0 => {
+                tracing::info!(
+                    target: "csp::context",
+                    expired = outcome.expired,
+                    oversize = outcome.oversize,
+                    "swept redaction vault files"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(target: "csp::context", %error, "redaction vault sweep failed");
+            }
+        }
+
+        let live: Vec<String> = self
+            .state
+            .sessions()
+            .map(|record| record.session_id.clone())
+            .collect();
+        match redaction_vault::sweep_orphans(&self.config.state_dir, &live) {
+            Ok(removed) if removed > 0 => {
+                tracing::info!(
+                    target: "csp::context",
+                    removed,
+                    "removed redaction vault files no live session owns"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(target: "csp::context", %error, "redaction vault orphan sweep failed");
+            }
+        }
+    }
+
+    /// Drop a stopped session's local redaction note.
+    ///
+    /// The first of the three reapers (see [`crate::redaction_vault`]), and the
+    /// one that handles the ordinary case.
+    fn forget_redactions(&mut self, session_id: &str) {
+        self.recorded_redactions.remove(session_id);
+        if let Err(error) = redaction_vault::remove_session(&self.config.state_dir, session_id) {
+            tracing::warn!(session_id, %error, "could not remove the session redaction vault");
+        }
     }
 
     /// Turn one report from the session inbox into durable state and queued
@@ -3310,6 +3431,7 @@ mod tests {
             idle_timeout: Duration::from_secs(900),
             answer_stall_timeout: Some(Duration::from_secs(120)),
             emit_raw_sdk_frames: false,
+            redaction_retention: crate::redaction_vault::RetentionPolicy::default(),
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             command_horizon: Duration::from_secs(86_400),
@@ -6217,6 +6339,139 @@ mod tests {
             provider.state().sessions().next().expect("session").cwd,
             cwd
         );
+    }
+
+    /// The other half of the invariant above: the path leaves the wire, and
+    /// stays on the machine that owns it.
+    ///
+    /// End to end through `enqueue_transcript` on purpose — the vault module's
+    /// own tests pass whether or not the publish path ever calls it, which is
+    /// exactly the gap this closes.
+    #[tokio::test]
+    async fn a_redacted_host_path_is_recoverable_on_the_machine_that_redacted_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("secret-checkout-path");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let state_dir = dir.path().join("state");
+        let mut provider = provider(&state_dir, Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        let needle = cwd.to_string_lossy().to_string();
+        provider
+            .enqueue_transcript(
+                channel_id,
+                &target,
+                Some("turn-1"),
+                serde_json::json!({
+                    "kind": "assistant_text",
+                    "text": format!("read {needle}/main.rs and it compiled"),
+                }),
+                Priority::Normal,
+            )
+            .expect("transcript");
+
+        // The digest is the only join, so read it back off the published item
+        // exactly as a reader on this machine would.
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let published = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .find(|item| item["item"]["kind"] == "assistant_text")
+            .expect("assistant item");
+        let text = published["item"]["text"].as_str().expect("text");
+        assert!(!text.contains(&needle), "{text}");
+        let digest = text
+            .split("sha256:")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("digest in marker")
+            .to_owned();
+
+        let found = redaction_vault::resolve(
+            &state_dir,
+            &target.session_id,
+            std::slice::from_ref(&digest),
+        )
+        .expect("resolve");
+        assert_eq!(
+            found[&digest].plaintext,
+            format!("{needle}/main.rs"),
+            "the host must be able to read back its own path"
+        );
+        assert_eq!(found[&digest].class, "host-path");
+
+        // Stop is terminal, so the note goes with it.
+        provider.forget_redactions(&target.session_id);
+        assert!(
+            redaction_vault::resolve(&state_dir, &target.session_id, &[digest])
+                .expect("resolve")
+                .is_empty()
+        );
+    }
+
+    /// A credential is redacted identically and is never written down. Same
+    /// publish path, opposite expectation — this is the leak direction.
+    #[tokio::test]
+    async fn a_redacted_credential_is_never_recoverable_anywhere() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let state_dir = dir.path().join("state");
+        let mut provider = provider(&state_dir, Some(&projects));
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        provider
+            .enqueue_transcript(
+                channel_id,
+                &target,
+                Some("turn-1"),
+                serde_json::json!({
+                    "kind": "assistant_text",
+                    "text": "exported GITHUB_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaaaaaa for the push",
+                }),
+                Priority::Normal,
+            )
+            .expect("transcript");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        for event in sink.all() {
+            let serialized = serde_json::to_string(&event).expect("serialize");
+            assert!(!serialized.contains("ghp_aaaa"), "{serialized}");
+        }
+        // Nothing about it reached disk either — not the file, not the value.
+        let vault = state_dir.join("redactions");
+        let recorded = std::fs::read_dir(&vault)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        assert!(!recorded.contains("ghp_"), "{recorded}");
     }
 
     #[tokio::test]

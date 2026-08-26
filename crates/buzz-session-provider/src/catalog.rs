@@ -244,6 +244,7 @@ mod tests {
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
             emit_raw_sdk_frames: false,
+            redaction_retention: crate::redaction_vault::RetentionPolicy::default(),
             command_horizon: Duration::from_secs(86_400),
         }
     }

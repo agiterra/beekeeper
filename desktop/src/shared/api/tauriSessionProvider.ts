@@ -196,3 +196,27 @@ export async function stopCodingSessionProvider(): Promise<CodingSessionProvider
     "stop_coding_session_provider",
   );
 }
+
+/**
+ * Ask this machine what it redacted out of one of its own transcripts.
+ *
+ * The provider redacts host-private values *before signing*, so the plaintext
+ * only ever existed here. The backend refuses unless `providerPubkey` is an
+ * identity this desktop provisioned for the active relay, and only ever
+ * recorded classes that are private rather than secret — a credential cannot
+ * come back from this call regardless of what is asked for.
+ *
+ * An empty result is not a claim about *why*: never recorded, expired, and
+ * "this is not the machine that produced it" are indistinguishable, and callers
+ * must render them the same.
+ */
+export async function resolveCodingSessionRedactions(input: {
+  digests: string[];
+  providerPubkey: string;
+  sessionId: string;
+}): Promise<Record<string, { class: string; plaintext: string }>> {
+  return invokeTauri<Record<string, { class: string; plaintext: string }>>(
+    "coding_session_resolve_redactions",
+    input,
+  );
+}

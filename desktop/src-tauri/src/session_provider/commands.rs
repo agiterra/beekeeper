@@ -324,3 +324,87 @@ pub(crate) fn mint_provider_record(
         private_key_nsec,
     })
 }
+
+/// One recovered redaction, as the UI receives it.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedRedaction {
+    /// The value as it was before redaction.
+    pub plaintext: String,
+    /// The rule that caught it — `host-path` or `structural`.
+    pub class: String,
+}
+
+/// Resolve published redaction digests against this machine's own vault.
+///
+/// The provider redacts host-private values *before signing*, so the plaintext
+/// exists only on the machine that produced the transcript. This is that
+/// machine asking itself what it removed — never the network.
+///
+/// Three gates, in order:
+///
+/// 1. **Locality.** `provider_pubkey` must be an identity this desktop
+///    provisioned for the active relay. A transcript signed by someone else's
+///    provider resolves nothing, even if a digest happens to match: the vault
+///    is keyed by session id, and two machines can legitimately redact the same
+///    path.
+/// 2. **Class.** Only recoverable classes were ever written
+///    (`RedactionClass::is_recoverable`), so a credential cannot be returned
+///    here regardless of what is asked for.
+/// 3. **Path safety.** The session id comes from a relay event; the vault
+///    proves it names one component inside the vault before opening anything.
+///
+/// An empty result is not a claim. "Never recorded", "expired", and "this is
+/// not the machine that produced it" are indistinguishable to the caller, and
+/// the UI must not invent a label for a state it cannot prove.
+#[tauri::command]
+pub async fn coding_session_resolve_redactions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider_pubkey: String,
+    session_id: String,
+    digests: Vec<String>,
+) -> Result<BTreeMap<String, ResolvedRedaction>, String> {
+    /// Bound on one lookup, so a hostile or broken transcript cannot ask this
+    /// command to scan a vault file once per digest for an unbounded list.
+    const MAX_DIGESTS_PER_LOOKUP: usize = 512;
+
+    if digests.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    if digests.len() > MAX_DIGESTS_PER_LOOKUP {
+        return Err(format!(
+            "too many digests in one lookup: {} (max {MAX_DIGESTS_PER_LOOKUP})",
+            digests.len()
+        ));
+    }
+
+    let relay_url = relay_ws_url_with_override(&state);
+    let store = load_provider_store(&app)?;
+    let local = store
+        .get(&relay_url)
+        .is_some_and(|record| record.provider_pubkey == provider_pubkey);
+    if !local {
+        // Not this machine's transcript. Silence rather than an error: a remote
+        // session is an ordinary, expected state, not a failure.
+        return Ok(BTreeMap::new());
+    }
+
+    let state_dir = crate::session_provider::provider_state_dir(&app, &provider_pubkey)?;
+    let found =
+        buzz_session_provider_pkg::redaction_vault::resolve(&state_dir, &session_id, &digests)
+            .map_err(|error| format!("failed to read the redaction vault: {error}"))?;
+
+    Ok(found
+        .into_iter()
+        .map(|(digest, entry)| {
+            (
+                digest,
+                ResolvedRedaction {
+                    plaintext: entry.plaintext,
+                    class: entry.class,
+                },
+            )
+        })
+        .collect())
+}
