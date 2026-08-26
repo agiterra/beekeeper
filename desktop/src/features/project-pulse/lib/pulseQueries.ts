@@ -90,13 +90,34 @@ export function projectPulseChannelSetUnresolved(query: {
   return query.isPending || query.isError || query.isFetching;
 }
 
-const DURABLE_SESSION_FACT_KINDS = [
+/**
+ * Per-generation durable facts: each one is published once per create, resume,
+ * stop, or rename, so this window stays bounded by generation count.
+ */
+const GENERATION_FACT_KINDS = [
   KIND_CODING_SESSION_LIFECYCLE_COMMAND,
   KIND_CODING_SESSION_METADATA,
-  KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
   KIND_CODING_SESSION_GOAL,
   KIND_CODING_SESSION_NAME,
   KIND_CODING_SESSION_CLOSURE,
+];
+
+/**
+ * Receipts get their own read and their own budget.
+ *
+ * Kind 44224 is no longer bounded by generation count: a turn publishes at
+ * least `turn_queued` and `turn_started`, so receipts outrun creates by orders
+ * of magnitude in any channel doing work. A relay filter returns its newest
+ * `limit` rows across every kind it names, so sharing one budget with the
+ * facts above means the 44221 commands and 44223 metadata the coordination
+ * fold needs to *prove* a generation drop off the end — and proven sessions
+ * vanish from the digest behind nothing but a generic truncation note.
+ */
+const RECEIPT_FACT_KINDS = [KIND_CODING_SESSION_LIFECYCLE_RECEIPT];
+
+const DURABLE_SESSION_FACT_KINDS = [
+  ...GENERATION_FACT_KINDS,
+  ...RECEIPT_FACT_KINDS,
 ];
 
 const LIVE_SESSION_FACT_KINDS = [
@@ -241,21 +262,28 @@ export async function fetchProjectPulseDigest(
   const chunks = channelChunks(channelIds);
   if (chunks.length > 0) {
     for (const channels of chunks) {
-      try {
-        const sessions = await fetchEvents({
-          kinds: DURABLE_SESSION_FACT_KINDS,
-          "#h": channels,
-          limit: PULSE_SESSION_QUERY_LIMIT,
-        });
-        events.push(...sessions);
-        if (sessions.length >= PULSE_SESSION_QUERY_LIMIT) {
+      // Two reads, two budgets: per-turn receipt volume must not be able to
+      // evict the per-generation facts a session is proven from.
+      for (const kinds of [GENERATION_FACT_KINDS, RECEIPT_FACT_KINDS]) {
+        try {
+          const sessions = await fetchEvents({
+            kinds,
+            "#h": channels,
+            limit: PULSE_SESSION_QUERY_LIMIT,
+          });
+          events.push(...sessions);
+          if (sessions.length >= PULSE_SESSION_QUERY_LIMIT) {
+            sourceErrors.push({
+              scope: "sessions",
+              message: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
+            });
+          }
+        } catch (error) {
           sourceErrors.push({
             scope: "sessions",
-            message: `session read truncated at ${PULSE_SESSION_QUERY_LIMIT} events`,
+            message: errorMessage(error),
           });
         }
-      } catch (error) {
-        sourceErrors.push({ scope: "sessions", message: errorMessage(error) });
       }
     }
     for (const channels of chunks) {

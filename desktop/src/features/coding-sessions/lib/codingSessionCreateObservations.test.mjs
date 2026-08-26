@@ -15,6 +15,7 @@ import {
 
 import {
   buildCodingSessionCreateObservationFilter,
+  buildCodingSessionCreateObservationHistoryFilters,
   classifyCodingSessionGenesisEvent,
   classifyCodingSessionCreateEvent,
   CodingSessionCreateObservationStore,
@@ -235,6 +236,31 @@ test("the subscription reads creates and receipts, unfiltered by author", () => 
   // Any member may found a session, so there is no allowlist to scope by —
   // and a p-gated relay still requires the explicit kinds above.
   assert.equal("authors" in filter, false);
+});
+
+test("the backfill gives every kind its own budget, so turn receipts cannot evict creates", () => {
+  const filters = buildCodingSessionCreateObservationHistoryFilters(
+    [CHANNEL_ID],
+    1000,
+  );
+  // One filter per kind. A relay returns its newest `limit` rows across every
+  // kind a filter names, and a turn now publishes two or more 44224 receipts,
+  // so a shared budget is eventually all receipts and no creates at all.
+  assert.deepEqual(
+    filters.map((filter) => filter.kinds),
+    [[44221], [44224], [44226]],
+  );
+  for (const filter of filters) {
+    assert.equal(filter.limit, 1000);
+    assert.deepEqual(filter["#h"], [CHANNEL_ID]);
+    assert.equal("authors" in filter, false);
+  }
+  // Every kind the subscription reads must also be backfilled, or a fact that
+  // arrived before this store existed is never seen at all.
+  assert.deepEqual(
+    filters.flatMap((filter) => filter.kinds),
+    buildCodingSessionCreateObservationFilter([CHANNEL_ID], 0).kinds,
+  );
 });
 
 test("founder resolves only through the create's exact genesis event id", () => {

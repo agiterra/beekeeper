@@ -67,18 +67,25 @@ test("cold reads split durable history from the one-shot lease snapshot", async 
       return [];
     },
   });
-  assert.equal(filters.length, 3);
+  assert.equal(filters.length, 4);
   assert.deepEqual(filters[0], {
     kinds: [44240],
     "#a": [PROJECT],
     limit: 500,
   });
+  // Per-generation facts and per-turn receipts read separately, each with its
+  // own budget — see the eviction test at the end of this file.
   assert.deepEqual(filters[1], {
-    kinds: [44221, 44223, 44224, 44227, 44229, 44230],
+    kinds: [44221, 44223, 44227, 44229, 44230],
     "#h": ["channel-1"],
     limit: 1000,
   });
   assert.deepEqual(filters[2], {
+    kinds: [44224],
+    "#h": ["channel-1"],
+    limit: 1000,
+  });
+  assert.deepEqual(filters[3], {
     kinds: [24223],
     "#h": ["channel-1"],
     limit: 1000,
@@ -101,7 +108,9 @@ test("cold reads sort, dedupe, and chunk explicit channels at the relay cap", as
     },
   });
   const channelFilters = filters.filter((filter) => filter["#h"]);
-  assert.equal(channelFilters.length, 4);
+  // Two chunks x (generation facts, receipts) durable reads, then one lease
+  // snapshot per chunk.
+  assert.equal(channelFilters.length, 6);
   assert.ok(channelFilters.every((filter) => filter["#h"].length <= 128));
   assert.deepEqual(channelFilters[0]["#h"].slice(0, 2), [
     "channel-000",
@@ -109,7 +118,7 @@ test("cold reads sort, dedupe, and chunk explicit channels at the relay cap", as
   ]);
   assert.deepEqual(
     channelFilters.map((filter) => filter["#h"].length),
-    [128, 1, 128, 1],
+    [128, 128, 1, 1, 128, 1],
   );
 });
 
@@ -181,5 +190,53 @@ test("events excluded by client validation are recorded, not silently dropped", 
         error.scope === "invalid-event" && error.message.includes("44223"),
     ),
     `expected an invalid-event row, got ${JSON.stringify(digest.errors)}`,
+  );
+});
+
+/**
+ * Kind 44224 stopped being one receipt per generation: a turn publishes at
+ * least `turn_queued` and `turn_started`. A relay filter returns its newest
+ * `limit` rows across *every* kind it names, so a receipt kind sharing the
+ * session budget with the 44221 commands and 44223 metadata means a busy
+ * project's proven generations fall off the end of the page and vanish from
+ * the digest behind nothing but a generic truncation note.
+ */
+test("per-turn receipt volume cannot evict the facts a session is proven from", async () => {
+  const create = { id: "create-1", kind: 44221, created_at: 1_000 };
+  const metadata = { id: "metadata-1", kind: 44223, created_at: 1_001 };
+  const pool = [
+    create,
+    metadata,
+    ...Array.from({ length: 1_200 }, (_, index) => ({
+      id: `receipt-${index}`,
+      kind: 44224,
+      created_at: 2_000 + index,
+    })),
+  ];
+  const read = new Set();
+  // A relay returns the newest `limit` rows matching the filter, exactly as
+  // `ORDER BY created_at DESC ... LIMIT` does. Nothing is folded here: this
+  // test is about what the read can still *reach*.
+  const fetchEvents = async (filter) => {
+    const kinds = new Set(filter.kinds);
+    for (const event of pool
+      .filter((event) => kinds.has(event.kind))
+      .sort((left, right) => right.created_at - left.created_at)
+      .slice(0, filter.limit ?? 0)) {
+      read.add(event.id);
+    }
+    return [];
+  };
+
+  await fetchProjectPulseDigest(PROJECT, ["channel-1"], { fetchEvents });
+  assert.equal(
+    read.has("create-1"),
+    true,
+    "the 44221 create must survive a channel full of turn receipts",
+  );
+  assert.equal(
+    read.has("metadata-1"),
+    true,
+    "the 44223 metadata must survive a channel full of turn receipts",
   );
 });
