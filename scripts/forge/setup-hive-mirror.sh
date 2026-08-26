@@ -124,12 +124,16 @@ EOF
     fi
 
     echo "== GitHub push access test =="
+    # The bare repo was cloned with --mirror; that push mode is incompatible
+    # with explicit refspecs (fatal) and would prune GitHub-only refs. The
+    # sync pushes explicit refspecs, so drop the mirror push semantics.
+    sudo -u git git -C "$MIRROR_REPO" config remote.origin.mirror false
     if ! sudo -u git git -C "$MIRROR_REPO" push --dry-run origin \
             '+refs/heads/main:refs/heads/main' 2>&1; then
         echo
-        echo "GitHub push failed — the deploy key is still read-only." >&2
-        echo "GitHub > agiterra/beekeeper > Settings > Deploy keys: give the" >&2
-        echo "'forge-mirror-beekeeper' key write access, then re-run." >&2
+        echo "GitHub push failed — the git output above is authoritative." >&2
+        echo "A 'read only' rejection means the deploy key needs write" >&2
+        echo "access: GitHub > agiterra/beekeeper > Settings > Deploy keys." >&2
         exit 1
     fi
 
