@@ -605,11 +605,14 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
 
     return (
       <article
-        className="min-w-0 text-sm leading-6 text-foreground"
+        className="min-w-0 text-base leading-6 text-foreground"
         data-role="assistant-message"
         data-testid="coding-session-assistant-message"
       >
-        <Markdown className="leading-6" content={item.text.trim() || " "} />
+        <Markdown
+          className="text-base leading-6"
+          content={item.text.trim() || " "}
+        />
       </article>
     );
   }

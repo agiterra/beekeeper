@@ -7,6 +7,7 @@
 //! Claude/Codex session record.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -835,6 +836,27 @@ impl CodingSessionContextHistoryItem {
 /// by the surrounding history item, so an authorized reader can distinguish a
 /// deliberate handoff elision from absent source data.
 pub fn sanitize_coding_session_context_content(value: &Value) -> Value {
+    sanitize_coding_session_context_content_with_workspace(value, None)
+}
+
+/// Redact a transcript item after making paths inside `workspace_root`
+/// repository-relative.
+///
+/// The root itself is never retained. `/private/checkout/desktop/src/App.tsx`
+/// becomes `desktop/src/App.tsx`, while `/private/other/secret` still reaches
+/// the ordinary host-path guard and is elided. This keeps code citations useful
+/// without publishing the machine-specific checkout location.
+pub fn sanitize_coding_session_context_content_for_workspace(
+    value: &Value,
+    workspace_root: &Path,
+) -> Value {
+    sanitize_coding_session_context_content_with_workspace(value, Some(workspace_root))
+}
+
+fn sanitize_coding_session_context_content_with_workspace(
+    value: &Value,
+    workspace_root: Option<&Path>,
+) -> Value {
     match value {
         Value::Object(object) => Value::Object(
             object
@@ -847,7 +869,10 @@ pub fn sanitize_coding_session_context_content(value: &Value) -> Value {
                             Value::String(context_elision_marker(nested))
                         }
                     } else {
-                        sanitize_coding_session_context_content(nested)
+                        sanitize_coding_session_context_content_with_workspace(
+                            nested,
+                            workspace_root,
+                        )
                     };
                     (key.clone(), value)
                 })
@@ -856,12 +881,62 @@ pub fn sanitize_coding_session_context_content(value: &Value) -> Value {
         Value::Array(values) => Value::Array(
             values
                 .iter()
-                .map(sanitize_coding_session_context_content)
+                .map(|nested| {
+                    sanitize_coding_session_context_content_with_workspace(nested, workspace_root)
+                })
                 .collect(),
         ),
-        Value::String(text) => Value::String(sanitize_coding_session_context_text(text)),
+        Value::String(text) => Value::String(match workspace_root {
+            Some(root) => sanitize_coding_session_context_text_for_workspace(text, root),
+            None => sanitize_coding_session_context_text(text),
+        }),
         _ => value.clone(),
     }
+}
+
+/// Make workspace-contained paths relative before applying the ordinary
+/// fail-closed text sanitizer.
+pub fn sanitize_coding_session_context_text_for_workspace(
+    value: &str,
+    workspace_root: &Path,
+) -> String {
+    sanitize_coding_session_context_text(&relativize_workspace_paths(value, workspace_root))
+}
+
+fn relativize_workspace_paths(value: &str, workspace_root: &Path) -> String {
+    let Some(root) = workspace_root.to_str() else {
+        return value.to_owned();
+    };
+    let root = root.trim_end_matches(['/', '\\']);
+    if root.is_empty() || root == "/" {
+        return value.to_owned();
+    }
+
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find(root) {
+        output.push_str(&rest[..index]);
+        let after = &rest[index + root.len()..];
+        let boundary_before = index == 0
+            || rest[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_ascii_alphanumeric());
+        let boundary_after = after.is_empty() || after.starts_with(['/', '\\']);
+        if boundary_before && boundary_after {
+            if let Some(relative) = after.strip_prefix('/').or_else(|| after.strip_prefix('\\')) {
+                rest = relative;
+            } else {
+                output.push('.');
+                rest = after;
+            }
+        } else {
+            output.push_str(root);
+            rest = after;
+        }
+    }
+    output.push_str(rest);
+    output
 }
 
 /// Redact an unsafe host-private or credential-bearing prose field while

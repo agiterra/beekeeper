@@ -462,6 +462,33 @@ fn a_stock_interpreter_survives_but_the_host_layout_around_it_does_not() {
 }
 
 #[test]
+fn workspace_paths_become_relative_but_neighboring_host_paths_stay_private() {
+    let root = std::path::Path::new("/Users/brian/Projects/beekeeper");
+    let sanitized = sanitize_coding_session_context_text_for_workspace(
+        "See `/Users/brian/Projects/beekeeper/desktop/src/App.tsx:42` and /Users/brian/Secrets/token.txt",
+        root,
+    );
+
+    assert!(
+        sanitized.contains("`desktop/src/App.tsx:42`"),
+        "{sanitized}"
+    );
+    assert!(!sanitized.contains("/Users/brian/Projects/beekeeper"));
+    assert!(!sanitized.contains("/Users/brian/Secrets"));
+    assert!(sanitized.contains("[elided private context: "));
+}
+
+#[test]
+fn workspace_prefix_lookalikes_are_not_relativized() {
+    let sanitized = sanitize_coding_session_context_text_for_workspace(
+        "/Users/brian/Projects/beekeeper-old/private.txt",
+        std::path::Path::new("/Users/brian/Projects/beekeeper"),
+    );
+    assert!(sanitized.starts_with("[elided private context: "));
+    assert!(!sanitized.contains("-old/private.txt"));
+}
+
+#[test]
 fn the_exemption_is_exact_and_does_not_widen_the_hole() {
     for private in [
         "/Users/brian/Projects/beekeeper",

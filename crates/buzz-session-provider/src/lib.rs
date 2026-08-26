@@ -2390,6 +2390,10 @@ impl Provider {
         item: serde_json::Value,
         priority: Priority,
     ) -> anyhow::Result<Option<u64>> {
+        let workspace_root = self
+            .state
+            .session(&target.session_id)
+            .map(|record| record.cwd.clone());
         let Some(event_seq) = self.state.allocate_seq(&target.session_id)? else {
             return Ok(None);
         };
@@ -2406,7 +2410,15 @@ impl Provider {
             serde_json::Value::Null,
         ))?
         .len();
-        let item = transcript::fit_item(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES);
+        let item = match workspace_root {
+            Some(root) => transcript::fit_item_for_workspace(
+                item,
+                overhead,
+                MAX_TRANSCRIPT_CONTENT_BYTES,
+                &root,
+            ),
+            None => transcript::fit_item(item, overhead, MAX_TRANSCRIPT_CONTENT_BYTES),
+        };
         let envelope = TranscriptEnvelope::new(target, event_seq, timestamp, turn_id, item);
         let content = serde_json::to_string(&envelope)?;
         let event = build_coding_session_transcript_item(channel_id, target, event_seq, &content)?

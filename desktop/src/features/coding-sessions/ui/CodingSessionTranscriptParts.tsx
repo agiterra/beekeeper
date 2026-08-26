@@ -400,7 +400,7 @@ export function CodingSessionTurnCompletion({
   return (
     <div
       className={cn(
-        "flex items-center gap-1.5 pt-0.5 text-xs text-muted-foreground",
+        "mt-2 flex items-center gap-1.5 border-t border-border/50 pt-3 text-sm text-muted-foreground",
         completion.state === "interrupted" &&
           "text-amber-600 dark:text-amber-400",
         completion.state === "failed" && "text-destructive",
