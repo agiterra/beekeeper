@@ -124,6 +124,12 @@ pub struct Config {
     pub max_turn_duration: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` transcript items.
     pub include_thoughts: bool,
+    /// Ask the adapter to forward raw SDK messages to the local log.
+    ///
+    /// Off by default. This is a debugging instrument, not a setting: the
+    /// frames are the adapter's unredacted internals and they are wanted for
+    /// one investigation at a time. See `BUZZ_CSP_EMIT_RAW_SDK_FRAMES`.
+    pub emit_raw_sdk_frames: bool,
     /// Age past which an unseen command is ignored rather than acted on.
     pub command_horizon: Duration,
 }
@@ -211,6 +217,7 @@ impl Config {
             DEFAULT_COMMAND_HORIZON_SECS,
         )?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
+        let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
 
         Ok(Self {
             keys,
@@ -227,6 +234,7 @@ impl Config {
             max_turn_duration,
             answer_stall_timeout,
             include_thoughts,
+            emit_raw_sdk_frames,
             command_horizon,
         })
     }
@@ -469,6 +477,19 @@ mod tests {
     /// setting it at or above that ceiling removes the silence guard entirely
     /// while looking like it raised it. The harness has always rejected this
     /// pair; this side accepted it.
+    /// Raw frames are a debugging instrument, so the default has to be off —
+    /// a switch that defaults on stops being a switch.
+    #[test]
+    fn raw_sdk_frames_are_off_until_asked_for() {
+        let mut vars = minimal();
+        assert!(
+            !load(&vars).expect("config").emit_raw_sdk_frames,
+            "a debugging instrument that defaults on is not a switch"
+        );
+        vars.insert("BUZZ_CSP_EMIT_RAW_SDK_FRAMES", "true".to_owned());
+        assert!(load(&vars).expect("config").emit_raw_sdk_frames);
+    }
+
     #[test]
     fn an_idle_budget_that_could_never_fire_is_refused() {
         let mut vars = minimal();

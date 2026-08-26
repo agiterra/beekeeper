@@ -126,6 +126,8 @@ pub struct CreateRequest {
     /// Budget for silence after the turn has finished answering, or `None` when
     /// disabled.
     pub answer_stall_timeout: Option<Duration>,
+    /// Ask the adapter to forward raw SDK messages to the local log.
+    pub emit_raw_sdk_frames: bool,
     /// Per-turn wall-clock ceiling.
     pub max_turn_duration: Duration,
     /// Idle window before the subprocess is reclaimed.
@@ -581,6 +583,9 @@ async fn start_agent(
     client.set_observer(Some(observer.clone()), 0);
     client.set_observer_context(context_for(Some(request.channel_id), None, None));
     client.set_answer_stall_timeout(request.answer_stall_timeout);
+    // Before session/new: the adapter reads the flag off that request's
+    // `_meta` exactly once.
+    client.set_emit_raw_sdk_frames(request.emit_raw_sdk_frames);
 
     if let Err(failure) = client
         .initialize()
@@ -1630,6 +1635,30 @@ while IFS= read -r line; do
 done
 "#;
 
+    /// Streams a raw SDK frame alongside a normal answer.
+    ///
+    /// The frame carries a marker string that must never appear in any
+    /// published item: these frames are the adapter's unredacted internals.
+    pub(crate) const RAW_FRAME_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"init","origin":{"kind":"subagent"},"cwd":"/Users/secret/private-path","apiKey":"HOST_ONLY_MARKER"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answered"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
     /// Advertises and accepts ACP `session/resume` for a saved cursor.
     pub(crate) const RESUMABLE_AGENT: &str = r#"
 while IFS= read -r line; do
@@ -1803,6 +1832,7 @@ done
             agent_env: Vec::new(),
             idle_timeout: Duration::from_secs(5),
             answer_stall_timeout: None,
+            emit_raw_sdk_frames: false,
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
@@ -2139,8 +2169,61 @@ done
         manager.shutdown("s1");
     }
 
+    /// Raw SDK frames are host-private and must stay that way.
+    ///
+    /// The whole reason this switch exists is to see the adapter's internals,
+    /// which is exactly the material `transcript.rs` exists to keep out of
+    /// signed events. They go to the local log; if one ever reaches a
+    /// published item this fails, and it should.
+    #[tokio::test]
+    async fn a_raw_sdk_frame_never_reaches_a_published_item() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "raw-frame-agent", RAW_FRAME_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.emit_raw_sdk_frames = true;
+        manager.create(create).await.expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: None,
+            })
+            .expect("deliver");
+
+        let mut items = Vec::new();
+        loop {
+            match next_event(&mut rx).await {
+                SessionEvent::TranscriptItems { items: batch, .. } => items.extend(batch),
+                SessionEvent::TurnFinished { .. } => break,
+                _ => {}
+            }
+        }
+        let published = serde_json::to_string(&items).expect("serialize");
+        for leaked in [
+            "HOST_ONLY_MARKER",
+            "/Users/secret/private-path",
+            "sdkMessage",
+        ] {
+            assert!(
+                !published.contains(leaked),
+                "{leaked:?} reached a published item: {published}"
+            );
+        }
+        // The turn still worked — the guarantee is that the frames are
+        // invisible, not that they break the session.
+        assert!(
+            published.contains("answered"),
+            "the agent's own answer must still publish: {published}"
+        );
+        manager.shutdown("s1");
+    }
+
     /// The row is built from an unbounded tally, so it has to be trimmed to
-    /// what the renderer shows rather than trusted to fit.
+    /// what the renderer shows rather than trusted to fit.""
     #[test]
     fn an_over_long_wire_row_is_cut_on_a_character_boundary() {
         let row = format!("turn_wire: {}", "é".repeat(400));
