@@ -9,6 +9,7 @@ import {
 test("member gate is fail-closed while the composer remains reachable", () => {
   assert.deepEqual(
     getCodingSessionComposerState({
+      canSteer: false,
       isMember: false,
       isWorking: false,
       text: "Steer",
@@ -26,6 +27,7 @@ test("member gate is fail-closed while the composer remains reachable", () => {
 test("a running turn offers Steer beside the interrupt, and Enter steers", () => {
   assert.equal(
     getCodingSessionComposerState({
+      canSteer: true,
       isMember: true,
       isWorking: true,
       text: "Steer",
@@ -34,6 +36,7 @@ test("a running turn offers Steer beside the interrupt, and Enter steers", () =>
   );
   assert.equal(
     getCodingSessionComposerState({
+      canSteer: true,
       isMember: true,
       isWorking: true,
       text: "Steer",
@@ -55,6 +58,7 @@ test("a running turn offers Steer beside the interrupt, and Enter steers", () =>
 // turn-level control and the terminal one both read "Stop", side by side.
 test("only the terminal control is called Stop", () => {
   const working = getCodingSessionComposerState({
+    canSteer: true,
     isMember: true,
     isWorking: true,
     text: "go",
@@ -95,5 +99,21 @@ test("a non-steering execution is not offered a steer it cannot get", () => {
       text: "go",
     }).sendLabel,
     "Steer",
+  );
+});
+
+test("a caller that says nothing about steering does not get a Steer button", () => {
+  // Fail-safe, not fail-open. `canSteer` is this execution's own capability,
+  // learned from its 44223 metadata; a call site that forgets to pass it used
+  // to get "Steer" and a `deliver: "steer"` command against a provider that
+  // cannot steer — a control that degrades one hundred per cent of the time,
+  // which is exactly what the delivery classes exist to prevent.
+  assert.equal(
+    getCodingSessionComposerState({
+      isMember: true,
+      isWorking: true,
+      text: "Steer",
+    }).sendLabel,
+    "Send next",
   );
 });

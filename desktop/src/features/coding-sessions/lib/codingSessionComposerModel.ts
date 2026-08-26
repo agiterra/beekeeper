@@ -1,6 +1,6 @@
 /** UI model for the provider-neutral coding-session composer. */
 export function getCodingSessionComposerState({
-  canSteer = true,
+  canSteer,
   isMember,
   isWorking,
   text,
@@ -10,8 +10,13 @@ export function getCodingSessionComposerState({
    * the promise the button makes, so an execution that cannot steer must not
    * offer to: its mid-turn send reaches the provider now and runs at the next
    * turn boundary, which is "Send next", not "Steer".
+   *
+   * Required, and it used to default to `true`. A call site that forgot it got
+   * a Steer button and a `deliver: "steer"` command aimed at a provider whose
+   * `threadSteer` is false — a control that is downgraded every single time it
+   * is pressed. The safe default for a capability is that it is absent.
    */
-  canSteer?: boolean;
+  canSteer: boolean;
   isMember: boolean;
   isWorking: boolean;
   text: string;
