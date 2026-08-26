@@ -2309,6 +2309,17 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   and `git archive`s the local bare mirror. Pointing Woodpecker at the relay is
   not a settings change: it needs OAuth login, a repo/branch/file API, webhook
   delivery and commit statuses, and the relay has none of the four.
+- **The relay ships before the desktop for coding-session turns (crew S2).**
+  A `kind:44220` `thread.turn.start` now carries an optional `deliver` key, the
+  desktop builder always writes it
+  (`desktop/src/features/coding-sessions/lib/codingSessionCommand.ts`), and the
+  relay validates 44220 content with `deny_unknown_fields`
+  (`crates/buzz-relay/src/handlers/ingest.rs`,
+  `crates/buzz-core/src/coding_session_command.rs`). An upgraded desktop
+  against an older relay therefore has **every** turn rejected, and NIP-CSC
+  forbids the kind-9 fallback that would have hidden it. Deploy the relay
+  first, then the desktop; the reverse order is a total turn-sending outage for
+  that community. See `docs/nips/NIP-CSC.md` § Deploying the `deliver` key.
 - **`nightly.yml` in this repo has never run.** The only Woodpecker cron row is
   `id=1, repo_id=1, branch=integrated` — the vanilla relay, on a dead branch.
   Nothing schedules the nightly for `repo_id=2`.
