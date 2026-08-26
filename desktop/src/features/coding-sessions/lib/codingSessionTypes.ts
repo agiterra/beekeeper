@@ -1,4 +1,4 @@
-import type { TranscriptItem } from "@/features/agents/ui/agentSessionTypes";
+import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import type { CodingSessionLifecycleResolution } from "./codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaCreateObservation } from "./codingSessionUmbrellaModel";
@@ -42,7 +42,7 @@ export type CodingSessionCatalogRecord = {
    * says nothing about which stream is fresher.
    */
   statusAt: number | null;
-  transcript: TranscriptItem[];
+  transcript: CodingSessionProjectedTranscriptItem[];
   conflictCount: number;
   commandTarget: CodingSessionCommandTarget | null;
   projectRef: string | null;

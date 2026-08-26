@@ -54,7 +54,10 @@ import {
   MAX_CODING_SESSION_LIFECYCLE_CONTENT_BYTES,
   MAX_CODING_SESSION_LIFECYCLE_IDENTIFIER_BYTES,
 } from "./codingSessionLifecycleCommand";
-import { classifyTrustedCodingSessionIngressEvent } from "./codingSessionTrustedIngress";
+import {
+  classifyTrustedCodingSessionIngressEvent,
+  isCodingSessionTurnReceipt,
+} from "./codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaCreateObservation } from "./codingSessionUmbrellaModel";
 import {
   boundedNonempty,
@@ -407,6 +410,11 @@ export class CodingSessionCreateObservationStore {
       );
       this.dispositions.set(event.id, classified.kind);
       if (classified.kind !== "receipt") continue;
+      // A turn receipt names the execution it was addressed to, but it is not
+      // an answer to a create: it neither creates, confirms, nor ends a
+      // generation. Joining one to a create here would let a refused turn
+      // decide which generation a session opened into.
+      if (isCodingSessionTurnReceipt(classified.receipt)) continue;
       const target = classified.receipt.session;
       if (!target) continue;
       const key = commandKey(

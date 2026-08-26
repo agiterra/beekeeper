@@ -24,6 +24,7 @@ import { buildCodingSessionCreateEvent } from "./codingSessionLifecycleCommand.t
 import {
   CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+  codingSessionReceiptSemanticKey,
   lifecycleReceiptSemanticKey,
 } from "./codingSessionTrustedIngress.ts";
 import { groupCodingSessionCatalog } from "./codingSessionUmbrellaModel.ts";
@@ -149,6 +150,44 @@ function receiptEvent({
         status: "created",
         session: target,
         error: null,
+      }),
+    },
+    secret,
+  );
+}
+
+/**
+ * A per-stage turn receipt for the same command id a create used. Nothing on
+ * the wire stops one, and it names a real target, so the fold has to refuse it
+ * on its status rather than on its shape.
+ */
+function turnReceiptEvent({
+  secret = PROVIDER_SECRET,
+  commandId = "csl-1",
+  status = "turn_refused",
+  target = CLAUDE_TARGET,
+  createdAt = 1_800_000_006,
+  channelId = CHANNEL_ID,
+} = {}) {
+  return finalizeEvent(
+    {
+      kind: KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+      created_at: createdAt,
+      tags: [
+        ["h", channelId],
+        ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+        ["csl-command", commandId],
+        ["csl-key", codingSessionReceiptSemanticKey(commandId, status)],
+      ],
+      content: JSON.stringify({
+        schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+        commandId,
+        status,
+        session: target,
+        error:
+          status === "turn_refused"
+            ? { code: "STALE_GENERATION", message: "that generation moved on" }
+            : null,
       }),
     },
     secret,
@@ -507,4 +546,37 @@ test("observations are scoped to the channels the caller asked for", () => {
   );
   assert.equal(store.snapshot(["channel-2"]).length, 1);
   assert.deepEqual(store.snapshot([CHANNEL_ID]), []);
+});
+
+test("a turn receipt never joins a create to an execution", () => {
+  // A turn is an event inside a generation, never a change to one. If a
+  // `turn_queued` could join, a create the provider never answered would
+  // still bind an execution the moment somebody sent a turn.
+  assert.deepEqual(
+    ingest([
+      createEvent(),
+      turnReceiptEvent({ status: "turn_queued" }),
+    ]).snapshot([CHANNEL_ID]),
+    [],
+  );
+  assert.deepEqual(
+    ingest([
+      createEvent(),
+      turnReceiptEvent({ status: "turn_refused" }),
+    ]).snapshot([CHANNEL_ID]),
+    [],
+  );
+});
+
+test("a turn receipt does not dispute the create's real answer", () => {
+  // Both receipts name the same command and the same target; only one of them
+  // is an answer to the create. Reading both would make the join ambiguous
+  // and silently drop a session that was created perfectly well.
+  const observations = ingest([
+    createEvent(),
+    receiptEvent(),
+    turnReceiptEvent({ status: "turn_refused" }),
+  ]).snapshot([CHANNEL_ID]);
+  assert.equal(observations.length, 1);
+  assert.deepEqual(observations[0].target, CLAUDE_TARGET);
 });

@@ -8,10 +8,17 @@
  * published, verified, and dropped: the person's message simply vanishes.
  *
  * The provider's silences are deliberate and must not be dressed up as
- * failures. A turn that ran publishes no receipt at all — its transcript items
- * are the acknowledgement — and a turn addressed to a session some other
- * provider owns is ignored without a word, because every provider on the
- * channel sees every command. So the wait is short, and it expires in silence.
+ * failures. A turn addressed to a session some other provider owns is ignored
+ * without a word, because every provider on the channel sees every command. So
+ * the wait is short, and it expires in silence.
+ *
+ * What is *not* silence any more is everything else about a turn's fate. A
+ * provider on the per-stage receipt contract signs `turn_queued` when it takes
+ * the turn into its mailbox, `turn_started` when the turn begins,
+ * `turn_dropped` when its queue overflowed, and `turn_refused` for a decision
+ * about the sender or the target. Refused and dropped are different words for
+ * different facts and this module keeps them apart: nobody was refused when a
+ * queue filled up.
  */
 import type { CodingSessionCommandRefusal } from "./codingSessionTrustedIngress";
 
@@ -35,6 +42,10 @@ export const MAX_WATCHED_CODING_SESSION_TURNS = 4;
 export const CODING_SESSION_TURN_REFUSED_MESSAGE =
   "The provider refused this turn.";
 
+/** Fallback when a drop receipt carries no readable message. */
+export const CODING_SESSION_TURN_DROPPED_MESSAGE =
+  "The provider's turn queue was full, so this turn was dropped.";
+
 /** One sent turn, held only until it is refused or the wait expires. */
 export type WatchedCodingSessionTurn = {
   commandId: string;
@@ -47,13 +58,27 @@ export type WatchedCodingSessionTurn = {
   draft: string;
 };
 
-/** Name the refusal for the composer's error line, in the provider's words. */
+/**
+ * Name the outcome for the composer's error line, in the provider's words.
+ *
+ * The provider's own `code` is shown alongside its sentence rather than
+ * translated away. The codes are few and specific — `UNAUTHORIZED_OPERATOR`,
+ * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`, `QUEUE_FULL` — and a
+ * person comparing what they see to what `bee sessions transcript` prints, or
+ * quoting it to whoever runs the provider, needs the same word both places.
+ */
 export function formatCodingSessionTurnRefusal(
   refusal: CodingSessionCommandRefusal,
 ): string {
-  return `Turn refused: ${
-    refusal.message.trim() || CODING_SESSION_TURN_REFUSED_MESSAGE
-  }`;
+  const dropped = refusal.outcome === "dropped";
+  const label = dropped ? "Turn dropped" : "Turn refused";
+  const message =
+    refusal.message.trim() ||
+    (dropped
+      ? CODING_SESSION_TURN_DROPPED_MESSAGE
+      : CODING_SESSION_TURN_REFUSED_MESSAGE);
+  const code = refusal.code.trim();
+  return code ? `${label} (${code}): ${message}` : `${label}: ${message}`;
 }
 
 /** Add one sent turn to the bounded watch set, dropping the oldest first. */

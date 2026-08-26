@@ -28,6 +28,7 @@ import {
 } from "./codingSessionIngressAuthority";
 import {
   type CodingSessionCommandRefusal,
+  type CodingSessionTurnProgress,
   type CodingSessionGenerationScope,
   type CodingSessionLifecycleResolution,
   isExactProviderAuthorityPubkey,
@@ -76,6 +77,13 @@ export type TrustedCodingSessionIngressHookSnapshot =
      * nothing at all.
      */
     turnRefusal: CodingSessionCommandRefusal | null;
+    /**
+     * How far the same `commandId` has got, from the provider's own per-stage
+     * receipts. `null` means it has published none — either the turn is still
+     * in flight or this provider predates the per-stage contract — and every
+     * surface reading it must say nothing rather than infer a stage.
+     */
+    turnProgress: CodingSessionTurnProgress | null;
     /**
      * The verified raw events behind one generation, for pop-out bootstrap.
      *
@@ -159,6 +167,7 @@ function emptySnapshot(
   scopeIdentity: string,
   lifecycle: CodingSessionLifecycleResolution | null,
   turnRefusal: CodingSessionCommandRefusal | null = null,
+  turnProgress: CodingSessionTurnProgress | null = null,
 ): TrustedCodingSessionIngressHookSnapshot {
   return {
     authorityIdentity,
@@ -173,6 +182,7 @@ function emptySnapshot(
     authorityErrorMessage: null,
     lifecycle,
     turnRefusal,
+    turnProgress,
     retainedRawEvents: NO_RETAINED_RAW_EVENTS,
     lifecycleFor: NO_LIFECYCLE_RESOLUTION,
   };
@@ -370,6 +380,16 @@ export function useTrustedCodingSessionIngress(
             providerAuthorityPubkey,
           )
         : null;
+    const resolveTurnProgress = (): CodingSessionTurnProgress | null =>
+      commandId &&
+      stableChannelIds.length === 1 &&
+      isExactProviderAuthorityPubkey(providerAuthorityPubkey)
+        ? store.resolveTurnProgress(
+            stableChannelIds[0],
+            commandId,
+            providerAuthorityPubkey,
+          )
+        : null;
     if (isConfigLoading) {
       setSnapshot({
         ...emptySnapshot(
@@ -377,6 +397,7 @@ export function useTrustedCodingSessionIngress(
           requestIdentity,
           resolveLifecycle(),
           resolveTurnRefusal(),
+          resolveTurnProgress(),
         ),
         isLoading: true,
       });
@@ -389,6 +410,7 @@ export function useTrustedCodingSessionIngress(
           requestIdentity,
           resolveLifecycle(),
           resolveTurnRefusal(),
+          resolveTurnProgress(),
         ),
         errorMessage: authority.errorMessage,
         authorityErrorMessage: authority.errorMessage,
@@ -402,6 +424,7 @@ export function useTrustedCodingSessionIngress(
           requestIdentity,
           resolveLifecycle(),
           resolveTurnRefusal(),
+          resolveTurnProgress(),
         ),
       );
       return;
@@ -451,6 +474,7 @@ export function useTrustedCodingSessionIngress(
         authorityErrorMessage: null,
         lifecycle: resolveLifecycle(),
         turnRefusal: resolveTurnRefusal(),
+        turnProgress: resolveTurnProgress(),
         retainedRawEvents: (scope) => store.retainedRawEvents(scope),
         lifecycleFor: (forChannelId, forCommandId, forAuthorityPubkey) =>
           isExactProviderAuthorityPubkey(forAuthorityPubkey)

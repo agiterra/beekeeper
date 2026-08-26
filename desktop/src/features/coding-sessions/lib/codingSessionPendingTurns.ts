@@ -38,6 +38,12 @@ export type PendingCodingSessionTurn = {
   recordedAt: number;
   /** Set once the relay has accepted the command. */
   published: boolean;
+  /**
+   * Set once the provider's own signed `turn_queued` receipt names this
+   * command. The turn is in the provider's mailbox behind whatever it is
+   * already doing — accepted, not started, and certainly not "thinking".
+   */
+  queuedByProvider?: boolean;
 };
 
 /**
@@ -130,6 +136,34 @@ export function markPendingCodingSessionTurnPublished(
   notify();
 }
 
+/**
+ * Record the provider's signed `turn_queued` for a turn this client sent.
+ *
+ * Kept separate from `published`: the relay accepting the command and the
+ * provider accepting the turn are two different facts, and the row says which
+ * one it has.
+ */
+export function markPendingCodingSessionTurnQueued(
+  channelId: string,
+  commandId: string,
+): void {
+  const key = pendingCodingSessionTurnKey({ channelId, commandId });
+  let changed = false;
+  const next = pendingTurns.map((entry) => {
+    if (
+      pendingCodingSessionTurnKey(entry) !== key ||
+      entry.queuedByProvider === true
+    ) {
+      return entry;
+    }
+    changed = true;
+    return { ...entry, published: true, queuedByProvider: true };
+  });
+  if (!changed) return;
+  pendingTurns = next;
+  notify();
+}
+
 /** Drop the given records — echoed by the provider, refused, or expired. */
 export function clearPendingCodingSessionTurns(keys: readonly string[]): void {
   if (keys.length === 0) return;
@@ -152,10 +186,61 @@ export function forgetPendingCodingSessionTurn(
   ]);
 }
 
+/**
+ * How many text-only settlements are remembered per community.
+ *
+ * The disclosure is per message and only matters while that message is on
+ * screen, so this is small on purpose — it exists to keep a long session from
+ * accumulating an unbounded set.
+ */
+export const MAX_TEXT_SETTLED_CODING_SESSION_ECHOES = 64;
+
+const NO_TEXT_SETTLED_ECHOES: ReadonlySet<string> = new Set();
+let textSettledEchoIds: ReadonlySet<string> = NO_TEXT_SETTLED_ECHOES;
+
+/**
+ * Remember which verified echoes were matched to a sent turn by their words
+ * alone, so the transcript can say so on the message itself.
+ *
+ * This is the honesty half of the text fallback. A row settled by command id
+ * is a fact the provider stated; a row settled by text is this client's best
+ * guess about which of possibly identical messages it is looking at, and the
+ * message it retired should not pretend otherwise.
+ */
+export function noteTextSettledCodingSessionEchoes(
+  echoIds: readonly string[],
+): void {
+  const additions = echoIds.filter((id) => !textSettledEchoIds.has(id));
+  if (additions.length === 0) return;
+  const next = [...textSettledEchoIds, ...additions];
+  textSettledEchoIds = new Set(
+    next.slice(
+      Math.max(0, next.length - MAX_TEXT_SETTLED_CODING_SESSION_ECHOES),
+    ),
+  );
+  notify();
+}
+
+/** The echo ids settled by text, for tests and diagnostics. */
+export function readTextSettledCodingSessionEchoes(): ReadonlySet<string> {
+  return textSettledEchoIds;
+}
+
+/** The echo ids settled by text, as a stable subscription. */
+export function useTextSettledCodingSessionEchoes(): ReadonlySet<string> {
+  return React.useSyncExternalStore(
+    subscribe,
+    readTextSettledCodingSessionEchoes,
+    readTextSettledCodingSessionEchoes,
+  );
+}
+
 /** Community switch teardown — see `resetCommunityState()`. */
 export function resetPendingCodingSessionTurns(): void {
-  if (pendingTurns.length === 0) return;
+  const hadTextSettled = textSettledEchoIds.size > 0;
+  if (pendingTurns.length === 0 && !hadTextSettled) return;
   pendingTurns = [];
+  textSettledEchoIds = NO_TEXT_SETTLED_ECHOES;
   notify();
 }
 
@@ -183,14 +268,26 @@ export function usePendingCodingSessionTurns(): readonly PendingCodingSessionTur
  * Structural so this module stays free of the renderer's types.
  */
 export type PendingCodingSessionTurnEcho = {
+  /** The projected item's own id, used to disclose a text-only settlement. */
+  id?: string;
   type?: string;
   role?: string;
   text?: string;
   operatorPubkey?: string | null;
+  /**
+   * The 44220 command id the provider stamped on its echo, when it stamps
+   * one. This is the join; the text match below is only what is left when a
+   * provider predates the field.
+   */
+  commandId?: string;
 };
 
 /** What a pending row should say about itself right now. */
-export type PendingCodingSessionTurnState = "sending" | "waiting" | "stalled";
+export type PendingCodingSessionTurnState =
+  | "sending"
+  | "queued"
+  | "waiting"
+  | "stalled";
 
 /** Classify a pending turn by what has actually happened to it. */
 export function pendingCodingSessionTurnState(
@@ -198,20 +295,49 @@ export function pendingCodingSessionTurnState(
   now: number,
 ): PendingCodingSessionTurnState {
   if (!pending.published) return "sending";
+  // A signed `turn_queued` outranks the stall clock, because it answers the
+  // exact question the stall label exists to raise: something did pick this
+  // turn up. It is waiting behind other work, and saying so beats both
+  // silence and "not picked up yet".
+  if (pending.queuedByProvider === true) return "queued";
   return now - pending.recordedAt > PENDING_CODING_SESSION_TURN_STALL_MS
     ? "stalled"
     : "waiting";
 }
 
+/** How a pending row was retired, for callers that must disclose the join. */
+export type PendingCodingSessionTurnSettlement = {
+  key: string;
+  commandId: string;
+  /**
+   * `"commandId"` — the provider named the command this echo answers.
+   * `"text"` — it did not, and the words were the only thing left to match on.
+   */
+  by: "commandId" | "text";
+  /** The echo's own item id, when it had one. */
+  echoId?: string;
+};
+
 /**
  * Decide which pending turns a surface should still show for one execution.
  *
- * A pending turn is retired when the provider's verified prompt echo carrying
- * the same text appears in that execution's transcript, or when its TTL runs
- * out. Matching is on the published text plus, when both sides know it, the
- * operator: the provider's `user_prompt` item carries no command id, so text is
- * the only join available, and two different people sending the same words to
- * the same execution must not retire each other's rows.
+ * A pending turn is retired when the provider's verified prompt echo for it
+ * appears in that execution's transcript, or when its TTL runs out. There are
+ * two joins and they are not equal:
+ *
+ * 1. **The command id.** A provider that stamps `commandId` on its
+ *    `user_prompt` has told us exactly which sent turn this echo answers.
+ *    Sending the same sentence twice settles each row against its own echo,
+ *    in whatever order they arrive.
+ * 2. **The text, as a fallback only.** A provider from before that field
+ *    exists says nothing about which command it is echoing, so the words plus
+ *    the operator are all there is. That is a *guess*: it cannot tell two
+ *    identical sentences apart except by arrival order, and a settlement made
+ *    this way is reported back in {@link PendingCodingSessionTurnSettlement}
+ *    so the surface can say the row was matched by text rather than named.
+ *
+ * An echo that carries a command id is never text-matched — a different
+ * command's echo must not retire this row just because the words agree.
  *
  * Pure — the caller clears `consumedKeys` in an effect.
  */
@@ -220,33 +346,79 @@ export function resolvePendingCodingSessionTurns(
   scope: { channelId: string; targetKey: string },
   echoes: readonly PendingCodingSessionTurnEcho[],
   now: number,
-): { visible: PendingCodingSessionTurn[]; consumedKeys: string[] } {
+): {
+  visible: PendingCodingSessionTurn[];
+  consumedKeys: string[];
+  settlements: PendingCodingSessionTurnSettlement[];
+} {
   const mine = pending.filter(
     (entry) =>
       entry.channelId === scope.channelId &&
       entry.targetKey === scope.targetKey,
   );
-  if (mine.length === 0) return { visible: [], consumedKeys: [] };
+  if (mine.length === 0) {
+    return { visible: [], consumedKeys: [], settlements: [] };
+  }
 
   // One echo retires one pending turn: sending the same words twice on purpose
   // is a real thing people do, and the second row must survive the first echo.
   const unmatched = echoes.filter(isPromptEcho);
-  const visible: PendingCodingSessionTurn[] = [];
   const consumedKeys: string[] = [];
+  const settlements: PendingCodingSessionTurnSettlement[] = [];
+  const expired = new Set<string>();
+  const settled = new Set<string>();
+
   for (const entry of mine) {
     if (now - entry.recordedAt > PENDING_CODING_SESSION_TURN_TTL_MS) {
-      consumedKeys.push(pendingCodingSessionTurnKey(entry));
-      continue;
+      const key = pendingCodingSessionTurnKey(entry);
+      expired.add(key);
+      consumedKeys.push(key);
     }
-    const index = unmatched.findIndex((echo) => echoMatches(echo, entry));
-    if (index >= 0) {
-      unmatched.splice(index, 1);
-      consumedKeys.push(pendingCodingSessionTurnKey(entry));
-      continue;
-    }
-    visible.push(entry);
   }
-  return { visible, consumedKeys };
+
+  // Pass one: named joins, for every row, before any guess is allowed to
+  // consume an echo a later row could have claimed by name.
+  for (const entry of mine) {
+    const key = pendingCodingSessionTurnKey(entry);
+    if (expired.has(key)) continue;
+    const index = unmatched.findIndex(
+      (echo) =>
+        echo.commandId !== undefined && echo.commandId === entry.commandId,
+    );
+    if (index < 0) continue;
+    const [echo] = unmatched.splice(index, 1);
+    settled.add(key);
+    consumedKeys.push(key);
+    settlements.push({
+      key,
+      commandId: entry.commandId,
+      by: "commandId",
+      ...(typeof echo.id === "string" ? { echoId: echo.id } : {}),
+    });
+  }
+
+  // Pass two: the fallback, over echoes that named no command at all.
+  const visible: PendingCodingSessionTurn[] = [];
+  for (const entry of mine) {
+    const key = pendingCodingSessionTurnKey(entry);
+    if (expired.has(key) || settled.has(key)) continue;
+    const index = unmatched.findIndex(
+      (echo) => echo.commandId === undefined && echoMatches(echo, entry),
+    );
+    if (index < 0) {
+      visible.push(entry);
+      continue;
+    }
+    const [echo] = unmatched.splice(index, 1);
+    consumedKeys.push(key);
+    settlements.push({
+      key,
+      commandId: entry.commandId,
+      by: "text",
+      ...(typeof echo.id === "string" ? { echoId: echo.id } : {}),
+    });
+  }
+  return { visible, consumedKeys, settlements };
 }
 
 function isPromptEcho(echo: PendingCodingSessionTurnEcho): boolean {

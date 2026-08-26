@@ -30,6 +30,8 @@ export const CODING_SESSION_METADATA_TAG_VERSION = "csm1-1" as const;
 const MAX_RECEIPT_CONTENT_BYTES = 16 * 1024;
 const MAX_METADATA_CONTENT_BYTES = 32 * 1024;
 const MAX_RECEIPT_COMMAND_ID_BYTES = 256;
+/** A provider's own turn id, bounded exactly like the command id it answers. */
+const MAX_RECEIPT_TURN_ID_BYTES = 256;
 const MAX_ERROR_CODE_BYTES = 256;
 const MAX_REFERENCE_BYTES = 2 * 1024;
 const MAX_LABEL_BYTES = 2 * 1024;
@@ -76,7 +78,83 @@ export type CodingSessionLifecycleReceipt =
       status: "resumed_without_context";
       session: CodingSessionCommandTarget;
       error: { code: "CONTEXT_NOT_RECOVERED"; message: string };
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "turn_queued";
+      session: CodingSessionCommandTarget;
+      error: null;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "turn_started";
+      session: CodingSessionCommandTarget;
+      error: null;
+      /** The provider's own id for the turn that just began. */
+      turnId: string;
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "turn_dropped" | "turn_refused";
+      session: CodingSessionCommandTarget;
+      error: { code: string; message: string };
     };
+
+/** Every status a 44224 can carry, lifecycle and turn alike. */
+export type CodingSessionLifecycleReceiptStatus =
+  CodingSessionLifecycleReceipt["status"];
+
+/**
+ * The four per-stage turn statuses.
+ *
+ * A turn receipt reports what happened to one 44220 `thread.turn.start`; it
+ * never creates, confirms, or ends a generation, which is why every fold that
+ * reads a receipt to decide a generation's state must skip these.
+ *
+ * `turn_queued` and `turn_started` carry `error: null`; `turn_dropped`
+ * (`QUEUE_FULL`) and `turn_refused` (`UNAUTHORIZED_OPERATOR`,
+ * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`) carry a
+ * `{code, message}`. The code is read as a bounded string rather than pinned
+ * to that list, exactly as the lifecycle `failed` status already is: a
+ * provider that grows a new reason must not be decoded as malformed.
+ */
+export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
+  "turn_queued",
+  "turn_started",
+  "turn_dropped",
+  "turn_refused",
+] as const;
+
+/** A per-stage turn status, as opposed to a generation lifecycle status. */
+export type CodingSessionTurnReceiptStatus =
+  (typeof CODING_SESSION_TURN_RECEIPT_STATUSES)[number];
+
+const TURN_RECEIPT_STATUSES: ReadonlySet<string> = new Set(
+  CODING_SESSION_TURN_RECEIPT_STATUSES,
+);
+
+/** True for the four turn statuses, false for every lifecycle status. */
+export function isCodingSessionTurnReceiptStatus(
+  status: string,
+): status is CodingSessionTurnReceiptStatus {
+  return TURN_RECEIPT_STATUSES.has(status);
+}
+
+/** A receipt that reports one turn stage rather than a generation change. */
+export type CodingSessionTurnReceipt = Extract<
+  CodingSessionLifecycleReceipt,
+  { status: CodingSessionTurnReceiptStatus }
+>;
+
+/** Narrow a decoded receipt to its turn-stage half. */
+export function isCodingSessionTurnReceipt(
+  receipt: Readonly<CodingSessionLifecycleReceipt>,
+): receipt is Readonly<CodingSessionTurnReceipt> {
+  return isCodingSessionTurnReceiptStatus(receipt.status);
+}
 
 /**
  * Per-generation metadata. `projectRef` is nullable — an explicit null is a
@@ -124,6 +202,30 @@ export function lifecycleReceiptSemanticKey(commandId: string): string {
   return encodeStructuredKey("coding-session-lifecycle-receipt/v1", commandId);
 }
 
+/**
+ * The publish-queue fence key a 44224 actually carries.
+ *
+ * The relay's publish queue de-duplicates on `(kind, semantic key)`, so a key
+ * is only honest when distinct facts get distinct keys. One create publishes
+ * one lifecycle receipt, so those keep the historical single-field key
+ * unchanged. One turn publishes up to three receipts (`turn_queued`, then
+ * `turn_started`, or a `turn_dropped`/`turn_refused` instead), so a turn
+ * receipt's key names its stage as well — keying by command id alone would
+ * fence the second receipt out as a duplicate of the first.
+ */
+export function codingSessionReceiptSemanticKey(
+  commandId: string,
+  status: CodingSessionLifecycleReceiptStatus,
+): string {
+  return isCodingSessionTurnReceiptStatus(status)
+    ? encodeStructuredKey(
+        "coding-session-lifecycle-receipt/v1",
+        commandId,
+        status,
+      )
+    : lifecycleReceiptSemanticKey(commandId);
+}
+
 /** Collision-free exact-generation metadata key shared with the provider. */
 export function codingSessionMetadataSemanticKey(
   target: CodingSessionCommandTarget,
@@ -137,23 +239,38 @@ export function codingSessionMetadataSemanticKey(
   );
 }
 
+/**
+ * The five keys every 44224 carries. `turn_started` is the single exception:
+ * it carries these plus `turnId`, and nothing else. Exact-key discipline is
+ * absolute in both directions — an unexpected key is a rejection, never a
+ * partial accept.
+ */
+const RECEIPT_ENVELOPE_KEYS = [
+  "schema",
+  "commandId",
+  "status",
+  "session",
+  "error",
+] as const;
+
 export function parseCodingSessionLifecycleReceipt(
   content: unknown,
 ): Readonly<CodingSessionLifecycleReceipt> | null {
   const value = parseBoundedJson(content, MAX_RECEIPT_CONTENT_BYTES);
+  if (!isPlainRecord(value) || typeof value.status !== "string") return null;
+  const expectedKeys =
+    value.status === "turn_started"
+      ? [...RECEIPT_ENVELOPE_KEYS, "turnId"]
+      : RECEIPT_ENVELOPE_KEYS;
   if (
-    !isPlainRecord(value) ||
-    !hasExactKeys(value, [
-      "schema",
-      "commandId",
-      "status",
-      "session",
-      "error",
-    ]) ||
+    !hasExactKeys(value, expectedKeys) ||
     value.schema !== CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA ||
     !boundedNonempty(value.commandId, MAX_RECEIPT_COMMAND_ID_BYTES)
   ) {
     return null;
+  }
+  if (isCodingSessionTurnReceiptStatus(value.status)) {
+    return parseTurnReceipt(value, value.status);
   }
   if (value.status === "created") {
     const session = decodeTarget(value.session);
@@ -236,6 +353,67 @@ export function parseCodingSessionLifecycleReceipt(
     commandId: value.commandId,
     status: "failed",
     session: null,
+    error: Object.freeze({
+      code: value.error.code,
+      message: value.error.message,
+    }),
+  });
+}
+
+/**
+ * The turn half of the receipt decoder.
+ *
+ * `session` is the 44220's own target for every turn status — a turn receipt
+ * always names the execution it was addressed to, even when the answer is
+ * "that generation is stale" — so an absent or malformed target is a
+ * rejection rather than a nullable field.
+ */
+function parseTurnReceipt(
+  value: Record<string, unknown>,
+  status: CodingSessionTurnReceiptStatus,
+): Readonly<CodingSessionLifecycleReceipt> | null {
+  const session = decodeTarget(value.session);
+  if (!session) return null;
+  const commandId = value.commandId as string;
+  if (status === "turn_queued") {
+    if (value.error !== null) return null;
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId,
+      status,
+      session,
+      error: null,
+    });
+  }
+  if (status === "turn_started") {
+    if (
+      value.error !== null ||
+      !boundedNonempty(value.turnId, MAX_RECEIPT_TURN_ID_BYTES)
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+      commandId,
+      status,
+      session,
+      error: null,
+      turnId: value.turnId,
+    });
+  }
+  if (
+    !isPlainRecord(value.error) ||
+    !hasExactKeys(value.error, ["code", "message"]) ||
+    !boundedNonempty(value.error.code, MAX_ERROR_CODE_BYTES) ||
+    !boundedNonempty(value.error.message, MAX_REFERENCE_BYTES)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    commandId,
+    status,
+    session,
     error: Object.freeze({
       code: value.error.code,
       message: value.error.message,

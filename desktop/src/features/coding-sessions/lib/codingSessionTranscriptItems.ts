@@ -35,6 +35,59 @@ import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptIte
 /** Display identity for the signer whose events these are. */
 export type CodingSessionBridgeSource = { pubkey: string; label: string };
 
+/** The largest a stamped `commandId` may be, matching the 44220 bound. */
+const MAX_PROMPT_COMMAND_ID_BYTES = 256;
+/**
+ * Control characters are rejected outright rather than stripped: a command id
+ * is an opaque join key, so a mangled one must not silently join anything.
+ * Written as a scan rather than a regex because a control-character class in a
+ * pattern is itself a lint error here.
+ */
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Read the 44220 command id a provider stamped on a `user_prompt`, or
+ * `undefined`.
+ *
+ * Same bounds the command itself is held to (non-blank, at most 256 bytes, no
+ * control characters) and no normalisation beyond that: the value has to
+ * compare byte-for-byte with the id this client minted, so trimming or
+ * case-folding it would invent matches.
+ */
+export function readCodingSessionPromptCommandId(
+  value: unknown,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value.trim().length === 0) return undefined;
+  if (hasControlCharacters(value)) return undefined;
+  return new TextEncoder().encode(value).byteLength <=
+    MAX_PROMPT_COMMAND_ID_BYTES
+    ? value
+    : undefined;
+}
+
+/**
+ * A projected transcript item, plus the coding-session-only join key.
+ *
+ * The renderer's `TranscriptItem` is shared with the local ACP surface, which
+ * has no notion of a signed 44220; rather than widening that type for one
+ * feature, coding sessions carry `commandId` in their own alias. Every
+ * consumer that only wants a `TranscriptItem` still gets one.
+ */
+export type CodingSessionProjectedTranscriptItem = TranscriptItem & {
+  /**
+   * The command id of the turn this item belongs to, when the provider
+   * stamped one. Only `user_prompt` echoes carry it today.
+   */
+  commandId?: string;
+};
+
 /** Everything a builder needs that does not come from the item itself. */
 export type CodingSessionItemIdentity = {
   id: string;
@@ -53,9 +106,9 @@ export type CodingSessionItemIdentity = {
 
 /** Stamp the signer's display identity onto a finished item. */
 export function finalizeCodingSessionItem(
-  item: TranscriptItem,
+  item: CodingSessionProjectedTranscriptItem,
   ctx: Identity,
-): TranscriptItem {
+): CodingSessionProjectedTranscriptItem {
   const stamped =
     ctx.providerSessionId != null
       ? { ...item, providerSessionId: ctx.providerSessionId }
@@ -70,7 +123,7 @@ type Identity = CodingSessionItemIdentity;
 export function buildBaseTranscriptItem(
   item: unknown,
   ctx: Identity,
-): TranscriptItem {
+): CodingSessionProjectedTranscriptItem {
   if (isQuarantineItem(item)) {
     return buildQuarantineStatusItem(item, ctx);
   }
@@ -135,7 +188,7 @@ export function buildBaseTranscriptItem(
 function buildUserPromptMessage(
   item: Record<string, unknown>,
   ctx: Identity,
-): TranscriptItem {
+): CodingSessionProjectedTranscriptItem {
   const content = typeof item.content === "string" ? item.content : "";
   const suffixes: string[] = [];
   if (typeof item.attachmentCount === "number" && item.attachmentCount > 0) {
@@ -163,6 +216,10 @@ function buildUserPromptMessage(
     // `null`) when absent or malformed so the renderer's "no attribution"
     // branch covers old items and junk alike.
     operatorPubkey: normalizeOperatorPubkey(item.operatorPubkey) ?? undefined,
+    // The turn command this echo answers, when the provider named it. This is
+    // what lets an optimistic row retire against the right echo instead of
+    // guessing from the words.
+    commandId: readCodingSessionPromptCommandId(item.commandId),
   };
 }
 
