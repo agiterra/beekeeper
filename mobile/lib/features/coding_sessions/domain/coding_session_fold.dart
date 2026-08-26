@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'coding_session_models.dart';
 import 'coding_session_target.dart';
 import 'coding_session_trust.dart';
-import 'coding_session_wire.dart';
 
 /// How long a 24223 lease proves anything for.
 const codingSessionLeaseTtl = Duration(seconds: 150);
@@ -784,12 +783,14 @@ CodingSessionMetadata? _newestMetadata(List<CodingSessionMetadata> records) {
 
 /// Whether the newest second holds two metadata payloads that disagree.
 ///
-/// The comparison covers *every* decoded field, not the handful the header
-/// prints: the desktop counts a conflict over the whole canonical payload
-/// (`codingSessionTrustedIngress.ts`, distinct `record.canonicalPayload` in
-/// the newest second), and two same-second events that differ only in, say,
-/// `projectRef` are still two providers disagreeing about the session. Two
-/// byte-equal payloads are one fact republished, never a conflict.
+/// The comparison is over [CodingSessionMetadata.canonicalPayload] — the
+/// whole payload as the decoder validated it — because that is what the
+/// desktop compares (`codingSessionTrustedIngress.ts`, distinct
+/// `record.canonicalPayload` in the newest second). Two same-second events
+/// differing only in, say, `projectRef` or `observedCommit` are still two
+/// providers disagreeing about the session, and no list of field names
+/// maintained here could be relied on to stay complete. Two byte-equal
+/// payloads are one fact republished, never a conflict.
 bool _hasStatusConflict(
   List<CodingSessionMetadata> records,
   CodingSessionMetadata? newest,
@@ -800,30 +801,9 @@ bool _hasStatusConflict(
       if (record.ref.createdAt == newest.ref.createdAt) record,
   ];
   if (sameSecond.length < 2) return false;
-  final payloads = {
-    for (final record in sameSecond) canonicalJson(_metadataPayload(record)),
-  };
+  final payloads = {for (final record in sameSecond) record.canonicalPayload};
   return payloads.length > 1;
 }
-
-/// Every decoded field of a 44223, in a shape [canonicalJson] can order.
-Map<String, Object?> _metadataPayload(CodingSessionMetadata record) => {
-  'target': record.target.key,
-  'status': record.status.wire,
-  'projectRef': record.projectRef,
-  'repoRef': record.repoRef,
-  'title': record.title,
-  'agentRef': record.agentRef,
-  'provider': record.provider,
-  'runtime': record.runtime,
-  'model': record.model,
-  'branch': record.branch,
-  'sessionRef': record.sessionRef,
-  'contextSummary': record.contextSummary,
-  'diffSummary': record.diffSummary,
-  'planSummary': record.planSummary,
-  'capabilities': record.capabilities,
-};
 
 T? _newestByRef<T>(
   Iterable<T> records,

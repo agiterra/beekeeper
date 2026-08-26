@@ -176,11 +176,21 @@ class CodingSessionMetadata {
   /// The provider's capability flags, read as opaque booleans.
   final Map<String, bool> capabilities;
 
+  /// The whole validated payload in canonical (key-sorted) JSON form.
+  ///
+  /// Captured at decode so D6's same-second conflict test compares what the
+  /// provider actually signed rather than the subset of keys this class
+  /// models. Fields the decoder validates and then deliberately drops — the
+  /// B1 code coordinates, for one — still differ here, which no
+  /// hand-maintained list of field names could guarantee.
+  final String canonicalPayload;
+
   const CodingSessionMetadata({
     required this.ref,
     required this.target,
     required this.status,
     required this.capabilities,
+    required this.canonicalPayload,
     this.projectRef,
     this.repoRef,
     this.title,

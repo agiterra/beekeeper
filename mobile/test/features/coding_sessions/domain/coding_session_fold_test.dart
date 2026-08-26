@@ -63,14 +63,15 @@ CodingSessionCreate _create({
   ),
 ).value!;
 
-/// A 44223 that differs from its sibling only in `projectRef`.
+/// A 44223 written out field by field so a test can vary any one of them.
 ///
-/// The shared fixture exposes no knob for the reference/summary fields, and
-/// those are exactly the ones D6's "distinct payloads" rule used to miss, so
-/// the payload is written out here.
-CodingSessionMetadata _metadataWithProjectRef({
-  required String? projectRef,
+/// The shared fixture exposes no knob for the reference/summary fields or the
+/// B1 code coordinates, and those are exactly the ones D6's "distinct
+/// payloads" rule has to cover, so the payload is written out here.
+CodingSessionMetadata _metadataVariant({
   required String id,
+  String? projectRef,
+  Map<String, Object?> extra = const {},
   int createdAt = 1000,
 }) {
   final resolved = target();
@@ -105,6 +106,7 @@ CodingSessionMetadata _metadataWithProjectRef({
           'diff': false,
           'plan': false,
         },
+        ...extra,
       }),
     ),
   ).value!;
@@ -217,13 +219,42 @@ void main() {
         final executions = resolveCodingSessionGenerations(
           receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
           metadata: [
-            _metadataWithProjectRef(
-              projectRef: 'project-a',
-              id: '0' * 63 + '1',
+            _metadataVariant(projectRef: 'project-a', id: '0' * 63 + '1'),
+            _metadataVariant(projectRef: 'project-b', id: '0' * 63 + '2'),
+          ],
+        );
+        expect(executions.single.statusConflict, isTrue);
+      },
+    );
+
+    // The decoder validates the B1 code coordinates and then drops them: this
+    // observer surfaces no commit or dirty flag in v1. Dropped is not the
+    // same as irrelevant — two providers disagreeing about which commit the
+    // session is on is a disagreement, and a conflict test built from a
+    // hand-written list of modelled fields cannot see it.
+    test(
+      'same-second metadata differing only in a dropped field conflicts',
+      () {
+        final executions = resolveCodingSessionGenerations(
+          receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+          metadata: [
+            _metadataVariant(
+              id: '0' * 63 + '3',
+              extra: {
+                'observedCommit': 'a' * 40,
+                'dirty': false,
+                'relayReachable': true,
+                'verifiedAt': 1700000000,
+              },
             ),
-            _metadataWithProjectRef(
-              projectRef: 'project-b',
-              id: '0' * 63 + '2',
+            _metadataVariant(
+              id: '0' * 63 + '4',
+              extra: {
+                'observedCommit': 'b' * 40,
+                'dirty': false,
+                'relayReachable': true,
+                'verifiedAt': 1700000000,
+              },
             ),
           ],
         );
@@ -235,8 +266,8 @@ void main() {
       final executions = resolveCodingSessionGenerations(
         receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
         metadata: [
-          _metadataWithProjectRef(projectRef: 'project-a', id: '0' * 63 + '1'),
-          _metadataWithProjectRef(projectRef: 'project-a', id: '0' * 63 + '2'),
+          _metadataVariant(projectRef: 'project-a', id: '0' * 63 + '1'),
+          _metadataVariant(projectRef: 'project-a', id: '0' * 63 + '2'),
         ],
       );
       expect(executions.single.statusConflict, isFalse);

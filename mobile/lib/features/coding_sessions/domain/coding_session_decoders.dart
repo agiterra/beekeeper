@@ -153,12 +153,23 @@ CodingSessionDecoded<CodingSessionMetadata> decodeCodingSessionMetadata(
   if (tags[2] != target.key || tags[3] != target.metadataSemanticKey) {
     return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
   }
+  // Canonicalise the validated payload here, once, rather than reassembling
+  // it downstream from the fields this observer happens to model: everything
+  // the decoder accepted — including the code coordinates it drops — is part
+  // of what a same-second conflict is a conflict about.
+  final canonicalPayload = canonicalJson(payload);
+  if (canonicalPayload == null) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
   return CodingSessionDecoded.ok(
     CodingSessionMetadata(
       ref: ref,
       target: target,
       status: status,
       capabilities: capabilities,
+      canonicalPayload: canonicalPayload,
       projectRef: payload['projectRef'] as String?,
       repoRef: payload['repoRef'] as String?,
       title: payload['title'] as String?,

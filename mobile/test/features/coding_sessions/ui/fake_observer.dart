@@ -80,6 +80,7 @@ CodingSessionExecution testExecution({
       target: resolved,
       status: status,
       capabilities: const {},
+      canonicalPayload: '{"fake":"$runtime"}',
       runtime: runtime,
       model: model,
       agentRef: agentRef,
