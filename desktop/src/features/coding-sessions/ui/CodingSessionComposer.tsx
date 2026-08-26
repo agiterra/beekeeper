@@ -32,6 +32,11 @@ type CodingSessionComposerProps = {
   canInterrupt: boolean;
   canControl?: boolean;
   authorityReason?: string | null;
+  /**
+   * Whether this execution advertised native mid-turn steering (its 44223
+   * `capabilities.threadSteer`). Defaults to `false`: a composer that has not
+   * been told must not offer a control the provider would only degrade.
+   */
   canSteer?: boolean;
   channelId: string;
   contextWindow?: CodingSessionContextWindow | null;
@@ -89,7 +94,7 @@ export function CodingSessionComposer({
   authorityReason = null,
   canInterrupt,
   canControl = true,
-  canSteer = true,
+  canSteer = false,
   channelId,
   contextWindow = null,
   controlContext,

@@ -208,7 +208,10 @@ test("immersive controls fail closed when authority and interrupt capability are
   assert.match(markup, />Provider runtime</);
   assert.doesNotMatch(markup, /coding-session-composer-steer/);
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, /aria-label="Send at the next turn boundary"/);
+  assert.match(
+    markup,
+    /aria-label="Send at the next turn boundary; it cannot be recalled"/,
+  );
   assert.match(markup, /Current-turn interrupt is unavailable/);
   assert.match(markup, /coding-session-composer-interrupt[^>]*disabled=""/);
 });
@@ -233,7 +236,10 @@ test("a running turn without live steer sends at the boundary and says so", () =
     /aria-label="Coding-session instruction"[^>]*disabled=""/,
   );
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, /aria-label="Send at the next turn boundary"/);
+  assert.match(
+    markup,
+    /aria-label="Send at the next turn boundary; it cannot be recalled"/,
+  );
   // The promise the button makes is the one the provider can keep: this
   // execution advertised no native steering, so nothing here says "Steer".
   assert.doesNotMatch(markup, />Steer</);
