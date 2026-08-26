@@ -16,6 +16,7 @@ mod initial_window;
 mod key_backup;
 mod link_preview_tags;
 mod linux_media;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos_notifications;
 mod managed_agents;
@@ -77,6 +78,11 @@ use tauri_plugin_window_state::StateFlags;
 use tray_menu::show_main_window;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First, so that everything after it is on the record. The embedded ACP and
+    // session-provider stacks log heavily and, until this call existed, into
+    // nothing at all.
+    logging::install();
+
     // Must run before anything else touches tauri::async_runtime.
     #[cfg(feature = "mesh-llm")]
     crate::mesh_llm::install_big_stack_worker_runtime();
