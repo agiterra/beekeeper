@@ -41,18 +41,31 @@ const PROJECT_RESOLUTION_SCAN_LIMIT: usize = 500;
 const CHANNEL_METADATA_SCAN_LIMIT: usize = 500;
 const ENTRY_FETCH_LIMIT: usize = 200;
 const DURABLE_SESSION_FETCH_LIMIT: usize = 500;
+const RECEIPT_FETCH_LIMIT: usize = 500;
 const LEASE_SNAPSHOT_LIMIT: usize = 500;
 const CHANNELS_PER_QUERY: usize = 128;
 const TEXT_LIMIT_CHARS: usize = 240;
 
-const DURABLE_SESSION_KINDS: [u32; 6] = [
+/// Per-generation durable facts: each is published once per create, resume,
+/// stop, or rename, so this window stays bounded by generation count.
+const GENERATION_FACT_KINDS: [u32; 5] = [
     KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_METADATA,
-    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_GOAL,
     KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_CLOSURE,
 ];
+
+/// Receipts read on their own budget.
+///
+/// Kind 44224 is no longer bounded by generation count: one turn publishes at
+/// least `turn_queued` and `turn_started`, so receipts outrun creates by
+/// orders of magnitude in any channel doing work. A relay filter returns its
+/// newest `limit` rows across every kind it names, so sharing one budget with
+/// the generation facts means the 44221 commands and 44223 metadata the fold
+/// *proves* a session from fall off the end — and proven sessions vanish from
+/// the digest behind nothing but a generic truncation note.
+const RECEIPT_FACT_KINDS: [u32; 1] = [KIND_CODING_SESSION_LIFECYCLE_RECEIPT];
 
 /// Resolved project coordinate and bounded prompt section.
 #[derive(Debug, Clone)]
@@ -102,11 +115,23 @@ pub async fn build_pulse_section(rest: &RestClient, channel_id: Uuid) -> Option<
 
     for chunk in resolved.channel_ids.chunks(CHANNELS_PER_QUERY) {
         let label = chunk.first().map(String::as_str).unwrap_or("unknown");
+        // Two reads, two budgets: per-turn receipt volume must never be able
+        // to evict the per-generation facts a session is proven from.
         read_source(
             rest,
             vec![durable_session_filter(chunk)],
             DURABLE_SESSION_FETCH_LIMIT,
             &format!("sessions:{label}"),
+            &mut events,
+            &mut errors,
+        )
+        .await;
+
+        read_source(
+            rest,
+            vec![receipt_session_filter(chunk)],
+            RECEIPT_FETCH_LIMIT,
+            &format!("receipts:{label}"),
             &mut events,
             &mut errors,
         )
@@ -145,12 +170,23 @@ fn pulse_entry_filter(coordinate: &str) -> Filter {
 fn durable_session_filter(channels: &[String]) -> Filter {
     Filter::new()
         .kinds(
-            DURABLE_SESSION_KINDS
+            GENERATION_FACT_KINDS
                 .iter()
                 .map(|kind| Kind::Custom(*kind as u16)),
         )
         .custom_tags(SingleLetterTag::lowercase(Alphabet::H), channels.to_vec())
         .limit(DURABLE_SESSION_FETCH_LIMIT)
+}
+
+fn receipt_session_filter(channels: &[String]) -> Filter {
+    Filter::new()
+        .kinds(
+            RECEIPT_FACT_KINDS
+                .iter()
+                .map(|kind| Kind::Custom(*kind as u16)),
+        )
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::H), channels.to_vec())
+        .limit(RECEIPT_FETCH_LIMIT)
 }
 
 fn lease_snapshot_filter(channels: &[String]) -> Filter {
@@ -686,11 +722,38 @@ mod tests {
         let leases = serde_json::to_value(lease_snapshot_filter(&channels)).unwrap();
         assert_eq!(durable["#h"], json!(channels));
         assert_eq!(durable["limit"], DURABLE_SESSION_FETCH_LIMIT);
-        assert_eq!(durable["kinds"], json!(DURABLE_SESSION_KINDS));
+        assert_eq!(durable["kinds"], json!(GENERATION_FACT_KINDS));
         assert_eq!(leases["#h"], json!(["channel-a", "channel-b"]));
         assert_eq!(leases["limit"], LEASE_SNAPSHOT_LIMIT);
         assert_eq!(leases["kinds"], json!([KIND_CODING_SESSION_LEASE]));
         assert_ne!(durable, leases);
+    }
+
+    /// A relay filter spends one newest-first budget across every kind it
+    /// names, and 44224 now grows per *turn*. The generation facts a session
+    /// is proven from must therefore never share a page with receipts: the
+    /// two reads name disjoint kinds and carry their own limits.
+    #[test]
+    fn turn_receipts_cannot_evict_the_generation_facts_they_share_a_channel_with() {
+        let channels = vec!["channel-a".to_owned()];
+        let durable = serde_json::to_value(durable_session_filter(&channels)).unwrap();
+        let receipts = serde_json::to_value(receipt_session_filter(&channels)).unwrap();
+
+        assert_eq!(
+            receipts["kinds"],
+            json!([KIND_CODING_SESSION_LIFECYCLE_RECEIPT])
+        );
+        assert_eq!(receipts["limit"], RECEIPT_FETCH_LIMIT);
+        assert_eq!(receipts["#h"], json!(channels));
+
+        let durable_kinds = durable["kinds"].as_array().expect("kinds array");
+        assert!(
+            !durable_kinds.contains(&json!(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)),
+            "the generation read must not spend its budget on turn receipts: {durable_kinds:?}"
+        );
+        for kind in GENERATION_FACT_KINDS {
+            assert!(durable_kinds.contains(&json!(kind)), "missing kind {kind}");
+        }
     }
 
     #[test]
