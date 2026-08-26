@@ -382,11 +382,21 @@ published the exact generation is known.
 `interrupt_delivered`, and a `{ "code", "message" }` object for
 `turn_degraded`, `turn_dropped`, and `turn_refused`.
 
-**The code set is open.** A validator accepts any nonblank code of at most 64
-UTF-8 bytes containing no control characters, and MUST NOT pin `turn_dropped`,
-`turn_degraded`, or `turn_refused` to a closed list — a provider that grows a
-new reason must not be decoded as malformed by a client that predates it. The
-codes in use today are documented, not enforced:
+**The code set is open, and the bound is exactly 64 UTF-8 bytes.** A validator
+accepts any nonblank code of **at most 64 UTF-8 bytes**
+(`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/buzz-core/src/coding_session_payload.rs:97`,
+checked at `coding_session_payload.rs:510-514`) containing no control
+characters, and MUST NOT pin `turn_dropped`, `turn_degraded`, or `turn_refused`
+to a closed list — a provider that grows a new reason must not be decoded as
+malformed by a client that predates it. 64 is normative here so the decoders
+converge: the desktop reader currently bounds the same field at 256
+(`MAX_ERROR_CODE_BYTES`,
+`desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts:35`),
+so a 65-byte code from a future provider renders in the desktop and is rejected
+as malformed by `bee sessions`. Producers MUST stay within 64; the desktop
+bound is owed a narrowing.
+
+The codes in use today are documented, not enforced:
 
 | status | code | means |
 | --- | --- | --- |
@@ -401,6 +411,21 @@ codes in use today are documented, not enforced:
 | `turn_refused` | `NO_TURN_IN_FLIGHT` | a `thread.turn.interrupt` reached a live execution that had no turn running or awaiting start |
 | `turn_refused` | `NO_LIVE_EXECUTION` | a `thread.turn.interrupt` addressed a session with no live process, so there was nothing to cancel |
 | `turn_refused` | `QUEUE_FULL` | a `thread.turn.interrupt` could not be delivered because the execution's mailbox is full |
+
+**Accepted contract delta, 2026-08-26.** Three of the codes above did not exist
+before this fork's delivery-class work and are recorded here as a ratified
+extension, not as a pre-existing set: `NO_LIVE_EXECUTION`
+(`crates/buzz-core/src/coding_session_payload.rs:79`), `NO_TURN_IN_FLIGHT`
+(`coding_session_payload.rs:88`) and `QUEUE_FULL_TURN_KEPT`
+(`crates/buzz-session-provider/src/lib.rs:159`). They are legal only because the
+same change opened the code list, above. They exist because the alternatives
+would have been false statements: `UNKNOWN_TARGET` and `SESSION_CLOSED` both
+claim something untrue about a live, open execution that simply has nothing
+running. Known and not fixed: **no client can infer finality from the status
+alone** — `turn_dropped` is terminal for `QUEUE_FULL`, `QUEUE_FULL_TURN_KEPT`
+and `NO_LIVE_EXECUTION`, with nothing in the status saying so, and a future
+non-terminal drop code would be indistinguishable. That is a wire-shape
+question for a later slice; no key is added for it here.
 
 **Publish points** (provider-side):
 

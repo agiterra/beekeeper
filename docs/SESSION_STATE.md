@@ -1815,20 +1815,24 @@ written and `bash -n` clean but **was not executed** — that harness needs
     behind a 1.5 s reorder window, and three receipt codes join the now-open
     code list: `NO_LIVE_EXECUTION`, `NO_TURN_IN_FLIGHT`,
     `QUEUE_FULL_TURN_KEPT` (any nonblank, control-free ≤64-byte code is legal
-    — the desktop decoder still bounds at 256, which is owed a NIP-CSL line).
+    — the desktop still bounds at 256; that gap is now written into NIP-CSL).
     **Scope was narrowed and the narrowing is ratified:** S2 delivers "a turn
     is never silently lost", not "every accepted turn eventually runs" — a
     turn reaching no live execution gets a terminal `turn_dropped` /
     `NO_LIVE_EXECUTION` because `session.resume` mints generation N+1
-    (`lib.rs:1626-1628`) and the fence refuses the replayed generation-N
+    (`lib.rs:1657-1660`) and the fence refuses the replayed generation-N
     command, so any receipt promising a replay would have been a lie.
+    Re-addressing an owed turn to the resumed generation is the **sender's**
+    job and is now in Slice 4's scope (desktop resend from the receipt; `bee
+    sessions send --readdress`).
     Evidence: no completed `just ci` at this head; per-crate green counts as
     in §3 above; note that `just ci` runs **no** buzz-session-provider,
     buzz-sdk or buzz-relay lib tests at all (`justfile:427-464`,
     `scripts/run-tests.sh:78-146`) — only `.woodpecker/gate.yml:138` does.
-    Residuals: `mailbox-1` (watermark advanced past older held turns) and
-    `evidence-3` (a failed held delivery drops the untried remainder) are
-    CONFIRMED and unfixed at `ecb16a52`; native mid-turn steer is stubbed —
+    Round-3 triage applied on `crew/lane-2F`: `mailbox-1` (the hold branch
+    advanced the watermark past older held turns) and `evidence-3` (a failed
+    held delivery dropped the untried remainder) are fixed, each pinned red
+    first. Residuals: native mid-turn steer is boundary-only in this build —
     `NATIVE_STEER_DELIVERABLE` is `false` and `threadSteer` is therefore false
     for every execution, so no degrade path in this build is reachable and all
     steer evidence is hand-injected; two briefed acceptances were **not met**
