@@ -143,7 +143,6 @@ function CodingSessionPendingTurnRow({
 }) {
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
-  const held = state === "queued" || state === "degraded";
   const caption = describePendingCodingSessionTurn(
     state,
     Math.max(0, now - turn.recordedAt),
@@ -171,11 +170,6 @@ function CodingSessionPendingTurnRow({
             stalled ? "text-destructive" : "text-muted-foreground",
           )}
           data-testid="coding-session-pending-turn-status"
-          title={
-            held
-              ? "The provider holds this turn until its current one ends. A published turn cannot be recalled from here."
-              : undefined
-          }
         >
           {stalled ? <CircleAlert aria-hidden className="size-3" /> : null}
           {caption}
@@ -200,6 +194,13 @@ function CodingSessionPendingTurnRow({
  * evasion at forty minutes. A degraded steer leads with the downgrade, because
  * that is the part the person did not ask for — their correction is not
  * reaching the turn that is running.
+ *
+ * Every held row also says it cannot be recalled, on screen rather than in a
+ * `title`. "Queued by the provider" is the sentence the retired client-side
+ * queue used, and that one had a Cancel button beside it; a tooltip saying
+ * otherwise is invisible on touch and unannounced by most screen readers, so
+ * the only people who learned the difference were the ones already using a
+ * mouse.
  */
 export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
@@ -207,15 +208,20 @@ export function describePendingCodingSessionTurn(
 ): string | null {
   const stalled = ageMs > PENDING_CODING_SESSION_TURN_STALL_MS;
   const age = formatPendingCodingSessionTurnAge(ageMs);
+  // Published, signed, and the provider's. There is no client-side cancel for
+  // it and there is no 44220 that unsends one.
+  const irrevocable = "it cannot be recalled";
   if (state === "degraded") {
     const degraded =
       "Delivered at the next turn boundary — this provider cannot steer";
-    return stalled ? `${degraded}; not started yet — ${age}` : degraded;
+    return stalled
+      ? `${degraded}; not started yet — ${age}; ${irrevocable}`
+      : `${degraded}; ${irrevocable}`;
   }
   if (state === "queued") {
     return stalled
-      ? `Queued by the provider, not started yet — ${age}`
-      : "Queued by the provider";
+      ? `Queued by the provider, not started yet — ${age}; ${irrevocable}`
+      : `Queued by the provider; ${irrevocable}`;
   }
   return state === "stalled" ? "Not picked up yet" : null;
 }

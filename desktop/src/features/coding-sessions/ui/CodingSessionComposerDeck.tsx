@@ -237,7 +237,7 @@ export function CodingSessionComposerDeck({
                 : isWorking
                   ? canSteer
                     ? "Steer current turn"
-                    : "Send at the next turn boundary"
+                    : "Send at the next turn boundary; it cannot be recalled"
                   : "Send message"
             }
             className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-30"

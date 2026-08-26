@@ -30,7 +30,7 @@ test("a turn the provider queued says exactly that", () => {
   // it behind whatever it is already doing.
   assert.equal(
     describePendingCodingSessionTurn("queued"),
-    "Queued by the provider",
+    "Queued by the provider; it cannot be recalled",
   );
 });
 
