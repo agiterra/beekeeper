@@ -26,12 +26,16 @@ class _CodingSessionsMessage extends StatelessWidget {
   final String detail;
   final Future<void> Function()? onRetry;
 
+  /// Disclosures appended under the message, such as what the read refused.
+  final List<Widget> notices;
+
   const _CodingSessionsMessage({
     super.key,
     required this.icon,
     required this.title,
     required this.detail,
     this.onRetry,
+    this.notices = const [],
   });
 
   @override
@@ -63,6 +67,10 @@ class _CodingSessionsMessage extends StatelessWidget {
             label: const Text('Retry'),
           ),
         ),
+      ],
+      for (final notice in notices) ...[
+        const SizedBox(height: Grid.twelve),
+        notice,
       ],
     ],
   );

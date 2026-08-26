@@ -95,18 +95,23 @@ class _CodingSessionsBody extends StatelessWidget {
     if (snapshot.isLoadingFirstRead) {
       return const _CodingSessionsLoading();
     }
+    final disclosures = _disclosures(snapshot);
     if (snapshot.sessions.isEmpty) {
-      return const _CodingSessionsMessage(
-        key: ValueKey('coding-sessions-empty'),
+      // "No coding sessions in this channel" is a claim about the channel,
+      // not about the read. When the read refused facts or stopped at the
+      // history limit, the claim is qualified by what it cost — otherwise a
+      // page that threw away a thousand signed events reads as a clean no.
+      return _CodingSessionsMessage(
+        key: const ValueKey('coding-sessions-empty'),
         icon: LucideIcons.terminal,
         title: codingSessionsEmptyLabel,
         detail:
             'Sessions opened from a desktop client in this channel appear '
             'here as their providers publish them.',
+        notices: disclosures,
       );
     }
 
-    final counts = codingSessionCountsLabel(snapshot.counts);
     final children = <Widget>[
       // A failed read behind a list that still has rows is disclosed rather
       // than hidden: what is on screen is older than the reader thinks.
@@ -131,11 +136,7 @@ class _CodingSessionsBody extends StatelessWidget {
             ),
           ),
         ),
-      if (counts != null)
-        _CodingSessionsNotice(
-          key: const ValueKey('coding-sessions-counts'),
-          text: counts,
-        ),
+      ...disclosures,
     ];
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(Grid.xs, Grid.xs, Grid.xs, Grid.xl),
@@ -143,5 +144,26 @@ class _CodingSessionsBody extends StatelessWidget {
       separatorBuilder: (_, _) => const SizedBox(height: Grid.twelve),
       itemBuilder: (_, index) => children[index],
     );
+  }
+
+  /// What this read cost, in the reader's terms.
+  ///
+  /// Shown whether or not the list has rows: both notices are admissions
+  /// about the read itself, and an empty list is exactly the case where the
+  /// reader most needs them.
+  List<Widget> _disclosures(CodingSessionObserverSnapshot snapshot) {
+    final counts = codingSessionCountsLabel(snapshot.counts);
+    return [
+      if (snapshot.truncatedAt1000)
+        const _CodingSessionsNotice(
+          key: ValueKey('coding-sessions-truncated'),
+          text: codingSessionTruncatedLabel,
+        ),
+      if (counts != null)
+        _CodingSessionsNotice(
+          key: const ValueKey('coding-sessions-counts'),
+          text: counts,
+        ),
+    ];
   }
 }

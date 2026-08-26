@@ -127,6 +127,52 @@ void main() {
     expect(find.text('No coding sessions in this channel'), findsOneWidget);
   });
 
+  testWidgets('an empty read still says what it refused', (tester) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: const [],
+        counts: const CodingSessionReadCounts(malformed: 3, rejectedAuthor: 2),
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    // "No coding sessions in this channel" is a claim about the channel. A
+    // read that threw five signed events away has not earned it unqualified.
+    expect(find.byKey(const ValueKey('coding-sessions-empty')), findsOneWidget);
+    expect(
+      find.text('Dropped from this read: 3 malformed, 2 wrong signer'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('an empty read discloses a truncated history', (tester) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(sessions: const [], truncatedAt1000: true),
+    );
+
+    await _pump(tester, binding);
+
+    expect(find.byKey(const ValueKey('coding-sessions-empty')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('coding-sessions-truncated')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a list that has sessions discloses truncation too', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(testSnapshot(truncatedAt1000: true));
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-sessions-truncated')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('shows an error state with a retry that refreshes', (
     tester,
   ) async {
