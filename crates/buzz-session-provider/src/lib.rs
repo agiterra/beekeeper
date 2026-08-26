@@ -8502,19 +8502,22 @@ mod tests {
     }
 
     /// The relay is the mailbox, and a killed provider must not eat what was in
-    /// it.
+    /// it *silently*.
     ///
-    /// Two turns queued behind a running one, then the provider dies with no
-    /// clean shutdown: nothing flushed, no actor asked to stop. A fresh
-    /// provider on the same state directory must find both turns unconsumed,
-    /// must have a watermark that still reaches back past them, and — when the
-    /// relay replays them newest-first, which is the order it actually serves
-    /// stored events in (`crates/buzz-db/src/event.rs:313`) — must handle them
-    /// in the order they were *sent*, once each. Nothing here is running, so
-    /// each one is answered with a `turn_dropped` rather than run; what this
-    /// pins is that the mailbox survived the kill and answered in order.
+    /// Named for what it pins, which is narrower than "both turns run": two
+    /// turns queued behind a running one, then the provider dies with no clean
+    /// shutdown (nothing flushed, no actor asked to stop). A fresh provider on
+    /// the same state directory finds both turns unconsumed, has a watermark
+    /// that still reaches back past them, and — when the relay replays them
+    /// newest-first, which is the order it actually serves stored events in
+    /// (`crates/buzz-db/src/event.rs:771`) — answers them in the order they
+    /// were *sent*, exactly once each. The answer is a terminal
+    /// `turn_dropped`/`NO_LIVE_EXECUTION`, not a run: the killed process took
+    /// its executions with it, a resume mints a generation the replayed
+    /// command no longer addresses, and re-addressing an owed turn to a new
+    /// generation is deferred design (plan §7, S2's scope correction).
     #[tokio::test]
-    async fn two_turns_queued_behind_a_running_one_survive_a_kill() {
+    async fn two_turns_queued_behind_a_running_one_are_answered_once_in_sent_order_after_a_kill() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().join("checkout");
         std::fs::create_dir_all(&cwd).expect("mkdir");
@@ -8566,6 +8569,12 @@ mod tests {
         drop(provider);
 
         let mut restarted = stalling_provider(&state, Some(&projects));
+        // A real restart runs recovery before it reads a single command: the
+        // ledger is reconciled, stranded executions are detached, and the
+        // context packages of the dead process are swept. Replaying into a
+        // provider that skipped it would be testing a startup that does not
+        // exist.
+        restarted.recover().expect("recover");
         assert!(restarted.state().is_command_consumed("turn-running"));
         assert!(!restarted.state().is_command_consumed("turn-second"));
         assert!(!restarted.state().is_command_consumed("turn-third"));
