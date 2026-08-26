@@ -270,6 +270,11 @@ void main() {
         executions: executions,
         names: [decodeCodingSessionName(nameEvent(content: 'Ship it')).value!],
         closures: [decodeCodingSessionClosure(closureEvent()).value!],
+        genesesByEventId: {
+          genesisEventIdA: decodeCodingSessionGenesis(
+            genesisEvent(eventId: genesisEventIdA),
+          ).value!,
+        },
       );
       expect(sessions, hasLength(1));
       expect(sessions.single.sessionRef, sessionRefA);
@@ -294,6 +299,11 @@ void main() {
           ).value!,
         ],
         closures: [decodeCodingSessionClosure(closureEvent()).value!],
+        genesesByEventId: {
+          genesisEventIdA: decodeCodingSessionGenesis(
+            genesisEvent(eventId: genesisEventIdA),
+          ).value!,
+        },
       );
       expect(sessions.single.name, 'New name');
       expect(sessions.single.displayName, 'New name');
@@ -307,6 +317,100 @@ void main() {
       );
       final sessions = groupCodingSessionUmbrellas(executions: executions);
       expect(sessions.single.displayName, 'Fallback title');
+    });
+  });
+
+  group('closure authority', () {
+    List<CodingSessionExecution> closableExecutions() =>
+        resolveCodingSessionGenerations(
+          receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+          metadata: [_metadata(sessionRef: sessionRefA)],
+        );
+
+    Map<String, CodingSessionGenesis> genesisA({
+      String sessionRef = sessionRefA,
+    }) => {
+      genesisEventIdA: decodeCodingSessionGenesis(
+        genesisEvent(eventId: genesisEventIdA, sessionRef: sessionRef),
+      ).value!,
+    };
+
+    test('the founder of the named genesis can close the session', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [decodeCodingSessionClosure(closureEvent()).value!],
+        genesesByEventId: genesisA(),
+      );
+      expect(sessions.single.closed, isTrue);
+    });
+
+    test('a close signed by anyone but the founder is refused', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [
+          decodeCodingSessionClosure(
+            closureEvent(pubkey: otherFounderPubkey),
+          ).value!,
+        ],
+        genesesByEventId: genesisA(),
+      );
+      expect(sessions.single.closed, isFalse);
+    });
+
+    test('a close whose genesis is unreadable is refused', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [decodeCodingSessionClosure(closureEvent()).value!],
+      );
+      expect(sessions.single.closed, isFalse);
+    });
+
+    test('a close anchored to another session\'s genesis is refused', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [decodeCodingSessionClosure(closureEvent()).value!],
+        genesesByEventId: genesisA(sessionRef: sessionRefB),
+      );
+      expect(sessions.single.closed, isFalse);
+    });
+
+    test('a newer reopen from any member reopens the session', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [
+          decodeCodingSessionClosure(closureEvent(createdAt: 1300)).value!,
+          decodeCodingSessionClosure(
+            closureEvent(
+              closed: false,
+              pubkey: otherFounderPubkey,
+              createdAt: 1400,
+            ),
+          ).value!,
+        ],
+        genesesByEventId: genesisA(),
+      );
+      expect(sessions.single.closed, isFalse);
+    });
+
+    test('a refused close never outranks an older authorized one', () {
+      final sessions = groupCodingSessionUmbrellas(
+        executions: closableExecutions(),
+        closures: [
+          decodeCodingSessionClosure(closureEvent(createdAt: 1300)).value!,
+          // A stranger publishing `open` after the founder closed cannot
+          // reopen through a genesis this observer cannot resolve.
+          decodeCodingSessionClosure(
+            closureEvent(
+              closed: false,
+              genesisRef: genesisEventIdB,
+              pubkey: otherFounderPubkey,
+              createdAt: 1400,
+            ),
+          ).value!,
+        ],
+        genesesByEventId: genesisA(),
+      );
+      expect(sessions.single.closed, isTrue);
     });
   });
 

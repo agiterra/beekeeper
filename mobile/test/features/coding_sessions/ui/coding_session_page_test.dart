@@ -57,6 +57,22 @@ void main() {
     expect(find.text('operator 11111111… · command command-…'), findsOneWidget);
   });
 
+  testWidgets('names the founder as the one who closed the session', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(sessions: [testUmbrella(closed: true)]),
+    );
+
+    await _pump(tester, binding);
+
+    // The fold only keeps a closure the session's founder signed, so the
+    // header states that rather than hedging about "a member".
+    expect(find.byKey(const ValueKey('coding-session-closed')), findsOneWidget);
+    expect(find.text('Closed by its founder'), findsOneWidget);
+    expect(find.text('Closed by a member of this channel'), findsNothing);
+  });
+
   testWidgets('folds a tool row and expands it to args and result', (
     tester,
   ) async {

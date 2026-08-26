@@ -216,7 +216,8 @@ class CodingSessionUmbrella {
   /// The newest 44227 goal, when one exists.
   final String? goal;
 
-  /// True when the newest 44230 marks the session closed.
+  /// True when the newest 44230 this observer may act on marks the session
+  /// closed: signed by the founder of the genesis it names.
   final bool closed;
 
   final CodingSessionFoldedStatus status;
@@ -483,13 +484,13 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
           );
     final closure = sessionRef == null
         ? null
-        : _newestByRef(
+        : _newestAuthorizedClosure(
             closures.where(
               (record) =>
                   record.sessionRef == sessionRef &&
                   record.ref.channelId == channelId,
             ),
-            (record) => record.ref,
+            genesesByEventId,
           );
     var lastActivityAt = 0;
     for (final execution in members) {
@@ -721,6 +722,31 @@ bool _createBelongs(
     return false;
   }
   return members.any((execution) => execution.targetKey == joinedTargetKey);
+}
+
+/// The newest 44230 this observer may act on for one umbrella.
+///
+/// A closure is evidence only through the genesis its own `cscl-genesis` tag
+/// names, and only that genesis's signer — the session's founder — may close.
+/// Reopening is a member act, so any signer's `open` counts once the genesis
+/// resolves. Until it resolves neither action is safe: the named genesis may
+/// anchor a different session entirely, and anyone in the channel can publish
+/// a 44230. A closed badge over a session that is still running is the
+/// observer asserting something nobody with the authority to end it signed.
+CodingSessionClosure? _newestAuthorizedClosure(
+  Iterable<CodingSessionClosure> closures,
+  Map<String, CodingSessionGenesis> genesesByEventId,
+) {
+  final authorized = <CodingSessionClosure>[];
+  for (final closure in closures) {
+    final genesis = genesesByEventId[closure.genesisRef];
+    if (genesis == null || genesis.sessionRef != closure.sessionRef) continue;
+    if (closure.closed && closure.ref.signerPubkey != genesis.founderPubkey) {
+      continue;
+    }
+    authorized.add(closure);
+  }
+  return _newestByRef(authorized, (record) => record.ref);
 }
 
 CodingSessionMetadata? _newestMetadata(List<CodingSessionMetadata> records) {

@@ -44,7 +44,7 @@ class _SessionHeader extends StatelessWidget {
             _HeaderLine(
               key: const ValueKey('coding-session-closed'),
               icon: LucideIcons.circleCheck,
-              text: 'Closed by a member of this channel',
+              text: 'Closed by its founder',
             ),
           if (reachabilityLine != null)
             _HeaderLine(

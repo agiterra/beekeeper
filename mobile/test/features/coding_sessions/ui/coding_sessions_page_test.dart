@@ -55,7 +55,9 @@ void main() {
     );
   });
 
-  testWidgets('marks a closed session as closed by a member', (tester) async {
+  testWidgets('marks a closed session as closed by its founder', (
+    tester,
+  ) async {
     final binding = FakeObserverBinding(
       testSnapshot(sessions: [testUmbrella(closed: true)]),
     );
@@ -66,11 +68,10 @@ void main() {
       find.byKey(const ValueKey('coding-session-closed-badge')),
       findsOneWidget,
     );
-    // The session page hedges this same fact ("Closed by a member of this
-    // channel") because v1 accepts any member's 44230. A bare "Closed" here
-    // would be the stronger claim the observer cannot make.
-    expect(find.text('Closed by a member'), findsOneWidget);
-    expect(find.text('Closed'), findsNothing);
+    // `closed` now only survives the fold when the founder of the session's
+    // own genesis signed it, so the badge may say so plainly.
+    expect(find.text('Closed by founder'), findsOneWidget);
+    expect(find.text('Closed by a member'), findsNothing);
   });
 
   testWidgets('marks a session whose authority no create vouched for', (

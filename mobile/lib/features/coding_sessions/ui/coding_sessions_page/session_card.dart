@@ -91,16 +91,16 @@ class _SessionCard extends StatelessWidget {
 
 /// The closed marker, stating who the observer can say closed the session.
 ///
-/// v1 accepts the newest 44230 from any member of the channel, which is what
-/// the session header says out loud ("Closed by a member of this channel").
-/// A bare "Closed" here would be the stronger claim — that the session's own
-/// founder ended it — and the read cannot support it.
+/// The fold keeps a 44230 only when the founder of the genesis it names
+/// signed it, so this badge may name the founder. A bare "Closed" would hide
+/// which signer the claim rests on, and anyone in the channel can publish a
+/// 44230 the fold refused.
 class _ClosedBadge extends StatelessWidget {
   const _ClosedBadge();
 
   @override
   Widget build(BuildContext context) => Tooltip(
-    message: 'Closed by a member of this channel',
+    message: 'Closed by the founder of this session',
     child: Container(
       key: const ValueKey('coding-session-closed-badge'),
       padding: const EdgeInsets.symmetric(
@@ -112,7 +112,7 @@ class _ClosedBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(Radii.full),
       ),
       child: Text(
-        'Closed by a member',
+        'Closed by founder',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: context.textTheme.labelSmall?.copyWith(
