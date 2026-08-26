@@ -1023,9 +1023,20 @@ impl Provider {
                 )
                 .await;
             if let Err(error) = delivered {
-                // This one never reached a mailbox, so it goes back too. A
-                // redelivery is safe: the consumed and refused ledgers answer
-                // anything that did land.
+                // Back it goes with the rest — but not because it "never
+                // reached a mailbox": `on_turn` can fail *after*
+                // `SessionHandle::deliver` took the turn, because the
+                // `turn_queued` (or `turn_degraded`) `enqueue_receipt` right
+                // behind the delivery is itself fallible. What makes the
+                // redelivery safe on that path is the process-local
+                // `in_flight` fence — `decide_turn` answers
+                // `Ignored::AlreadyAccepted` for a command this provider has
+                // already handed to a session (`commands.rs`) — not the
+                // ledgers, which are written when a turn *starts* or when it
+                // is answered terminally and so say nothing about a turn
+                // sitting in a session's mailbox. The ledgers cover the other
+                // two shapes; the fence covers this one, and it dies with the
+                // process, where replay from the channel floor takes over.
                 self.replay.held.push(command);
                 self.replay.held.extend(queue);
                 return Err(error);
