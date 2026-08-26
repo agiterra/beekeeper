@@ -62,9 +62,18 @@ const GENERATION_FACT_KINDS: [u32; 5] = [
 /// least `turn_queued` and `turn_started`, so receipts outrun creates by
 /// orders of magnitude in any channel doing work. A relay filter returns its
 /// newest `limit` rows across every kind it names, so sharing one budget with
-/// the generation facts means the 44221 commands and 44223 metadata the fold
-/// *proves* a session from fall off the end — and proven sessions vanish from
-/// the digest behind nothing but a generic truncation note.
+/// the generation facts let turn volume push the 44221 commands and 44223
+/// metadata off the end of the read.
+///
+/// **The split closes only that half.** A generation is proven from a *pair* —
+/// the 44221 command and the 44224 receipt that answers it, joined in
+/// `buzz_core::pulse_fold` (`receipts.get(key) else continue`) — and a create
+/// receipt is itself a kind 44224, so it still shares `RECEIPT_FETCH_LIMIT`
+/// with unbounded turn receipts. Enough turn traffic in a channel still evicts
+/// a create receipt, and its session still vanishes from the digest behind
+/// nothing but the generic truncation note. Narrowing the receipt read (a
+/// `csl-key` filter, or a separate budget for lifecycle-status receipts) is
+/// the actual fix and is not done here.
 const RECEIPT_FACT_KINDS: [u32; 1] = [KIND_CODING_SESSION_LIFECYCLE_RECEIPT];
 
 /// Resolved project coordinate and bounded prompt section.
@@ -115,8 +124,10 @@ pub async fn build_pulse_section(rest: &RestClient, channel_id: Uuid) -> Option<
 
     for chunk in resolved.channel_ids.chunks(CHANNELS_PER_QUERY) {
         let label = chunk.first().map(String::as_str).unwrap_or("unknown");
-        // Two reads, two budgets: per-turn receipt volume must never be able
-        // to evict the per-generation facts a session is proven from.
+        // Two reads, two budgets, so per-turn receipt volume cannot evict the
+        // 44221 commands and 44223 metadata. See `RECEIPT_FACT_KINDS`: this
+        // closes only half of it, because the create receipt a generation is
+        // also proven from shares the receipt budget with turn receipts.
         read_source(
             rest,
             vec![durable_session_filter(chunk)],

@@ -109,9 +109,15 @@ const GENERATION_FACT_KINDS = [
  * least `turn_queued` and `turn_started`, so receipts outrun creates by orders
  * of magnitude in any channel doing work. A relay filter returns its newest
  * `limit` rows across every kind it names, so sharing one budget with the
- * facts above means the 44221 commands and 44223 metadata the coordination
- * fold needs to *prove* a generation drop off the end — and proven sessions
- * vanish from the digest behind nothing but a generic truncation note.
+ * facts above let turn volume push the 44221 commands and 44223 metadata the
+ * coordination fold needs to *prove* a generation off the end of the read.
+ *
+ * The split closes only that half. A generation is proven from the 44221
+ * command *and* the 44224 receipt answering it, and a create receipt is itself
+ * a kind 44224 sharing this budget with unbounded turn receipts — so enough
+ * turn traffic still evicts a create receipt and its proven session still
+ * vanishes from the digest behind nothing but a generic truncation note.
+ * Narrowing the receipt read is owed.
  */
 const RECEIPT_FACT_KINDS = [KIND_CODING_SESSION_LIFECYCLE_RECEIPT];
 
@@ -262,8 +268,13 @@ export async function fetchProjectPulseDigest(
   const chunks = channelChunks(channelIds);
   if (chunks.length > 0) {
     for (const channels of chunks) {
-      // Two reads, two budgets: per-turn receipt volume must not be able to
-      // evict the per-generation facts a session is proven from.
+      // Two reads, two budgets, so per-turn receipt volume cannot evict the
+      // 44221 commands and 44223 metadata a session is proven from. That is
+      // half the problem: a generation is proven from the command *and* the
+      // 44224 receipt answering it, and a create receipt is itself a 44224
+      // sharing this budget with unbounded turn receipts, so enough turn
+      // traffic still drops a proven session from the digest. Narrowing the
+      // receipt read is owed.
       for (const kinds of [GENERATION_FACT_KINDS, RECEIPT_FACT_KINDS]) {
         try {
           const sessions = await fetchEvents({
