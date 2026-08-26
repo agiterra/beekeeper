@@ -1157,6 +1157,7 @@ dependencies = [
  "buzz-ws-client",
  "clap",
  "nostr 0.44.7",
+ "rustls",
  "serde_json",
  "tokio",
  "zeroize",

@@ -14,6 +14,7 @@ path = "src/main.rs"
 buzz-core      = { workspace = true }
 buzz-ws-client = { workspace = true }
 nostr          = { workspace = true }
+rustls         = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio          = { workspace = true }
 serde_json     = { workspace = true }
 zeroize        = { workspace = true }

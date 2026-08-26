@@ -166,7 +166,10 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable --now hive-mirror-bridge.service
+    systemctl enable hive-mirror-bridge.service
+    # restart, not `enable --now`: a previous broken install may be
+    # crash-looping, and --now is a no-op on an already-enabled unit.
+    systemctl restart hive-mirror-bridge.service
     sleep 3
     if ! systemctl is-active --quiet hive-mirror-bridge.service; then
         echo "bridge service failed to start:" >&2

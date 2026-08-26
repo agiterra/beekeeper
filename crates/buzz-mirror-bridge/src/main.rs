@@ -185,6 +185,17 @@ async fn run_connection(args: &Args, keys: &Keys) -> String {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // The workspace compiles both aws-lc-rs and ring into rustls
+    // transitively, so it cannot auto-select a provider and panics on the
+    // first TLS connection without this. Mirrors buzz-admin's main().
+    if rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        eprintln!("failed to install rustls crypto provider");
+        return ExitCode::from(1);
+    }
+
     let args = Args::parse();
     let keys = match load_keys(&args) {
         Ok(keys) => keys,
