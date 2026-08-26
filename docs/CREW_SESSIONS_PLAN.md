@@ -243,6 +243,15 @@ Tier 1.5 for the CLI, tier 2 for the provider inbox. Three lanes.
 - **Lane 4B (provider + context package).** Owns `crates/buzz-core/src/coding_session_context.rs`, `crates/buzz-session-provider/src/{context_projector.rs,context_store.rs}`, `crates/buzz-dev-mcp/src/session_context.rs`. Package gains a `roster` (per execution: target, actor, role, status, last signed seq/age); `session_overview` returns it; a `session_inbox` tool pages 44220s addressed to *this* execution with their receipt stage. The MCP attaches to every umbrella execution with a genesis, not only rehydrated ones (the bootstrap prefix distinguishes the two).
 - **Lane 4C (prompting).** Owns `crates/buzz-session-provider/src/session.rs` (the boundary-delivery prompt block only) and `crates/buzz-acp/src/base_prompt.md` (a "Crew sessions" section). A boundary-delivered turn is rendered in the `[Context]` shape of `queue.rs:1568`: sender actor/role, delivery class, reply target, then the text — never as bare prompt text, so a seat can tell a sibling's message from its operator's.
 
+**Added to S4 by ruling R1 (2026-08-26):** the re-addressing affordance for an
+owed turn. A `turn_dropped`/`NO_LIVE_EXECUTION` or `turn_refused`/`STALE_GENERATION`
+receipt is the point at which the sender learns their words did not run; the
+desktop row gains "Resend to the resumed execution" and `bee sessions send`
+gains `--readdress`, both of which re-sign the same text against the
+*current* generation. Open questions the lane must answer, not assume: which
+generation it resolves to, who resumed it, and what happens when the session is
+closed.
+
 Acceptance: two managed agents seated in one umbrella; agent A `bee sessions
 send --to builder` while B is mid-turn → `turn_queued`, then `turn_started`
 with the `[Context]` block visible in B's `user_prompt`; `bee sessions status`
