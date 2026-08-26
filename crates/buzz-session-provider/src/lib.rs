@@ -47,7 +47,7 @@ pub mod session;
 pub mod state;
 pub mod transcript;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -1016,19 +1016,41 @@ impl Provider {
                 .cmp(&right.created_at)
                 .then_with(|| left.event_id.cmp(&right.event_id))
         });
-        for command in held {
-            self.on_turn(
-                command.channel_id,
-                command.created_at,
-                &command.operator_pubkey,
-                &command.content,
-            )
-            .await?;
+        // Popped one at a time so a failure can hand the rest back. `?` out of
+        // this loop used to take the untried remainder with it: `mem::take`
+        // had already emptied `replay.held`, so those commands were no longer
+        // held, had never been delivered, had no receipt, and the run loop
+        // only logs. A restart still recovered them — the channel floor sits
+        // below them — but inside the running process that is the silent loss
+        // this machinery exists to remove.
+        let mut queue: VecDeque<HeldCommand> = held.into();
+        while let Some(command) = queue.pop_front() {
+            let delivered = self
+                .on_turn(
+                    command.channel_id,
+                    command.created_at,
+                    &command.operator_pubkey,
+                    &command.content,
+                )
+                .await;
+            if let Err(error) = delivered {
+                // This one never reached a mailbox, so it goes back too. A
+                // redelivery is safe: the consumed and refused ledgers answer
+                // anything that did land.
+                self.replay.held.push(command);
+                self.replay.held.extend(queue);
+                return Err(error);
+            }
             let mark = match self.watermark_ceiling(command.channel_id) {
                 Some(ceiling) => command.created_at.min(ceiling),
                 None => command.created_at,
             };
-            self.state.record_watermark(command.channel_id, mark)?;
+            if let Err(error) = self.state.record_watermark(command.channel_id, mark) {
+                // Delivered, so this one is not handed back — only the ones
+                // still waiting behind it.
+                self.replay.held.extend(queue);
+                return Err(error.into());
+            }
         }
         Ok(())
     }
@@ -9891,5 +9913,87 @@ mod tests {
             "the timer that closes the window is what delivers the turn"
         );
         assert_eq!(provider.next_replay_delay(), None);
+    }
+
+    /// A failed delivery hands the rest of the burst back, instead of dropping
+    /// it on the floor.
+    ///
+    /// `deliver_held_commands` drains `replay.held` with `mem::take`, so a `?`
+    /// out of the delivery loop used to take the untried remainder with it:
+    /// no longer held, never delivered, no receipt, and the run loop only
+    /// logs. A restart still recovers them — the channel floor sits below
+    /// them — but inside the running process that is exactly the silent loss
+    /// this machinery exists to remove.
+    #[tokio::test]
+    async fn a_failed_held_delivery_hands_the_rest_of_the_burst_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let state_dir = dir.path().join("state");
+        let mut provider = provider(&state_dir, Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        // A generation this provider has moved past: the fence answers it with
+        // a refusal, and a refusal is written to the durable ledger before it
+        // is published. That write is the io failure this test induces.
+        let mut stale = target.clone();
+        stale.generation += 1;
+
+        let base = now_secs();
+        provider.open_replay_window(channel_id);
+        for (command_id, turn_target, created_at) in [
+            ("turn-stale", &stale, base),
+            ("turn-second", &target, base + 1),
+            ("turn-third", &target, base + 2),
+        ] {
+            provider
+                .handle_command_event(
+                    channel_id,
+                    &turn_event_at(channel_id, command_id, turn_target, "words", created_at),
+                )
+                .await
+                .expect("hold");
+        }
+
+        // A directory where the refusal ledger's file belongs: every append to
+        // it fails, which is the same `io::Error` class a full or read-only
+        // state directory raises.
+        std::fs::create_dir_all(state_dir.join("refusals.jsonl")).expect("sabotage");
+
+        provider
+            .flush_replays_now()
+            .await
+            .expect_err("the refusal ledger append fails");
+
+        let mut still_held: Vec<u64> = provider
+            .replay
+            .held
+            .iter()
+            .filter(|held| held.channel_id == channel_id)
+            .map(|held| held.created_at)
+            .collect();
+        still_held.sort_unstable();
+        assert_eq!(
+            still_held,
+            vec![base, base + 1, base + 2],
+            "the command that failed and everything queued behind it stay held"
+        );
+        assert!(
+            provider
+                .state()
+                .watermark(channel_id)
+                .is_none_or(|mark| mark <= base),
+            "the floor still reaches the oldest turn this provider is holding"
+        );
     }
 }
