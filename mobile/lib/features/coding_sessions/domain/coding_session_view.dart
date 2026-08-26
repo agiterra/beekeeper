@@ -95,14 +95,22 @@ class CodingSessionChannelView {
 
   /// Whether a provider is answering for [session]'s current generation.
   ///
-  /// Reachability is a per-execution fact; a session with several executions
-  /// is reachable when any current generation has a live lease, and unknown
-  /// when no execution can answer either way.
+  /// Reachability is a per-execution fact folded into one line. One live lease
+  /// settles it: the session has a provider answering. Otherwise *unknown is
+  /// sticky* — "no provider answering" is only returned when every current
+  /// generation said so. D8 forbids rendering a partial read as nobody
+  /// answering, and a session whose executions split between "undetermined"
+  /// and "silent" is a partial read; the header prints the denial in the
+  /// error colour, so returning it there would state as fact something this
+  /// device never read. The undetermined verdict is passed through whole,
+  /// with its lease sequence and its conflict flag, rather than flattened to
+  /// the bare constant.
   CodingSessionReachability reachabilityFor(
     CodingSessionUmbrella session, {
     required DateTime now,
   }) {
-    var best = CodingSessionReachability.unknown;
+    CodingSessionReachability? undetermined;
+    CodingSessionReachability? silent;
     for (final execution in session.executions) {
       if (!execution.isCurrentGeneration) continue;
       final verdict = deriveCodingSessionReachability(
@@ -113,15 +121,21 @@ class CodingSessionChannelView {
         now: now,
         leasesRead: leasesRead,
       );
-      if (verdict.kind == CodingSessionReachabilityKind.reachable) {
-        return verdict;
-      }
-      if (best.kind == CodingSessionReachabilityKind.unknown &&
-          verdict.kind == CodingSessionReachabilityKind.noProviderAnswering) {
-        best = verdict;
+      switch (verdict.kind) {
+        case CodingSessionReachabilityKind.reachable:
+          return verdict;
+        case CodingSessionReachabilityKind.unknown:
+          // A lease tie is the more specific reason to be undetermined, so it
+          // outranks "no query has come back yet" when both are present.
+          if (undetermined == null ||
+              (!undetermined.conflict && verdict.conflict)) {
+            undetermined = verdict;
+          }
+        case CodingSessionReachabilityKind.noProviderAnswering:
+          silent ??= verdict;
       }
     }
-    return best;
+    return undetermined ?? silent ?? CodingSessionReachability.unknown;
   }
 }
 

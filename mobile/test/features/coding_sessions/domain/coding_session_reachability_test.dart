@@ -1,4 +1,5 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'coding_session_fixtures.dart';
@@ -109,6 +110,96 @@ void main() {
         leasesRead: false,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.unknown);
+    });
+  });
+
+  group('reachability across a session', () {
+    final now = DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true);
+    final second = target(sessionId: 'session-2');
+
+    // D8: "an unknown read (no lease query yet / partial) must never render
+    // as 'nobody answering'". A session whose executions disagree — one
+    // undetermined, one with nothing answering — is a partial read, and the
+    // header prints "No provider answering" in the error colour. Unknown has
+    // to be sticky, or the page states as fact something it did not read.
+    test('one undetermined execution keeps the whole session unknown', () {
+      final events = <NostrEvent>[
+        // Execution one: a lease tie, which reads unknown on its own.
+        createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running', sessionRef: sessionRefA),
+        leaseEvent(leaseSequence: 3, createdAt: 1990, id: 'a' * 64),
+        leaseEvent(leaseSequence: 3, createdAt: 1991, id: 'b' * 64),
+        // Execution two: no lease at all, which reads "nobody answering".
+        createEvent(commandId: 'cmd-2', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-2', status: 'created', forTarget: second),
+        metadataEvent(
+          forTarget: second,
+          status: 'running',
+          sessionRef: sessionRefA,
+        ),
+      ];
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: events,
+      );
+      final session = view.sessions.single;
+      expect(session.executions, hasLength(2));
+      final verdict = view.reachabilityFor(session, now: now);
+      expect(verdict.kind, CodingSessionReachabilityKind.unknown);
+      expect(verdict.conflict, isTrue);
+      expect(verdict.leaseSequence, 3);
+    });
+
+    // A live lease still wins: one execution proving a provider is answering
+    // is what the session is asking about.
+    test('a reachable execution still answers for the session', () {
+      final events = <NostrEvent>[
+        createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running', sessionRef: sessionRefA),
+        leaseEvent(leaseSequence: 3, createdAt: 1990, id: 'a' * 64),
+        leaseEvent(leaseSequence: 3, createdAt: 1991, id: 'b' * 64),
+        createEvent(commandId: 'cmd-2', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-2', status: 'created', forTarget: second),
+        metadataEvent(
+          forTarget: second,
+          status: 'running',
+          sessionRef: sessionRefA,
+        ),
+        leaseEvent(forTarget: second, commandId: 'cmd-2', createdAt: 1990),
+      ];
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: events,
+      );
+      final verdict = view.reachabilityFor(view.sessions.single, now: now);
+      expect(verdict.kind, CodingSessionReachabilityKind.reachable);
+    });
+
+    // When every current generation says the same thing, that is the answer.
+    test('every execution silent reads as nobody answering', () {
+      final events = <NostrEvent>[
+        createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running', sessionRef: sessionRefA),
+        createEvent(commandId: 'cmd-2', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-2', status: 'created', forTarget: second),
+        metadataEvent(
+          forTarget: second,
+          status: 'running',
+          sessionRef: sessionRefA,
+        ),
+      ];
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: events,
+      );
+      final verdict = view.reachabilityFor(view.sessions.single, now: now);
+      expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
     });
   });
 }
