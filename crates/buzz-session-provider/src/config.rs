@@ -48,7 +48,12 @@ pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// `BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
 pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
 /// Default per-turn silence budget, mirroring the buzz-acp harness.
-pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
+///
+/// Off-round on purpose — see the harness constant of the same name. Claude
+/// Code's `Monitor` budget is 900000ms; while this was also 900s, a turn that
+/// died at ~900s could have been ended by either clock and the duration said
+/// nothing about which.
+pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 870;
 /// Default per-turn wall-clock ceiling, mirroring the buzz-acp harness.
 pub const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
 /// Default budget for silence *after* a turn has finished answering.
