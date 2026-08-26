@@ -1435,6 +1435,12 @@ function turnReceipt(status, overrides = {}) {
       message: "only the founder or a granted operator may steer this session",
     };
   }
+  if (status === "turn_degraded") {
+    base.error = {
+      code: "STEER_UNSUPPORTED",
+      message: "this runtime advertised no native steering",
+    };
+  }
   return { ...base, ...overrides };
 }
 
@@ -1557,6 +1563,52 @@ test("queued then started is two facts about one turn, not a conflict", () => {
   assert.deepEqual(
     store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
     { stage: "started", turnId: "turn-abc" },
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+});
+
+test("a degraded steer is progress, not a failure, and outranks queued", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_degraded"), turnReceiptEvent("turn_queued")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  // The provider says both: it could not steer, and the turn is in the
+  // mailbox. The later fact about the same turn is the one the row reads.
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "degraded" },
+  );
+  // A turn that will still run must never restore the draft.
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_started")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "started", turnId: "turn-abc" },
+  );
+});
+
+test("an issued interrupt is neither progress on a turn nor a refusal", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("interrupt_delivered")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.equal(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
   );
   assert.equal(
     store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),

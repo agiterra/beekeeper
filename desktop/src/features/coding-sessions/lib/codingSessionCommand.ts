@@ -20,11 +20,53 @@ export type CodingSessionCommandTarget = {
   generation: number;
 };
 
+/**
+ * How the sender asks the provider to deliver this turn into an execution that
+ * may already be working. The provider decides what it can honour and says so
+ * in its receipts; this is the request, never a promise.
+ *
+ * - `boundary` — hold the turn in the provider's mailbox and run it when the
+ *   current turn settles. This is the contract's default and the only class a
+ *   client may assume works.
+ * - `steer` — inject into the running turn where the execution's runtime
+ *   advertised native steering. Where it did not, the provider publishes
+ *   `turn_degraded` (`STEER_UNSUPPORTED`) and treats the turn as `boundary`.
+ *   It never cancels the running turn to make room.
+ * - `interrupt` — cancel the running turn first, then deliver at the boundary
+ *   it creates. Founder authority only; anyone else is refused
+ *   (`UNAUTHORIZED_OPERATOR`).
+ */
+export type CodingSessionTurnDelivery = "boundary" | "steer" | "interrupt";
+
+/** The closed set of delivery classes, in escalation order. */
+export const CODING_SESSION_TURN_DELIVERIES = [
+  "boundary",
+  "steer",
+  "interrupt",
+] as const;
+
+/** True for exactly the three delivery classes on the wire. */
+export function isCodingSessionTurnDelivery(
+  value: unknown,
+): value is CodingSessionTurnDelivery {
+  return (
+    typeof value === "string" &&
+    (CODING_SESSION_TURN_DELIVERIES as readonly string[]).includes(value)
+  );
+}
+
 /** Actions supported by the governed coding-session command contract. */
 export type CodingSessionCommandAction =
   | {
       type: "thread.turn.start";
       text: string;
+      /**
+       * Always written explicitly by this client even though the wire
+       * contract defaults an absent key to `boundary`: a reader of a signed
+       * command should never have to know the default to know what was asked
+       * for.
+       */
+      deliver: CodingSessionTurnDelivery;
     }
   | {
       type: "thread.turn.interrupt";
@@ -89,12 +131,17 @@ export function buildCodingSessionCommandEvent(input: {
   commandId: string;
   target: CodingSessionCommandTarget;
   text: string;
+  deliver: CodingSessionTurnDelivery;
 }): CodingSessionCommandEventInput {
   return buildCodingSessionActionEvent({
     channelId: input.channelId,
     commandId: input.commandId,
     target: input.target,
-    action: { type: "thread.turn.start", text: input.text },
+    action: {
+      type: "thread.turn.start",
+      text: input.text,
+      deliver: input.deliver,
+    },
   });
 }
 
@@ -143,6 +190,7 @@ export function validateCodingSessionCommandInput(input: {
     | {
         type: "thread.turn.start";
         text?: string;
+        deliver?: unknown;
       };
 }): void {
   validateBoundedNonemptyUtf8(
@@ -177,6 +225,14 @@ export function validateCodingSessionCommandInput(input: {
       "action.text",
       MAX_CODING_SESSION_TEXT_BYTES,
     );
+    // An unrecognised class is refused here rather than sent and defaulted by
+    // the provider: a turn the sender asked to interrupt with must never be
+    // quietly delivered at a boundary because a typo made it unreadable.
+    if (!isCodingSessionTurnDelivery(input.action.deliver)) {
+      throw new Error(
+        `action.deliver must be one of ${CODING_SESSION_TURN_DELIVERIES.join(", ")}`,
+      );
+    }
   }
 }
 

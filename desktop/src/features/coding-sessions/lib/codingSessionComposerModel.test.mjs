@@ -64,3 +64,36 @@ test("only the terminal control is called Stop", () => {
   assert.equal(working.sendLabel, "Steer");
   assert.equal(working.showStopAction, true);
 });
+
+// The label is a promise about what the provider will do with the words. An
+// execution whose runtime advertised no native steering cannot keep it: the
+// turn reaches the provider now and runs at the next turn boundary.
+test("a non-steering execution is not offered a steer it cannot get", () => {
+  assert.equal(
+    getCodingSessionComposerState({
+      canSteer: false,
+      isMember: true,
+      isWorking: true,
+      text: "go",
+    }).sendLabel,
+    "Send next",
+  );
+  assert.equal(
+    getCodingSessionComposerState({
+      canSteer: false,
+      isMember: true,
+      isWorking: false,
+      text: "go",
+    }).sendLabel,
+    "Send",
+  );
+  assert.equal(
+    getCodingSessionComposerState({
+      canSteer: true,
+      isMember: true,
+      isWorking: true,
+      text: "go",
+    }).sendLabel,
+    "Steer",
+  );
+});

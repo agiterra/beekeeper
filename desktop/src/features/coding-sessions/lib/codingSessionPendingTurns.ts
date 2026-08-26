@@ -14,9 +14,12 @@
  *
  * Like {@link ./codingSessionPendingLifecycle}, this is not persistence: it
  * survives neither reload nor community switch (reset via
- * `resetPendingCodingSessionTurns`), and every record expires after
+ * `resetPendingCodingSessionTurns`), and an unanswered record expires after
  * {@link PENDING_CODING_SESSION_TURN_TTL_MS} so a provider that never answers
- * cannot leave a row claiming a turn is still in flight an hour later.
+ * cannot leave a row claiming a turn is still in flight an hour later. A
+ * record the provider has signed for (`turn_queued`, `turn_degraded`) is
+ * exempt from that expiry and ages visibly instead — the relay is the mailbox,
+ * so a turn waiting behind an hour of work is still coming.
  */
 import * as React from "react";
 
@@ -44,7 +47,29 @@ export type PendingCodingSessionTurn = {
    * already doing — accepted, not started, and certainly not "thinking".
    */
   queuedByProvider?: boolean;
+  /**
+   * Set once the provider's own signed `turn_degraded` receipt names this
+   * command: the sender asked to steer the running turn and this execution's
+   * runtime cannot, so the turn waits for the next boundary instead. The turn
+   * is not lost and was not merged into the running one — but it is not what
+   * was asked for, so the row says so rather than reading as an ordinary queue.
+   */
+  degradedByProvider?: boolean;
 };
+
+/**
+ * True once the provider has signed for this turn — queued, or degraded to the
+ * boundary. Both mean the same thing for the row's lifetime: the turn is in
+ * the provider's mailbox and the client is no longer the only thing claiming
+ * it exists.
+ */
+export function pendingCodingSessionTurnHeldByProvider(
+  pending: PendingCodingSessionTurn,
+): boolean {
+  return (
+    pending.queuedByProvider === true || pending.degradedByProvider === true
+  );
+}
 
 /**
  * When a published turn stops reading as in-flight.
@@ -55,13 +80,18 @@ export type PendingCodingSessionTurn = {
 export const PENDING_CODING_SESSION_TURN_STALL_MS = 10_000;
 
 /**
- * When a pending row is dropped outright.
+ * When an *unanswered* pending row is dropped outright.
  *
  * A row that has gone unanswered this long is not going to be answered — the
  * command was addressed to a target no live provider owns — and keeping it
  * forever would put a permanent unsent message above the composer. The stall
  * label above is what warns the person in time to keep their words; this is the
  * backstop, not the disclosure.
+ *
+ * A row the provider has signed for is exempt: a turn queued behind a long
+ * turn is *supposed* to sit there, and dropping it at three minutes would
+ * delete a message that is still coming. Those rows age out loud instead —
+ * see {@link pendingCodingSessionTurnHeldByProvider}.
  */
 export const PENDING_CODING_SESSION_TURN_TTL_MS = 3 * 60_000;
 
@@ -158,6 +188,35 @@ export function markPendingCodingSessionTurnQueued(
     }
     changed = true;
     return { ...entry, published: true, queuedByProvider: true };
+  });
+  if (!changed) return;
+  pendingTurns = next;
+  notify();
+}
+
+/**
+ * Record the provider's signed `turn_degraded` for a turn this client sent.
+ *
+ * Kept apart from `queuedByProvider` because it is a different sentence: the
+ * turn is queued *because the steer could not happen*, and a row that only
+ * said "queued" would quietly swallow the fact that the person's mid-turn
+ * correction is not reaching the running turn.
+ */
+export function markPendingCodingSessionTurnDegraded(
+  channelId: string,
+  commandId: string,
+): void {
+  const key = pendingCodingSessionTurnKey({ channelId, commandId });
+  let changed = false;
+  const next = pendingTurns.map((entry) => {
+    if (
+      pendingCodingSessionTurnKey(entry) !== key ||
+      entry.degradedByProvider === true
+    ) {
+      return entry;
+    }
+    changed = true;
+    return { ...entry, published: true, degradedByProvider: true };
   });
   if (!changed) return;
   pendingTurns = next;
@@ -285,6 +344,7 @@ export type PendingCodingSessionTurnEcho = {
 /** What a pending row should say about itself right now. */
 export type PendingCodingSessionTurnState =
   | "sending"
+  | "degraded"
   | "queued"
   | "waiting"
   | "stalled";
@@ -295,14 +355,29 @@ export function pendingCodingSessionTurnState(
   now: number,
 ): PendingCodingSessionTurnState {
   if (!pending.published) return "sending";
-  // A signed `turn_queued` outranks the stall clock, because it answers the
-  // exact question the stall label exists to raise: something did pick this
-  // turn up. It is waiting behind other work, and saying so beats both
-  // silence and "not picked up yet".
+  // A signed receipt outranks the stall clock, because it answers the exact
+  // question the stall label exists to raise: something did pick this turn up.
+  // It is waiting behind other work, and saying so beats both silence and
+  // "not picked up yet". Degraded outranks queued: a provider that could not
+  // steer publishes both, and the half the person did not ask for is the half
+  // worth reading.
+  if (pending.degradedByProvider === true) return "degraded";
   if (pending.queuedByProvider === true) return "queued";
   return now - pending.recordedAt > PENDING_CODING_SESSION_TURN_STALL_MS
     ? "stalled"
     : "waiting";
+}
+
+/**
+ * How long a held row has been waiting, in the coarsest unit that is still
+ * true. Seconds matter here — the stall clock fires ten seconds in, and
+ * "just now" at that point would be an evasion rather than a rounding.
+ */
+export function formatPendingCodingSessionTurnAge(ageMs: number): string {
+  const seconds = Math.max(0, Math.floor(ageMs / 1_000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3_600)}h`;
 }
 
 /** How a pending row was retired, for callers that must disclose the join. */
@@ -322,8 +397,9 @@ export type PendingCodingSessionTurnSettlement = {
  * Decide which pending turns a surface should still show for one execution.
  *
  * A pending turn is retired when the provider's verified prompt echo for it
- * appears in that execution's transcript, or when its TTL runs out. There are
- * two joins and they are not equal:
+ * appears in that execution's transcript, or when its TTL runs out — the TTL
+ * applying only to a turn no provider has signed for. There are two joins and
+ * they are not equal:
  *
  * 1. **The command id.** A provider that stamps `commandId` on its
  *    `user_prompt` has told us exactly which sent turn this echo answers.
@@ -369,6 +445,7 @@ export function resolvePendingCodingSessionTurns(
   const settled = new Set<string>();
 
   for (const entry of mine) {
+    if (pendingCodingSessionTurnHeldByProvider(entry)) continue;
     if (now - entry.recordedAt > PENDING_CODING_SESSION_TURN_TTL_MS) {
       const key = pendingCodingSessionTurnKey(entry);
       expired.add(key);

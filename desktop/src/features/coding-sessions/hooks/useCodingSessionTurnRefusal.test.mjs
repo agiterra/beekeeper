@@ -516,3 +516,153 @@ test("a queued turn marks its optimistic row without touching the editor", async
   resetPendingCodingSessionTurns();
   scope.teardown();
 });
+
+test("a degraded steer relabels the row and leaves the editor alone", async () => {
+  const {
+    markPendingCodingSessionTurnPublished,
+    readPendingCodingSessionTurns,
+    recordPendingCodingSessionTurn,
+    resetPendingCodingSessionTurns,
+  } = await import("../lib/codingSessionPendingTurns.ts");
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const degraded = await turnStageEvent({
+    status: "turn_degraded",
+    error: {
+      code: "STEER_UNSUPPORTED",
+      message: "this runtime advertised no native steering",
+    },
+  });
+
+  recordPendingCodingSessionTurn({
+    channelId: CHANNEL_ID,
+    targetKey: "coding-session/v1|whatever",
+    commandId: TURN_COMMAND_ID,
+    text: "look at the second failure first",
+    operatorPubkey: null,
+    recordedAt: Date.now(),
+    published: false,
+  });
+  markPendingCodingSessionTurnPublished(CHANNEL_ID, TURN_COMMAND_ID);
+
+  await scope.act(async () => {
+    scope.state.typeInto("look at the second failure first");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(degraded);
+  });
+  await scope.settle();
+
+  assert.equal(readPendingCodingSessionTurns()[0].degradedByProvider, true);
+  // The turn still runs, so the words stay sent: a downgrade is not a refusal
+  // and must never hand the draft back as though nothing was published.
+  assert.equal(scope.error(), null);
+  assert.equal(scope.draft(), "");
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});
+
+test("a turn the provider is holding stays watched past the refusal deadline", async () => {
+  const { resetPendingCodingSessionTurns } = await import(
+    "../lib/codingSessionPendingTurns.ts"
+  );
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const queued = await turnStageEvent({ status: "turn_queued" });
+  const dropped = await turnStageEvent({
+    status: "turn_dropped",
+    error: {
+      code: "NO_LIVE_EXECUTION",
+      message: "no execution is running for this session",
+    },
+  });
+
+  await scope.act(async () => {
+    scope.state.typeInto("run the whole suite");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(queued);
+  });
+  await scope.settle();
+
+  // A queued turn can wait behind an hour of work. Twenty seconds of silence
+  // is not evidence it ran, so the watch is not allowed to expire on it —
+  // otherwise the drop below would arrive to nobody listening.
+  assert.equal(scope.pendingDeadlines(), 0);
+  await scope.act(async () => {
+    scope.expireDeadlines();
+  });
+  await scope.settle();
+  assert.equal(scope.state.isWatching, true);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(dropped);
+  });
+  await scope.settle();
+  assert.equal(
+    scope.error(),
+    "Turn dropped (NO_LIVE_EXECUTION): no execution is running for this session",
+  );
+  assert.equal(scope.draft(), "run the whole suite");
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});
+
+test("a started turn hands the row to the transcript and stops watching", async () => {
+  const { resetPendingCodingSessionTurns } = await import(
+    "../lib/codingSessionPendingTurns.ts"
+  );
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const queued = await turnStageEvent({ status: "turn_queued" });
+  const started = await turnStageEvent({ status: "turn_started" });
+  started.content = JSON.stringify({
+    ...JSON.parse(started.content),
+    turnId: "turn-abc",
+  });
+  const { finalizeEvent: sign } = await import("nostr-tools/pure");
+  const signedStarted = sign(
+    {
+      kind: started.kind,
+      created_at: started.created_at,
+      tags: started.tags,
+      content: started.content,
+    },
+    PROVIDER_SECRET,
+  );
+
+  await scope.act(async () => {
+    scope.state.typeInto("go");
+  });
+  await scope.act(async () => {
+    scope.state.send(TURN_COMMAND_ID);
+  });
+  await scope.settle();
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(queued);
+  });
+  await scope.settle();
+  assert.equal(scope.state.isWatching, true);
+
+  await scope.act(async () => {
+    scope.liveSubscriptions[0].onEvent(signedStarted);
+  });
+  await scope.settle();
+
+  assert.equal(scope.state.isWatching, false);
+  assert.equal(scope.error(), null);
+  assert.equal(scope.draft(), "");
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});

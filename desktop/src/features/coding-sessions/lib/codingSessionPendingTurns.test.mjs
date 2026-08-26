@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatPendingCodingSessionTurnAge,
+  markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnQueued,
   MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
   PENDING_CODING_SESSION_TURN_STALL_MS,
@@ -335,4 +337,68 @@ test("text-only settlements are remembered so the message can disclose them", ()
   assert.equal(readTextSettledCodingSessionEchoes().has("item-legacy"), true);
   resetPendingCodingSessionTurns();
   assert.equal(readTextSettledCodingSessionEchoes().size, 0);
+});
+
+test("a turn the provider holds outlives the unanswered-row TTL", () => {
+  // The TTL exists to clear a row nobody ever picked up. A signed
+  // `turn_queued` is the provider saying it did pick it up, so dropping the
+  // row at three minutes would delete a message that is genuinely still
+  // coming — the exact silence this whole store exists to remove.
+  const held = turn({
+    commandId: "csc-held",
+    published: true,
+    queuedByProvider: true,
+  });
+  const resolved = resolvePendingCodingSessionTurns(
+    [held],
+    { channelId: CHANNEL, targetKey: TARGET },
+    [],
+    1_000 + PENDING_CODING_SESSION_TURN_TTL_MS + 1,
+  );
+  assert.equal(resolved.visible.length, 1);
+  assert.deepEqual(resolved.consumedKeys, []);
+
+  const unheld = turn({ commandId: "csc-unheld", published: true });
+  assert.deepEqual(
+    resolvePendingCodingSessionTurns(
+      [unheld],
+      { channelId: CHANNEL, targetKey: TARGET },
+      [],
+      1_000 + PENDING_CODING_SESSION_TURN_TTL_MS + 1,
+    ).visible,
+    [],
+  );
+});
+
+test("a degraded steer is held at the boundary, and says which", () => {
+  recordPendingCodingSessionTurn(turn({ commandId: "csc-d" }));
+  markPendingCodingSessionTurnDegraded(CHANNEL, "csc-d");
+  const [stored] = readPendingCodingSessionTurns();
+  assert.equal(stored.published, true);
+  assert.equal(stored.degradedByProvider, true);
+  assert.equal(pendingCodingSessionTurnState(stored, 1_000), "degraded");
+  // Degradation outranks the queue receipt that follows it: the person asked
+  // to steer and did not get to.
+  markPendingCodingSessionTurnQueued(CHANNEL, "csc-d");
+  const [requeued] = readPendingCodingSessionTurns();
+  assert.equal(pendingCodingSessionTurnState(requeued, 1_000), "degraded");
+  assert.equal(
+    resolvePendingCodingSessionTurns(
+      readPendingCodingSessionTurns(),
+      { channelId: CHANNEL, targetKey: TARGET },
+      [],
+      1_000 + PENDING_CODING_SESSION_TURN_TTL_MS + 1,
+    ).visible.length,
+    1,
+  );
+});
+
+test("the age a held row shows counts seconds before it counts minutes", () => {
+  assert.equal(formatPendingCodingSessionTurnAge(0), "0s");
+  assert.equal(formatPendingCodingSessionTurnAge(11_000), "11s");
+  assert.equal(formatPendingCodingSessionTurnAge(59_999), "59s");
+  assert.equal(formatPendingCodingSessionTurnAge(60_000), "1m");
+  assert.equal(formatPendingCodingSessionTurnAge(3_599_000), "59m");
+  assert.equal(formatPendingCodingSessionTurnAge(3_600_000), "1h");
+  assert.equal(formatPendingCodingSessionTurnAge(-1), "0s");
 });

@@ -33,7 +33,6 @@ type ComposerSurfaceProps = {
   isWorking: boolean;
   layout: "inline" | "stacked";
   onAddProvider?: () => void;
-  onCancelQueued: () => void;
   onInterrupt: () => void;
   onPrimary: () => void;
   onReconnect: () => void;
@@ -41,7 +40,6 @@ type ComposerSurfaceProps = {
   onTextChange: (text: string) => void;
   pendingAction: "send" | "interrupt" | "resume" | "stop" | null;
   providerAuthorityPubkey: string | null;
-  queuedDraft: string | null;
   recipientControl?: React.ReactNode;
   sendLabel: string;
   showAuthorityFailure: boolean;
@@ -76,7 +74,6 @@ export function CodingSessionComposerSurface({
   isWorking,
   layout,
   onAddProvider,
-  onCancelQueued,
   onInterrupt,
   onPrimary,
   onReconnect,
@@ -84,7 +81,6 @@ export function CodingSessionComposerSurface({
   onTextChange,
   pendingAction,
   providerAuthorityPubkey,
-  queuedDraft,
   recipientControl,
   sendLabel,
   showAuthorityFailure,
@@ -118,11 +114,9 @@ export function CodingSessionComposerSurface({
           isResuming={isResuming}
           isSending={isSending}
           onAddProvider={onAddProvider}
-          onCancelQueued={onCancelQueued}
           onReconnect={onReconnect}
           onSessionStop={onSessionStop}
           providerAuthorityPubkey={providerAuthorityPubkey}
-          queuedDraft={queuedDraft}
           unreachable={unreachable}
           unreachableDetail={unreachableDetail}
         />
@@ -132,7 +126,6 @@ export function CodingSessionComposerSurface({
           canControl={canControl}
           error={error}
           isUngovernedSession={isUngovernedSession}
-          queuedDraft={queuedDraft}
           showAuthorityFailure={showAuthorityFailure}
         />
       )}
@@ -164,7 +157,6 @@ export function CodingSessionComposerSurface({
           placeholder={composerPlaceholder({
             canControl,
             canSteer,
-            immersive,
             isDisconnected,
             isEnded,
             isMember,
@@ -303,11 +295,9 @@ function ComposerLifecycleNotice({
   isResuming,
   isSending,
   onAddProvider,
-  onCancelQueued,
   onReconnect,
   onSessionStop,
   providerAuthorityPubkey,
-  queuedDraft,
   unreachable,
   unreachableDetail,
 }: {
@@ -320,15 +310,13 @@ function ComposerLifecycleNotice({
   isResuming: boolean;
   isSending: boolean;
   onAddProvider?: () => void;
-  onCancelQueued: () => void;
   onReconnect: () => void;
   onSessionStop: () => void;
   providerAuthorityPubkey: string | null;
-  queuedDraft: string | null;
   unreachable: boolean;
   unreachableDetail: string | null;
 }) {
-  if (!error && !queuedDraft && !unreachable && !isDisconnected && !isEnded) {
+  if (!error && !unreachable && !isDisconnected && !isEnded) {
     return null;
   }
   return (
@@ -340,24 +328,6 @@ function ComposerLifecycleNotice({
         >
           {error}
         </p>
-      ) : null}
-      {queuedDraft ? (
-        <div
-          className="flex items-center gap-3 text-xs"
-          data-testid="coding-session-composer-queued"
-        >
-          <p className="min-w-0 flex-1 truncate text-muted-foreground">
-            <span className="font-medium text-foreground/80">Next:</span>{" "}
-            {queuedDraft}
-          </p>
-          <button
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={onCancelQueued}
-            type="button"
-          >
-            Cancel
-          </button>
-        </div>
       ) : null}
       {unreachable ? (
         <LifecycleNoticeRow
@@ -458,14 +428,12 @@ function CompactComposerNotices({
   canControl,
   error,
   isUngovernedSession,
-  queuedDraft,
   showAuthorityFailure,
 }: {
   authorityReason: string | null;
   canControl: boolean;
   error: string | null;
   isUngovernedSession: boolean;
-  queuedDraft: string | null;
   showAuthorityFailure: boolean;
 }) {
   return (
@@ -504,11 +472,6 @@ function CompactComposerNotices({
           {error}
         </p>
       ) : null}
-      {queuedDraft ? (
-        <p className="mb-2 truncate text-xs text-muted-foreground">
-          Next turn queued: {queuedDraft}
-        </p>
-      ) : null}
     </>
   );
 }
@@ -516,7 +479,6 @@ function CompactComposerNotices({
 function composerPlaceholder({
   canControl,
   canSteer,
-  immersive,
   isDisconnected,
   isEnded,
   isMember,
@@ -524,7 +486,6 @@ function composerPlaceholder({
 }: {
   canControl: boolean;
   canSteer: boolean;
-  immersive: boolean;
   isDisconnected: boolean;
   isEnded: boolean;
   isMember: boolean;
@@ -534,7 +495,7 @@ function composerPlaceholder({
   if (isDisconnected) return "Reconnect this execution to continue…";
   if (!isMember) return "Join this channel to send a message.";
   if (!canControl) return "View only — ask for collaborator access.";
-  if (immersive && isWorking && !canSteer) return "Write the next turn…";
+  if (isWorking && !canSteer) return "Send the next turn…";
   if (isWorking) return "Steer this coding session…";
   return "Send a message…";
 }

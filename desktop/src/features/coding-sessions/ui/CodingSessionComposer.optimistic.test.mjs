@@ -179,9 +179,9 @@ test("a failed publish returns the words and retires the pending row", async () 
   }
 });
 
-test("a prompt composed during a non-steerable turn waits, then publishes", async () => {
+test("a mid-turn prompt is published at once, held by the provider not this client", async () => {
   const React = (await import("react")).default;
-  const { act, cleanup, fireEvent, render, screen, waitFor } = await import(
+  const { act, cleanup, fireEvent, render, screen } = await import(
     "@testing-library/react"
   );
   const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
@@ -207,9 +207,8 @@ test("a prompt composed during a non-steerable turn waits, then publishes", asyn
   };
 
   try {
-    let view;
     await act(async () => {
-      view = render(
+      render(
         React.createElement(CodingSessionComposer, {
           ...baseProps,
           isWorking: true,
@@ -225,29 +224,88 @@ test("a prompt composed during a non-steerable turn waits, then publishes", asyn
       fireEvent.click(screen.getByTestId("coding-session-composer-queue"));
     });
 
+    // The relay is the mailbox: the turn is on it now, addressed with the
+    // delivery class that says "wait for the boundary". Nothing is held in
+    // this client's memory, so closing the window does not lose it.
+    assert.equal(published.length, 1);
+    assert.equal(published[0].text, "check the second failure next");
+    assert.equal(published[0].deliver, "boundary");
     assert.equal(
-      published.length,
-      0,
-      "a running provider must not get the turn",
+      screen.queryByTestId("coding-session-composer-queued"),
+      null,
+      "the local next-turn draft is retired",
     );
-    assert.equal(store.readPendingCodingSessionTurns().length, 0);
-    assert.match(
-      screen.getByTestId("coding-session-composer-queued").textContent,
-      /check the second failure next/,
+    const pending = store.readPendingCodingSessionTurns();
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].published, true);
+    assert.equal(
+      pending[0].queuedByProvider,
+      undefined,
+      "only the provider's own receipt may say it is queued",
     );
+    assert.equal(editor.value, "");
+  } finally {
+    cleanup();
+  }
+});
 
+test("a steerable execution is asked to steer; anything else is a boundary", async () => {
+  const React = (await import("react")).default;
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { CodingSessionComposer } = await import("./CodingSessionComposer.tsx");
+  const published = [];
+  const baseProps = {
+    canInterrupt: true,
+    channelId: CHANNEL_ID,
+    currentUserPubkey: OPERATOR,
+    immersive: true,
+    isMember: true,
+    target: TARGET,
+    variant: "floating",
+    publishCommand: async (input) => {
+      published.push(input);
+      return { eventId: "e", kind: 44220, commandId: input.commandId };
+    },
+  };
+
+  try {
+    let view;
+    await act(async () => {
+      view = render(
+        React.createElement(CodingSessionComposer, {
+          ...baseProps,
+          canSteer: true,
+          isWorking: true,
+        }),
+      );
+    });
+    const editor = () => screen.getByLabelText("Coding-session instruction");
+    await act(async () => {
+      fireEvent.change(editor(), { target: { value: "stop and re-read it" } });
+      fireEvent.click(screen.getByTestId("coding-session-composer-steer"));
+    });
+    assert.equal(published.length, 1);
+    assert.equal(published[0].deliver, "steer");
+
+    // Idle: there is no running turn to steer, so asking to steer one would be
+    // a claim about the provider that nothing supports.
     await act(async () => {
       view.rerender(
         React.createElement(CodingSessionComposer, {
           ...baseProps,
+          canSteer: true,
           isWorking: false,
         }),
       );
     });
-    await waitFor(() => assert.equal(published.length, 1));
-    assert.equal(published[0].text, "check the second failure next");
-    assert.equal(store.readPendingCodingSessionTurns().length, 1);
-    assert.equal(screen.queryByTestId("coding-session-composer-queued"), null);
+    await act(async () => {
+      fireEvent.change(editor(), { target: { value: "and now the tests" } });
+      fireEvent.click(screen.getByTestId("coding-session-composer-primary"));
+    });
+    assert.equal(published.length, 2);
+    assert.equal(published[1].deliver, "boundary");
   } finally {
     cleanup();
   }

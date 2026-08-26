@@ -1,6 +1,9 @@
 import * as React from "react";
 
-import { markPendingCodingSessionTurnQueued } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
+import {
+  markPendingCodingSessionTurnDegraded,
+  markPendingCodingSessionTurnQueued,
+} from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import {
   CODING_SESSION_TURN_REFUSAL_DEADLINE_MS,
@@ -147,7 +150,13 @@ function CodingSessionTurnRefusalWatcher({
     "pinned",
   );
   const refusal = snapshot.turnRefusal;
-  const queued = snapshot.turnProgress?.stage === "queued";
+  const stage = snapshot.turnProgress?.stage;
+  const queued = stage === "queued";
+  const degraded = stage === "degraded";
+  const started = stage === "started";
+  // Queued and degraded are the two stages that leave the turn in the
+  // provider's hands. While it is there, this turn's fate is still open.
+  const held = queued || degraded;
 
   // The same subscription answers a second question the person can see: the
   // provider signed for this turn and parked it behind work already running.
@@ -156,6 +165,14 @@ function CodingSessionTurnRefusalWatcher({
     if (!queued) return;
     markPendingCodingSessionTurnQueued(channelId, turn.commandId);
   }, [channelId, queued, turn.commandId]);
+  // And a third: the steer this turn asked for could not happen, so it will
+  // arrive at the next turn boundary instead. Not a refusal — the words stay
+  // sent — but not what was asked for either, so the row must not read as an
+  // ordinary queue.
+  React.useEffect(() => {
+    if (!degraded) return;
+    markPendingCodingSessionTurnDegraded(channelId, turn.commandId);
+  }, [channelId, degraded, turn.commandId]);
   // A replayed receipt (relay refetch, reconnect backfill) is the same
   // refusal; restoring the draft twice would duplicate the person's words.
   const settledRef = React.useRef(false);
@@ -166,7 +183,21 @@ function CodingSessionTurnRefusalWatcher({
     onRefused(turn, refusal);
   }, [onRefused, refusal, turn]);
 
+  // A turn that has begun is the transcript's business from here: its echo
+  // settles the optimistic row, and no further receipt is coming for it.
   React.useEffect(() => {
+    if (settledRef.current || !started) return;
+    settledRef.current = true;
+    onExpired(turn.commandId);
+  }, [onExpired, started, turn.commandId]);
+
+  React.useEffect(() => {
+    // A turn the provider signed for can legitimately sit in its mailbox for
+    // longer than this deadline — behind a turn that runs for an hour. Twenty
+    // seconds of silence is only evidence the turn ran when nobody has said
+    // otherwise; once `turn_queued` says it has not, expiring the watch would
+    // throw away the `turn_dropped` that may still be coming.
+    if (held) return;
     const timer = window.setTimeout(() => {
       if (settledRef.current) return;
       settledRef.current = true;
@@ -175,7 +206,7 @@ function CodingSessionTurnRefusalWatcher({
       onExpired(turn.commandId);
     }, CODING_SESSION_TURN_REFUSAL_DEADLINE_MS);
     return () => window.clearTimeout(timer);
-  }, [onExpired, turn.commandId]);
+  }, [held, onExpired, turn.commandId]);
 
   return null;
 }

@@ -3,7 +3,9 @@ import { CircleAlert } from "lucide-react";
 
 import {
   clearPendingCodingSessionTurns,
+  formatPendingCodingSessionTurnAge,
   noteTextSettledCodingSessionEchoes,
+  PENDING_CODING_SESSION_TURN_STALL_MS,
   pendingCodingSessionTurnKey,
   pendingCodingSessionTurnState,
   resolvePendingCodingSessionTurns,
@@ -141,7 +143,11 @@ function CodingSessionPendingTurnRow({
 }) {
   const state = pendingCodingSessionTurnState(turn, now);
   const stalled = state === "stalled";
-  const caption = describePendingCodingSessionTurn(state);
+  const held = state === "queued" || state === "degraded";
+  const caption = describePendingCodingSessionTurn(
+    state,
+    Math.max(0, now - turn.recordedAt),
+  );
   return (
     <div
       className="group flex flex-col items-end gap-1"
@@ -165,6 +171,11 @@ function CodingSessionPendingTurnRow({
             stalled ? "text-destructive" : "text-muted-foreground",
           )}
           data-testid="coding-session-pending-turn-status"
+          title={
+            held
+              ? "The provider holds this turn until its current one ends. A published turn cannot be recalled from here."
+              : undefined
+          }
         >
           {stalled ? <CircleAlert aria-hidden className="size-3" /> : null}
           {caption}
@@ -183,11 +194,29 @@ function CodingSessionPendingTurnRow({
  * turn that nobody has picked up long after they should have, or one the
  * provider has signed for and parked behind other work. "Queued" is stated
  * plainly and not dressed up as progress — the turn has not started.
+ *
+ * A held row no longer expires, so its age is part of the sentence once the
+ * stall clock passes: "queued" without a number is fine at ten seconds and an
+ * evasion at forty minutes. A degraded steer leads with the downgrade, because
+ * that is the part the person did not ask for — their correction is not
+ * reaching the turn that is running.
  */
 export function describePendingCodingSessionTurn(
   state: ReturnType<typeof pendingCodingSessionTurnState>,
+  ageMs: number,
 ): string | null {
-  if (state === "queued") return "Queued by the provider";
+  const stalled = ageMs > PENDING_CODING_SESSION_TURN_STALL_MS;
+  const age = formatPendingCodingSessionTurnAge(ageMs);
+  if (state === "degraded") {
+    const degraded =
+      "Delivered at the next turn boundary — this provider cannot steer";
+    return stalled ? `${degraded}; not started yet — ${age}` : degraded;
+  }
+  if (state === "queued") {
+    return stalled
+      ? `Queued by the provider, not started yet — ${age}`
+      : "Queued by the provider";
+  }
   return state === "stalled" ? "Not picked up yet" : null;
 }
 
