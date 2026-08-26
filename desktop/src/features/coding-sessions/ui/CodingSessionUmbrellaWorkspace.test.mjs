@@ -22,6 +22,7 @@ import {
   buildUmbrellaTurnBlockHandoff,
   shouldAutoOpenAgentsSurface,
   shouldShowTurnBlockProvenance,
+  scrollCodingSessionNarrativeToLatest,
   umbrellaAgentStatusSummary,
   umbrellaWorkspaceStatus,
 } from "./CodingSessionUmbrellaWorkspace.tsx";
@@ -256,7 +257,7 @@ test("conversation-lane messages interleave between blocks by time", async () =>
   assert.ok(laneIndex < markup.indexOf("Regenerated the fixture"));
 });
 
-test("completed blocks keep reply and handoff actions visible", async () => {
+test("completed blocks keep reply and one compact handoff menu visible", async () => {
   const markup = await renderTimeline({
     channelId: CHANNEL_ID,
     laneMessages: [],
@@ -265,10 +266,24 @@ test("completed blocks keep reply and handoff actions visible", async () => {
   });
   assert.match(markup, /data-testid="coding-session-umbrella-send-to"/);
   assert.match(markup, /data-testid="coding-session-umbrella-reply"/);
-  assert.match(markup, /Send to.*Codex · gpt-5\.3-codex/s);
-  assert.match(markup, /Send to.*Claude · claude-opus-5/s);
+  assert.equal(
+    markup.match(/data-testid="coding-session-umbrella-send-to"/g)?.length,
+    2,
+  );
+  assert.doesNotMatch(markup, /coding-session-umbrella-send-to-target/);
   assert.doesNotMatch(markup, /opacity-0/);
   assert.match(markup, /sticky top-0/);
+});
+
+test("focusing an agent moves the narrative to its latest visible content", () => {
+  const calls = [];
+  scrollCodingSessionNarrativeToLatest({
+    scrollHeight: 8120,
+    scrollTo(options) {
+      calls.push(options);
+    },
+  });
+  assert.deepEqual(calls, [{ behavior: "smooth", top: 8120 }]);
 });
 
 test("agent focus folds other turns without removing the merged order", async () => {

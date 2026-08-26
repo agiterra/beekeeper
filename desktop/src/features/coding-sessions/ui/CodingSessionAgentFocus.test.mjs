@@ -8,7 +8,7 @@ import {
   CodingSessionAgentFocus,
 } from "./CodingSessionAgentFocus.tsx";
 
-test("agent accents are stable and focus chips expose individual status", () => {
+test("agent accents are stable and the compact focus control exposes aggregate liveness", () => {
   assert.deepEqual(
     codingSessionAgentAccent("codex-primary"),
     codingSessionAgentAccent("codex-primary"),
@@ -31,9 +31,9 @@ test("agent accents are stable and focus chips expose individual status", () => 
       onFocus() {},
     }),
   );
-  assert.match(markup, /Codex · GPT-5.6/);
-  assert.match(markup, /Claude · Sonnet/);
-  assert.match(markup, /working/);
-  assert.match(markup, /idle/);
-  assert.match(markup, /aria-pressed="true"/);
+  assert.match(markup, /2 agents · 1 working/);
+  assert.match(markup, /Viewing Codex · GPT-5.6/);
+  assert.match(markup, /coding-session-agent-breathe/);
+  assert.match(markup, /data-working="true"/);
+  assert.doesNotMatch(markup, /Claude · Sonnet/);
 });

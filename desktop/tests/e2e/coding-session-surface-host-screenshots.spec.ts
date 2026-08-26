@@ -259,8 +259,8 @@ test("merged work focuses in place and the shared surface remains responsive", a
   // work is attached to the composer and includes only the working execution.
   const host = page.getByTestId("coding-session-surface-host");
   await expect(host).toHaveCount(0);
-  const focusChips = page.getByTestId("coding-session-agent-focus-chip");
-  await expect(focusChips).toHaveCount(2);
+  const focusTrigger = page.getByTestId("coding-session-agent-focus-trigger");
+  await expect(focusTrigger).toContainText("2 agents · 1 working");
   const activeWork = page.getByTestId("coding-session-active-work-dock");
   await expect(activeWork).toContainText("Keep agent identity visible");
   await expect(activeWork).not.toContainText(
@@ -275,7 +275,14 @@ test("merged work focuses in place and the shared surface remains responsive", a
     (await page
       .getByTestId("coding-session-participant-picker-trigger")
       .textContent()) ?? "";
-  await focusChips.filter({ hasText: "Codex" }).click();
+  const narrativeScroll = page.getByTestId("coding-session-narrative-scroll");
+  await narrativeScroll.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await focusTrigger.click();
+  const focusChoices = page.getByTestId("coding-session-agent-focus-chip");
+  await expect(focusChoices).toHaveCount(2);
+  await focusChoices.filter({ hasText: "Codex" }).click();
   await expect(
     page.getByTestId("coding-session-umbrella-folded-turn"),
   ).toHaveCount(1);
@@ -288,6 +295,17 @@ test("merged work focuses in place and the shared surface remains responsive", a
   await expect(activeWork).toBeVisible();
   await expect(activeWork).toBeInViewport();
   await expect(page.getByTestId("coding-session-composer")).toBeInViewport();
+  await expect(
+    page.getByTestId("coding-session-focused-agent-notice"),
+  ).toContainText("Viewing Codex");
+  await expect
+    .poll(async () =>
+      narrativeScroll.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(8);
   await waitForAnimations(page);
   const focusedClip = await workspace.boundingBox();
   if (!focusedClip) throw new Error("focused workspace geometry missing");
@@ -297,8 +315,9 @@ test("merged work focuses in place and the shared surface remains responsive", a
   });
 
   // Return to All, then open the detail surface explicitly at this width.
-  await focusChips.filter({ hasText: "Codex" }).click();
-  await page.getByTestId("coding-session-surface-toggle-agents").click();
+  await page.getByTestId("coding-session-focused-agent-clear").click();
+  await focusTrigger.click();
+  await page.getByTestId("coding-session-agent-details-toggle").click();
   await expect(host).toBeVisible();
   await expect(host).toContainText("All agents");
   await expect(host).toContainText("Claude");
@@ -344,13 +363,46 @@ test("merged work focuses in place and the shared surface remains responsive", a
   // 6 — on a narrow workspace the same host content appears in one sheet
   // with exactly one close button (the sheet's own).
   await page.setViewportSize({ width: 900, height: 900 });
-  await page.getByTestId("coding-session-surface-toggle-agents").click();
+  await focusTrigger.click();
+  await page.getByTestId("coding-session-agent-details-toggle").click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("All agents");
   await expect(sheet).toContainText("Codex");
   await expect(sheet.getByRole("button", { name: "Close" })).toHaveCount(1);
   await waitForAnimations(page);
   await page.screenshot({ path: `${SHOTS}/07-narrow-sheet.png` });
+
+  // 7 — the compact focus and recipient controls remain usable at narrow
+  // width; both popovers stay inside the viewport instead of creating another
+  // horizontal interaction band.
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await focusTrigger.click();
+  await expect(page.getByTestId("coding-session-agent-focus-chip")).toHaveCount(
+    2,
+  );
+  const focusPopover = page.getByText("Read this session").locator("..");
+  const focusBox = await focusPopover.boundingBox();
+  if (!focusBox) throw new Error("focus popover geometry missing");
+  expect(focusBox.x).toBeGreaterThanOrEqual(0);
+  expect(focusBox.x + focusBox.width).toBeLessThanOrEqual(900);
+  await page.keyboard.press("Escape");
+
+  const recipient = page.getByTestId(
+    "coding-session-participant-picker-trigger",
+  );
+  await recipient.click();
+  await expect(
+    page.getByTestId("coding-session-participant-execution"),
+  ).toHaveCount(2);
+  const recipientPopover = page
+    .getByText("Send to", { exact: true })
+    .locator("..");
+  const recipientBox = await recipientPopover.boundingBox();
+  if (!recipientBox) throw new Error("recipient popover geometry missing");
+  expect(recipientBox.x).toBeGreaterThanOrEqual(0);
+  expect(recipientBox.x + recipientBox.width).toBeLessThanOrEqual(900);
+  await waitForAnimations(page);
+  await page.screenshot({ path: `${SHOTS}/08-narrow-recipient.png` });
 });
 
 test("an ultrawide multi-agent session opens Agents beside the narrative", async ({
@@ -365,5 +417,5 @@ test("an ultrawide multi-agent session opens Agents beside the narrative", async
     page.getByTestId("coding-session-umbrella-timeline"),
   ).toBeVisible();
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/08-ultrawide-agents.png` });
+  await workspace.screenshot({ path: `${SHOTS}/09-ultrawide-agents.png` });
 });

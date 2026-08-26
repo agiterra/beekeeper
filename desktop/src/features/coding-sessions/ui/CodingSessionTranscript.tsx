@@ -386,6 +386,9 @@ const CodingSessionTurn = React.memo(function CodingSessionTurn({
         <>
           {activeNarrative.prompts.map((entry) => renderEntry(entry, "prompt"))}
           <CodingSessionWorking
+            showThinking={
+              activeNarrative.plan === null && activeNarrative.work.length === 0
+            }
             startedAt={turn.startedAt}
             stepLabel={activeNarrative.currentStep}
           />

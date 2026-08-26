@@ -214,39 +214,41 @@ export function CodingSessionHeader({
           {agentControls}
         </div>
       ) : null}
-      <Badge
-        aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
-        className={cn("gap-1.5", compact && "px-2")}
-        data-testid="coding-session-status-badge"
-        title={sessionClosed ? "Closed" : statusText}
-        variant="outline"
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "h-2 w-2 rounded-full",
-            !sessionClosed && status.kind === "working"
-              ? "bg-emerald-500"
-              : status.kind === "idle" || status.kind === "ended"
-                ? "bg-muted-foreground/50"
-                : // A lifecycle-signed "Disconnected" or "Needs attention"
-                  // reads like the execution rail's own attention state, not
-                  // like an unread status.
-                  status.kind === "unknown" && status.attention
-                  ? "bg-destructive"
-                  : "bg-amber-500",
+      {!agentControls ? (
+        <Badge
+          aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
+          className={cn("gap-1.5", compact && "px-2")}
+          data-testid="coding-session-status-badge"
+          title={sessionClosed ? "Closed" : statusText}
+          variant="outline"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "h-2 w-2 rounded-full",
+              !sessionClosed && status.kind === "working"
+                ? "bg-emerald-500"
+                : status.kind === "idle" || status.kind === "ended"
+                  ? "bg-muted-foreground/50"
+                  : // A lifecycle-signed "Disconnected" or "Needs attention"
+                    // reads like the execution rail's own attention state, not
+                    // like an unread status.
+                    status.kind === "unknown" && status.attention
+                    ? "bg-destructive"
+                    : "bg-amber-500",
+            )}
+          />
+          {compact ? (
+            <span className="sr-only">
+              {sessionClosed ? "Closed" : statusText}
+            </span>
+          ) : sessionClosed ? (
+            "Closed"
+          ) : (
+            statusText
           )}
-        />
-        {compact ? (
-          <span className="sr-only">
-            {sessionClosed ? "Closed" : statusText}
-          </span>
-        ) : sessionClosed ? (
-          "Closed"
-        ) : (
-          statusText
-        )}
-      </Badge>
+        </Badge>
+      ) : null}
       <Popover>
         <PopoverTrigger asChild>
           <Button

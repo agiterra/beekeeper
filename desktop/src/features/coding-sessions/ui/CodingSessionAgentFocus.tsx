@@ -1,5 +1,9 @@
+import * as React from "react";
+import { Check, ChevronDown, PanelRightOpen, Users } from "lucide-react";
+
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
 import { cn } from "@/shared/lib/cn";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 const AGENT_ACCENTS = [
   {
@@ -47,62 +51,178 @@ export function codingSessionAgentAccent(
 }
 
 export function CodingSessionAgentFocus({
+  agentSurfaceOpen = false,
   focusedExecutionKey,
   items,
   onFocus,
+  onOpenAgents,
+  surfaceHostId,
 }: {
+  agentSurfaceOpen?: boolean;
   focusedExecutionKey: string | null;
   items: readonly CodingSessionAgentFocusItem[];
   onFocus: (executionKey: string | null) => void;
+  onOpenAgents?: () => void;
+  surfaceHostId?: string;
 }) {
+  const [open, setOpen] = React.useState(false);
+  const focused = items.find(
+    (item) => item.executionKey === focusedExecutionKey,
+  );
+  const workingCount = items.filter(
+    (item) => item.status.kind === "working",
+  ).length;
+  const summary = aggregateAgentStatus(items, workingCount);
+
+  const selectFocus = (executionKey: string | null) => {
+    onFocus(executionKey);
+    setOpen(false);
+  };
+
   return (
-    <fieldset
-      aria-label="Focus session by agent"
-      className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      data-testid="coding-session-agent-focus"
-    >
-      {items.map((item) => {
-        const accent = codingSessionAgentAccent(item.executionKey);
-        const selected = focusedExecutionKey === item.executionKey;
-        return (
+    <div data-testid="coding-session-agent-focus">
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger asChild>
           <button
-            aria-label={`${selected ? "Show all agents" : `Focus ${item.label}`} — ${agentStatusLabel(item.status)}`}
-            aria-pressed={selected}
+            aria-label={`${summary}. ${focused ? `Viewing ${focused.label}` : "Viewing all agents"}`}
             className={cn(
-              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors",
-              selected
-                ? cn(accent.border, accent.soft, accent.text)
-                : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/45 hover:text-foreground",
+              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border/60 bg-muted/25 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              workingCount > 0 && "coding-session-agent-breathe",
             )}
-            data-execution={item.executionKey}
-            data-testid="coding-session-agent-focus-chip"
-            key={item.executionKey}
-            onClick={() => onFocus(selected ? null : item.executionKey)}
-            title={
-              selected ? "Show the complete session" : `Focus ${item.label}`
-            }
+            data-testid="coding-session-agent-focus-trigger"
+            data-working={workingCount > 0 ? "true" : undefined}
             type="button"
           >
             <span
               aria-hidden
-              className={cn("size-2 rounded-full", accent.dot)}
-            />
-            <span className="max-w-36 truncate font-medium">{item.label}</span>
-            <span
-              aria-hidden
               className={cn(
-                "size-1.5 rounded-full",
-                statusDotClass(item.status),
+                "size-2 rounded-full",
+                workingCount > 0 ? "bg-emerald-500" : "bg-muted-foreground/45",
               )}
             />
-            <span className="text-2xs opacity-75">
-              {agentStatusLabel(item.status)}
-            </span>
+            <Users aria-hidden className="size-3.5" />
+            <span className="whitespace-nowrap font-medium">{summary}</span>
+            <ChevronDown aria-hidden className="size-3.5 opacity-60" />
           </button>
-        );
-      })}
-    </fieldset>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-80 p-2">
+          <p className="px-2 pt-1 pb-2 text-xs font-medium text-muted-foreground">
+            Read this session
+          </p>
+          <fieldset aria-label="Focus session by agent" className="grid gap-1">
+            <button
+              aria-pressed={focusedExecutionKey === null}
+              className="flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
+              data-testid="coding-session-agent-focus-all"
+              onClick={() => selectFocus(null)}
+              type="button"
+            >
+              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted">
+                <Users aria-hidden className="size-3.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">All agents</span>
+                <span className="block text-xs text-muted-foreground">
+                  Complete session timeline
+                </span>
+              </span>
+              <Check
+                aria-hidden
+                className={cn(
+                  "size-4 shrink-0 text-primary",
+                  focusedExecutionKey !== null && "invisible",
+                )}
+              />
+            </button>
+            {items.map((item) => {
+              const accent = codingSessionAgentAccent(item.executionKey);
+              const selected = focusedExecutionKey === item.executionKey;
+              const working = item.status.kind === "working";
+              return (
+                <button
+                  aria-label={`${selected ? "Show all agents" : `Focus ${item.label}`} — ${agentStatusLabel(item.status)}`}
+                  aria-pressed={selected}
+                  className="flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
+                  data-execution={item.executionKey}
+                  data-testid="coding-session-agent-focus-chip"
+                  key={item.executionKey}
+                  onClick={() =>
+                    selectFocus(selected ? null : item.executionKey)
+                  }
+                  type="button"
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "grid size-7 shrink-0 place-items-center rounded-full",
+                      accent.soft,
+                      working && "coding-session-agent-breathe",
+                    )}
+                  >
+                    <span className={cn("size-2 rounded-full", accent.dot)} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-foreground">
+                      {item.label}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "size-1.5 rounded-full",
+                          statusDotClass(item.status),
+                        )}
+                      />
+                      {agentStatusLabel(item.status)}
+                    </span>
+                  </span>
+                  <Check
+                    aria-hidden
+                    className={cn(
+                      "size-4 shrink-0 text-primary",
+                      !selected && "invisible",
+                    )}
+                  />
+                </button>
+              );
+            })}
+          </fieldset>
+          {onOpenAgents ? (
+            <button
+              aria-controls={surfaceHostId}
+              aria-expanded={agentSurfaceOpen}
+              className="mt-2 flex min-h-9 w-full items-center gap-2 border-t border-border/55 px-3 pt-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+              data-testid="coding-session-agent-details-toggle"
+              onClick={() => {
+                onOpenAgents();
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <PanelRightOpen aria-hidden className="size-3.5" />
+              {agentSurfaceOpen ? "Hide agent details" : "Show agent details"}
+            </button>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+    </div>
   );
+}
+
+function aggregateAgentStatus(
+  items: readonly CodingSessionAgentFocusItem[],
+  workingCount: number,
+): string {
+  if (workingCount > 0) {
+    return `${items.length} agents · ${workingCount} working`;
+  }
+  const attentionCount = items.filter(
+    (item) => item.status.kind === "unknown" && item.status.attention,
+  ).length;
+  if (attentionCount > 0) {
+    return `${items.length} agents · ${attentionCount} need attention`;
+  }
+  return `${items.length} agents · idle`;
 }
 
 function agentStatusLabel(status: CodingSessionWorkspaceStatus): string {
