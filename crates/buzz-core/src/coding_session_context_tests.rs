@@ -940,15 +940,27 @@ fn a_bare_separator_is_not_a_host_path() {
     }
 }
 
-/// `/^worktree` is a `sed` address. It was recorded as a host path.
+/// `/^worktree` is a `sed` address. It was recorded as a host path, and so was
+/// the `/{` of a brace expansion.
 #[test]
 fn a_regex_or_glob_anchor_is_not_a_host_path() {
     for text in [
         "ran sed -n '/^worktree/p' over the list",
         "the pattern /$/ ends every line",
+        "expanded /{a,b} into two arguments",
     ] {
         assert_eq!(sanitize_coding_session_context_text(text), text, "{text}");
     }
+}
+
+/// Every bracket the shell puts around a path belongs to the sentence, not to
+/// the filename. A backtick-quoted `~/…` was recorded with its backtick.
+#[test]
+fn a_backtick_or_paren_around_a_path_survives_the_redaction() {
+    let sanitized = sanitize_coding_session_context_text("see (`~/Library/Logs`) for more");
+    assert!(sanitized.starts_with("see (`["), "{sanitized}");
+    assert!(sanitized.contains("`) for more"), "{sanitized}");
+    assert!(!sanitized.contains("Library"), "{sanitized}");
 }
 
 /// The path goes; the sentence's punctuation stays where the author put it.
