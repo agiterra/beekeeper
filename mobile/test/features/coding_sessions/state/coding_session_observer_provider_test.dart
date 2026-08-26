@@ -341,6 +341,27 @@ void main() {
       },
     );
 
+    // A first connect still in flight is not "Not connected to this
+    // community / Nothing is being read while the connection is down": the
+    // socket is up and about to answer, and that page also offers a Retry
+    // that cannot help. Report the spinner the state actually warrants.
+    test(
+      'a first connect in flight is a spinner, not a disconnection',
+      () async {
+        final session = _FakeRelaySession(
+          events: _liveSession(),
+          initialStatus: SessionStatus.connecting,
+        );
+        final container = _container(session);
+        addTearDown(container.dispose);
+
+        final snapshot = await _start(container);
+
+        expect(snapshot.connection, CodingSessionObserverConnection.connecting);
+        expect(session.historyFilters, isEmpty);
+      },
+    );
+
     test('a disconnect keeps the last read and says it is not open', () async {
       final session = _FakeRelaySession(events: _liveSession());
       final container = _container(session);

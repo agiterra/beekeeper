@@ -85,7 +85,7 @@ class CodingSessionChannelObserverNotifier
     if (status != SessionStatus.connected) {
       // Keep whatever was already read: stale facts with an honest connection
       // state beat a blank page that implies the channel has no sessions.
-      return _snapshot(CodingSessionObserverConnection.idle);
+      return _snapshot(_offlineConnection(status));
     }
 
     // Deferred: a notifier may not assign `state` until `build` has returned.
@@ -101,13 +101,29 @@ class CodingSessionChannelObserverNotifier
     _lastError = null;
     _leasesRead = false;
     _truncated = false;
-    if (ref.read(relaySessionProvider).status != SessionStatus.connected) {
-      _emit(CodingSessionObserverConnection.idle);
+    final status = ref.read(relaySessionProvider).status;
+    if (status != SessionStatus.connected) {
+      _emit(_offlineConnection(status));
       return;
     }
     _emit(CodingSessionObserverConnection.connecting);
     await _start();
   }
+
+  /// What to report while the community socket is not connected.
+  ///
+  /// A first connect still in flight is a spinner, not "Not connected to this
+  /// community": the socket is up and about to answer, so reporting idle
+  /// states a falsehood over a live attempt and offers a Retry that cannot
+  /// help. [SessionStatus.reconnecting] deliberately stays idle —
+  /// `RelaySessionNotifier` retries under exponential backoff and leaves that
+  /// state only on success or auth rejection, so a spinner there would never
+  /// end; that is the hang abf31c32 fixed.
+  static CodingSessionObserverConnection _offlineConnection(
+    SessionStatus status,
+  ) => status == SessionStatus.connecting
+      ? CodingSessionObserverConnection.connecting
+      : CodingSessionObserverConnection.idle;
 
   Future<void> _start() async {
     final epoch = _epoch;
