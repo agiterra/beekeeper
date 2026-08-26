@@ -139,11 +139,19 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
       "interrupt_delivered",
     ],
   );
+  // Literal, not a call compared to itself: the earlier form was true for any
+  // implementation, including one that returned a constant.
+  const expectedKeys = {
+    turn_degraded:
+      "coding-session-lifecycle-receipt/v1|5:csc-113:turn_degraded",
+    interrupt_delivered:
+      "coding-session-lifecycle-receipt/v1|5:csc-119:interrupt_delivered",
+  };
   for (const status of ["turn_degraded", "interrupt_delivered"]) {
     assert.equal(isCodingSessionTurnReceiptStatus(status), true);
     assert.equal(
       codingSessionReceiptSemanticKey("csc-1", status),
-      codingSessionReceiptSemanticKey("csc-1", status),
+      expectedKeys[status],
     );
     assert.notEqual(
       codingSessionReceiptSemanticKey("csc-1", status),

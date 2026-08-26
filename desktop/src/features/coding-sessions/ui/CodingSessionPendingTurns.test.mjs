@@ -19,6 +19,25 @@ const STALLED = PENDING_CODING_SESSION_TURN_STALL_MS + 1;
 test("an ordinary in-flight turn says nothing at all", () => {
   assert.equal(describePendingCodingSessionTurn("sending", 0), null);
   assert.equal(describePendingCodingSessionTurn("waiting", 0), null);
+  // Asked for 2026-08-25: no spinner, no waiting-on-provider copy. A normal
+  // in-flight turn is just the person's message; the session's own status
+  // announces work beginning.
+  const source = readFileSync(
+    new URL("./CodingSessionPendingTurns.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /LoaderCircle|animate-spin/);
+  assert.doesNotMatch(source, /waiting for the provider/i);
+});
+
+test("nothing claims the model is thinking", () => {
+  for (const state of ["sending", "queued", "waiting", "stalled", "degraded"]) {
+    for (const age of [1_000, STALLED]) {
+      const caption = describePendingCodingSessionTurn(state, age);
+      if (caption === null) continue;
+      assert.doesNotMatch(caption, /thinking|working|generating/i, caption);
+    }
+  }
 });
 
 test("a turn nobody answered says so, and only that", () => {
