@@ -581,10 +581,23 @@ CodingSessionFounder resolveCodingSessionFounder({
 /// *every* execution is stopped — one live generation is enough to keep a
 /// session alive. Otherwise the most-recently-active non-stopped execution
 /// speaks for the session.
+///
+/// Only *current* generations vote. A superseded generation is the past of a
+/// stream that is still running under a newer generation: providers do not
+/// publish a `stopped` for the generation a resume replaced, so folding one in
+/// would pin the session to Working for as long as the read remembers it, and
+/// Ended could never be reached. When nothing in [executions] is marked
+/// current — a partial read — every member votes rather than the session
+/// reporting nothing at all.
 CodingSessionFoldedStatus foldCodingSessionUmbrellaStatus(
   Iterable<CodingSessionExecution> executions,
 ) {
-  final members = executions.toList();
+  final all = executions.toList();
+  final current = [
+    for (final execution in all)
+      if (execution.isCurrentGeneration) execution,
+  ];
+  final members = current.isEmpty ? all : current;
   if (members.isEmpty) {
     return const CodingSessionFoldedStatus(
       kind: CodingSessionFoldedStatusKind.unknown,

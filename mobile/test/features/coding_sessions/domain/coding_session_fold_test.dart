@@ -530,14 +530,51 @@ void main() {
     });
   });
 
+  group('generation-aware status', () {
+    test(
+      'a stopped resume ends the session the old generation left running',
+      () {
+        final executions = resolveCodingSessionGenerations(
+          receipts: [
+            _receipt(commandId: 'cmd-1', status: 'created'),
+            _receipt(
+              commandId: 'cmd-2',
+              status: 'resumed',
+              forTarget: target(generation: 2),
+              createdAt: 1500,
+            ),
+          ],
+          metadata: [
+            _metadata(sessionRef: sessionRefA, status: 'running'),
+            _metadata(
+              forTarget: target(generation: 2),
+              sessionRef: sessionRefA,
+              status: 'stopped',
+              createdAt: 1600,
+            ),
+          ],
+        );
+        final sessions = groupCodingSessionUmbrellas(executions: executions);
+        expect(sessions.single.executions, hasLength(2));
+        expect(
+          sessions.single.status.kind,
+          CodingSessionFoldedStatusKind.ended,
+          reason: 'generation 1 was superseded, not still working',
+        );
+      },
+    );
+  });
+
   group('umbrella status fold', () {
     CodingSessionExecution execution({
       required CodingSessionStatus status,
       int lastActivityAt = 1000,
       String sessionId = 'session-1',
+      int generation = 1,
+      bool isCurrentGeneration = true,
     }) => CodingSessionExecution(
       channelId: channelId,
-      target: target(sessionId: sessionId),
+      target: target(sessionId: sessionId, generation: generation),
       authority: const CodingSessionAuthority(
         pubkey: providerPubkey,
         verified: true,
@@ -546,7 +583,7 @@ void main() {
       statusAt: lastActivityAt,
       metadata: null,
       sessionRef: sessionRefA,
-      isCurrentGeneration: true,
+      isCurrentGeneration: isCurrentGeneration,
       statusConflict: false,
       lastActivityAt: lastActivityAt,
       commandId: 'cmd-1',
@@ -590,6 +627,41 @@ void main() {
         ]).kind,
         isNot(CodingSessionFoldedStatusKind.ended),
       );
+    });
+
+    test('a superseded generation never keeps a session Working', () {
+      final folded = foldCodingSessionUmbrellaStatus([
+        // Generation 1 was still "running" when it was superseded; the read
+        // never sees a stop for it because generation 2 took over.
+        execution(
+          status: CodingSessionStatus.running,
+          lastActivityAt: 1000,
+          isCurrentGeneration: false,
+        ),
+        execution(
+          status: CodingSessionStatus.stopped,
+          lastActivityAt: 2000,
+          generation: 2,
+        ),
+      ]);
+      expect(folded.kind, CodingSessionFoldedStatusKind.ended);
+    });
+
+    test('a superseded generation does not speak for a live one', () {
+      final folded = foldCodingSessionUmbrellaStatus([
+        execution(
+          status: CodingSessionStatus.waitingForInput,
+          lastActivityAt: 1000,
+          isCurrentGeneration: false,
+        ),
+        execution(
+          status: CodingSessionStatus.idle,
+          lastActivityAt: 2000,
+          generation: 2,
+        ),
+      ]);
+      expect(folded.kind, CodingSessionFoldedStatusKind.reported);
+      expect(folded.status, CodingSessionStatus.idle);
     });
 
     test('otherwise the most recently active non-stopped status stands', () {
