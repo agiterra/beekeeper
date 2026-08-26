@@ -61,6 +61,20 @@ export type AgentActivityDescriptor = {
 /** Observer/ACP wire label for dev-only transcript debugging. */
 export type TranscriptAcpSource = string;
 
+/**
+ * An item the producer dropped whole rather than publish over the event cap.
+ *
+ * Not a privacy redaction — different cause, and the reader is owed the
+ * difference. `bytes` and `digest` are what the producer recorded about what
+ * it dropped, so "the provider had this and chose not to publish it" stays
+ * distinguishable from "nothing was there".
+ */
+export type TranscriptItemElision = {
+  bytes: number | null;
+  digest: string | null;
+  reason: string;
+};
+
 /** Shared optional identity fields attached during transcript construction. */
 export type TranscriptItemIdentity = {
   turnId?: string | null;
@@ -137,6 +151,13 @@ export type TranscriptItem =
       durationMs?: number | null;
       /** Structured turn cost (USD) for coding-session "Turn result" items. */
       costUsd?: number | null;
+      /**
+       * Present when this row stands in for an item the producer dropped whole
+       * because it exceeded the event cap. Structured rather than formatted
+       * into `text` so the renderer can show it in the same pill vocabulary as
+       * a privacy redaction while still naming the different cause.
+       */
+      elision?: TranscriptItemElision;
       timestamp: string;
       descriptor?: AgentActivityDescriptor;
       acpSource?: TranscriptAcpSource;

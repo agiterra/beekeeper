@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown, CircleX } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 import { useAgentSessionTranscriptVariant } from "../agentSessionTranscriptContext";
 import type { AgentActivityAction } from "../agentSessionTypes";
 import type {
@@ -67,7 +68,7 @@ export function CompactToolSummaryRow({
           <span className="shrink-0">Tool call failed</span>
           {preview ? (
             <span className="min-w-0 truncate font-normal" title={preview}>
-              {preview}
+              <RedactedText text={preview} />
             </span>
           ) : null}
         </span>
@@ -88,7 +89,7 @@ export function CompactToolSummaryRow({
             tone,
           )}
         >
-          {label}
+          <RedactedText text={label} />
         </span>
       )}
       {!fileEditSummary && resolvedThumbnail ? (
@@ -110,7 +111,7 @@ export function CompactToolSummaryRow({
           )}
           title={preview}
         >
-          {preview}
+          <RedactedText text={preview} />
         </span>
       ) : null}
       {duration ? (

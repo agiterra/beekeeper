@@ -660,7 +660,144 @@ pub fn render_markdown(row: Option<&SessionRow>, records: &[TranscriptRecord]) -
         out.push_str(&render_item(&record.envelope.item, &result_by_id));
     }
 
+    condense_redaction_markers(&out)
+}
+
+/// Replace privacy redaction markers with a short label and a footnote.
+///
+/// The provider replaces each host-private or credential-bearing value with
+/// `[elided private context: N bytes, sha256:<64 hex>]` before signing (see
+/// `buzz_core::coding_session_context`). That is 90 characters of hash dropped
+/// mid-sentence, and it is usually hiding a path.
+///
+/// The digest is not thrown away — it is what distinguishes "the provider had
+/// this and chose not to publish it" from "nothing was there", and two readers
+/// comparing two transcripts need it. A terminal has no hover, so it moves to
+/// a numbered footnote instead: the body reads, the digest stays reachable,
+/// and identical values share one footnote number so a repeated redaction is
+/// visibly the same value.
+///
+/// Fenced code blocks are left byte-for-byte. Inside a fence the reader is
+/// looking at the bytes, and a substitution would claim they say something
+/// they do not.
+fn condense_redaction_markers(markdown: &str) -> String {
+    let mut digests: Vec<(String, u64)> = Vec::new();
+    let mut out = String::with_capacity(markdown.len());
+    let mut in_fence = false;
+
+    for line in markdown.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            continue;
+        }
+        if in_fence {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&condense_redaction_markers_in_line(line, &mut digests));
+    }
+
+    if digests.is_empty() {
+        return out;
+    }
+
+    out.push_str("\n## Redactions\n\n");
+    out.push_str(
+        "Values this session's provider removed before signing. Each digest is \
+         SHA-256 over the value's JSON encoding, so the byte count includes its \
+         quoting and escaping.\n\n",
+    );
+    for (index, (digest, bytes)) in digests.iter().enumerate() {
+        out.push_str(&format!(
+            "{}. {} bytes — `sha256:{}`\n",
+            index + 1,
+            bytes,
+            digest
+        ));
+    }
+    out.push('\n');
     out
+}
+
+fn condense_redaction_markers_in_line(line: &str, digests: &mut Vec<(String, u64)>) -> String {
+    const PREFIX: &str = "[elided private context: ";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+
+    loop {
+        let Some(start) = rest.find(PREFIX) else {
+            out.push_str(rest);
+            return out;
+        };
+        let tail = &rest[start..];
+        let Some(close) = tail.find(']') else {
+            // No closing bracket on this line: not a marker this reader can
+            // prove, so it stays text rather than eating the rest of the line.
+            out.push_str(rest);
+            return out;
+        };
+        let Some((bytes, digest)) = parse_redaction_marker(&tail[..=close]) else {
+            out.push_str(&rest[..start + PREFIX.len()]);
+            rest = &rest[start + PREFIX.len()..];
+            continue;
+        };
+        out.push_str(&rest[..start]);
+        let index = match digests.iter().position(|(seen, _)| *seen == digest) {
+            Some(index) => index,
+            None => {
+                digests.push((digest, bytes));
+                digests.len() - 1
+            }
+        };
+        out.push_str(&format!(
+            "[redacted {} · #{}]",
+            format_redacted_bytes(bytes),
+            index + 1
+        ));
+        rest = &tail[close + 1..];
+    }
+}
+
+/// Read `[elided private context: N bytes, sha256:<64 lowercase hex>]`.
+///
+/// Deliberately strict: anything that does not match exactly is not a marker,
+/// and is left as the text it is.
+fn parse_redaction_marker(candidate: &str) -> Option<(u64, String)> {
+    let body = candidate
+        .strip_prefix("[elided private context: ")?
+        .strip_suffix(']')?;
+    let (bytes, digest) = body.split_once(" bytes, sha256:")?;
+    let digest = digest.to_owned();
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    if digest.bytes().any(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    Some((bytes.parse().ok()?, digest))
+}
+
+/// Byte counts for humans, in decimal units — the same ramp the desktop pill
+/// uses, so one transcript reads the same in both places.
+fn format_redacted_bytes(bytes: u64) -> String {
+    if bytes < 1_000 {
+        return format!("{bytes} B");
+    }
+    if bytes < 1_000_000 {
+        let kilobytes = bytes as f64 / 1_000.0;
+        return if kilobytes < 10.0 {
+            format!("{kilobytes:.1} KB")
+        } else {
+            format!("{} KB", kilobytes.round() as u64)
+        };
+    }
+    let megabytes = bytes as f64 / 1_000_000.0;
+    if megabytes < 10.0 {
+        format!("{megabytes:.1} MB")
+    } else {
+        format!("{} MB", megabytes.round() as u64)
+    }
 }
 
 fn render_item(item: &Value, result_by_id: &HashMap<String, bool>) -> String {
@@ -718,8 +855,21 @@ fn render_item(item: &Value, result_by_id: &HashMap<String, bool>) -> String {
             format!("_status: {status}_\n\n")
         }
         "elided" => {
-            let bytes = item.get("byteCount").and_then(Value::as_u64).unwrap_or(0);
-            format!("_[elided — {bytes} bytes did not fit the event cap]_\n\n")
+            // The *cap*, not a privacy redaction — a different cause, and the
+            // reader is owed the difference. The digest rides along so a
+            // dropped item stays distinguishable from an absent one.
+            let size = item
+                .get("byteCount")
+                .and_then(Value::as_u64)
+                .map(format_redacted_bytes)
+                .unwrap_or_else(|| "an unknown amount".to_owned());
+            let digest = item
+                .get("contentDigest")
+                .and_then(Value::as_str)
+                .filter(|digest| !digest.is_empty())
+                .map(|digest| format!(" · `sha256:{}`", digest.trim_start_matches("sha256:")))
+                .unwrap_or_default();
+            format!("_[dropped {size} — did not fit the event cap]_{digest}\n\n")
         }
         other => format!("_[{other}]_\n\n"),
     }
@@ -2677,6 +2827,145 @@ mod tests {
         // A raw tool_result never renders on its own — it is already folded
         // into the call line above it.
         assert!(!markdown.contains("tool_result"), "{markdown}");
+    }
+
+    // ── Redaction markers in rendered markdown ───────────────────────────────
+
+    fn marker(bytes: u64, digest_seed: char) -> String {
+        format!(
+            "[elided private context: {bytes} bytes, sha256:{}]",
+            String::from_iter(std::iter::repeat_n(digest_seed, 64))
+        )
+    }
+
+    #[test]
+    fn a_rendered_transcript_condenses_the_redactions_it_contains() {
+        // End to end through `render_markdown`, because the condensing being
+        // *reachable* is the whole feature — unit-testing the condenser alone
+        // would still pass with it unhooked.
+        let session = target("s-redacted", 1);
+        let signer = "a".repeat(64);
+        let events = vec![transcript_event(
+            &format!("{:064}", 1),
+            &signer,
+            1,
+            &session,
+            1,
+            Some("turn-1"),
+            json!({
+                "kind": "assistant_text",
+                "text": format!("I read {} and stopped.", marker(148, 'a')),
+            }),
+        )];
+        let (records, _) = decode_transcripts(&events);
+        let rows = resolve_sessions(&[], &[], &records);
+        let markdown = render_markdown(rows.first(), &records);
+
+        assert!(markdown.contains("[redacted 148 B · #1]"), "{markdown}");
+        assert!(!markdown.contains("elided private context"), "{markdown}");
+        assert!(markdown.contains("## Redactions"), "{markdown}");
+    }
+
+    #[test]
+    fn a_redaction_reads_as_a_label_and_the_digest_moves_to_a_footnote() {
+        let rendered = condense_redaction_markers(&format!(
+            "**Assistant**\n\nI read {} and stopped.\n",
+            marker(148, 'a')
+        ));
+
+        assert!(rendered.contains("[redacted 148 B · #1]"), "{rendered}");
+        assert!(!rendered.contains("elided private context"), "{rendered}");
+        // The digest is condensed, never discarded: it is what tells two
+        // readers whether they are looking at the same hidden value.
+        assert!(rendered.contains("## Redactions"), "{rendered}");
+        assert!(
+            rendered.contains(&format!("1. 148 bytes — `sha256:{}`", "a".repeat(64))),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn the_same_value_redacted_twice_shares_one_footnote_number() {
+        let rendered = condense_redaction_markers(&format!(
+            "first {} then {} then {}\n",
+            marker(148, 'a'),
+            marker(9, 'b'),
+            marker(148, 'a')
+        ));
+
+        assert_eq!(rendered.matches("· #1]").count(), 2, "{rendered}");
+        assert_eq!(rendered.matches("· #2]").count(), 1, "{rendered}");
+        assert!(rendered.contains("2. 9 bytes"), "{rendered}");
+        assert!(!rendered.contains("3. "), "{rendered}");
+    }
+
+    #[test]
+    fn a_fenced_block_keeps_the_marker_byte_for_byte() {
+        // Inside a fence the reader is looking at the bytes; a substitution
+        // would claim they say something they do not.
+        let source = format!("prose\n\n```\ngrep {}\n```\n", marker(148, 'a'));
+        let rendered = condense_redaction_markers(&source);
+
+        assert_eq!(rendered, source, "{rendered}");
+        assert!(!rendered.contains("## Redactions"), "{rendered}");
+    }
+
+    #[test]
+    fn text_that_is_not_a_marker_survives_unchanged() {
+        for text in [
+            "[elided private context: 12\n",
+            "[elided private context: 148 bytes, sha256:beef]\n",
+            &format!(
+                "[elided private context: 148 bytes, sha256:{}]\n",
+                "A".repeat(64)
+            ),
+            &format!(
+                "[elided private context: many bytes, sha256:{}]\n",
+                "a".repeat(64)
+            ),
+            "…[elided 41235 bytes]…\n",
+        ] {
+            assert_eq!(condense_redaction_markers(text), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_document_with_no_redaction_gains_no_footnote_section() {
+        let source = "**Assistant**\n\nran the tests and they passed\n";
+        assert_eq!(condense_redaction_markers(source), source);
+    }
+
+    #[test]
+    fn a_capped_item_says_dropped_and_names_its_cause() {
+        // The cap is not a privacy redaction, and the reader is owed the
+        // difference: different verb, and no entry in the Redactions footnote.
+        let rendered = render_item(
+            &json!({
+                "kind": "elided",
+                "reason": "oversize",
+                "byteCount": 41_235,
+                "contentDigest": "deadbeef",
+            }),
+            &HashMap::new(),
+        );
+
+        assert!(rendered.contains("dropped 41 KB"), "{rendered}");
+        assert!(rendered.contains("did not fit the event cap"), "{rendered}");
+        assert!(rendered.contains("`sha256:deadbeef`"), "{rendered}");
+        assert!(!rendered.contains("redacted"), "{rendered}");
+    }
+
+    #[test]
+    fn byte_counts_render_in_decimal_units() {
+        // Same ramp as the desktop pill, so one transcript reads the same in
+        // both places.
+        assert_eq!(format_redacted_bytes(0), "0 B");
+        assert_eq!(format_redacted_bytes(148), "148 B");
+        assert_eq!(format_redacted_bytes(999), "999 B");
+        assert_eq!(format_redacted_bytes(1_000), "1.0 KB");
+        assert_eq!(format_redacted_bytes(2_140), "2.1 KB");
+        assert_eq!(format_redacted_bytes(41_235), "41 KB");
+        assert_eq!(format_redacted_bytes(3_000_000), "3.0 MB");
     }
 
     // ── NIP-CSAT receipt decode + fold ───────────────────────────────────────

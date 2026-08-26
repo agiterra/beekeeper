@@ -1,5 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// Overridable because several worktrees are usually checked out at once and
+// `reuseExistingServer` will happily adopt whichever one already answers on
+// 4173 — serving a *sibling's* `dist` against this worktree's specs, which
+// fails as though the code under test were broken.
+const PREVIEW_PORT = process.env.BUZZ_E2E_PORT ?? "4173";
+const PREVIEW_URL = `http://127.0.0.1:${PREVIEW_PORT}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
@@ -10,7 +17,7 @@ export default defineConfig({
     ["html", { open: "never", outputFolder: "playwright-report" }],
   ],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: PREVIEW_URL,
     screenshot: "only-on-failure",
     trace: "on-first-retry",
     video: "retain-on-failure",
@@ -28,6 +35,7 @@ export default defineConfig({
         "**/coding-session-capacity.spec.ts",
         "**/coding-session-goal.spec.ts",
         "**/coding-session-transcript-narrative-screenshots.spec.ts",
+        "**/coding-session-elision-screenshots.spec.ts",
         "**/coding-session-surface-host-screenshots.spec.ts",
         "**/coding-session-connect.spec.ts",
         "**/coding-session-width.spec.ts",
@@ -195,9 +203,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "python3 -m http.server 4173 -d dist",
+    command: `python3 -m http.server ${PREVIEW_PORT} -d dist`,
     cwd: ".",
     reuseExistingServer: !process.env.CI,
-    url: "http://127.0.0.1:4173",
+    url: PREVIEW_URL,
   },
 });

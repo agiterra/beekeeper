@@ -1,7 +1,7 @@
 # Context redaction: readable markers and a local plaintext dictionary
 
-**Status:** design agreed 2026-08-26 (Andy). Part 1 landed except the
-oversize-row restyle (§2.4); Part 2 not started.
+**Status:** design agreed 2026-08-26 (Andy). Part 1 landed in full; Part 2 not
+started.
 **Owner surface:** coding-session transcripts (kinds 44222/44223) and any
 channel timeline that renders them.
 
@@ -158,17 +158,44 @@ case adds nothing to the tree. Wired:
 - **Lifecycle rows** — the error and permission branches of
   `LifecycleActivity.tsx`; permission prose quotes commands, so it quotes paths.
 
-**Deferred, deliberately:**
+- **Failed and collapsed tool rows** — `CompactToolSummaryRow.tsx`. Its own
+  renderer, not `ActivityRowLabel`; it was still printing the raw marker after
+  the first pass, which the e2e spec caught.
 
-- **`buildElidedStatusItem`** (`codingSessionTranscriptItems.ts:399`) — the
-  *oversize* kind. It deserves the same visual vocabulary, but it carries a
-  different marker shape, and the parser has a test pinning it to *ignore*
-  that shape. Restyling it means changing the projection and its tests; that
-  is its own change, not a rider on this one.
-- **`bee`** — `crates/buzz-cli/src/commands/sessions.rs:720` already prints a
-  prose form for the oversize kind and nothing for the privacy marker. A
-  terminal has no hover, so the CLI should render `[redacted 148 B]` inline and
-  append the digests as a footnote block under `--format compact`.
+### 2.5 The cap, in the same vocabulary
+
+The 32 KiB cap is a *different cause* and the reader is owed the difference, so
+it shares the pill and never the label:
+
+| | Redaction | Cap |
+|---|---|---|
+| Verb | `redacted 148 B` | `dropped 41 KB` |
+| Icon | eye-off | scissors |
+| Tooltip | "removed before the transcript was signed" | "did not fit the event cap" |
+| Row title | — | `Content dropped` |
+
+`ElisionPill` takes the cause; `RedactedPill` is the redaction-cause wrapper
+the markdown path uses. `buildElidedStatusItem` now carries
+`elision: {bytes, digest, reason}` **structurally** on the lifecycle item
+(`TranscriptItemElision`), beside the existing `durationMs`/`costUsd`
+precedent, rather than formatting a `reason:` / `byteCount:` /
+`contentDigest:` block into `text`. `text` keeps a one-line prose fallback for
+consumers that read the item as prose.
+
+The row title moved from `Content elided` to `Content dropped` — the wire word
+is precise about the mechanism and opaque about the meaning. It stays absent
+from `DIAGNOSTIC_LIFECYCLE_TITLES`, so a dropped item still shows where it was
+dropped rather than in the telemetry rail.
+
+### 2.6 `bee`
+
+A terminal has no hover, so the digest moves to a footnote instead of a
+tooltip. `render_markdown` post-processes its own output
+(`condense_redaction_markers`): each marker becomes `[redacted 148 B · #1]` and
+the document gains a `## Redactions` section listing each distinct digest once.
+Identical values share a number, so a repeated redaction is visibly the same
+value. Fenced blocks are skipped, matching the desktop. The cap line reads
+`_[dropped 41 KB — did not fit the event cap]_ · sha256:…`.
 
 ---
 
@@ -325,8 +352,27 @@ BUZZ_SCREENSHOT_BASE_URL=http://127.0.0.1:4273 \
   node tests/helpers/screenshot.mjs --name whatever
 ```
 
-`playwright.config.ts` still hardcodes 4173 for `pnpm test:e2e:smoke`, so the
-smoke suite has the same hazard and no override yet.
+`playwright.config.ts` honours `BUZZ_E2E_PORT` for the same reason — it drives
+`use.baseURL`, the `webServer` command, and its readiness URL together:
+
+```bash
+BUZZ_E2E_PORT=4273 pnpm exec playwright test --project=smoke <spec>
+```
+
+## 4b. What Part 1 is verified by
+
+- `desktop/src/shared/lib/redactionMarker.test.mjs` — the parser, including
+  every shape it must refuse.
+- `desktop/src/shared/lib/remarkRedactionMarkers.test.mjs` — the mdast
+  transform, fences included.
+- `desktop/tests/e2e/coding-session-elision-screenshots.spec.ts` — the real
+  transcript surface: both pills, the fence staying literal, the failed-tool
+  row, and the digest reachable on hover. This is what caught
+  `CompactToolSummaryRow` still printing a raw marker.
+- `crates/buzz-cli/src/commands/sessions.rs` tests — the CLI condenser and its
+  footnote, including one that goes through `render_markdown` end to end,
+  because unit-testing the condenser alone still passes with it unhooked
+  (verified by unhooking it and watching only that test fail).
 
 ## 5. Tests that must be watched fail
 

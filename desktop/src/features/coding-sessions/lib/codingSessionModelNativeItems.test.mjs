@@ -146,10 +146,10 @@ test("an elided item stays visible in reading order, not folded into diagnostics
   const { model, turn } = turnOf(transcript);
   assert.deepEqual(model.diagnostics, []);
   const elided = turn.entries.find(
-    (entry) => entry.kind === "item" && entry.item.title === "Content elided",
+    (entry) => entry.kind === "item" && entry.item.title === "Content dropped",
   );
   assert.ok(elided, "a dropped item must be visible where it was dropped");
-  assert.ok(elided.item.text.includes("41235"));
+  assert.equal(elided.item.elision.bytes, 41_235);
   assert.deepEqual(turn.diagnostics, []);
 });
 

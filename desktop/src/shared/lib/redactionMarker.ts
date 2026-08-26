@@ -119,11 +119,35 @@ export function formatRedactedBytes(bytes: number): string {
 }
 
 /**
- * The pill's label: `redacted 148 B`.
+ * Why content is missing. The two causes are unrelated and the reader is owed
+ * the difference:
  *
- * "redacted" rather than "elided" — the wire word is precise about the
- * mechanism and opaque about the meaning, and the reader needs the meaning.
+ * - `redaction` — the provider redacted a host-private or credential-bearing
+ *   value before signing (this module's marker).
+ * - `cap` — the item exceeded the 32 KiB event cap and was dropped or
+ *   truncated to fit.
+ *
+ * Sharing one pill vocabulary is what makes them comparable; sharing one
+ * *label* would make them indistinguishable.
  */
+export type ElisionCause = "redaction" | "cap";
+
+/**
+ * The pill's label: `redacted 148 B`, or `dropped 41 KB` for the cap.
+ *
+ * "redacted"/"dropped" rather than "elided" — the wire word is precise about
+ * the mechanism and opaque about the meaning, and the reader needs the
+ * meaning.
+ */
+export function formatElisionLabel(
+  cause: ElisionCause,
+  bytes: number | null,
+): string {
+  const verb = cause === "redaction" ? "redacted" : "dropped";
+  return bytes === null ? verb : `${verb} ${formatRedactedBytes(bytes)}`;
+}
+
+/** `formatElisionLabel` for a parsed redaction marker. */
 export function formatRedactionLabel(marker: RedactionMarker): string {
-  return `redacted ${formatRedactedBytes(marker.bytes)}`;
+  return formatElisionLabel("redaction", marker.bytes);
 }

@@ -1,11 +1,12 @@
-import { EyeOff } from "lucide-react";
+import { EyeOff, Scissors } from "lucide-react";
 import * as React from "react";
 
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
 import {
+  type ElisionCause,
+  formatElisionLabel,
   formatRedactedBytes,
-  formatRedactionLabel,
   parseRedactionMarkers,
   type RedactionMarker,
   type RedactionSegment,
@@ -13,35 +14,43 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 /**
- * The inline stand-in for a value the provider redacted before signing.
+ * The stand-in for content the reader cannot see.
  *
- * On the wire the redaction is 90 characters of hash dropped into the middle
- * of a sentence (see `shared/lib/redactionMarker.ts`). The digest still has to
- * be *reachable* — it is what distinguishes "the provider had this and chose
- * not to publish it" from "nothing was there", and two readers comparing two
- * transcripts need it to tell whether they are looking at the same hidden
- * value. So it moves behind the pill rather than away: hover or keyboard-focus
- * reveals it, and a click copies it.
+ * Two causes share this vocabulary and neither is allowed to impersonate the
+ * other: a **redaction** (the provider removed a host-private or
+ * credential-bearing value before signing) and a **cap** (the item exceeded
+ * the 32 KiB event cap). Same shape, different verb and different tooltip.
+ *
+ * The digest stays *reachable* either way — it is what distinguishes "the
+ * producer had this and chose not to publish it" from "nothing was there", and
+ * two readers comparing two transcripts need it to tell whether they are
+ * looking at the same hidden value. So it moves behind the pill rather than
+ * away: hover or keyboard-focus reveals it, a click copies it.
  *
  * Sizing is on the `text-2xs` meta-text token, not a literal. The transcript
  * is a zoom-sensitive surface and `check-px-text.mjs` fails the build on
  * arbitrary text sizes anyway.
  */
-export function RedactedPill({
+export function ElisionPill({
+  bytes,
+  cause,
   className,
+  digest,
   interactive = true,
-  marker,
 }: {
+  bytes: number | null;
+  cause: ElisionCause;
   className?: string;
+  digest: string | null;
   /**
    * `false` in non-interactive renders (previews, notification bodies), where
    * a focusable control would be a trap. The label still reads the same; only
    * the tooltip and the copy affordance are dropped.
    */
   interactive?: boolean;
-  marker: RedactionMarker;
 }) {
-  const label = formatRedactionLabel(marker);
+  const label = formatElisionLabel(cause, bytes);
+  const Icon = cause === "redaction" ? EyeOff : Scissors;
   const shared = cn(
     "mx-px inline-flex select-none items-baseline gap-1 rounded-sm px-1 py-px align-baseline",
     "bg-muted/70 font-medium text-2xs text-muted-foreground",
@@ -50,8 +59,12 @@ export function RedactedPill({
 
   if (!interactive) {
     return (
-      <span className={shared} data-redaction-pill="">
-        <EyeOff aria-hidden className="size-3 self-center" />
+      <span
+        className={shared}
+        data-elision-cause={cause}
+        data-redaction-pill=""
+      >
+        <Icon aria-hidden className="size-3 self-center" />
         {label}
       </span>
     );
@@ -61,45 +74,88 @@ export function RedactedPill({
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          aria-label={`${label}. Click to copy the SHA-256 digest.`}
+          aria-label={
+            digest
+              ? `${label}. Click to copy the SHA-256 digest.`
+              : `${label}. No digest was recorded.`
+          }
           className={cn(
             shared,
             "cursor-pointer hover:bg-muted hover:text-foreground/80",
             "focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
           )}
-          data-redaction-digest={marker.digest}
+          data-elision-cause={cause}
+          data-redaction-digest={digest ?? undefined}
           data-redaction-pill=""
           onClick={() => {
-            copyTextToClipboard(`sha256:${marker.digest}`, "Digest copied");
+            if (!digest) return;
+            copyTextToClipboard(`sha256:${digest}`, "Digest copied");
           }}
           type="button"
         >
-          <EyeOff aria-hidden className="size-3 self-center" />
+          <Icon aria-hidden className="size-3 self-center" />
           {label}
         </button>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">
-        <RedactedPillTooltipBody marker={marker} />
+        <ElisionPillTooltipBody bytes={bytes} cause={cause} digest={digest} />
       </TooltipContent>
     </Tooltip>
   );
 }
 
-function RedactedPillTooltipBody({ marker }: { marker: RedactionMarker }) {
+/** `ElisionPill` for a redaction marker parsed out of published text. */
+export function RedactedPill({
+  className,
+  interactive = true,
+  marker,
+}: {
+  className?: string;
+  interactive?: boolean;
+  marker: RedactionMarker;
+}) {
+  return (
+    <ElisionPill
+      bytes={marker.bytes}
+      cause="redaction"
+      className={className}
+      digest={marker.digest}
+      interactive={interactive}
+    />
+  );
+}
+
+function ElisionPillTooltipBody({
+  bytes,
+  cause,
+  digest,
+}: {
+  bytes: number | null;
+  cause: ElisionCause;
+  digest: string | null;
+}) {
   return (
     <div className="space-y-1">
       <p>
-        Redacted by this session&rsquo;s provider before the transcript was
-        signed.
+        {cause === "redaction"
+          ? "Redacted by this session’s provider before the transcript was signed."
+          : "Dropped by this session’s provider: the item did not fit the event cap."}
       </p>
-      <p className="wrap-anywhere font-mono text-2xs opacity-80">
-        sha256:{marker.digest}
-      </p>
+      {digest ? (
+        <p className="wrap-anywhere font-mono text-2xs opacity-80">
+          sha256:{digest}
+        </p>
+      ) : (
+        <p className="text-2xs opacity-70">No digest was recorded.</p>
+      )}
       <p className="text-2xs opacity-70">
         {/* Serialized, not visible: the count covers the value's JSON quoting
             and escaping, so it reads a few bytes larger than the text a human
             would have seen. Saying which is cheaper than being wrong. */}
-        {formatRedactedBytes(marker.bytes)} serialized &middot; click to copy
+        {bytes === null
+          ? "Size unknown"
+          : `${formatRedactedBytes(bytes)} serialized`}
+        {digest ? " · click to copy" : null}
       </p>
     </div>
   );

@@ -808,19 +808,33 @@ test("an elided item surfaces a visible placeholder carrying size and digest", (
   assert.equal(result.type, "lifecycle");
   assert.equal(result.renderClass, "status");
   assert.ok(isCompactRenderable(result));
-  assert.equal(result.title, "Content elided");
-  assert.ok(result.text.includes("reason: oversize"));
-  assert.ok(result.text.includes("byteCount: 41235"));
+  assert.equal(result.title, "Content dropped");
+  // Structured, so the renderer can show the cap in the same pill vocabulary
+  // as a redaction without the two becoming indistinguishable.
+  assert.deepEqual(result.elision, {
+    bytes: 41_235,
+    digest: "deadbeef",
+    reason: "oversize",
+  });
+  // The prose fallback still names the size, the cause, and the digest, for
+  // every consumer that reads the item as text.
+  assert.ok(result.text.includes("41 KB"));
+  assert.ok(result.text.includes("oversize"));
   assert.ok(result.text.includes("sha256:deadbeef"));
 });
 
-test("an elided item with missing fields still renders bounded unknowns", () => {
+test("an elided item with missing fields reports unknowns rather than inventing them", () => {
   const result = projectCodingSessionTranscriptItem(
     envelope({ item: { kind: "elided" } }),
   );
-  assert.ok(result.text.includes("reason: unknown"));
-  assert.ok(result.text.includes("byteCount: unknown"));
-  assert.ok(result.text.includes("contentDigest: unknown"));
+  assert.deepEqual(result.elision, {
+    bytes: null,
+    digest: null,
+    reason: "unknown",
+  });
+  assert.ok(result.text.includes("an unknown amount"));
+  assert.ok(result.text.includes("unknown"));
+  assert.ok(!result.text.includes("sha256:"));
 });
 
 test("reasoning is admitted into the thought lane — the fork's deliberate reversal of the donor ban", () => {

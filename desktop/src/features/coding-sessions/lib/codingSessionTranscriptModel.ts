@@ -64,7 +64,7 @@ export type CodingSessionTranscriptModel = {
 
 /**
  * Lifecycle rows that belong in the diagnostics rail rather than the reading
- * order. "Content elided" is deliberately absent: a dropped item is something
+ * order. "Content dropped" is deliberately absent: a dropped item is something
  * the reader must see in place, not a telemetry line.
  *
  * "Status" covers the provider's generic status slugs. The continuity slugs

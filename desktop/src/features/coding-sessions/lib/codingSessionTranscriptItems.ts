@@ -27,6 +27,8 @@ import {
   safeStringArray,
   stringifyToolResultContent,
 } from "./codingSessionDefensive";
+import { formatRedactedBytes } from "@/shared/lib/redactionMarker";
+
 import { normalizeOperatorPubkey } from "./codingSessionPromptAttribution";
 import type { CodingSessionQuarantineItemV1 } from "./codingSessionTranscriptItemContract";
 
@@ -395,16 +397,40 @@ function renderPlanChecklist(entries: unknown): string {
  * An item the producer had to drop whole because it would not fit the
  * envelope cap. Surfaced as a visible placeholder — the reader must be able
  * to see that something existed here, and how much of it.
+ *
+ * The size and digest travel structurally, not formatted into `text`, so the
+ * renderer can show them in the same pill vocabulary as a privacy redaction
+ * while still saying which of the two happened. `text` keeps a readable
+ * one-line fallback for every consumer that has not learned the field —
+ * exports, the diagnostics rail, anything reading the item as prose.
  */
 function buildElidedStatusItem(
   item: Record<string, unknown>,
   ctx: Identity,
 ): TranscriptItem {
-  return buildStatusItem(ctx, "Content elided", [
-    `reason: ${safeString(item.reason ?? "unknown", 80)}`,
-    `byteCount: ${typeof item.byteCount === "number" ? item.byteCount : "unknown"}`,
-    `contentDigest: ${safeString(item.contentDigest ?? "unknown", 120)}`,
-  ]);
+  const bytes = typeof item.byteCount === "number" ? item.byteCount : null;
+  // The producer writes bare hex (`transcript.rs` `digest()`), but this is a
+  // relay-supplied field and the renderer adds its own `sha256:` label, so a
+  // producer that ever prefixes it must not read `sha256:sha256:…`.
+  const digest =
+    typeof item.contentDigest === "string" && item.contentDigest.length > 0
+      ? safeString(item.contentDigest.replace(/^sha256:/i, ""), 120)
+      : null;
+  const reason = safeString(item.reason ?? "unknown", 80);
+  const size =
+    bytes === null ? "an unknown amount" : formatRedactedBytes(bytes);
+  return {
+    id: ctx.id,
+    type: "lifecycle",
+    renderClass: "status",
+    title: CODING_SESSION_DROPPED_TITLE,
+    text: `${size} dropped (${reason})${digest ? ` · sha256:${digest}` : ""}`,
+    elision: { bytes, digest, reason },
+    timestamp: ctx.timestamp,
+    turnId: ctx.turnId,
+    sessionId: ctx.sessionId,
+    channelId: ctx.channelId,
+  };
 }
 
 /**
@@ -491,6 +517,16 @@ function buildResultLifecycleItem(
  * it belongs in the reading order, not behind a click.
  */
 export const CODING_SESSION_CONTINUITY_TITLE = "Session continuity";
+
+/**
+ * Title for a row standing in for an item the producer dropped whole.
+ *
+ * "Dropped", not "elided": the wire word is precise about the mechanism and
+ * opaque about the meaning, and the reader needs the meaning. Deliberately
+ * absent from `DIAGNOSTIC_LIFECYCLE_TITLES` — a dropped item belongs in the
+ * reading order, where it was dropped.
+ */
+export const CODING_SESSION_DROPPED_TITLE = "Content dropped";
 
 /**
  * Provider continuity slugs, in the reader's terms.

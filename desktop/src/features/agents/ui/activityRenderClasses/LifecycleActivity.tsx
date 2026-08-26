@@ -1,6 +1,6 @@
 import { AlertCircle, CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 
-import { RedactedText } from "@/shared/ui/RedactedPill";
+import { ElisionPill, RedactedText } from "@/shared/ui/RedactedPill";
 
 import { formatTranscriptTimestampTitle } from "../agentSessionUtils";
 import { ActivityRow, ActivityRowLabel } from "./ActivityRow";
@@ -126,10 +126,26 @@ export function LifecycleActivity(props: ActivityRenderClassItemProps) {
     );
   }
 
+  // A row standing in for an item the producer dropped whole shows the pill
+  // rather than its own prose fallback: same vocabulary as a redaction, and
+  // the cap's byte count and digest end up in the same place a reader already
+  // knows to look. The fallback `text` stays on the item for consumers that
+  // read it as prose (exports, the diagnostics rail).
+  const elision = props.item.elision;
   return (
     <ActivityRow testId="transcript-lifecycle-item" title={timestampTitle}>
       <ActivityRowLabel
-        object={props.item.text || undefined}
+        object={
+          elision ? (
+            <ElisionPill
+              bytes={elision.bytes}
+              cause="cap"
+              digest={elision.digest}
+            />
+          ) : (
+            props.item.text || undefined
+          )
+        }
         openToneScope="none"
         verb={props.item.title}
       />
