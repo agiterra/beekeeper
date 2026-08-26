@@ -8,6 +8,11 @@ import 'coding_session_transcript_item.dart';
 import 'coding_session_trust.dart';
 
 /// Raw events retained per generation before the oldest are evicted.
+///
+/// The cap applies per bucket, and `CodingSessionEventStore` gives the two
+/// low-volume targeted kinds (44223 metadata, 24223 leases) a bucket of their
+/// own, so a long transcript cannot evict the facts that give a generation its
+/// status and its proof that a provider is answering.
 const maxCodingSessionEventsPerGeneration = 2000;
 
 /// The `limit` one history page asks for.

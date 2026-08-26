@@ -257,10 +257,13 @@ void main() {
             .transcriptFor(snapshot.sessions.single)
             .single
             .items;
-        // 2000 retained, one of which is the metadata event sharing the bucket.
-        expect(items, hasLength(1999));
-        expect(items.first.eventSeq, 102);
+        // The transcript bucket holds 2000 transcript events: the generation's
+        // 44223 metadata is capped separately, so the flood no longer eats a
+        // row of its own history to make room for the session's status.
+        expect(items, hasLength(2000));
+        expect(items.first.eventSeq, 101);
         expect(items.last.eventSeq, 2100);
+        expect(snapshot.sessions.single.executions.single.metadata, isNotNull);
       },
     );
   });

@@ -17,6 +17,16 @@ import '../domain/coding_sessions_domain.dart';
 /// "Founder unresolved" and "authority unverified" with nothing to say why.
 /// The kinds this observer stores are a fixed, short list, so the number of
 /// buckets stays bounded.
+///
+/// Two kinds *do* carry `cs-target` and still need that separation: 44223
+/// metadata and 24223 leases. A single long turn is thousands of 44225
+/// envelopes against a handful of each, and both are older than the flood, so
+/// oldest-first eviction takes them first: the session loses its status, its
+/// title and its `sessionRef` (and with no readable create, the D5 fallback
+/// authority with them, so the session leaves the list altogether), and the
+/// last lease goes with it, which reads on screen as "No provider answering"
+/// while the provider is streaming. Both are low-cardinality per generation,
+/// so giving each its own sub-bucket keeps the store bounded.
 class CodingSessionEventStore {
   CodingSessionEventStore({this.cap = maxCodingSessionEventsPerGeneration});
 
@@ -47,10 +57,28 @@ class CodingSessionEventStore {
   List<NostrEvent> eventsForGeneration(String generationKey) =>
       List.unmodifiable(_byGeneration[generationKey] ?? const <NostrEvent>[]);
 
-  /// The bucket [event] belongs to: its generation, or its kind when it names
-  /// no generation.
-  static String generationKeyOf(NostrEvent event) =>
-      event.getTagValue('cs-target') ?? kindBucket(event.kind);
+  /// Kinds that name a generation but arrive in ones and twos, and whose
+  /// eviction silently degrades the page rather than shortening a transcript.
+  static const _separatelyCappedTargetedKinds = <int>{
+    EventKind.codingSessionMetadata,
+    EventKind.codingSessionLease,
+  };
+
+  /// The bucket [event] belongs to: its generation, its kind *and* generation
+  /// for the kinds capped separately above, or its kind when it names no
+  /// generation.
+  ///
+  /// The kind leads so the three key shapes cannot collide: a `cs-target`
+  /// always starts with the `coding-session/v1|` prefix, so no generation key
+  /// can be mistaken for a `kind NNNNN ...` one.
+  static String generationKeyOf(NostrEvent event) {
+    final target = event.getTagValue('cs-target');
+    if (target == null) return kindBucket(event.kind);
+    if (_separatelyCappedTargetedKinds.contains(event.kind)) {
+      return '${kindBucket(event.kind)} $target';
+    }
+    return target;
+  }
 
   /// Add one event. Returns true when the store changed.
   ///

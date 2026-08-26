@@ -132,6 +132,98 @@ void main() {
       );
     });
 
+    test('a transcript flood never evicts its own status and lease', () {
+      final store = CodingSessionEventStore(cap: 3);
+      final generation = target();
+      // Both carry cs-target, so a single per-generation bucket puts them in
+      // the transcript's queue. They are also *older* than the flood, which
+      // is exactly what oldest-first eviction throws away first.
+      store.add(
+        metadataEvent(forTarget: generation, createdAt: 1000, id: 'a' * 64),
+      );
+      store.add(leaseEvent(forTarget: generation, createdAt: 1001));
+      for (var seq = 1; seq <= 10; seq++) {
+        store.add(
+          transcriptEvent(
+            eventSeq: seq,
+            forTarget: generation,
+            createdAt: 2000 + seq,
+            item: {'kind': 'assistant_text', 'text': 'row \$seq'},
+          ),
+        );
+      }
+
+      expect(
+        store.events
+            .where((event) => event.kind == EventKind.codingSessionMetadata)
+            .length,
+        1,
+        reason: 'the metadata carries the status, title and sessionRef',
+      );
+      expect(
+        store.events
+            .where((event) => event.kind == EventKind.codingSessionLease)
+            .length,
+        1,
+        reason: 'the lease is the only proof a provider is answering',
+      );
+    });
+
+    test('each generation caps its own status and lease facts', () {
+      // The separate cap is still *per generation*: one shared metadata
+      // bucket would let a second execution's status evict the first's.
+      final store = CodingSessionEventStore(cap: 1);
+      final one = target(sessionId: 'one');
+      final two = target(sessionId: 'two');
+      store.add(metadataEvent(forTarget: one, createdAt: 1000, id: 'a' * 64));
+      store.add(metadataEvent(forTarget: two, createdAt: 1001, id: 'b' * 64));
+      store.add(leaseEvent(forTarget: one, createdAt: 1002, id: 'c' * 64));
+      store.add(leaseEvent(forTarget: two, createdAt: 1003, id: 'd' * 64));
+
+      expect(store.length, 4);
+      expect(store.generationCount, 4);
+    });
+
+    test('a flooded generation still reports its status and reachability', () {
+      final store = CodingSessionEventStore(cap: 3);
+      final generation = target();
+      store.add(receiptEvent(commandId: 'cmd-1', status: 'created'));
+      store.add(
+        metadataEvent(forTarget: generation, createdAt: 1000, id: 'a' * 64),
+      );
+      store.add(
+        leaseEvent(forTarget: generation, createdAt: 1001, leaseSequence: 1),
+      );
+      for (var seq = 1; seq <= 10; seq++) {
+        store.add(
+          transcriptEvent(
+            eventSeq: seq,
+            forTarget: generation,
+            createdAt: 2000 + seq,
+            item: {'kind': 'assistant_text', 'text': 'row \$seq'},
+          ),
+        );
+      }
+
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        events: store.events,
+        verifier: null,
+      );
+      expect(view.sessions, hasLength(1));
+      final session = view.sessions.single;
+      expect(session.executions.single.status, CodingSessionStatus.running);
+      expect(
+        view
+            .reachabilityFor(
+              session,
+              now: DateTime.fromMillisecondsSinceEpoch(1001 * 1000),
+            )
+            .kind,
+        CodingSessionReachabilityKind.reachable,
+      );
+    });
+
     test('clear drops everything, including the dedupe set', () {
       final store = CodingSessionEventStore();
       final event = metadataEvent(id: 'b' * 64);
