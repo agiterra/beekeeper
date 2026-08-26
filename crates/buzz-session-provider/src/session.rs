@@ -1150,7 +1150,7 @@ impl SessionActor {
             .send(SessionEvent::TurnStarted {
                 session_id: self.session_id.clone(),
                 turn_id: turn_id.clone(),
-                command_id,
+                command_id: command_id.clone(),
                 text: text.clone(),
             })
             .await;
@@ -1159,9 +1159,9 @@ impl SessionActor {
         // what is sent after it exists, so subscribing afterwards would lose the
         // opening chunks of every turn.
         let mut frames = self.observer.subscribe();
-        let opening = self
-            .translator
-            .begin_turn(&text, operator_pubkey.as_deref());
+        let opening =
+            self.translator
+                .begin_turn(&text, operator_pubkey.as_deref(), Some(&command_id));
         emit_items(&self.events, &self.session_id, &turn_id, opening).await;
 
         // The prompt future holds `&mut self.client` for the whole turn; it is
