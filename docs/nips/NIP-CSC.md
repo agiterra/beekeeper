@@ -109,7 +109,13 @@ what it did in a [NIP-CSL](NIP-CSL.md) receipt. There are three classes.
   turn at the boundary that creates. Authority for this class is the **session
   founder only**; any other signer — including an operator holding
   `grant-operator` — is refused with `turn_refused` /
-  `UNAUTHORIZED_OPERATOR` and the running turn is left alone.
+  `UNAUTHORIZED_OPERATOR` and the running turn is left alone. Stated exactly,
+  because the boundary is narrower than it looks: what is founder-only is the
+  *class on a `thread.turn.start`*. A `thread.turn.interrupt` command is open
+  to any signer who may steer the execution, so a granted operator can still
+  cancel a running turn and then send an ordinary `boundary` turn. Tightening
+  that is authority work; until it happens, no document here should imply
+  otherwise.
 
 **The downgrade rule.** A `steer` addressed to an execution whose runtime does
 not offer native steering is *not* refused and *not* escalated. The provider
@@ -140,6 +146,12 @@ consequences bind providers:
    watermark, in `(created_at, id)` order**, and delivers them in that order.
    A command whose turn already started is ignored as already-consumed, so a
    replay can never run a turn twice.
+3. **The guarantee is "never silently lost", not "eventually run".** A replayed
+   command addressed to an execution with no live process is answered with a
+   terminal `turn_dropped` (`NO_LIVE_EXECUTION`) and recorded as refused.
+   Resuming that session does not deliver it: `session.resume` mints a new
+   generation, and the replayed command still names the old one. The sender
+   sees a signed receipt saying so and sends it again.
 
 A client therefore does not need to hold an unsent turn in memory to deliver
 it later: publishing it with `deliver: "boundary"` is strictly safer, because
@@ -170,3 +182,15 @@ inherit the channel ACL (including private-project access) on the read path.
 | Envelope validation | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Builder | `crates/buzz-sdk/src/builders.rs` |
 | Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |
+
+## Deploying the `deliver` key
+
+**Relay before desktop.** The relay validates `kind:44220` content with
+`deny_unknown_fields` (`crates/buzz-relay/src/handlers/ingest.rs`,
+`crates/buzz-core/src/coding_session_command.rs`), and this fork's desktop
+builder always writes `deliver` explicitly. An upgraded desktop against a relay
+that predates the key therefore has **every** turn rejected — not degraded,
+rejected — and the kind-9 fallback that would have hidden it does not exist
+here by design (see the fork amendment above). Ship the relay first, then the
+desktop. The reverse order is a total outage of turn sending for everyone on
+that community.

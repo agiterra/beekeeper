@@ -331,14 +331,26 @@ land without polling the transcript. Six statuses:
   follows. See the downgrade rule in [NIP-CSC](NIP-CSC.md).
 - `turn_dropped` — the provider will never run this command and nobody was
   refused: the mailbox was full (`QUEUE_FULL`), or the session has no live
-  execution to deliver into (`NO_LIVE_EXECUTION`). A `NO_LIVE_EXECUTION` drop
-  leaves the command **unconsumed** on purpose, so resuming that session
-  replays it rather than losing it.
+  execution to deliver into (`NO_LIVE_EXECUTION`). Both are **terminal**: the
+  command is never consumed (it did not run) and it is recorded as refused, so
+  the answer is given once and no redelivery repeats it. A dropped turn is not
+  re-delivered by resuming the session — `session.resume` mints a new
+  generation, and a replayed command still addresses the old one, so it would
+  be refused as `STALE_GENERATION`. The sender has to send it again. What this
+  contract guarantees is that a turn is never *silently* lost, not that every
+  accepted turn eventually runs.
 - `turn_refused` — the provider will never run this command: an unauthorized
   operator, or a target this provider owns that no longer accepts turns.
 - `interrupt_delivered` — a `thread.turn.interrupt` reached a live turn and
-  the cancel was issued. An interrupt that finds no live turn, or that a
-  non-founder signed, gets `turn_refused` instead.
+  the cancel was issued. An interrupt that finds no live turn gets
+  `turn_refused` (`NO_TURN_IN_FLIGHT`) instead, and one from a signer who may
+  not steer the session at all gets `turn_refused`
+  (`UNAUTHORIZED_OPERATOR`). A `thread.turn.interrupt` is **not** founder-only:
+  any signer who may steer the execution may send one. Only the
+  `deliver: "interrupt"` *class* on a `thread.turn.start` is founder-only, and
+  a granted operator can reach the same effect in two commands (interrupt,
+  then start). That gap is recorded here rather than papered over; closing it
+  is authority work, not delivery work.
 
 Every turn status except `turn_started` keeps the exact five-key v1 object
 (`schema`, `commandId`, `status`, `session`, `error`) — no `turnId` key at
@@ -379,18 +391,26 @@ codes in use today are documented, not enforced:
 | `turn_degraded` | `STEER_UNSUPPORTED` | this execution's runtime offers no native steering; delivered at the boundary |
 | `turn_dropped` | `QUEUE_FULL` | the in-actor turn queue is at `SESSION_QUEUE_DEPTH` |
 | `turn_dropped` | `NO_LIVE_EXECUTION` | the session is persisted but nothing is running to deliver into |
-| `turn_refused` | `UNAUTHORIZED_OPERATOR` | the signer may not steer this session — including any non-founder asking for `deliver: "interrupt"` |
+| `turn_refused` | `UNAUTHORIZED_OPERATOR` | the signer may not steer this session — including a non-founder asking for `deliver: "interrupt"` on a `thread.turn.start` |
 | `turn_refused` | `UNKNOWN_TARGET` | this provider owns the session id but not that target |
 | `turn_refused` | `STALE_GENERATION` | the addressed generation has been superseded |
 | `turn_refused` | `SESSION_CLOSED` | the session no longer accepts turns |
+| `turn_refused` | `NO_TURN_IN_FLIGHT` | a `thread.turn.interrupt` reached a live execution that had no turn running or awaiting start |
+| `turn_refused` | `NO_LIVE_EXECUTION` | a `thread.turn.interrupt` addressed a session with no live process, so there was nothing to cancel |
+| `turn_refused` | `QUEUE_FULL` | a `thread.turn.interrupt` could not be delivered because the execution's mailbox is full |
 
 **Publish points** (provider-side):
 
 - `turn_queued` — when a `TurnDecision::Start` is accepted into the session's
   mailbox.
-- `turn_degraded` — when a `deliver: "steer"` command reaches an execution
-  whose runtime advertised no native steering, immediately before the same
-  command is queued as `boundary`.
+- `turn_degraded` — when a `deliver: "steer"` command has been accepted into
+  the mailbox of an execution that cannot take a mid-turn steer, immediately
+  before that command's `turn_queued`. Never before the delivery is known to
+  have succeeded: a degrade in front of a delivery that then fails publishes
+  two receipts contradicting each other about one command. Its `message` MUST
+  be a function of the command, not of what a particular process learned at
+  `initialize` — a redelivery answered by a different process must not publish
+  a second payload under the same `(commandId, turn_degraded)` semantic key.
 - `turn_dropped` — when the mailbox itself is full (`QueueFull`), when the
   in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`), or when the addressed
   session has no live execution to deliver into (`NO_LIVE_EXECUTION`). The
@@ -403,8 +423,15 @@ codes in use today are documented, not enforced:
   consumed** — never on receipt — so a provider that dies with turns waiting
   replays them from its watermark on restart, in `(created_at, id)` order,
   and each one runs exactly once.
-- `interrupt_delivered` — when a `thread.turn.interrupt` from the session
-  founder caused a cancel to be issued to a running turn.
+- `interrupt_delivered` — when a `thread.turn.interrupt` caused a cancel to be
+  issued to a turn the provider is running or has taken custody of. A provider
+  answers this from what it holds, not from a lagging fold of its own session
+  reports: a turn and an interrupt sent back to back must not be answered
+  "nothing to cancel" by a cancel that in fact lands.
+- `turn_refused` with `NO_TURN_IN_FLIGHT`, `NO_LIVE_EXECUTION`, or
+  `QUEUE_FULL` — the three ways a `thread.turn.interrupt` finds nothing to
+  cancel or cannot be handed over. All three are terminal and recorded as
+  refused.
 - `turn_refused` — for every `TurnDecision::Fail` (`UNAUTHORIZED_OPERATOR`),
   and for a `TurnDecision::Ignore` whose reason names a target this provider
   owns: `UnknownTarget`, `StaleGeneration`, `SessionClosed`. An `Ignore` for
