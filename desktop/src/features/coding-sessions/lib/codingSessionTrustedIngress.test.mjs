@@ -25,9 +25,12 @@ import {
   CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
   CODING_SESSION_METADATA_TAG_VERSION,
   CODING_SESSION_TRANSCRIPT_TAG_VERSION,
+  CODING_SESSION_TURN_RECEIPT_STATUSES,
   codingSessionMetadataSemanticKey,
+  codingSessionReceiptSemanticKey,
   codingSessionTranscriptSemanticKey,
   establishedCodingSessionTarget,
+  isCodingSessionTurnReceipt,
   lifecycleReceiptSemanticKey,
   MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
   parseBuzzCodingSessionMetadata,
@@ -1406,4 +1409,224 @@ test("a shelf cache rehydrates through the classifier and drops rejected authors
   const rejected = hostile.snapshot([CHANNEL_ID]);
   assert.equal(rejected.metadata.length, 0);
   assert.equal(rejected.rejectedAuthorCount, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Per-stage turn receipts (44224 `turn_*`)
+// ---------------------------------------------------------------------------
+
+const TURN_COMMAND_ID = "csc-turn-1";
+
+function turnReceipt(status, overrides = {}) {
+  const base = {
+    schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,
+    commandId: TURN_COMMAND_ID,
+    status,
+    session: TARGET,
+    error: null,
+  };
+  if (status === "turn_started") base.turnId = "turn-abc";
+  if (status === "turn_dropped") {
+    base.error = { code: "QUEUE_FULL", message: "the session queue is full" };
+  }
+  if (status === "turn_refused") {
+    base.error = {
+      code: "UNAUTHORIZED_OPERATOR",
+      message: "only the founder or a granted operator may steer this session",
+    };
+  }
+  return { ...base, ...overrides };
+}
+
+function turnReceiptEvent(status, { value, ...options } = {}) {
+  const receipt = value ?? turnReceipt(status);
+  return receiptEvent(receipt, {
+    tags: [
+      ["h", options.channelId ?? CHANNEL_ID],
+      ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+      ["csl-command", receipt.commandId],
+      ["csl-key", codingSessionReceiptSemanticKey(receipt.commandId, status)],
+    ],
+    ...options,
+  });
+}
+
+test("every turn stage decodes, with turnId only on turn_started", () => {
+  for (const status of CODING_SESSION_TURN_RECEIPT_STATUSES) {
+    const parsed = parseCodingSessionLifecycleReceipt(
+      JSON.stringify(turnReceipt(status)),
+    );
+    assert.ok(parsed, status);
+    assert.equal(parsed.status, status);
+    assert.deepEqual(parsed.session, TARGET);
+    assert.equal(isCodingSessionTurnReceipt(parsed), true);
+  }
+  const started = parseCodingSessionLifecycleReceipt(
+    JSON.stringify(turnReceipt("turn_started")),
+  );
+  assert.equal(started.turnId, "turn-abc");
+  assert.equal(started.error, null);
+  const queued = parseCodingSessionLifecycleReceipt(
+    JSON.stringify(turnReceipt("turn_queued")),
+  );
+  assert.equal("turnId" in queued, false);
+});
+
+test("a turn receipt with an unexpected key is rejected outright", () => {
+  const cases = [
+    // `turnId` belongs to exactly one status.
+    turnReceipt("turn_queued", { turnId: "turn-abc" }),
+    turnReceipt("turn_refused", { turnId: "turn-abc" }),
+    // ... and turn_started cannot do without it.
+    (() => {
+      const value = turnReceipt("turn_started");
+      delete value.turnId;
+      return value;
+    })(),
+    turnReceipt("turn_started", { turnId: "" }),
+    // An error where there must be none, and none where there must be one.
+    turnReceipt("turn_queued", { error: { code: "X", message: "y" } }),
+    turnReceipt("turn_dropped", { error: null }),
+    turnReceipt("turn_refused", { error: { code: "X" } }),
+    // A turn receipt always names the execution it was addressed to.
+    turnReceipt("turn_queued", { session: null }),
+    // Any extra key at all.
+    turnReceipt("turn_queued", { deliver: "boundary" }),
+    turnReceipt("turn_started", { deliver: "boundary" }),
+  ];
+  for (const value of cases) {
+    assert.equal(
+      parseCodingSessionLifecycleReceipt(JSON.stringify(value)),
+      null,
+      JSON.stringify(value),
+    );
+  }
+});
+
+test("each turn stage carries its own semantic key", () => {
+  const keys = CODING_SESSION_TURN_RECEIPT_STATUSES.map((status) =>
+    codingSessionReceiptSemanticKey(TURN_COMMAND_ID, status),
+  );
+  assert.equal(new Set(keys).size, keys.length);
+  for (const key of keys) {
+    assert.notEqual(key, lifecycleReceiptSemanticKey(TURN_COMMAND_ID));
+  }
+  // Lifecycle statuses keep the key the provider has always published.
+  assert.equal(
+    codingSessionReceiptSemanticKey("create-1", "created"),
+    lifecycleReceiptSemanticKey("create-1"),
+  );
+});
+
+test("a turn receipt keyed by command id alone is malformed", () => {
+  const receipt = turnReceipt("turn_queued");
+  const event = receiptEvent(receipt, {
+    tags: [
+      ["h", CHANNEL_ID],
+      ["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION],
+      ["csl-command", receipt.commandId],
+      ["csl-key", lifecycleReceiptSemanticKey(receipt.commandId)],
+    ],
+  });
+  assert.equal(
+    classifyTrustedCodingSessionIngressEvent(
+      event,
+      new Set([CHANNEL_ID]),
+      AUTHORITY,
+    ).kind,
+    "malformed",
+  );
+});
+
+test("queued then started is two facts about one turn, not a conflict", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_queued")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "queued" },
+  );
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_started")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveTurnProgress(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    { stage: "started", turnId: "turn-abc" },
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
+});
+
+test("a refused turn and a dropped turn read back as different outcomes", () => {
+  const refused = new TrustedCodingSessionIngressStore();
+  refused.ingestRelayEvents(
+    [turnReceiptEvent("turn_refused")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    refused.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    {
+      code: "UNAUTHORIZED_OPERATOR",
+      message: "only the founder or a granted operator may steer this session",
+      outcome: "refused",
+    },
+  );
+
+  const dropped = new TrustedCodingSessionIngressStore();
+  dropped.ingestRelayEvents(
+    [turnReceiptEvent("turn_queued"), turnReceiptEvent("turn_dropped")],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    dropped.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    {
+      code: "QUEUE_FULL",
+      message: "the session queue is full",
+      outcome: "dropped",
+    },
+  );
+});
+
+test("a turn receipt never decides a generation's lifecycle", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  // The same command id on purpose: even then, a turn stage must not create,
+  // confirm, or fail the generation the create is waiting on.
+  store.ingestRelayEvents(
+    [
+      turnReceiptEvent("turn_refused", {
+        value: turnReceipt("turn_refused", { commandId: "create-1" }),
+      }),
+      turnReceiptEvent("turn_queued", {
+        value: turnReceipt("turn_queued", { commandId: "create-1" }),
+      }),
+    ],
+    [CHANNEL_ID],
+    AUTHORITY,
+  );
+  assert.deepEqual(
+    store.resolveLifecycle(CHANNEL_ID, "create-1", PROVIDER_PUBKEY),
+    { state: "pending", commandId: "create-1" },
+  );
+});
+
+test("a turn receipt from another provider is not this turn's answer", () => {
+  const store = new TrustedCodingSessionIngressStore();
+  store.ingestRelayEvents(
+    [turnReceiptEvent("turn_refused", { secret: OTHER_SECRET })],
+    [CHANNEL_ID],
+    OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+  );
+  assert.equal(
+    store.resolveTurnRefusal(CHANNEL_ID, TURN_COMMAND_ID, PROVIDER_PUBKEY),
+    null,
+  );
 });

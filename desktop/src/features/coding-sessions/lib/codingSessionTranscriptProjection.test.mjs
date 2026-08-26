@@ -1108,3 +1108,54 @@ test("an unknown/quarantine item actually renders in compact preview, not the em
   }
   assert.ok(buildTranscriptDisplayBlocks(items, null).length > 0);
 });
+
+// --- the turn command id on a prompt echo ---------------------------------
+
+test("a prompt echo carries the command id that started its turn", () => {
+  const [item] = projectCodingSessionTranscript([
+    envelope({
+      item: {
+        kind: "user_prompt",
+        content: "run the tests",
+        commandId: "csc-turn-1",
+      },
+    }),
+  ]);
+  assert.equal(item.role, "user");
+  assert.equal(item.commandId, "csc-turn-1");
+
+  const single = projectCodingSessionTranscriptItem(
+    envelope({
+      item: {
+        kind: "user_prompt",
+        content: "run the tests",
+        commandId: "csc-turn-1",
+      },
+    }),
+  );
+  assert.equal(single.commandId, "csc-turn-1");
+});
+
+test("an unusable command id is dropped rather than joined on", () => {
+  // The value is a join key compared byte for byte against what this client
+  // minted, so a blank, oversized, or control-character-bearing one must not
+  // reach the settler at all.
+  for (const commandId of [
+    "",
+    "   ",
+    42,
+    null,
+    "csc\u0001turn",
+    "c".repeat(257),
+  ]) {
+    const [item] = projectCodingSessionTranscript([
+      envelope({ item: { kind: "user_prompt", content: "hi", commandId } }),
+    ]);
+    assert.equal(item.commandId, undefined, JSON.stringify(commandId));
+  }
+  // ...and an echo from a provider that never learned the field is unchanged.
+  const [legacy] = projectCodingSessionTranscript([
+    envelope({ item: { kind: "user_prompt", content: "hi" } }),
+  ]);
+  assert.equal(legacy.commandId, undefined);
+});

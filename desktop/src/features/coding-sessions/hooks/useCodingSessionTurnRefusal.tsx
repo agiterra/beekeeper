@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { markPendingCodingSessionTurnQueued } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import {
   CODING_SESSION_TURN_REFUSAL_DEADLINE_MS,
@@ -52,9 +53,11 @@ export type CodingSessionTurnRefusalState = {
  * difference between "the agent is thinking" and "you were not allowed to say
  * that" — a distinction the multi-member case makes constantly.
  *
- * Success and irrelevance are both silent by design (see
- * `codingSessionTurnRefusal.ts`), so this waits briefly and then stops
- * watching without a word rather than inventing an outcome.
+ * Irrelevance stays silent by design (see `codingSessionTurnRefusal.ts`), so
+ * this waits briefly and then stops watching without a word rather than
+ * inventing an outcome. Success is no longer silent where the provider
+ * publishes per-stage receipts: a `turn_queued` is passed to the optimistic
+ * row so it can stop implying the turn started.
  */
 export function useCodingSessionTurnRefusal({
   channelId,
@@ -144,6 +147,15 @@ function CodingSessionTurnRefusalWatcher({
     "pinned",
   );
   const refusal = snapshot.turnRefusal;
+  const queued = snapshot.turnProgress?.stage === "queued";
+
+  // The same subscription answers a second question the person can see: the
+  // provider signed for this turn and parked it behind work already running.
+  // The optimistic row stops implying it is being worked on and says so.
+  React.useEffect(() => {
+    if (!queued) return;
+    markPendingCodingSessionTurnQueued(channelId, turn.commandId);
+  }, [channelId, queued, turn.commandId]);
   // A replayed receipt (relay refetch, reconnect backfill) is the same
   // refusal; restoring the draft twice would duplicate the person's words.
   const settledRef = React.useRef(false);
