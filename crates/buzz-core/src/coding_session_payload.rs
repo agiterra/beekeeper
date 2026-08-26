@@ -72,10 +72,16 @@ pub const SESSION_CLOSED: &str = "SESSION_CLOSED";
 pub const QUEUE_FULL: &str = "QUEUE_FULL";
 /// A turn addressed a persisted execution that has no live process behind it.
 ///
-/// The command is *not* consumed when this is published: the execution can be
-/// resumed, and the turn is still owed. A drop is the honest answer to "where
-/// did my turn go", and it replaces the log line that used to be the only
-/// record of it.
+/// **Terminal: the turn did not run and will not run.** The provider records a
+/// durable refusal beside this receipt (`record_refusal` in
+/// `report_no_live_execution`, `crates/buzz-session-provider/src/lib.rs`), so a
+/// replayed copy of the same 44220 is answered `AlreadyRefused` instead of
+/// being run, and a `session.resume` mints generation N+1 that the replayed
+/// command no longer addresses anyway. The receipt message says so in words —
+/// "will not be retried; resume the execution and send it again" — and
+/// re-addressing an owed turn to the successor generation is the **sender's**
+/// job, not the provider's. A drop is the honest answer to "where did my turn
+/// go", and it replaces the log line that used to be the only record of it.
 pub const NO_LIVE_EXECUTION: &str = "NO_LIVE_EXECUTION";
 /// A `steer` delivery was requested of a runtime that never advertised native
 /// mid-turn steering, so the turn was delivered at the next boundary instead.
@@ -170,7 +176,11 @@ pub enum ReceiptStatus {
     /// The accepted turn began running; carries the provider's `turnId`.
     #[serde(rename = "turn_started")]
     TurnStarted,
-    /// The turn could not be accepted because the queue is full.
+    /// The turn was not accepted and will not run: the mailbox was full
+    /// ([`QUEUE_FULL`], or `QUEUE_FULL_TURN_KEPT` for an interrupt that needed
+    /// two slots), or the addressed execution had no live process
+    /// ([`NO_LIVE_EXECUTION`]). Terminal in every case; `error.code` says
+    /// which, and nothing in the status itself marks it terminal.
     #[serde(rename = "turn_dropped")]
     TurnDropped,
     /// The turn was refused: the signer lacked authority, or the target was
