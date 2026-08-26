@@ -526,6 +526,22 @@ pub struct Provider {
     /// In-memory on purpose. After a restart there is no mailbox, so every
     /// entry in it would be a lie about custody this process no longer has.
     in_flight: HashMap<String, InFlightTurn>,
+    /// `commandId`s of cancels this process has already handed to an actor's
+    /// mailbox but has not yet answered durably.
+    ///
+    /// A `thread.turn.interrupt` is not a turn, so it never enters
+    /// [`Provider::in_flight`] — and everything that runs *after* its delivery
+    /// (the consumed/refused ledger append, then the receipt) is fallible. When
+    /// one of those fails the command is handed back for a later try, and both
+    /// ledgers roll their in-memory entry back on a failed append, so without
+    /// this set a redelivery walked every `decide_turn` fence and cancelled
+    /// whatever turn was running by then: no receipt, no transcript item, no
+    /// ledger entry. Entries are removed the moment a ledger write makes the
+    /// durable fences answer, so this holds only the failure window.
+    ///
+    /// In-memory for the same reason as `in_flight`: after a restart there is
+    /// no mailbox, so no entry in it could still be true.
+    delivered_cancels: HashSet<String>,
     /// Whether each live execution's runtime advertised native mid-turn
     /// steering at `initialize`, keyed by session id.
     ///
@@ -648,6 +664,7 @@ impl Provider {
             established_leases: HashSet::new(),
             first_lease_prerequisites: HashMap::new(),
             in_flight: HashMap::new(),
+            delivered_cancels: HashSet::new(),
             steering: HashMap::new(),
             replay: ReplayWindow::default(),
         })
@@ -1039,16 +1056,21 @@ impl Provider {
                 // reached a mailbox": `on_turn` can fail *after*
                 // `SessionHandle::deliver` took the turn, because the
                 // `turn_queued` (or `turn_degraded`) `enqueue_receipt` right
-                // behind the delivery is itself fallible. What makes the
-                // redelivery safe on that path is the process-local
-                // `in_flight` fence — `decide_turn` answers
-                // `Ignored::AlreadyAccepted` for a command this provider has
-                // already handed to a session (`commands.rs`) — not the
-                // ledgers, which are written when a turn *starts* or when it
-                // is answered terminally and so say nothing about a turn
-                // sitting in a session's mailbox. The ledgers cover the other
-                // two shapes; the fence covers this one, and it dies with the
-                // process, where replay from the channel floor takes over.
+                // behind the delivery is itself fallible, and for an interrupt
+                // so is the ledger append in front of that receipt. What makes
+                // the redelivery safe on that path is a pair of process-local
+                // fences, both of which make `decide_turn` answer
+                // `Ignored::AlreadyAccepted` (`commands.rs`): `in_flight` for a
+                // turn already handed to a session, and `delivered_cancels` for
+                // an interrupt already handed to one. An interrupt is not a
+                // turn, so `in_flight` never holds it, and both ledgers roll
+                // their in-memory entry back when their append fails — without
+                // the second fence a redelivery cancelled an unrelated running
+                // turn with no receipt at all. The ledgers say nothing about
+                // either shape: they are written when a turn *starts* or when a
+                // command is answered terminally, never when a mailbox takes
+                // something. Both fences die with the process, where replay
+                // from the channel floor takes over.
                 self.replay.held.push(command);
                 self.replay.held.extend(queue);
                 return Err(error);
@@ -2104,6 +2126,17 @@ impl Provider {
                 // An interrupt is answered by whether the cancel reached a
                 // live turn, which is a fact this loop already holds.
                 Ok(()) => {
+                    // Custody of the cancel itself, recorded before anything
+                    // that can fail. `handle.deliver` has already put the
+                    // `SessionCommand::Interrupt` in the actor's mailbox and
+                    // nothing can take it back, while both writes below can
+                    // fail and hand this command back to `replay.held` for a
+                    // later try. `in_flight` is deliberately not the place for
+                    // it — this is not a turn, and an entry there would poison
+                    // the `open_turn` predicate three lines down, the
+                    // `watermark_ceiling` clamp and `report_lost_mailbox`'s
+                    // `is_turn` receipt.
+                    self.delivered_cancels.insert(command_id.clone());
                     // Custody, not just the fold: a turn this provider has
                     // accepted and not yet seen start is in flight as surely
                     // as one whose `TurnStarted` has already been folded. The
@@ -2136,6 +2169,10 @@ impl Provider {
                         )
                     };
                     self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    // Durably answered: one of the two ledgers now fences a
+                    // redelivery, so the process-local record has nothing left
+                    // to say.
+                    self.delivered_cancels.remove(&command_id);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -2727,6 +2764,7 @@ impl Provider {
             state: &self.state,
             projects,
             in_flight: &self.in_flight,
+            delivered_cancels: &self.delivered_cancels,
         }
     }
 
@@ -4312,6 +4350,13 @@ mod tests {
     }
 
     /// Drain and record session reports until one satisfies `done`.
+    /// Set a file's mode. Used to make a durable ledger unwritable, which is
+    /// the `io::Error` class a full or read-only state directory raises.
+    fn chmod(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+
     async fn pump_until(provider: &mut Provider, done: impl Fn(&SessionEvent) -> bool) {
         loop {
             let event =
@@ -10017,6 +10062,114 @@ mod tests {
                 .watermark(channel_id)
                 .is_none_or(|mark| mark <= base),
             "the floor still reaches the oldest turn this provider is holding"
+        );
+    }
+
+    /// A cancel the actor already has is not delivered a second time by a
+    /// redelivery.
+    ///
+    /// `on_turn` records custody in `in_flight` only on the `Ok(()) if is_turn`
+    /// arm, and `is_turn` is false for `TurnAction::Interrupt`. So a plain
+    /// `thread.turn.interrupt` whose `SessionHandle::deliver` succeeded and
+    /// whose ledger append then failed was handed back to `replay.held` with
+    /// nothing anywhere recording that the actor already had it: the
+    /// consumed/refused sets roll their in-memory entry back when the append
+    /// fails, `in_flight` never held it, and the relay's next redelivery walked
+    /// through every `decide_turn` fence and cancelled whatever turn was
+    /// running by then — no receipt, no transcript item, no ledger entry.
+    #[tokio::test]
+    async fn a_delivered_cancel_is_not_issued_twice_after_a_failed_ledger_append() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let state_dir = dir.path().join("state");
+        let mut provider = stalling_provider(&state_dir, Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+
+        // Held, so the delivery happens out of `deliver_held_commands` — the
+        // one path that hands a failed command back for a later try.
+        let cancel = interrupt_event(channel_id, "int-held", &target);
+        provider.open_replay_window(channel_id);
+        provider
+            .handle_command_event(channel_id, &cancel)
+            .await
+            .expect("hold");
+
+        // A read-only consumed ledger: the append that records the delivered
+        // cancel fails, which is the `io::Error` class a full or read-only
+        // state directory raises.
+        let ledger = state_dir.join("commands.jsonl");
+        chmod(&ledger, 0o444);
+        provider
+            .flush_replays_now()
+            .await
+            .expect_err("the consumed ledger append fails");
+        chmod(&ledger, 0o600);
+
+        // Custody is a fact, not a hypothesis: the cancel reached the actor and
+        // ended the running turn before the ledger write failed.
+        pump_until(&mut provider, |event| {
+            matches!(
+                event,
+                SessionEvent::TurnFinished {
+                    outcome: session::TurnOutcome::Cancelled,
+                    ..
+                }
+            )
+        })
+        .await;
+        assert!(
+            !provider.state().is_command_consumed("int-held"),
+            "the failed append left no durable record of the delivered cancel"
+        );
+        assert!(
+            !provider.state().is_command_refused("int-held"),
+            "and no refusal either"
+        );
+
+        // A second turn, running, and a relay redelivery of the same cancel —
+        // the reconnect shape. Nothing about this command is new; the actor has
+        // already had it.
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-2", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+        provider.flush(&CollectingSink::new()).await.expect("drain");
+
+        provider
+            .handle_command_event(channel_id, &cancel)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(
+            receipt_stages(&sink, "int-held").is_empty(),
+            "a redelivered cancel this provider already handed to the actor is silent; \
+             an `interrupt_delivered` here is published from the same arm that issues the \
+             second `SessionCommand::Interrupt`, so it means turn-2 was cancelled too"
+        );
+        assert!(
+            !provider.state().is_command_consumed("int-held"),
+            "the redelivery consumed nothing, because it delivered nothing"
         );
     }
 
