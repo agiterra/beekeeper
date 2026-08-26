@@ -2,6 +2,7 @@ import '../../../shared/relay/nostr_models.dart';
 import 'coding_session_decode_result.dart';
 import 'coding_session_models.dart';
 import 'coding_session_signature.dart';
+import 'coding_session_target.dart';
 import 'coding_session_wire.dart';
 
 /// Strict decoders for the umbrella-session kinds a *member* signs: the 44221
@@ -149,6 +150,81 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
       repoRef: action['repoRef'] as String?,
       model: action['model'] as String?,
       title: action['title'] as String?,
+    ),
+  );
+}
+
+/// Decode a 44221 `session.resume`.
+///
+/// Read for authority only: the resume names the provider that may answer it,
+/// and that provider's lifecycle receipt names the generation the resume
+/// minted. Without this a resumed generation falls through to D5's
+/// first-seen-metadata-signer fallback, which hands a stranger the current
+/// generation of somebody else's session. `session.stop` is still
+/// [CodingSessionDecodeReason.wrongKind]: it binds no authority this reader
+/// needs.
+CodingSessionDecoded<CodingSessionResume> decodeCodingSessionResume(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionLifecycleCommand) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final tags = parseExactTags(event.tags, ['h', 'csl-v', 'csl-command']);
+  if (tags == null ||
+      tags[0].isEmpty ||
+      tags[1] != codingSessionLifecycleCommandTagVersion) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final value = parseBoundedJson(event.content, _maxLifecycleContentBytes);
+  if (!isPlainRecord(value)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final payload = value! as Map<String, dynamic>;
+  if (!hasExactKeys(payload, ['schema', 'commandId', 'action']) ||
+      payload['schema'] != codingSessionLifecycleCommandSchema ||
+      !boundedNonempty(payload['commandId'], _maxIdentifierBytes) ||
+      payload['commandId'] != tags[2] ||
+      !isPlainRecord(payload['action'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final action = payload['action']! as Map<String, dynamic>;
+  if (action['type'] != 'session.resume') {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  if (!hasExactKeys(action, ['type', 'session', 'providerAuthorityPubkey'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final session = CodingSessionTarget.decode(action['session']);
+  final authority = normalizePubkey(action['providerAuthorityPubkey']);
+  if (session == null || authority.isEmpty) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    CodingSessionResume(
+      ref: ref,
+      commandId: payload['commandId'] as String,
+      providerAuthorityPubkey: authority,
+      session: session,
     ),
   );
 }

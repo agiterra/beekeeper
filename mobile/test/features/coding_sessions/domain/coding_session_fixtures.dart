@@ -230,6 +230,41 @@ NostrEvent createEvent({
   );
 }
 
+/// A signed 44221 `session.resume` event.
+///
+/// A resume names the generation it is reattaching to and the provider that
+/// may answer it; the provider's receipt mints the next generation.
+NostrEvent resumeEvent({
+  required String commandId,
+  CodingSessionTarget? forTarget,
+  String pubkey = founderPubkey,
+  String authority = providerPubkey,
+  int createdAt = 800,
+  String? id,
+}) {
+  final resolved = forTarget ?? target();
+  return event(
+    kind: EventKind.codingSessionLifecycleCommand,
+    pubkey: pubkey,
+    createdAt: createdAt,
+    id: id,
+    tags: [
+      ['h', channelId],
+      ['csl-v', 'csl1-1'],
+      ['csl-command', commandId],
+    ],
+    content: jsonEncode({
+      'schema': 'buzz-coding-session-lifecycle-command/v1',
+      'commandId': commandId,
+      'action': {
+        'type': 'session.resume',
+        'session': resolved.toJson(),
+        'providerAuthorityPubkey': authority,
+      },
+    }),
+  );
+}
+
 /// A signed 44226 genesis event.
 NostrEvent genesisEvent({
   required String eventId,

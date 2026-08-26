@@ -422,6 +422,63 @@ void main() {
     });
   });
 
+  group('session.resume', () {
+    test('binds the provider named for the generation it resumes', () {
+      final decoded = decodeCodingSessionResume(
+        resumeEvent(commandId: 'cmd-2', forTarget: target(generation: 2)),
+      );
+      final resume = decoded.value!;
+      expect(resume.commandId, 'cmd-2');
+      expect(resume.providerAuthorityPubkey, providerPubkey);
+      expect(resume.session.generation, 2);
+      expect(resume.ref.signerPubkey, founderPubkey);
+    });
+
+    test('a create is not a resume, and a resume is not a create', () {
+      expect(
+        decodeCodingSessionResume(createEvent(commandId: 'cmd-1')).reason,
+        CodingSessionDecodeReason.wrongKind,
+      );
+      expect(
+        decodeCodingSessionCreate(resumeEvent(commandId: 'cmd-2')).reason,
+        CodingSessionDecodeReason.wrongKind,
+      );
+    });
+
+    test('an extra action key is malformed, never read past', () {
+      final base = resumeEvent(commandId: 'cmd-2');
+      final payload = jsonDecode(base.content) as Map<String, dynamic>;
+      (payload['action'] as Map<String, dynamic>)['sessionRef'] = sessionRefA;
+      final tampered = event(
+        kind: base.kind,
+        pubkey: base.pubkey,
+        tags: base.tags,
+        content: jsonEncode(payload),
+      );
+      expect(
+        decodeCodingSessionResume(tampered).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    });
+
+    test('a resume naming a pubkey that is not 64-hex is malformed', () {
+      final base = resumeEvent(commandId: 'cmd-2');
+      final payload = jsonDecode(base.content) as Map<String, dynamic>;
+      (payload['action'] as Map<String, dynamic>)['providerAuthorityPubkey'] =
+          'not-a-key';
+      final tampered = event(
+        kind: base.kind,
+        pubkey: base.pubkey,
+        tags: base.tags,
+        content: jsonEncode(payload),
+      );
+      expect(
+        decodeCodingSessionResume(tampered).reason,
+        CodingSessionDecodeReason.malformedPayload,
+      );
+    });
+  });
+
   group('signature verification', () {
     test('the nostr package verifies a genuinely signed event', () {
       const secretKey =

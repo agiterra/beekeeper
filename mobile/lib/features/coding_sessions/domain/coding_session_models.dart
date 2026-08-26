@@ -324,6 +324,32 @@ class CodingSessionCreate {
   });
 }
 
+/// A decoded 44221 `session.resume` command.
+///
+/// A resume names an existing generation and the provider allowed to answer
+/// it; the provider's lifecycle receipt mints the *next* generation. It is
+/// read for one reason only: without it the generation a resume produced has
+/// no create-backed authority, so any signer whose metadata landed first
+/// becomes its fallback authority. It claims no umbrella and founds nothing.
+@immutable
+class CodingSessionResume {
+  final CodingSessionEventRef ref;
+  final String commandId;
+
+  /// The provider this resume addressed; the only signer whose facts count.
+  final String providerAuthorityPubkey;
+
+  /// The generation the resume asked to reattach to.
+  final CodingSessionTarget session;
+
+  const CodingSessionResume({
+    required this.ref,
+    required this.commandId,
+    required this.providerAuthorityPubkey,
+    required this.session,
+  });
+}
+
 /// A decoded 44229 umbrella-session display name.
 @immutable
 class CodingSessionName {

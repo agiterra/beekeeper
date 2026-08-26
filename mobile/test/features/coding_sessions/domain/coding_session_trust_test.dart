@@ -97,6 +97,54 @@ void main() {
       },
     );
 
+    test('a resume vouches for the generation it mints', () {
+      final resumed = target(generation: 2);
+      final facts = _gate([
+        resumeEvent(commandId: 'cmd-2'),
+        receiptEvent(
+          commandId: 'cmd-2',
+          status: 'resumed',
+          forTarget: resumed,
+          createdAt: 900,
+        ),
+        metadataEvent(forTarget: resumed, status: 'running', createdAt: 1000),
+      ]);
+      final authority = facts.authorityByTarget[resumed.key]!;
+      expect(authority.pubkey, providerPubkey);
+      expect(
+        authority.verified,
+        isTrue,
+        reason: 'the resume named the provider that answered it',
+      );
+      expect(facts.targetKeyByCommandId['cmd-2'], resumed.key);
+    });
+
+    test('a stranger cannot speak for a resumed generation', () {
+      final resumed = target(generation: 2);
+      final facts = _gate([
+        resumeEvent(commandId: 'cmd-2'),
+        // The stranger's metadata lands first, so before the resume was read
+        // it became the fallback authority for the whole generation.
+        metadataEvent(
+          forTarget: resumed,
+          status: 'running',
+          pubkey: otherProviderPubkey,
+          createdAt: 800,
+        ),
+        receiptEvent(
+          commandId: 'cmd-2',
+          status: 'resumed',
+          forTarget: resumed,
+          createdAt: 900,
+        ),
+        metadataEvent(forTarget: resumed, status: 'idle', createdAt: 1000),
+      ]);
+      expect(facts.authorityByTarget[resumed.key]!.pubkey, providerPubkey);
+      expect(facts.metadata, hasLength(1));
+      expect(facts.metadata.single.ref.signerPubkey, providerPubkey);
+      expect(facts.counts.rejectedAuthor, 1);
+    });
+
     test('two creates disagreeing about the provider bind nothing', () {
       final facts = _gate([
         createEvent(commandId: 'cmd-1', authority: providerPubkey),

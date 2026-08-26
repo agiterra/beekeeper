@@ -165,6 +165,7 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   final receipts = <CodingSessionReceipt>[];
   final transcripts = <CodingSessionTranscriptEnvelope>[];
   final creates = <CodingSessionCreate>[];
+  final resumes = <CodingSessionResume>[];
   final geneses = <String, CodingSessionGenesis>{};
   final names = <CodingSessionName>[];
   final goals = <CodingSessionGoal>[];
@@ -206,9 +207,23 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
         count(_outcomeOf(decoded.reason));
         if (decoded.value != null) transcripts.add(decoded.value!);
       case EventKind.codingSessionLifecycleCommand:
+        // One kind, two commands this reader cares about. A create binds the
+        // provider for the generation it opens; a resume binds it for the
+        // generation the provider mints in answer. `session.stop` decodes as
+        // neither and is counted as irrelevant, not as corruption.
         final decoded = decodeCodingSessionCreate(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
-        if (decoded.value != null) creates.add(decoded.value!);
+        if (decoded.value != null) {
+          count(_outcomeOf(decoded.reason));
+          creates.add(decoded.value!);
+          break;
+        }
+        if (decoded.reason != CodingSessionDecodeReason.wrongKind) {
+          count(_outcomeOf(decoded.reason));
+          break;
+        }
+        final resume = decodeCodingSessionResume(event, verifier: verifier);
+        count(_outcomeOf(resume.reason));
+        if (resume.value != null) resumes.add(resume.value!);
       case EventKind.codingSessionGenesis:
         final decoded = decodeCodingSessionGenesis(event, verifier: verifier);
         count(_outcomeOf(decoded.reason));
@@ -234,7 +249,7 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
     }
   }
 
-  final joins = _joinCreates(creates, receipts);
+  final joins = _joinCreates(creates, resumes, receipts);
   conflicts += joins.conflicts;
 
   final authorityByTarget = <String, CodingSessionAuthority>{};
@@ -336,26 +351,65 @@ class _CreateJoins {
     required this.conflicts,
   });
 
-  /// `cs-target` key -> the provider pubkey a create named for it.
+  /// `cs-target` key -> the provider pubkey a create or resume named for it.
   final Map<String, String> authorityByTarget;
 
   /// commandId -> the `cs-target` key its receipts settled on.
   final Map<String, String> targetKeyByCommandId;
 
-  /// commandId -> the provider pubkey the create addressed.
+  /// commandId -> the provider pubkey the command addressed.
   final Map<String, String> authorityByCommandId;
 
   final int conflicts;
 }
 
+/// One lifecycle command that names a provider, create or resume alike.
+///
+/// The join below cares about four things — who signed the command, which
+/// provider it addressed, which umbrella it claimed and which genesis it
+/// anchored to — and a resume simply claims neither of the last two.
+class _AuthorityClaim {
+  const _AuthorityClaim({
+    required this.ref,
+    required this.commandId,
+    required this.providerAuthorityPubkey,
+    required this.sessionRef,
+    required this.genesisRef,
+  });
+
+  _AuthorityClaim.ofCreate(CodingSessionCreate create)
+    : ref = create.ref,
+      commandId = create.commandId,
+      providerAuthorityPubkey = create.providerAuthorityPubkey,
+      sessionRef = create.sessionRef,
+      genesisRef = create.genesisRef;
+
+  _AuthorityClaim.ofResume(CodingSessionResume resume)
+    : ref = resume.ref,
+      commandId = resume.commandId,
+      providerAuthorityPubkey = resume.providerAuthorityPubkey,
+      sessionRef = null,
+      genesisRef = null;
+
+  final CodingSessionEventRef ref;
+  final String commandId;
+  final String providerAuthorityPubkey;
+  final String? sessionRef;
+  final String? genesisRef;
+}
+
 _CreateJoins _joinCreates(
   List<CodingSessionCreate> creates,
+  List<CodingSessionResume> resumes,
   List<CodingSessionReceipt> receipts,
 ) {
   var conflicts = 0;
-  final byCommandId = <String, List<CodingSessionCreate>>{};
-  for (final create in creates) {
-    byCommandId.putIfAbsent(create.commandId, () => []).add(create);
+  final byCommandId = <String, List<_AuthorityClaim>>{};
+  for (final claim in [
+    ...creates.map(_AuthorityClaim.ofCreate),
+    ...resumes.map(_AuthorityClaim.ofResume),
+  ]) {
+    byCommandId.putIfAbsent(claim.commandId, () => []).add(claim);
   }
   final authorityByCommandId = <String, String>{};
   final targetKeyByCommandId = <String, String>{};
@@ -366,7 +420,8 @@ _CreateJoins _joinCreates(
     final records = [...entry.value]
       ..sort((left, right) => _byCreatedAtThenEventId(left.ref, right.ref));
     // One commandId, one signer, one umbrella claim, one addressed provider.
-    // Anything else is a disputed create, and a disputed create binds nothing.
+    // Anything else is a disputed command, and a disputed command binds
+    // nothing.
     final disputed =
         records.map((record) => record.ref.signerPubkey).toSet().length > 1 ||
         records.map((record) => record.sessionRef).toSet().length > 1 ||
@@ -377,17 +432,17 @@ _CreateJoins _joinCreates(
       conflicts += 1;
       continue;
     }
-    final create = records.first;
-    authorityByCommandId[create.commandId] = create.providerAuthorityPubkey;
+    final claim = records.first;
+    authorityByCommandId[claim.commandId] = claim.providerAuthorityPubkey;
 
-    // Only *lifecycle* receipts from the create's own named provider settle
-    // which execution the command minted. A turn receipt names the execution
-    // it was addressed to, but joining one here would let a refused turn
-    // decide which generation a session opened into.
+    // Only *lifecycle* receipts from the command's own named provider settle
+    // which execution it minted. A turn receipt names the execution it was
+    // addressed to, but joining one here would let a refused turn decide
+    // which generation a session opened into.
     final answers = <String>{};
     for (final receipt in receipts) {
-      if (receipt.commandId != create.commandId) continue;
-      if (receipt.ref.signerPubkey != create.providerAuthorityPubkey) continue;
+      if (receipt.commandId != claim.commandId) continue;
+      if (receipt.ref.signerPubkey != claim.providerAuthorityPubkey) continue;
       if (receipt.isTurnStage) continue;
       final target = receipt.session;
       if (target == null) continue;
@@ -398,17 +453,17 @@ _CreateJoins _joinCreates(
       continue;
     }
     final targetKey = answers.single;
-    targetKeyByCommandId[create.commandId] = targetKey;
+    targetKeyByCommandId[claim.commandId] = targetKey;
     final incumbent = authorityByTarget[targetKey];
-    if (incumbent != null && incumbent != create.providerAuthorityPubkey) {
-      // Two creates claiming one execution for different providers. Neither
+    if (incumbent != null && incumbent != claim.providerAuthorityPubkey) {
+      // Two commands claiming one execution for different providers. Neither
       // wins: the target falls through to the unverified fallback rather than
-      // letting the earlier create pick the winner silently.
+      // letting the earlier one pick the winner silently.
       conflicts += 1;
       disputedTargets.add(targetKey);
       continue;
     }
-    authorityByTarget[targetKey] = create.providerAuthorityPubkey;
+    authorityByTarget[targetKey] = claim.providerAuthorityPubkey;
   }
   for (final targetKey in disputedTargets) {
     authorityByTarget.remove(targetKey);
