@@ -11,13 +11,18 @@
 //! 1. **Every filter carries explicit `kinds`.** The relay's p-gate answers 403
 //!    to an open-ended query, so there is no such thing as "just fetch the
 //!    channel" — see the query builders below.
-//! 2. **Resolution matches the desktop consumer exactly.** A receipt confirms a
-//!    generation exists; the newest metadata wins, and a same-second burst is
-//!    broken on event id rather than treated as a conflict (a provider
-//!    legitimately moves `starting -> idle -> running` inside one second, and
-//!    second-granularity `created_at` cannot order that). Diverging from the
-//!    desktop here would mean the CLI and the app disagree about what happened,
-//!    which is worse than either being wrong alone.
+//! 2. **Resolution matches the desktop consumer exactly.** A *lifecycle*
+//!    receipt (`created`, `resumed`, `stopped`, ...) confirms a generation
+//!    exists; the newest metadata wins, and a same-second burst is broken on
+//!    event id rather than treated as a conflict (a provider legitimately
+//!    moves `starting -> idle -> running` inside one second, and
+//!    second-granularity `created_at` cannot order that). A *turn* receipt
+//!    (`turn_queued`/`turn_started`/`turn_dropped`/`turn_refused`, NIP-CSL
+//!    fork amendment 7) is the deliberate exception: it never creates,
+//!    confirms, or ends a generation, so `resolve_sessions` ignores it for
+//!    that purpose. Diverging from the desktop here would mean the CLI and
+//!    the app disagree about what happened, which is worse than either being
+//!    wrong alone.
 //!
 //! Signature verification is NOT performed here: `/query` results come from the
 //! relay the caller authenticated to, and every row carries its `signer` so a
@@ -91,6 +96,12 @@ pub struct ReceiptRecord {
     /// session — it confirms nothing exists, so it names no target.
     target: Option<CodingSessionTarget>,
     target_key: Option<String>,
+    /// Whether this receipt reports one of the D4 turn stages (`turn_queued`,
+    /// `turn_started`, `turn_dropped`, `turn_refused`) rather than a lifecycle
+    /// outcome. Per NIP-CSL, a turn receipt names the generation its command
+    /// targeted but never creates, confirms, or ends it — `resolve_sessions`
+    /// must ignore it for those purposes.
+    is_turn_status: bool,
     raw: Value,
 }
 
@@ -187,7 +198,44 @@ pub fn decode_metadata(events: &[Value]) -> (Vec<MetadataRecord>, DecodeStats) {
     (records, stats)
 }
 
+/// The four D4 turn-stage statuses a 44224 receipt may carry (NIP-CSL).
+/// `ReceiptStatus`'s own `#[serde(rename)]` strings, mirrored here so this
+/// decoder can recognize them even when linked against a `buzz-core` build
+/// whose `ReceiptStatus` enum predates them (see [`decode_receipts`]).
+const TURN_RECEIPT_STATUSES: &[&str] = &[
+    "turn_queued",
+    "turn_started",
+    "turn_dropped",
+    "turn_refused",
+];
+
+/// Whether a decoded `ReceiptStatus` is one of the four turn stages.
+fn is_turn_receipt_status(status: buzz_core::coding_session_payload::ReceiptStatus) -> bool {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .is_some_and(|status| TURN_RECEIPT_STATUSES.contains(&status.as_str()))
+}
+
+/// Whether a raw receipt JSON value's `status` field names a turn stage.
+fn is_turn_receipt_value(value: &Value) -> bool {
+    value
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| TURN_RECEIPT_STATUSES.contains(&status))
+}
+
 /// Decode every 44224 event in `events`, dropping and counting the unreadable.
+///
+/// Lifecycle statuses decode through `buzz-core`'s typed `LifecycleReceipt`.
+/// Turn statuses (D4: `turn_queued`, `turn_started`, `turn_dropped`,
+/// `turn_refused`) try the same typed path first — once `buzz-core`'s
+/// `ReceiptStatus` carries them, that is all this needs — and fall back to
+/// reading `status`/`session` straight off the JSON otherwise, so a
+/// well-formed turn receipt is never miscounted as malformed while
+/// `buzz-core` has not yet grown the variant. Either way the result is marked
+/// [`ReceiptRecord::is_turn_status`] so callers (`resolve_sessions`) never let
+/// it create, confirm, or end a generation.
 pub fn decode_receipts(events: &[Value]) -> (Vec<ReceiptRecord>, DecodeStats) {
     let mut records = Vec::new();
     let mut stats = DecodeStats::default();
@@ -197,19 +245,46 @@ pub fn decode_receipts(events: &[Value]) -> (Vec<ReceiptRecord>, DecodeStats) {
         {
             continue;
         }
-        let decoded = content_of(event)
-            .and_then(|content| serde_json::from_str::<LifecycleReceipt>(content).ok());
-        let (Some(receipt), Some(signer), Some(created_at)) =
-            (decoded, event_str(event, "pubkey"), event_created_at(event))
+        let (Some(content), Some(signer), Some(created_at)) = (
+            content_of(event),
+            event_str(event, "pubkey"),
+            event_created_at(event),
+        ) else {
+            stats.malformed += 1;
+            continue;
+        };
+
+        if let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(content) {
+            records.push(ReceiptRecord {
+                signer,
+                created_at,
+                is_turn_status: is_turn_receipt_status(receipt.status),
+                target_key: receipt.session.as_ref().map(coding_session_target_key),
+                target: receipt.session,
+                raw: event.clone(),
+            });
+            continue;
+        }
+
+        let Some(value) = serde_json::from_str::<Value>(content)
+            .ok()
+            .filter(is_turn_receipt_value)
         else {
             stats.malformed += 1;
             continue;
         };
+        let target = value
+            .get("session")
+            .filter(|session| !session.is_null())
+            .and_then(|session| {
+                serde_json::from_value::<CodingSessionTarget>(session.clone()).ok()
+            });
         records.push(ReceiptRecord {
             signer,
             created_at,
-            target_key: receipt.session.as_ref().map(coding_session_target_key),
-            target: receipt.session,
+            target_key: target.as_ref().map(coding_session_target_key),
+            target,
+            is_turn_status: true,
             raw: event.clone(),
         });
     }
@@ -351,6 +426,16 @@ pub fn resolve_sessions(
     receipts: &[ReceiptRecord],
     transcripts: &[TranscriptRecord],
 ) -> Vec<SessionRow> {
+    // A turn receipt (D4: turn_queued/turn_started/turn_dropped/turn_refused)
+    // names the generation its command targeted, but per NIP-CSL it never
+    // creates, confirms, or ends one — only the six lifecycle statuses do
+    // that. Filtering here, once, keeps every rule below exactly as it read
+    // before turn receipts existed.
+    let receipts: Vec<&ReceiptRecord> = receipts
+        .iter()
+        .filter(|record| !record.is_turn_status)
+        .collect();
+
     let mut identities: BTreeMap<(String, String), CodingSessionTarget> = BTreeMap::new();
     for record in metadata {
         identities.insert(
@@ -376,7 +461,7 @@ pub fn resolve_sessions(
         .collect();
     // A receipt alone is enough to know a generation exists, even before its
     // first metadata or transcript event lands.
-    for record in receipts {
+    for record in &receipts {
         if let (Some(key), Some(target)) = (record.target_key.clone(), record.target.clone()) {
             identities
                 .entry((record.signer.clone(), key))
@@ -668,7 +753,16 @@ fn render_item(item: &Value, result_by_id: &HashMap<String, bool>) -> String {
     match kind {
         "user_prompt" => {
             let content = item_text(item, "content").unwrap_or_default();
-            format!("**User**\n\n{content}\n\n")
+            // `commandId` is present whenever the turn was started by a
+            // 44220 command (absent only for the initial turn embedded in a
+            // create, which is attributed via the create's own commandId
+            // upstream) — see NIP-CST. Rendered as a short footnote so a
+            // reader can join this line back to its `thread.turn.start`
+            // without the prose growing.
+            let command_note = item_text(item, "commandId")
+                .map(|command_id| format!(" _(cmd `{command_id}`)_"))
+                .unwrap_or_default();
+            format!("**User**{command_note}\n\n{content}\n\n")
         }
         "assistant_text" => {
             let text = item_text(item, "text").unwrap_or_default();
@@ -1506,7 +1600,7 @@ pub async fn dispatch(
 mod tests {
     use super::*;
     use buzz_core::coding_session_payload::{
-        Capabilities, LifecycleReceipt, SessionStatus, METADATA_SCHEMA,
+        Capabilities, LifecycleReceipt, SessionStatus, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
     };
 
     fn target(session_id: &str, generation: u64) -> CodingSessionTarget {
@@ -2148,6 +2242,157 @@ mod tests {
         // A raw tool_result never renders on its own — it is already folded
         // into the call line above it.
         assert!(!markdown.contains("tool_result"), "{markdown}");
+    }
+
+    /// D4/NIP-CST: a `user_prompt` carries `commandId` whenever the turn was
+    /// started by a command. The markdown footnote lets a reader join the
+    /// line back to the `thread.turn.start` that produced it without
+    /// bloating the prose line itself.
+    #[test]
+    fn markdown_shows_a_user_prompts_command_id_when_present() {
+        let session = target("s-1", 1);
+        let signer = "a".repeat(64);
+        let events = vec![transcript_event(
+            &format!("{:064}", 1),
+            &signer,
+            1,
+            &session,
+            1,
+            Some("turn-1"),
+            json!({ "kind": "user_prompt", "content": "fix the test", "commandId": "cmd-9" }),
+        )];
+        let (records, _) = decode_transcripts(&events);
+        let rows = resolve_sessions(&[], &[], &records);
+        let markdown = render_markdown(rows.first(), &records);
+
+        assert!(markdown.contains("**User** _(cmd `cmd-9`)_"), "{markdown}");
+        assert!(markdown.contains("fix the test"), "{markdown}");
+    }
+
+    /// Older providers never emit `commandId` — the footnote must not appear
+    /// and rendering must not regress for them.
+    #[test]
+    fn markdown_omits_the_footnote_when_command_id_is_absent() {
+        let session = target("s-1", 1);
+        let signer = "a".repeat(64);
+        let events = vec![transcript_event(
+            &format!("{:064}", 1),
+            &signer,
+            1,
+            &session,
+            1,
+            Some("turn-1"),
+            json!({ "kind": "user_prompt", "content": "fix the test" }),
+        )];
+        let (records, _) = decode_transcripts(&events);
+        let rows = resolve_sessions(&[], &[], &records);
+        let markdown = render_markdown(rows.first(), &records);
+
+        assert!(markdown.contains("**User**\n\nfix the test"), "{markdown}");
+        assert!(!markdown.contains("_(cmd"), "{markdown}");
+    }
+
+    // ── D4 turn receipts never create, confirm, or end a generation ─────────
+
+    /// Builds a well-formed turn-stage 44224 event straight from JSON, since
+    /// `buzz-core`'s `LifecycleReceipt` builders (Lane 1A) do not mint these
+    /// statuses yet. Mirrors the exact-key shape D4 requires: 6 keys with
+    /// `turnId` for `turn_started`, 5 keys otherwise.
+    fn turn_receipt_event(
+        id: &str,
+        signer: &str,
+        created_at: i64,
+        command_id: &str,
+        status: &str,
+        target: Option<&CodingSessionTarget>,
+        turn_id: Option<&str>,
+    ) -> Value {
+        let mut content = serde_json::json!({
+            "schema": LIFECYCLE_RECEIPT_SCHEMA,
+            "commandId": command_id,
+            "status": status,
+            "session": target,
+            "error": Value::Null,
+        });
+        if let (Some(object), Some(turn_id)) = (content.as_object_mut(), turn_id) {
+            object.insert("turnId".into(), json!(turn_id));
+        }
+        json!({
+            "id": id,
+            "pubkey": signer,
+            "kind": KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            "created_at": created_at,
+            "sig": "0".repeat(128),
+            "tags": [["h", "channel"], ["cslr-v", "cslr1-1"]],
+            "content": content.to_string(),
+        })
+    }
+
+    #[test]
+    fn a_turn_receipt_for_an_unknown_target_creates_no_row() {
+        let session = target("s-1", 1);
+        let signer = "a".repeat(64);
+        let events = vec![turn_receipt_event(
+            &format!("{:064}", 1),
+            &signer,
+            10,
+            "turn-cmd-1",
+            "turn_started",
+            Some(&session),
+            Some("provider-turn-9"),
+        )];
+        let (receipts, stats) = decode_receipts(&events);
+        assert_eq!(
+            stats.malformed, 0,
+            "a well-formed turn receipt is not garbage"
+        );
+        assert_eq!(receipts.len(), 1);
+
+        let rows = resolve_sessions(&[], &receipts, &[]);
+        assert!(
+            rows.is_empty(),
+            "a turn receipt alone must never create a generation row: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_turn_receipt_does_not_confirm_or_change_the_status_of_a_known_target() {
+        let session = target("s-1", 1);
+        let signer = "a".repeat(64);
+        let metadata_events = vec![metadata_event(
+            &format!("{:064}", 1),
+            &signer,
+            100,
+            &metadata_payload(&session, SessionStatus::Idle, Some("t"), None),
+        )];
+        let (metadata, _) = decode_metadata(&metadata_events);
+        let baseline = resolve_sessions(&metadata, &[], &[]);
+        assert_eq!(baseline.len(), 1);
+        assert!(!baseline[0].confirmed);
+        assert_eq!(baseline[0].status, "idle");
+
+        let receipt_events = vec![turn_receipt_event(
+            &format!("{:064}", 2),
+            &signer,
+            200,
+            "turn-cmd-2",
+            "turn_refused",
+            Some(&session),
+            None,
+        )];
+        let (receipts, stats) = decode_receipts(&receipt_events);
+        assert_eq!(stats.malformed, 0);
+
+        let rows = resolve_sessions(&metadata, &receipts, &[]);
+        assert_eq!(rows.len(), 1);
+        assert!(
+            !rows[0].confirmed,
+            "a turn receipt must never confirm a generation"
+        );
+        assert_eq!(
+            rows[0].status, "idle",
+            "a turn receipt must never change a generation's status"
+        );
     }
 
     // ── NIP-CSAT receipt decode + fold ───────────────────────────────────────
