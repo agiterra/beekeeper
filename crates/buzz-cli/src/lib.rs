@@ -2259,6 +2259,18 @@ pub enum SessionsCmd {
         #[arg(long, value_enum, default_value = "md")]
         format: TranscriptFormat,
     },
+    /// Diagnose how each turn ended — spans, unterminated tools, stalled prompts
+    #[command(
+        after_help = "Examples:\n  bee sessions doctor --channel <uuid>\n  bee --format compact sessions doctor --channel <uuid> --target '<cs-target>'\n\nReports, per turn: wall span, unterminated tool calls, the terminal result's\ntoken counts, and the `turn_wire` row when the producer published one. A\nfailed turn whose result carries no usage was never resolved by the agent."
+    )]
+    Doctor {
+        /// Channel UUID the session was published into
+        #[arg(long)]
+        channel: String,
+        /// Restrict to one generation's `cs-target` key
+        #[arg(long)]
+        target: Option<String>,
+    },
     /// Aggregate tool usage and error rates across transcripts
     #[command(
         after_help = "Examples:\n  bee sessions tools --channel <uuid>\n  bee sessions tools --channel <uuid> --target '<cs-target>'"
@@ -2946,6 +2958,7 @@ mod tests {
         assert_eq!(
             names(&cmd, "sessions"),
             vec![
+                "doctor",
                 "export",
                 "grant",
                 "list",
@@ -2996,7 +3009,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 7),
+            ("sessions", 8),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),
