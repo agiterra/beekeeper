@@ -155,6 +155,11 @@ audioadapter-buffers = "3.0"
 tempfile = "3"
 strip-ansi-escapes = "0.2"
 tracing = "0.1"
+# The desktop app embeds buzz-acp and buzz-session-provider, which carry ~440
+# tracing call sites between them. Without a subscriber every one of those —
+# including the adapter stderr captured for exactly this purpose — is discarded.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 [dev-dependencies]
 tauri-utils = "2"
