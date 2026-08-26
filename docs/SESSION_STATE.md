@@ -1493,6 +1493,36 @@ same morning and one left as a product question.
       tests, every mobile test, all workspace tests, and desktop/web production
       builds are green.
 
+
+58. **Turn receipts and commandId on the echo (Slice 1).** Built overnight
+    2026-08-25/26 on `crew/s1-truthful-turns@5f7ce22d`, not landed. On the
+    wire, kind 44224 gains four statuses — `turn_queued` (mailbox accept),
+    `turn_started` (`run_turn`), `turn_dropped` (queue overflow, code
+    `QUEUE_FULL`), `turn_refused` (every `TurnDecision::Fail` plus the
+    `Ignore` reasons that name a target) — in the existing exact-key shape,
+    with `turnId` present only on `turn_started`, and the semantic key
+    `coding-session-lifecycle-receipt/v1|<len>:<commandId><len>:<status>`
+    (byte-pinned in `crates/buzz-sdk/src/builders.rs:6371`). Kind 44225
+    `user_prompt` items now carry the turn's `commandId`, so the desktop
+    settles an optimistic row by id and falls back to the text join only for
+    echoes without one — and says so on the row (`data-settled-by="text"`).
+    Evidence: fmt exit 0; clippy `--workspace --all-targets -D warnings` exit
+    0; `cargo test --lib` 846/474/406/143/302/254 passed across buzz-acp,
+    -cli, -core, -db, -sdk, -session-provider with 0 failures; desktop `pnpm
+    test` 6172 passed / 0 failed over 72 suites; `pnpm typecheck` 0 errors;
+    `pnpm check` and `just file-size-check` exit 0. `just ci` never finished
+    (killed mid-clippy), `just test` and `pnpm check:px-text` never ran, and
+    `cargo test -p buzz-relay --lib` is 957/1 on the flaky `mesh_demo` QUIC
+    test this diff does not touch.
+    Residuals: nothing ran against a relay or a live provider (the
+    relay-backed e2e is `#[ignore]`d, the app was never opened), so the Rust
+    and desktop halves have not met on the wire; `DeliverError::Gone` and the
+    no-live-actor arm still eat a turn with only a `tracing::warn`; the
+    mailbox-full drop receipt is untested; a `turn_queued` row still expires
+    at the 3-minute pending TTL and the suppressed stall escalation is now
+    pinned by a test; the Rust decoder's closed four-code `turn_refused` list
+    will reject S6's `BUDGET_EXHAUSTED` while the desktop accepts it.
+
 59. **A coding session hung for fifteen minutes after it had already
     answered.** Andy: the answer finishes, "but nothing triggers the main
     thread to run again". Confirmed against the live transcript — see the
@@ -1817,6 +1847,50 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Direction set 2026-08-25: crew sessions.** Executions become agent seats
+with roles that address each other durably, a lead seat dispatches, and the
+human founder observes. The plan, its operating model (lead / lanes / refuter
+/ finalizer), the verified seams, and the six slices live in
+[docs/CREW_SESSIONS_PLAN.md](CREW_SESSIONS_PLAN.md); its section 7 ledger is
+where slice status goes, findings still come here. The amas predecessor's kit
+is at ~/Projects/amas (read-only; contains keys). **Slice 1 (turn commandId on
+the echo + per-stage receipts) was built overnight by a Claude-only crew on
+crew/s1-truthful-turns@5f7ce22d**: gate red — `just ci` was killed mid-clippy
+and never produced counts, and `just test` / `pnpm check:px-text` were never
+reached, so the evidence is the by-hand per-gate run instead (fmt exit 0;
+clippy `--workspace --all-targets -D warnings` exit 0; `cargo test --lib` 846
+buzz-acp / 474 buzz-cli / 406 buzz-core / 143 buzz-db / 302 buzz-sdk / 254
+buzz-session-provider passed, 0 failed; `-p buzz-relay --lib` 957 passed / 1
+failed on the flaky `mesh_demo` QUIC loopback test that this diff does not
+touch; desktop `pnpm test` 6172 passed / 0 failed over 72 suites; `pnpm
+typecheck` 0 errors; `pnpm check` exit 0; `just file-size-check` exit 0);
+refuters NOT-REFUTED (contract & runtime correctness) and NOT-REFUTED (test
+honesty and evidence), both same-family and therefore advisory, not the
+cross-family pass §1 requires for a tier-2 diff. Residuals: nothing was ever
+run against a relay or a live provider — the relay-backed e2e is `#[ignore]`d
+and the app was not opened, so the Rust and desktop halves have never met on
+the wire; `DeliverError::Gone` and the no-live-actor arm still consume the
+command and drop the turn with only a `tracing::warn`, because the locked
+contract gives `turn_dropped` exactly one code (QUEUE_FULL); the mailbox-full
+`turn_dropped` path is implemented but untested (the actor mailbox could not
+be forced full deterministically); a row the provider signed `turn_queued` for
+still vanishes at the 3-minute pending TTL, and the lane's own test now pins
+the suppressed stall escalation as intended; a refused `Ignore` does not
+consume its command, so a redelivered 44220 republishes a byte-identical
+refusal (duplicate signal, deduped by `csl-key` downstream); interrupts get no
+stage receipts at all; the Rust receipt decoder pins `turn_refused` to four
+codes while the desktop accepts any bounded code, which will bite when S6's
+`BUDGET_EXHAUSTED` ships; `bee sessions list --json` reports `malformed: 0`
+for a malformed turn receipt because of a raw-JSON fallback; the TESTING.md
+live-observation block (§6.13.1) is marked NOT YET RUN LIVE; and three
+out-of-lane or shape deviations are recorded in the lane reports (two
+mechanical `turn_id: None` lines in
+`crates/buzz-db/src/coding_session_generation.rs`, the semantic-key helper
+placed in `buzz-sdk/src/builders.rs` rather than beside its siblings, and
+`CodingSessionProjectedTranscriptItem` as a coding-sessions-owned alias
+because `TranscriptItem` lives in the agents lane). It is a topic branch
+awaiting Brian's live look; not landed on main.
 
 **The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
 item 52's ten points, in that order.** The first four are contained (the
