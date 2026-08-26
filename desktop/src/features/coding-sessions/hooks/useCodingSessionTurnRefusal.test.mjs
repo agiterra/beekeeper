@@ -666,3 +666,68 @@ test("a started turn hands the row to the transcript and stops watching", async 
   resetPendingCodingSessionTurns();
   scope.teardown();
 });
+
+test("holding five turns at once does not silence the first of them", async () => {
+  // The composer's local queue retired this slice: every draft sent mid-turn
+  // is published immediately, so a person can have as many turns held by the
+  // provider as the pending-row bound allows. A held row is exempt from the
+  // pending TTL *and* from the refusal deadline, so a row whose watch was
+  // evicted can never retire — it sits above the composer forever, and the
+  // `turn_dropped` that would have retired it arrives to nobody.
+  const { resetPendingCodingSessionTurns } = await import(
+    "../lib/codingSessionPendingTurns.ts"
+  );
+  const { MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET } = await import(
+    "../lib/codingSessionPendingTurns.ts"
+  );
+  resetPendingCodingSessionTurns();
+  const scope = await harness();
+  const held = ["a", "b", "c", "d", "e"].map((suffix) => `csc-hold-${suffix}`);
+  assert.ok(
+    held.length <= MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET,
+    "this test must stay inside the number of rows a person can really have",
+  );
+
+  const deliver = async (event) => {
+    for (const subscription of scope.liveSubscriptions) {
+      if (subscription.closed) continue;
+      await scope.act(async () => {
+        subscription.onEvent(event);
+      });
+    }
+    await scope.settle();
+  };
+
+  for (const commandId of held) {
+    await scope.act(async () => {
+      scope.state.typeInto(`draft for ${commandId}`);
+    });
+    await scope.act(async () => {
+      scope.state.send(commandId);
+    });
+    await scope.settle();
+  }
+  for (const commandId of held) {
+    await deliver(await turnStageEvent({ commandId, status: "turn_queued" }));
+  }
+
+  // The oldest of the five is the one the provider gives up on.
+  await deliver(
+    await turnStageEvent({
+      commandId: held[0],
+      status: "turn_dropped",
+      error: {
+        code: "NO_LIVE_EXECUTION",
+        message: "no execution is running for this session",
+      },
+    }),
+  );
+  assert.equal(
+    scope.error(),
+    "Turn dropped (NO_LIVE_EXECUTION): no execution is running for this session",
+  );
+  assert.equal(scope.draft(), `draft for ${held[0]}`);
+
+  resetPendingCodingSessionTurns();
+  scope.teardown();
+});

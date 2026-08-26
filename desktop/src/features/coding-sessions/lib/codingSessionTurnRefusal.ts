@@ -23,6 +23,7 @@
  * nobody was refused when a queue filled up. Degraded is neither — the turn
  * still runs — so it never reaches this module's error line at all.
  */
+import { MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET } from "./codingSessionPendingTurns";
 import type { CodingSessionCommandRefusal } from "./codingSessionTrustedIngress";
 
 /**
@@ -35,11 +36,20 @@ import type { CodingSessionCommandRefusal } from "./codingSessionTrustedIngress"
 export const CODING_SESSION_TURN_REFUSAL_DEADLINE_MS = 20_000;
 
 /**
- * How many sent turns are watched at once. Each watch holds a relay
- * subscription, and a person cannot meaningfully be waiting on more refusals
- * than this; the oldest watch is the one whose deadline is nearest anyway.
+ * How many sent turns are watched at once.
+ *
+ * Exactly the number of pending rows one execution can hold, because a watch
+ * is now the only thing that can retire one. When the composer still queued
+ * drafts locally a person could not have more than a few turns outstanding,
+ * and an evicted watch cost nothing: the row expired at the pending TTL. A
+ * turn the provider has signed for is exempt from that TTL *and* from the
+ * refusal deadline, so a row whose watch was evicted has nothing left that can
+ * end it — its `turn_dropped` arrives to a closed subscription and the row
+ * sits above the composer forever. Each watch holds a relay subscription; that
+ * is the cost of not lying about a message that was really sent.
  */
-export const MAX_WATCHED_CODING_SESSION_TURNS = 4;
+export const MAX_WATCHED_CODING_SESSION_TURNS =
+  MAX_PENDING_CODING_SESSION_TURNS_PER_TARGET;
 
 /** Fallback when a refusal receipt carries no readable message. */
 export const CODING_SESSION_TURN_REFUSED_MESSAGE =
