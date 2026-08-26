@@ -40,7 +40,9 @@ use buzz_core::coding_session_authority_transition::{
     CODING_SESSION_AUTHORITY_TRANSITION_TAG_VERSION,
 };
 use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
-use buzz_core::coding_session_payload::{LifecycleReceipt, SessionMetadata, TranscriptEnvelope};
+use buzz_core::coding_session_payload::{
+    LifecycleReceipt, ReceiptStatus, SessionMetadata, TranscriptEnvelope,
+};
 use buzz_core::kind::{KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_SYSTEM_MESSAGE};
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
@@ -198,42 +200,40 @@ pub fn decode_metadata(events: &[Value]) -> (Vec<MetadataRecord>, DecodeStats) {
     (records, stats)
 }
 
-/// The four D4 turn-stage statuses a 44224 receipt may carry (NIP-CSL).
-/// `ReceiptStatus`'s own `#[serde(rename)]` strings, mirrored here so this
-/// decoder can recognize them even when linked against a `buzz-core` build
-/// whose `ReceiptStatus` enum predates them (see [`decode_receipts`]).
-const TURN_RECEIPT_STATUSES: &[&str] = &[
-    "turn_queued",
-    "turn_started",
-    "turn_dropped",
-    "turn_refused",
-];
-
-/// Whether a decoded `ReceiptStatus` is one of the four turn stages.
-fn is_turn_receipt_status(status: buzz_core::coding_session_payload::ReceiptStatus) -> bool {
-    serde_json::to_value(status)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .is_some_and(|status| TURN_RECEIPT_STATUSES.contains(&status.as_str()))
+/// Whether a decoded `ReceiptStatus` is a turn stage.
+///
+/// Asked of `buzz-core`'s own enum, never of a list kept here. The list this
+/// replaced named four statuses and fell behind the day `turn_degraded` and
+/// `interrupt_delivered` were added: both decoded as *lifecycle* outcomes, and
+/// a turn receipt that reaches `resolve_sessions` confirms a generation, which
+/// NIP-CSL makes a MUST NOT. Nothing failed to compile, and no test noticed.
+fn is_turn_receipt_status(status: ReceiptStatus) -> bool {
+    status.is_turn_stage()
 }
 
 /// Whether a raw receipt JSON value's `status` field names a turn stage.
+///
+/// Same source of truth as [`is_turn_receipt_status`], reached by parsing the
+/// wire string back into the enum: this path exists for a receipt whose typed
+/// decode failed for some *other* reason (an unexpected key, a shape this
+/// build does not know), not for a status vocabulary this build has never
+/// heard of.
 fn is_turn_receipt_value(value: &Value) -> bool {
     value
         .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| TURN_RECEIPT_STATUSES.contains(&status))
+        .cloned()
+        .and_then(|status| serde_json::from_value::<ReceiptStatus>(status).ok())
+        .is_some_and(is_turn_receipt_status)
 }
 
 /// Decode every 44224 event in `events`, dropping and counting the unreadable.
 ///
 /// Lifecycle statuses decode through `buzz-core`'s typed `LifecycleReceipt`.
-/// Turn statuses (D4: `turn_queued`, `turn_started`, `turn_dropped`,
-/// `turn_refused`) try the same typed path first — once `buzz-core`'s
-/// `ReceiptStatus` carries them, that is all this needs — and fall back to
-/// reading `status`/`session` straight off the JSON otherwise, so a
-/// well-formed turn receipt is never miscounted as malformed while
-/// `buzz-core` has not yet grown the variant. Either way the result is marked
+/// Turn statuses (every [`ReceiptStatus::is_turn_stage`] variant) take the same
+/// typed path first and fall back to reading `status`/`session` straight off
+/// the JSON when that fails, so a well-formed turn receipt whose shape this
+/// build cannot type is never miscounted as malformed. Either way the result is
+/// marked
 /// [`ReceiptRecord::is_turn_status`] so callers (`resolve_sessions`) never let
 /// it create, confirm, or end a generation.
 pub fn decode_receipts(events: &[Value]) -> (Vec<ReceiptRecord>, DecodeStats) {
@@ -426,11 +426,11 @@ pub fn resolve_sessions(
     receipts: &[ReceiptRecord],
     transcripts: &[TranscriptRecord],
 ) -> Vec<SessionRow> {
-    // A turn receipt (D4: turn_queued/turn_started/turn_dropped/turn_refused)
-    // names the generation its command targeted, but per NIP-CSL it never
-    // creates, confirms, or ends one — only the six lifecycle statuses do
-    // that. Filtering here, once, keeps every rule below exactly as it read
-    // before turn receipts existed.
+    // A turn receipt names the generation its command targeted, but per
+    // NIP-CSL it never creates, confirms, or ends one — only the six lifecycle
+    // statuses do that. Which statuses are turn stages is `buzz-core`'s
+    // question, asked in `is_turn_receipt_status`. Filtering here, once, keeps
+    // every rule below exactly as it read before turn receipts existed.
     let receipts: Vec<&ReceiptRecord> = receipts
         .iter()
         .filter(|record| !record.is_turn_status)
@@ -2329,31 +2329,72 @@ mod tests {
         })
     }
 
+    /// Every turn stage, not two named ones: the list this file used to keep
+    /// by hand fell behind the day `turn_degraded` and `interrupt_delivered`
+    /// were added, and nothing here noticed.
+    const EVERY_TURN_STAGE: &[ReceiptStatus] = &[
+        ReceiptStatus::TurnQueued,
+        ReceiptStatus::TurnStarted,
+        ReceiptStatus::TurnDropped,
+        ReceiptStatus::TurnRefused,
+        ReceiptStatus::TurnDegraded,
+        ReceiptStatus::InterruptDelivered,
+    ];
+
+    #[test]
+    fn every_turn_stage_this_build_knows_is_covered_here() {
+        for status in EVERY_TURN_STAGE {
+            assert!(
+                status.is_turn_stage(),
+                "{} is not a turn stage",
+                status.as_str()
+            );
+        }
+        // A new turn stage in `buzz-core` has to be added to the list above,
+        // or the two tests below stop covering it silently.
+        assert_eq!(
+            EVERY_TURN_STAGE.len(),
+            6,
+            "a turn stage was added or removed in buzz-core; extend EVERY_TURN_STAGE"
+        );
+    }
+
     #[test]
     fn a_turn_receipt_for_an_unknown_target_creates_no_row() {
         let session = target("s-1", 1);
         let signer = "a".repeat(64);
-        let events = vec![turn_receipt_event(
-            &format!("{:064}", 1),
-            &signer,
-            10,
-            "turn-cmd-1",
-            "turn_started",
-            Some(&session),
-            Some("provider-turn-9"),
-        )];
-        let (receipts, stats) = decode_receipts(&events);
-        assert_eq!(
-            stats.malformed, 0,
-            "a well-formed turn receipt is not garbage"
-        );
-        assert_eq!(receipts.len(), 1);
+        for (index, status) in EVERY_TURN_STAGE.iter().enumerate() {
+            let turn_id = (*status == ReceiptStatus::TurnStarted).then_some("provider-turn-9");
+            let events = vec![turn_receipt_event(
+                &format!("{:064}", index + 1),
+                &signer,
+                10,
+                "turn-cmd-1",
+                status.as_str(),
+                Some(&session),
+                turn_id,
+            )];
+            let (receipts, stats) = decode_receipts(&events);
+            assert_eq!(
+                stats.malformed,
+                0,
+                "a well-formed {} receipt is not garbage",
+                status.as_str()
+            );
+            assert_eq!(receipts.len(), 1);
+            assert!(
+                receipts[0].is_turn_status,
+                "{} is a turn stage and must be marked as one",
+                status.as_str()
+            );
 
-        let rows = resolve_sessions(&[], &receipts, &[]);
-        assert!(
-            rows.is_empty(),
-            "a turn receipt alone must never create a generation row: {rows:?}"
-        );
+            let rows = resolve_sessions(&[], &receipts, &[]);
+            assert!(
+                rows.is_empty(),
+                "a {} receipt alone must never create a generation row: {rows:?}",
+                status.as_str()
+            );
+        }
     }
 
     #[test]
@@ -2372,28 +2413,34 @@ mod tests {
         assert!(!baseline[0].confirmed);
         assert_eq!(baseline[0].status, "idle");
 
-        let receipt_events = vec![turn_receipt_event(
-            &format!("{:064}", 2),
-            &signer,
-            200,
-            "turn-cmd-2",
-            "turn_refused",
-            Some(&session),
-            None,
-        )];
-        let (receipts, stats) = decode_receipts(&receipt_events);
-        assert_eq!(stats.malformed, 0);
+        for (index, status) in EVERY_TURN_STAGE.iter().enumerate() {
+            let turn_id = (*status == ReceiptStatus::TurnStarted).then_some("provider-turn-9");
+            let receipt_events = vec![turn_receipt_event(
+                &format!("{:064}", index + 2),
+                &signer,
+                200,
+                "turn-cmd-2",
+                status.as_str(),
+                Some(&session),
+                turn_id,
+            )];
+            let (receipts, stats) = decode_receipts(&receipt_events);
+            assert_eq!(stats.malformed, 0);
 
-        let rows = resolve_sessions(&metadata, &receipts, &[]);
-        assert_eq!(rows.len(), 1);
-        assert!(
-            !rows[0].confirmed,
-            "a turn receipt must never confirm a generation"
-        );
-        assert_eq!(
-            rows[0].status, "idle",
-            "a turn receipt must never change a generation's status"
-        );
+            let rows = resolve_sessions(&metadata, &receipts, &[]);
+            assert_eq!(rows.len(), 1);
+            assert!(
+                !rows[0].confirmed,
+                "a {} receipt must never confirm a generation",
+                status.as_str()
+            );
+            assert_eq!(
+                rows[0].status,
+                "idle",
+                "a {} receipt must never change a generation's status",
+                status.as_str()
+            );
+        }
     }
 
     // ── NIP-CSAT receipt decode + fold ───────────────────────────────────────
