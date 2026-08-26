@@ -414,16 +414,36 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
   Iterable<CodingSessionGoal> goals = const [],
   Iterable<CodingSessionClosure> closures = const [],
 }) {
+  // The umbrella a stream claimed, per stream. A generation whose metadata
+  // echo has not landed yet claims nothing of its own, and reading that as
+  // "belongs to no session" splits one session in two on screen — with no
+  // name, no goal and no closed state on the half that resumed. The newest
+  // generation that did claim an umbrella speaks for the generations that are
+  // silent; a generation carrying a claim of its own always keeps it.
+  final claimByExecutionKey = <String, CodingSessionExecution>{};
+  for (final execution in executions) {
+    if (execution.sessionRef == null) continue;
+    final incumbent = claimByExecutionKey[execution.executionKey];
+    if (incumbent == null ||
+        execution.target.generation > incumbent.target.generation ||
+        (execution.target.generation == incumbent.target.generation &&
+            execution.lastActivityAt > incumbent.lastActivityAt)) {
+      claimByExecutionKey[execution.executionKey] = execution;
+    }
+  }
+
   final grouped = <String, List<CodingSessionExecution>>{};
   final sessionRefByKey = <String, String?>{};
   for (final execution in executions) {
     // An execution that claimed no umbrella still groups with its own resumes:
     // generation 2 of a stream is the same session as generation 1, umbrella
     // claim or not.
-    final key =
-        execution.sessionRef ?? 'execution\u0000${execution.executionKey}';
+    final claim =
+        execution.sessionRef ??
+        claimByExecutionKey[execution.executionKey]?.sessionRef;
+    final key = claim ?? 'execution\u0000${execution.executionKey}';
     grouped.putIfAbsent(key, () => []).add(execution);
-    sessionRefByKey[key] = execution.sessionRef;
+    sessionRefByKey[key] = claim;
   }
 
   final umbrellas = <CodingSessionUmbrella>[];

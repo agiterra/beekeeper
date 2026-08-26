@@ -252,6 +252,32 @@ void main() {
       expect(sessions.single.executions, hasLength(2));
     });
 
+    test('a resumed generation whose metadata lags stays in its session', () {
+      final executions = resolveCodingSessionGenerations(
+        receipts: [
+          _receipt(commandId: 'cmd-1', status: 'created'),
+          _receipt(
+            commandId: 'cmd-2',
+            status: 'resumed',
+            forTarget: target(generation: 2),
+            createdAt: 1500,
+          ),
+        ],
+        // Only generation 1 has echoed the umbrella claim so far.
+        metadata: [_metadata(sessionRef: sessionRefA)],
+      );
+      final sessions = groupCodingSessionUmbrellas(
+        executions: executions,
+        names: [decodeCodingSessionName(nameEvent(content: 'Ship it')).value!],
+        closures: [decodeCodingSessionClosure(closureEvent()).value!],
+      );
+      expect(sessions, hasLength(1));
+      expect(sessions.single.sessionRef, sessionRefA);
+      expect(sessions.single.executions, hasLength(2));
+      expect(sessions.single.name, 'Ship it');
+      expect(sessions.single.closed, isTrue);
+    });
+
     test('the newest name and closure win', () {
       final executions = resolveCodingSessionGenerations(
         receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
