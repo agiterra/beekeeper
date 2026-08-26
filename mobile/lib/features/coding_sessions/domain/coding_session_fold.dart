@@ -400,9 +400,15 @@ List<CodingSessionExecution> resolveCodingSessionGenerations({
 
 /// Group executions into umbrella sessions and resolve each one's founder,
 /// name, goal and closed state.
+///
+/// [targetKeyByCommandId] is the receipt join from the trust gate: the
+/// execution each create actually minted, as its own named provider reported
+/// it. A create absent from that map was never answered, so it is evidence of
+/// nothing here — D7 makes the *receipt-joined* create the founder's witness.
 List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
   required Iterable<CodingSessionExecution> executions,
   Iterable<CodingSessionCreate> creates = const [],
+  Map<String, String> targetKeyByCommandId = const {},
   Map<String, CodingSessionGenesis> genesesByEventId = const {},
   Iterable<CodingSessionName> names = const [],
   Iterable<CodingSessionGoal> goals = const [],
@@ -427,7 +433,8 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
     final channelId = members.first.channelId;
     final ownCreates = [
       for (final create in creates)
-        if (_createBelongs(create, sessionRef, members)) create,
+        if (_createBelongs(create, sessionRef, members, targetKeyByCommandId))
+          create,
     ];
     final founder = resolveCodingSessionFounder(
       sessionRef: sessionRef,
@@ -661,14 +668,26 @@ CodingSessionReachability deriveCodingSessionReachability({
   );
 }
 
+/// Whether [create] is evidence about this umbrella.
+///
+/// Three things have to hold, and each one is a way the observer has been
+/// lied to before: the create's own named provider answered it with a
+/// lifecycle receipt (so it minted a real execution), that execution is one of
+/// this session's members, and the umbrella the create claimed is the one
+/// being resolved. An unanswered create — anyone in the channel can publish
+/// one — is evidence of nothing.
 bool _createBelongs(
   CodingSessionCreate create,
   String? sessionRef,
   List<CodingSessionExecution> members,
+  Map<String, String> targetKeyByCommandId,
 ) {
-  if (sessionRef != null) return create.sessionRef == sessionRef;
-  if (create.sessionRef != null) return false;
-  return members.any((execution) => execution.commandId == create.commandId);
+  final joinedTargetKey = targetKeyByCommandId[create.commandId];
+  if (joinedTargetKey == null) return false;
+  if (create.sessionRef != null && create.sessionRef != sessionRef) {
+    return false;
+  }
+  return members.any((execution) => execution.targetKey == joinedTargetKey);
 }
 
 CodingSessionMetadata? _newestMetadata(List<CodingSessionMetadata> records) {

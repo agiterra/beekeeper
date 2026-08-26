@@ -408,6 +408,102 @@ void main() {
     });
   });
 
+  group('receipt-joined creates', () {
+    test('an unanswered create is not founder evidence', () {
+      final executions = resolveCodingSessionGenerations(
+        receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+        metadata: [_metadata(sessionRef: sessionRefA)],
+        creates: [_create(commandId: 'cmd-1', sessionRef: sessionRefA)],
+      );
+      final sessions = groupCodingSessionUmbrellas(
+        executions: executions,
+        creates: [
+          _create(commandId: 'cmd-1', sessionRef: sessionRefA),
+          // Never answered by a receipt: it minted no execution here, so it
+          // says nothing about who founded this session.
+          _create(
+            commandId: 'cmd-99',
+            sessionRef: sessionRefA,
+            genesisRef: genesisEventIdA,
+            pubkey: otherFounderPubkey,
+          ),
+        ],
+        genesesByEventId: {
+          genesisEventIdA: decodeCodingSessionGenesis(
+            genesisEvent(eventId: genesisEventIdA, pubkey: otherFounderPubkey),
+          ).value!,
+        },
+        targetKeyByCommandId: {'cmd-1': target().key},
+      );
+      expect(
+        sessions.single.founder.resolution,
+        CodingSessionFounderResolution.legacy,
+      );
+      expect(sessions.single.founder.pubkey, founderPubkey);
+    });
+
+    test('a create joined to another execution stays out of this one', () {
+      final executions = resolveCodingSessionGenerations(
+        receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+        metadata: [_metadata(sessionRef: sessionRefA)],
+      );
+      final sessions = groupCodingSessionUmbrellas(
+        executions: executions,
+        creates: [
+          _create(
+            commandId: 'cmd-2',
+            sessionRef: sessionRefA,
+            pubkey: otherFounderPubkey,
+          ),
+        ],
+        targetKeyByCommandId: {
+          'cmd-2': target(sessionId: 'somewhere-else').key,
+        },
+      );
+      expect(
+        sessions.single.founder.resolution,
+        CodingSessionFounderResolution.unresolved,
+      );
+    });
+  });
+
+  group('channel read', () {
+    test('a stranger\'s unanswered create cannot dispute the founder', () {
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: [
+          genesisEvent(eventId: genesisEventIdA),
+          createEvent(
+            commandId: 'cmd-1',
+            sessionRef: sessionRefA,
+            genesisRef: genesisEventIdA,
+          ),
+          receiptEvent(commandId: 'cmd-1', status: 'created'),
+          metadataEvent(status: 'running', sessionRef: sessionRefA),
+          // A create nobody answered, naming a genesis nobody else names.
+          genesisEvent(
+            eventId: genesisEventIdB,
+            sessionRef: sessionRefA,
+            pubkey: otherFounderPubkey,
+          ),
+          createEvent(
+            commandId: 'cmd-99',
+            sessionRef: sessionRefA,
+            genesisRef: genesisEventIdB,
+            pubkey: otherFounderPubkey,
+          ),
+        ],
+      );
+      expect(view.sessions, hasLength(1));
+      expect(
+        view.sessions.single.founder.resolution,
+        CodingSessionFounderResolution.genesis,
+      );
+      expect(view.sessions.single.founder.pubkey, founderPubkey);
+    });
+  });
+
   group('umbrella status fold', () {
     CodingSessionExecution execution({
       required CodingSessionStatus status,

@@ -147,6 +147,7 @@ CodingSessionChannelView readCodingSessionChannel({
   final sessions = groupCodingSessionUmbrellas(
     executions: executions,
     creates: facts.creates,
+    targetKeyByCommandId: facts.targetKeyByCommandId,
     genesesByEventId: facts.genesesByEventId,
     names: facts.names,
     goals: facts.goals,
