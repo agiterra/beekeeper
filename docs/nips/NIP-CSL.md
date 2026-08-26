@@ -389,12 +389,19 @@ checked at `coding_session_payload.rs:510-514`) containing no control
 characters, and MUST NOT pin `turn_dropped`, `turn_degraded`, or `turn_refused`
 to a closed list — a provider that grows a new reason must not be decoded as
 malformed by a client that predates it. 64 is normative here so the decoders
-converge: the desktop reader currently bounds the same field at 256
-(`MAX_ERROR_CODE_BYTES`,
+converge, because today no reader enforces it. The desktop reader bounds the
+same field at 256 (`MAX_ERROR_CODE_BYTES`,
 `desktop/src/features/coding-sessions/lib/codingSessionIngressPayloads.ts:35`),
-so a 65-byte code from a future provider renders in the desktop and is rejected
-as malformed by `bee sessions`. Producers MUST stay within 64; the desktop
-bound is owed a narrowing.
+and `bee sessions` applies no bound at all — it decodes receipt content with a
+plain `serde_json::from_str::<LifecycleReceipt>`
+(`crates/buzz-cli/src/commands/sessions.rs:257`) and never calls the strict
+decoder — so a 65-byte code from a future provider renders in both clients.
+The only readers that enforce 64 are the strict decoder's two callers, the
+pulse fold (`crates/buzz-core/src/pulse_fold.rs:739`) and the generation mint
+check (`crates/buzz-db/src/coding_session_generation.rs:250`), and both drop
+such a receipt *silently*: it surfaces nowhere as malformed, it simply never
+counts. Producers MUST stay within 64; the desktop and `bee` bounds are owed a
+narrowing, and the two silent drops are owed a diagnostic.
 
 The codes in use today are documented, not enforced:
 
