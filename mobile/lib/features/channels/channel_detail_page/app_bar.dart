@@ -30,12 +30,7 @@ double _dmAppBarTitleContentHeight(BuildContext context) {
   return textHeight > _dmHeaderAvatarSize ? textHeight : _dmHeaderAvatarSize;
 }
 
-/// The channel header's member actions, plus the coding-session observer
-/// beside them.
-///
-/// The coding-session action lives here rather than in the page's own
-/// `actions:` list because this part file is the only header surface this
-/// change owns; it renders as a second compact icon next to Members.
+/// The channel header's member action.
 class _MembersButton extends ConsumerWidget {
   final String channelId;
   final Channel channel;
@@ -48,20 +43,18 @@ class _MembersButton extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      _CodingSessionsButton(channel: channel),
-      _MembersIconButton(
-        channelId: channelId,
-        channel: channel,
-        currentPubkey: currentPubkey,
-      ),
-    ],
+  Widget build(BuildContext context, WidgetRef ref) => _MembersIconButton(
+    channelId: channelId,
+    channel: channel,
+    currentPubkey: currentPubkey,
   );
 }
 
 /// Opens the read-only coding-session observer for this channel.
+///
+/// Mounted from the page's own `actions:` list rather than from
+/// [_MembersButton]: Members is hidden in a two-participant DM, and nesting
+/// this inside it took the D11(a) header entry point down with it.
 class _CodingSessionsButton extends StatelessWidget {
   final Channel channel;
 

@@ -345,6 +345,7 @@ class ChannelDetailPage extends HookConsumerWidget {
                 ],
               ),
         actions: [
+          _CodingSessionsButton(channel: resolvedChannel),
           if (_showsMembersAction(resolvedChannel))
             _MembersButton(
               channelId: resolvedChannel.id,

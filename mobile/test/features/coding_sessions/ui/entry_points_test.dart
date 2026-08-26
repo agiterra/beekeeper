@@ -38,13 +38,35 @@ final _channel = Channel(
   isMember: true,
 );
 
+/// A two-participant DM: the case `_showsMembersAction` returns false for, so
+/// the header action has to stand on its own rather than ride along with
+/// Members (D11a).
+const _dmChannelId = 'entry-dm';
+
+final _dmChannel = Channel(
+  id: _dmChannelId,
+  name: 'dm',
+  channelType: 'dm',
+  visibility: 'private',
+  description: '',
+  createdBy: 'me',
+  createdAt: DateTime(2025),
+  memberCount: 2,
+  isMember: true,
+  participants: const ['me', 'them'],
+  participantPubkeys: const ['me', 'them'],
+);
+
 late SharedPreferences _prefs;
 
-List<Override> _sharedOverrides(FakeObserverBinding binding) => <Override>[
+List<Override> _sharedOverrides(
+  FakeObserverBinding binding, {
+  String channelId = _channelId,
+}) => <Override>[
   fakeObserverOverride(binding),
   currentPubkeyProvider.overrideWith((ref) => 'me'),
   channelMembersProvider(
-    _channelId,
+    channelId,
   ).overrideWith((ref) async => const <ChannelMember>[]),
   agentOwnersProvider.overrideWithValue(
     const AsyncValue<Map<String, String>>.data(<String, String>{}),
@@ -76,27 +98,30 @@ Widget _sheetApp(FakeObserverBinding binding) => ProviderScope(
   ),
 );
 
-Widget _detailApp(FakeObserverBinding binding) => ProviderScope(
-  overrides: [
-    ..._sharedOverrides(binding),
-    channelMessagesProvider(
-      _channelId,
-    ).overrideWith(() => _FakeMessagesNotifier(_channelId)),
-    channelTypingProvider(
-      _channelId,
-    ).overrideWith(() => _FakeTypingNotifier(_channelId)),
-    channelDetailsProvider(
-      _channelId,
-    ).overrideWith((ref) async => ChannelDetails.fromChannel(_channel)),
-    channelsProvider.overrideWith(() => _FakeChannelsNotifier()),
-    profileProvider.overrideWith(_FakeProfileNotifier.new),
-    userCacheProvider.overrideWith(_FakeUserCacheNotifier.new),
-  ],
-  child: MaterialApp(
-    theme: AppTheme.light(),
-    home: ChannelDetailPage(channel: _channel),
-  ),
-);
+Widget _detailApp(FakeObserverBinding binding, {Channel? channel}) {
+  final resolved = channel ?? _channel;
+  return ProviderScope(
+    overrides: [
+      ..._sharedOverrides(binding, channelId: resolved.id),
+      channelMessagesProvider(
+        resolved.id,
+      ).overrideWith(() => _FakeMessagesNotifier(resolved.id)),
+      channelTypingProvider(
+        resolved.id,
+      ).overrideWith(() => _FakeTypingNotifier(resolved.id)),
+      channelDetailsProvider(
+        resolved.id,
+      ).overrideWith((ref) async => ChannelDetails.fromChannel(resolved)),
+      channelsProvider.overrideWith(() => _FakeChannelsNotifier(resolved)),
+      profileProvider.overrideWith(_FakeProfileNotifier.new),
+      userCacheProvider.overrideWith(_FakeUserCacheNotifier.new),
+    ],
+    child: MaterialApp(
+      theme: AppTheme.light(),
+      home: ChannelDetailPage(channel: resolved),
+    ),
+  );
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -144,6 +169,30 @@ void main() {
     );
     expect(page.channelId, _channelId);
   });
+
+  // A 2-participant DM has no Members action, and the coding-session action
+  // used to be nested inside it — so the D11(a) header entry point was absent
+  // exactly where the desktop's session DMs live.
+  testWidgets('the header action is there in a two-person DM too', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(testSnapshot(sessions: const []));
+    await tester.pumpWidget(_detailApp(binding, channel: _dmChannel));
+    await tester.pump();
+
+    expect(find.byTooltip('View members'), findsNothing);
+    final action = find.byKey(const ValueKey('channel-coding-sessions-action'));
+    expect(action, findsOneWidget);
+
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+
+    final page = tester.widget<CodingSessionsPage>(
+      find.byType(CodingSessionsPage),
+    );
+    expect(page.channelId, _dmChannelId);
+    expect(page.channelName, isNull);
+  });
 }
 
 class _FakeMessagesNotifier extends ChannelMessagesNotifier {
@@ -167,8 +216,12 @@ class _FakeTypingNotifier extends ChannelTypingNotifier {
 }
 
 class _FakeChannelsNotifier extends ChannelsNotifier {
+  _FakeChannelsNotifier(this.channel);
+
+  final Channel channel;
+
   @override
-  Future<List<Channel>> build() async => [_channel];
+  Future<List<Channel>> build() async => [channel];
 }
 
 class _FakeProfileNotifier extends ProfileNotifier {
