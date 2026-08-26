@@ -99,6 +99,34 @@ export function buildCodingSessionCreateObservationFilter(
   };
 }
 
+/**
+ * The backfill reads, one per kind — never one filter with a shared budget.
+ *
+ * A relay filter returns its newest `limit` rows across *all* the kinds it
+ * names, and kind 44224 stopped being one receipt per generation: a turn
+ * publishes at least `turn_queued` and `turn_started`, so a channel set that
+ * has run real work produces receipts faster than it produces creates by
+ * orders of magnitude. Sharing one budget therefore means the newest N rows
+ * are eventually all turn receipts, the 44221 creates and 44226 genesis events
+ * fall off the end, and this store — which has no persistence and starts empty
+ * on every cold start, community switch, and channel-scope change — reports no
+ * observations at all. That reads downstream as "no founder, no operator",
+ * which silently un-gates founder-only affordances instead of failing loudly.
+ *
+ * One filter per kind gives each its own budget, so per-turn volume can only
+ * ever truncate the receipts, never the human creates they join to.
+ */
+export function buildCodingSessionCreateObservationHistoryFilters(
+  channelIds: readonly string[],
+  limit: number,
+): RelaySubscriptionFilter[] {
+  return CODING_SESSION_CREATE_OBSERVATION_KINDS.map((kind) => ({
+    kinds: [kind],
+    "#h": [...channelIds],
+    limit,
+  }));
+}
+
 export type CodingSessionCreateClassification =
   | {
       kind: "create";
