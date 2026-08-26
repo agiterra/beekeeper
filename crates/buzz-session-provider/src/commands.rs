@@ -9,7 +9,7 @@
 //! through the shared `buzz_core::coding_session_command` type, so the
 //! provider and the relay can never disagree about what is valid.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -50,9 +50,10 @@ pub enum Ignored {
     /// for the same reason as `AlreadyConsumed`: a second byte-identical
     /// refusal is a stutter, not information.
     AlreadyRefused,
-    /// This `commandId` is already in this process's mailbox, accepted and not
-    /// yet started. Silent: the operator has its `turn_queued` and the turn is
-    /// going to run — a relay redelivery must not queue it twice.
+    /// This `commandId` is already in this process's mailbox: a turn accepted
+    /// and not yet started, or a cancel already handed to an actor and not yet
+    /// answered durably. Silent: a relay redelivery must not queue the turn
+    /// twice, nor cancel a second time work nobody asked to stop.
     AlreadyAccepted,
     /// Older than the freshness horizon and never seen — history, not intent.
     PastHorizon,
@@ -275,6 +276,15 @@ pub struct CommandContext<'a> {
     /// a restart the mailbox is empty, and every unstarted command genuinely
     /// does need re-delivering.
     pub in_flight: &'a HashMap<String, crate::InFlightTurn>,
+    /// `commandId`s of cancels this process has already handed to an actor's
+    /// mailbox and has not yet answered durably.
+    ///
+    /// An interrupt is not a turn, so it never appears in `in_flight`, and the
+    /// ledger append that would durably answer it happens *after* the delivery
+    /// and can fail — rolling its own in-memory entry back. Without this set a
+    /// redelivery of such a command reaches the actor a second time and cancels
+    /// an unrelated running turn. In-memory for the same reason as `in_flight`.
+    pub delivered_cancels: &'a HashSet<String>,
 }
 
 impl CommandContext<'_> {
@@ -500,6 +510,12 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         return TurnDecision::Ignore(Ignored::AlreadyRefused);
     }
     if context.in_flight.contains_key(&command.command_id) {
+        return TurnDecision::Ignore(Ignored::AlreadyAccepted);
+    }
+    // Same fence, other shape: a cancel this process already put in an actor's
+    // mailbox and could not durably record. Issuing it twice destroys work
+    // nobody asked to stop.
+    if context.delivered_cancels.contains(&command.command_id) {
         return TurnDecision::Ignore(Ignored::AlreadyAccepted);
     }
     if context.past_horizon(created_at) {
@@ -796,6 +812,7 @@ mod tests {
             state,
             projects,
             in_flight: no_commands_in_flight(),
+            delivered_cancels: no_delivered_cancels(),
         }
     }
 
@@ -805,6 +822,12 @@ mod tests {
         static EMPTY: std::sync::OnceLock<HashMap<String, crate::InFlightTurn>> =
             std::sync::OnceLock::new();
         EMPTY.get_or_init(HashMap::new)
+    }
+
+    /// The empty delivered-cancel set, leaked once for the same reason.
+    fn no_delivered_cancels() -> &'static HashSet<String> {
+        static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashSet::new)
     }
 
     fn create_content(command_id: &str, project_ref: &str, authority: &str) -> String {
@@ -1838,13 +1861,18 @@ mod tests {
                 created_at: 1_000,
             },
         );
+        // A cancel already in an actor's mailbox whose ledger append failed:
+        // no durable fence answers it, so this in-memory one has to.
+        let delivered_cancels: HashSet<String> = ["cancel-delivered".to_owned()].into();
         let mut context = ctx(&state, &projects, 1_000);
         context.in_flight = &in_flight;
+        context.delivered_cancels = &delivered_cancels;
 
         for (command_id, expected) in [
             ("turn-ran", Ignored::AlreadyConsumed),
             ("turn-refused", Ignored::AlreadyRefused),
             ("turn-waiting", Ignored::AlreadyAccepted),
+            ("cancel-delivered", Ignored::AlreadyAccepted),
         ] {
             let decision = decide_turn(&context, 1_000, &turn_content(command_id, "s1", 1));
             assert_eq!(decision, TurnDecision::Ignore(expected.clone()));
