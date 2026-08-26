@@ -655,9 +655,14 @@ CodingSessionFoldedStatus foldCodingSessionUmbrellaStatus(
 /// any lease naming a different one (`sessionCoordinationFold.ts`,
 /// `lease.commandId !== authority.command.commandId`); this does the same, so
 /// a 24223 that no accepted command backs cannot claim a provider is
-/// answering. `null` means no create was readable for the target at all — the
-/// D5 fallback, where there is no accepted command to compare against and the
-/// execution is already marked `authority unverified`.
+/// answering. `null` switches that comparison off, and exists only for direct
+/// callers of this function — nothing the channel view produces passes it.
+/// [resolveCodingSessionGenerations] fills `commandIdByTarget` and `targets`
+/// in the same loop body under the same guards, and builds executions only
+/// from `targets`, so every [CodingSessionExecution.commandId] is non-null,
+/// a D5-fallback target's included: the lease command gate above applies to
+/// every execution the observer renders, not just the ones a create vouched
+/// for.
 ///
 /// [leasesRead] `== false` (no lease query has returned yet) always reads
 /// unknown. An unknown read must never be rendered as "nobody answering".
