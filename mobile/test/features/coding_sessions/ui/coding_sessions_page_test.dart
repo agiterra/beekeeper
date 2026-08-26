@@ -73,6 +73,48 @@ void main() {
     expect(find.text('Closed'), findsNothing);
   });
 
+  testWidgets('marks a session whose authority no create vouched for', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: [
+          testUmbrella(
+            executions: [
+              testExecution(),
+              testExecution(
+                target: testTarget(sessionId: 'session-2'),
+                authorityVerified: false,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-session-card-authority-unverified')),
+      findsOneWidget,
+    );
+    expect(find.text('Authority unverified'), findsOneWidget);
+  });
+
+  testWidgets('says nothing of the sort when every create vouched', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(testSnapshot());
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-session-card-authority-unverified')),
+      findsNothing,
+    );
+    expect(find.text('Authority unverified'), findsNothing);
+  });
+
   testWidgets('shows the empty state when the read returned no sessions', (
     tester,
   ) async {

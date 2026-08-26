@@ -319,6 +319,46 @@ void main() {
     expect(find.textContaining('No provider answering'), findsNothing);
   });
 
+  testWidgets('marks an execution no create vouched for', (tester) async {
+    // D5: with no readable create the facts come from the first-seen metadata
+    // signer. The reader is shown facts nobody signed a mandate for, and this
+    // line is the only place the page says so.
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: [
+          testUmbrella(executions: [testExecution(authorityVerified: false)]),
+        ],
+        envelopes: _conversation(),
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.textContaining('authority unverified'),
+      findsOneWidget,
+      reason: 'an unvouched signer must be named as one',
+    );
+  });
+
+  testWidgets('says nothing of the sort when a create vouched for it', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        sessions: [
+          testUmbrella(executions: [testExecution()]),
+        ],
+        envelopes: _conversation(),
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(find.textContaining('authority unverified'), findsNothing);
+    expect(find.textContaining('signer aaaaaaaa…'), findsOneWidget);
+  });
+
   testWidgets('reports history truncated at the page limit', (tester) async {
     final binding = FakeObserverBinding(
       testSnapshot(envelopes: _conversation(), truncatedAt1000: true),
