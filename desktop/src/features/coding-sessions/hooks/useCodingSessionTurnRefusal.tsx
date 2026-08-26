@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import {
+  heldPendingCodingSessionTurns,
   markPendingCodingSessionTurnDegraded,
   markPendingCodingSessionTurnQueued,
 } from "@/features/coding-sessions/lib/codingSessionPendingTurns";
@@ -28,6 +29,15 @@ export type CodingSessionTurnRefusalOptions = {
    * it — a refused turn has no echo coming.
    */
   restoreDraft: (text: string, commandId: string) => void;
+  /**
+   * `buildCodingSessionTargetKey` of the execution this composer sends to.
+   *
+   * Given, this hook adopts the turns that execution's provider is still
+   * holding when it mounts — see the re-arm effect below. Omitted, it watches
+   * only the turns sent through it, which is all a surface with no optimistic
+   * rows of its own needs.
+   */
+  targetKey?: string;
   /** Ingress transport seam; production passes nothing. */
   client?: CodingSessionIngressClient;
 };
@@ -67,6 +77,7 @@ export function useCodingSessionTurnRefusal({
   client,
   providerAuthorityPubkey,
   restoreDraft,
+  targetKey,
 }: CodingSessionTurnRefusalOptions): CodingSessionTurnRefusalState {
   const [watched, setWatched] = React.useState<
     readonly WatchedCodingSessionTurn[]
@@ -78,6 +89,41 @@ export function useCodingSessionTurnRefusal({
     setError(null);
     setWatched((current) => watchCodingSessionTurn(current, turn));
   }, []);
+
+  // Adopt what the provider is still holding for this execution.
+  //
+  // A watch is a component and a held row is not: the row is exempt from the
+  // pending TTL *and* from the refusal deadline, precisely because a queued
+  // turn can wait behind an hour of work. Unmount the composer in that hour
+  // — switch execution, close the panel, remount on a community switch — and
+  // the `turn_dropped` that finally answers it arrives with nothing
+  // listening, leaving a row that says "queued by the provider" forever with
+  // the person's words trapped inside it.
+  //
+  // Once per scope, not on every store change: `watch` adds turns as they are
+  // sent, and re-adding one a settled watcher has just retired would
+  // resurrect it.
+  const rearmedScope = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (targetKey === undefined) return;
+    const scope = `${channelId}|${targetKey}`;
+    if (rearmedScope.current === scope) return;
+    rearmedScope.current = scope;
+    const held = heldPendingCodingSessionTurns(channelId, targetKey);
+    if (held.length === 0) return;
+    setWatched((current) =>
+      held.reduce(
+        (watching, turn) =>
+          watchCodingSessionTurn(watching, {
+            commandId: turn.commandId,
+            // The wire text is the fallback: a row recorded before this field
+            // existed still gives the person something back.
+            draft: turn.draft ?? turn.text,
+          }),
+        [...current],
+      ),
+    );
+  }, [channelId, targetKey]);
 
   const handleRefused = React.useCallback(
     (turn: WatchedCodingSessionTurn, refusal: CodingSessionCommandRefusal) => {

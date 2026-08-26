@@ -36,6 +36,17 @@ export type PendingCodingSessionTurn = {
    * this is deliberately the wire text and not the raw draft.
    */
   text: string;
+  /**
+   * The words the person actually typed, when they differ from {@link text}.
+   *
+   * The umbrella composer strips a routing `@handle` before publishing, so the
+   * wire text above is not what belongs back in the editor if this turn is
+   * refused or dropped. Carried on the row rather than only in the watcher's
+   * memory because the watcher is a component: it dies when the composer
+   * unmounts, and a composer that remounts has to be able to re-arm a watch
+   * for a turn the provider is still holding.
+   */
+  draft?: string;
   /** This client's signer, which the provider stamps onto its echo. */
   operatorPubkey: string | null;
   recordedAt: number;
@@ -221,6 +232,30 @@ export function markPendingCodingSessionTurnDegraded(
   if (!changed) return;
   pendingTurns = next;
   notify();
+}
+
+/**
+ * Every row for one execution that the provider has signed for and this client
+ * is still showing.
+ *
+ * The re-arm list. A held row is exempt from the pending TTL and from the
+ * refusal watch's deadline — deliberately, because a turn queued behind an
+ * hour of work is still coming — which leaves the watch as the only thing that
+ * can ever retire it. The watch is a component, so it dies on unmount while
+ * the row survives; a composer coming back has to pick these up again or the
+ * turn's terminal receipt lands on nobody and the row (with the person's words
+ * in it) stays on screen forever.
+ */
+export function heldPendingCodingSessionTurns(
+  channelId: string,
+  targetKey: string,
+): readonly PendingCodingSessionTurn[] {
+  return pendingTurns.filter(
+    (entry) =>
+      entry.channelId === channelId &&
+      entry.targetKey === targetKey &&
+      pendingCodingSessionTurnHeldByProvider(entry),
+  );
 }
 
 /** Drop the given records — echoed by the provider, refused, or expired. */
