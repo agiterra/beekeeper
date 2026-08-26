@@ -384,8 +384,8 @@ published the exact generation is known.
 
 **The code set is open, and the bound is exactly 64 UTF-8 bytes.** A validator
 accepts any nonblank code of **at most 64 UTF-8 bytes**
-(`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/buzz-core/src/coding_session_payload.rs:97`,
-checked at `coding_session_payload.rs:510-514`) containing no control
+(`MAX_RECEIPT_ERROR_CODE_BYTES`, `crates/buzz-core/src/coding_session_payload.rs:103`,
+checked at `coding_session_payload.rs:520-524`) containing no control
 characters, and MUST NOT pin `turn_dropped`, `turn_degraded`, or `turn_refused`
 to a closed list — a provider that grows a new reason must not be decoded as
 malformed by a client that predates it. 64 is normative here so the decoders
@@ -422,8 +422,8 @@ The codes in use today are documented, not enforced:
 **Accepted contract delta, 2026-08-26.** Three of the codes above did not exist
 before this fork's delivery-class work and are recorded here as a ratified
 extension, not as a pre-existing set: `NO_LIVE_EXECUTION`
-(`crates/buzz-core/src/coding_session_payload.rs:79`), `NO_TURN_IN_FLIGHT`
-(`coding_session_payload.rs:88`) and `QUEUE_FULL_TURN_KEPT`
+(`crates/buzz-core/src/coding_session_payload.rs:85`), `NO_TURN_IN_FLIGHT`
+(`coding_session_payload.rs:94`) and `QUEUE_FULL_TURN_KEPT`
 (`crates/buzz-session-provider/src/lib.rs:159`). They are legal only because the
 same change opened the code list, above. They exist because the alternatives
 would have been false statements: `UNKNOWN_TARGET` and `SESSION_CLOSED` both
