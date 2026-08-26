@@ -449,6 +449,13 @@ async fn test_120s_timeout() {
     // Yield to let the relay task run its deadline branch.
     tokio::task::yield_now().await;
 
+    // Hand the clock back before waiting on the socket. The close travels
+    // over a real loopback connection, but `assert_closed`'s 2 s budget is a
+    // tokio timer: while time is paused the runtime auto-advances every time
+    // it parks, so under load that budget expires in zero real time and the
+    // test fails on a connection that closes microseconds later.
+    tokio::time::resume();
+
     assert_closed(&mut ws).await;
 }
 
@@ -1185,6 +1192,9 @@ async fn test_cancellation_immediate() {
 
     tokio::time::advance(Duration::from_secs(121)).await;
     tokio::task::yield_now().await;
+
+    // Real time for the real socket — see `test_120s_timeout`.
+    tokio::time::resume();
 
     // The connection must be closed — not just slow.
     assert_closed(&mut ws).await;
