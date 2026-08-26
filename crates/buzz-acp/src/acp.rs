@@ -449,6 +449,22 @@ impl TurnWireSummary {
 /// `_meta.claudeCode.emitRawSDKMessages`.
 const RAW_SDK_FRAME_METHOD: &str = "_claude/sdkMessage";
 
+/// What one out-of-turn read produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutOfTurnRead {
+    /// A raw SDK frame changed the set of live background tasks.
+    BackgroundChanged,
+    /// A non-frame line was set aside for the next turn's read loop.
+    Buffered,
+    /// Read and folded, but nothing the caller needs to act on.
+    Ignored,
+    /// The line could not be read. The caller decides whether that is fatal;
+    /// between turns it usually is not worth tearing a session down for.
+    Unreadable,
+    /// Stdout closed — the agent process is gone.
+    AgentExited,
+}
+
 /// What kind of background work a task is.
 ///
 /// Read from `task_type` on `task_started`, **not** from `subagent_type`.
@@ -972,6 +988,14 @@ pub struct AcpClient {
     raw_sdk_frames: RawSdkFrames,
     /// Background work folded out of those frames. Structural facts only.
     background_tasks: BackgroundTasks,
+    /// Lines read between turns that were not raw SDK frames.
+    ///
+    /// Before there was any out-of-turn reader these sat in the pipe until the
+    /// next `session/prompt` read loop consumed them. Buffering keeps that
+    /// exactly true — the next read loop still sees them, in order, and handles
+    /// them as it always did — rather than the out-of-turn arm quietly
+    /// swallowing a `session/update` or a permission request.
+    pending_out_of_turn: std::collections::VecDeque<String>,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
     ///
@@ -1399,6 +1423,7 @@ impl AcpClient {
             answer_stall_timeout: None,
             raw_sdk_frames: RawSdkFrames::Off,
             background_tasks: BackgroundTasks::default(),
+            pending_out_of_turn: std::collections::VecDeque::new(),
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1981,6 +2006,51 @@ impl AcpClient {
         &self.background_tasks
     }
 
+    /// Read one line while no turn is in flight.
+    ///
+    /// Deliberately narrow. It folds raw SDK frames — the only channel that
+    /// says anything about background work — and buffers everything else for
+    /// the next turn's read loop. It does **not** interpret `session/update`s,
+    /// synthesize turns, or answer agent-initiated requests; those remain
+    /// unbuilt and an out-of-turn permission request still waits for the next
+    /// turn, exactly as before.
+    ///
+    /// Reading at all also drains the pipe, which is what stops the adapter
+    /// blocking on write once it has produced ~64 KiB between turns.
+    ///
+    /// Cancel-safe: `FramedRead::next` is, and the only state written before
+    /// the first await point is none.
+    pub async fn read_out_of_turn(&mut self) -> OutOfTurnRead {
+        let line = match self.reader.next().await {
+            Some(Ok(line)) => line,
+            Some(Err(_)) => return OutOfTurnRead::Unreadable,
+            None => return OutOfTurnRead::AgentExited,
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return OutOfTurnRead::Ignored;
+        }
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            tracing::warn!(
+                target: "acp::wire",
+                "unparseable line between turns — skipping"
+            );
+            return OutOfTurnRead::Ignored;
+        };
+        if msg.get("method").and_then(|m| m.as_str()) == Some(RAW_SDK_FRAME_METHOD) {
+            let before = self.background_tasks.live_count();
+            self.log_raw_sdk_frame(&msg);
+            let after = self.background_tasks.live_count();
+            return if before == after {
+                OutOfTurnRead::Ignored
+            } else {
+                OutOfTurnRead::BackgroundChanged
+            };
+        }
+        self.pending_out_of_turn.push_back(line);
+        OutOfTurnRead::Buffered
+    }
+
     /// Ask the adapter to forward raw SDK frames for this session.
     ///
     /// Must be set before `session/new`: the adapter reads the value once, off
@@ -2516,6 +2586,22 @@ impl AcpClient {
                 return Err(expiry.into_error(idle_timeout, &stall_watch, last_activity_at, &wire));
             }
 
+            // Lines the out-of-turn reader buffered are consumed here first, in
+            // order, before the socket is touched again. They are handled by
+            // exactly the code below that would have handled them had this loop
+            // read them itself, which is what makes the out-of-turn arm
+            // behaviour-preserving for everything it does not interpret.
+            if let Some(buffered) = self.pending_out_of_turn.pop_front() {
+                self.dispatch_buffered_line(&buffered).await?;
+                // Re-enter rather than fall through: the arms below own the
+                // prompt-response and steer matching, and a buffered line is
+                // never either — no turn was in flight when it arrived. The
+                // deadlines are deliberately not reset either: this frame is
+                // older than the prompt, so crediting it as this turn's
+                // activity would hand the turn a silence budget it never earned.
+                continue;
+            }
+
             // LinesCodec::new_with_max_length enforces MAX_LINE_SIZE at the
             // read level — the buffer never grows beyond the limit.
             let read_result = tokio::select! {
@@ -2865,6 +2951,47 @@ impl AcpClient {
                 }
             }
         }
+    }
+
+    /// Handle one line the out-of-turn reader set aside.
+    ///
+    /// Mirrors the notification dispatch of the main read loop — the same
+    /// observe, the same four methods, the same `-32601` reply to an unknown
+    /// request — because these lines *would* have been handled by that loop
+    /// before there was an out-of-turn reader, and buffering must not change
+    /// what happens to them. It deliberately does not do prompt-response or
+    /// steer matching: nothing that arrived with no turn in flight can be
+    /// either.
+    async fn dispatch_buffered_line(&mut self, line: &str) -> Result<(), AcpError> {
+        let trimmed = line.trim();
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            return Ok(());
+        };
+        tracing::debug!(target: "acp::wire", "← (buffered) {trimmed}");
+        self.observe("acp_read", msg.clone());
+        let Some(method) = msg.get("method").and_then(|v| v.as_str()) else {
+            return Ok(());
+        };
+        match method {
+            "session/update" => {
+                let _ = self.handle_session_update(&msg);
+            }
+            "_goose/unstable/session/update" => self.handle_goose_usage_update(&msg),
+            RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
+            "session/request_permission" => self.handle_permission_request(&msg).await?,
+            other => {
+                if msg.get("id").is_some() {
+                    let err_resp = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": msg["id"],
+                        "error": {"code": -32601, "message": format!("Method not found: {other}")}
+                    });
+                    self.write_ndjson(&err_resp).await?;
+                }
+                tracing::debug!(target: "acp::wire", "ignoring unknown buffered method: {other}");
+            }
+        }
+        Ok(())
     }
 
     /// Log a `session/update` notification via tracing.

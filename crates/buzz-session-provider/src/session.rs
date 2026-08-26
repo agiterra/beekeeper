@@ -28,8 +28,8 @@ use uuid::Uuid;
 use tokio::sync::broadcast;
 
 use buzz_acp::acp::{
-    AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, RawSdkFrames, StopReason,
-    SystemPromptTransport, TurnWireSummary,
+    AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, OutOfTurnRead, RawSdkFrames,
+    StopReason, SystemPromptTransport, TurnWireSummary,
 };
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
@@ -340,6 +340,17 @@ pub enum SessionEvent {
     /// Sent from the actor's own task, interleaved with `TurnStarted` and
     /// `TurnFinished`, so the provider sees the turn's items in narrative order
     /// rather than in whatever order two tasks happened to race.
+    /// Items that belong to the session rather than to any turn.
+    ///
+    /// Published with `turnId: null`, which the desktop transcript model
+    /// already renders as a standalone entry — no synthetic turn is needed to
+    /// say something between turns.
+    SessionItems {
+        /// Which session.
+        session_id: String,
+        /// The items.
+        items: Vec<serde_json::Value>,
+    },
     TranscriptItems {
         /// Which session.
         session_id: String,
@@ -1064,18 +1075,80 @@ impl SessionActor {
                     operator_pubkey: turn.operator_pubkey,
                 }),
                 None => {
-                    let idle = tokio::time::sleep(self.idle_shutdown);
-                    tokio::pin!(idle);
-                    tokio::select! {
-                        biased;
-                        changed = shutdown.changed() => {
-                            let _ = changed;
-                            break 'actor;
-                        }
-                        command = rx.recv() => command,
-                        _ = &mut idle => {
-                        reason = ExitReason::Idle;
-                        break 'actor;
+                    // The idle deadline is computed once and deliberately not
+                    // reset by out-of-turn reads. A background task chattering
+                    // away is not the operator being present, and letting its
+                    // frames renew the window would make the hold unbounded
+                    // through the back door.
+                    let mut idle_deadline = tokio::time::Instant::now() + self.idle_shutdown;
+                    let mut holding_since: Option<tokio::time::Instant> = None;
+                    loop {
+                        let idle = tokio::time::sleep_until(idle_deadline);
+                        tokio::pin!(idle);
+                        let selected = tokio::select! {
+                            biased;
+                            changed = shutdown.changed() => {
+                                let _ = changed;
+                                break 'actor;
+                            }
+                            command = rx.recv() => IdleEvent::Command(command),
+                            read = self.client.read_out_of_turn() => IdleEvent::Read(read),
+                            _ = &mut idle => IdleEvent::Expired,
+                        };
+                        match selected {
+                            IdleEvent::Command(command) => break command,
+                            IdleEvent::Read(read) => {
+                                match read {
+                                    // Stdout closed between turns. The next
+                                    // turn would fail on it anyway; ending here
+                                    // says so while there is still a session to
+                                    // attribute it to.
+                                    OutOfTurnRead::AgentExited => {
+                                        reason = ExitReason::AgentGone(
+                                            "agent stdout closed between turns".to_owned(),
+                                        );
+                                        break 'actor;
+                                    }
+                                    OutOfTurnRead::BackgroundChanged => {
+                                        self.report_background_work().await;
+                                    }
+                                    OutOfTurnRead::Buffered
+                                    | OutOfTurnRead::Ignored
+                                    | OutOfTurnRead::Unreadable => {}
+                                }
+                                continue;
+                            }
+                            IdleEvent::Expired => {
+                                let live = self.client.background_tasks().live_count();
+                                if live == 0 {
+                                    reason = ExitReason::Idle;
+                                    break 'actor;
+                                }
+                                let now = tokio::time::Instant::now();
+                                let since = *holding_since.get_or_insert(now);
+                                if now.saturating_duration_since(since) >= BACKGROUND_WORK_MAX_HOLD
+                                {
+                                    // Reclaimed anyway, but never silently: a
+                                    // session that vanishes while its build is
+                                    // still running has to say that is what
+                                    // happened.
+                                    self.emit_background_row(format!(
+                                        "background_work: session reclaimed with {live} task(s) \
+                                         still running after holding {:?}",
+                                        BACKGROUND_WORK_MAX_HOLD
+                                    ))
+                                    .await;
+                                    reason = ExitReason::Idle;
+                                    break 'actor;
+                                }
+                                if holding_since == Some(now) {
+                                    // First extension — say once that the
+                                    // session is being kept alive on purpose.
+                                    self.report_background_work().await;
+                                }
+                                idle_deadline = now + BACKGROUND_WORK_CHECK;
+                                continue;
+                            }
                         }
                     }
                 }
@@ -1289,6 +1362,26 @@ impl SessionActor {
         let tail = self.translator.close_turn();
         emit_items(&self.events, &self.session_id, &turn_id, tail).await;
 
+        // A turn that ends over live background work says so inside that turn.
+        // This is the moment the operator reads the answer and decides whether
+        // anything is still owed them — and, until now, the moment an agent's
+        // "I'll report back when the tests finish" went unqualified.
+        let live = self.client.background_tasks().live();
+        if !live.is_empty() {
+            let note = format!(
+                "background_work: this turn ended with {}. Nothing will report \
+                 back on its own.",
+                describe_live_work(&live)
+            );
+            emit_items(
+                &self.events,
+                &self.session_id,
+                &turn_id,
+                vec![crate::payload::status_item(&fit_status_row(&note))],
+            )
+            .await;
+        }
+
         let usage = self.client.take_turn_usage().map(Box::new);
         let _ = self
             .events
@@ -1327,6 +1420,43 @@ impl SessionActor {
     /// close it, because a turn that silently reads Completed over a prompt the
     /// adapter dropped hides the defect from the person best placed to report
     /// it, and there is nothing in the record afterwards to notice it by.
+    /// Say what background work is outstanding, outside any turn.
+    ///
+    /// Published with no turn id: this is a fact about the session, and the
+    /// desktop transcript model already renders turn-less items standalone.
+    async fn emit_background_row(&self, text: String) {
+        let items = vec![crate::payload::status_item(&fit_status_row(&text))];
+        let _ = self
+            .events
+            .send(SessionEvent::SessionItems {
+                session_id: self.session_id.clone(),
+                items,
+            })
+            .await;
+    }
+
+    /// Report the current state of background work, if there is any to report.
+    async fn report_background_work(&self) {
+        let tasks = self.client.background_tasks();
+        let live = tasks.live();
+        if live.is_empty() {
+            // Nothing running now. Only worth a row if something just ended —
+            // otherwise this fires on every no-op check.
+            let Some(finished) = tasks.last_finished() else {
+                return;
+            };
+            let elapsed = finished.elapsed(tokio::time::Instant::now());
+            self.emit_background_row(format!(
+                "background_work: {} finished after {elapsed:?}; 0 still running",
+                finished.kind.label()
+            ))
+            .await;
+            return;
+        }
+        self.emit_background_row(format!("background_work: {}", describe_live_work(&live)))
+            .await;
+    }
+
     /// Publish one row saying what actually crossed the wire this turn.
     ///
     /// Abnormal endings only. On a healthy turn the item answers a question
@@ -1464,6 +1594,58 @@ impl SessionActor {
                 },
                 None,
             ),
+        }
+    }
+}
+
+/// What woke the between-turns wait.
+///
+/// A named enum rather than three inline `break`s because the out-of-turn arm
+/// has to `continue` the wait without leaving it, which a `select!` returning
+/// the command directly cannot express.
+enum IdleEvent {
+    Command(Option<SessionCommand>),
+    Read(OutOfTurnRead),
+    Expired,
+}
+
+/// How much longer than one idle window a session may be held open purely
+/// because background work is still running.
+///
+/// A hold has to be bounded. A task that never reports terminal — the adapter
+/// drops a notification, a detached process is killed outside the harness —
+/// would otherwise pin an agent subprocess for the life of the machine. Two
+/// hours covers a long build or test matrix; past that the session is reclaimed
+/// and says so.
+const BACKGROUND_WORK_MAX_HOLD: Duration = Duration::from_secs(2 * 60 * 60);
+
+/// How often to re-check live work while holding a session open.
+const BACKGROUND_WORK_CHECK: Duration = Duration::from_secs(60);
+
+/// One line naming what is running, with no host content in it.
+///
+/// Counts, kinds and the subagent's declared type only. The frames these are
+/// folded from also carry `description` and `prompt`, which are verbatim host
+/// paths and argv; nothing here may grow a way to reach them.
+fn describe_live_work(tasks: &[&buzz_acp::acp::BackgroundTask]) -> String {
+    match tasks {
+        [] => "0 running".to_owned(),
+        [one] => match &one.flavour {
+            Some(flavour) => format!("1 running ({flavour} {})", one.kind.label()),
+            None => format!("1 running (1 {})", one.kind.label()),
+        },
+        many => {
+            let mut counts: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for task in many {
+                *counts.entry(task.kind.label()).or_default() += 1;
+            }
+            let breakdown = counts
+                .into_iter()
+                .map(|(label, count)| format!("{count} {label}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} running ({breakdown})", many.len())
         }
     }
 }
@@ -1652,6 +1834,60 @@ while IFS= read -r line; do
       LAST_PROMPT="$id"
       printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"init","origin":{"kind":"subagent"},"cwd":"/Users/secret/private-path","apiKey":"HOST_ONLY_MARKER"}}}\n'
       printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"answered"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// Launches a backgrounded subagent mid-turn, answers, resolves the prompt,
+    /// and only **then** reports the task finished.
+    ///
+    /// That ordering is the whole point: the completion arrives with no turn in
+    /// flight, which before the out-of-turn reader meant it sat in the pipe
+    /// forever. The frames are the real shapes from the 2026-08-26 provider log
+    /// — note `task_started` carries `task_type` and no `subagent_type`.
+    pub(crate) const BACKGROUND_WORK_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentInfo":{"name":"claude-agent-acp","version":"0.70.0"}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"task_started","task_id":"a6522ff1683ff2069","task_type":"local_agent","is_backgrounded":true,"tool_use_id":"toolu_012Q","description":"/Users/andy/PRIVATE-PATH pnpm test","prompt":"HOST_ONLY_MARKER"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"task_progress","task_id":"a6522ff1683ff2069","subagent_type":"Explore","last_tool_name":"Bash"}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Kicked off the tests."}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
+      # After the prompt has resolved: the completion nobody was listening for.
+      sleep 0.3
+      printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"task_updated","task_id":"a6522ff1683ff2069","patch":{"status":"completed"}}}}\n' ;;
+    *'"method":"session/cancel"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// Launches a backgrounded task and never reports it terminal.
+    ///
+    /// Keeps the live set non-empty for the whole test, so a reaper that
+    /// ignores background work has an unambiguous window to be wrong in.
+    pub(crate) const UNENDING_BACKGROUND_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"agentInfo":{"name":"claude-agent-acp","version":"0.70.0"}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","method":"_claude/sdkMessage","params":{"sessionId":"acp-session-1","message":{"type":"system","subtype":"task_started","task_id":"never-ends","task_type":"local_bash","is_backgrounded":true}}}\n'
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
     *'"method":"session/cancel"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
@@ -2122,6 +2358,140 @@ done
             wire.chars().count()
         );
 
+        manager.shutdown("s1");
+    }
+
+    /// The case that is silently lost without an out-of-turn reader.
+    ///
+    /// A backgrounded subagent outlives the turn that launched it. Its
+    /// completion arrives with no prompt in flight, so before this it sat in
+    /// the pipe until the next turn — or forever, if there was no next turn,
+    /// which is exactly the session Andy was looking at.
+    #[tokio::test]
+    async fn a_background_task_that_outlives_its_turn_is_still_reported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "background-agent", BACKGROUND_WORK_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.raw_sdk_frames = RawSdkFrames::All;
+        manager.create(create).await.expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: None,
+            })
+            .expect("deliver");
+
+        let mut in_turn = Vec::new();
+        let mut session_level = Vec::new();
+        let mut turn_finished = false;
+        // Keep reading past TurnFinished: the completion row is published
+        // afterwards, from the between-turns arm.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            let Ok(event) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await else {
+                break;
+            };
+            match event {
+                Some(SessionEvent::TranscriptItems { items, .. }) => in_turn.extend(items),
+                Some(SessionEvent::SessionItems { items, .. }) => {
+                    session_level.extend(items);
+                    if turn_finished {
+                        break;
+                    }
+                }
+                Some(SessionEvent::TurnFinished { .. }) => turn_finished = true,
+                Some(_) => {}
+                None => break,
+            }
+        }
+        assert!(turn_finished, "the turn must resolve on its own");
+
+        let rows = |items: &[serde_json::Value]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|item| item["status"].as_str())
+                .filter(|status| status.starts_with("background_work:"))
+                .map(str::to_owned)
+                .collect()
+        };
+
+        let in_turn_rows = rows(&in_turn);
+        assert!(
+            in_turn_rows
+                .iter()
+                .any(|row| row.contains("this turn ended with") && row.contains("Explore")),
+            "the turn must disclose that work outlived it: {in_turn_rows:?}"
+        );
+
+        let after = rows(&session_level);
+        assert!(
+            after.iter().any(|row| row.contains("finished")),
+            "the completion arrived with no turn in flight and must still be \
+             published; got {after:?}"
+        );
+
+        // The frames carried a host path and a marker. Neither may appear in
+        // anything published, in a turn or out of it.
+        let published = serde_json::to_string(&(in_turn, session_level)).expect("serialize");
+        for leaked in ["HOST_ONLY_MARKER", "PRIVATE-PATH", "toolu_012Q"] {
+            assert!(
+                !published.contains(leaked),
+                "{leaked:?} reached a published item: {published}"
+            );
+        }
+
+        manager.shutdown("s1");
+    }
+
+    /// Reclaiming a session whose build is still running kills the build. The
+    /// idle window must not fire while work is outstanding.
+    #[tokio::test]
+    async fn a_session_is_not_reclaimed_while_background_work_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let agent = fake_agent(dir.path(), "unending-agent", UNENDING_BACKGROUND_AGENT);
+        let (tx, mut rx) = mpsc::channel(64);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, dir.path());
+        create.raw_sdk_frames = RawSdkFrames::All;
+        // Deliberately tiny: an ungated reaper fires many times over inside the
+        // window this test then watches.
+        create.idle_shutdown = Duration::from_millis(100);
+        manager.create(create).await.expect("create");
+        manager
+            .handle("s1")
+            .expect("handle")
+            .deliver(SessionCommand::Turn {
+                command_id: "turn-1".into(),
+                text: "go".into(),
+                operator_pubkey: None,
+            })
+            .expect("deliver");
+
+        let mut finished = false;
+        // Keep draining well past several idle windows. The assertion is the
+        // absence of an exit, so the loop has to actually keep listening —
+        // breaking early is how this test passed while proving nothing.
+        let deadline = std::time::Instant::now() + Duration::from_millis(900);
+        while std::time::Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(SessionEvent::Exited { reason, .. })) => {
+                    panic!("reclaimed with a background task still live: {reason:?}")
+                }
+                Ok(Some(SessionEvent::TurnFinished { .. })) => finished = true,
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+        assert!(
+            finished,
+            "the turn must have run — otherwise the window proved nothing"
+        );
         manager.shutdown("s1");
     }
 

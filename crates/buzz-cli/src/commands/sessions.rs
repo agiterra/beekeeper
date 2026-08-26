@@ -1101,6 +1101,12 @@ pub struct TurnDiagnosis {
     pub output_tokens: Option<u64>,
     /// The `turn_wire:` row, when the producer published one.
     pub wire: Option<String>,
+    /// `background_work:` rows in this turn, verbatim.
+    ///
+    /// A turn that ends over live background work says so; surfacing it here
+    /// means a reader diagnosing "why did nothing happen after this" sees the
+    /// answer beside the turn rather than by scrolling the transcript.
+    pub background_work: Vec<String>,
     /// Everything this turn tripped, in the words a reader needs.
     pub findings: Vec<String>,
 }
@@ -1142,6 +1148,7 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
             let mut resulted: HashSet<String> = HashSet::new();
             let mut last_tool_ms: Option<i64> = None;
             let mut wire: Option<String> = None;
+            let mut background_work: Vec<String> = Vec::new();
             let (mut is_error, mut result, mut input_tokens, mut output_tokens) =
                 (None, None, None, None);
 
@@ -1169,6 +1176,9 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
                             if status.starts_with("turn_wire: ") {
                                 wire = Some(status.to_owned());
                             }
+                            if status.starts_with("background_work:") {
+                                background_work.push(status.to_owned());
+                            }
                         }
                     }
                     Some("result") => {
@@ -1192,6 +1202,14 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
             let last_tool_offset_secs = last_tool_ms.map(|at| (at - start_ms) as f64 / 1000.0);
 
             let mut findings = Vec::new();
+            // Reported for healthy turns too: a turn that ended *successfully*
+            // while leaving a build running is exactly the case where the
+            // operator is waiting for a report that is not coming.
+            for row in &background_work {
+                if row.contains("this turn ended with") {
+                    findings.push(row.clone());
+                }
+            }
             if is_error == Some(true) {
                 if result_has_no_usage(input_tokens, output_tokens) {
                     findings.push(
@@ -1241,6 +1259,7 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
                 input_tokens,
                 output_tokens,
                 wire,
+                background_work,
                 findings,
             })
         })
@@ -1279,6 +1298,7 @@ async fn cmd_doctor(
                 "unterminatedTools": turn.unterminated_tools,
                 "lastToolOffsetSecs": turn.last_tool_offset_secs,
                 "wire": turn.wire,
+                "backgroundWork": turn.background_work,
                 "findings": turn.findings,
             })
         })
@@ -1982,6 +2002,57 @@ mod tests {
         assert!(
             turns[0].findings.is_empty(),
             "a session-level group has nothing to diagnose: {:?}",
+            turns[0].findings
+        );
+    }
+
+    /// A turn can succeed and still leave the operator waiting. That is the
+    /// case `doctor` most needs to name, because nothing about the turn's own
+    /// result looks wrong.
+    #[test]
+    fn a_successful_turn_that_left_work_running_is_still_flagged() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let events = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &"a".repeat(64),
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                json!({
+                    "kind": "status",
+                    "status": "background_work: this turn ended with 1 running \
+                               (Explore subagent). Nothing will report back on its own."
+                }),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &"a".repeat(64),
+                base + 30,
+                &session,
+                2,
+                Some("t-1"),
+                json!({
+                    "kind": "result",
+                    "isError": false,
+                    "result": "completed",
+                    "inputTokens": 900_000,
+                    "outputTokens": 2000,
+                }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        assert_eq!(turns[0].is_error, Some(false), "the turn itself was fine");
+        assert_eq!(turns[0].background_work.len(), 1);
+        assert!(
+            turns[0]
+                .findings
+                .iter()
+                .any(|f| f.contains("this turn ended with")),
+            "a healthy turn that left work running must still be flagged: {:?}",
             turns[0].findings
         );
     }

@@ -2498,6 +2498,17 @@ impl Provider {
                     },
                 )?;
             }
+            SessionEvent::SessionItems { session_id, items } => {
+                let Some((channel_id, target)) = self.locate(&session_id) else {
+                    return Ok(());
+                };
+                for item in items {
+                    // `None` is the whole point: these describe the session,
+                    // not a turn, and inventing a turn to hold them would put a
+                    // phantom in every consumer's turn list.
+                    self.enqueue_transcript(channel_id, &target, None, item, Priority::Normal)?;
+                }
+            }
             SessionEvent::TranscriptItems {
                 session_id,
                 turn_id,
