@@ -147,6 +147,15 @@ const REPLAY_GRACE_SECS: u64 = 600;
 /// startup is not noticeably delayed. See [`ReplayWindow`].
 const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
 
+/// The operator-facing sentence a `turn_degraded` receipt carries.
+///
+/// One sentence, not a per-execution explanation: see
+/// [`Provider::native_steer_deliverable`] for why the payload under a given
+/// `(commandId, turn_degraded)` key must not depend on what a particular
+/// process learned at `initialize`.
+const STEER_DOWNGRADED: &str = "this execution cannot take a mid-turn steer; the turn was \
+                                accepted for the next turn boundary instead";
+
 /// Entry point: read the environment and run until shutdown.
 pub async fn run() -> anyhow::Result<()> {
     init_tracing();
@@ -921,8 +930,11 @@ impl Provider {
     /// Close every open replay window immediately and deliver what they hold.
     ///
     /// The deterministic form of [`Provider::flush_due_replays`], for callers
-    /// that know history is complete — tests, and a shutdown that must not
-    /// leave accepted-looking commands unheld.
+    /// that know history is complete. Tests, today: a shutdown deliberately
+    /// does *not* call this. Held commands are unconsumed and sit at or above
+    /// the channel watermark, so the next start replays them; delivering them
+    /// into a process that is on its way out would answer `turn_queued` for
+    /// turns that are about to be dropped.
     pub async fn flush_replays_now(&mut self) -> anyhow::Result<()> {
         let open: BTreeSet<Uuid> = self.replay.open_until.keys().copied().collect();
         for channel_id in open {
@@ -960,7 +972,7 @@ impl Provider {
                 &command.content,
             )
             .await?;
-            let mark = match self.watermark_ceiling() {
+            let mark = match self.watermark_ceiling(command.channel_id) {
                 Some(ceiling) => command.created_at.min(ceiling),
                 None => command.created_at,
             };
@@ -1012,7 +1024,7 @@ impl Provider {
                     });
                     // The watermark must not step over a command still waiting
                     // to be delivered.
-                    if let Some(ceiling) = self.watermark_ceiling() {
+                    if let Some(ceiling) = self.watermark_ceiling(channel_id) {
                         self.state.record_watermark(channel_id, ceiling)?;
                     }
                     return Ok(());
@@ -1028,7 +1040,18 @@ impl Provider {
                 return Ok(());
             }
         }
-        let mark = match self.watermark_ceiling() {
+        if self.replay.open_until.contains_key(&channel_id) {
+            // A window that is still open has not seen the oldest event it is
+            // going to see. Only 44220s are held for reordering, so a *newer*
+            // 44221 or 40099 arriving first — which is the order the relay
+            // serves stored events in — would record its own `created_at`
+            // here, and `record_watermark` never moves backwards, so the clamp
+            // a held command applies afterwards would be a no-op and a crash
+            // inside the window would lose that turn. The window's own close
+            // records the marks; until then this channel's floor stays put.
+            return Ok(());
+        }
+        let mark = match self.watermark_ceiling(channel_id) {
             Some(ceiling) => created_at.min(ceiling),
             None => created_at,
         };
@@ -1901,23 +1924,6 @@ impl Provider {
             self.spawn_context_refresh(&session_id);
         }
 
-        // A `steer` this execution cannot receive is answered before delivery,
-        // not instead of it: the receipt says the injection did not happen and
-        // the turn still runs at the next boundary. Silence here would let an
-        // operator believe the agent was redirected mid-thought.
-        if is_turn && deliver == CodingSessionDelivery::Steer {
-            let (deliverable, reason) = self.native_steer_availability(&session_id);
-            if !deliverable {
-                let receipt = LifecycleReceipt::turn_degraded(
-                    &command_id,
-                    &target,
-                    payload::STEER_UNSUPPORTED,
-                    reason,
-                );
-                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
-            }
-        }
-
         // Interrupt-class delivery: cancel what is running, then deliver the
         // new turn at the boundary that cancel creates. Authority for this was
         // already checked — `decide_turn` refuses an interrupt-class turn from
@@ -1940,16 +1946,46 @@ impl Provider {
                             created_at,
                         },
                     );
+                    // A `steer` this execution cannot receive is answered
+                    // beside the delivery, never instead of it: the receipt
+                    // says the injection did not happen and the turn still
+                    // runs at the next boundary. It is published here, after
+                    // the mailbox took the turn, because a degrade in front of
+                    // a delivery that then fails is two receipts contradicting
+                    // each other about one command — "accepted for the next
+                    // boundary" followed by "this execution has no live
+                    // process".
+                    if deliver == CodingSessionDelivery::Steer
+                        && !self.native_steer_deliverable(&session_id)
+                    {
+                        let receipt = LifecycleReceipt::turn_degraded(
+                            &command_id,
+                            &target,
+                            payload::STEER_UNSUPPORTED,
+                            STEER_DOWNGRADED,
+                        );
+                        self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    }
                     let receipt = LifecycleReceipt::turn_queued(&command_id, &target);
                     self.enqueue_receipt(channel_id, &command_id, &receipt)?;
                 }
                 // An interrupt is answered by whether the cancel reached a
                 // live turn, which is a fact this loop already holds.
                 Ok(()) => {
+                    // Custody, not just the fold: a turn this provider has
+                    // accepted and not yet seen start is in flight as surely
+                    // as one whose `TurnStarted` has already been folded. The
+                    // run loop is biased towards the relay arm, so answering
+                    // from `open_turn` alone published a signed "nothing to
+                    // cancel" for an interrupt that did reach a running turn.
                     let open_turn = self
                         .state
                         .session(&session_id)
-                        .is_some_and(|record| record.open_turn.is_some());
+                        .is_some_and(|record| record.open_turn.is_some())
+                        || self
+                            .in_flight
+                            .values()
+                            .any(|turn| turn.session_id == session_id);
                     let receipt = if open_turn {
                         // Consumed: the cancel was issued, which is the whole
                         // of what an interrupt does.
@@ -1987,10 +2023,7 @@ impl Provider {
             },
             // A persisted session with no live actor. This used to be a
             // `tracing::warn!` and nothing else: the operator's turn vanished
-            // with no signed trace of where it went. It is now a visible drop
-            // that deliberately does *not* consume the command, so resuming
-            // the execution and replaying the channel runs the turn it was
-            // always owed.
+            // with no signed trace of where it went. It is now a visible drop.
             None => {
                 tracing::warn!(
                     target: "csp",
@@ -2004,49 +2037,42 @@ impl Provider {
         Ok(())
     }
 
-    /// Whether a native mid-turn steer can be delivered to `session_id`, and
-    /// the operator-facing sentence for the `turn_degraded` receipt when it
-    /// cannot.
+    /// Whether a native mid-turn steer can be delivered to `session_id`.
     ///
-    /// Two separate facts, kept separate on purpose: whether the runtime
-    /// advertised steering at `initialize`, and whether this provider can
-    /// deliver one at all (see [`session::NATIVE_STEER_DELIVERABLE`]). Telling
-    /// an operator "this provider cannot steer" when the runtime plainly can
-    /// is the kind of comfortable-but-wrong message this project treats as a
-    /// bug, so the two cases say different things.
-    fn native_steer_availability(&self, session_id: &str) -> (bool, &'static str) {
+    /// Two facts, both required: this execution's runtime advertised steering
+    /// at `initialize`, and this provider can deliver one at all (see
+    /// [`session::NATIVE_STEER_DELIVERABLE`]). Which of the two failed is
+    /// logged, not published — the receipt message has to be a function of the
+    /// command alone, because a redelivery answered by a process that learned
+    /// different capabilities would otherwise publish a different payload
+    /// under the same `(commandId, turn_degraded)` semantic key, and a
+    /// consumer that sees one key carry two payloads drops both.
+    fn native_steer_deliverable(&self, session_id: &str) -> bool {
         let advertised = self.steering.get(session_id).copied().unwrap_or(false);
-        match (advertised, session::NATIVE_STEER_DELIVERABLE) {
-            (true, true) => (true, ""),
-            (true, false) => (
-                false,
-                "this execution's runtime offers mid-turn steering but this provider cannot \
-                 deliver one yet; the turn was accepted for the next turn boundary instead",
-            ),
-            (false, _) => (
-                false,
-                "this execution's runtime does not offer mid-turn steering; the turn was \
-                 accepted for the next turn boundary instead",
-            ),
+        if advertised && !session::NATIVE_STEER_DELIVERABLE {
+            tracing::info!(
+                target: "csp",
+                %session_id,
+                "runtime advertised mid-turn steering but this provider cannot deliver one yet"
+            );
         }
+        advertised && session::NATIVE_STEER_DELIVERABLE
     }
 
     /// Cancel whatever turn is running on `session_id` so an interrupt-class
     /// turn can be delivered at the boundary that creates.
     ///
-    /// Best effort by design: an execution that is already idle needs no
-    /// cancel, and a full mailbox is reported by the delivery that follows.
-    /// The interrupt is never merged into the running turn — cancel-and-merge
-    /// rewrites what the agent was asked to do, which is exactly what the
-    /// delivery classes exist to stop.
+    /// Sent to any live execution, without first consulting `open_turn`: that
+    /// fold lags the actor by one pass of the run loop's biased `select!`, so
+    /// a turn and an interrupt-class turn sent back to back would find it
+    /// empty and skip the cancel the founder asked for — silently, with no
+    /// receipt saying the class did not happen. The actor no-ops an interrupt
+    /// it has no turn for (`session.rs`'s idle arm), so asking costs nothing.
+    /// A full mailbox is reported by the delivery that follows. The interrupt
+    /// is never merged into the running turn — cancel-and-merge rewrites what
+    /// the agent was asked to do, which is exactly what the delivery classes
+    /// exist to stop.
     fn interrupt_open_turn(&mut self, session_id: &str, command_id: &str) {
-        let open_turn = self
-            .state
-            .session(session_id)
-            .is_some_and(|record| record.open_turn.is_some());
-        if !open_turn {
-            return;
-        }
         let Some(handle) = self.sessions.handle(session_id) else {
             return;
         };
@@ -2107,10 +2133,10 @@ impl Provider {
     /// started.
     ///
     /// The mailbox died with the process. Each of those turns gets the same
-    /// visible `turn_dropped` a turn addressed to a dead execution gets, and
-    /// each stays unconsumed, so resuming the execution and replaying the
-    /// channel runs them. Before this, they disappeared with no signed trace
-    /// at all.
+    /// visible `turn_dropped` a turn addressed to a dead execution gets — it
+    /// never ran, so it is never consumed, and it will not be run later, so it
+    /// is recorded as refused. Before this, they disappeared with no signed
+    /// trace at all.
     fn report_lost_mailbox(&mut self, session_id: &str) -> anyhow::Result<()> {
         let lost: Vec<(String, InFlightTurn)> = self
             .in_flight
@@ -2125,8 +2151,9 @@ impl Provider {
         Ok(())
     }
 
-    /// The newest `created_at` this provider may record as a channel
-    /// watermark, given what it has accepted and not yet started.
+    /// The newest `created_at` this provider may record as `channel_id`'s
+    /// watermark, given what it has accepted for that channel and not yet
+    /// started.
     ///
     /// The watermark is the restart replay floor. Advancing it past a command
     /// that has been accepted but has not run would skip that command on the
@@ -2139,16 +2166,31 @@ impl Provider {
     /// (`created_at >= $since`, `crates/buzz-db/src/event.rs:583`) and its
     /// in-memory matcher (`crates/buzz-core/src/filter.rs:53-55`), so a
     /// watermark equal to a command's `created_at` still replays that command.
-    fn watermark_ceiling(&self) -> Option<u64> {
+    fn watermark_ceiling(&self, channel_id: Uuid) -> Option<u64> {
         self.in_flight
             .values()
+            .filter(|turn| turn.channel_id == channel_id)
             .map(|turn| turn.created_at)
-            .chain(self.replay.held.iter().map(|held| held.created_at))
+            .chain(
+                self.replay
+                    .held
+                    .iter()
+                    .filter(|held| held.channel_id == channel_id)
+                    .map(|held| held.created_at),
+            )
             .min()
     }
 
-    /// Publish the visible answer for a command that reached no live process,
-    /// leaving the command unconsumed so a later resume can still run it.
+    /// Publish the visible answer for a command that reached no live process.
+    ///
+    /// Terminal, and said as such. An earlier version left the command in
+    /// neither ledger and promised the operator a replay — "resume it and the
+    /// turn will be delivered" — that nothing kept: the watermark walked past
+    /// the owed turn on the next durable write, and a resume mints a new
+    /// generation the replayed command no longer addresses
+    /// (`commands.rs`'s `StaleGeneration` fence). A signed receipt that
+    /// states a falsehood is worse than a blunt one, so the turn is recorded
+    /// as refused and the message says the sender has to send it again.
     fn report_no_live_execution(
         &mut self,
         channel_id: Uuid,
@@ -2157,14 +2199,17 @@ impl Provider {
         is_turn: bool,
     ) -> anyhow::Result<()> {
         let receipt = if is_turn {
-            // Deliberately neither consumed nor refused: the turn is still
-            // owed, and the next resume plus the channel replay is how it gets
-            // run. Recording it either way would lose it for good.
+            // Refused, not consumed: the turn never ran, and it never will.
+            // Recording it terminally is also what lets the channel watermark
+            // move — an unanswered command holds the replay floor, an answered
+            // one does not.
+            self.state.record_refusal(command_id, now_secs())?;
             LifecycleReceipt::turn_dropped(
                 command_id,
                 target,
                 payload::NO_LIVE_EXECUTION,
-                "this execution has no live process; resume it and the turn will be delivered",
+                "this execution has no live process, so the turn was not delivered and will \
+                 not be retried; resume the execution and send it again",
             )
         } else {
             // An interrupt of nothing is terminal — there is no later moment
@@ -4235,6 +4280,25 @@ mod tests {
 
     fn signed_lifecycle_event(channel_id: Uuid, content: String) -> Event {
         signed_lifecycle_event_by(channel_id, content, test_operator_keys())
+    }
+
+    /// A lifecycle command with an explicit `created_at`, for tests that need
+    /// one event to be demonstrably newer than another.
+    fn lifecycle_target_event_at(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        action: &str,
+        target: &CodingSessionTarget,
+        created_at: u64,
+    ) -> Event {
+        let mut event = lifecycle_target_event(provider, channel_id, command_id, action, target);
+        event = nostr::EventBuilder::new(event.kind, event.content.clone())
+            .tags(event.tags.to_vec())
+            .custom_created_at(nostr::Timestamp::from_secs(created_at))
+            .sign_with_keys(test_operator_keys())
+            .expect("sign");
+        event
     }
 
     fn signed_lifecycle_event_by(channel_id: Uuid, content: String, keys: &Keys) -> Event {
@@ -8150,7 +8214,9 @@ mod tests {
     /// must have a watermark that still reaches back past them, and — when the
     /// relay replays them newest-first, which is the order it actually serves
     /// stored events in (`crates/buzz-db/src/event.rs:313`) — must handle them
-    /// in the order they were *sent*, once each.
+    /// in the order they were *sent*, once each. Nothing here is running, so
+    /// each one is answered with a `turn_dropped` rather than run; what this
+    /// pins is that the mailbox survived the kill and answered in order.
     #[tokio::test]
     async fn two_turns_queued_behind_a_running_one_survive_a_kill() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -8236,11 +8302,18 @@ mod tests {
             "replayed turns are answered in (created_at, id) order, once each"
         );
         for (command_id, _) in &turns {
-            // Still owed: this execution has no live process yet, so the turn
-            // must survive to be run after a resume.
+            // Answered, not run: this execution has no live process, and the
+            // drop receipt says the sender has to send the turn again. The
+            // refusal ledger is what keeps that answer from being repeated on
+            // the next redelivery.
             assert!(!restarted.state().is_command_consumed(command_id));
-            assert!(!restarted.state().is_command_refused(command_id));
+            assert!(restarted.state().is_command_refused(command_id));
         }
+        assert_eq!(
+            restarted.state().watermark(channel_id),
+            Some(base + 2),
+            "every replayed turn is answered, so the floor may finally move past them"
+        );
         let dropped = sink
             .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
             .into_iter()
@@ -8365,7 +8438,7 @@ mod tests {
     }
 
     /// A turn addressed to an execution with no live process is a visible
-    /// drop, not a log line — and it stays owed.
+    /// drop, not a log line — and it is answered exactly once.
     ///
     /// Both arms that used to end in a bare `tracing::warn!` are covered: no
     /// handle at all, and a handle whose actor has gone away
@@ -8421,9 +8494,12 @@ mod tests {
             payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
                 .expect("strictly decodable");
             assert!(
-                !provider.state().is_command_consumed(command_id)
-                    && !provider.state().is_command_refused(command_id),
-                "{command_id} is still owed, so neither ledger may claim it"
+                !provider.state().is_command_consumed(command_id),
+                "{command_id} never ran, so nothing may claim it did"
+            );
+            assert!(
+                provider.state().is_command_refused(command_id),
+                "{command_id} was answered terminally, and the answer is given once"
             );
         }
     }
@@ -8612,6 +8688,14 @@ mod tests {
     /// `threadSteer` in one generation's metadata is a fact about *that*
     /// execution's process, not a constant for the driver — and it is never
     /// `true` unless a steer could actually be delivered.
+    ///
+    /// Scope, stated plainly: while [`session::NATIVE_STEER_DELIVERABLE`] is
+    /// `false` the published capability is `false` for every execution, so what
+    /// this test can pin is the per-execution *bookkeeping* (`steering` is
+    /// learned per session id and absent means nothing is claimed) and the
+    /// gate. It is not evidence that an advertised steer would be published
+    /// once delivery ships; the assertion above the second case is the
+    /// tripwire that makes someone come back here when it does.
     #[tokio::test]
     async fn metadata_thread_steer_is_this_executions_own_truth() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -8641,14 +8725,22 @@ mod tests {
                 .thread_steer
         );
 
+        // Literals, not `session::NATIVE_STEER_DELIVERABLE`: asserting against
+        // the same constant `metadata_for` multiplies in would hold for any
+        // implementation at all, including one that hardcodes `false`.
+        assert!(
+            !session::NATIVE_STEER_DELIVERABLE,
+            "this provider cannot deliver a native steer yet; when it can, the expectation \
+             below becomes `true` and the capability starts tracking `steering`"
+        );
         provider.steering.insert(target.session_id.clone(), true);
-        assert_eq!(
-            provider
+        assert!(
+            !provider
                 .metadata_for(&target, SessionStatus::Idle)
                 .capabilities
                 .thread_steer,
-            session::NATIVE_STEER_DELIVERABLE,
-            "an advertised steer is published only when this provider can deliver one"
+            "a steer this provider cannot deliver is never published as a capability an \
+             operator may press"
         );
 
         // An execution with no witnessed process claims nothing.
@@ -8659,5 +8751,437 @@ mod tests {
                 .capabilities
                 .thread_steer
         );
+    }
+
+    /// A `NO_LIVE_EXECUTION` drop is an answer, and an answer is given once.
+    ///
+    /// The receipt used to promise a replay ("resume it and the turn will be
+    /// delivered") that nothing kept: the command was recorded in neither
+    /// ledger, so the channel watermark walked straight past it, and a
+    /// redelivery of the same 44220 republished a byte-identical
+    /// `turn_dropped` under the same semantic key.
+    #[tokio::test]
+    async fn a_drop_with_no_live_execution_is_terminal_and_answered_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let record = provider.state().sessions().next().expect("session").clone();
+        let target = record.target("instance-1");
+        provider
+            .handle_session_event(session::SessionEvent::Exited {
+                session_id: record.session_id.clone(),
+                reason: session::ExitReason::Idle,
+            })
+            .expect("fold the exit");
+
+        let base = now_secs();
+        let orphan = turn_event_at(channel_id, "turn-orphan", &target, "do the thing", base);
+        provider
+            .handle_command_event(channel_id, &orphan)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(receipt_stages(&sink, "turn-orphan"), vec!["turn_dropped"]);
+        assert!(
+            provider.state().is_command_refused("turn-orphan"),
+            "a drop nobody will retry is terminal, so the refusal ledger holds it"
+        );
+        assert!(
+            !provider.state().is_command_consumed("turn-orphan"),
+            "the turn never ran, so nothing may claim it did"
+        );
+        assert_eq!(
+            provider.state().watermark(channel_id),
+            Some(base),
+            "an answered command holds the replay floor no longer"
+        );
+
+        provider
+            .handle_command_event(channel_id, &orphan)
+            .await
+            .expect("redelivery");
+        let after = CollectingSink::new();
+        provider.flush(&after).await.expect("flush");
+        assert!(
+            receipt_stages(&after, "turn-orphan").is_empty(),
+            "a redelivered drop publishes nothing"
+        );
+    }
+
+    /// A `steer` to an execution with no live process is dropped, and only
+    /// dropped.
+    ///
+    /// The degrade used to be published before the delivery was attempted, so
+    /// one command produced two receipts that contradicted each other: "the
+    /// turn was accepted for the next turn boundary" immediately followed by
+    /// "this execution has no live process".
+    #[tokio::test]
+    async fn a_steer_to_a_dead_execution_is_dropped_and_not_degraded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let record = provider.state().sessions().next().expect("session").clone();
+        let target = record.target("instance-1");
+        provider
+            .handle_session_event(session::SessionEvent::Exited {
+                session_id: record.session_id.clone(),
+                reason: session::ExitReason::Idle,
+            })
+            .expect("fold the exit");
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "turn-steer-dead",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "actually, use the other approach",
+                        "deliver": "steer",
+                    }),
+                ),
+            )
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "turn-steer-dead"),
+            vec!["turn_dropped"],
+            "a turn that reached no process was not accepted for any boundary"
+        );
+    }
+
+    /// An interrupt answers from what this provider has taken custody of, not
+    /// from a fold that lags the actor by one select pass.
+    ///
+    /// The run loop is `biased;` with the relay arm ahead of the session-event
+    /// arm, so a turn and an interrupt sent back to back reach the interrupt
+    /// decision before `TurnStarted` has been folded into `open_turn`. That
+    /// published a signed "nothing to cancel" while the cancel was in fact
+    /// delivered to a running turn.
+    #[tokio::test]
+    async fn an_interrupt_racing_a_turn_start_is_not_answered_from_stale_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = stalling_provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        // The actor has started the turn, but the provider has not folded the
+        // report yet — exactly the state the biased run loop is in when a
+        // second command arrives on the relay arm first.
+        loop {
+            let event =
+                tokio::time::timeout(Duration::from_secs(20), provider.next_session_event())
+                    .await
+                    .expect("session event within timeout")
+                    .expect("channel open");
+            if matches!(event, SessionEvent::TurnStarted { .. }) {
+                break;
+            }
+            provider.handle_session_event(event).expect("record");
+        }
+        assert!(
+            provider
+                .state()
+                .session(&target.session_id)
+                .is_some_and(|record| record.open_turn.is_none()),
+            "the fold has deliberately not happened yet"
+        );
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &interrupt_event(channel_id, "int-racing", &target),
+            )
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "int-racing"),
+            vec!["interrupt_delivered"],
+            "the cancel reached a turn this provider is holding, and the receipt must say so"
+        );
+    }
+
+    /// An interrupt-class turn cancels the running turn and then runs.
+    ///
+    /// Without the cancel it is an ordinary boundary turn that waits behind a
+    /// stalled one forever, which is the opposite of what the class promises
+    /// its (founder-only) sender.
+    #[tokio::test]
+    async fn an_interrupt_class_turn_cancels_the_running_turn_then_runs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = stalling_provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-stalled", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "turn-boss",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "stop and do this instead",
+                        "deliver": "interrupt",
+                    }),
+                ),
+            )
+            .await
+            .expect("handle");
+        // The stalled turn is cancelled, and the boundary that creates is where
+        // the interrupt-class turn runs.
+        pump_until(&mut provider, |event| {
+            matches!(event, SessionEvent::TurnStarted { command_id, .. } if command_id == "turn-boss")
+        })
+        .await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "turn-boss"),
+            vec!["turn_queued".to_owned(), "turn_started".to_owned()],
+        );
+        assert!(provider.state().is_command_consumed("turn-boss"));
+    }
+
+    /// A channel watermark never steps over a turn its own replay window is
+    /// still holding.
+    ///
+    /// Only 44220s are held for reordering. A newer 44221 arriving first — the
+    /// order the relay serves stored events in — recorded its own `created_at`,
+    /// and `record_watermark` never moves backwards, so the clamp the held
+    /// command tried to apply afterwards was a no-op and a crash inside the
+    /// window lost the turn.
+    #[tokio::test]
+    async fn a_replay_window_holds_the_watermark_against_a_newer_trailing_write() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        let mut unknown = target.clone();
+        unknown.session_id = format!("{}-gone", target.session_id);
+
+        let held_at = now_secs() + 10;
+        provider.open_replay_window(channel_id);
+        // Newest first: a lifecycle command for a session this provider does
+        // not have, which is ignored but still advanced the channel.
+        provider
+            .handle_command_event(
+                channel_id,
+                &lifecycle_target_event_at(
+                    &provider,
+                    channel_id,
+                    "stop-gone",
+                    "session.stop",
+                    &unknown,
+                    held_at + 10,
+                ),
+            )
+            .await
+            .expect("handle");
+        provider
+            .handle_command_event(
+                channel_id,
+                &turn_event_at(channel_id, "turn-held", &target, "do the thing", held_at),
+            )
+            .await
+            .expect("handle");
+
+        assert!(
+            provider
+                .state()
+                .watermark(channel_id)
+                .is_none_or(|mark| mark <= held_at),
+            "the replay floor must still reach a command this provider is holding"
+        );
+    }
+
+    /// The watermark ceiling is a fact about one channel.
+    ///
+    /// A turn held on a busy channel must not drag every other channel's
+    /// replay floor backwards with it — that is a silent multiplication of
+    /// replay volume on a multi-channel provider, and the doc on
+    /// `watermark_ceiling` says per channel.
+    #[tokio::test]
+    async fn a_held_turn_does_not_drag_another_channels_watermark_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let busy = Uuid::new_v4();
+        let quiet = Uuid::new_v4();
+        let projects = write_projects(dir.path(), busy, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(busy, &create_event(&provider, busy, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        let mut unknown = target.clone();
+        unknown.session_id = format!("{}-gone", target.session_id);
+
+        let held_at = now_secs().saturating_sub(600);
+        provider.open_replay_window(busy);
+        provider
+            .handle_command_event(
+                busy,
+                &turn_event_at(busy, "turn-held", &target, "do the thing", held_at),
+            )
+            .await
+            .expect("handle");
+        let now = now_secs();
+        provider
+            .handle_command_event(
+                quiet,
+                &lifecycle_target_event(&provider, quiet, "stop-gone", "session.stop", &unknown),
+            )
+            .await
+            .expect("handle");
+
+        assert!(
+            provider
+                .state()
+                .watermark(quiet)
+                .is_some_and(|mark| mark >= now),
+            "a quiet channel with nothing held replays from where it actually got to"
+        );
+    }
+
+    /// The run loop's own replay arm delivers held turns when the window
+    /// closes.
+    ///
+    /// Every other replay test calls `flush_replays_now`, which is test-only:
+    /// deleting the production `flush_due_replays` arm left the suite green
+    /// while every held 44220 was held forever.
+    #[tokio::test]
+    async fn the_replay_window_closing_on_its_own_clock_delivers_held_turns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = stalling_provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        let base = now_secs();
+        provider.open_replay_window(channel_id);
+        provider
+            .handle_command_event(
+                channel_id,
+                &turn_event_at(channel_id, "turn-held", &target, "do the thing", base),
+            )
+            .await
+            .expect("handle");
+        provider
+            .flush_due_replays()
+            .await
+            .expect("no window is due yet");
+        let early = CollectingSink::new();
+        provider.flush(&early).await.expect("flush");
+        assert!(
+            receipt_stages(&early, "turn-held").is_empty(),
+            "an open window holds the turn"
+        );
+
+        // Real time, on purpose: the production path is a `sleep_for` on
+        // `next_replay_delay`, and this is the clock it waits on.
+        let delay = provider
+            .next_replay_delay()
+            .expect("an open window has a deadline");
+        tokio::time::sleep(delay + Duration::from_millis(100)).await;
+        provider.flush_due_replays().await.expect("window closed");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "turn-held"),
+            vec!["turn_queued"],
+            "the timer that closes the window is what delivers the turn"
+        );
+        assert_eq!(provider.next_replay_delay(), None);
     }
 }
