@@ -38,6 +38,50 @@ void main() {
       expect(facts.counts.rejectedAuthor, 1);
     });
 
+    // D5 makes the first-seen-metadata-signer fallback the answer only "when
+    // no create is readable". Two receipt-joined creates naming one target for
+    // different providers are a dispute, not an absence: falling back would
+    // let whoever published the earliest metadata own a victim's execution.
+    test(
+      'a disputed target never falls back to the earliest metadata signer',
+      () {
+        final events = [
+          // The genuine provider's execution.
+          createEvent(commandId: 'cmd-1'),
+          receiptEvent(commandId: 'cmd-1', status: 'created'),
+          metadataEvent(status: 'running', createdAt: 2000),
+          // A channel member claiming the same execution for themselves, with
+          // metadata timed to win any first-seen race.
+          createEvent(
+            commandId: 'cmd-2',
+            pubkey: otherFounderPubkey,
+            authority: otherProviderPubkey,
+          ),
+          receiptEvent(
+            commandId: 'cmd-2',
+            status: 'created',
+            pubkey: otherProviderPubkey,
+          ),
+          metadataEvent(
+            status: 'failed',
+            pubkey: otherProviderPubkey,
+            createdAt: 500,
+          ),
+        ];
+        final facts = _gate(events);
+        expect(facts.authorityByTarget[target().key], isNull);
+        expect(facts.metadata, isEmpty);
+        expect(facts.counts.conflicts, greaterThan(0));
+
+        final view = readCodingSessionChannel(
+          channelId: channelId,
+          verifier: null,
+          events: events,
+        );
+        expect(view.sessions, isEmpty);
+      },
+    );
+
     test('a transcript for a target nobody vouches for is not rendered', () {
       final facts = _gate([
         transcriptEvent(

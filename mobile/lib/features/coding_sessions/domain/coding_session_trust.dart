@@ -262,9 +262,17 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   // Fallback authority: the first-seen metadata signer for a target no
   // readable create claims. Deterministic, so two devices reading the same
   // events agree on which signer that is.
+  //
+  // A *disputed* target is excluded. D5 allows this fallback only when no
+  // create is readable; applying it to a target two receipt-joined creates
+  // claim for different providers would hand the execution to whoever timed
+  // their metadata earliest, which is a forgery anyone in the channel can
+  // publish. A contested execution renders no provider facts at all, and the
+  // conflict is already counted for the reader.
   final orderedMetadata = [...metadata]
     ..sort((left, right) => _byCreatedAtThenEventId(left.ref, right.ref));
   for (final record in orderedMetadata) {
+    if (joins.disputedTargets.contains(record.target.key)) continue;
     authorityByTarget.putIfAbsent(
       record.target.key,
       () => CodingSessionAuthority(
@@ -348,11 +356,19 @@ class _CreateJoins {
     required this.authorityByTarget,
     required this.targetKeyByCommandId,
     required this.authorityByCommandId,
+    required this.disputedTargets,
     required this.conflicts,
   });
 
   /// `cs-target` key -> the provider pubkey a create or resume named for it.
   final Map<String, String> authorityByTarget;
+
+  /// Targets two receipt-joined commands claimed for different providers.
+  ///
+  /// Carried out of the join because the D5 fallback must skip them: a
+  /// disputed target is a contradiction between readable creates, not the
+  /// "no create is readable" case the fallback exists for.
+  final Set<String> disputedTargets;
 
   /// commandId -> the `cs-target` key its receipts settled on.
   final Map<String, String> targetKeyByCommandId;
@@ -472,6 +488,7 @@ _CreateJoins _joinCreates(
     authorityByTarget: authorityByTarget,
     targetKeyByCommandId: targetKeyByCommandId,
     authorityByCommandId: authorityByCommandId,
+    disputedTargets: disputedTargets,
     conflicts: conflicts,
   );
 }
