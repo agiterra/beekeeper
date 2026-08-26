@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'coding_session_fixtures.dart';
@@ -60,6 +62,53 @@ CodingSessionCreate _create({
     createdAt: createdAt,
   ),
 ).value!;
+
+/// A 44223 that differs from its sibling only in `projectRef`.
+///
+/// The shared fixture exposes no knob for the reference/summary fields, and
+/// those are exactly the ones D6's "distinct payloads" rule used to miss, so
+/// the payload is written out here.
+CodingSessionMetadata _metadataWithProjectRef({
+  required String? projectRef,
+  required String id,
+  int createdAt = 1000,
+}) {
+  final resolved = target();
+  return decodeCodingSessionMetadata(
+    event(
+      kind: EventKind.codingSessionMetadata,
+      createdAt: createdAt,
+      id: id,
+      tags: [
+        ['h', channelId],
+        ['csm-v', 'csm1-1'],
+        ['cs-target', resolved.key],
+        ['csm-key', resolved.metadataSemanticKey],
+      ],
+      content: jsonEncode({
+        'schema': 'buzz-coding-session-metadata/v1',
+        'session': resolved.toJson(),
+        'projectRef': projectRef,
+        'repoRef': null,
+        'title': null,
+        'agentRef': null,
+        'provider': 'buzz-session-provider',
+        'runtime': 'claude-agent-acp',
+        'model': 'opus',
+        'status': 'running',
+        'branch': null,
+        'capabilities': const {
+          'threadTurnStart': true,
+          'threadTurnInterrupt': true,
+          'threadSteer': false,
+          'context': true,
+          'diff': false,
+          'plan': false,
+        },
+      }),
+    ),
+  ).value!;
+}
 
 CodingSessionLease _lease({
   CodingSessionTarget? forTarget,
@@ -174,6 +223,41 @@ void main() {
         metadata: [_metadata(status: 'running', createdAt: 2000)],
       );
       expect(executions.single.status, CodingSessionStatus.stopped);
+    });
+
+    // D6: a conflict is counted over the whole payload, not over the handful
+    // of fields the header happens to print. Two same-second events differing
+    // anywhere are distinct payloads; two byte-equal ones are not a conflict
+    // at all, and accusing the provider of one would be an invented fact.
+    test(
+      'same-second metadata differing outside the header fields conflicts',
+      () {
+        final executions = resolveCodingSessionGenerations(
+          receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+          metadata: [
+            _metadataWithProjectRef(
+              projectRef: 'project-a',
+              id: '0' * 63 + '1',
+            ),
+            _metadataWithProjectRef(
+              projectRef: 'project-b',
+              id: '0' * 63 + '2',
+            ),
+          ],
+        );
+        expect(executions.single.statusConflict, isTrue);
+      },
+    );
+
+    test('two byte-equal metadata events in one second are not a conflict', () {
+      final executions = resolveCodingSessionGenerations(
+        receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+        metadata: [
+          _metadataWithProjectRef(projectRef: 'project-a', id: '0' * 63 + '1'),
+          _metadataWithProjectRef(projectRef: 'project-a', id: '0' * 63 + '2'),
+        ],
+      );
+      expect(executions.single.statusConflict, isFalse);
     });
 
     test('resume mints a new generation and only the newest is current', () {
