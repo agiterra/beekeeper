@@ -2066,6 +2066,39 @@ written and `bash -n` clean but **was not executed** — that harness needs
     hermit `just` was missing from the hook subshell so six other hook steps
     exited 127 before branch-skew ran.
 
+69. **Mobile coding-session observer (read-only)** (`crew/mobile-observer`,
+   built on lanes M1-M3: domain decoders, Riverpod state, and two pages).
+   Renders a channel's umbrella-session list and one session's transcript
+   from the same signed 44220-44230/24223 wire contract the desktop reads,
+   with no composer and no command surface. It mirrors the desktop's
+   read-side rules from `docs/CREW_SESSIONS_PLAN.md` §3: D3 — a turn's
+   `deliver` class and any steer-to-boundary degrade are shown as received,
+   never inferred from prose; D4 — rows settle on `turn_started` by
+   `commandId`, and generation status/lease are kept out of the transcript
+   queue itself; D5 — every provider's turns are read through one uniform
+   fold, untargeted coding-session events bucketed by kind rather than by
+   an assumed shape; D6 — an unresolved-actor failure is disclosed, not
+   swallowed (pinned by the authority-unverified test); D7 — founder
+   identity for close/genesis comes only from a receipt-joined signed
+   create, so a session reads closed, and names who closed it, only on the
+   founder's own word; D8 — a resumed generation is scoped to its own
+   session and never bleeds into a sibling's history; D9 — an unread lease
+   reads "reachability unknown," never "nobody answering"; D10 — no
+   memory/context surface is rendered, consistent with memory staying out
+   of scope. Gate here: `dart format` exit 0, `flutter analyze` exit 0 (no
+   issues reported), `flutter test` was still running at last check (~661
+   passed so far, none failed), and the repo-wide file-size gate had not
+   yet run. Refuter (same-family, advisory — not a gating verdict):
+   "does the mobile coding-session observer disclose what it could not
+   read?" = CONFIRMED; test honesty = CONFIRMED. Deferred, one clause
+   each: `mobile-observer-1` — `turn_degraded`/`interrupt_delivered`
+   receipt error shapes are not pinned
+   (`coding_session_decoders.dart:556-560`) because those statuses are not
+   yet in this base's producer contract (D3/D7's native-steer and
+   interrupt-delivery paths land in later slices); they still decode as
+   turn stages, which is the property this branch needs. Not yet run on a
+   device or simulator.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
