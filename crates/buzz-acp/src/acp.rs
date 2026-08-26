@@ -443,6 +443,12 @@ impl TurnWireSummary {
     }
 }
 
+/// Ext-notification claude-agent-acp uses to forward raw SDK messages.
+///
+/// Only arrives when the session asked for it via
+/// `_meta.claudeCode.emitRawSDKMessages`.
+const RAW_SDK_FRAME_METHOD: &str = "_claude/sdkMessage";
+
 /// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
 ///
 /// Both halves matter: the re-emission is what keeps the harness terminal's
@@ -709,6 +715,12 @@ pub struct AcpClient {
     /// the host stops waiting. `None` disables the watch. See
     /// [`AnswerStallWatch`].
     answer_stall_timeout: Option<std::time::Duration>,
+    /// Ask claude-agent-acp to forward every raw SDK message it sees.
+    ///
+    /// Off by default and deliberately not a published fact: these frames are
+    /// the adapter's own internals, unredacted, and they are wanted for one
+    /// debugging session at a time rather than for a session's life.
+    emit_raw_sdk_frames: bool,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
     ///
@@ -1134,6 +1146,7 @@ impl AcpClient {
             standard_adapter,
             stderr_tail,
             answer_stall_timeout: None,
+            emit_raw_sdk_frames: false,
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1369,6 +1382,14 @@ impl AcpClient {
         if let Some(title) = session_title {
             // Merge — _meta may already carry systemPrompt from ClaudeMeta above.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
+        }
+        if self.emit_raw_sdk_frames {
+            // claude-agent-acp reads this once, here, and forwards every SDK
+            // message as a `_claude/sdkMessage` ext-notification thereafter.
+            // `true` means unfiltered; the adapter also accepts a filter list,
+            // which is not exposed because the reason to turn this on is not
+            // knowing yet which frames matter.
+            params["_meta"]["claudeCode"]["emitRawSDKMessages"] = serde_json::Value::Bool(true);
         }
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
@@ -1666,6 +1687,32 @@ impl AcpClient {
     /// Opt-in rather than defaulted so the managed-agent pool, whose turns have
     /// different shapes and its own supervision, is unaffected until someone
     /// decides it should be.
+    /// Ask the adapter to forward raw SDK messages for this session.
+    ///
+    /// Must be set before `session/new`: the adapter reads the flag once, off
+    /// that request's `_meta`, and never re-reads it.
+    /// Record one raw SDK frame to the local log, and nowhere else.
+    ///
+    /// These frames carry `origin.kind` and the whole task lifecycle — the
+    /// evidence that would have named the cause of the 2026-08-24 stall. They
+    /// also carry the adapter's unredacted internals, so they go to `tracing`
+    /// and are deliberately **not** handed to the observer, whose frames become
+    /// signed transcript items.
+    fn log_raw_sdk_frame(&self, msg: &serde_json::Value) {
+        let message = &msg["params"]["message"];
+        tracing::info!(
+            target: "acp::sdk_frame",
+            kind = message.get("type").and_then(|v| v.as_str()).unwrap_or("?"),
+            subtype = message.get("subtype").and_then(|v| v.as_str()).unwrap_or(""),
+            origin = message.pointer("/origin/kind").and_then(|v| v.as_str()).unwrap_or(""),
+            "{message}"
+        );
+    }
+
+    pub fn set_emit_raw_sdk_frames(&mut self, emit: bool) {
+        self.emit_raw_sdk_frames = emit;
+    }
+
     pub fn set_answer_stall_timeout(&mut self, timeout: Option<std::time::Duration>) {
         self.answer_stall_timeout = timeout;
     }
@@ -2065,6 +2112,7 @@ impl AcpClient {
                     "_goose/unstable/session/update" => {
                         self.handle_goose_usage_update(&msg);
                     }
+                    RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
                     "session/request_permission" => {
                         self.handle_permission_request(&msg).await?;
                     }
@@ -2516,6 +2564,7 @@ impl AcpClient {
                             "_goose/unstable/session/update" => {
                                 self.handle_goose_usage_update(&msg);
                             }
+                            RAW_SDK_FRAME_METHOD => self.log_raw_sdk_frame(&msg),
                             "session/request_permission" => {
                                 self.handle_permission_request(&msg).await?;
                             }
@@ -4955,6 +5004,58 @@ mod tests {
         assert!(
             matches!(result, Err(AcpError::IdleTimeout { .. })),
             "expected IdleTimeout after silence, got {result:?}"
+        );
+    }
+
+    /// The flag has to reach `session/new`, because that is the only place the
+    /// adapter ever reads it. A later toggle is silently inert.
+    #[tokio::test]
+    async fn raw_sdk_frames_are_requested_on_the_session_that_opts_in() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        client.set_emit_raw_sdk_frames(true);
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode/emitRawSDKMessages"),
+            Some(&serde_json::json!(true)),
+            "the adapter only reads this on session/new: {sent}"
+        );
+    }
+
+    /// Default off, and off means the key is absent rather than `false`.
+    /// A session that never asked should be byte-identical to one from before
+    /// the flag existed.
+    #[tokio::test]
+    async fn a_session_that_did_not_opt_in_sends_no_raw_frame_key() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode"),
+            None,
+            "off must mean absent, not false: {sent}"
         );
     }
 

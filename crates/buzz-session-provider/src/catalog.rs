@@ -243,6 +243,7 @@ mod tests {
             answer_stall_timeout: Some(Duration::from_secs(120)),
             max_turn_duration: Duration::from_secs(7200),
             include_thoughts: true,
+            emit_raw_sdk_frames: false,
             command_horizon: Duration::from_secs(86_400),
         }
     }
