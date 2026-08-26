@@ -152,7 +152,14 @@ const TURN_RECEIPT_STATUSES: ReadonlySet<string> = new Set(
   CODING_SESSION_TURN_RECEIPT_STATUSES,
 );
 
-/** True for the four turn statuses, false for every lifecycle status. */
+/**
+ * True for any member of {@link CODING_SESSION_TURN_RECEIPT_STATUSES},
+ * false for every generation lifecycle status.
+ *
+ * Deliberately not a count: the list above grows, and a comment naming a
+ * number goes stale silently. The same off-by-two in the Rust CLI mirror is
+ * what routed turn receipts into session resolution until `158f323e`.
+ */
 export function isCodingSessionTurnReceiptStatus(
   status: string,
 ): status is CodingSessionTurnReceiptStatus {

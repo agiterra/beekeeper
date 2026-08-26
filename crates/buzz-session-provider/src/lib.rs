@@ -557,7 +557,8 @@ pub struct InFlightTurn {
 /// delivered in the order they were *sent* rather than the order they arrive.
 ///
 /// The relay answers a stored-event REQ newest-first (`ORDER BY created_at
-/// DESC, id ASC` — `crates/buzz-db/src/event.rs:313`). That is harmless for
+/// DESC, id ASC` — the generic query builder every stored REQ goes through,
+/// `crates/buzz-db/src/event.rs:771`). That is harmless for
 /// commands that were already consumed, and wrong for the ones this slice
 /// keeps: two turns queued behind a running one, lost to a crash, would be
 /// replayed and run in reverse. So every 44220 that arrives while a channel's
@@ -3404,8 +3405,12 @@ impl Provider {
             }
             SessionEvent::Exited { session_id, reason } => {
                 // The process is gone and its mailbox with it. Turns it had
-                // taken custody of and not started are owed an answer, and are
-                // deliberately left unconsumed so a resume replays them.
+                // taken custody of and not started are owed an answer, and they
+                // get a terminal one: `turn_dropped` / `NO_LIVE_EXECUTION`,
+                // left unconsumed (they never ran) and recorded as refused
+                // (they never will, here — a resume mints a generation the
+                // command no longer addresses). Unconsumed is not the same as
+                // redeliverable; see `report_no_live_execution`.
                 self.report_lost_mailbox(&session_id)?;
                 self.steering.remove(&session_id);
                 let Some((channel_id, target)) = self.locate(&session_id) else {
@@ -8826,13 +8831,15 @@ mod tests {
     }
 
     /// A turn addressed to an execution with no live process is a visible
-    /// drop, not a log line — and it is answered exactly once.
+    /// drop, not a log line — and it is answered exactly once, terminally.
     ///
     /// Both arms that used to end in a bare `tracing::warn!` are covered: no
     /// handle at all, and a handle whose actor has gone away
-    /// ([`DeliverError::Gone`]).
+    /// ([`DeliverError::Gone`]). Nothing is left owed: the command is never
+    /// consumed (it did not run) *and* it is recorded as refused (it will not
+    /// run later), which is what the assertions below pin.
     #[tokio::test]
-    async fn a_turn_with_no_live_execution_is_dropped_out_loud_and_stays_owed() {
+    async fn a_turn_with_no_live_execution_is_dropped_out_loud_and_answered_terminally() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().join("checkout");
         std::fs::create_dir_all(&cwd).expect("mkdir");
@@ -9177,9 +9184,13 @@ mod tests {
                 .thread_steer
         );
 
-        // Literals, not `session::NATIVE_STEER_DELIVERABLE`: asserting against
-        // the same constant `metadata_for` multiplies in would hold for any
-        // implementation at all, including one that hardcodes `false`.
+        // Every assertion in this test is `!thread_steer`, so a `metadata_for`
+        // that hardcoded `false` would pass it. That is not a claim this test
+        // can make while the constant below is `false`, and pretending
+        // otherwise would have it cited as coverage it does not provide. The
+        // `const` assertion is the tripwire instead: the day a native steer
+        // can be delivered, this stops compiling and whoever flipped it comes
+        // back to make the second case expect `true`.
         const {
             assert!(
                 !session::NATIVE_STEER_DELIVERABLE,
