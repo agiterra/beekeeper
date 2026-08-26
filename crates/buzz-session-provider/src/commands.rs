@@ -30,6 +30,15 @@ use crate::payload::{
 use crate::state::StateStore;
 
 /// Why a command produced no side effect.
+///
+/// The last three variants carry the command and target they refused. They are
+/// reached only *after* the addressing check, so the provider both knows the
+/// command was meant for it and can name what the operator addressed — which
+/// is exactly the difference between an ignore that owes the operator a
+/// visible refusal and one that must stay silent. `NotAddressed`,
+/// `AlreadyConsumed`, `PastHorizon`, and `Malformed` carry nothing because
+/// answering them would be cross-provider chatter, a duplicate answer, or a
+/// claim about a command this provider cannot read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ignored {
     /// The command names a different provider authority or instance.
@@ -41,11 +50,75 @@ pub enum Ignored {
     /// Content did not decode against the contract.
     Malformed(String),
     /// No live session matches the addressed target.
-    UnknownTarget,
+    UnknownTarget {
+        /// The command being ignored.
+        command_id: String,
+        /// What it addressed.
+        target: CodingSessionTarget,
+    },
     /// The addressed generation is not the one this provider is running.
-    StaleGeneration,
+    StaleGeneration {
+        /// The command being ignored.
+        command_id: String,
+        /// What it addressed.
+        target: CodingSessionTarget,
+    },
     /// The addressed session has been retired.
-    SessionClosed,
+    SessionClosed {
+        /// The command being ignored.
+        command_id: String,
+        /// What it addressed.
+        target: CodingSessionTarget,
+    },
+}
+
+/// A visible refusal owed to the operator for an ignored turn command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnRefusal<'a> {
+    /// The 44220 being answered.
+    pub command_id: &'a str,
+    /// The target the command addressed.
+    pub target: &'a CodingSessionTarget,
+    /// Stable receipt error code.
+    pub code: &'static str,
+    /// Operator-facing detail.
+    pub message: &'static str,
+}
+
+impl Ignored {
+    /// The refusal this ignore owes the operator, or `None` when silence is
+    /// the correct answer.
+    ///
+    /// Silence is correct for a command addressed to another provider, one
+    /// already answered, one older than the freshness horizon, and one whose
+    /// content did not decode — in every case a receipt would either be
+    /// chatter about someone else's command or a second answer to a command
+    /// already answered.
+    pub fn refusal(&self) -> Option<TurnRefusal<'_>> {
+        match self {
+            Self::NotAddressed | Self::AlreadyConsumed | Self::PastHorizon | Self::Malformed(_) => {
+                None
+            }
+            Self::UnknownTarget { command_id, target } => Some(TurnRefusal {
+                command_id,
+                target,
+                code: UNKNOWN_TARGET,
+                message: "this provider has no execution matching the addressed target",
+            }),
+            Self::StaleGeneration { command_id, target } => Some(TurnRefusal {
+                command_id,
+                target,
+                code: STALE_GENERATION,
+                message: "the addressed generation has been superseded",
+            }),
+            Self::SessionClosed { command_id, target } => Some(TurnRefusal {
+                command_id,
+                target,
+                code: SESSION_CLOSED,
+                message: "the addressed execution was durably stopped",
+            }),
+        }
+    }
 }
 
 /// What to do about one 44221 lifecycle command.
@@ -132,6 +205,9 @@ pub enum TurnDecision {
     Fail {
         /// The command being answered.
         command_id: String,
+        /// The target the command addressed, so the refusal names the
+        /// execution the operator tried to steer.
+        target: CodingSessionTarget,
         /// Operator-facing detail.
         message: String,
     },
@@ -401,20 +477,30 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
     }
 
     let Some(record) = context.state.session(&command.target.session_id) else {
-        return TurnDecision::Ignore(Ignored::UnknownTarget);
+        return TurnDecision::Ignore(Ignored::UnknownTarget {
+            command_id: command.command_id,
+            target: command.target,
+        });
     };
     if record.generation != command.target.generation {
-        return TurnDecision::Ignore(Ignored::StaleGeneration);
+        return TurnDecision::Ignore(Ignored::StaleGeneration {
+            command_id: command.command_id,
+            target: command.target,
+        });
     }
     if !operator_may_steer(record, context.operator_pubkey) {
         return TurnDecision::Fail {
             command_id: command.command_id,
+            target: command.target,
             message: "only the session founder or a granted operator may steer this execution"
                 .into(),
         };
     }
     if record.closed {
-        return TurnDecision::Ignore(Ignored::SessionClosed);
+        return TurnDecision::Ignore(Ignored::SessionClosed {
+            command_id: command.command_id,
+            target: command.target,
+        });
     }
 
     match command.action {
@@ -661,6 +747,16 @@ mod tests {
         format!(
             r#"{{"schema":"buzz-coding-session-command/v1","commandId":"{command_id}","target":{{"driver":"claude-agent-acp","instanceId":"instance-1","sessionId":"{session_id}","generation":{generation}}},"action":{{"type":"thread.turn.start","text":"do the thing"}}}}"#
         )
+    }
+
+    /// The target a `turn_content` / `interrupt_content` command addresses.
+    fn turn_target(session_id: &str, generation: u64) -> CodingSessionTarget {
+        CodingSessionTarget {
+            driver: "claude-agent-acp".into(),
+            instance_id: "instance-1".into(),
+            session_id: session_id.into(),
+            generation,
+        }
     }
 
     fn interrupt_content(command_id: &str, session_id: &str, generation: u64) -> String {
@@ -1359,11 +1455,17 @@ mod tests {
         ));
         assert_eq!(
             decide_turn(&context, 1_000, &turn_content("turn-2", "s1", 2)),
-            TurnDecision::Ignore(Ignored::StaleGeneration)
+            TurnDecision::Ignore(Ignored::StaleGeneration {
+                command_id: "turn-2".into(),
+                target: turn_target("s1", 2),
+            })
         );
         assert_eq!(
             decide_turn(&context, 1_000, &turn_content("turn-3", "ghost", 1)),
-            TurnDecision::Ignore(Ignored::UnknownTarget)
+            TurnDecision::Ignore(Ignored::UnknownTarget {
+                command_id: "turn-3".into(),
+                target: turn_target("ghost", 1),
+            })
         );
     }
 
@@ -1399,7 +1501,10 @@ mod tests {
                 1_000,
                 &turn_content("turn-1", "s1", 1)
             ),
-            TurnDecision::Ignore(Ignored::SessionClosed)
+            TurnDecision::Ignore(Ignored::SessionClosed {
+                command_id: "turn-1".into(),
+                target: turn_target("s1", 1),
+            })
         );
     }
 
@@ -1450,7 +1555,10 @@ mod tests {
         ));
         assert_eq!(
             decide_turn(&context, 1_000, &interrupt_content("turn-2", "s1", 9)),
-            TurnDecision::Ignore(Ignored::StaleGeneration)
+            TurnDecision::Ignore(Ignored::StaleGeneration {
+                command_id: "turn-2".into(),
+                target: turn_target("s1", 9),
+            })
         );
     }
 

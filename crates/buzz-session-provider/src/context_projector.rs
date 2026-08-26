@@ -649,6 +649,14 @@ fn group_executions(
     Ok(executions)
 }
 
+/// The one lifecycle receipt answering `command_id`, if the fact set has it.
+///
+/// Kind 44224 carries two vocabularies. The turn statuses report the stages of
+/// a 44220, and a create that requested a first turn publishes them under the
+/// *create's* own `commandId` — that is what makes the first prompt joinable.
+/// They are skipped here rather than counted: a turn receipt never creates,
+/// confirms, or ends a generation, and counting one would make every
+/// first-turn create look like a command with two rival outcomes.
 fn receipt_for_command<'a>(
     events: &'a [Event],
     command_id: &str,
@@ -665,6 +673,9 @@ fn receipt_for_command<'a>(
                 "provider receipt for command {command_id} is malformed"
             ))
         })?;
+        if receipt.status.is_turn_stage() {
+            continue;
+        }
         if receipt.command_id != command_id {
             return Err(ContextProjectionError::Conflict(format!(
                 "receipt tag and content disagree for command {command_id}"
@@ -1669,7 +1680,7 @@ mod tests {
     use buzz_sdk::builders::{
         build_coding_session_genesis, build_coding_session_lifecycle_command,
         build_coding_session_lifecycle_receipt, build_coding_session_metadata,
-        build_coding_session_transcript_item,
+        build_coding_session_transcript_item, build_coding_session_turn_receipt,
     };
 
     const SESSION_REF: &str = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
@@ -1844,7 +1855,7 @@ mod tests {
         };
 
         for (seq, operator) in [(1u64, None), (2u64, Some("d".repeat(64)))] {
-            let item = crate::payload::user_prompt_item("go", false, operator.as_deref());
+            let item = crate::payload::user_prompt_item("go", false, operator.as_deref(), None);
             let envelope =
                 TranscriptEnvelope::new(&target, seq, seq as i64 * 1_000, Some("turn-1"), item);
             let content = serde_json::to_string(&envelope).unwrap();
@@ -1944,6 +1955,60 @@ mod tests {
         assert!(package.provenance.complete);
         assert_eq!(package.provenance.total_history_items, Some(4));
         assert_eq!(package.provenance.source_event_count, 8);
+    }
+
+    /// A create with a first turn now publishes turn receipts under the
+    /// create's own `commandId` — that is what makes the first prompt
+    /// joinable. Those receipts must not be mistaken for a second answer to
+    /// the create: a turn receipt never creates, confirms, or ends a
+    /// generation, and reading one as a rival lifecycle outcome would fail the
+    /// whole projection with "more than one provider receipt".
+    #[test]
+    fn turn_receipts_sharing_a_command_id_do_not_rival_the_lifecycle_receipt() {
+        let fixture = fixture(4);
+        let generation = &fixture.input.executions[0].generations[0];
+        let target = CodingSessionTarget {
+            driver: "codex-acp".into(),
+            instance_id: "provider-host-1".into(),
+            session_id: "session-1".into(),
+            generation: 1,
+        };
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+        ];
+        for receipt in [
+            LifecycleReceipt::turn_queued("create-1", &target),
+            LifecycleReceipt::turn_started("create-1", &target, "turn-1"),
+        ] {
+            let content = serde_json::to_string(&receipt).unwrap();
+            events.push(
+                build_coding_session_turn_receipt(
+                    fixture.input.channel_id,
+                    "create-1",
+                    receipt.status,
+                    &content,
+                )
+                .unwrap()
+                .sign_with_keys(&fixture.provider)
+                .unwrap(),
+            );
+        }
+        events.extend(generation.transcript.iter().cloned());
+        let request = ContextProjectionRequest {
+            channel_id: fixture.input.channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+        };
+
+        let package = project_session_context_events(&request, &events)
+            .expect("turn receipts must not break the create chain");
+        assert_eq!(package.history.len(), 4);
     }
 
     #[test]

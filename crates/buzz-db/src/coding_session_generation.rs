@@ -398,6 +398,7 @@ mod tests {
             status: ReceiptStatus::Created,
             session: Some(target.clone()),
             error: None,
+            turn_id: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),
@@ -429,6 +430,7 @@ mod tests {
             status,
             session: Some(target.clone()),
             error: None,
+            turn_id: None,
         };
         EventBuilder::new(
             Kind::Custom(44_224),

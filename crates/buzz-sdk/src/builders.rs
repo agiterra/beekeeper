@@ -35,6 +35,7 @@ use buzz_core::{
         validate_coding_session_name_content, validate_coding_session_name_session_ref,
         CODING_SESSION_NAME_TAG_VERSION,
     },
+    coding_session_payload::ReceiptStatus,
     kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_APPROVAL_DENY, KIND_APPROVAL_GRANT,
         KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_CLOSURE,
@@ -63,10 +64,10 @@ use uuid::Uuid;
 use crate::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
     coding_session_provider_catalog_semantic_key, coding_session_transcript_semantic_key,
-    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION, CODING_SESSION_METADATA_TAG_VERSION,
-    CODING_SESSION_PROVIDER_CATALOG_TAG_VERSION, CODING_SESSION_TRANSCRIPT_TAG_VERSION,
-    MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES, MAX_METADATA_CONTENT_BYTES,
-    MAX_PROVIDER_CATALOG_CONTENT_BYTES, MAX_TRANSCRIPT_CONTENT_BYTES,
+    encode_structured_key, CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
+    CODING_SESSION_METADATA_TAG_VERSION, CODING_SESSION_PROVIDER_CATALOG_TAG_VERSION,
+    CODING_SESSION_TRANSCRIPT_TAG_VERSION, MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES,
+    MAX_METADATA_CONTENT_BYTES, MAX_PROVIDER_CATALOG_CONTENT_BYTES, MAX_TRANSCRIPT_CONTENT_BYTES,
 };
 use crate::{
     ChannelKind, CustomEmoji, DiffMeta, MemberRole, SdkError, ThreadRef, Visibility, VoteDirection,
@@ -2829,6 +2830,57 @@ pub fn build_coding_session_lifecycle_receipt(
         tag(&[
             "csl-key",
             &coding_session_lifecycle_receipt_semantic_key(command_id),
+        ])?,
+    ];
+    Ok(EventBuilder::new(
+        Kind::Custom(KIND_CODING_SESSION_LIFECYCLE_RECEIPT as u16),
+        content.to_owned(),
+    )
+    .tags(tags))
+}
+
+/// The `csl-key` tag value for one *stage* receipt of a turn command (44220).
+///
+/// A lifecycle command has one outcome, so
+/// [`coding_session_lifecycle_receipt_semantic_key`] keys its receipt by
+/// `commandId` alone. A turn command has several stages — queued, then
+/// started; or a single drop or refusal — so its receipts key by
+/// `(commandId, status)`. Keying them by `commandId` alone would make the
+/// second stage a duplicate of the first and fence it out of the outbox, and
+/// the operator would never learn that the turn they watched queue actually
+/// began.
+pub fn coding_session_turn_receipt_semantic_key(command_id: &str, status: ReceiptStatus) -> String {
+    encode_structured_key(
+        "coding-session-lifecycle-receipt/v1",
+        &[command_id, status.as_str()],
+    )
+}
+
+/// Build one stage receipt for a coding-session turn command (kind 44224).
+///
+/// Same envelope as [`build_coding_session_lifecycle_receipt`] — a consumer
+/// reads both with one decoder — but keyed per stage, so the `turn_started`
+/// that follows a `turn_queued` is a new fact rather than a duplicate.
+pub fn build_coding_session_turn_receipt(
+    channel_id: Uuid,
+    command_id: &str,
+    status: ReceiptStatus,
+    content: &str,
+) -> Result<EventBuilder, SdkError> {
+    check_identifier(command_id, "commandId")?;
+    check_content(content, MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES)?;
+    if !status.is_turn_stage() {
+        return Err(SdkError::InvalidInput(
+            "a turn receipt must carry a turn status".to_owned(),
+        ));
+    }
+    let tags = vec![
+        tag(&["h", &channel_id.to_string()])?,
+        tag(&["cslr-v", CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION])?,
+        tag(&["csl-command", command_id])?,
+        tag(&[
+            "csl-key",
+            &coding_session_turn_receipt_semantic_key(command_id, status),
         ])?,
     ];
     Ok(EventBuilder::new(
@@ -6286,6 +6338,62 @@ mod tests {
             ]
         );
         assert!(build_coding_session_lifecycle_receipt(channel, "  ", "{}").is_err());
+    }
+
+    /// A turn command produces up to three receipts. Keying them by
+    /// `commandId` alone — the lifecycle rule — would make the second one a
+    /// duplicate of the first and fence it out of the outbox, so each stage
+    /// carries its own key and no two stages collide.
+    #[test]
+    fn turn_receipt_keys_differ_per_stage_and_never_collide_with_a_lifecycle_key() {
+        let channel = Uuid::new_v4();
+        let stages = [
+            ReceiptStatus::TurnQueued,
+            ReceiptStatus::TurnStarted,
+            ReceiptStatus::TurnDropped,
+            ReceiptStatus::TurnRefused,
+        ];
+        let mut stage_keys: Vec<String> = stages
+            .iter()
+            .map(|status| coding_session_turn_receipt_semantic_key("turn-1", *status))
+            .collect();
+        stage_keys.push(coding_session_lifecycle_receipt_semantic_key("turn-1"));
+        let unique: std::collections::BTreeSet<&String> = stage_keys.iter().collect();
+        assert_eq!(unique.len(), stage_keys.len(), "{stage_keys:?}");
+
+        assert_eq!(
+            coding_session_turn_receipt_semantic_key("turn-1", ReceiptStatus::TurnStarted),
+            "coding-session-lifecycle-receipt/v1|6:turn-112:turn_started"
+        );
+
+        let event =
+            build_coding_session_turn_receipt(channel, "turn-1", ReceiptStatus::TurnQueued, "{}")
+                .unwrap()
+                .sign_with_keys(&keys())
+                .unwrap();
+        assert_eq!(
+            ordered_tags(&event),
+            vec![
+                ("h".into(), channel.to_string()),
+                ("cslr-v".into(), "cslr1-1".into()),
+                ("csl-command".into(), "turn-1".into()),
+                (
+                    "csl-key".into(),
+                    "coding-session-lifecycle-receipt/v1|6:turn-111:turn_queued".into()
+                ),
+            ]
+        );
+
+        // A lifecycle status has one outcome and must never be published on
+        // the per-stage key.
+        assert!(
+            build_coding_session_turn_receipt(channel, "turn-1", ReceiptStatus::Created, "{}")
+                .is_err()
+        );
+        assert!(
+            build_coding_session_turn_receipt(channel, "  ", ReceiptStatus::TurnQueued, "{}")
+                .is_err()
+        );
     }
 
     #[test]
