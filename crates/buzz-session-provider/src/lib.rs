@@ -1980,6 +1980,16 @@ impl Provider {
             self.interrupt_open_turn(&session_id, &command_id);
         }
 
+        // Steer-class delivery: the injection is attempted first, and its
+        // answer — did the words actually reach the running turn? — is the one
+        // fact everything below reads. A steer that was not injected is a
+        // boundary delivery, and one that is never *said* to be a boundary
+        // delivery is the silent downgrade the delivery classes exist to
+        // prevent.
+        let steer_injected = is_turn
+            && deliver == CodingSessionDelivery::Steer
+            && self.inject_native_steer(&session_id);
+
         match self.sessions.handle(&session_id) {
             Some(handle) => match handle.deliver(message) {
                 // Custody, not execution: the provider has the turn, and the
@@ -2003,9 +2013,7 @@ impl Provider {
                     // each other about one command — "accepted for the next
                     // boundary" followed by "this execution has no live
                     // process".
-                    if deliver == CodingSessionDelivery::Steer
-                        && !self.native_steer_deliverable(&session_id)
-                    {
+                    if deliver == CodingSessionDelivery::Steer && !steer_injected {
                         let receipt = LifecycleReceipt::turn_degraded(
                             &command_id,
                             &target,
@@ -2105,6 +2113,36 @@ impl Provider {
             );
         }
         advertised && session::NATIVE_STEER_DELIVERABLE
+    }
+
+    /// Inject a `steer`-class turn into the turn already running on
+    /// `session_id`, answering whether the injection actually happened.
+    ///
+    /// Always `false` today, and deliberately shaped so that stays true until
+    /// somebody writes the injection. The caller publishes `turn_degraded`
+    /// whenever this returns `false` — it does *not* consult
+    /// [`session::NATIVE_STEER_DELIVERABLE`] itself — because a downgrade
+    /// gated on a constant is a downgrade that disappears the day the constant
+    /// is flipped without the transport behind it, leaving a steer
+    /// boundary-delivered under a plain `turn_queued` and nobody told.
+    ///
+    /// The `const` block below is the other half of that fence: flipping the
+    /// constant fails the build here rather than shipping a lie. Whoever wires
+    /// the real injection replaces it, and owes this path the
+    /// `turn_started` receipt (current `turnId`, `user_prompt{steered:true}`)
+    /// that a genuinely injected steer publishes instead of `turn_queued`.
+    fn inject_native_steer(&mut self, session_id: &str) -> bool {
+        const {
+            assert!(
+                !session::NATIVE_STEER_DELIVERABLE,
+                "wire the native steer injection, and the turn_started receipt it publishes, \
+                 before declaring this provider able to deliver one"
+            )
+        };
+        // Consulted for its log line: an operator whose runtime offered a steer
+        // this provider could not take should be able to find out why.
+        let _deliverable = self.native_steer_deliverable(session_id);
+        false
     }
 
     /// Cancel whatever turn is running on `session_id` so an interrupt-class
@@ -8851,6 +8889,70 @@ mod tests {
             vec!["turn_queued".to_owned(), "turn_dropped".to_owned()]
         );
         assert!(!provider.state().is_command_consumed("turn-2"));
+    }
+
+    /// The downgrade is a fact about the *injection*, not about the
+    /// advertisement.
+    ///
+    /// An execution whose runtime advertised native steering at `initialize`
+    /// is still degraded, because nothing injected the words into the running
+    /// turn. This is the arm that would go silent if the degrade were ever
+    /// gated on the advertisement, or on
+    /// [`session::NATIVE_STEER_DELIVERABLE`], instead of on whether
+    /// [`Provider::inject_native_steer`] actually did anything: the turn would
+    /// be boundary-delivered under a bare `turn_queued` and the sender would
+    /// never learn their mid-turn correction missed the turn.
+    #[tokio::test]
+    async fn a_steer_an_execution_advertised_is_still_degraded_when_nothing_injects_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        // The runtime said it could take a steer. This provider still cannot
+        // deliver one.
+        provider.steering.insert(target.session_id.clone(), true);
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "turn-steer-advertised",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "stop and look at the second failure",
+                        "deliver": "steer",
+                    }),
+                ),
+            )
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "turn-steer-advertised"),
+            vec![
+                "turn_degraded".to_owned(),
+                "turn_queued".to_owned(),
+                "turn_started".to_owned(),
+            ],
+            "an advertised steer that nothing injected is still a downgrade, said out loud"
+        );
     }
 
     /// A `steer` no runtime here can honour is downgraded out loud and then

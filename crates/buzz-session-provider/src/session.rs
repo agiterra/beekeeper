@@ -68,6 +68,14 @@ pub const CANCEL_GRACE: Duration = Duration::from_secs(30);
 /// boundary delivery, so the turn still runs and nobody is told it was
 /// injected mid-thought. The published `threadSteer` capability is gated on
 /// this too — a control an operator can press must be a control that works.
+///
+/// **Flipping this constant is not how a steer gets delivered.** The receipt
+/// is keyed off whether `Provider::inject_native_steer` actually injected
+/// anything, never off this value, so a flip alone cannot turn the downgrade
+/// silent; and that function carries a `const` assertion on this constant, so
+/// a flip without the injection behind it fails the build instead. Wire the
+/// transport (and the `turn_started` receipt an injected steer publishes in
+/// place of `turn_queued`), then flip this.
 pub const NATIVE_STEER_DELIVERABLE: bool = false;
 
 /// Continuity bootstrap for adapters that accept a system prompt on
