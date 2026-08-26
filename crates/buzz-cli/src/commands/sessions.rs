@@ -1070,6 +1070,257 @@ async fn cmd_tools(
     Ok(())
 }
 
+// ── Turn diagnosis ───────────────────────────────────────────────────────────
+
+/// What one turn's transcript says about how it ended.
+///
+/// This is the triage that was done by hand, in Python, against the 2026-08-24
+/// "project repo access" session: group by turn, find the ones whose span is
+/// suspiciously close to a timeout budget, check whether any tool call was left
+/// unterminated, and read the result's token counts. Doing it by hand took an
+/// hour and the interesting fact — that no SDK result had ever arrived — was
+/// nearly missed. It is a command now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnDiagnosis {
+    pub turn_id: Option<String>,
+    /// Wall time from the turn's first item to its last, in seconds.
+    pub span_secs: f64,
+    /// Unix seconds of the first item, for correlating with anything else.
+    pub started_at: i64,
+    pub items: usize,
+    /// Tool calls with no matching `tool_result`, by name.
+    pub unterminated_tools: Vec<String>,
+    /// Offset of the last tool frame from the turn's start, in seconds.
+    pub last_tool_offset_secs: Option<f64>,
+    /// Whether the terminal `result` reported an error.
+    pub is_error: Option<bool>,
+    /// The terminal `result`'s own words.
+    pub result: Option<String>,
+    /// Token counts as the `result` reported them.
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    /// The `turn_wire:` row, when the producer published one.
+    pub wire: Option<String>,
+    /// Everything this turn tripped, in the words a reader needs.
+    pub findings: Vec<String>,
+}
+
+/// Whether a failed turn's own result proves the agent never answered it.
+///
+/// A provider-synthesized timeout result carries no usage, because there was no
+/// SDK result to take usage from. A turn that genuinely errored downstream
+/// still has real counts. That difference is the single clearest signal that a
+/// prompt was dropped rather than a turn going wrong, and it is invisible
+/// unless someone thinks to compare against a healthy turn.
+fn result_has_no_usage(input: Option<u64>, output: Option<u64>) -> bool {
+    matches!((input, output), (None, None) | (Some(0), Some(0)))
+}
+
+/// Group a generation's items by turn and report on each.
+pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
+    let mut order: Vec<Option<String>> = Vec::new();
+    let mut by_turn: HashMap<Option<String>, Vec<&TranscriptRecord>> = HashMap::new();
+    for record in records {
+        let key = record.envelope.turn_id.clone();
+        if !by_turn.contains_key(&key) {
+            order.push(key.clone());
+        }
+        by_turn.entry(key).or_default().push(record);
+    }
+
+    order
+        .into_iter()
+        .filter_map(|key| {
+            let mut items = by_turn.remove(&key)?;
+            items.sort_by_key(|record| record.seq);
+            let first = items.first()?;
+            let last = items.last()?;
+            let start_ms = first.envelope.timestamp;
+            let span_secs = (last.envelope.timestamp - start_ms) as f64 / 1000.0;
+
+            let mut called: Vec<(String, String)> = Vec::new();
+            let mut resulted: HashSet<String> = HashSet::new();
+            let mut last_tool_ms: Option<i64> = None;
+            let mut wire: Option<String> = None;
+            let (mut is_error, mut result, mut input_tokens, mut output_tokens) =
+                (None, None, None, None);
+
+            for record in &items {
+                let item = &record.envelope.item;
+                match item.get("kind").and_then(Value::as_str) {
+                    Some("tool_call") => {
+                        if let Some(id) = item.pointer("/tool/toolId").and_then(Value::as_str) {
+                            let name = item
+                                .pointer("/tool/toolName")
+                                .and_then(Value::as_str)
+                                .unwrap_or("(unnamed)");
+                            called.push((id.to_owned(), name.to_owned()));
+                        }
+                        last_tool_ms = Some(record.envelope.timestamp);
+                    }
+                    Some("tool_result") => {
+                        if let Some(id) = item.get("toolId").and_then(Value::as_str) {
+                            resulted.insert(id.to_owned());
+                        }
+                        last_tool_ms = Some(record.envelope.timestamp);
+                    }
+                    Some("status") => {
+                        if let Some(status) = item.get("status").and_then(Value::as_str) {
+                            if status.starts_with("turn_wire: ") {
+                                wire = Some(status.to_owned());
+                            }
+                        }
+                    }
+                    Some("result") => {
+                        is_error = item.get("isError").and_then(Value::as_bool);
+                        result = item
+                            .get("result")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        input_tokens = item.get("inputTokens").and_then(Value::as_u64);
+                        output_tokens = item.get("outputTokens").and_then(Value::as_u64);
+                    }
+                    _ => {}
+                }
+            }
+
+            let unterminated: Vec<String> = called
+                .iter()
+                .filter(|(id, _)| !resulted.contains(id))
+                .map(|(id, name)| format!("{name} ({id})"))
+                .collect();
+            let last_tool_offset_secs = last_tool_ms.map(|at| (at - start_ms) as f64 / 1000.0);
+
+            let mut findings = Vec::new();
+            if is_error == Some(true) {
+                if result_has_no_usage(input_tokens, output_tokens) {
+                    findings.push(
+                        "no usage on the result — the provider synthesized it, so the agent \
+                         never resolved this prompt"
+                            .to_owned(),
+                    );
+                }
+                if unterminated.is_empty() {
+                    findings.push(
+                        "every tool call terminated — nothing was outstanding when it died"
+                            .to_owned(),
+                    );
+                } else {
+                    findings.push(format!(
+                        "{} tool call(s) never terminated: {}",
+                        unterminated.len(),
+                        unterminated.join(", ")
+                    ));
+                }
+                if let Some(offset) = last_tool_offset_secs {
+                    let quiet = span_secs - offset;
+                    if quiet > 60.0 {
+                        findings.push(format!(
+                            "{quiet:.0}s between the last tool frame and the end of the turn"
+                        ));
+                    }
+                }
+                if wire.is_none() {
+                    findings.push(
+                        "no turn_wire row — this generation predates it, so the quiet-onset \
+                         above is inferred from item timestamps, not measured"
+                            .to_owned(),
+                    );
+                }
+            }
+
+            Some(TurnDiagnosis {
+                turn_id: key,
+                span_secs,
+                started_at: start_ms / 1000,
+                items: items.len(),
+                unterminated_tools: unterminated,
+                last_tool_offset_secs,
+                is_error,
+                result,
+                input_tokens,
+                output_tokens,
+                wire,
+                findings,
+            })
+        })
+        .collect()
+}
+
+async fn cmd_doctor(
+    client: &BuzzClient,
+    channel_id: &str,
+    target: Option<&str>,
+    format: &crate::OutputFormat,
+) -> Result<(), CliError> {
+    validate_uuid(channel_id)?;
+    let events =
+        fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_TRANSCRIPT]).await?;
+    let (all, stats) = decode_transcripts(&events);
+    let mut records = match target {
+        Some(target) => filter_transcripts_by_target(&all, target),
+        None => all,
+    };
+    sort_transcripts(&mut records);
+    let turns = diagnose_turns(&records);
+
+    let rows: Vec<Value> = turns
+        .iter()
+        .map(|turn| {
+            json!({
+                "turnId": turn.turn_id,
+                "startedAt": rfc3339(turn.started_at),
+                "spanSecs": turn.span_secs,
+                "items": turn.items,
+                "isError": turn.is_error,
+                "result": turn.result,
+                "inputTokens": turn.input_tokens,
+                "outputTokens": turn.output_tokens,
+                "unterminatedTools": turn.unterminated_tools,
+                "lastToolOffsetSecs": turn.last_tool_offset_secs,
+                "wire": turn.wire,
+                "findings": turn.findings,
+            })
+        })
+        .collect();
+
+    match format {
+        crate::OutputFormat::Compact => {
+            for turn in &turns {
+                let id = turn.turn_id.as_deref().unwrap_or("(no turn)");
+                let verdict = match turn.is_error {
+                    Some(true) => "FAILED",
+                    Some(false) => "ok",
+                    None => "unfinished",
+                };
+                println!(
+                    "{id}  {verdict}  {:.1}s  {} items{}",
+                    turn.span_secs,
+                    turn.items,
+                    if turn.unterminated_tools.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  {} unterminated", turn.unterminated_tools.len())
+                    }
+                );
+                for finding in &turn.findings {
+                    println!("    - {finding}");
+                }
+            }
+        }
+        crate::OutputFormat::Json => println!(
+            "{}",
+            json!({
+                "channel": channel_id,
+                "target": target,
+                "malformedEvents": stats.malformed,
+                "turns": rows,
+            })
+        ),
+    }
+    Ok(())
+}
+
 async fn cmd_export(client: &BuzzClient, channel_id: &str, out: &str) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     let directory = Path::new(out);
@@ -1484,6 +1735,9 @@ pub async fn dispatch(
         SessionsCmd::Tools { channel, target } => {
             cmd_tools(client, &channel, target.as_deref(), format).await
         }
+        SessionsCmd::Doctor { channel, target } => {
+            cmd_doctor(client, &channel, target.as_deref(), format).await
+        }
         SessionsCmd::Export { channel, out } => cmd_export(client, &channel, &out).await,
         SessionsCmd::Grant {
             channel,
@@ -1614,6 +1868,246 @@ mod tests {
 
     fn tool_result(id: &str, is_error: bool) -> Value {
         json!({ "kind": "tool_result", "toolId": id, "isError": is_error })
+    }
+
+    /// Rebuilt from the real 2026-08-24 stall: prompt, one terminated tool,
+    /// then ~900s of nothing, then a synthesized error result carrying zero
+    /// tokens. This is the shape `doctor` exists to name on sight.
+    #[test]
+    fn a_dropped_prompt_is_named_from_its_transcript_alone() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let events = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &"a".repeat(64),
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                json!({ "kind": "user_prompt", "content": "merge it" }),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &"a".repeat(64),
+                base,
+                &session,
+                2,
+                Some("t-1"),
+                tool_call("Terminal", "toolu_1"),
+            ),
+            transcript_event(
+                &format!("{:064}", 3),
+                &"a".repeat(64),
+                base + 40,
+                &session,
+                3,
+                Some("t-1"),
+                tool_result("toolu_1", false),
+            ),
+            transcript_event(
+                &format!("{:064}", 4),
+                &"a".repeat(64),
+                base + 952,
+                &session,
+                4,
+                Some("t-1"),
+                json!({
+                    "kind": "result",
+                    "isError": true,
+                    "result": "Idle timeout — no agent activity for 870s",
+                    "inputTokens": 0,
+                    "outputTokens": 0,
+                }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        assert_eq!(turns.len(), 1);
+        let turn = &turns[0];
+
+        assert_eq!(turn.is_error, Some(true));
+        assert!(turn.unterminated_tools.is_empty());
+        assert!((turn.span_secs - 952.0).abs() < 0.5);
+        assert_eq!(turn.last_tool_offset_secs, Some(40.0));
+
+        let findings = turn.findings.join(" | ");
+        assert!(
+            findings.contains("never resolved this prompt"),
+            "the zero-token result is the clearest tell and must be called out: {findings}"
+        );
+        assert!(
+            findings.contains("every tool call terminated"),
+            "ruling the tools out is what separates this from a hung tool: {findings}"
+        );
+        assert!(
+            findings.contains("912s between the last tool frame"),
+            "the quiet window is the number a reader needs: {findings}"
+        );
+        assert!(
+            findings.contains("inferred"),
+            "without a turn_wire row the quiet onset is inferred, and saying so \
+             is the difference between a measurement and a guess: {findings}"
+        );
+    }
+
+    /// A turn that ended normally gets no findings — a triage command that
+    /// flags healthy turns trains people to ignore it.
+    #[test]
+    fn a_healthy_turn_is_reported_without_findings() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let events = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &"a".repeat(64),
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                json!({ "kind": "user_prompt", "content": "go" }),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &"a".repeat(64),
+                base + 12,
+                &session,
+                2,
+                Some("t-1"),
+                json!({
+                    "kind": "result",
+                    "isError": false,
+                    "result": "completed",
+                    "inputTokens": 2_465_043,
+                    "outputTokens": 4014,
+                }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        assert_eq!(turns.len(), 1);
+        assert!(
+            turns[0].findings.is_empty(),
+            "a clean turn must stay quiet: {:?}",
+            turns[0].findings
+        );
+    }
+
+    /// An unterminated call points at a hung tool, not a dropped prompt. The
+    /// two need different words or the command sends people the wrong way.
+    #[test]
+    fn a_hung_tool_is_distinguished_from_a_dropped_prompt() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let events = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &"a".repeat(64),
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                tool_call("Terminal", "toolu_hung"),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &"a".repeat(64),
+                base + 900,
+                &session,
+                2,
+                Some("t-1"),
+                json!({
+                    "kind": "result",
+                    "isError": true,
+                    "result": "Idle timeout — no agent activity for 870s",
+                    "inputTokens": 1200,
+                    "outputTokens": 30,
+                }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        let findings = turns[0].findings.join(" | ");
+        assert_eq!(turns[0].unterminated_tools.len(), 1);
+        assert!(
+            findings.contains("never terminated: Terminal (toolu_hung)"),
+            "name the call that was still open: {findings}"
+        );
+        assert!(
+            !findings.contains("never resolved this prompt"),
+            "real usage means the agent did answer — this is a hung tool: {findings}"
+        );
+    }
+
+    /// A published `turn_wire` row is a measurement and must win over the
+    /// inference, including dropping the caveat that says it is inferred.
+    #[test]
+    fn a_published_wire_row_replaces_the_inference() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let events = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &"a".repeat(64),
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                tool_call("Terminal", "toolu_1"),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &"a".repeat(64),
+                base + 40,
+                &session,
+                2,
+                Some("t-1"),
+                tool_result("toolu_1", false),
+            ),
+            transcript_event(
+                &format!("{:064}", 3),
+                &"a".repeat(64),
+                base + 952,
+                &session,
+                3,
+                Some("t-1"),
+                json!({
+                    "kind": "status",
+                    "status": "turn_wire: 47 frames/18 KiB over 952s; last \
+                               agent_message_chunk at +52.1s; quiet 900.0s"
+                }),
+            ),
+            transcript_event(
+                &format!("{:064}", 4),
+                &"a".repeat(64),
+                base + 952,
+                &session,
+                4,
+                Some("t-1"),
+                json!({
+                    "kind": "result",
+                    "isError": true,
+                    "result": "Idle timeout",
+                    "inputTokens": 0,
+                    "outputTokens": 0,
+                }),
+            ),
+        ];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        let turn = &turns[0];
+        assert!(
+            turn.wire
+                .as_deref()
+                .is_some_and(|wire| wire.contains("+52.1s")),
+            "the measured row must be surfaced: {:?}",
+            turn.wire
+        );
+        assert!(
+            !turn.findings.iter().any(|f| f.contains("inferred")),
+            "with a measurement present the inference caveat is wrong: {:?}",
+            turn.findings
+        );
     }
 
     /// The one ordering bug this command exists to not have: `cst-seq` is a
