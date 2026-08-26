@@ -335,15 +335,10 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::lease", "lease handoff failed: {error}");
                 }
             }
-            // Last on purpose. Delivery is still one row per pass — a slow relay
-            // ACK must not multiply across the backlog — but the *wait* between
-            // passes is the queue's own eligibility, not a timer, so a burst
-            // drains at relay speed instead of one row every RUNTIME_TICK. An
-            // empty outbox yields `None`, which parks this arm forever, and a
-            // failed publish yields its backoff, so neither case spins.
             // The replay reorder window closing is a delivery, not a timer
             // tick: the turns it holds are already the operator's, they are
-            // just waiting to be put back in the order they were sent.
+            // just waiting to be put back in the order they were sent. No open
+            // window yields `None`, which parks this arm.
             _ = sleep_for(replay_delay) => {
                 if let Err(error) = provider.flush_due_replays().await {
                     tracing::error!(target: "csp", "replayed turn delivery failed: {error}");
@@ -352,6 +347,12 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     tracing::warn!(target: "csp::lease", "lease handoff after replay failed: {error}");
                 }
             }
+            // Last on purpose. Delivery is still one row per pass — a slow relay
+            // ACK must not multiply across the backlog — but the *wait* between
+            // passes is the queue's own eligibility, not a timer, so a burst
+            // drains at relay speed instead of one row every RUNTIME_TICK. An
+            // empty outbox yields `None`, which parks this arm forever, and a
+            // failed publish yields its backoff, so neither case spins.
             _ = sleep_for(publish_delay) => {
                 if let Err(error) = provider.flush_one(&publisher).await {
                     tracing::error!(target: "csp", "outbox flush failed: {error}");
@@ -9793,6 +9794,12 @@ mod tests {
     /// unconsumed turn therefore came back backwards on the commonest
     /// recovery path there is — a socket drop, not a restart — and ran in
     /// reverse.
+    ///
+    /// What this pins, exactly: `reopen_replay_windows_after_reconnect`, which
+    /// it calls directly. It does not enter the run loop's `None =>` reconnect
+    /// arm — no test in this crate enters `run_with` at all — so the call site
+    /// itself is covered only by
+    /// `the_run_loop_still_calls_both_replay_entry_points`.
     #[tokio::test]
     async fn a_reconnect_reopens_the_replay_window_for_every_subscribed_channel() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -9852,12 +9859,17 @@ mod tests {
         );
     }
 
-    /// The run loop's own replay arm delivers held turns when the window
-    /// closes.
+    /// `flush_due_replays` delivers held turns once the window's own clock
+    /// runs out.
     ///
-    /// Every other replay test calls `flush_replays_now`, which is test-only:
-    /// deleting the production `flush_due_replays` arm left the suite green
-    /// while every held 44220 was held forever.
+    /// What this pins, exactly: the function, on the real deadline, not the
+    /// run loop's `sleep_for(replay_delay)` arm that calls it. Every other
+    /// replay test calls `flush_replays_now`, which is test-only and ignores
+    /// the clock. Nothing in this crate enters `run_with` — it builds a live
+    /// `HarnessRelay` before it reaches its `select!` — so deleting that arm
+    /// still leaves the suite green while every held 44220 is held forever.
+    /// `the_run_loop_still_calls_both_replay_entry_points` is the cheap
+    /// stand-in for that until the loop takes an injectable event source.
     #[tokio::test]
     async fn the_replay_window_closing_on_its_own_clock_delivers_held_turns() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -9995,5 +10007,40 @@ mod tests {
                 .is_none_or(|mark| mark <= base),
             "the floor still reaches the oldest turn this provider is holding"
         );
+    }
+
+    /// Both replay entry points are still wired into the run loop.
+    ///
+    /// Honest about what it is: a source-level pin, not an execution of the
+    /// arms. `run_with` connects a live `HarnessRelay` before it reaches its
+    /// `select!`, so no unit test in this crate can enter the
+    /// `sleep_for(replay_delay)` arm or the `next_event() -> None` reconnect
+    /// arm; the two tests above drive `flush_due_replays` and
+    /// `reopen_replay_windows_after_reconnect` directly and pin the functions,
+    /// not the call sites. Deleting either arm is the regression that leaves
+    /// every held 44220 held forever with no receipt, and until the loop takes
+    /// an injectable event source this is the cheapest thing that catches it.
+    #[test]
+    fn the_run_loop_still_calls_both_replay_entry_points() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("pub async fn run_with(")
+            .expect("run_with is this crate's run loop");
+        // Bounded at the test module so this test's own doc comment, which
+        // names both functions, cannot satisfy the assertions below.
+        let end = start
+            + source[start..]
+                .find("\n#[cfg(test)]")
+                .expect("the test module follows the run loop");
+        let run_loop = &source[start..end];
+        for call in [
+            "provider.flush_due_replays()",
+            "provider.reopen_replay_windows_after_reconnect()",
+        ] {
+            assert!(
+                run_loop.contains(call),
+                "the run loop no longer calls {call}: held turns are never delivered"
+            );
+        }
     }
 }
