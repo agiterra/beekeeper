@@ -70,9 +70,11 @@ if [[ "${1:-}" == "--remote" ]]; then
 
     echo "== git user credential config =="
     install -d -m700 -o git -g git /home/git/.nostr
-    sudo -u git git config --global "credential.${RELAY_SCOPE}.helper" nostr
-    sudo -u git git config --global "credential.${RELAY_SCOPE}.useHttpPath" true
-    sudo -u git git config --global nostr.keyfile "$KEYFILE"
+    # -C /home/git: this script's cwd is /root, which user git cannot read —
+    # git 2.55's repo discovery makes even `config --global` fatal there.
+    sudo -u git git -C /home/git config --global "credential.${RELAY_SCOPE}.helper" nostr
+    sudo -u git git -C /home/git config --global "credential.${RELAY_SCOPE}.useHttpPath" true
+    sudo -u git git -C /home/git config --global nostr.keyfile "$KEYFILE"
 
     echo "== hive remote on $MIRROR_REPO =="
     if sudo -u git git -C "$MIRROR_REPO" config --get remote.hive.url >/dev/null 2>&1; then
