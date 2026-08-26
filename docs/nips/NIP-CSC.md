@@ -69,6 +69,17 @@ adapters route on, so the two can never be allowed to disagree.
 The command author is the signed event pubkey. Consumers must never use JSON
 content as claimed operator attribution.
 
+### `commandId` correlates the receipt and the echo
+
+A `thread.turn.start` command's `commandId` is the join key for everything
+that command produces downstream: the provider's per-stage
+[NIP-CSL](NIP-CSL.md) `kind:44224` receipts (`turn_queued`, `turn_started`,
+`turn_dropped`, `turn_refused`) and the [NIP-CST](NIP-CST.md) `kind:44225`
+`user_prompt` transcript item that opens the turn, which carries this same
+`commandId` when present. A consumer that wants to know what became of one
+signed command reads both streams keyed on it, rather than matching prompt
+text or polling.
+
 ## Authority
 
 The relay requires `messages:write`, a valid `h` channel scope, and an actual

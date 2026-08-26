@@ -82,6 +82,46 @@ controlled by `BUZZ_CSP_INCLUDE_THOUGHTS` on the producer (default on). A
 deployment that does not want them recorded turns the flag off; nothing
 downstream requires them to be present.
 
+## Fork amendment: `user_prompt` correlation fields
+
+A `user_prompt` item is additionally, optionally, attributed to the exact
+command that opened its turn:
+
+```json
+{
+  "item": {
+    "kind": "user_prompt",
+    "content": "Add a test for the empty case.",
+    "steered": false,
+    "operatorPubkey": "64-lowercase-hex-signer",
+    "commandId": "the-thread.turn.start-commandId"
+  }
+}
+```
+
+`operatorPubkey` and `commandId` are both additive and optional, following the
+rule that governs every item field here: present only when the provider
+actually witnessed the fact, omitted entirely rather than sent as `null` when
+it did not, so an item published before either field existed stays valid
+forever.
+
+`commandId` is the `commandId` of the [NIP-CSC](NIP-CSC.md) `kind:44220`
+`thread.turn.start` command that started this turn — the same identifier the
+`turn_started` [NIP-CSL](NIP-CSL.md) `kind:44224` receipt for that command
+carries, so a reader can join a transcript line to the wire command and to its
+receipts without a text match. It is present whenever a `thread.turn.start`
+command started the turn. It is absent for exactly one case: the initial turn
+embedded in a `kind:44221` `session.create`'s `initialTurn`, which has no
+`thread.turn.start` command of its own — for that turn, use the *create's*
+`commandId` instead, so every operator-originated prompt stays joinable to the
+command that caused it. `commandId` follows the NIP-CSC identifier bounds:
+nonblank after trimming, at most 256 UTF-8 bytes, no control characters.
+
+The desktop's pending-turn row settles on this field when present; matching
+prompt text remains a fallback for echoes an older provider produced with no
+`commandId`, and a row that settled that way says so rather than presenting a
+text match as equally strong evidence.
+
 ## Authority and immutable reconciliation
 
 The relay requires `messages:write`, an `h` channel scope, and **active channel
