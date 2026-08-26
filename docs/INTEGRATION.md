@@ -9,7 +9,7 @@ is the product, and upstream is merged in occasionally.
 | Remote | Repo | What it is |
 |---|---|---|
 | `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. **`main` tracks `origin/main`**, and this is where you push. Needs Nostr credentials; run `just install-git-credentials`. |
-| `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | GitHub. Still what **Woodpecker watches**, so it is what CI and the relay deploy from — kept in step as `origin`'s second push URL, not by pushing here separately. |
+| `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | GitHub. Still what **Woodpecker watches**, so it is what CI and the relay deploy from — kept in step automatically by the forge's mirror bridge (see § The relay is canonical). Fetch-only from clones; never push here. |
 | `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
 
 This is not the arrangement described before 2026-08-24, when `origin` was the
@@ -17,28 +17,29 @@ GitHub repo and there was no `upstream`. Both names moved at once, so anything
 you remember about which is which is probably stale — `git remote -v` is the
 only reliable answer.
 
-### One push, two destinations
+### One push, one destination (since 2026-08-26)
 
-`origin` fetches from the relay and pushes to **both** the relay and GitHub:
+Push to `origin` (the relay) only. The forge mirrors every ref to GitHub
+within seconds — `hive-mirror-bridge.service` subscribes to the relay's
+kind:30618 ref-state events and runs the sync on each one, with the hourly
+`git-mirror.timer` as reconcile fallback. GitHub then triggers Woodpecker as
+before. Setup per clone:
 
 ```sh
-git remote set-url --add --push origin "$(git remote get-url origin)"
-git remote set-url --add --push origin https://github.com/agiterra/beekeeper.git
 git branch -u origin/main main
+git remote add upstream https://github.com/agiterra/beekeeper.git   # fetch-only
 ```
 
-Order matters — the first `--add --push` replaces the implicit push URL, so the
-relay has to be added explicitly too or it stops receiving pushes. Check with
-`git remote get-url --push --all origin`; both must be listed.
+A clone still carrying the pre-bridge dual push URLs should drop them —
+pushing to GitHub directly now only creates races against the bridge:
 
-This is per-clone config in `.git/config`, not something the repo carries. A
-fresh clone needs it again.
+```sh
+git config --unset-all remote.origin.pushurl
+```
 
-The honest limit: the two pushes are **sequential, not atomic**. Git reports a
-failure per URL, so divergence is visible rather than silent — but a push that
-reaches the relay and fails at GitHub leaves a commit that will not build,
-because Woodpecker only sees GitHub. `git rev-parse origin/main upstream/main`
-is the one-line check.
+Divergence check (fetch first, or you are comparing frozen refs):
+`git fetch upstream && git rev-parse origin/main upstream/main`. The bridge
+logs on the forge: `journalctl -u hive-mirror-bridge`.
 
 Why the relay is the fetch side: it is measurably faster from here (~190 ms
 against GitHub's ~400 ms), and the pre-push guards resolve their base from
@@ -315,27 +316,43 @@ from outside: publish a probe event of a kind the new build introduced and read
 the relay's verdict — an older relay answers `restricted: unknown event kind`.
 
 Mirrors + CI run on the `forge` incus container on agincus (bare mirrors at
-`/srv/git`, Woodpecker at `ci.agiterra.org`). GitHub remains the canonical
-host; the forge is additive infrastructure.
+`/srv/git`, Woodpecker at `ci.agiterra.org`).
 
-**That is being inverted, in steps.** The intent is for the relay to be
-canonical and GitHub to be a CI mirror. What blocks a straight swap is narrow
-and specific: Woodpecker needs a *forge* it can talk to — OAuth login, a repo
-and branch API, webhook delivery on push, commit-status reporting — and the
-relay's git hosting is a bespoke NIP-98-authed smart-HTTP transport with none
-of those. Its three routes are `info/refs`, `git-upload-pack` and
-`git-receive-pack`, and nothing else.
+**The relay is canonical (since 2026-08-26).** For beekeeper the old
+GitHub-pull mirror is inverted: `/srv/git/beekeeper.git` fetches from the
+relay and pushes to GitHub, which exists as CI trigger and backup. The moving
+parts, all deployed by `scripts/forge/setup-hive-mirror.sh` (idempotent,
+re-run it after changing any of them):
+
+- **`buzz-mirror-bridge`** (`crates/buzz-mirror-bridge`, installed to
+  `/usr/local/bin`, run as `hive-mirror-bridge.service`) subscribes to the
+  relay's relay-signed **kind:30618** NIP-34 ref-state events — published on
+  every ref-changing push, replaceable, so the bridge simply resyncs per event
+  and on every reconnect — and runs the mirror sync within seconds of a push.
+- **`git-mirror-update`** (`scripts/forge/git-mirror-update`) does the sync.
+  Direction is per-repo git config, never a hard-coded remote name:
+  `mirror.fetchRemote` (the relay) and `mirror.pushRemote` (GitHub) flip a
+  repo to canonical→local→backup; repos without them (buzz, cairn, portage…)
+  keep the old GitHub-pull behavior. The hourly `git-mirror.timer` runs the
+  same script as the reconcile fallback, so a dead bridge costs latency, not
+  commits. Pushes use forced refspecs but **no prune** — GitHub-only refs are
+  left alone.
+- The forge's identities: an SSH deploy key with **write** access for the
+  GitHub push, and a Nostr key (`/home/git/.nostr/key`, member of the
+  community and of the repo's bound channel) for the NIP-98 fetch — the git
+  read gate 404s repos to non-members, and `git-credential-nostr` (git 2.46+
+  required, PPA-installed on the forge) signs the fetches.
+
+Woodpecker still watches GitHub, and that constraint is unchanged: it needs a
+*forge* — OAuth login, repo/branch API, webhook delivery, commit statuses —
+and the relay's git hosting is a bespoke NIP-98-authed smart-HTTP transport
+whose only routes are `info/refs`, `git-upload-pack` and `git-receive-pack`.
+The bridge is what reconciles "the relay is canonical" with "CI clones from
+GitHub".
 
 Everything *downstream* of the forge is already GitHub-free and stays that way:
 `autodeploy` reads Woodpecker's sqlite and `git archive`s the local bare mirror,
 so it never talks to GitHub at all.
-
-The push notification the relay does emit is a relay-signed **kind:30618**
-NIP-34 ref-state event, published on every ref-changing push (and on repo
-creation — it is replaceable, so a listener must compare refs rather than treat
-each as new work). That, not a webhook, is what a future relay→mirror bridge
-would subscribe to. Until such a bridge exists, keeping GitHub in step is a
-push to both remotes.
 
 ### CI caching
 

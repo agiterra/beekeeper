@@ -5,6 +5,29 @@ authority (§4), a protocol for a specific experiment, or history. This file
 is updated on every build and whenever live use produces a finding; if it
 disagrees with an older document about *current state*, this one wins.
 
+> **2026-08-26 — the relay is canonical; GitHub is a bridge-fed follower.**
+> Verification first: nothing server-side ever pushed to GitHub — Woodpecker's
+> forge *is* GitHub (`WOODPECKER_GITHUB=true`), so GitHub pushes trigger CI,
+> and the only thing keeping GitHub current was the per-clone dual push URL.
+> That is now inverted for beekeeper: `hive-mirror-bridge.service` on the
+> forge (`crates/buzz-mirror-bridge`) subscribes to the relay's kind:30618
+> ref-state events and syncs relay → `/srv/git/beekeeper.git` → GitHub within
+> seconds; the hourly `git-mirror.timer` is the reconcile fallback. Deployed
+> by `scripts/forge/setup-hive-mirror.sh`; direction is per-repo
+> `mirror.fetchRemote`/`mirror.pushRemote` config (other `/srv/git` repos
+> still pull GitHub). Forge identities: deploy key
+> `forge-mirror-beekeeper-rw` (write), Nostr pubkey `f08a4e42…0627` — relay
+> member *and* #general member, because the git read gate 404s repos to
+> non-channel-members. Forge git upgraded to 2.55 (credential `authtype`
+> needs ≥2.46). Push **only to `origin`** now; the dual push URL is retired
+> (`git config --unset-all remote.origin.pushurl` on clones that still carry
+> it) — a direct GitHub push now merely races the bridge, which was observed
+> beating a dual-push's GitHub leg with its own commit on day one. The
+> divergence that motivated all this happened the same day: a GitHub-only
+> push and a hive push split `main` for an hour.
+> `docs/INTEGRATION.md` § Remotes and § The relay is canonical carry the
+> durable version of this.
+
 > **2026-08-21 — the branch ceremony is gone, and so is the repo it ran in.**
 > This repo is now `agiterra/beekeeper`: a single `main` branch, ordinary topic
 > branches, upstream **merged** in occasionally. **Since 2026-08-23 topic
@@ -33,14 +56,15 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
+_Last updated: 2026-08-26 — the mirror inversion landed and is live (banner
+above); `main` is identical on the relay and GitHub, fed by the bridge._
+
+_Previously: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
 rebuild, the session ceiling and silent-turn budget as settings, and the
-redaction rework) are fixed and pushed through CI #24; items 51-53 and 55-56
-are the full-screen session pass, item 57 is its final multi-agent interaction
-refinement, and item 54 records the Claude
-background-shell / unresolved-prompt failure proven in Andy's shared session.
-The latest multi-agent narrative work is on `fix/full-screen-session-ux` and
-awaits live confirmation after the development app is rebuilt._
+redaction rework) are fixed and pushed through CI #24; items 51-52 are the
+composer responsiveness fix and the full-screen UI critique that comes next.
+**Five commits are unpushed** and the dev instance was last rebuilt at
+01:44Z with all of them. `main` is `88d64ea3` on both remotes._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -1226,6 +1250,221 @@ same morning and one left as a product question.
       at its next start, and the panel says so while the two differ. The
       default is unchanged at fifteen minutes, because raising it silently
       would trade one wrong number for another.
+    - **Amended 2026-08-25, re-amended 2026-08-26.** Some of these turns were
+      not slow at all — see item 51. A silence budget cannot distinguish work
+      in progress from a prompt the adapter dropped, and both were landing
+      here. Two of the six turns in the measured session were the latter.
+
+51. **A coding session hung for fifteen minutes after it had already
+    answered.** Andy: the answer finishes, "but nothing triggers the main
+    thread to run again". Confirmed against the live transcript — see the
+    measurement bullet below, which also **rules out the subagent cause this
+    entry originally named**. What follows about `claude-agent-acp` 0.70.0
+    (`~/Library/Application Support/Bee Keeper/node-tools/lib/node_modules/
+    @agentclientprotocol/claude-agent-acp/dist/acp-agent.js`) is a real latent
+    bug found while reading for this, but it is **not** what happened here:
+    `settleOrDefer` (`:1559-1575`) holds the `session/prompt` open
+    while a Task subagent is live, and when the subagent ends —
+    `task_notification` at `:2339`, terminal `task_updated` at `:2350` — the
+    entry is deleted but **`settleDeferredIfDrained` is never called from any
+    task-lifecycle handler**. It is reachable from `:2106`, `:2138`, `:2714`
+    and nowhere else. The turn is drainable and nobody looks. The adapter's own
+    idle-without-result failsafe (`#825`, `:2141`) cannot rescue it either:
+    `isHeldOpen` (`:124-127`) tests only "outcome recorded, not yet resolved"
+    and sits ahead of it in the idle chain, so a held turn always
+    short-circuits first. Per the bundle, only a client-sent `session/cancel`
+    or a new prompt gets out. A session that *does* spawn a subagent should
+    therefore hang exactly this way; none of the transcripts read so far does.
+    - **Measured 2026-08-26 against the session Andy named, and the subagent
+      cause did not survive it.** `bee sessions transcript` on channel
+      `023cf12c-e589-4771-88d4-99b0a2d68cec`, session
+      `d9e04173-3b78-4c00-9891-269ac4eab643` generation 1 ("project repo
+      access"): 582 items, 6 prompts, **2 stalled** — turn `150fcad7` at
+      2026-08-24 12:09:01Z and turn `7f0bb8af` at 13:15:49Z, both closed by the
+      idle guard at 952.1s and 954.1s. The check this ledger set for itself was
+      "an unterminated Task-shaped `tool_call` plus a ~900s gap confirms the
+      hold; a terminated one points elsewhere." It pointed elsewhere:
+      **257 `tool_call`s, 257 `tool_result`s, zero unterminated, and no
+      Task/Agent call anywhere in the session** (census: Terminal 207, Edit 30,
+      Read File 8, ToolSearch 4, one each of EnterPlanMode, grep, Monitor,
+      TaskStop, ListAgents). The adapter cannot have been holding: `:2333` adds
+      to `spawnedTaskIds` only when `message.subagent_type` is set, and
+      `turnAwaitingSubagents` requires `record.isSubagent` (`:1538`) — the
+      bundle calls this the "shells-never-defer contract" in as many words.
+    - **What the transcript does prove is the shape, and the fix keys on the
+      shape.** Both stalled turns end `assistant_text` → `context_window_updated`
+      → `result` at one instant — the close flush — exactly like the four clean
+      turns; the difference is only that their `result` is Buzz's synthesized
+      error carrying `inputTokens: 0, outputTokens: 0` where a clean turn
+      carries real counts. **No SDK `result` ever arrived.** Subtracting the
+      900s budget from each span locates when the wire actually went quiet.
+      **Corrected 2026-08-26 against the provider log, which logs the timeouts
+      directly and made the arithmetic unnecessary:** turn `150fcad7`'s idle
+      fired at 12:24:53, +952s, so its last frame was at +52.1s. Turn
+      `7f0bb8af`'s fired at 13:31:13, **+924s not +954s** — the extra 30s is
+      the cancel-drain grace, logged separately as `hard turn timeout exceeded
+      (silence 30.0015465s)` at 13:31:43 because that adapter ignored the
+      cancel. Its last frame was at **+24.1s**, not the +54.1s first derived.
+      Subtracting the budget from the span only works when the drain is clean.
+      Either way: a short burst of streaming after the last tool, then nothing. The
+      answer had finished and the adapter went silent — which is precisely what
+      `BUZZ_CSP_ANSWER_STALL_TIMEOUT` arms on. Both turns would have been
+      nudged at ~172s and published Completed with the answer intact, about
+      **780 seconds earlier**.
+    - **The strongest remaining lead is background work, not subagents.** A
+      backgrounded terminal command (`btt3f5d4c`, armed 11:43:22Z, never
+      stopped) and a `Monitor` armed 11:43:27Z were live across the stalls, and
+      the Monitor's own timeout is **900000ms — the same 900s as Buzz's idle
+      budget**, so the two clocks are indistinguishable by duration alone. It
+      is not deterministic: the turn between the two stalls ("Ok to push.")
+      completed in 149s with the same background task live. Deciding this needs
+      the adapter stderr and raw SDK frames that item 51's own step 1 now
+      captures and that were not running on 2026-08-24 — so the next stall,
+      not this one, is the one that will name the cause.
+    - **The earlier reading was wrong, and worth recording as wrong.** The
+      first analysis held that T3 Code stays healthy because it keeps the SDK
+      stream alive across turns while the ACP adapter does not, and proposed
+      forking the adapter on that basis. Both run a single persistent
+      streaming-input `query()` per session — T3 at `ClaudeAdapter.ts:3855-3863`
+      and `:4377`, the adapter at `acp-agent.js:~1002-1036`. The real
+      difference is that **T3 never lets background work block a turn**:
+      `ThreadBackgroundLiveness.ts` is an advisory sidebar pill. ACP has to
+      answer "which result settles which prompt", and chose to wait.
+    - **Also amend the claim that the adapter "flushed its answer only during
+      cancellation".** That timestamp is Bee Keeper's own flush. The translator
+      buffers agent text to a size, tool, or turn-end boundary
+      (`transcript.rs:13-19`, `:122-127`) and `close_turn()` runs after the
+      cancel drain.
+    - **Fixed by watching for the shape of a finished turn.** Once top-level
+      prose has streamed and every tool call opened has reported terminal,
+      nothing is left to be doing and the result normally follows in
+      milliseconds; silence *there* gets `BUZZ_CSP_ANSWER_STALL_TIMEOUT`
+      (default 120s) instead of the fifteen-minute silence budget, which stays
+      as it is because it still has to cover genuinely long tools. On expiry
+      the provider **nudges** with the adapter's own escape hatch rather than
+      killing: the turn usually returns a real stop reason and is published
+      **Completed with the answer intact**, plus a status row saying Bee Keeper
+      had to close it. Reporting it as clean would hide the defect from the
+      only person able to report it upstream.
+    - **A second, independent silence, now closed.** The adapter strips a
+      subagent's prose and thinking unless the client declares the
+      `subagent-transcript` capability (`:3252-3259`, `:4768-4769`), and Buzz
+      did not. A subagent that reasoned for minutes without calling a tool put
+      *nothing* on the wire, so the idle timer counted down through healthy
+      work. Buzz declares it now — and the translator had to learn to ignore
+      `_meta.claudeCode.parentToolUseId` in the same change, or the subagent's
+      narration concatenates into the agent's own prose as one indistinguishable
+      block. Publishing subagent work properly needs an item kind the clients
+      can render; until that exists the honest handling is to carry the
+      liveness and publish nothing.
+    - **Still open, deliberately.** Nothing reads the adapter's stdout between
+      turns (`session.rs`, the actor's idle select has no reader arm), so a late
+      notification waits for the next prompt and past ~64 KiB the adapter blocks
+      on write. That is the out-of-turn delivery channel T3 has and Buzz does
+      not; it is prerequisite for ever promising "you'll be notified when it's
+      done", and it will not fix this hang on its own.
+    - **Instrumented 2026-08-26 so the next stall names its own cause.** Six
+      changes, because the forensic pass showed the evidence was not merely
+      missing but structurally unreachable.
+      1. **The desktop app installed no `tracing` subscriber**, so its own
+         instrumentation went nowhere; `desktop/src-tauri/src/logging.rs` now
+         opens a daily rolling file under
+         `~/Library/Logs/io.agiterra.beekeeper.app`. **Corrected same day —
+         this was first written up as far more important than it is.** The
+         claim was that the ACP and provider stacks' ~440 call sites were all
+         being discarded. They were not: `buzz-session-provider` runs as a
+         supervised *child process*, installs its own subscriber
+         (`buzz-session-provider/src/lib.rs:147`), and has its stdio
+         redirected by `supervisor.rs:621-629` to
+         `<app data>/session-provider/logs/<pubkey>.log` — a file that already
+         existed and is where `acp::stall`, `acp::stderr`, `acp::sdk_frame`
+         and every `csp::` line actually land. The desktop crate has 14
+         tracing sites of its own, not 440. **Read the provider log, not the
+         desktop one, when diagnosing a session.**
+      2. **The timeout errors carry a `TurnWireSummary`** (`acp.rs`): frames,
+         bytes, kinds, first/last arrival, tools in flight, whether prose had
+         streamed. The message now says "last agent_message_chunk at +52.1s;
+         quiet 900.0s; 0 tools in flight; answer streamed" — the sentence that
+         cost an hour of subtracting the budget from the span by hand.
+      3. **`BUZZ_CSP_IDLE_TIMEOUT` defaults to 870, not 900.** Claude Code's
+         `Monitor` budget is 900000ms; while ours matched, a turn killed at
+         ~900s could have been ended by either clock and the duration did not
+         say which. Do not round it back.
+      4. **Abnormal turns publish the same facts as a `turn_wire:` status
+         row**, so a reader who was never near the machine has them too.
+         Abnormal only: every turn is published and kept forever.
+      5. **`BUZZ_CSP_EMIT_RAW_SDK_FRAMES`** asks the adapter for every raw SDK
+         message (`acp-agent.js:5183`, forwarded at `:1829-1836`). These carry
+         `origin.kind` and the whole task lifecycle. **Local log only** — they
+         are the adapter's unredacted internals, and a test drives a frame
+         carrying a host path and a credential marker through a live session
+         and fails if either reaches a published item.
+      6. **`bee sessions doctor`** does the triage as a command. It separates
+         the two failures that look alike: zero usage with every tool
+         terminated is a prompt the agent never resolved; real usage with a
+         call still open is a hung tool. Where no `turn_wire` row exists it
+         says the quiet window is inferred rather than measured.
+    - **2026-08-26, first raw frames: a better upstream bug, with evidence.**
+      `BUZZ_CSP_EMIT_RAW_SDK_FRAMES=true` on the rebuilt app produced 8447
+      frames in two hours, and among them the task lifecycle this whole
+      investigation was missing. A backgrounded Task subagent (`Explore`,
+      task `a6522ff1683ff2069`, 10:06:59) emits a `task_started` carrying
+      `task_type:"local_agent"` and `is_backgrounded:true` — and **no
+      `subagent_type` field at all**. `subagent_type:"Explore"` appears on the
+      `task_progress` frames instead, which the adapter discards with a bare
+      `break` (`:2307-2308`).
+      The adapter reads exactly the field that is absent, on exactly the frame
+      that lacks it: `isSubagent: !!message.subagent_type` (`:2330`) and the
+      `spawnedTaskIds.add()` gate (`:2333`). So `isSubagent` is false, the set
+      stays empty, `turnAwaitingSubagents` returns false — **the deferred-settle
+      hold cannot arm at all on this CLI (2.1.241)**. It is not a missing
+      drain call; it is a field-name mismatch upstream of it.
+      This supersedes the `settleDeferredIfDrained` reading as the thing to
+      report: same subsystem, direct frame-level evidence, and it explains why
+      no transcript here ever reproduced the hold. The observed instance did
+      not hang — the agent answered from the progress frames at 10:09:09, one
+      second before the subagent completed, and the turn ran on to a result at
+      10:22:32 — so this is a latent defect, not the cause of the 08-24 stalls.
+      16 of the other 17 tasks were `local_bash`/`is_backgrounded:false`, which
+      correctly never defer.
+    - **2026-08-26, built: background work is visible now.** The lived
+      complaint turned out to be a different defect from the stall, and the one
+      with evidence. A session launches an async subagent or a detached build,
+      the turn ends, and nothing reports on it — the agent's "I'll tell you when
+      the tests finish" was a promise nothing here could keep.
+      - `BUZZ_CSP_EMIT_RAW_SDK_FRAMES` is a **mode**, defaulting to a filtered
+        `lifecycle` set. Unfiltered cost 8447 frames in two hours (6072 of them
+        `stream_event`) for the 80 that carry information; `shouldEmitRawMessage`
+        takes a matcher array, so the filter is a whitelist. `all` is the
+        firehose, `off` sends no `_meta` key at all. Default-on is the point:
+        the adapter emits nothing about the task lifecycle to the wire, so
+        these frames are the *only* channel that says background work exists.
+      - `BackgroundTasks` folds them into structural facts. Classification
+        reads `task_type`, **not** `subagent_type` — the latter is the field
+        whose absence breaks the adapter's own hold. Registration requires
+        `is_backgrounded`, because 16 of the 17 tasks observed were ordinary
+        foreground commands the turn was already waiting on.
+      - The actor's between-turns select gained a reader arm. It folds raw
+        frames and **buffers everything else** for the next turn's read loop,
+        which dispatches it exactly as before — buffering rather than dropping
+        is what keeps this behaviour-preserving for the frames it does not
+        interpret. Out-of-turn permission requests still wait for the next turn.
+      - Rows publish with `turnId: null`;
+        `codingSessionTranscriptModel.ts:102` already renders those standalone,
+        so no synthetic turn was needed. Counts, kinds and durations only —
+        `description` and `prompt` are verbatim host paths and argv, and
+        `fit_item` is a size cap, not a scrubber.
+      - The idle reaper no longer fires over live work, bounded at two hours,
+        and says so when the bound is hit. Reclaiming a session whose build is
+        still running kills the build.
+      - **No new `SessionStatus` variant**, deliberately: the enum has no
+        `#[serde(other)]` fallback, so an unknown variant makes the whole
+        metadata payload fail to parse in every Rust consumer including `bee`.
+    - **Not yet reported upstream, and the report must not overclaim.** The
+      missing `settleDeferredIfDrained` call in the two task-lifecycle handlers
+      is a one-line fix in their code and a genuine latent bug, but no
+      transcript here reproduces it. File it as a code reading, not as an
+      incident report.
 
 
 ### Built 2026-08-24 — project membership is the repository access signal
@@ -1348,183 +1587,6 @@ written and `bash -n` clean but **was not executed** — that harness needs
     10. *`Send` and `Stop execution` are neighbours* at the same weight, one of
         them terminal.
 
-    **Implemented on `fix/full-screen-session-ux` (2026-08-25):** the composer
-    dock is opaque with its fade entirely above it; the narrative and composer
-    expand from 48rem to 72rem only while no Agents/Changes surface is open;
-    the latest signed plan now drives both the compact inline plan + Work Log
-    and a T3-style Tasks sheet attached above the composer instead of a side
-    rail. The empty goal is a small action. Turn boundaries have separators.
-    Session-context MCP results unwrap their one-text-block transport envelope
-    and summarize as `Session history · N items`; exact-zero durations are
-    omitted. Packed model ids are decoded everywhere the session labels them
-    (`gpt-5.6-terra · Low`, not `gpt-5.6-terra[low]`). The composer no longer
-    repeats the header's Idle/Working state, completed-turn handoff chips are
-    revealed only on hover/focus, and terminal execution stop is an icon action
-    rather than a peer of Send. Evidence: the focused desktop tests plus the
-    three-view Playwright workflow in
-    `coding-session-transcript-narrative-screenshots.spec.ts`; its collapsed
-    task, expanded task, and opened Changes views are pixel-distinct.
-
-53. **A running turn no longer locks the full-screen editor** (live comparison
-    with T3 Code, 2026-08-25). The old composer disabled its textarea whenever
-    the provider did not declare `threadSteer`, conflating “cannot inject into
-    this turn” with “cannot write the next one.” The editor now stays available:
-    a steer-capable provider still offers `Steer`; otherwise the action reads
-    `Queue`, stores the draft locally without publishing a command or optimistic
-    row, and publishes exactly once when the current turn settles. The queued
-    row is explicit and cancellable. `CodingSessionComposer.optimistic.test.mjs`
-    proves the relay sees zero commands while the turn is working and one after
-    the state becomes idle; the wide E2E screenshot proves the editor is enabled
-    in that state.
-
-54. **OPEN: Claude background shell completed, but the following ACP prompt
-    never resolved until Bee Keeper cancelled it.** Andy's shared session is
-    channel `7df9fd91-0066-461c-bc6b-5f49c6bb9a16`, session
-    `ecde2480-c334-491d-ad6f-c8685e22ee02`, generation 1, signed projection
-    `4b6fd011e70b1323…c150f4312b9` (`claude-agent-acp`, title "Rebuild Bee
-    Keeper"). The signed kind-44225 sequence separates two failures that look
-    like one spinner:
-    - Turn 1 launched `scripts/local-prod-build.sh HEAD` as a Claude Terminal
-      background command. Its tool result explicitly said "You will be
-      notified when it completes" (event seq 20), but the ACP turn then ended
-      successfully after 41,422 ms (seq 27). That promise is not a Bee Keeper
-      capability: a detached shell can outlive the prompt, and neither ACP nor
-      the adapter creates a new person-visible turn when it exits. The current
-      adapter's background-subagent hold deliberately excludes background
-      shells because a server can live forever; its own fix records this as an
-      out-of-scope, out-of-turn episode
-      ([claude-agent-acp #870](https://github.com/agentclientprotocol/claude-agent-acp/commit/7a70f82739e085014cad878f08513cdef7b7fe16)).
-    - The build itself was healthy. When Andy asked "Is it done?" 41m 50s
-      later, Claude immediately emitted two Terminal calls and two successful
-      results (seq 29-32); the captured build output says `Finished release`,
-      bundle OK, installed, exit code 0. Then the adapter emitted **nothing for
-      934,726 ms**. At Bee Keeper's configured 900s silence boundary the
-      provider sent `session/cancel`; only during that cancellation drain did
-      Claude flush the complete "Yes — done" answer (seq 33), followed 19 ms
-      later by the honest terminal result `Idle timeout — no agent activity
-      for 900s` (seq 35). This is the exact wire shape independently reported
-      upstream: streamed output, no response to `session/prompt`, response only
-      after `session/cancel`
-      ([claude-agent-acp #970](https://github.com/agentclientprotocol/claude-agent-acp/issues/970)).
-    - A second upstream Claude SDK report now names the preceding trigger:
-      background-task notifications can sit queued in streaming-input mode
-      until a later user message wakes the session
-      ([claude-code #88378](https://github.com/anthropics/claude-code/issues/88378)).
-      That is consistent with this session, but the signed transcript does not
-      carry Andy's installed adapter/SDK versions or provider stderr, so it is
-      an inference, not yet the proven local root cause.
-    - **Do not "fix" this by only raising the silence budget.** That merely
-      moves an unresolved ACP request farther away; Bee Keeper's timeout and
-      cancellation did the useful thing here and preserved both the late answer
-      and the fact that its turn failed. Next evidence: on Andy's machine record
-      `claude-agent-acp` and Claude Code versions plus raw ACP/provider stderr,
-      then reproduce once on the latest released adapter. Product follow-up:
-      never let an agent promise a proactive report for a detached shell unless
-      the session has a real session-level background-work lifecycle to deliver
-      it.
-
-55. **The active plan and composer now behave as one turn-scoped work surface**
-    (T3 Code comparison, 2026-08-25). The floating composer is a solid surface
-    with one borderless editor and one quiet control row: the provider/model
-    identity and access label open explanatory popovers; model traits are
-    informational rather than fake selectors; execution stop is terminal and
-    lives under More; and a context meter appears only when a signed
-    `Context Window Updated` item supplies real token use. Send/Queue/Steer and
-    interrupt retain the existing authority and capability gates.
-    - The Tasks attachment is derived only from the newest signed plan in the
-      currently running transcript turn. A stale, untraceable, completed, or
-      idle plan cannot pin itself above the composer. Closing dismisses that
-      turn's attachment; a newer signed turn may open its own. Completed rows
-      retain elapsed time derived from same-turn signed plan snapshots, and the
-      active row reads `now`. Completion releases the attachment automatically.
-    - The Goal bar, transcript, task attachment, and composer share one measure:
-      72rem while the workspace is clear, 48rem while Agents or Observed changes
-      occupies the side, with both values rem-based so Cmd +/- preserves the
-      reading measure. The Goal bar now lives inside the shrinking narrative
-      section rather than remaining centered across the hidden flank.
-    - Multi-provider umbrellas use that same surface instead of leaving their
-      routing chips and instructions above it. The recipient is a compact
-      human-labelled control inside the composer; its menu keeps execution
-      targets visible but honestly disabled without control authority, and the
-      Session lane remains available. Selecting an execution also selects the
-      signed active Tasks attachment for that execution. Umbrellas now open
-      with no side surface, then contract only when Agents, Changes, or People
-      is requested.
-    - Evidence: 47 focused composer/task/context tests; all 6,166 desktop unit
-      tests; the three-view transcript narrative screenshot workflow; and the
-    width workflow at 1100/1280/1920/2560/3440px, with a side surface and at
-    24px root zoom. The repository-wide `just ci` gate passed on 2026-08-25.
-
-56. **A multi-agent session now reads as one attributed story, not one
-    agent's log with the others hidden behind a count** (T3 Code-informed pass,
-    2026-08-25). The signed flat timeline remains the record; presentation now
-    makes each execution legible without splitting it into tabs or swimlanes.
-    - Every execution has a stable accent used by its header chip, turn rail,
-      sticky provenance, and handoff actions. Sticky provenance exists only in
-      the merged multi-agent read, where the author can otherwise scroll away;
-      it is bounded by its turn block and uses an opaque surface.
-    - The header execution chips are the focus control. Selecting Codex folds
-      other agents' turns to attributed one-line summaries in their original
-      positions; people, handoffs, and lifecycle facts are never hidden.
-      Selecting the chip again returns to All. Focus and the composer's
-      recipient deliberately share identity styling but no state, so reading
-      Claude cannot retarget a draft and choosing a recipient cannot hide the
-      passage being handed off.
-    - The T3-style **Active Work** attachment is the current work surface for
-      every execution that is actually working. It shows only a current signed
-      plan when one exists, says truthfully when no plan was published, and
-      collapses to nothing when all executions are idle or complete. Dismissal
-      is scoped to the current work fingerprint; newer work can reopen it.
-    - A completed turn ends with an always-visible boundary naming its author,
-      signed duration/cost when supplied, and explicit Reply / Send-to actions.
-      Assistant prose is back on the app's `text-base` chat ramp. The goal is
-      under the session title, founder provenance moved into Info, and the
-      Agents / Changes / People controls form one responsive surface switcher.
-    - Multi-agent sessions automatically open Agents beside the narrative only
-      when the available body is at least 1920px. Laptops and single-agent
-      sessions keep the clean full-width transcript; narrow layouts compact
-      the header and retain the execution chips below the goal.
-    - Workspace-contained absolute paths are relativized before the provider
-      signs transcript context. Anything still private remains fail-closed but
-      renders as a compact `Private context · N bytes` chip whose tooltip keeps
-      the digest, rather than shredding the answer with inline hashes.
-    - Evidence: 6,175 desktop unit tests; 31 focused core sanitizer tests plus
-      the provider signing-boundary test; the seven-session E2E workflow and
-      the two-view surface-host workflow, including focus without recipient
-      mutation and 2560px Agents auto-open; all captured states are pixel-
-    distinct. The repository-wide `just ci` gate passed on 2026-08-25.
-
-57. **The multi-agent controls now preserve the story instead of competing
-    with it** (T3 Code comparison plus the four-execution UXV1 transcript,
-    2026-08-25). The crowded row of one chip per execution and a second
-    aggregate status badge is one compact `N agents · M working` control. Its
-    popover is the place to focus an execution or open full agent detail; the
-    working state has a restrained breathing accent derived from signed
-    activity, so the session feels alive without inventing progress.
-    - Focus remains a reading mode, never a routing mode. Choosing an agent
-      shows a small `Viewing …` notice above the narrative with an explicit
-      release action, leaves the composer recipient unchanged, and scrolls the
-      filtered transcript to its latest content instead of stranding the
-      reader near the first matching turn.
-    - The composer makes routing persistent and explicit as `Send to …`, with
-      the same execution accent and the participant's exact disambiguated
-      label. Completed turns now keep only `Reply` plus one `Send to…` menu;
-      empty folded turns no longer manufacture a generic `Signed execution
-      activity` row.
-    - T3's moving-highlight treatment is adapted for `Thinking`, but its truth
-      boundary is Bee Keeper's: it appears only after a signed running turn
-      exists and before any signed plan, tool, answer, or error becomes visible.
-      The optimistic unsent row remains silent. Breathing and text-sweep
-      animation both become static under reduced motion.
-    - Evidence: 62 focused component tests; both focused surface-host E2Es;
-      the five-test coding-session E2E; and nine pixel-distinct medium, narrow,
-      focused, surface-open, and ultrawide screenshots. The focus E2E starts at
-      the top, selects Codex, proves the viewport is within 8px of the bottom,
-      and proves the composer recipient did not change. The repository-wide
-      `just ci` gate passed on 2026-08-25: 6,177 desktop tests, 2,681 Tauri
-      tests, every mobile test, all workspace tests, and desktop/web production
-      builds are green.
-
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -1539,11 +1601,11 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-**The active track as of 2026-08-25 night is live confirmation of the
-full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
-focused wide-screen E2E workflow, and repository-wide `just ci` gate are green.
-It is landed on `fix/full-screen-session-ux`; only confirmation in the live
-desktop against hive remains. Everything below is the previous track, kept
+**The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
+item 52's ten points, in that order.** The first four are contained (the
+composer's leaking overlay, the raw JSON tool result, the flanking dead space,
+and the raw identifiers the picker already fixed elsewhere); the rest are
+hierarchy and action-weight work. Everything below is the previous track, kept
 because its live confirmations are still owed.
 
 **The previous track was the coding-session honesty pass — §2 items 37-44. As of
