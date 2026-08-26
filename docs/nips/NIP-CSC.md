@@ -137,17 +137,28 @@ is the contract, not a description of what ships today. In this fork's provider
 `NATIVE_STEER_DELIVERABLE` is `false`
 (`crates/buzz-session-provider/src/session.rs:78`) and `metadata_for`
 AND-gates the per-execution witness with it
-(`crates/buzz-session-provider/src/lib.rs:2759-2762`), so
-`capabilities.threadSteer` is `false` for **every** execution, the desktop
+(`crates/buzz-session-provider/src/lib.rs:2808-2811`), so
+`capabilities.threadSteer` is `false` for **every** execution and the desktop
 composer never sends `deliver: "steer"`
 (`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:295`
-selects `steer` only when `canSteer`), and no `turn_degraded` /
-`STEER_UNSUPPORTED` receipt can be produced by this build. A `steer` from
-another client is still accepted and still degrades; that path has unit
-coverage with a hand-injected capability and no end-to-end evidence. Native
-mid-turn injection needs the `buzz-acp` steer types re-exported (`mod pool` is
-private at `crates/buzz-acp/src/lib.rs:13`) and is a later slice's work. Do not
-read this section as "steer shipped".
+selects `steer` only when `canSteer`).
+
+**`turn_degraded` is not unreachable here, and a consumer that skips decoding
+it is wrong about what this relay will hand it.** What the paragraph above
+establishes is only that *this fork's desktop* never asks for a steer, so no
+`turn_degraded` originates from it. A `steer` from any other client is accepted
+on the wire — the envelope validates all four delivery classes — and the
+provider then degrades it out loud: `inject_native_steer` returns `false`
+unconditionally (`crates/buzz-session-provider/src/lib.rs:2227-2239`) and the
+arm behind the delivery publishes `turn_degraded` / `STEER_UNSUPPORTED` beside
+the `turn_queued` (`crates/buzz-session-provider/src/lib.rs:2094-2102`). That
+degrade path has unit coverage with a hand-injected capability and no
+end-to-end evidence, which is why native injection is called deferred; it is
+not why the receipt is called impossible, because it is not.
+
+Native mid-turn injection needs the `buzz-acp` steer types re-exported (`mod
+pool` is private at `crates/buzz-acp/src/lib.rs:13`) and is a later slice's
+work. Do not read this section as "steer shipped".
 
 An unknown `deliver` value is a malformed command, rejected by the relay's
 envelope validation. Defaulting an unreadable class to `boundary` would take a
