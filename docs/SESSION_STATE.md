@@ -1881,7 +1881,10 @@ mechanical `turn_id: None` lines in
 placed in `buzz-sdk/src/builders.rs` rather than beside its siblings, and
 `CodingSessionProjectedTranscriptItem` as a coding-sessions-owned alias
 because `TranscriptItem` lives in the agents lane). It is a topic branch
-awaiting Brian's live look; not landed on main.
+awaiting Brian's live look; not landed on main. Rebased onto
+main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
+6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
+`--force-with-lease`.
 
 **The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
 item 52's ten points, in that order.** The first four are contained (the
