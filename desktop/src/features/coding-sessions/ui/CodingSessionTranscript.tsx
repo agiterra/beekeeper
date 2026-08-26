@@ -24,6 +24,7 @@ import { resolveCodingSessionPromptAuthorLabel } from "@/features/coding-session
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import { Markdown } from "@/shared/ui/markdown";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 import { VirtualizedList } from "@/shared/ui/VirtualizedList";
 import {
   CodingSessionActiveTool,
@@ -671,10 +672,12 @@ const CodingSessionItem = React.memo(function CodingSessionItem({
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
           <div className="min-w-0">
-            <p className="font-medium">{item.title || "Session error"}</p>
+            <p className="font-medium">
+              <RedactedText text={item.title || "Session error"} />
+            </p>
             {"text" in item && item.text ? (
               <p className="mt-1 whitespace-pre-wrap text-xs opacity-85">
-                {item.text}
+                <RedactedText text={item.text} />
               </p>
             ) : null}
           </div>

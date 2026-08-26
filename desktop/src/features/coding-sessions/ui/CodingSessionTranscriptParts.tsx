@@ -28,6 +28,7 @@ import type {
   CodingSessionTaskModel,
 } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 
 /**
  * The leaf presentation pieces of the coding-session transcript.
@@ -60,7 +61,7 @@ export function CodingSessionActiveTool({
         <LoaderCircle className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
       )}
       <span className="min-w-0 truncate font-medium text-foreground/85">
-        {label}
+        <RedactedText text={label} />
       </span>
       <span className="ml-auto shrink-0 text-xs">{statusLabel}</span>
       {hasDetails ? (
@@ -96,12 +97,12 @@ export function CodingSessionActiveTool({
       <div className="mt-1 ml-1 min-w-0 border-l border-border/60 pl-4">
         {Object.keys(item.args).length > 0 ? (
           <pre className="buzz-code-scrollbar max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
-            {safeFormatToolArgs(item.args)}
+            <RedactedText text={safeFormatToolArgs(item.args)} />
           </pre>
         ) : null}
         {item.result.trim() ? (
           <pre className="buzz-code-scrollbar mt-2 max-h-48 min-w-0 max-w-full overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-muted/50 p-2 text-xs">
-            {item.result}
+            <RedactedText text={item.result} />
           </pre>
         ) : null}
       </div>
@@ -488,10 +489,12 @@ export const CodingSessionDiagnostics = React.memo(
         <div className="mt-1 ml-1 flex flex-col gap-2 border-l border-border/60 pl-3">
           {diagnostics.map((item) => (
             <div data-testid="coding-session-diagnostic-row" key={item.id}>
-              <p className="font-medium text-foreground/75">{item.title}</p>
+              <p className="font-medium text-foreground/75">
+                <RedactedText text={item.title} />
+              </p>
               {"text" in item && item.text ? (
                 <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap">
-                  {item.text}
+                  <RedactedText text={item.text} />
                 </p>
               ) : null}
             </div>

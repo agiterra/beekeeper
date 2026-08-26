@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/shared/lib/cn";
+import { RedactedText } from "@/shared/ui/RedactedPill";
 import { useAgentSessionTranscriptVariant } from "../agentSessionTranscriptContext";
 
 export type ActivityRowLabelParts = {
@@ -147,7 +148,11 @@ export function ActivityRowLabel({
                 : "transition-colors group-hover/row:text-foreground group-open:text-foreground",
           )}
         >
-          {object}
+          {/* Coding-session tool labels are prose the provider redacted before
+              signing, and a shell row is the argv itself — so a redacted
+              interpreter path lands mid-label. Strings get the pill; anything
+              already an element was built by a caller that knows better. */}
+          {typeof object === "string" ? <RedactedText text={object} /> : object}
         </span>
       ) : null}
       {stats ? <ActivityRowStatsView stats={stats} /> : null}

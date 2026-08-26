@@ -1,5 +1,7 @@
 import { AlertCircle, CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 
+import { RedactedText } from "@/shared/ui/RedactedPill";
+
 import { formatTranscriptTimestampTitle } from "../agentSessionUtils";
 import { ActivityRow, ActivityRowLabel } from "./ActivityRow";
 import { ToolActivity } from "./ToolActivity";
@@ -66,7 +68,10 @@ export function LifecycleActivity(props: ActivityRenderClassItemProps) {
           <ShieldCheck className="mr-1.5 inline h-3.5 w-3.5 align-text-bottom" />
           <span className="font-medium">{props.item.title}</span>
           {requestLines ? (
-            <span className="opacity-80"> · {requestLines}</span>
+            <span className="opacity-80">
+              {" · "}
+              <RedactedText text={requestLines} />
+            </span>
           ) : null}
         </div>
         {/* Row 2: options (muted sub-line) */}
@@ -112,7 +117,10 @@ export function LifecycleActivity(props: ActivityRenderClassItemProps) {
         <AlertCircle className="mr-1.5 inline h-3.5 w-3.5 align-text-bottom" />
         <span className="font-medium">{props.item.title}</span>
         {props.item.text ? (
-          <span className="opacity-80"> · {props.item.text}</span>
+          <span className="opacity-80">
+            {" · "}
+            <RedactedText text={props.item.text} />
+          </span>
         ) : null}
       </div>
     );
