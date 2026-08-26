@@ -414,7 +414,8 @@ List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
     // An execution that claimed no umbrella still groups with its own resumes:
     // generation 2 of a stream is the same session as generation 1, umbrella
     // claim or not.
-    final key = execution.sessionRef ?? 'execution ${execution.executionKey}';
+    final key =
+        execution.sessionRef ?? 'execution\u0000${execution.executionKey}';
     grouped.putIfAbsent(key, () => []).add(execution);
     sessionRefByKey[key] = execution.sessionRef;
   }

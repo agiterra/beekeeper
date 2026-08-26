@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -76,6 +78,25 @@ CodingSessionLease _lease({
 ).value!;
 
 void main() {
+  group('source hygiene', () {
+    // A raw NUL byte in a source file makes git treat the file as binary:
+    // no reviewable diff and no three-way merge on the rebase onto main. The
+    // escape is byte-identical at runtime, so there is no reason to keep one.
+    test('no domain source file carries a raw NUL byte', () {
+      for (final path in const [
+        'lib/features/coding_sessions/domain/coding_session_fold.dart',
+        'lib/features/coding_sessions/domain/coding_session_transcript.dart',
+        'lib/features/coding_sessions/domain/coding_session_transcript_item.dart',
+      ]) {
+        expect(
+          File(path).readAsBytesSync().contains(0),
+          isFalse,
+          reason: '$path contains a raw NUL byte; write it as the escape',
+        );
+      }
+    });
+  });
+
   group('generation resolution', () {
     test('a turn receipt never creates a generation', () {
       final executions = resolveCodingSessionGenerations(
