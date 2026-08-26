@@ -193,14 +193,20 @@ class CodingSessionChannelObserverNotifier
       final filter = filters[index];
       final page = pages[index];
       if (page == null) continue;
-      // A page that came back full means older facts exist that this read
-      // never saw; the page says so rather than presenting a partial history
-      // as a whole one.
-      if (filter.limit > 0 && page.length >= filter.limit) _truncated = true;
       if (identical(filter, leaseFilter)) _leasesRead = true;
       if (filter.kinds.contains(EventKind.codingSessionAuthorityTransition) ||
           filter.kinds.contains(EventKind.relayReceipt)) {
+        // Read because the contract's filter set says so, folded by nothing.
+        // A full roster page says nothing about the history this page shows,
+        // so it must not raise the truncation notice either.
         continue;
+      }
+      // A page that came back full at the history limit means older facts
+      // exist that this read never saw; the page says so rather than
+      // presenting a partial history as a whole one.
+      if (filter.limit >= codingSessionHistoryPageLimit &&
+          page.length >= filter.limit) {
+        _truncated = true;
       }
       _store.addAll(page);
     }

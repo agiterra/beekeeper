@@ -105,9 +105,30 @@ void main() {
     test('discloses a full history page as truncated', () async {
       final session = _FakeRelaySession(
         events: [
+          ..._liveSession(),
+          for (var index = 0; index < codingSessionHistoryPageLimit; index++)
+            nameEvent(content: 'name $index', createdAt: 1200 + index),
+        ],
+      );
+      final container = _container(session);
+      addTearDown(container.dispose);
+
+      final snapshot = await _start(container);
+
+      expect(snapshot.truncatedAt1000, isTrue);
+    });
+
+    test('a full roster page is not a truncated history', () async {
+      // 44228/40099 are read at limit 500 and thrown away — 40099 is an
+      // ordinary relay receipt, so any busy channel fills that page. Reporting
+      // it as truncated history would put a false statement over a complete
+      // read of the facts the page actually shows.
+      final session = _FakeRelaySession(
+        events: [
+          ..._liveSession(),
           for (var index = 0; index < 500; index++)
             event(
-              kind: EventKind.codingSessionAuthorityTransition,
+              kind: EventKind.relayReceipt,
               tags: [
                 ['h', channelId],
               ],
@@ -120,7 +141,8 @@ void main() {
 
       final snapshot = await _start(container);
 
-      expect(snapshot.truncatedAt1000, isTrue);
+      expect(snapshot.truncatedAt1000, isFalse);
+      expect(snapshot.sessions, hasLength(1));
     });
   });
 
