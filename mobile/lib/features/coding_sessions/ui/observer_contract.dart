@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import '../domain/coding_sessions_domain.dart';
+import '../state/coding_sessions_state.dart' as state;
 
 /// How the channel observer's relay read is doing right now.
 ///
@@ -187,11 +188,68 @@ final class UnboundCodingSessionObserverBinding
   Future<void> refresh(WidgetRef ref, String channelId) async {}
 }
 
+/// The binding that forwards to the real relay observer.
+///
+/// The state layer keeps its own snapshot type (it carries the folded view and
+/// the lease-read flag the pages have no use for); this adapter projects it
+/// onto the contract above. Reachability is time-dependent, so it is resolved
+/// against the clock at read time rather than stored.
+final class RelayCodingSessionObserverBinding
+    implements CodingSessionObserverBinding {
+  const RelayCodingSessionObserverBinding();
+
+  @override
+  CodingSessionObserverSnapshot watch(WidgetRef ref, String channelId) =>
+      _project(
+        ref.watch(state.codingSessionChannelObserverProvider(channelId)),
+      );
+
+  @override
+  Future<void> refresh(WidgetRef ref, String channelId) => ref
+      .read(state.codingSessionChannelObserverProvider(channelId).notifier)
+      .refresh();
+
+  static CodingSessionObserverSnapshot _project(
+    state.CodingSessionObserverSnapshot read,
+  ) {
+    final now = DateTime.now();
+    return CodingSessionObserverSnapshot(
+      channelId: read.channelId,
+      sessions: read.sessions,
+      executions: read.executions,
+      transcriptBlocksByExecution: read.transcriptBlocksByExecution,
+      counts: read.counts,
+      truncatedAt1000: read.truncatedAt1000,
+      connection: _connection(read.connection),
+      signaturesVerified: read.signaturesVerified,
+      lastError: read.lastError,
+      reachabilityBySession: {
+        for (final session in read.sessions)
+          session.key: read.reachabilityFor(session, now: now),
+      },
+    );
+  }
+
+  static CodingSessionObserverConnection _connection(
+    state.CodingSessionObserverConnection connection,
+  ) => switch (connection) {
+    state.CodingSessionObserverConnection.idle =>
+      CodingSessionObserverConnection.idle,
+    state.CodingSessionObserverConnection.connecting =>
+      CodingSessionObserverConnection.connecting,
+    state.CodingSessionObserverConnection.open =>
+      CodingSessionObserverConnection.open,
+    state.CodingSessionObserverConnection.error =>
+      CodingSessionObserverConnection.error,
+  };
+}
+
 /// The binding the coding-session pages read.
 ///
-/// Overridden in tests with a fake, and overridden at app start by the M2
-/// adapter. The default is deliberately honest rather than empty.
+/// Overridden in tests with a fake. The default is the real relay observer;
+/// [UnboundCodingSessionObserverBinding] remains for builds that deliberately
+/// leave the observer out, and reports that rather than claiming emptiness.
 final codingSessionObserverBindingProvider =
     Provider<CodingSessionObserverBinding>(
-      (ref) => const UnboundCodingSessionObserverBinding(),
+      (ref) => const RelayCodingSessionObserverBinding(),
     );
