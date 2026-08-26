@@ -292,6 +292,10 @@ pub async fn run_with(config: Config) -> anyhow::Result<()> {
                     if let Err(error) = relay.reconnect().await {
                         return Err(error.into());
                     }
+                    // The socket coming back is a replay, not a resumption:
+                    // every channel is resubscribed from before it dropped and
+                    // its stored history arrives newest-first. Reorder it.
+                    provider.reopen_replay_windows_after_reconnect();
                     provider.queue_lease_renewals()?;
                     if let Err(error) = provider.flush_pending_leases(&publisher).await {
                         tracing::warn!(target: "csp::lease", "lease handoff after reconnect failed: {error}");
@@ -888,10 +892,34 @@ impl Provider {
         Ok(())
     }
 
+    /// Reopen the reorder window on every subscribed channel after the relay
+    /// socket dropped and came back.
+    ///
+    /// A reconnect is a *re*-subscription, not a quiet resumption: the relay
+    /// client reissues each channel's REQ from `min(last_seen,
+    /// channel_dropped_since)` (`crates/buzz-acp/src/relay.rs:3256-3269`), and
+    /// the relay answers a stored REQ newest-first
+    /// (`crates/buzz-db/src/event.rs:771`). So the same backwards burst that
+    /// [`Provider::subscribe`] opens a window for arrives again here, for
+    /// every channel at once — and a socket drop is far more common than a
+    /// process restart. Without this the recovered queue runs in reverse.
+    ///
+    /// Cheap when there is nothing to reorder: an empty window closes on its
+    /// own timer having held nothing.
+    pub fn reopen_replay_windows_after_reconnect(&mut self) {
+        let channels: Vec<Uuid> = self.subscribed.iter().copied().collect();
+        for channel_id in channels {
+            self.open_replay_window(channel_id);
+        }
+    }
+
     /// Begin holding this channel's turn commands for reordering.
     ///
-    /// Called when a subscription is (re)opened, because that is exactly when
-    /// stored history arrives newest-first. See [`ReplayWindow`].
+    /// Called from both places a subscription is opened, because those are
+    /// exactly when stored history arrives newest-first: [`Provider::subscribe`]
+    /// for a first (or membership-triggered) REQ, and
+    /// [`Provider::reopen_replay_windows_after_reconnect`] for the resubscribe
+    /// the relay client issues after a dropped socket. See [`ReplayWindow`].
     pub fn open_replay_window(&mut self, channel_id: Uuid) {
         self.replay
             .open_until
@@ -9121,6 +9149,76 @@ mod tests {
                 .watermark(quiet)
                 .is_some_and(|mark| mark >= now),
             "a quiet channel with nothing held replays from where it actually got to"
+        );
+    }
+
+    /// A dropped socket replays history too, and the reorder window has to
+    /// reopen for it.
+    ///
+    /// The run loop's reconnect arm used to call `relay.reconnect()` and
+    /// nothing else, while the relay client resubscribes every channel from
+    /// `min(last_seen, channel_dropped_since)`
+    /// (`crates/buzz-acp/src/relay.rs:3256-3269`) and the relay serves stored
+    /// REQ results newest-first (`crates/buzz-db/src/event.rs:771`). Every
+    /// unconsumed turn therefore came back backwards on the commonest
+    /// recovery path there is — a socket drop, not a restart — and ran in
+    /// reverse.
+    #[tokio::test]
+    async fn a_reconnect_reopens_the_replay_window_for_every_subscribed_channel() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = stalling_provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        // What `subscribe` left behind before the socket went away.
+        provider.subscribed.insert(channel_id);
+        provider.flush_replays_now().await.expect("start clean");
+        assert_eq!(provider.next_replay_delay(), None);
+
+        let base = now_secs();
+        let first = turn_event_at(channel_id, "turn-first", &target, "alpha", base);
+        let second = turn_event_at(channel_id, "turn-second", &target, "beta", base + 1);
+
+        // Exactly what the run loop does when `next_event()` yields `None`.
+        provider.reopen_replay_windows_after_reconnect();
+        assert!(
+            provider.next_replay_delay().is_some(),
+            "a reconnect is a replay, so it must be holding turns for reorder"
+        );
+
+        // Newest first, which is the order the relay actually serves.
+        for event in [&second, &first] {
+            provider
+                .handle_command_event(channel_id, event)
+                .await
+                .expect("replay");
+        }
+        provider.flush_replays_now().await.expect("deliver replay");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let turns: Vec<(String, String)> = turn_receipts_in_order(&sink)
+            .into_iter()
+            .filter(|(command_id, _)| command_id.starts_with("turn-"))
+            .collect();
+        assert_eq!(
+            turns,
+            vec![
+                ("turn-first".to_owned(), "turn_queued".to_owned()),
+                ("turn-second".to_owned(), "turn_queued".to_owned()),
+            ],
+            "a reconnected provider answers in sent order, not arrival order"
         );
     }
 
