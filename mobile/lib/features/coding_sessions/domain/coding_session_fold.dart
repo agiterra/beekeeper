@@ -1,0 +1,725 @@
+import 'package:flutter/foundation.dart';
+
+import 'coding_session_models.dart';
+import 'coding_session_target.dart';
+import 'coding_session_trust.dart';
+import 'coding_session_wire.dart';
+
+/// How long a 24223 lease proves anything for.
+const codingSessionLeaseTtl = Duration(seconds: 150);
+
+/// One generation of one execution stream, with the facts folded over it.
+@immutable
+class CodingSessionExecution {
+  final String channelId;
+  final CodingSessionTarget target;
+
+  /// Whose facts these are, and whether a create vouched for that signer.
+  final CodingSessionAuthority authority;
+
+  /// The newest reported status, or [CodingSessionStatus.unknown].
+  final CodingSessionStatus status;
+
+  /// When [status] was reported, in epoch seconds; `null` when no metadata
+  /// was readable at all.
+  final int? statusAt;
+
+  /// The metadata record [status] came from, when there was one.
+  final CodingSessionMetadata? metadata;
+
+  /// The umbrella this execution belongs to, or `null` for none.
+  final String? sessionRef;
+
+  /// True when no higher generation of this stream exists in the read.
+  final bool isCurrentGeneration;
+
+  /// True when two distinct metadata payloads shared the newest second.
+  ///
+  /// Both were signed by the same authority and disagree; the newer-by-event-id
+  /// rule still picks one to render, but the reader is told they collided.
+  final bool statusConflict;
+
+  /// Newest `created_at` of any fact for this execution, in epoch seconds.
+  final int lastActivityAt;
+
+  /// The 44221 command id that minted this generation, when one is readable.
+  final String? commandId;
+
+  const CodingSessionExecution({
+    required this.channelId,
+    required this.target,
+    required this.authority,
+    required this.status,
+    required this.statusAt,
+    required this.metadata,
+    required this.sessionRef,
+    required this.isCurrentGeneration,
+    required this.statusConflict,
+    required this.lastActivityAt,
+    required this.commandId,
+  });
+
+  /// The signed `cs-target` key of this generation.
+  String get targetKey => target.key;
+
+  /// The generation-free identity of the stream this generation belongs to.
+  String get executionKey => target.executionKey;
+
+  /// The provider whose facts these are.
+  String get signerPubkey => authority.pubkey;
+
+  String? get runtime => metadata?.runtime;
+
+  String? get model => metadata?.model;
+
+  String? get agentRef => metadata?.agentRef;
+
+  /// A short label for this execution: `runtime · model`, or the agent
+  /// reference when the provider bound one.
+  String get label => metadata?.label ?? target.driver;
+}
+
+/// The four ways an umbrella session's founder can resolve.
+enum CodingSessionFounderResolution {
+  /// A receipt-joined create named a genesis, and that genesis was readable.
+  genesis,
+
+  /// No create named a genesis; the earliest create's signer stands in.
+  legacy,
+
+  /// Two creates named different geneses. Neither wins.
+  conflict,
+
+  /// No create for this session was readable at all.
+  unresolved,
+}
+
+/// Who founded an umbrella session, and how confidently.
+@immutable
+class CodingSessionFounder {
+  /// The founder's pubkey; `null` for [CodingSessionFounderResolution.conflict]
+  /// and [CodingSessionFounderResolution.unresolved].
+  final String? pubkey;
+
+  final CodingSessionFounderResolution resolution;
+
+  const CodingSessionFounder({required this.pubkey, required this.resolution});
+
+  /// The unresolved founder, used before any create is readable.
+  static const unresolved = CodingSessionFounder(
+    pubkey: null,
+    resolution: CodingSessionFounderResolution.unresolved,
+  );
+}
+
+/// The folded state of a whole umbrella session.
+enum CodingSessionFoldedStatusKind {
+  /// At least one execution is running.
+  working,
+
+  /// Nothing is running and at least one execution awaits input.
+  waiting,
+
+  /// Every execution is stopped.
+  ended,
+
+  /// Neither of the above: the most-recently-active non-stopped execution's
+  /// own reported status stands.
+  reported,
+
+  /// Nothing readable to fold.
+  unknown,
+}
+
+/// The result of [foldCodingSessionUmbrellaStatus].
+@immutable
+class CodingSessionFoldedStatus {
+  final CodingSessionFoldedStatusKind kind;
+
+  /// The underlying reported status the fold settled on, when there is one.
+  final CodingSessionStatus? status;
+
+  const CodingSessionFoldedStatus({required this.kind, this.status});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CodingSessionFoldedStatus &&
+          kind == other.kind &&
+          status == other.status;
+
+  @override
+  int get hashCode => Object.hash(kind, status);
+}
+
+/// Whether a provider is answering for the current generation, right now.
+enum CodingSessionReachabilityKind {
+  /// A live lease for the current generation, younger than the TTL.
+  reachable,
+
+  /// The leases were read and none proves anything: a live-sounding status
+  /// must be shown as "No provider answering".
+  noProviderAnswering,
+
+  /// The leases have not been read, or two collided. Never rendered as
+  /// "nobody answering" — an unknown read is not a negative answer.
+  unknown,
+}
+
+/// The reachability verdict for one execution stream.
+@immutable
+class CodingSessionReachability {
+  final CodingSessionReachabilityKind kind;
+
+  /// Age of the lease the verdict rests on, when there was one.
+  final Duration? leaseAge;
+
+  /// Sequence of that lease, when there was one.
+  final int? leaseSequence;
+
+  /// True when two distinct leases tied at the highest sequence.
+  final bool conflict;
+
+  const CodingSessionReachability({
+    required this.kind,
+    this.leaseAge,
+    this.leaseSequence,
+    this.conflict = false,
+  });
+
+  /// The verdict before any lease query has come back.
+  static const unknown = CodingSessionReachability(
+    kind: CodingSessionReachabilityKind.unknown,
+  );
+}
+
+/// One umbrella session: the executions that share a `sessionRef`, or the
+/// generations of a single stream that claimed none.
+@immutable
+class CodingSessionUmbrella {
+  final String channelId;
+
+  /// Stable identity for routing; see [sessionRef] for the umbrella claim.
+  final String key;
+
+  /// The umbrella claim, or `null` for an implicit session.
+  final String? sessionRef;
+
+  /// Generations of this session, newest activity first.
+  final List<CodingSessionExecution> executions;
+
+  final CodingSessionFounder founder;
+
+  /// The newest 44229 name, when one exists.
+  final String? name;
+
+  /// The newest 44227 goal, when one exists.
+  final String? goal;
+
+  /// True when the newest 44230 marks the session closed.
+  final bool closed;
+
+  final CodingSessionFoldedStatus status;
+
+  /// Newest `created_at` of any fact in this session, in epoch seconds.
+  final int lastActivityAt;
+
+  const CodingSessionUmbrella({
+    required this.channelId,
+    required this.key,
+    required this.sessionRef,
+    required this.executions,
+    required this.founder,
+    required this.name,
+    required this.goal,
+    required this.closed,
+    required this.status,
+    required this.lastActivityAt,
+  });
+
+  /// What to call this session on screen.
+  ///
+  /// The newest signed name wins; failing that the newest execution's title or
+  /// label. Never invented — the fallback is always something a provider or a
+  /// member signed.
+  String get displayName {
+    final signed = name;
+    if (signed != null && signed.trim().isNotEmpty) return signed;
+    for (final execution in executions) {
+      final title = execution.metadata?.title;
+      if (title != null && title.trim().isNotEmpty) return title;
+    }
+    for (final execution in executions) {
+      return execution.label;
+    }
+    return 'Coding session';
+  }
+
+  /// True when any execution's authority is the unverified fallback.
+  bool get hasUnverifiedAuthority =>
+      executions.any((execution) => !execution.authority.verified);
+}
+
+/// Resolve which generations exist, and fold each one's newest status.
+///
+/// A generation exists only when a lifecycle receipt with a
+/// generation-creating status names it. The turn statuses are decoded and kept
+/// for the transcript, but they never bring a generation into existence and
+/// never decide its status — a `turn_refused` naming a stale generation must
+/// not conjure one.
+///
+/// The newest 44223 wins for status: highest `created_at`, ties broken by the
+/// *lower* event id. Distinct payloads sharing that second still render, with
+/// [CodingSessionExecution.statusConflict] set.
+List<CodingSessionExecution> resolveCodingSessionGenerations({
+  required Iterable<CodingSessionReceipt> receipts,
+  required Iterable<CodingSessionMetadata> metadata,
+  Iterable<CodingSessionTranscriptEnvelope> transcripts = const [],
+  Iterable<CodingSessionCreate> creates = const [],
+  Map<String, CodingSessionAuthority> authorityByTarget = const {},
+}) {
+  final receiptList = receipts.toList();
+  final metadataList = metadata.toList();
+  final createsByCommandId = {
+    for (final create in creates) create.commandId: create,
+  };
+
+  final targets = <String, CodingSessionTarget>{};
+  final commandIdByTarget = <String, String>{};
+  final channelByTarget = <String, String>{};
+  for (final receipt in receiptList) {
+    if (receipt.isTurnStage || !receipt.status.createsGeneration) continue;
+    final target = receipt.session;
+    if (target == null) continue;
+    targets[target.key] = target;
+    channelByTarget[target.key] = receipt.ref.channelId;
+    // The earliest create-bearing receipt names the command that minted the
+    // generation; a later resume receipt for the same target would be a
+    // different command for the same key only if the provider replayed it.
+    commandIdByTarget.putIfAbsent(target.key, () => receipt.commandId);
+  }
+
+  final currentGeneration = <String, int>{};
+  for (final target in targets.values) {
+    final key = target.executionKey;
+    final incumbent = currentGeneration[key];
+    if (incumbent == null || target.generation > incumbent) {
+      currentGeneration[key] = target.generation;
+    }
+  }
+
+  final executions = <CodingSessionExecution>[];
+  for (final entry in targets.entries) {
+    final targetKey = entry.key;
+    final target = entry.value;
+    final own = [
+      for (final record in metadataList)
+        if (record.target.key == targetKey) record,
+    ];
+    final newest = _newestMetadata(own);
+    final conflict = _hasStatusConflict(own, newest);
+
+    final stopReceipts = [
+      for (final receipt in receiptList)
+        if (!receipt.isTurnStage &&
+            receipt.status == CodingSessionReceiptStatus.stopped &&
+            receipt.session?.key == targetKey)
+          receipt,
+    ];
+    final newestStop = stopReceipts.isEmpty
+        ? null
+        : stopReceipts.reduce(
+            (left, right) =>
+                left.ref.createdAt >= right.ref.createdAt ? left : right,
+          );
+
+    // A `stopped` receipt is a lifecycle fact of the same standing as
+    // metadata: when it is the newer of the two, the execution is stopped even
+    // if the last metadata still said running.
+    var status = newest?.status ?? CodingSessionStatus.unknown;
+    var statusAt = newest?.statusAt;
+    if (newestStop != null &&
+        (newest == null || newestStop.ref.createdAt >= newest.statusAt)) {
+      status = CodingSessionStatus.stopped;
+      statusAt = newestStop.ref.createdAt;
+    }
+
+    var lastActivityAt = 0;
+    for (final record in own) {
+      if (record.ref.createdAt > lastActivityAt) {
+        lastActivityAt = record.ref.createdAt;
+      }
+    }
+    for (final receipt in receiptList) {
+      if (receipt.session?.key != targetKey) continue;
+      if (receipt.ref.createdAt > lastActivityAt) {
+        lastActivityAt = receipt.ref.createdAt;
+      }
+    }
+    for (final envelope in transcripts) {
+      if (envelope.target.key != targetKey) continue;
+      if (envelope.ref.createdAt > lastActivityAt) {
+        lastActivityAt = envelope.ref.createdAt;
+      }
+    }
+
+    final commandId = commandIdByTarget[targetKey];
+    final create = commandId == null ? null : createsByCommandId[commandId];
+    final signerPubkey =
+        authorityByTarget[targetKey]?.pubkey ??
+        newest?.ref.signerPubkey ??
+        create?.providerAuthorityPubkey ??
+        '';
+    executions.add(
+      CodingSessionExecution(
+        channelId: channelByTarget[targetKey] ?? '',
+        target: target,
+        authority:
+            authorityByTarget[targetKey] ??
+            CodingSessionAuthority(pubkey: signerPubkey, verified: false),
+        status: status,
+        statusAt: statusAt,
+        metadata: newest,
+        sessionRef: newest?.sessionRef ?? create?.sessionRef,
+        isCurrentGeneration:
+            currentGeneration[target.executionKey] == target.generation,
+        statusConflict: conflict,
+        lastActivityAt: lastActivityAt,
+        commandId: commandId,
+      ),
+    );
+  }
+  executions.sort((left, right) {
+    final byActivity = right.lastActivityAt.compareTo(left.lastActivityAt);
+    return byActivity != 0
+        ? byActivity
+        : left.targetKey.compareTo(right.targetKey);
+  });
+  return List.unmodifiable(executions);
+}
+
+/// Group executions into umbrella sessions and resolve each one's founder,
+/// name, goal and closed state.
+List<CodingSessionUmbrella> groupCodingSessionUmbrellas({
+  required Iterable<CodingSessionExecution> executions,
+  Iterable<CodingSessionCreate> creates = const [],
+  Map<String, CodingSessionGenesis> genesesByEventId = const {},
+  Iterable<CodingSessionName> names = const [],
+  Iterable<CodingSessionGoal> goals = const [],
+  Iterable<CodingSessionClosure> closures = const [],
+}) {
+  final grouped = <String, List<CodingSessionExecution>>{};
+  final sessionRefByKey = <String, String?>{};
+  for (final execution in executions) {
+    // An execution that claimed no umbrella still groups with its own resumes:
+    // generation 2 of a stream is the same session as generation 1, umbrella
+    // claim or not.
+    final key = execution.sessionRef ?? 'execution ${execution.executionKey}';
+    grouped.putIfAbsent(key, () => []).add(execution);
+    sessionRefByKey[key] = execution.sessionRef;
+  }
+
+  final umbrellas = <CodingSessionUmbrella>[];
+  for (final entry in grouped.entries) {
+    final members = entry.value;
+    final sessionRef = sessionRefByKey[entry.key];
+    final channelId = members.first.channelId;
+    final ownCreates = [
+      for (final create in creates)
+        if (_createBelongs(create, sessionRef, members)) create,
+    ];
+    final founder = resolveCodingSessionFounder(
+      creates: ownCreates,
+      genesesByEventId: genesesByEventId,
+    );
+    final name = sessionRef == null
+        ? null
+        : _newestByRef(
+            names.where(
+              (record) =>
+                  record.sessionRef == sessionRef &&
+                  record.ref.channelId == channelId,
+            ),
+            (record) => record.ref,
+          );
+    final goal = sessionRef == null
+        ? null
+        : _newestByRef(
+            goals.where(
+              (record) =>
+                  record.sessionRef == sessionRef &&
+                  record.ref.channelId == channelId,
+            ),
+            (record) => record.ref,
+          );
+    final closure = sessionRef == null
+        ? null
+        : _newestByRef(
+            closures.where(
+              (record) =>
+                  record.sessionRef == sessionRef &&
+                  record.ref.channelId == channelId,
+            ),
+            (record) => record.ref,
+          );
+    var lastActivityAt = 0;
+    for (final execution in members) {
+      if (execution.lastActivityAt > lastActivityAt) {
+        lastActivityAt = execution.lastActivityAt;
+      }
+    }
+    umbrellas.add(
+      CodingSessionUmbrella(
+        channelId: channelId,
+        key: entry.key,
+        sessionRef: sessionRef,
+        executions: List.unmodifiable(members),
+        founder: founder,
+        name: name?.content,
+        goal: goal?.content,
+        closed: closure?.closed ?? false,
+        status: foldCodingSessionUmbrellaStatus(members),
+        lastActivityAt: lastActivityAt,
+      ),
+    );
+  }
+  umbrellas.sort((left, right) {
+    final byActivity = right.lastActivityAt.compareTo(left.lastActivityAt);
+    return byActivity != 0 ? byActivity : left.key.compareTo(right.key);
+  });
+  return List.unmodifiable(umbrellas);
+}
+
+/// Resolve the founder of one umbrella from the creates that belong to it.
+///
+/// A create that names a genesis anchors the session to that exact 44226,
+/// resolved by event id — the genesis's own session tag is never a selector.
+/// Two creates naming different geneses is a dispute the observer refuses to
+/// settle.
+CodingSessionFounder resolveCodingSessionFounder({
+  required Iterable<CodingSessionCreate> creates,
+  Map<String, CodingSessionGenesis> genesesByEventId = const {},
+}) {
+  final records = creates.toList();
+  if (records.isEmpty) return CodingSessionFounder.unresolved;
+  final genesisRefs = {
+    for (final create in records)
+      if (create.genesisRef != null) create.genesisRef!,
+  };
+  if (genesisRefs.length > 1) {
+    return const CodingSessionFounder(
+      pubkey: null,
+      resolution: CodingSessionFounderResolution.conflict,
+    );
+  }
+  if (genesisRefs.length == 1) {
+    final genesis = genesesByEventId[genesisRefs.single];
+    if (genesis == null) return CodingSessionFounder.unresolved;
+    return CodingSessionFounder(
+      pubkey: genesis.founderPubkey,
+      resolution: CodingSessionFounderResolution.genesis,
+    );
+  }
+  final earliest = records.reduce(
+    (left, right) =>
+        left.ref.createdAt < right.ref.createdAt ||
+            (left.ref.createdAt == right.ref.createdAt &&
+                left.ref.eventId.compareTo(right.ref.eventId) < 0)
+        ? left
+        : right,
+  );
+  return CodingSessionFounder(
+    pubkey: earliest.ref.signerPubkey,
+    resolution: CodingSessionFounderResolution.legacy,
+  );
+}
+
+/// Fold a session's executions into one status.
+///
+/// Any running execution makes the session Working; failing that, any
+/// execution waiting for input makes it Waiting. Ended is claimed only when
+/// *every* execution is stopped — one live generation is enough to keep a
+/// session alive. Otherwise the most-recently-active non-stopped execution
+/// speaks for the session.
+CodingSessionFoldedStatus foldCodingSessionUmbrellaStatus(
+  Iterable<CodingSessionExecution> executions,
+) {
+  final members = executions.toList();
+  if (members.isEmpty) {
+    return const CodingSessionFoldedStatus(
+      kind: CodingSessionFoldedStatusKind.unknown,
+    );
+  }
+  if (members.any(
+    (execution) => execution.status == CodingSessionStatus.running,
+  )) {
+    return const CodingSessionFoldedStatus(
+      kind: CodingSessionFoldedStatusKind.working,
+      status: CodingSessionStatus.running,
+    );
+  }
+  if (members.any(
+    (execution) => execution.status == CodingSessionStatus.waitingForInput,
+  )) {
+    return const CodingSessionFoldedStatus(
+      kind: CodingSessionFoldedStatusKind.waiting,
+      status: CodingSessionStatus.waitingForInput,
+    );
+  }
+  if (members.every((execution) => execution.status.isStopped)) {
+    return const CodingSessionFoldedStatus(
+      kind: CodingSessionFoldedStatusKind.ended,
+      status: CodingSessionStatus.stopped,
+    );
+  }
+  final live =
+      [
+        for (final execution in members)
+          if (!execution.status.isStopped) execution,
+      ]..sort((left, right) {
+        final byActivity = right.lastActivityAt.compareTo(left.lastActivityAt);
+        return byActivity != 0
+            ? byActivity
+            : left.targetKey.compareTo(right.targetKey);
+      });
+  return CodingSessionFoldedStatus(
+    kind: CodingSessionFoldedStatusKind.reported,
+    status: live.first.status,
+  );
+}
+
+/// Decide whether a provider is answering for [currentTarget].
+///
+/// Only the highest-sequence live lease for the *current* generation, younger
+/// than [ttl], proves reachability. Two distinct leases tied at that sequence
+/// prove nothing and read as unknown rather than as a denial — the provider's
+/// own sequence is supposed to break that tie, so a tie means the snapshot
+/// cannot be trusted either way.
+///
+/// [leasesRead] `== false` (no lease query has returned yet) always reads
+/// unknown. An unknown read must never be rendered as "nobody answering".
+CodingSessionReachability deriveCodingSessionReachability({
+  required Iterable<CodingSessionLease> leases,
+  required CodingSessionTarget currentTarget,
+  required DateTime now,
+  String? authorityPubkey,
+  bool leasesRead = true,
+  Duration ttl = codingSessionLeaseTtl,
+}) {
+  if (!leasesRead) return CodingSessionReachability.unknown;
+  final own = [
+    for (final lease in leases)
+      if (lease.target.key == currentTarget.key &&
+          (authorityPubkey == null ||
+              lease.ref.signerPubkey == authorityPubkey))
+        lease,
+  ];
+  if (own.isEmpty) {
+    return const CodingSessionReachability(
+      kind: CodingSessionReachabilityKind.noProviderAnswering,
+    );
+  }
+  final highestSequence = own
+      .map((lease) => lease.leaseSequence)
+      .reduce((left, right) => left > right ? left : right);
+  final highest = [
+    for (final lease in own)
+      if (lease.leaseSequence == highestSequence) lease,
+  ];
+  final distinct = {for (final lease in highest) lease.ref.eventId};
+  if (distinct.length > 1) {
+    return CodingSessionReachability(
+      kind: CodingSessionReachabilityKind.unknown,
+      leaseSequence: highestSequence,
+      conflict: true,
+    );
+  }
+  final winner = highest.first;
+  final age = Duration(
+    seconds: now.millisecondsSinceEpoch ~/ 1000 - winner.ref.createdAt,
+  );
+  final live = winner.state == CodingSessionLeaseState.live && age < ttl;
+  return CodingSessionReachability(
+    kind: live
+        ? CodingSessionReachabilityKind.reachable
+        : CodingSessionReachabilityKind.noProviderAnswering,
+    leaseAge: age,
+    leaseSequence: highestSequence,
+  );
+}
+
+bool _createBelongs(
+  CodingSessionCreate create,
+  String? sessionRef,
+  List<CodingSessionExecution> members,
+) {
+  if (sessionRef != null) return create.sessionRef == sessionRef;
+  if (create.sessionRef != null) return false;
+  return members.any((execution) => execution.commandId == create.commandId);
+}
+
+CodingSessionMetadata? _newestMetadata(List<CodingSessionMetadata> records) {
+  CodingSessionMetadata? newest;
+  for (final record in records) {
+    if (newest == null) {
+      newest = record;
+      continue;
+    }
+    if (record.ref.createdAt > newest.ref.createdAt) {
+      newest = record;
+      continue;
+    }
+    // Ties break to the lower event id, so every reader that saw the same two
+    // events shows the same one.
+    if (record.ref.createdAt == newest.ref.createdAt &&
+        record.ref.eventId.compareTo(newest.ref.eventId) < 0) {
+      newest = record;
+    }
+  }
+  return newest;
+}
+
+bool _hasStatusConflict(
+  List<CodingSessionMetadata> records,
+  CodingSessionMetadata? newest,
+) {
+  if (newest == null) return false;
+  final sameSecond = [
+    for (final record in records)
+      if (record.ref.createdAt == newest.ref.createdAt) record,
+  ];
+  if (sameSecond.length < 2) return false;
+  final payloads = {
+    for (final record in sameSecond)
+      canonicalJson({
+        'status': record.status.wire,
+        'title': record.title,
+        'runtime': record.runtime,
+        'model': record.model,
+        'agentRef': record.agentRef,
+        'sessionRef': record.sessionRef,
+      }),
+  };
+  return payloads.length > 1;
+}
+
+T? _newestByRef<T>(
+  Iterable<T> records,
+  CodingSessionEventRef Function(T record) refOf,
+) {
+  T? newest;
+  for (final record in records) {
+    if (newest == null) {
+      newest = record;
+      continue;
+    }
+    final candidate = refOf(record);
+    final incumbent = refOf(newest);
+    if (candidate.createdAt > incumbent.createdAt ||
+        (candidate.createdAt == incumbent.createdAt &&
+            candidate.eventId.compareTo(incumbent.eventId) > 0)) {
+      newest = record;
+    }
+  }
+  return newest;
+}

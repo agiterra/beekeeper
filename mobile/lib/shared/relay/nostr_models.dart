@@ -46,6 +46,53 @@ abstract final class EventKind {
   static const huddleParticipantLeft = 48102;
   static const huddleEnded = 48103;
 
+  // --- Coding sessions (44220-44230, 24223) ---------------------------------
+  // Keep in sync with `desktop/src/shared/constants/kinds.ts`. Mobile is a
+  // read-only observer: it subscribes to the fact kinds and never publishes a
+  // command kind.
+
+  /// Kind:44220 governed turn command addressed to a coding-session provider.
+  static const codingSessionCommand = 44220;
+
+  /// Kind:44221 lifecycle command (`session.create` / `resume` / `stop`).
+  static const codingSessionLifecycleCommand = 44221;
+
+  /// Kind:44222 provider catalog of runtimes and models it can serve.
+  static const codingSessionProviderCatalog = 44222;
+
+  /// Kind:44223 per-generation provider metadata (status, runtime, model).
+  static const codingSessionMetadata = 44223;
+
+  /// Kind:44224 lifecycle/turn receipt answering a 44220 or 44221.
+  static const codingSessionLifecycleReceipt = 44224;
+
+  /// Kind:44225 transcript envelope carrying one transcript item.
+  static const codingSessionTranscript = 44225;
+
+  /// Kind:44226 umbrella-session genesis; its signer is the founder.
+  static const codingSessionGenesis = 44226;
+
+  /// Kind:44227 umbrella-session goal (addressable by `d` = sessionRef).
+  static const codingSessionGoal = 44227;
+
+  /// Kind:44228 authority transition within a session roster.
+  static const codingSessionAuthorityTransition = 44228;
+
+  /// Kind:44229 umbrella-session display name (addressable by `d`).
+  static const codingSessionName = 44229;
+
+  /// Kind:44230 umbrella-session closure marker (addressable by `d`).
+  static const codingSessionClosure = 44230;
+
+  /// Kind:24223 ephemeral provider lease proving the provider is reachable.
+  static const codingSessionLease = 24223;
+
+  /// Kind:40099 relay receipt / system message.
+  ///
+  /// Same integer as [systemMessage]; named here for the coding-session roster
+  /// read, which asks the relay for its receipts alongside kind:44228.
+  static const relayReceipt = systemMessage;
+
   /// Event kinds that represent user-visible channel messages.
   static const channelMessageEventKinds = [
     streamMessage, // 9

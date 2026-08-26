@@ -212,4 +212,125 @@ abstract final class NostrFilters {
   /// User status (NIP-38, kind:30315).
   static NostrFilter userStatus(String pubkey) =>
       NostrFilter(kinds: [30315], authors: [pubkey], limit: 1);
+
+  // --- Coding sessions (read-only observer) --------------------------------
+  //
+  // Every coding-session filter carries explicit `kinds` and `#h`: the relay's
+  // p-gate answers 403 to a filter without kinds, and the coding-session read
+  // is always scoped to one channel. None of them narrow by `authors` —
+  // authority is open (channel membership), and which signer may be trusted
+  // for a given target is decided after decode by the trust gate, not by the
+  // relay query.
+
+  /// History read for the three per-generation fact kinds (44223/44224/44225).
+  static NostrFilter codingSessionFacts(String channelId, {int limit = 1000}) =>
+      NostrFilter(
+        kinds: const [
+          EventKind.codingSessionMetadata,
+          EventKind.codingSessionLifecycleReceipt,
+          EventKind.codingSessionTranscript,
+        ],
+        tags: {
+          '#h': [channelId],
+        },
+        limit: limit,
+      );
+
+  /// Live subscription twin of [codingSessionFacts] (`limit: 0`).
+  static NostrFilter codingSessionFactsLive(String channelId) => NostrFilter(
+    kinds: const [
+      EventKind.codingSessionMetadata,
+      EventKind.codingSessionLifecycleReceipt,
+      EventKind.codingSessionTranscript,
+    ],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: 0,
+  );
+
+  /// Creation evidence: one filter per kind (44221, 44224, 44226).
+  ///
+  /// Deliberately three filters rather than one three-kind filter: a single
+  /// filter shares one `limit` across the kinds, so a chatty receipt stream
+  /// would starve the creates and geneses that authority resolution needs.
+  static List<NostrFilter> codingSessionCreates(
+    String channelId, {
+    int limit = 1000,
+  }) => [
+    for (final kind in const [
+      EventKind.codingSessionLifecycleCommand,
+      EventKind.codingSessionLifecycleReceipt,
+      EventKind.codingSessionGenesis,
+    ])
+      NostrFilter(
+        kinds: [kind],
+        tags: {
+          '#h': [channelId],
+        },
+        limit: limit,
+      ),
+  ];
+
+  /// Umbrella-session display names (kind:44229).
+  static NostrFilter codingSessionNames(String channelId, {int limit = 1000}) =>
+      NostrFilter(
+        kinds: const [EventKind.codingSessionName],
+        tags: {
+          '#h': [channelId],
+        },
+        limit: limit,
+      );
+
+  /// Umbrella-session goals (kind:44227).
+  static NostrFilter codingSessionGoals(String channelId, {int limit = 1000}) =>
+      NostrFilter(
+        kinds: const [EventKind.codingSessionGoal],
+        tags: {
+          '#h': [channelId],
+        },
+        limit: limit,
+      );
+
+  /// Umbrella-session closures (kind:44230).
+  static NostrFilter codingSessionClosures(
+    String channelId, {
+    int limit = 1000,
+  }) => NostrFilter(
+    kinds: const [EventKind.codingSessionClosure],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: limit,
+  );
+
+  /// Provider leases (kind:24223), the only proof of reachability.
+  ///
+  /// Never paginated: a lease older than its 150 s TTL proves nothing, so a
+  /// second page of expired leases would only cost bytes.
+  static NostrFilter codingSessionLeases(String channelId) => NostrFilter(
+    kinds: const [EventKind.codingSessionLease],
+    tags: {
+      '#h': [channelId],
+    },
+    limit: 1000,
+  );
+
+  /// Roster reads: authority transitions (44228) and relay receipts (40099).
+  static List<NostrFilter> codingSessionRoster(
+    String channelId, {
+    int limit = 500,
+  }) => [
+    for (final kind in const [
+      EventKind.codingSessionAuthorityTransition,
+      EventKind.relayReceipt,
+    ])
+      NostrFilter(
+        kinds: [kind],
+        tags: {
+          '#h': [channelId],
+        },
+        limit: limit,
+      ),
+  ];
 }

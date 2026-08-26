@@ -1,0 +1,398 @@
+import '../../../shared/relay/nostr_models.dart';
+import 'coding_session_decode_result.dart';
+import 'coding_session_models.dart';
+import 'coding_session_signature.dart';
+import 'coding_session_wire.dart';
+
+/// Strict decoders for the umbrella-session kinds a *member* signs: the 44221
+/// create that names a provider authority, the 44226 genesis that anchors an
+/// umbrella, and the 44229/44227/44230 name, goal and closure facts.
+
+/// Schema string on a 44221 payload.
+const codingSessionLifecycleCommandSchema =
+    'buzz-coding-session-lifecycle-command/v1';
+
+/// Tag version on a 44221 event (`csl-v`).
+const codingSessionLifecycleCommandTagVersion = 'csl1-1';
+
+/// Tag version on a 44226 event (`csg-v`).
+const codingSessionGenesisTagVersion = 'csg1-1';
+
+/// Schema version integer inside a 44226 payload.
+const codingSessionGenesisSchemaVersion = 1;
+
+/// Tag version on a 44229 event (`csnm-v`).
+const codingSessionNameTagVersion = 'csnm1-1';
+
+/// Tag version on a 44227 event (`csgl-v`).
+const codingSessionGoalTagVersion = 'csgl1-1';
+
+/// Tag version on a 44230 event (`cscl-v`).
+const codingSessionClosureTagVersion = 'cscl1-1';
+
+/// Schema version integer inside a 44230 payload.
+const codingSessionClosureSchemaVersion = 1;
+
+const _maxLifecycleContentBytes = 16 * 1024;
+const _maxIdentifierBytes = 256;
+const _maxReferenceBytes = 2 * 1024;
+const _maxGenesisContentBytes = 1024;
+const _maxNameBytes = 256;
+const _maxGoalBytes = 4096;
+const _maxClosureContentBytes = 512;
+const _maxInitialTurnBytes = 12 * 1024;
+
+/// Decode a 44221 `session.create`.
+///
+/// Only creates decode here: a resume or stop names an existing execution and
+/// binds no new authority, so it is [CodingSessionDecodeReason.wrongKind] for
+/// this reader rather than a defect.
+CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionLifecycleCommand) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final tags = parseExactTags(event.tags, ['h', 'csl-v', 'csl-command']);
+  if (tags == null ||
+      tags[0].isEmpty ||
+      tags[1] != codingSessionLifecycleCommandTagVersion) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final value = parseBoundedJson(event.content, _maxLifecycleContentBytes);
+  if (!isPlainRecord(value)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final payload = value! as Map<String, dynamic>;
+  if (!hasExactKeys(payload, ['schema', 'commandId', 'action']) ||
+      payload['schema'] != codingSessionLifecycleCommandSchema ||
+      !boundedNonempty(payload['commandId'], _maxIdentifierBytes) ||
+      payload['commandId'] != tags[2] ||
+      !isPlainRecord(payload['action'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final action = payload['action']! as Map<String, dynamic>;
+  if (action['type'] != 'session.create') {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final hasSessionRef = action.containsKey('sessionRef');
+  final hasGenesisRef = action.containsKey('genesisRef');
+  final createKeys = [
+    'type',
+    'projectRef',
+    'repoRef',
+    if (hasSessionRef) 'sessionRef',
+    if (hasGenesisRef) 'genesisRef',
+    'providerInstanceRef',
+    'providerAuthorityPubkey',
+    'model',
+    'title',
+    'initialTurn',
+  ];
+  if (!hasExactKeys(action, createKeys) || (hasGenesisRef && !hasSessionRef)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  // Absent is the historical 8-key form ("no umbrella claimed"); an explicit
+  // null means the same thing on a new create. Anything present must be a
+  // canonical UUID — a malformed claim is refused rather than coerced.
+  final claimed = action['sessionRef'];
+  if (claimed != null && !isCodingSessionSessionRef(claimed)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final genesisRef = action['genesisRef'];
+  if (hasGenesisRef && (!isHex64(genesisRef) || claimed == null)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final authority = normalizePubkey(action['providerAuthorityPubkey']);
+  if (authority.isEmpty ||
+      !boundedNonempty(action['providerInstanceRef'], _maxReferenceBytes) ||
+      !boundedNullable(action['projectRef'], _maxReferenceBytes) ||
+      !boundedNullable(action['repoRef'], _maxReferenceBytes) ||
+      !boundedNullable(action['model'], _maxReferenceBytes) ||
+      !boundedNullable(action['title'], _maxReferenceBytes) ||
+      !boundedNullable(action['initialTurn'], _maxInitialTurnBytes)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    CodingSessionCreate(
+      ref: ref,
+      commandId: payload['commandId'] as String,
+      providerAuthorityPubkey: authority,
+      providerInstanceRef: action['providerInstanceRef'] as String,
+      sessionRef: claimed as String?,
+      genesisRef: genesisRef as String?,
+      projectRef: action['projectRef'] as String?,
+      repoRef: action['repoRef'] as String?,
+      model: action['model'] as String?,
+      title: action['title'] as String?,
+    ),
+  );
+}
+
+/// Decode a 44226 genesis. Its signer is the umbrella's founder.
+///
+/// The genesis is resolved by *event id* from the create that names it; the
+/// `csg-session` tag is a scoping aid, never a selector.
+CodingSessionDecoded<CodingSessionGenesis> decodeCodingSessionGenesis(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionGenesis) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final tags = parseExactTags(event.tags, ['h', 'csg-v', 'csg-session']);
+  if (tags == null ||
+      tags[0].isEmpty ||
+      tags[1] != codingSessionGenesisTagVersion) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final value = parseBoundedJson(event.content, _maxGenesisContentBytes);
+  if (!isPlainRecord(value)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final payload = value! as Map<String, dynamic>;
+  final hasAdopts = payload.containsKey('adopts');
+  if (!hasExactKeys(
+        payload,
+        hasAdopts ? ['sessionRef', 'v', 'adopts'] : ['sessionRef', 'v'],
+      ) ||
+      payload['v'] != codingSessionGenesisSchemaVersion ||
+      !isCodingSessionSessionRef(payload['sessionRef']) ||
+      payload['sessionRef'] != tags[2]) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  if (hasAdopts && !_adoptsValid(payload['adopts'])) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    CodingSessionGenesis(ref: ref, sessionRef: payload['sessionRef'] as String),
+  );
+}
+
+/// Decode a 44229 umbrella-session display name: one line, at most 256 bytes.
+CodingSessionDecoded<CodingSessionName> decodeCodingSessionName(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionName) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final decoded = _decodeAddressableText(
+    event,
+    versionTag: 'csnm-v',
+    version: codingSessionNameTagVersion,
+    maxBytes: _maxNameBytes,
+    singleLine: true,
+    verifier: verifier,
+  );
+  final failure = decoded.reason;
+  if (failure != null) return CodingSessionDecoded.failed(failure);
+  final record = decoded.value!;
+  return CodingSessionDecoded.ok(
+    CodingSessionName(
+      ref: record.ref,
+      sessionRef: record.sessionRef,
+      content: record.content,
+    ),
+  );
+}
+
+/// Decode a 44227 umbrella-session goal: at most 4096 bytes.
+CodingSessionDecoded<CodingSessionGoal> decodeCodingSessionGoal(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionGoal) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final decoded = _decodeAddressableText(
+    event,
+    versionTag: 'csgl-v',
+    version: codingSessionGoalTagVersion,
+    maxBytes: _maxGoalBytes,
+    singleLine: false,
+    verifier: verifier,
+  );
+  final failure = decoded.reason;
+  if (failure != null) return CodingSessionDecoded.failed(failure);
+  final record = decoded.value!;
+  return CodingSessionDecoded.ok(
+    CodingSessionGoal(
+      ref: record.ref,
+      sessionRef: record.sessionRef,
+      content: record.content,
+    ),
+  );
+}
+
+/// Decode a 44230 closure marker.
+CodingSessionDecoded<CodingSessionClosure> decodeCodingSessionClosure(
+  NostrEvent event, {
+  CodingSessionSignatureVerifier? verifier,
+}) {
+  if (event.kind != EventKind.codingSessionClosure) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.wrongKind,
+    );
+  }
+  final tags = parseExactTags(event.tags, ['h', 'd', 'cscl-v', 'cscl-genesis']);
+  if (tags == null ||
+      tags[0].isEmpty ||
+      !isCodingSessionSessionRef(tags[1]) ||
+      tags[2] != codingSessionClosureTagVersion ||
+      !isHex64(tags[3])) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final value = parseBoundedJson(event.content, _maxClosureContentBytes);
+  if (!isPlainRecord(value)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  final payload = value! as Map<String, dynamic>;
+  final action = payload['action'];
+  if (!hasExactKeys(payload, ['action', 'genesisRef', 'sessionRef', 'v']) ||
+      (action != 'closed' && action != 'open') ||
+      payload['genesisRef'] != tags[3] ||
+      payload['sessionRef'] != tags[1] ||
+      payload['v'] != codingSessionClosureSchemaVersion) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    CodingSessionClosure(
+      ref: ref,
+      sessionRef: tags[1],
+      genesisRef: tags[3],
+      closed: action == 'closed',
+    ),
+  );
+}
+
+class _AddressableText {
+  const _AddressableText({
+    required this.ref,
+    required this.sessionRef,
+    required this.content,
+  });
+
+  final CodingSessionEventRef ref;
+  final String sessionRef;
+  final String content;
+}
+
+CodingSessionDecoded<_AddressableText> _decodeAddressableText(
+  NostrEvent event, {
+  required String versionTag,
+  required String version,
+  required int maxBytes,
+  required bool singleLine,
+  required CodingSessionSignatureVerifier? verifier,
+}) {
+  final tags = parseExactTags(event.tags, ['h', 'd', versionTag]);
+  if (tags == null ||
+      tags[0].isEmpty ||
+      !isCodingSessionSessionRef(tags[1]) ||
+      tags[2] != version) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final ref = _eventRef(event, tags[0]);
+  if (ref == null) {
+    return const CodingSessionDecoded.failed(CodingSessionDecodeReason.badTags);
+  }
+  final signature = _checkSignature(event, verifier);
+  if (signature != null) return CodingSessionDecoded.failed(signature);
+
+  final content = event.content;
+  if (!boundedNonempty(content, maxBytes) ||
+      (singleLine && (content.contains('\n') || content.contains('\r')))) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  return CodingSessionDecoded.ok(
+    _AddressableText(ref: ref, sessionRef: tags[1], content: content),
+  );
+}
+
+bool _adoptsValid(Object? value) {
+  if (!isPlainRecord(value)) return false;
+  final record = value! as Map<String, dynamic>;
+  return hasExactKeys(record, ['createEventId', 'receiptEventId']) &&
+      isHex64(record['createEventId']) &&
+      isHex64(record['receiptEventId']);
+}
+
+CodingSessionEventRef? _eventRef(NostrEvent event, String channelId) {
+  final signerPubkey = normalizePubkey(event.pubkey);
+  if (signerPubkey.isEmpty || !isHex64(event.id) || event.createdAt <= 0) {
+    return null;
+  }
+  return CodingSessionEventRef(
+    channelId: channelId,
+    eventId: event.id,
+    signerPubkey: signerPubkey,
+    createdAt: event.createdAt,
+  );
+}
+
+CodingSessionDecodeReason? _checkSignature(
+  NostrEvent event,
+  CodingSessionSignatureVerifier? verifier,
+) {
+  if (verifier == null) return null;
+  return verifier.verify(event) == CodingSessionSignatureVerdict.invalid
+      ? CodingSessionDecodeReason.badSignature
+      : null;
+}
