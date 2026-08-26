@@ -82,6 +82,61 @@ void main() {
       },
     );
 
+    // A 44221 carries only h / csl-v / csl-command, so a commandId is a
+    // claim, not a credential: anyone in the channel can publish a second
+    // create reusing a live one. The command is then disputed and binds
+    // nothing — but the execution its receipt named must not quietly drop
+    // into the first-seen-metadata-signer fallback, or the forger's backdated
+    // 44223 owns the victim's execution.
+    test('a forged create reusing a live commandId cannot take the target', () {
+      final events = [
+        // The genuine command, its provider's receipt, and its facts.
+        createEvent(commandId: 'cmd-1'),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running', createdAt: 2000),
+        // A channel member republishing the same commandId for themselves,
+        // with metadata timed to win any first-seen race.
+        createEvent(
+          commandId: 'cmd-1',
+          pubkey: otherFounderPubkey,
+          authority: otherProviderPubkey,
+        ),
+        metadataEvent(
+          status: 'failed',
+          pubkey: otherProviderPubkey,
+          createdAt: 500,
+        ),
+      ];
+      final facts = _gate(events);
+      expect(facts.authorityByTarget[target().key], isNull);
+      expect(facts.metadata, isEmpty);
+      expect(facts.counts.conflicts, greaterThan(0));
+
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: events,
+      );
+      expect(view.sessions, isEmpty);
+    });
+
+    // One command cannot have minted two executions. Which one it really
+    // minted is unreadable, so neither may fall back to a metadata signer.
+    test('a command answered with two executions disputes both', () {
+      final second = target(sessionId: 'session-2');
+      final facts = _gate([
+        createEvent(commandId: 'cmd-1'),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        receiptEvent(commandId: 'cmd-1', status: 'resumed', forTarget: second),
+        metadataEvent(status: 'running'),
+        metadataEvent(forTarget: second, status: 'running'),
+      ]);
+      expect(facts.authorityByTarget[target().key], isNull);
+      expect(facts.authorityByTarget[second.key], isNull);
+      expect(facts.metadata, isEmpty);
+      expect(facts.counts.conflicts, greaterThan(0));
+    });
+
     test('a transcript for a target nobody vouches for is not rendered', () {
       final facts = _gate([
         transcriptEvent(

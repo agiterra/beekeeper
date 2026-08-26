@@ -432,6 +432,21 @@ _CreateJoins _joinCreates(
   final authorityByTarget = <String, String>{};
   final disputedTargets = <String>{};
 
+  // Every execution some lifecycle receipt says [commandId] opened. When the
+  // command itself is unreadable, each of these is a target whose provenance
+  // the read cannot settle either way.
+  Set<String> executionsNamedBy(String commandId) {
+    final keys = <String>{};
+    for (final receipt in receipts) {
+      if (receipt.commandId != commandId) continue;
+      if (receipt.isTurnStage) continue;
+      final target = receipt.session;
+      if (target == null) continue;
+      keys.add(target.key);
+    }
+    return keys;
+  }
+
   for (final entry in byCommandId.entries) {
     final records = [...entry.value]
       ..sort((left, right) => _byCreatedAtThenEventId(left.ref, right.ref));
@@ -446,6 +461,14 @@ _CreateJoins _joinCreates(
             1;
     if (disputed) {
       conflicts += 1;
+      // A commandId is a claim, not a credential: a 44221 carries only
+      // h / csl-v / csl-command, so anyone in the channel can publish a
+      // second create reusing a live one. Binding nothing is not enough —
+      // the executions this command's receipts named would then drop into
+      // the first-seen-metadata-signer fallback, and the forger's backdated
+      // 44223 would own the victim's execution. D5 allows that fallback only
+      // when no create is readable; a contested one is not an absence.
+      disputedTargets.addAll(executionsNamedBy(entry.key));
       continue;
     }
     final claim = records.first;
@@ -465,7 +488,13 @@ _CreateJoins _joinCreates(
       answers.add(target.key);
     }
     if (answers.length != 1) {
-      if (answers.length > 1) conflicts += 1;
+      if (answers.length > 1) {
+        conflicts += 1;
+        // One command cannot have minted two executions. Which one it really
+        // minted is unreadable, so neither may fall back to whoever timed
+        // their metadata earliest.
+        disputedTargets.addAll(answers);
+      }
       continue;
     }
     final targetKey = answers.single;
