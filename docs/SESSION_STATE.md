@@ -1807,8 +1807,10 @@ written and `bash -n` clean but **was not executed** — that harness needs
 ### Found 2026-08-25 — the responsiveness pass, and the UI critique behind it
 
 60. **The relay as the mailbox for turn delivery (Slice 2), built but not
-    clean.** On `crew/s2-s6@ecb16a52`, not landed, not gated. On the wire,
-    kind 44220 gains a closed `deliver` class (`start` / `queue` / `steer` /
+    clean.** On `crew/s2-s6`, code at `734bd639`, not landed, not gated. (The
+    SHA this item used to name, `ecb16a52`, is on no branch — `git branch -a
+    --contains ecb16a52` is empty — so nothing cited against it resolved.)
+    On the wire, kind 44220 gains a closed `deliver` class (`start` / `queue` / `steer` /
     `interrupt` / `ignore`, rejected at decode rather than in `validate()`),
     the provider consumes a boundary turn at *start* and replays unconsumed
     turns from a persisted per-channel watermark in `(created_at, id)` order
@@ -1820,8 +1822,10 @@ written and `bash -n` clean but **was not executed** — that harness needs
     is never silently lost", not "every accepted turn eventually runs" — a
     turn reaching no live execution gets a terminal `turn_dropped` /
     `NO_LIVE_EXECUTION` because `session.resume` mints generation N+1
-    (`lib.rs:1657-1660`) and the fence refuses the replayed generation-N
-    command, so any receipt promising a replay would have been a lie.
+    (`resume_session`'s `record.generation.checked_add(1)`,
+    `crates/buzz-session-provider/src/lib.rs:1690-1693`) and the fence refuses
+    the replayed generation-N command, so any receipt promising a replay would
+    have been a lie.
     Re-addressing an owed turn to the resumed generation is the **sender's**
     job and is now in Slice 4's scope (desktop resend from the receipt; `bee
     sessions send --readdress`).
@@ -1832,7 +1836,21 @@ written and `bash -n` clean but **was not executed** — that harness needs
     Round-3 triage applied on `crew/lane-2F`: `mailbox-1` (the hold branch
     advanced the watermark past older held turns) and `evidence-3` (a failed
     held delivery dropped the untried remainder) are fixed, each pinned red
-    first. Residuals: native mid-turn steer is boundary-only in this build —
+    first. Round-2 triage, `contract-1`, fixed on `crew/s2-s6@734bd639` and
+    pinned red first by
+    `a_delivered_cancel_is_not_issued_twice_after_a_failed_ledger_append`
+    (`crates/buzz-session-provider/src/lib.rs:9813`, 0 passed / 1 failed before
+    the fix): the `evidence-3` hand-back itself created a silent-loss path for
+    interrupts. `on_turn` records custody in `in_flight` only on its
+    `Ok(()) if is_turn` arm and `is_turn` is false for `TurnAction::Interrupt`,
+    so a cancel whose `SessionHandle::deliver` had already succeeded and whose
+    ledger append then failed went back into `replay.held` with no record
+    anywhere — both ledgers roll their in-memory entry back on a failed append
+    — and the next redelivery passed every `decide_turn` fence and cancelled an
+    unrelated running turn with no receipt, no transcript item and no ledger
+    entry. A sibling process-local set, `delivered_cancels`, now covers the
+    window between delivery and the durable answer
+    (`crates/buzz-session-provider/src/commands.rs:518`). Residuals: native mid-turn steer is boundary-only in this build —
     `NATIVE_STEER_DELIVERABLE` is `false` and `threadSteer` is therefore false
     for every execution, so no degrade path in this build is reachable and all
     steer evidence is hand-injected; two briefed acceptances were **not met**
@@ -1897,8 +1915,9 @@ main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 later that day with one docs conflict (this item is now 58) and re-gated:
 **Slices 2–6 were built by a Claude-only crew on crew/s2-s6 on
 2026-08-26**: only S2 (the relay is the mailbox) was reached, and it is **not
-clean** — its `just ci`/`just test` gate at `ecb16a52` never finished, so the
-slice has no gate counts of its own; the green counts that exist are per-crate
+clean** — its `just ci`/`just test` gate never finished at any head (the head
+this paragraph used to name, `ecb16a52`, is on no branch), so the slice has no
+gate counts of its own; the green counts that exist are per-crate
 at the round-2 head (`cargo test -p buzz-session-provider` 277 lib + 2
 integration passed / 0 failed, desktop `coding-sessions` 857 passed / 0 failed,
 `tsc --noEmit`, `cargo clippy -p buzz-session-provider --all-targets` and
