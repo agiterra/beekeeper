@@ -147,6 +147,17 @@ const REPLAY_GRACE_SECS: u64 = 600;
 /// startup is not noticeably delayed. See [`ReplayWindow`].
 const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
 
+/// The `turn_dropped` code for an interrupt-class turn the mailbox had no room
+/// for.
+///
+/// Distinct from `payload::QUEUE_FULL` because it states the second fact that
+/// matters to the sender: the running turn was *not* cancelled. A plain
+/// `QUEUE_FULL` here would leave them unable to tell "your words did not get
+/// in" from "your words did not get in and the work you interrupted is gone".
+/// The receipt code list is open (see `docs/nips/NIP-CSL.md`), which is what
+/// lets a new fact get its own word instead of being folded into an old one.
+const QUEUE_FULL_TURN_KEPT: &str = "QUEUE_FULL_TURN_KEPT";
+
 /// The operator-facing sentence a `turn_degraded` receipt carries.
 ///
 /// One sentence, not a per-execution explanation: see
@@ -1957,6 +1968,28 @@ impl Provider {
         // already checked — `decide_turn` refuses an interrupt-class turn from
         // anyone but the founder.
         if is_turn && deliver == CodingSessionDelivery::Interrupt {
+            // Two sends into one bounded mailbox — the cancel, then the turn
+            // that replaces what was cancelled — and the actor stops reading
+            // that mailbox for up to `session::CANCEL_GRACE` while it drains
+            // the turn the cancel ended. Issuing the cancel and *then*
+            // discovering the turn cannot be taken destroys the running work
+            // and loses the words meant to replace it, under a receipt that
+            // mentions only the queue. Both slots or neither: this run loop is
+            // the sole producer, so the room measured here is the room the two
+            // sends get.
+            if !self.mailbox_fits_interrupt_class(&session_id) {
+                // Terminal, and recorded as such: the sender has to send it
+                // again, and a redelivery must not republish this answer.
+                self.state.record_refusal(&command_id, now_secs())?;
+                let receipt = LifecycleReceipt::turn_dropped(
+                    &command_id,
+                    &target,
+                    QUEUE_FULL_TURN_KEPT,
+                    "the execution's queue is full, so the running turn was left alone and \
+                     this turn was not delivered; send it again once the queue drains",
+                );
+                return self.enqueue_receipt(channel_id, &command_id, &receipt);
+            }
             self.interrupt_open_turn(&session_id, &command_id);
         }
 
@@ -2123,6 +2156,18 @@ impl Provider {
         // this provider could not take should be able to find out why.
         let _deliverable = self.native_steer_deliverable(session_id);
         false
+    }
+
+    /// Whether `session_id`'s mailbox can take both halves of an interrupt-class
+    /// delivery.
+    ///
+    /// `true` when there is no live handle at all: that command's answer is
+    /// the ordinary no-live-execution drop below, and this check must not
+    /// substitute a different one for it.
+    fn mailbox_fits_interrupt_class(&self, session_id: &str) -> bool {
+        self.sessions
+            .handle(session_id)
+            .is_none_or(|handle| handle.free_slots() >= 2)
     }
 
     /// Cancel whatever turn is running on `session_id` so an interrupt-class
@@ -9087,6 +9132,111 @@ mod tests {
     /// Without the cancel it is an ordinary boundary turn that waits behind a
     /// stalled one forever, which is the opposite of what the class promises
     /// its (founder-only) sender.
+    /// An interrupt-class turn that cannot be taken does not destroy the turn
+    /// it was going to replace.
+    ///
+    /// The cancel and the replacement turn are two sends into one bounded
+    /// mailbox (`session::SESSION_MAILBOX_DEPTH`), and the actor stops reading
+    /// that mailbox for up to `session::CANCEL_GRACE` while it drains the turn
+    /// the cancel just ended. With one slot free, issuing the cancel first
+    /// destroyed the running turn, lost the founder's replacement words to a
+    /// `QUEUE_FULL`, and left a receipt that mentioned only the queue. Both
+    /// slots or neither.
+    #[tokio::test]
+    async fn an_interrupt_class_turn_with_no_room_for_it_leaves_the_running_turn_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = stalling_provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-stalled", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+        assert!(provider
+            .state()
+            .session(&target.session_id)
+            .is_some_and(|record| record.open_turn.is_some()));
+
+        // A mailbox with exactly one free slot, held by this test rather than
+        // by a real actor — see `SessionManager::attach_test_handle`.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(session::SESSION_MAILBOX_DEPTH);
+        for index in 0..session::SESSION_MAILBOX_DEPTH - 1 {
+            tx.try_send(session::SessionCommand::Turn {
+                command_id: format!("filler-{index}"),
+                text: "filler".to_owned(),
+                operator_pubkey: None,
+            })
+            .expect("fill the mailbox");
+        }
+        let _shutdown_rx = provider.sessions.attach_test_handle(&target.session_id, tx);
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "turn-boss",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "stop and do this instead",
+                        "deliver": "interrupt",
+                    }),
+                ),
+            )
+            .await
+            .expect("handle");
+
+        // Nothing new reached the mailbox: no cancel was issued, so the turn
+        // that was running is still running.
+        let mut delivered = Vec::new();
+        while let Ok(command) = rx.try_recv() {
+            delivered.push(command);
+        }
+        assert_eq!(
+            delivered.len(),
+            session::SESSION_MAILBOX_DEPTH - 1,
+            "an interrupt that cannot be completed must not be started"
+        );
+        assert!(
+            delivered
+                .iter()
+                .all(|command| !matches!(command, session::SessionCommand::Interrupt { .. })),
+            "the running turn was cancelled for a replacement that could not be delivered"
+        );
+        assert!(provider
+            .state()
+            .session(&target.session_id)
+            .is_some_and(|record| record.open_turn.is_some()));
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(receipt_stages(&sink, "turn-boss"), vec!["turn_dropped"]);
+        let dropped = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "turn-boss")
+            .expect("drop receipt");
+        assert_eq!(dropped["error"]["code"], QUEUE_FULL_TURN_KEPT);
+        payload::decode_coding_session_lifecycle_receipt(&dropped.to_string())
+            .expect("strictly decodable drop receipt");
+        assert!(provider.state().is_command_refused("turn-boss"));
+    }
+
     #[tokio::test]
     async fn an_interrupt_class_turn_cancels_the_running_turn_then_runs() {
         let dir = tempfile::tempdir().expect("tempdir");

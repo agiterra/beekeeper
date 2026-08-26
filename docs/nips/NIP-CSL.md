@@ -330,8 +330,10 @@ land without polling the transcript. Six statuses:
   refused, not merged into the running turn, and not lost: a `turn_queued`
   follows. See the downgrade rule in [NIP-CSC](NIP-CSC.md).
 - `turn_dropped` — the provider will never run this command and nobody was
-  refused: the mailbox was full (`QUEUE_FULL`), or the session has no live
-  execution to deliver into (`NO_LIVE_EXECUTION`). Both are **terminal**: the
+  refused: the mailbox was full (`QUEUE_FULL`), the mailbox had no room for
+  both halves of an interrupt-class delivery so the running turn was left
+  untouched (`QUEUE_FULL_TURN_KEPT`), or the session has no live execution to
+  deliver into (`NO_LIVE_EXECUTION`). All are **terminal**: the
   command is never consumed (it did not run) and it is recorded as refused, so
   the answer is given once and no redelivery repeats it. A dropped turn is not
   re-delivered by resuming the session — `session.resume` mints a new
@@ -390,6 +392,7 @@ codes in use today are documented, not enforced:
 | --- | --- | --- |
 | `turn_degraded` | `STEER_UNSUPPORTED` | this execution's runtime offers no native steering; delivered at the boundary |
 | `turn_dropped` | `QUEUE_FULL` | the in-actor turn queue is at `SESSION_QUEUE_DEPTH` |
+| `turn_dropped` | `QUEUE_FULL_TURN_KEPT` | a `deliver: "interrupt"` turn needed two mailbox slots (the cancel, then the turn replacing what was cancelled) and there was room for fewer; nothing was cancelled |
 | `turn_dropped` | `NO_LIVE_EXECUTION` | the session is persisted but nothing is running to deliver into |
 | `turn_refused` | `UNAUTHORIZED_OPERATOR` | the signer may not steer this session — including a non-founder asking for `deliver: "interrupt"` on a `thread.turn.start` |
 | `turn_refused` | `UNKNOWN_TARGET` | this provider owns the session id but not that target |
@@ -412,8 +415,17 @@ codes in use today are documented, not enforced:
   `initialize` — a redelivery answered by a different process must not publish
   a second payload under the same `(commandId, turn_degraded)` semantic key.
 - `turn_dropped` — when the mailbox itself is full (`QueueFull`), when the
-  in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`), or when the addressed
-  session has no live execution to deliver into (`NO_LIVE_EXECUTION`). The
+  in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`), when an
+  interrupt-class turn cannot have both of its sends
+  (`QUEUE_FULL_TURN_KEPT`), or when the addressed session has no live
+  execution to deliver into (`NO_LIVE_EXECUTION`).
+
+  An **interrupt-class turn is two sends into one bounded mailbox** — the
+  cancel, then the turn that replaces what was cancelled — and a provider MUST
+  check that both fit before issuing the cancel. Cancelling and then failing to
+  deliver destroys work the sender did not ask to lose *and* loses the words
+  meant to replace it. When there is not room for both, nothing is cancelled
+  and the command is dropped as `QUEUE_FULL_TURN_KEPT`. The
   queue-overflow case already publishes a `turn_dropped` transcript item, and
   this receipt is additive to that item, not a replacement for it. The
   `NO_LIVE_EXECUTION` case must not consume the command: dropping a turn *and*
