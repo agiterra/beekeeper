@@ -285,14 +285,18 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   const first = renderHook(() => useBothIngressHooks(client), { wrapper });
   await settleUntil(
     () =>
-      historyCalls.length === 2 &&
+      historyCalls.length === 4 &&
       liveSubscriptions.length === 2 &&
       first.result.current.trusted.metadata.length === 1 &&
       first.result.current.creates.observations.length === 1,
     "both hooks to fetch history, arm live subscriptions, and ingest",
   );
 
-  assert.equal(historyCalls.length, 2, "one history fetch per hook");
+  // Four reads, two hooks: the trusted ingress backfills in one filter, while
+  // the create observations read one filter per kind so per-turn 44224 volume
+  // cannot evict the creates they join to. Live subscriptions carry no row
+  // budget, so there is still exactly one per hook.
+  assert.equal(historyCalls.length, 4, "one history read per kind budget");
   assert.equal(liveSubscriptions.length, 2, "one live subscription per hook");
   assert.equal(first.result.current.trusted.metadata.length, 1);
   assert.equal(first.result.current.creates.observations.length, 1);
@@ -310,14 +314,14 @@ test("both ingress subscriptions rebuild when the session view is re-entered", a
   const second = renderHook(() => useBothIngressHooks(client), { wrapper });
   await settleUntil(
     () =>
-      historyCalls.length === 4 &&
+      historyCalls.length === 8 &&
       liveSubscriptions.length === 4 &&
       second.result.current.trusted.metadata.length === 1 &&
       second.result.current.creates.observations.length === 1,
     "the remounted hooks to refetch history and re-arm live subscriptions",
   );
 
-  assert.equal(historyCalls.length, 4, "history must be refetched on remount");
+  assert.equal(historyCalls.length, 8, "history must be refetched on remount");
   assert.equal(liveSubscriptions.length, 4, "live subs must be re-armed");
   assert.equal(
     liveSubscriptions.filter((subscription) => !subscription.closed).length,
@@ -428,13 +432,13 @@ test("a channel added during create fences live before its first history backfil
   });
   await settleUntil(
     () =>
-      historyCalls.length === 2 &&
+      historyCalls.length === 4 &&
       result.current.trusted.metadata.length === 1 &&
       result.current.creates.observations.length === 1,
     "the post-fence history read to land in both stores",
   );
 
-  assert.equal(historyCalls.length, 2, "one post-fence read per ingress");
+  assert.equal(historyCalls.length, 4, "one post-fence read per kind budget");
   assert.equal(result.current.trusted.metadata.length, 1);
   assert.equal(result.current.creates.observations.length, 1);
 
@@ -540,8 +544,8 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
   });
   // Observe as soon as the first rejection has landed on both ingresses.
   await settleUntil(
-    () => attemptsByFilterKind.size === 2,
-    "the first back-pressure rejection on both ingresses",
+    () => attemptsByFilterKind.size === 4,
+    "the first back-pressure rejection on every ingress read",
   );
 
   // At this observation point the retry may still be backing off, or a busy
@@ -573,10 +577,15 @@ test("a back-pressure CLOSED on the re-entry history REQ converges instead of la
     attemptsByFilterKind.get("44223,44224,44225") >= 6,
     `trusted ingress must retry past the bounded transport budget (attempts: ${JSON.stringify([...attemptsByFilterKind])})`,
   );
-  assert.ok(
-    attemptsByFilterKind.get("44221,44224,44226") >= 6,
-    "create observations must retry past the bounded transport budget",
-  );
+  // The create backfill reads one filter per kind, and the retry ladder
+  // re-runs the whole set, so every one of its three keys must get past the
+  // bounded transport budget — not just whichever one happened to be first.
+  for (const kinds of ["44221", "44224", "44226"]) {
+    assert.ok(
+      attemptsByFilterKind.get(kinds) >= 6,
+      `create observations must retry kind ${kinds} past the bounded transport budget (attempts: ${JSON.stringify([...attemptsByFilterKind])})`,
+    );
+  }
   assert.equal(result.current.trusted.errorMessage, null);
   assert.equal(result.current.trusted.isLoading, false);
   assert.equal(result.current.trusted.metadata.length, 1);
