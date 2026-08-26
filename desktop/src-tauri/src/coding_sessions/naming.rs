@@ -135,7 +135,19 @@ fn save_record(app: &AppHandle, record: &CodingSessionNamingRecord) -> Result<()
 /// The stored key, from the keyring when there is one and the record file
 /// otherwise. `None` means no key has been set.
 fn stored_api_key(record: &CodingSessionNamingRecord) -> Option<String> {
-    if let Some(secrets) = naming_secret_store() {
+    stored_api_key_in(record, naming_secret_store())
+}
+
+/// [`stored_api_key`] against an explicit store.
+///
+/// The store is a parameter so the mapping can be exercised with `None` — a
+/// unit test must never reach the OS keychain, which blocks on an access
+/// prompt nobody is there to answer and hangs the run.
+fn stored_api_key_in(
+    record: &CodingSessionNamingRecord,
+    secrets: Option<&SecretStore>,
+) -> Option<String> {
+    if let Some(secrets) = secrets {
         if let Ok(Some(key)) = secrets.load(keyring_name()) {
             if !key.is_empty() {
                 return Some(key);
@@ -150,11 +162,19 @@ fn stored_api_key(record: &CodingSessionNamingRecord) -> Option<String> {
 }
 
 fn settings_from(record: &CodingSessionNamingRecord) -> CodingSessionNamingSettings {
+    settings_from_in(record, naming_secret_store())
+}
+
+/// [`settings_from`] against an explicit store — see [`stored_api_key_in`].
+fn settings_from_in(
+    record: &CodingSessionNamingRecord,
+    secrets: Option<&SecretStore>,
+) -> CodingSessionNamingSettings {
     CodingSessionNamingSettings {
         provider: record.provider,
         base_url: record.base_url.clone(),
         model: record.model.clone(),
-        has_api_key: stored_api_key(record).is_some(),
+        has_api_key: stored_api_key_in(record, secrets).is_some(),
     }
 }
 

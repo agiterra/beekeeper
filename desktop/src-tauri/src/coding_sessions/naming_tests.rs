@@ -77,7 +77,12 @@ fn settings_never_carry_the_key_itself() {
         model: "claude-opus-5".to_string(),
         api_key: "sk-ant-secret".to_string(),
     };
-    let serialized = serde_json::to_string(&settings_from(&record)).expect("serialize");
+    // No store: the keychain is an interactive dependency, and this property
+    // — the settings shape never carries the key — is about the
+    // record-to-settings mapping, not about where the key is kept. Reaching
+    // the real keychain here blocks on an access prompt nobody is there to
+    // answer, and the whole test binary hangs.
+    let serialized = serde_json::to_string(&settings_from_in(&record, None)).expect("serialize");
     assert!(!serialized.contains("sk-ant-secret"), "{serialized}");
     assert!(serialized.contains("\"hasApiKey\":true"), "{serialized}");
 }
