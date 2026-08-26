@@ -24,7 +24,18 @@ pub(crate) const PROJECTS_FILE_NAME: &str = "projects.json";
 
 /// Default log filter for the child. Deliberately quiet: the provider's own
 /// lifecycle lines are what matter in the log file, not relay chatter.
+///
+/// A **default**, not an override — see `rust_log` on [`ProviderEnvInputs`].
 pub(crate) const DEFAULT_RUST_LOG: &str = "info,buzz_session_provider=info";
+
+/// Debug switch asking the adapter to forward every raw SDK message.
+///
+/// Passed through explicitly rather than left to inheritance. The child does
+/// inherit the desktop's environment, so this would arrive anyway — but a
+/// documented debug switch that works by accident is one `env_clear()` away
+/// from silently doing nothing, and the failure would look like the adapter
+/// ignoring the request.
+pub(crate) const EMIT_RAW_SDK_FRAMES_VAR: &str = "BUZZ_CSP_EMIT_RAW_SDK_FRAMES";
 
 /// Everything the env map is derived from.
 pub(crate) struct ProviderEnvInputs<'a> {
@@ -54,6 +65,16 @@ pub(crate) struct ProviderEnvInputs<'a> {
     pub max_sessions: Option<usize>,
     /// Per-turn silence budget in seconds; `None` keeps the provider default.
     pub turn_idle_timeout_secs: Option<u64>,
+    /// Log filter for the child, when the host was launched with one.
+    ///
+    /// `None` uses [`DEFAULT_RUST_LOG`]. This used to be set unconditionally,
+    /// which meant a `RUST_LOG` chosen for a debugging session was silently
+    /// discarded — the one moment somebody actually cares what the child
+    /// logs.
+    pub rust_log: Option<String>,
+    /// Whether to ask the adapter for raw SDK frames. See
+    /// [`EMIT_RAW_SDK_FRAMES_VAR`].
+    pub emit_raw_sdk_frames: bool,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -127,7 +148,18 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
     if let Some(path) = &inputs.augmented_path {
         env.insert("PATH".to_string(), path.clone());
     }
-    env.insert("RUST_LOG".to_string(), DEFAULT_RUST_LOG.to_string());
+    env.insert(
+        "RUST_LOG".to_string(),
+        inputs
+            .rust_log
+            .clone()
+            .unwrap_or_else(|| DEFAULT_RUST_LOG.to_string()),
+    );
+    if inputs.emit_raw_sdk_frames {
+        // Absent rather than "false" when off, so a provider that never asked
+        // sends no `emitRawSDKMessages` key at all.
+        env.insert(EMIT_RAW_SDK_FRAMES_VAR.to_string(), "true".to_string());
+    }
     if let Some(cli) = &inputs.claude_code_executable {
         env.insert(
             "CLAUDE_CODE_EXECUTABLE".to_string(),

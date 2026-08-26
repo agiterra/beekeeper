@@ -1,18 +1,21 @@
 //! A log file for the desktop app.
 //!
-//! Until this existed the app installed no `tracing` subscriber at all. The
-//! session-provider and ACP stacks it embeds carry roughly four hundred
-//! `tracing` call sites between them — every one compiled in, every one
-//! discarded at runtime. That included the adapter's stderr, captured
-//! deliberately into a ring buffer so a session that died on an unattended
-//! machine could still be explained, and then written to a subscriber that did
-//! not exist.
+//! Until this existed the app installed no `tracing` subscriber at all, so its
+//! own instrumentation — the provider supervisor, deep links, managed-agent
+//! discovery — went nowhere.
 //!
-//! What is written here is host-private by nature: adapter stderr quotes paths
-//! and argv and occasionally a credential it choked on, and raw SDK frames are
-//! the adapter's internals verbatim. A local file under the user's own log
-//! directory is the right home for that. It must not be uploaded, attached to
-//! a crash report, or folded into anything that leaves the machine.
+//! **Scope, because this was initially claimed too broadly.** The ACP and
+//! session-provider stacks do *not* log through here: `buzz-session-provider`
+//! runs as a supervised child process, installs its own subscriber
+//! (`buzz-session-provider/src/lib.rs:147`), and has its stdout and stderr
+//! redirected by `supervisor.rs` to
+//! `<app data>/session-provider/logs/<pubkey>.log`. That file is where
+//! `acp::stall`, `acp::stderr`, `acp::sdk_frame` and every `csp::` line land,
+//! and it already existed. This module covers the desktop process only.
+//!
+//! What is written here can still be host-private, so it stays local: not
+//! uploaded, not attached to a crash report, not folded into anything that
+//! leaves the machine.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -29,10 +32,11 @@ static GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::
 
 /// Default verbosity when `RUST_LOG` says nothing.
 ///
-/// `info` globally, with the two stall-diagnosis targets pinned on: they are
-/// the reason this file exists, and they are quiet — a handful of lines per
-/// abnormal turn rather than per frame. `acp::wire` is deliberately absent; it
-/// logs every line in both directions and would bury everything else.
+/// The `acp::`/`csp::` targets are named even though those crates log in the
+/// provider child rather than here: the desktop links them for types and
+/// constants, an in-process user could appear, and a filter that silently
+/// dropped them would be a trap. `acp::wire` is deliberately absent — it logs
+/// every line in both directions and would bury everything else.
 const DEFAULT_FILTER: &str = "info,csp=debug,acp::stall=debug,acp::stderr=debug";
 
 /// Where the log file goes, per platform.
