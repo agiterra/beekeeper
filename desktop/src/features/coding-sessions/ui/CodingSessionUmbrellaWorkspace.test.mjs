@@ -20,7 +20,9 @@ import {
 import {
   CodingSessionUmbrellaTimelineView,
   buildUmbrellaTurnBlockHandoff,
+  shouldAutoOpenAgentsSurface,
   shouldShowTurnBlockProvenance,
+  umbrellaAgentStatusSummary,
   umbrellaWorkspaceStatus,
 } from "./CodingSessionUmbrellaWorkspace.tsx";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail.tsx";
@@ -254,7 +256,7 @@ test("conversation-lane messages interleave between blocks by time", async () =>
   assert.ok(laneIndex < markup.indexOf("Regenerated the fixture"));
 });
 
-test("completed blocks offer Send to the other execution", async () => {
+test("completed blocks keep reply and handoff actions visible", async () => {
   const markup = await renderTimeline({
     channelId: CHANNEL_ID,
     laneMessages: [],
@@ -262,10 +264,35 @@ test("completed blocks offer Send to the other execution", async () => {
     umbrella: buildUmbrella(),
   });
   assert.match(markup, /data-testid="coding-session-umbrella-send-to"/);
+  assert.match(markup, /data-testid="coding-session-umbrella-reply"/);
   assert.match(markup, /Send to.*Codex · gpt-5\.3-codex/s);
   assert.match(markup, /Send to.*Claude · claude-opus-5/s);
-  assert.match(markup, /group-hover\/turn:opacity-100/);
-  assert.match(markup, /opacity-0/);
+  assert.doesNotMatch(markup, /opacity-0/);
+  assert.match(markup, /sticky top-0/);
+});
+
+test("agent focus folds other turns without removing the merged order", async () => {
+  const umbrella = buildUmbrella();
+  const codex = umbrella.executions[1];
+  const markup = await renderTimeline({
+    channelId: CHANNEL_ID,
+    focusedExecutionKey: codex.executionKey,
+    laneMessages: [],
+    onFocusExecution() {},
+    onHandoff() {},
+    umbrella,
+  });
+  assert.equal(
+    markup.match(/data-testid="coding-session-umbrella-folded-turn"/g)?.length,
+    1,
+  );
+  assert.equal(
+    markup.match(/data-testid="coding-session-umbrella-turn-block"/g)?.length,
+    1,
+  );
+  assert.match(markup, /The failing test is fixtures\/relay\.rs:88\./);
+  assert.match(markup, /Regenerated the fixture as requested\./);
+  assert.doesNotMatch(markup, /sticky top-0/);
 });
 
 function handoffPromptFor(link) {
@@ -527,4 +554,37 @@ test("umbrella status maps onto the header's honest states", () => {
     kind: "unknown",
     label: "Status unknown",
   });
+});
+
+test("umbrella status summary says how many agents are actually working", () => {
+  assert.equal(
+    umbrellaAgentStatusSummary([
+      {
+        executionKey: "claude",
+        label: "Claude",
+        status: { kind: "idle", label: "Idle" },
+      },
+      {
+        executionKey: "codex",
+        label: "Codex",
+        status: { kind: "working", label: "Working" },
+      },
+    ]),
+    "2 agents · 1 working",
+  );
+});
+
+test("the Agents surface auto-opens only for multi-agent ultrawide workspaces", () => {
+  assert.equal(
+    shouldAutoOpenAgentsSurface({ bodyWidthPx: 1920, isMultiExecution: true }),
+    true,
+  );
+  assert.equal(
+    shouldAutoOpenAgentsSurface({ bodyWidthPx: 1919, isMultiExecution: true }),
+    false,
+  );
+  assert.equal(
+    shouldAutoOpenAgentsSurface({ bodyWidthPx: 3440, isMultiExecution: false }),
+    false,
+  );
 });

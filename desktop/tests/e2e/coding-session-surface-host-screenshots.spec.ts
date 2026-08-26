@@ -173,10 +173,27 @@ function seededEvents(): RelayEvent[] {
       4,
       "turn-1",
       {
+        kind: "plan",
+        entries: [
+          { content: "Unify the multi-agent timeline", status: "completed" },
+          {
+            content: "Keep agent identity visible while reading",
+            status: "in_progress",
+          },
+          { content: "Verify focus without retargeting", status: "pending" },
+        ],
+      },
+      BASE_CREATED_AT + 4,
+    ),
+    transcriptEvent(
+      CLAUDE_TARGET,
+      5,
+      "turn-1",
+      {
         kind: "assistant_text",
         text: "Both rails now share one collapsible surface host.",
       },
-      BASE_CREATED_AT + 4,
+      BASE_CREATED_AT + 5,
     ),
     metadataEvent(
       CODEX_TARGET,
@@ -232,22 +249,64 @@ async function openUmbrellaWorkspace(page: import("@playwright/test").Page) {
   return workspace;
 }
 
-test("the surface host opens on Agents, switches, resizes, collapses, and sheets", async ({
+test("merged work focuses in place and the shared surface remains responsive", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const workspace = await openUmbrellaWorkspace(page);
 
-  // 1 — open on Agents by default: participants, not panel chrome per rail.
+  // 1 — the medium-width default is the complete merged narrative. Active
+  // work is attached to the composer and includes only the working execution.
   const host = page.getByTestId("coding-session-surface-host");
+  await expect(host).toHaveCount(0);
+  const focusChips = page.getByTestId("coding-session-agent-focus-chip");
+  await expect(focusChips).toHaveCount(2);
+  const activeWork = page.getByTestId("coding-session-active-work-dock");
+  await expect(activeWork).toContainText("Keep agent identity visible");
+  await expect(activeWork).not.toContainText(
+    "The tab semantics and resize teardown look correct",
+  );
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/01-merged-active-work.png` });
+
+  // 2 — focus folds the other execution in place. It never removes that
+  // execution from the chronology and never retargets the composer.
+  const recipientBeforeFocus =
+    (await page
+      .getByTestId("coding-session-participant-picker-trigger")
+      .textContent()) ?? "";
+  await focusChips.filter({ hasText: "Codex" }).click();
+  await expect(
+    page.getByTestId("coding-session-umbrella-folded-turn"),
+  ).toHaveCount(1);
+  await expect(
+    page.getByTestId("coding-session-umbrella-timeline"),
+  ).toContainText("Both rails now share one collapsible surface host.");
+  await expect(
+    page.getByTestId("coding-session-participant-picker-trigger"),
+  ).toHaveText(recipientBeforeFocus);
+  await expect(activeWork).toBeVisible();
+  await expect(activeWork).toBeInViewport();
+  await expect(page.getByTestId("coding-session-composer")).toBeInViewport();
+  await waitForAnimations(page);
+  const focusedClip = await workspace.boundingBox();
+  if (!focusedClip) throw new Error("focused workspace geometry missing");
+  await page.screenshot({
+    clip: focusedClip,
+    path: `${SHOTS}/02-codex-focus.png`,
+  });
+
+  // Return to All, then open the detail surface explicitly at this width.
+  await focusChips.filter({ hasText: "Codex" }).click();
+  await page.getByTestId("coding-session-surface-toggle-agents").click();
   await expect(host).toBeVisible();
   await expect(host).toContainText("All agents");
   await expect(host).toContainText("Claude");
   await expect(host).toContainText("Codex");
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/01-agents-open.png` });
+  await workspace.screenshot({ path: `${SHOTS}/03-agents-open.png` });
 
-  // 2 — switching tabs swaps content without closing or resizing the host.
+  // 3 — switching tabs swaps content without closing or resizing the host.
   const widthBeforeSwitch = (await host.boundingBox())?.width ?? 0;
   await page.getByTestId("coding-session-surface-tab-changes").click();
   const changes = page.getByTestId("coding-session-changes-rail");
@@ -258,9 +317,9 @@ test("the surface host opens on Agents, switches, resizes, collapses, and sheets
     Math.round(widthBeforeSwitch),
   );
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/02-observed-changes.png` });
+  await workspace.screenshot({ path: `${SHOTS}/04-observed-changes.png` });
 
-  // 3 — the host resizes via its separator; the surface only re-flows.
+  // 4 — the host resizes via its separator; the surface only re-flows.
   const resize = page.getByRole("separator", {
     name: "Resize session surface",
   });
@@ -274,15 +333,15 @@ test("the surface host opens on Agents, switches, resizes, collapses, and sheets
     .poll(async () => (await host.boundingBox())?.width ?? 0)
     .toBeGreaterThan(widthBeforeSwitch + 100);
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/03-resized.png` });
+  await workspace.screenshot({ path: `${SHOTS}/05-resized.png` });
 
-  // 4 — one close control collapses the host entirely.
+  // 5 — one close control collapses the host entirely.
   await page.getByLabel("Close session surface").click();
   await expect(host).toHaveCount(0);
   await waitForAnimations(page);
-  await workspace.screenshot({ path: `${SHOTS}/04-collapsed.png` });
+  await workspace.screenshot({ path: `${SHOTS}/06-collapsed.png` });
 
-  // 5 — on a narrow workspace the same host content appears in one sheet
+  // 6 — on a narrow workspace the same host content appears in one sheet
   // with exactly one close button (the sheet's own).
   await page.setViewportSize({ width: 900, height: 900 });
   await page.getByTestId("coding-session-surface-toggle-agents").click();
@@ -291,5 +350,20 @@ test("the surface host opens on Agents, switches, resizes, collapses, and sheets
   await expect(sheet).toContainText("Codex");
   await expect(sheet.getByRole("button", { name: "Close" })).toHaveCount(1);
   await waitForAnimations(page);
-  await page.screenshot({ path: `${SHOTS}/05-narrow-sheet.png` });
+  await page.screenshot({ path: `${SHOTS}/07-narrow-sheet.png` });
+});
+
+test("an ultrawide multi-agent session opens Agents beside the narrative", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 2560, height: 1100 });
+  const workspace = await openUmbrellaWorkspace(page);
+  const host = page.getByTestId("coding-session-surface-host");
+  await expect(host).toBeVisible();
+  await expect(host).toContainText("All agents");
+  await expect(
+    page.getByTestId("coding-session-umbrella-timeline"),
+  ).toBeVisible();
+  await waitForAnimations(page);
+  await workspace.screenshot({ path: `${SHOTS}/08-ultrawide-agents.png` });
 });

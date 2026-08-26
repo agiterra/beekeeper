@@ -40,8 +40,11 @@
 //! there".
 
 use std::collections::HashMap;
+use std::path::Path;
 
-use buzz_core::coding_session_context::sanitize_coding_session_context_content;
+use buzz_core::coding_session_context::{
+    sanitize_coding_session_context_content, sanitize_coding_session_context_content_for_workspace,
+};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -289,6 +292,21 @@ impl TranscriptTranslator {
 pub fn fit_item(item: Value, overhead: usize, max_envelope_bytes: usize) -> Value {
     shrink_item(
         sanitize_coding_session_context_content(&item),
+        overhead,
+        max_envelope_bytes,
+    )
+}
+
+/// [`fit_item`] with the execution checkout available for safe path
+/// relativization. The root itself is never copied into the signed item.
+pub fn fit_item_for_workspace(
+    item: Value,
+    overhead: usize,
+    max_envelope_bytes: usize,
+    workspace_root: &Path,
+) -> Value {
+    shrink_item(
+        sanitize_coding_session_context_content_for_workspace(&item, workspace_root),
         overhead,
         max_envelope_bytes,
     )
@@ -957,6 +975,25 @@ mod tests {
                 "the path was dropped without a visible elision: {serialized}"
             );
         }
+    }
+
+    #[test]
+    fn a_workspace_citation_is_signed_as_a_relative_path() {
+        let item = json!({
+            "kind": "assistant_text",
+            "text": "See `/Users/brian/Projects/beekeeper/desktop/src/App.tsx:42`; not /Users/brian/.ssh/id_ed25519"
+        });
+        let signed = fit_item_for_workspace(
+            item,
+            512,
+            32 * 1024,
+            Path::new("/Users/brian/Projects/beekeeper"),
+        );
+        let text = signed["text"].as_str().expect("text");
+        assert!(text.contains("`desktop/src/App.tsx:42`"), "{text}");
+        assert!(!text.contains("/Users/brian/Projects/beekeeper"));
+        assert!(!text.contains("/Users/brian/.ssh"));
+        assert!(text.contains("[elided private context: "));
     }
 
     /// ACP's `kind` is a discriminant, not a name. Folding it into the name

@@ -1,16 +1,10 @@
 import * as React from "react";
-import { ArrowRightLeft, Flag } from "lucide-react";
 import { toast } from "sonner";
 
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
-  buildCodingSessionHandoffPrefill,
-  isCompletedCodingSessionTurnBlock,
-  parseCodingSessionHandoffPrefill,
-  readCodingSessionTurnBlockPrompt,
   resolveCodingSessionHandoffFactLocation,
-  resolveCodingSessionHandoffSource,
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
@@ -25,7 +19,6 @@ import {
   buildUmbrellaTimeline,
   codingSessionUmbrellaEntryKey,
   type CodingSessionUmbrellaTimelineEntry,
-  type CodingSessionUmbrellaTurnBlock,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaTimeline";
 import type {
   CodingSessionCatalogRecord,
@@ -58,12 +51,20 @@ import {
 } from "./CodingSessionColumn";
 import { CodingSessionGoalPill } from "./CodingSessionGoalPill";
 import { CodingSessionNameDialog } from "./CodingSessionNameDialog";
-import { CodingSessionTranscript } from "./CodingSessionTranscript";
 import { CodingSessionPendingTurns } from "./CodingSessionPendingTurns";
 import { CodingSessionChangesRail } from "./CodingSessionChangesRail";
 import { CodingSessionTaskRail } from "./CodingSessionTaskRail";
 import { useCodingSessionTaskDock } from "./useCodingSessionTaskDock";
+import { deriveCodingSessionActiveTaskModel } from "./useCodingSessionTaskDock";
 import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
+import {
+  CodingSessionAgentFocus,
+  type CodingSessionAgentFocusItem,
+} from "./CodingSessionAgentFocus";
+import {
+  CodingSessionActiveWorkDock,
+  type CodingSessionActiveWorkAgent,
+} from "./CodingSessionActiveWorkDock";
 import {
   CodingSessionSurfaceHost,
   useCodingSessionSurfaceHostState,
@@ -74,6 +75,9 @@ import {
   CodingSessionUmbrellaComposer,
   type CodingSessionUmbrellaComposerPrefill,
 } from "./CodingSessionUmbrellaComposer";
+import { CodingSessionUmbrellaTurnBlock } from "./CodingSessionUmbrellaTurnBlock";
+
+export { buildUmbrellaTurnBlockHandoff } from "./CodingSessionUmbrellaTurnBlock";
 
 /**
  * The umbrella surface: one time-ordered narrative interleaved at turn-block
@@ -130,6 +134,11 @@ export function UmbrellaCodingSessionWorkspace({
   const resolveReachability = useCodingSessionReachabilityResolver(channelId);
   const [workspaceBodyRef, bodyWidthPx] = useElementWidth<HTMLDivElement>();
   const isNarrow = bodyWidthPx > 0 && bodyWidthPx < 960;
+  const headerCompact = bodyWidthPx > 0 && bodyWidthPx < 1320;
+  const isMultiExecution = umbrella.executions.length > 1;
+  const [focusedExecutionKey, setFocusedExecutionKey] = React.useState<
+    string | null
+  >(null);
   const composerParticipants = React.useMemo(
     () => listCodingSessionUmbrellaParticipants(umbrella),
     [umbrella],
@@ -224,6 +233,16 @@ export function UmbrellaCodingSessionWorkspace({
     [surfaces],
   );
   const surfaceHost = useCodingSessionSurfaceHostState(surfaceIds);
+  const autoOpenedAgentsRef = React.useRef(false);
+  React.useEffect(() => {
+    if (
+      !autoOpenedAgentsRef.current &&
+      shouldAutoOpenAgentsSurface({ bodyWidthPx, isMultiExecution })
+    ) {
+      autoOpenedAgentsRef.current = true;
+      surfaceHost.select("agents");
+    }
+  }, [bodyWidthPx, isMultiExecution, surfaceHost.select]);
   const narrativeExpanded = surfaceHost.activeTab === null;
   const surfaceHostId = React.useId();
   const [renameOpen, setRenameOpen] = React.useState(false);
@@ -232,6 +251,55 @@ export function UmbrellaCodingSessionWorkspace({
     umbrella.sessionRef !== null &&
     umbrella.founderPubkey !== null &&
     currentUserPubkey?.toLowerCase() === umbrella.founderPubkey.toLowerCase();
+  const agentFocusItems = React.useMemo<CodingSessionAgentFocusItem[]>(
+    () =>
+      composerParticipants.flatMap((participant) => {
+        if (participant.kind !== "execution") return [];
+        const record = participant.execution.activeGeneration;
+        return [
+          {
+            executionKey: participant.executionKey,
+            label: participant.label,
+            status: deriveCodingSessionWorkspaceStatus(
+              record.transcript,
+              record.status,
+              record.statusAt,
+              resolveReachability(record.commandTarget),
+            ),
+          },
+        ];
+      }),
+    [composerParticipants, resolveReachability],
+  );
+  const activeWorkAgents = React.useMemo<CodingSessionActiveWorkAgent[]>(
+    () =>
+      composerParticipants.flatMap((participant) => {
+        if (participant.kind !== "execution") return [];
+        const record = participant.execution.activeGeneration;
+        const status = deriveCodingSessionWorkspaceStatus(
+          record.transcript,
+          record.status,
+          record.statusAt,
+          resolveReachability(record.commandTarget),
+        );
+        if (status.kind !== "working") return [];
+        const model = deriveCodingSessionTaskModel(record.transcript);
+        const activeModel = deriveCodingSessionActiveTaskModel({
+          isWorking: true,
+          model,
+          transcript: record.transcript,
+        });
+        return [
+          {
+            executionKey: participant.executionKey,
+            label: participant.label,
+            model: activeModel,
+            turnKey: `${participant.executionKey}:${activeModel?.turnId ?? record.statusAt ?? record.lastEventAt}`,
+          },
+        ];
+      }),
+    [composerParticipants, resolveReachability],
+  );
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -250,9 +318,28 @@ export function UmbrellaCodingSessionWorkspace({
     >
       <div className="shrink-0" data-testid="coding-session-authority-summary">
         <CodingSessionHeader
+          agentControls={
+            isMultiExecution && !isNarrow ? (
+              <CodingSessionAgentFocus
+                focusedExecutionKey={focusedExecutionKey}
+                items={agentFocusItems}
+                onFocus={setFocusedExecutionKey}
+              />
+            ) : undefined
+          }
           channelName={channelName}
-          compact={isNarrow}
+          compact={isNarrow || headerCompact}
+          founderDetails={
+            umbrella.founderPubkey && umbrella.genesisRef ? (
+              <CodingSessionFounderLine
+                founderPubkey={umbrella.founderPubkey}
+                genesisRef={umbrella.genesisRef}
+                variant="label"
+              />
+            ) : undefined
+          }
           generationLabel={codingSessionUmbrellaGenerationLabel(umbrella)}
+          goalText={goal?.content ?? null}
           onAddProvider={onAddProvider}
           onBack={onBack}
           onCloseSession={onCloseSession}
@@ -262,7 +349,7 @@ export function UmbrellaCodingSessionWorkspace({
           onReopenSession={onReopenSession}
           peopleCount={peopleCount}
           onToggleTaskRail={
-            composerTaskDock.activeModel
+            !isMultiExecution && composerTaskDock.activeModel
               ? () => {
                   surfaceHost.close();
                   composerTaskDock.toggle();
@@ -277,6 +364,7 @@ export function UmbrellaCodingSessionWorkspace({
           sessionTitle={authoritativeTitle}
           sessionClosed={sessionClosed}
           status={umbrellaWorkspaceStatus(umbrella)}
+          statusLabelOverride={umbrellaAgentStatusSummary(agentFocusItems)}
           surfaceHostId={surfaceHostId}
           surfaceTabs={surfaces.map((surfaceEntry) => ({
             id: surfaceEntry.id,
@@ -285,12 +373,12 @@ export function UmbrellaCodingSessionWorkspace({
             count: surfaceEntry.count ?? 0,
             active: surfaceHost.activeTab === surfaceEntry.id,
           }))}
-          taskCount={composerTaskDock.activeModel?.tasks.length ?? 0}
+          taskCount={
+            isMultiExecution
+              ? 0
+              : (composerTaskDock.activeModel?.tasks.length ?? 0)
+          }
           taskRailOpen={composerTaskDock.open}
-        />
-        <CodingSessionFounderLine
-          founderPubkey={umbrella.founderPubkey}
-          genesisRef={umbrella.genesisRef}
         />
       </div>
       {umbrella.sessionRef ? (
@@ -313,9 +401,19 @@ export function UmbrellaCodingSessionWorkspace({
               currentUserPubkey={currentUserPubkey}
               founderPubkey={umbrella.founderPubkey}
               goal={goal}
+              headerCarriesGoal
               sessionRef={umbrella.sessionRef}
               workspaceExpanded={narrativeExpanded}
             />
+            {isMultiExecution && isNarrow ? (
+              <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <CodingSessionAgentFocus
+                  focusedExecutionKey={focusedExecutionKey}
+                  items={agentFocusItems}
+                  onFocus={setFocusedExecutionKey}
+                />
+              </div>
+            ) : null}
           </div>
           <div
             className={cn(
@@ -326,15 +424,20 @@ export function UmbrellaCodingSessionWorkspace({
             <CodingSessionColumn
               className={cn(
                 "min-h-full pt-7",
-                composerTaskDock.open && !isNarrow ? "pb-[34rem]" : "pb-48",
+                activeWorkAgents.length > 0 ||
+                  (composerTaskDock.open && !isNarrow)
+                  ? "pb-[34rem]"
+                  : "pb-48",
               )}
               expanded={narrativeExpanded}
             >
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 currentUserPubkey={currentUserPubkey}
+                focusedExecutionKey={focusedExecutionKey}
                 laneMessages={lane.messages}
                 onHandoff={setPrefill}
+                onFocusExecution={setFocusedExecutionKey}
                 operatorProfiles={operatorProfiles}
                 umbrella={umbrella}
               />
@@ -351,7 +454,15 @@ export function UmbrellaCodingSessionWorkspace({
                 className="pointer-events-auto"
                 expanded={narrativeExpanded}
               >
-                {composerTaskDock.open && !isNarrow ? (
+                {isMultiExecution ? (
+                  <div className="-mb-6">
+                    <CodingSessionActiveWorkDock
+                      agents={activeWorkAgents}
+                      focusedExecutionKey={focusedExecutionKey}
+                      onFocusAgent={setFocusedExecutionKey}
+                    />
+                  </div>
+                ) : composerTaskDock.open && !isNarrow ? (
                   <div className="-mb-6">
                     <CodingSessionTaskRail
                       model={composerTaskDock.activeModel}
@@ -420,8 +531,10 @@ export function UmbrellaCodingSessionWorkspace({
 export function CodingSessionUmbrellaTimelineView({
   channelId,
   currentUserPubkey = null,
+  focusedExecutionKey = null,
   laneMessages,
   onHandoff,
+  onFocusExecution,
   operatorProfiles,
   umbrella,
 }: {
@@ -431,8 +544,11 @@ export function CodingSessionUmbrellaTimelineView({
    * sent by another operator is attributed to them instead of to the reader.
    */
   currentUserPubkey?: string | null;
+  /** Null keeps the full merged narrative; a key folds every other agent. */
+  focusedExecutionKey?: string | null;
   laneMessages: readonly CodingSessionLaneMessage[];
   onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
+  onFocusExecution?: (executionKey: string | null) => void;
   /** Profiles for the umbrella's operators, resolved once by the workspace. */
   operatorProfiles?: UserProfileLookup;
   umbrella: CodingSessionUmbrellaRecord;
@@ -595,12 +711,16 @@ export function CodingSessionUmbrellaTimelineView({
           );
         }
         return (
-          <UmbrellaTurnBlock
+          <CodingSessionUmbrellaTurnBlock
             block={entry}
             blockKey={key}
             channelId={channelId}
             currentUserPubkey={currentUserPubkey}
             isHighlighted={revealed?.key === key}
+            isFolded={
+              focusedExecutionKey !== null &&
+              focusedExecutionKey !== entry.executionKey
+            }
             isWorking={workingBlockKeys.has(key)}
             key={key}
             label={
@@ -609,206 +729,22 @@ export function CodingSessionUmbrellaTimelineView({
             }
             labelsByExecutionKey={labelsByExecutionKey}
             onHandoff={onHandoff}
+            onFocusExecution={onFocusExecution}
             onRegisterNode={registerBlockNode}
             operatorProfiles={operatorProfiles}
             onRevealFact={revealFact}
             record={recordsByGenerationId.get(entry.generationId) ?? null}
             resolveFactLocation={resolveFactLocation}
             showProvenance={shouldShowTurnBlockProvenance(entries, index)}
+            stickyProvenance={
+              focusedExecutionKey === null && umbrella.executions.length > 1
+            }
             umbrella={umbrella}
           />
         );
       })}
       {pendingTurns}
     </div>
-  );
-}
-
-/**
- * One execution's turn block: provenance strip (provider label + signer,
- * mirroring the header's provenance popover fields), the block's items
- * rendered by the existing transcript renderer, a handoff chip when the
- * prompt carries a recognizable provenance block, and "Send to ⟨execution⟩"
- * on completed blocks.
- */
-function UmbrellaTurnBlock({
-  block,
-  blockKey,
-  channelId,
-  currentUserPubkey,
-  isHighlighted,
-  isWorking,
-  label,
-  labelsByExecutionKey,
-  onHandoff,
-  onRegisterNode,
-  onRevealFact,
-  operatorProfiles,
-  record,
-  resolveFactLocation,
-  showProvenance,
-  umbrella,
-}: {
-  block: CodingSessionUmbrellaTurnBlock;
-  blockKey: string;
-  channelId: string;
-  currentUserPubkey: string | null;
-  isHighlighted: boolean;
-  isWorking: boolean;
-  label: string;
-  labelsByExecutionKey: ReadonlyMap<string, string>;
-  onHandoff: (prefill: CodingSessionUmbrellaComposerPrefill) => void;
-  onRegisterNode: (key: string, node: HTMLElement | null) => void;
-  onRevealFact: (key: string) => void;
-  operatorProfiles: UserProfileLookup | undefined;
-  record: CodingSessionCatalogRecord | null;
-  resolveFactLocation: (link: CodingSessionHandoffLink) => string | null;
-  showProvenance: boolean;
-  umbrella: CodingSessionUmbrellaRecord;
-}) {
-  const prompt = readCodingSessionTurnBlockPrompt(block);
-  const handoff = prompt ? parseCodingSessionHandoffPrefill(prompt.text) : null;
-  const isForeign =
-    umbrella.founderPubkey !== null &&
-    (umbrella.executions.find(
-      (execution) => execution.executionKey === block.executionKey,
-    )?.operatorPubkey ?? null) !== null &&
-    umbrella.executions.find(
-      (execution) => execution.executionKey === block.executionKey,
-    )?.operatorPubkey !== umbrella.founderPubkey;
-  const handoffTargets = umbrella.executions.filter(
-    (execution) => execution.executionKey !== block.executionKey,
-  );
-  const completed = isCompletedCodingSessionTurnBlock(block);
-  const source = completed ? resolveCodingSessionHandoffSource(block) : null;
-  const sourceLocation =
-    handoff?.link != null ? resolveFactLocation(handoff.link) : null;
-  const registerNode = React.useCallback(
-    (node: HTMLElement | null) => onRegisterNode(blockKey, node),
-    [blockKey, onRegisterNode],
-  );
-
-  return (
-    <article
-      className={cn(
-        "group/turn relative border-t border-border/40 pt-5 pb-1 first:border-t-0 first:pt-1 transition-colors",
-        isHighlighted &&
-          "-mx-3 rounded-2xl bg-primary/5 px-3 ring-1 ring-primary/60",
-      )}
-      data-block={blockKey}
-      data-execution={block.executionKey}
-      data-highlighted={isHighlighted ? "true" : undefined}
-      data-signer={block.signerPubkey}
-      data-testid="coding-session-umbrella-turn-block"
-      ref={registerNode}
-    >
-      <span className="sr-only">
-        Response from {label}, signer {truncatePubkey(block.signerPubkey)},
-        generation {block.generation}.
-      </span>
-      {showProvenance ? (
-        <header
-          className="mb-3 flex flex-wrap items-center gap-2"
-          data-testid="coding-session-umbrella-provenance"
-        >
-          <span className="rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium">
-            {label}
-          </span>
-          <span
-            className="font-mono text-2xs text-muted-foreground"
-            title="Fact-stream signer for every item in this execution run"
-          >
-            {truncatePubkey(block.signerPubkey)}
-          </span>
-          <span className="text-2xs text-muted-foreground">
-            generation {block.generation}
-          </span>
-          {isForeign ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs text-amber-700 dark:text-amber-300"
-              data-testid="coding-session-umbrella-foreign-flag"
-              title="This execution was attached by an operator other than the session founder."
-            >
-              <Flag aria-hidden className="size-3" />
-              foreign
-            </span>
-          ) : null}
-        </header>
-      ) : null}
-      {handoff ? (
-        <p
-          className="mb-2 inline-flex flex-wrap items-center gap-1.5 rounded-lg bg-primary/10 px-2 py-1 text-xs"
-          data-testid="coding-session-umbrella-handoff-chip"
-        >
-          <ArrowRightLeft aria-hidden className="size-3.5" />
-          <span>
-            Handoff from {handoff.sourceLabel} → {label}
-          </span>
-          {handoff.link === null ? null : sourceLocation !== null ? (
-            <button
-              className="underline underline-offset-2"
-              data-testid="coding-session-umbrella-view-source"
-              onClick={() => onRevealFact(sourceLocation)}
-              type="button"
-            >
-              View source
-            </button>
-          ) : (
-            // The quoted fact is not in this view (another channel, a
-            // generation this surface has not ingested). A dead anchor would
-            // leak an unhandled scheme to the OS, so the provenance stays
-            // visible but inert — the durable link is still in the prompt text.
-            <span
-              className="text-muted-foreground"
-              data-testid="coding-session-umbrella-source-unavailable"
-              title={handoff.linkUrl}
-            >
-              source not in this view
-            </span>
-          )}
-        </p>
-      ) : null}
-      <CodingSessionTranscript
-        currentUserPubkey={currentUserPubkey}
-        generationId={block.generationId}
-        isWorking={isWorking}
-        items={block.items}
-        operatorProfiles={operatorProfiles}
-      />
-      {completed && source && handoffTargets.length > 0 ? (
-        <footer
-          className="absolute right-0 bottom-0 flex translate-y-1/2 flex-wrap items-center gap-1.5 rounded-full bg-background/95 p-1 opacity-0 shadow-sm transition-opacity group-focus-within/turn:opacity-100 group-hover/turn:opacity-100"
-          data-testid="coding-session-umbrella-handoff-actions"
-        >
-          {handoffTargets.map((execution) => (
-            <button
-              className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2.5 py-1 text-2xs text-muted-foreground transition-colors hover:text-foreground"
-              data-testid="coding-session-umbrella-send-to"
-              key={execution.executionKey}
-              onClick={() =>
-                onHandoff(
-                  buildUmbrellaTurnBlockHandoff({
-                    block,
-                    channelId,
-                    quote: source.quote,
-                    eventSeq: source.eventSeq,
-                    record,
-                    sourceLabel: label,
-                    targetExecutionKey: execution.executionKey,
-                  }),
-                )
-              }
-              type="button"
-            >
-              <ArrowRightLeft aria-hidden className="size-3" />
-              Send to{" "}
-              {labelsByExecutionKey.get(execution.executionKey) ??
-                truncatePubkey(execution.signerPubkey)}
-            </button>
-          ))}
-        </footer>
-      ) : null}
-    </article>
   );
 }
 
@@ -865,50 +801,40 @@ function formatLaneTimestamp(timestampMs: number): string {
     : "";
 }
 
-/**
- * Build the composer prefill for "Send to ⟨execution⟩". With a resolvable
- * signed-fact coordinate the provenance line carries the deep link; without
- * one it degrades to a plain quoted block, which old and new clients alike
- * render as an ordinary prompt with a visible quote.
- */
-export function buildUmbrellaTurnBlockHandoff(input: {
-  block: CodingSessionUmbrellaTurnBlock;
-  channelId: string;
-  quote: string;
-  eventSeq: number | null;
-  record: CodingSessionCatalogRecord | null;
-  sourceLabel: string;
-  targetExecutionKey: string;
-}): CodingSessionUmbrellaComposerPrefill {
-  const target = input.record?.commandTarget ?? null;
-  const text =
-    target !== null && input.eventSeq !== null
-      ? buildCodingSessionHandoffPrefill({
-          sourceLabel: input.sourceLabel,
-          link: {
-            channelId: input.channelId,
-            targetKey: buildCodingSessionTargetKey(target),
-            eventSeq: input.eventSeq,
-          },
-          quote: input.quote,
-        })
-      : `> From ${input.sourceLabel} (this session)\n${input.quote
-          .trim()
-          .split("\n")
-          .map((line) => `> ${line}`)
-          .join("\n")}\n\n`;
-  return {
-    id: `handoff:${input.block.generationId}:${input.block.turnId ?? "no-turn"}:${input.targetExecutionKey}:${Date.now()}`,
-    participantKey: `execution:${input.targetExecutionKey}`,
-    text,
-  };
-}
-
 /** Map the umbrella's derived status onto the header's three honest states. */
 export function umbrellaWorkspaceStatus(
   umbrella: Pick<CodingSessionUmbrellaRecord, "status">,
 ): CodingSessionWorkspaceStatus {
   return codingSessionWireWorkspaceStatus(umbrella.status);
+}
+
+export function umbrellaAgentStatusSummary(
+  agents: readonly CodingSessionAgentFocusItem[],
+): string | null {
+  if (agents.length <= 1) return null;
+  const working = agents.filter(
+    (agent) => agent.status.kind === "working",
+  ).length;
+  if (working > 0) {
+    return `${agents.length} agents · ${working} working`;
+  }
+  const attention = agents.filter(
+    (agent) => agent.status.kind === "unknown" && agent.status.attention,
+  ).length;
+  if (attention > 0) {
+    return `${agents.length} agents · ${attention} need attention`;
+  }
+  return `${agents.length} agents · idle`;
+}
+
+export function shouldAutoOpenAgentsSurface({
+  bodyWidthPx,
+  isMultiExecution,
+}: {
+  bodyWidthPx: number;
+  isMultiExecution: boolean;
+}): boolean {
+  return isMultiExecution && bodyWidthPx >= 1920;
 }
 
 /** The exact `cs-target` key of a block's stream, when the record has one. */

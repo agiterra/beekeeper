@@ -27,6 +27,7 @@ export function CodingSessionGoalPill({
   currentUserPubkey,
   founderPubkey,
   goal,
+  headerCarriesGoal = false,
   workspaceExpanded = false,
   sessionRef,
   variant = "workspace",
@@ -35,6 +36,8 @@ export function CodingSessionGoalPill({
   currentUserPubkey: string | null;
   founderPubkey: string | null;
   goal: CodingSessionGoal | null;
+  /** The session header already renders the goal text; leave only edit access. */
+  headerCarriesGoal?: boolean;
   /** Matches the transcript/composer when no secondary rail is open. */
   workspaceExpanded?: boolean;
   sessionRef: string | null;
@@ -54,6 +57,7 @@ export function CodingSessionGoalPill({
 
   if (!goal && !canEdit) return null;
   const compact = variant === "catalog";
+  if (goal && headerCarriesGoal && !compact && !canEdit) return null;
   const save = async () => {
     if (!canEdit || !sessionRef) return;
     setSaving(true);
@@ -81,7 +85,7 @@ export function CodingSessionGoalPill({
             : cn(
                 CODING_SESSION_COLUMN_CLASS,
                 workspaceExpanded && CODING_SESSION_COLUMN_EXPANDED_CLASS,
-                goal
+                goal && !headerCarriesGoal
                   ? "flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/8 px-3 py-2"
                   : "flex items-center",
               )
@@ -100,6 +104,20 @@ export function CodingSessionGoalPill({
             <Target className="size-3.5" />
             Add goal
           </Button>
+        ) : headerCarriesGoal && !compact ? (
+          canEdit ? (
+            <Button
+              className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+              data-testid="coding-session-goal-edit-workspace"
+              onClick={() => setOpen(true)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Target className="size-3.5" />
+              Edit goal
+            </Button>
+          ) : null
         ) : (
           <>
             <Target className="mt-0.5 size-3.5 shrink-0 text-primary" />

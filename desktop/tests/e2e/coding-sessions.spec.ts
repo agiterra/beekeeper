@@ -520,17 +520,19 @@ test("a seeded signed session is discoverable, opens, and renders its turn", asy
   // (`8bb80ff7`); the founder-only sentence is now only the fallback for a
   // composer with no resolved authority reason. Second stale assertion of the
   // same class as §2 item 37 — this spec had been red before it ever got here.
-  await expect(
-    page.getByTestId("coding-session-composer-authority-gated"),
-  ).toContainText("View only — ask the session owner for collaborator access");
-  await expect(page.getByLabel("Coding-session instruction")).toBeDisabled();
+  const instruction = page.getByLabel("Coding-session instruction");
+  await expect(instruction).toHaveAttribute(
+    "placeholder",
+    "View only — ask for collaborator access.",
+  );
+  await expect(instruction).toBeDisabled();
   await waitForAnimations(page);
   await gatedComposer.screenshot({
     path: "test-results/screenshots/bite3-gated-composer.png",
   });
 });
 
-test("a legacy session stays usable while naming its ungoverned state", async ({
+test("a legacy session stays usable through the unified composer", async ({
   page,
 }) => {
   await page.getByTestId(`channel-${CHANNEL_NAME}`).click();
@@ -549,9 +551,12 @@ test("a legacy session stays usable while naming its ungoverned state", async ({
   await trigger.click();
   await page.getByTestId("channel-coding-session-open").click();
 
-  const hint = page.getByTestId("coding-session-ungoverned-hint");
-  await expect(hint).toHaveText("ungoverned — adopt to govern.");
-  await expect(page.getByLabel("Coding-session instruction")).toBeEnabled();
+  const instruction = page.getByLabel("Coding-session instruction");
+  await expect(instruction).toHaveAttribute(
+    "placeholder",
+    "Steer this coding session…",
+  );
+  await expect(instruction).toBeEnabled();
   await waitForAnimations(page);
   await page.getByTestId("coding-session-composer").screenshot({
     path: "test-results/screenshots/bite3-ungoverned-session.png",
@@ -697,9 +702,11 @@ test("a resumed session renders every earlier generation, not just the newest", 
   // here and showed generation 2 alone over an empty timeline.
   const workspace = page.getByTestId("coding-session-umbrella-workspace");
   await expect(workspace).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("coding-session-header")).toContainText(
+  await page.getByTestId("coding-session-provenance-toggle").click();
+  await expect(page.getByRole("dialog")).toContainText(
     "generation 2 · 1 earlier",
   );
+  await page.keyboard.press("Escape");
 
   const timeline = page.getByTestId("coding-session-umbrella-timeline");
   await expect(timeline).toContainText("Fix the reconnect bug");

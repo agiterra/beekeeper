@@ -35,10 +35,11 @@ disagrees with an older document about *current state*, this one wins.
 
 _Last updated: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
 rebuild, the session ceiling and silent-turn budget as settings, and the
-redaction rework) are fixed and pushed through CI #24; items 51-52 are the
-composer responsiveness fix and the full-screen UI critique that comes next.
-**Five commits are unpushed** and the dev instance was last rebuilt at
-01:44Z with all of them. `main` is `88d64ea3` on both remotes._
+redaction rework) are fixed and pushed through CI #24; items 51-53 and 55-56
+are the full-screen session pass, and item 54 records the Claude
+background-shell / unresolved-prompt failure proven in Andy's shared session.
+The latest multi-agent narrative work is on `fix/full-screen-session-ux` and
+awaits live confirmation after the development app is rebuilt._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
@@ -1375,6 +1376,52 @@ written and `bash -n` clean but **was not executed** — that harness needs
     the state becomes idle; the wide E2E screenshot proves the editor is enabled
     in that state.
 
+54. **OPEN: Claude background shell completed, but the following ACP prompt
+    never resolved until Bee Keeper cancelled it.** Andy's shared session is
+    channel `7df9fd91-0066-461c-bc6b-5f49c6bb9a16`, session
+    `ecde2480-c334-491d-ad6f-c8685e22ee02`, generation 1, signed projection
+    `4b6fd011e70b1323…c150f4312b9` (`claude-agent-acp`, title "Rebuild Bee
+    Keeper"). The signed kind-44225 sequence separates two failures that look
+    like one spinner:
+    - Turn 1 launched `scripts/local-prod-build.sh HEAD` as a Claude Terminal
+      background command. Its tool result explicitly said "You will be
+      notified when it completes" (event seq 20), but the ACP turn then ended
+      successfully after 41,422 ms (seq 27). That promise is not a Bee Keeper
+      capability: a detached shell can outlive the prompt, and neither ACP nor
+      the adapter creates a new person-visible turn when it exits. The current
+      adapter's background-subagent hold deliberately excludes background
+      shells because a server can live forever; its own fix records this as an
+      out-of-scope, out-of-turn episode
+      ([claude-agent-acp #870](https://github.com/agentclientprotocol/claude-agent-acp/commit/7a70f82739e085014cad878f08513cdef7b7fe16)).
+    - The build itself was healthy. When Andy asked "Is it done?" 41m 50s
+      later, Claude immediately emitted two Terminal calls and two successful
+      results (seq 29-32); the captured build output says `Finished release`,
+      bundle OK, installed, exit code 0. Then the adapter emitted **nothing for
+      934,726 ms**. At Bee Keeper's configured 900s silence boundary the
+      provider sent `session/cancel`; only during that cancellation drain did
+      Claude flush the complete "Yes — done" answer (seq 33), followed 19 ms
+      later by the honest terminal result `Idle timeout — no agent activity
+      for 900s` (seq 35). This is the exact wire shape independently reported
+      upstream: streamed output, no response to `session/prompt`, response only
+      after `session/cancel`
+      ([claude-agent-acp #970](https://github.com/agentclientprotocol/claude-agent-acp/issues/970)).
+    - A second upstream Claude SDK report now names the preceding trigger:
+      background-task notifications can sit queued in streaming-input mode
+      until a later user message wakes the session
+      ([claude-code #88378](https://github.com/anthropics/claude-code/issues/88378)).
+      That is consistent with this session, but the signed transcript does not
+      carry Andy's installed adapter/SDK versions or provider stderr, so it is
+      an inference, not yet the proven local root cause.
+    - **Do not "fix" this by only raising the silence budget.** That merely
+      moves an unresolved ACP request farther away; Bee Keeper's timeout and
+      cancellation did the useful thing here and preserved both the late answer
+      and the fact that its turn failed. Next evidence: on Andy's machine record
+      `claude-agent-acp` and Claude Code versions plus raw ACP/provider stderr,
+      then reproduce once on the latest released adapter. Product follow-up:
+      never let an agent promise a proactive report for a detached shell unless
+      the session has a real session-level background-work lifecycle to deliver
+      it.
+
 55. **The active plan and composer now behave as one turn-scoped work surface**
     (T3 Code comparison, 2026-08-25). The floating composer is a solid surface
     with one borderless editor and one quiet control row: the provider/model
@@ -1404,8 +1451,47 @@ written and `bash -n` clean but **was not executed** — that harness needs
       is requested.
     - Evidence: 47 focused composer/task/context tests; all 6,166 desktop unit
       tests; the three-view transcript narrative screenshot workflow; and the
-      width workflow at 1100/1280/1920/2560/3440px, with a side surface and at
-      24px root zoom. The repository-wide `just ci` gate passed on 2026-08-25.
+    width workflow at 1100/1280/1920/2560/3440px, with a side surface and at
+    24px root zoom. The repository-wide `just ci` gate passed on 2026-08-25.
+
+56. **A multi-agent session now reads as one attributed story, not one
+    agent's log with the others hidden behind a count** (T3 Code-informed pass,
+    2026-08-25). The signed flat timeline remains the record; presentation now
+    makes each execution legible without splitting it into tabs or swimlanes.
+    - Every execution has a stable accent used by its header chip, turn rail,
+      sticky provenance, and handoff actions. Sticky provenance exists only in
+      the merged multi-agent read, where the author can otherwise scroll away;
+      it is bounded by its turn block and uses an opaque surface.
+    - The header execution chips are the focus control. Selecting Codex folds
+      other agents' turns to attributed one-line summaries in their original
+      positions; people, handoffs, and lifecycle facts are never hidden.
+      Selecting the chip again returns to All. Focus and the composer's
+      recipient deliberately share identity styling but no state, so reading
+      Claude cannot retarget a draft and choosing a recipient cannot hide the
+      passage being handed off.
+    - The T3-style **Active Work** attachment is the current work surface for
+      every execution that is actually working. It shows only a current signed
+      plan when one exists, says truthfully when no plan was published, and
+      collapses to nothing when all executions are idle or complete. Dismissal
+      is scoped to the current work fingerprint; newer work can reopen it.
+    - A completed turn ends with an always-visible boundary naming its author,
+      signed duration/cost when supplied, and explicit Reply / Send-to actions.
+      Assistant prose is back on the app's `text-base` chat ramp. The goal is
+      under the session title, founder provenance moved into Info, and the
+      Agents / Changes / People controls form one responsive surface switcher.
+    - Multi-agent sessions automatically open Agents beside the narrative only
+      when the available body is at least 1920px. Laptops and single-agent
+      sessions keep the clean full-width transcript; narrow layouts compact
+      the header and retain the execution chips below the goal.
+    - Workspace-contained absolute paths are relativized before the provider
+      signs transcript context. Anything still private remains fail-closed but
+      renders as a compact `Private context · N bytes` chip whose tooltip keeps
+      the digest, rather than shredding the answer with inline hashes.
+    - Evidence: 6,175 desktop unit tests; 31 focused core sanitizer tests plus
+      the provider signing-boundary test; the seven-session E2E workflow and
+      the two-view surface-host workflow, including focus without recipient
+      mutation and 2560px Agents auto-open; all captured states are pixel-
+      distinct. The repository-wide `just ci` gate passed on 2026-08-25.
 
 ## 2a. Direction settled 2026-08-18
 
@@ -1422,11 +1508,11 @@ than replace them, and it is not started.
 ## 3. Next — one track at a time, in this order
 
 **The active track as of 2026-08-25 night is live confirmation of the
-full-screen UI/UX pass — §2 items 52–53 and 55.** The implementation, focused
-wide-screen E2E workflow, and repository-wide `just ci` gate are green. It is
-landed on `fix/full-screen-session-ux`; only confirmation in the live desktop
-against hive remains. Everything below is the previous track, kept because its
-live confirmations are still owed.
+full-screen UI/UX pass — §2 items 52–53 and 55–56.** The implementation,
+focused wide-screen E2E workflow, and repository-wide `just ci` gate are green.
+It is landed on `fix/full-screen-session-ux`; only confirmation in the live
+desktop against hive remains. Everything below is the previous track, kept
+because its live confirmations are still owed.
 
 **The previous track was the coding-session honesty pass — §2 items 37-44. As of
 2026-08-24 the code is done and the live confirmation is not.** Six items are

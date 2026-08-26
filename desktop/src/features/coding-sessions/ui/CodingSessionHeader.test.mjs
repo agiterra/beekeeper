@@ -28,6 +28,29 @@ test("header keeps signed generation identity visible beside runtime context", (
   assert.match(markup, /data-testid="coding-session-provenance-toggle"/);
 });
 
+test("umbrella header promotes the goal and aggregate agent status", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      agentControls: React.createElement(
+        "div",
+        null,
+        "Codex working · Claude idle",
+      ),
+      channelName: "Hive Sessions",
+      generationLabel: "generation 1",
+      goalText: "Make two-agent work read as one session",
+      onBack() {},
+      sessionTitle: "Session UX",
+      status: { kind: "working", label: "Working" },
+      statusLabelOverride: "2 agents · 1 working",
+    }),
+  );
+  assert.match(markup, /Make two-agent work read as one session/);
+  assert.match(markup, /2 agents · 1 working/);
+  assert.match(markup, /Codex working · Claude idle/);
+  assert.doesNotMatch(markup, />generation 1<\/p>/);
+});
+
 test("header renders the export button only when an export handler is provided", () => {
   const baseProps = {
     channelName: "Hive Sessions",

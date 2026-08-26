@@ -11,6 +11,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
 import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -35,9 +36,15 @@ export type CodingSessionHeaderSurfaceTab = {
 };
 
 type CodingSessionHeaderProps = {
+  /** Multi-execution focus/status chips. Omitted for the effortless N=1 path. */
+  agentControls?: ReactNode;
   channelName: string | null;
   compact?: boolean;
   generationLabel: string;
+  /** Resolved founder label rendered inside the provenance popover. */
+  founderDetails?: ReactNode;
+  /** Durable session intent, shown directly below the title when present. */
+  goalText?: string | null;
   isExporting?: boolean;
   model?: string | null;
   /**
@@ -75,6 +82,8 @@ type CodingSessionHeaderProps = {
   sessionTitle?: string | null;
   sessionClosed?: boolean;
   status: CodingSessionWorkspaceStatus;
+  /** Aggregate label for an umbrella; per-agent truth lives in agentControls. */
+  statusLabelOverride?: string | null;
   /** DOM id of the surface host panel, for `aria-controls`. */
   surfaceHostId?: string;
   surfaceTabs?: readonly CodingSessionHeaderSurfaceTab[];
@@ -83,9 +92,12 @@ type CodingSessionHeaderProps = {
 };
 
 export function CodingSessionHeader({
+  agentControls,
   channelName,
   compact = false,
   generationLabel,
+  founderDetails,
+  goalText = null,
   isExporting = false,
   model = null,
   onAddProvider,
@@ -107,6 +119,7 @@ export function CodingSessionHeader({
   sessionTitle = null,
   sessionClosed = false,
   status,
+  statusLabelOverride = null,
   surfaceHostId,
   surfaceTabs,
   taskCount = 0,
@@ -117,7 +130,10 @@ export function CodingSessionHeader({
   // the header never presents a stale report as the current condition.
   const statusDetail = codingSessionWorkspaceStatusDetail(status);
   const statusText =
-    statusDetail === null ? status.label : `${status.label} · ${statusDetail}`;
+    statusLabelOverride ??
+    (statusDetail === null
+      ? status.label
+      : `${status.label} · ${statusDetail}`);
   const conciseGenerationLabel = removeRepeatedTitle(generationLabel, title);
   const modelLabel = model ? formatCodingSessionModelSummary(model) : null;
   const linkedProject = onOpenProject ? projectName?.trim() || null : null;
@@ -167,7 +183,9 @@ export function CodingSessionHeader({
           ) : null}
         </div>
         <p className="truncate text-xs text-muted-foreground">
-          {linkedProject ? (
+          {goalText?.trim() ? (
+            goalText.trim()
+          ) : linkedProject ? (
             <>
               <button
                 className="rounded-sm underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
@@ -191,6 +209,11 @@ export function CodingSessionHeader({
           )}
         </p>
       </div>
+      {agentControls ? (
+        <div className="hidden min-w-0 max-w-[min(38vw,36rem)] md:flex">
+          {agentControls}
+        </div>
+      ) : null}
       <Badge
         aria-label={`Session status: ${sessionClosed ? "Closed" : statusText}`}
         className={cn("gap-1.5", compact && "px-2")}
@@ -263,6 +286,12 @@ export function CodingSessionHeader({
                 </dd>
               </div>
             ) : null}
+            {founderDetails ? (
+              <div>
+                <dt className="text-muted-foreground">Founded by</dt>
+                <dd className="mt-0.5 wrap-break-word">{founderDetails}</dd>
+              </div>
+            ) : null}
           </dl>
         </PopoverContent>
       </Popover>
@@ -295,67 +324,74 @@ export function CodingSessionHeader({
           ) : null}
         </Button>
       ) : null}
-      {onToggleSurface && surfaceTabs
-        ? surfaceTabs.map((tab) => (
-            <Button
-              aria-controls={surfaceHostId}
-              aria-expanded={tab.active}
-              aria-label={
-                tab.active
-                  ? `Hide ${tab.label.toLowerCase()}`
-                  : `Show ${tab.label.toLowerCase()}`
-              }
-              data-testid={`coding-session-surface-toggle-${tab.id}`}
-              key={tab.id}
-              onClick={() => onToggleSurface(tab.id)}
-              size={compact ? "icon" : "sm"}
-              type="button"
-              variant={tab.active ? "secondary" : "ghost"}
-            >
-              {tab.icon === "agents" ? <Users /> : <GitCompare />}
-              <span className={compact ? "sr-only" : undefined}>
-                {tab.label}
-              </span>
-              {tab.count !== undefined && tab.count > 0 ? (
-                <span
-                  className={cn(
-                    "rounded-full bg-background/70 px-1.5 text-xs",
-                    compact && "sr-only",
-                  )}
+      {(onToggleSurface && surfaceTabs) || onOpenPeople ? (
+        <fieldset
+          aria-label="Session details"
+          className="flex shrink-0 items-center gap-0.5 rounded-xl border border-border/55 bg-muted/20 p-0.5"
+        >
+          {onToggleSurface && surfaceTabs
+            ? surfaceTabs.map((tab) => (
+                <Button
+                  aria-controls={surfaceHostId}
+                  aria-expanded={tab.active}
+                  aria-label={
+                    tab.active
+                      ? `Hide ${tab.label.toLowerCase()}`
+                      : `Show ${tab.label.toLowerCase()}`
+                  }
+                  data-testid={`coding-session-surface-toggle-${tab.id}`}
+                  key={tab.id}
+                  onClick={() => onToggleSurface(tab.id)}
+                  size={compact ? "icon" : "sm"}
+                  type="button"
+                  variant={tab.active ? "secondary" : "ghost"}
                 >
-                  {tab.count}
-                </span>
+                  {tab.icon === "agents" ? <Users /> : <GitCompare />}
+                  <span className={compact ? "sr-only" : undefined}>
+                    {tab.label}
+                  </span>
+                  {tab.count !== undefined && tab.count > 0 ? (
+                    <span
+                      className={cn(
+                        "rounded-full bg-background/70 px-1.5 text-xs",
+                        compact && "sr-only",
+                      )}
+                    >
+                      {tab.count}
+                    </span>
+                  ) : null}
+                </Button>
+              ))
+            : null}
+          {onOpenPeople ? (
+            <Button
+              aria-label="Show session people"
+              data-testid="coding-session-people-toggle"
+              onClick={onOpenPeople}
+              size={compact ? "icon" : "sm"}
+              title="People with access to this session"
+              type="button"
+              variant="ghost"
+            >
+              <Users />
+              <span className={compact ? "sr-only" : undefined}>People</span>
+              {peopleCount > 0 ? (
+                <>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "rounded-full bg-background/70 px-1.5 text-xs",
+                      compact && "sr-only",
+                    )}
+                  >
+                    {peopleCount}
+                  </span>
+                  <span className="sr-only">{peopleCount} people</span>
+                </>
               ) : null}
             </Button>
-          ))
-        : null}
-      {onOpenPeople ? (
-        <Button
-          aria-label="Show session people"
-          data-testid="coding-session-people-toggle"
-          onClick={onOpenPeople}
-          size={compact ? "icon" : "sm"}
-          title="People with access to this session"
-          type="button"
-          variant="ghost"
-        >
-          <Users />
-          <span className={compact ? "sr-only" : undefined}>People</span>
-          {peopleCount > 0 ? (
-            <>
-              <span
-                aria-hidden
-                className={cn(
-                  "rounded-full bg-background/70 px-1.5 text-xs",
-                  compact && "sr-only",
-                )}
-              >
-                {peopleCount}
-              </span>
-              <span className="sr-only">{peopleCount} people</span>
-            </>
           ) : null}
-        </Button>
+        </fieldset>
       ) : null}
       {onAddProvider ? (
         <Button

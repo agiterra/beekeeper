@@ -71,6 +71,7 @@ import {
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
 import { createLinkPreviewImageLightbox } from "./markdown/LinkPreviewImageLightbox";
 import { MarkdownInput } from "./markdown/MarkdownInput";
+import { MarkdownPrivateContext } from "./MarkdownPrivateContext";
 import {
   MediaContextMenu,
   type MediaContextMenuPosition,
@@ -1698,15 +1699,12 @@ export function createMarkdownComponents(
         />
       );
     },
+    "private-context": MarkdownPrivateContext,
   } as Components;
 }
 
-/**
- * The component map only varies by the three boolean render flags, so at most
- * eight instances ever exist. Module-stable maps mean cached markdown element
- * trees (see ./markdown/nodeCache.ts) never embed per-mount closures.
- */
-const MARKDOWN_COMPONENT_SCHEMA_VERSION = "8";
+/** Module-stable maps keep cached trees free of per-mount closures. */
+const MARKDOWN_COMPONENT_SCHEMA_VERSION = "9";
 const markdownComponentsByVariant = new Map<string, MarkdownComponentSet>();
 
 type MarkdownComponentSet = { components: Components; variant: string };
