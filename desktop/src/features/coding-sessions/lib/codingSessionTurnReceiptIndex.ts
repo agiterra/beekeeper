@@ -1,13 +1,15 @@
 /**
  * The per-stage turn receipts (44224 `turn_queued` / `turn_started` /
- * `turn_dropped` / `turn_refused`), kept apart from the lifecycle ones.
+ * `turn_degraded` / `turn_dropped` / `turn_refused` / `interrupt_delivered`),
+ * kept apart from the lifecycle ones.
  *
  * Two facts force the separation, and both are correctness rather than tidiness:
  *
- * - **One turn produces several receipts.** Queued, then started; or queued,
- *   then dropped. A commandId-keyed bucket would read those as three
- *   disagreeing copies of one immutable fact and resolve the lot to a
- *   conflict, which is how the second receipt would go missing.
+ * - **One turn produces several receipts.** Queued, then started; or degraded,
+ *   then queued, then started; or queued, then dropped. A commandId-keyed
+ *   bucket would read those as several disagreeing copies of one immutable
+ *   fact and resolve the lot to a conflict, which is how the later receipts
+ *   would go missing.
  * - **A turn receipt must never decide a generation's state.** A turn is an
  *   event *inside* a generation, never a change to one. Keeping the two in
  *   separate indexes makes that structural instead of a filter every future
@@ -84,6 +86,13 @@ export function resolveImmutableReceipt(
  */
 export type CodingSessionTurnProgress =
   | { stage: "queued" }
+  /**
+   * The sender asked to steer a running turn and this execution's runtime
+   * cannot: the turn was not cancelled, merged, or lost — it waits for the
+   * next boundary like any other. A stage rather than a failure precisely
+   * because the turn still runs.
+   */
+  | { stage: "degraded" }
   | { stage: "started"; turnId: string };
 
 /** Why a turn will never run, in the provider's own code and words. */
@@ -142,10 +151,13 @@ export class CodingSessionTurnReceiptIndex {
   /**
    * How far the turn got.
    *
-   * `turn_started` outranks `turn_queued` because it is the later fact about
-   * the same turn, not a competing claim. A provider that publishes neither
-   * reports `null`, and the surfaces reading this say nothing rather than
-   * guessing a stage.
+   * Later facts outrank earlier ones about the same turn, because they are not
+   * competing claims: `turn_started` over `turn_degraded` over `turn_queued`.
+   * A degraded steer is published alongside the `turn_queued` that follows it
+   * — the provider says both — and the row shows the degradation, which is the
+   * half the person did not ask for. A provider that publishes none of the
+   * three reports `null`, and the surfaces reading this say nothing rather
+   * than guessing a stage.
    */
   resolveProgress(
     channelId: string,
@@ -160,6 +172,16 @@ export class CodingSessionTurnReceiptIndex {
     );
     if (started && started.status === "turn_started") {
       return { stage: "started", turnId: started.turnId };
+    }
+    if (
+      this.resolve(
+        channelId,
+        commandId,
+        "turn_degraded",
+        providerAuthorityPubkey,
+      )
+    ) {
+      return { stage: "degraded" };
     }
     return this.resolve(
       channelId,

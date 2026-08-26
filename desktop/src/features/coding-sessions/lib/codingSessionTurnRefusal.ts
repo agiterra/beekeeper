@@ -14,11 +14,14 @@
  *
  * What is *not* silence any more is everything else about a turn's fate. A
  * provider on the per-stage receipt contract signs `turn_queued` when it takes
- * the turn into its mailbox, `turn_started` when the turn begins,
- * `turn_dropped` when its queue overflowed, and `turn_refused` for a decision
- * about the sender or the target. Refused and dropped are different words for
- * different facts and this module keeps them apart: nobody was refused when a
- * queue filled up.
+ * the turn into its mailbox, `turn_degraded` when a steer it cannot perform
+ * becomes a boundary delivery, `turn_started` when the turn begins,
+ * `turn_dropped` when it will never run it (`QUEUE_FULL`, or
+ * `NO_LIVE_EXECUTION` for a session with nothing running), and `turn_refused`
+ * for a decision about the sender or the target. Refused and dropped are
+ * different words for different facts and this module keeps them apart:
+ * nobody was refused when a queue filled up. Degraded is neither — the turn
+ * still runs — so it never reaches this module's error line at all.
  */
 import type { CodingSessionCommandRefusal } from "./codingSessionTrustedIngress";
 
@@ -42,9 +45,17 @@ export const MAX_WATCHED_CODING_SESSION_TURNS = 4;
 export const CODING_SESSION_TURN_REFUSED_MESSAGE =
   "The provider refused this turn.";
 
-/** Fallback when a drop receipt carries no readable message. */
+/**
+ * Fallback when a drop receipt carries no readable message.
+ *
+ * Deliberately does not name a cause. A drop used to mean one thing (the
+ * queue was full) and now means several — `QUEUE_FULL`, or `NO_LIVE_EXECUTION`
+ * when the session has no running execution to deliver into — so guessing the
+ * reason in the fallback would put a specific wrong sentence on screen. The
+ * provider's own `code` is shown beside this either way.
+ */
 export const CODING_SESSION_TURN_DROPPED_MESSAGE =
-  "The provider's turn queue was full, so this turn was dropped.";
+  "The provider dropped this turn without running it.";
 
 /** One sent turn, held only until it is refused or the wait expires. */
 export type WatchedCodingSessionTurn = {
@@ -62,10 +73,12 @@ export type WatchedCodingSessionTurn = {
  * Name the outcome for the composer's error line, in the provider's words.
  *
  * The provider's own `code` is shown alongside its sentence rather than
- * translated away. The codes are few and specific — `UNAUTHORIZED_OPERATOR`,
- * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`, `QUEUE_FULL` — and a
- * person comparing what they see to what `bee sessions transcript` prints, or
- * quoting it to whoever runs the provider, needs the same word both places.
+ * translated away. The known codes are specific — `UNAUTHORIZED_OPERATOR`,
+ * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`, `QUEUE_FULL`,
+ * `NO_LIVE_EXECUTION` — but the set is open, and an unfamiliar one is shown
+ * verbatim rather than swallowed: a person comparing what they see to what
+ * `bee sessions transcript` prints, or quoting it to whoever runs the
+ * provider, needs the same word both places.
  */
 export function formatCodingSessionTurnRefusal(
   refusal: CodingSessionCommandRefusal,

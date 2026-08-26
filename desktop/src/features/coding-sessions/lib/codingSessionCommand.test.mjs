@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildCodingSessionCommandEvent,
+  CODING_SESSION_TURN_DELIVERIES,
   buildCodingSessionInterruptEvent,
   buildCodingSessionTargetKey,
   codingSessionTargetSupportsInterrupt,
@@ -43,11 +44,12 @@ test("coding-session command content and tags are deterministic", () => {
     commandId: "cmd-1",
     target,
     text: "Steer this turn",
+    deliver: "boundary",
   });
   assert.equal(event.kind, 44220);
   assert.equal(
     event.content,
-    '{"schema":"buzz-coding-session-command/v1","commandId":"cmd-1","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":2},"action":{"type":"thread.turn.start","text":"Steer this turn"}}',
+    '{"schema":"buzz-coding-session-command/v1","commandId":"cmd-1","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":2},"action":{"type":"thread.turn.start","text":"Steer this turn","deliver":"boundary"}}',
   );
   assert.deepEqual(event.tags, [
     ["h", "channel-1"],
@@ -105,6 +107,7 @@ test("turn text is bounded by UTF-8 bytes, not code units", () => {
     commandId: "cmd-boundary",
     target,
     text: textAtLimit,
+    deliver: "boundary",
   });
   assert.equal(
     new TextEncoder().encode(JSON.parse(atLimit.content).action.text)
@@ -118,6 +121,7 @@ test("turn text is bounded by UTF-8 bytes, not code units", () => {
         commandId: "cmd-boundary",
         target,
         text: textOverLimit,
+        deliver: "boundary",
       }),
     /action\.text exceeds 12288 bytes/,
   );
@@ -131,6 +135,7 @@ test("identifiers use UTF-8 byte bounds and all required strings are trimmed-non
       commandId: identifierAtLimit,
       target,
       text: "Steer",
+      deliver: "boundary",
     }),
   );
   assert.throws(
@@ -140,24 +145,32 @@ test("identifiers use UTF-8 byte bounds and all required strings are trimmed-non
         commandId: `${identifierAtLimit}a`,
         target,
         text: "Steer",
+        deliver: "boundary",
       }),
     /commandId exceeds 256 bytes/,
   );
 
   for (const invalid of [
-    { commandId: "   ", target, text: "Steer" },
-    { commandId: "cmd", target: { ...target, driver: "\t" }, text: "Steer" },
+    { commandId: "   ", target, text: "Steer", deliver: "boundary" },
+    {
+      commandId: "cmd",
+      target: { ...target, driver: "\t" },
+      text: "Steer",
+      deliver: "boundary",
+    },
     {
       commandId: "cmd",
       target: { ...target, instanceId: "\n" },
       text: "Steer",
+      deliver: "boundary",
     },
     {
       commandId: "cmd",
       target: { ...target, sessionId: " " },
       text: "Steer",
+      deliver: "boundary",
     },
-    { commandId: "cmd", target, text: "\n\t" },
+    { commandId: "cmd", target, text: "\n\t", deliver: "boundary" },
   ]) {
     assert.throws(() =>
       buildCodingSessionCommandEvent({ channelId: "channel-1", ...invalid }),
@@ -174,6 +187,7 @@ test("frontend rejects invalid content before invoking the signer", async () => 
         commandId: "cmd-1",
         target,
         text: textOverLimit,
+        deliver: "boundary",
       },
       {
         signer: async () => {
@@ -191,7 +205,13 @@ test("publish signs the native kind exactly once and reports the accepted identi
   const signed = [];
   const accepted = [];
   const result = await publishCodingSessionCommand(
-    { channelId: "channel-1", commandId: "cmd-1", target, text: "Steer" },
+    {
+      channelId: "channel-1",
+      commandId: "cmd-1",
+      target,
+      text: "Steer",
+      deliver: "boundary",
+    },
     {
       signer: signerStub(signed),
       publisher: {
@@ -261,7 +281,13 @@ test("native-only publish never re-signs under any relay rejection", async () =>
     const signed = [];
     await assert.rejects(
       publishCodingSessionCommand(
-        { channelId: "channel-1", commandId: "cmd-1", target, text: "Steer" },
+        {
+          channelId: "channel-1",
+          commandId: "cmd-1",
+          target,
+          text: "Steer",
+          deliver: "boundary",
+        },
         {
           signer: signerStub(signed),
           publisher: {
@@ -278,4 +304,49 @@ test("native-only publish never re-signs under any relay rejection", async () =>
       [44220],
     );
   }
+});
+
+test("the delivery class is on the wire, explicit, and closed", () => {
+  assert.deepEqual(
+    [...CODING_SESSION_TURN_DELIVERIES],
+    ["boundary", "steer", "interrupt"],
+  );
+  for (const deliver of CODING_SESSION_TURN_DELIVERIES) {
+    const event = buildCodingSessionCommandEvent({
+      channelId: "channel-1",
+      commandId: "cmd-deliver",
+      target,
+      text: "do the thing",
+      deliver,
+    });
+    const action = JSON.parse(event.content).action;
+    assert.deepEqual(Object.keys(action), ["type", "text", "deliver"]);
+    assert.equal(action.deliver, deliver);
+  }
+});
+
+test("an unknown or absent delivery class is refused before signing", () => {
+  for (const deliver of ["queue", "BOUNDARY", "", undefined, null, 1]) {
+    assert.throws(
+      () =>
+        buildCodingSessionCommandEvent({
+          channelId: "channel-1",
+          commandId: "cmd-deliver",
+          target,
+          text: "do the thing",
+          deliver,
+        }),
+      /action\.deliver/,
+      `deliver=${String(deliver)} must not reach the signer`,
+    );
+  }
+});
+
+test("an interrupt command carries no delivery class of its own", () => {
+  const event = buildCodingSessionInterruptEvent({
+    channelId: "channel-1",
+    commandId: "interrupt-1",
+    target,
+  });
+  assert.deepEqual(Object.keys(JSON.parse(event.content).action), ["type"]);
 });

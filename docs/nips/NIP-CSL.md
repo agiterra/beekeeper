@@ -37,7 +37,8 @@ Provider-neutral rendering after creation uses the signed
 >    proves recent provider reachability for one exact generation. It does not
 >    replace durable metadata and is never written to Postgres.
 > 7. **A turn gets its own receipts.** `turn_queued`, `turn_started`,
->    `turn_dropped`, `turn_refused` — keyed by `commandId` and `status`
+>    `turn_degraded`, `turn_dropped`, `turn_refused`, and
+>    `interrupt_delivered` — keyed by `commandId` and `status`
 >    together, never confirming or ending a generation on their own. Their
 >    `commandId` normally names a `kind:44220` turn command, but for the
 >    initial turn embedded in a `kind:44221` `session.create` it names that
@@ -286,10 +287,10 @@ A **lifecycle** receipt (`created`, `created_with_failed_initial_turn`,
 `commandId` alone: one lifecycle command has exactly one outcome, so a second
 receipt for the same command is a duplicate to drop, never a revision to
 apply. A **turn** receipt (below) is keyed by `commandId` *and* `status`,
-because one `kind:44220` turn command legitimately produces up to three of
-them in sequence (`turn_queued`, then either `turn_started` or `turn_dropped`
-or `turn_refused`) and keying by `commandId` alone would drop the second and
-third. Consumers retain all metadata rows and fold the newest valid
+because one `kind:44220` turn command legitimately produces several of them in
+sequence (for example `turn_degraded`, then `turn_queued`, then
+`turn_started`) and keying by `commandId` alone would drop everything after
+the first. Consumers retain all metadata rows and fold the newest valid
 observation per exact generation by `(created_at, event id)`. A new generation
 fences resume identity; it is not required for an ordinary status transition
 or corrected observation.
@@ -316,22 +317,33 @@ transcript remain independently verifiable facts.
 
 A [NIP-CSC](NIP-CSC.md) turn gets its own receipts, distinct from the six
 lifecycle statuses above, so an operator or a sibling agent can watch a turn
-land without polling the transcript. Four statuses:
+land without polling the transcript. Six statuses:
 
 - `turn_queued` — the command was accepted into the session's mailbox and has
   not started yet.
 - `turn_started` — the provider began running the turn. **This is the only
   turn status with a sixth key**, `turnId`: the provider's own identifier for
   the started turn.
-- `turn_dropped` — the mailbox was full (`QUEUE_FULL`) and the command was
-  never queued.
+- `turn_degraded` — the command asked for `deliver: "steer"` and this
+  execution's runtime advertised no native steering, so it will be delivered
+  at the next turn boundary instead (`STEER_UNSUPPORTED`). The turn is not
+  refused, not merged into the running turn, and not lost: a `turn_queued`
+  follows. See the downgrade rule in [NIP-CSC](NIP-CSC.md).
+- `turn_dropped` — the provider will never run this command and nobody was
+  refused: the mailbox was full (`QUEUE_FULL`), or the session has no live
+  execution to deliver into (`NO_LIVE_EXECUTION`). A `NO_LIVE_EXECUTION` drop
+  leaves the command **unconsumed** on purpose, so resuming that session
+  replays it rather than losing it.
 - `turn_refused` — the provider will never run this command: an unauthorized
   operator, or a target this provider owns that no longer accepts turns.
+- `interrupt_delivered` — a `thread.turn.interrupt` reached a live turn and
+  the cancel was issued. An interrupt that finds no live turn, or that a
+  non-founder signed, gets `turn_refused` instead.
 
-`turn_queued`, `turn_dropped`, and `turn_refused` keep the exact five-key v1
-object (`schema`, `commandId`, `status`, `session`, `error`) — no `turnId` key
-at all, present or `null`, for any of the three. `turn_started` has exactly
-six keys: the five plus `turnId`.
+Every turn status except `turn_started` keeps the exact five-key v1 object
+(`schema`, `commandId`, `status`, `session`, `error`) — no `turnId` key at
+all, present or `null`. `turn_started` has exactly six keys: the five plus
+`turnId`.
 
 `commandId` names the signed command that caused the turn, and that command is
 one of **two** kinds. Normally it is a `kind:44220` `thread.turn.start` or
@@ -347,27 +359,53 @@ and turn receipts; the `status` discriminates them, and the semantic key keeps
 them distinct on the wire.
 
 `session` is the target the command addressed — `driver`, `instanceId`,
-`sessionId`, `generation` — for **all four** turn statuses, including
+`sessionId`, `generation` — for **every** turn status, including
 `turn_refused`/`turn_dropped`: unlike a failed `session.create` receipt, a turn
 receipt's session is never `null`, because by the time a turn receipt is
 published the exact generation is known.
 
-`error` is `null` for `turn_queued` and `turn_started`. For `turn_dropped` it
-is `{ "code": "QUEUE_FULL", "message": "..." }`. For `turn_refused` it is one
-of the existing authority codes: `UNAUTHORIZED_OPERATOR`, `UNKNOWN_TARGET`,
-`STALE_GENERATION`, or `SESSION_CLOSED`.
+`error` is `null` for `turn_queued`, `turn_started`, and
+`interrupt_delivered`, and a `{ "code", "message" }` object for
+`turn_degraded`, `turn_dropped`, and `turn_refused`.
+
+**The code set is open.** A validator accepts any nonblank code of at most 64
+UTF-8 bytes containing no control characters, and MUST NOT pin `turn_dropped`,
+`turn_degraded`, or `turn_refused` to a closed list — a provider that grows a
+new reason must not be decoded as malformed by a client that predates it. The
+codes in use today are documented, not enforced:
+
+| status | code | means |
+| --- | --- | --- |
+| `turn_degraded` | `STEER_UNSUPPORTED` | this execution's runtime offers no native steering; delivered at the boundary |
+| `turn_dropped` | `QUEUE_FULL` | the in-actor turn queue is at `SESSION_QUEUE_DEPTH` |
+| `turn_dropped` | `NO_LIVE_EXECUTION` | the session is persisted but nothing is running to deliver into |
+| `turn_refused` | `UNAUTHORIZED_OPERATOR` | the signer may not steer this session — including any non-founder asking for `deliver: "interrupt"` |
+| `turn_refused` | `UNKNOWN_TARGET` | this provider owns the session id but not that target |
+| `turn_refused` | `STALE_GENERATION` | the addressed generation has been superseded |
+| `turn_refused` | `SESSION_CLOSED` | the session no longer accepts turns |
 
 **Publish points** (provider-side):
 
 - `turn_queued` — when a `TurnDecision::Start` is accepted into the session's
   mailbox.
-- `turn_dropped` — when the mailbox itself is full (`QueueFull`), or when the
-  in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`); the latter already
-  publishes a `turn_dropped` transcript item, and this receipt is additive to
-  that item, not a replacement for it.
+- `turn_degraded` — when a `deliver: "steer"` command reaches an execution
+  whose runtime advertised no native steering, immediately before the same
+  command is queued as `boundary`.
+- `turn_dropped` — when the mailbox itself is full (`QueueFull`), when the
+  in-actor turn queue overflows (`SESSION_QUEUE_DEPTH`), or when the addressed
+  session has no live execution to deliver into (`NO_LIVE_EXECUTION`). The
+  queue-overflow case already publishes a `turn_dropped` transcript item, and
+  this receipt is additive to that item, not a replacement for it. The
+  `NO_LIVE_EXECUTION` case must not consume the command: dropping a turn *and*
+  marking it delivered is the silent loss this contract exists to remove.
 - `turn_started` — when the run loop actually begins the turn, carrying the
-  `turnId` the provider mints for it.
-- `turn_refused` — for every `TurnDecision::Fail` (today: `UNAUTHORIZED_OPERATOR`),
+  `turnId` the provider mints for it. **This is also the point the command is
+  consumed** — never on receipt — so a provider that dies with turns waiting
+  replays them from its watermark on restart, in `(created_at, id)` order,
+  and each one runs exactly once.
+- `interrupt_delivered` — when a `thread.turn.interrupt` from the session
+  founder caused a cancel to be issued to a running turn.
+- `turn_refused` — for every `TurnDecision::Fail` (`UNAUTHORIZED_OPERATOR`),
   and for a `TurnDecision::Ignore` whose reason names a target this provider
   owns: `UnknownTarget`, `StaleGeneration`, `SessionClosed`. An `Ignore` for
   `NotAddressed`, `AlreadyConsumed`, `PastHorizon`, or a malformed command
@@ -375,22 +413,29 @@ of the existing authority codes: `UNAUTHORIZED_OPERATOR`, `UNKNOWN_TARGET`,
   this provider's to answer, and publishing one would be cross-provider
   chatter about someone else's command.
 
+A provider that refuses a command records that command id durably alongside
+its consumed ids (pruned at the same horizon), so a relay redelivery of the
+same 44220 does not republish a byte-identical `turn_refused` under the same
+semantic key.
+
 **A turn receipt never creates, confirms, or ends a generation.** Only the six
 lifecycle statuses do that (`created`, `created_with_failed_initial_turn`,
 `failed`, `resumed`, `resumed_without_context`, `stopped`). Any fold that reads
 `kind:44224` by `commandId` to decide whether a generation exists, is
 confirmed, or has ended — the catalog, create observations, `bee sessions`
-generation resolution — MUST ignore `turn_queued`/`turn_started`/
-`turn_dropped`/`turn_refused` for that purpose. A turn receipt is evidence
+generation resolution — MUST ignore every turn status for that purpose. A turn receipt is evidence
 about one turn, never about the generation's existence or lifecycle.
 
 The pending-turn UI settles a queued command on the `user_prompt` transcript
 echo whose `commandId` equals the pending command's `commandId` (see
 [NIP-CST](NIP-CST.md)), not on `turn_started` alone — the receipt says the
 provider began a turn; the echo says what it began. `turn_queued` updates a
-pending row to say the provider has queued it; `turn_dropped` and
-`turn_refused` remove the row, restore the draft, and surface
-`error.code`/`error.message`.
+pending row to say the provider has queued it, and exempts that row from the
+client's unanswered-row expiry — a turn queued behind an hour of work is still
+coming, and the row ages visibly instead of vanishing. `turn_degraded`
+relabels the row to say the steer was downgraded to a boundary delivery and
+leaves the words sent. `turn_dropped` and `turn_refused` remove the row,
+restore the draft, and surface `error.code`/`error.message`.
 
 The ACP session id used as a resume cursor is sensitive host-local state. It
 MUST NOT appear in commands, receipts, metadata, transcripts, adapter

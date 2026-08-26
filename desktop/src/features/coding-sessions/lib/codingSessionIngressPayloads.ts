@@ -98,9 +98,16 @@ export type CodingSessionLifecycleReceipt =
   | {
       schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
       commandId: string;
-      status: "turn_dropped" | "turn_refused";
+      status: "turn_dropped" | "turn_refused" | "turn_degraded";
       session: CodingSessionCommandTarget;
       error: { code: string; message: string };
+    }
+  | {
+      schema: typeof CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA;
+      commandId: string;
+      status: "interrupt_delivered";
+      session: CodingSessionCommandTarget;
+      error: null;
     };
 
 /** Every status a 44224 can carry, lifecycle and turn alike. */
@@ -108,24 +115,33 @@ export type CodingSessionLifecycleReceiptStatus =
   CodingSessionLifecycleReceipt["status"];
 
 /**
- * The four per-stage turn statuses.
+ * The six per-stage turn statuses.
  *
- * A turn receipt reports what happened to one 44220 `thread.turn.start`; it
- * never creates, confirms, or ends a generation, which is why every fold that
- * reads a receipt to decide a generation's state must skip these.
+ * A turn receipt reports what happened to one 44220 command — a
+ * `thread.turn.start` or a `thread.turn.interrupt`; it never creates,
+ * confirms, or ends a generation, which is why every fold that reads a receipt
+ * to decide a generation's state must skip these.
  *
- * `turn_queued` and `turn_started` carry `error: null`; `turn_dropped`
- * (`QUEUE_FULL`) and `turn_refused` (`UNAUTHORIZED_OPERATOR`,
- * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`) carry a
- * `{code, message}`. The code is read as a bounded string rather than pinned
- * to that list, exactly as the lifecycle `failed` status already is: a
- * provider that grows a new reason must not be decoded as malformed.
+ * `turn_queued`, `turn_started`, and `interrupt_delivered` carry
+ * `error: null`. `turn_degraded` (`STEER_UNSUPPORTED`), `turn_dropped`
+ * (`QUEUE_FULL`, `NO_LIVE_EXECUTION`) and `turn_refused`
+ * (`UNAUTHORIZED_OPERATOR`, `UNKNOWN_TARGET`, `STALE_GENERATION`,
+ * `SESSION_CLOSED`) carry a `{code, message}`. The code is read as a bounded
+ * string rather than pinned to those lists, exactly as the lifecycle `failed`
+ * status already is: a provider that grows a new reason must not be decoded as
+ * malformed.
+ *
+ * `turn_degraded` is not a failure. It says the provider could not steer the
+ * running turn and will run this one at the next boundary instead — the turn
+ * still happens, so the row is relabelled rather than retired.
  */
 export const CODING_SESSION_TURN_RECEIPT_STATUSES = [
   "turn_queued",
   "turn_started",
+  "turn_degraded",
   "turn_dropped",
   "turn_refused",
+  "interrupt_delivered",
 ] as const;
 
 /** A per-stage turn status, as opposed to a generation lifecycle status. */
@@ -375,7 +391,7 @@ function parseTurnReceipt(
   const session = decodeTarget(value.session);
   if (!session) return null;
   const commandId = value.commandId as string;
-  if (status === "turn_queued") {
+  if (status === "turn_queued" || status === "interrupt_delivered") {
     if (value.error !== null) return null;
     return Object.freeze({
       schema: CODING_SESSION_LIFECYCLE_RECEIPT_SCHEMA,

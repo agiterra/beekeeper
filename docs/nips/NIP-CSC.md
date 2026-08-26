@@ -32,14 +32,24 @@ The event content is exactly this JSON shape (no additional fields):
     "sessionId": "provider-session",
     "generation": 1
   },
-  "action": { "type": "thread.turn.start", "text": "operator instruction" }
+  "action": {
+    "type": "thread.turn.start",
+    "text": "operator instruction",
+    "deliver": "boundary"
+  }
 }
 ```
 
 `driver` is an open capability-driven slug, not a Buzz enum. `commandId` and
 all target identifiers are nonempty after trimming and at most 256 UTF-8 bytes.
 Start-action text is nonempty after trimming and at most 12 KiB (12,288 UTF-8
-bytes). `generation` is a positive JavaScript-safe integer
+bytes). `deliver` is an **optional** key on `thread.turn.start` — absent means
+`"boundary"` — whose value is one of exactly `"boundary"`, `"steer"`, or
+`"interrupt"`; any other value makes the command malformed, never a silent
+default. `thread.turn.interrupt` carries no `deliver` key: the action is the
+class. Producers on this fork write `deliver` explicitly even though it has a
+default, so a reader of a signed command never has to know the default to know
+what was asked for. `generation` is a positive JavaScript-safe integer
 (≤ 9,007,199,254,740,991) — the bound is JSON's, not Rust's, because the
 consumer is JavaScript and a `u64` that survives a Rust round-trip but loses
 precision in the browser would silently address a different session.
@@ -74,11 +84,69 @@ content as claimed operator attribution.
 A `thread.turn.start` command's `commandId` is the join key for everything
 that command produces downstream: the provider's per-stage
 [NIP-CSL](NIP-CSL.md) `kind:44224` receipts (`turn_queued`, `turn_started`,
-`turn_dropped`, `turn_refused`) and the [NIP-CST](NIP-CST.md) `kind:44225`
+`turn_degraded`, `turn_dropped`, `turn_refused`; and `interrupt_delivered` for
+a `thread.turn.interrupt`) and the [NIP-CST](NIP-CST.md) `kind:44225`
 `user_prompt` transcript item that opens the turn, which carries this same
 `commandId` when present. A consumer that wants to know what became of one
 signed command reads both streams keyed on it, rather than matching prompt
 text or polling.
+
+### Fork amendment: delivery classes
+
+A turn command says *when* it wants to reach an execution that may already be
+working. The sender chooses; the provider executes what it can and reports
+what it did in a [NIP-CSL](NIP-CSL.md) receipt. There are three classes.
+
+- **`boundary` (default).** The turn is held in the provider's mailbox and run
+  when the current turn settles. This is the only class a client may assume
+  works, and the one every provider on this contract implements.
+- **`steer`.** The turn is injected into the *running* turn where this
+  execution's runtime advertised native steering at initialize. Steering
+  capability is a fact about the execution, not about the driver slug, and it
+  is published per execution as `capabilities.threadSteer` in the
+  `kind:44223` metadata.
+- **`interrupt`.** The provider cancels the running turn and then delivers this
+  turn at the boundary that creates. Authority for this class is the **session
+  founder only**; any other signer — including an operator holding
+  `grant-operator` — is refused with `turn_refused` /
+  `UNAUTHORIZED_OPERATOR` and the running turn is left alone.
+
+**The downgrade rule.** A `steer` addressed to an execution whose runtime does
+not offer native steering is *not* refused and *not* escalated. The provider
+publishes `turn_degraded` (`STEER_UNSUPPORTED`) naming the command, and then
+treats the turn exactly as `boundary` — so the ordinary `turn_queued` follows.
+It never cancels or restarts the running turn to make room, and it never
+merges the two turns' text: cancel-and-merge loses work that has already been
+done, and doing it silently on a sender's behalf is worse than saying "not
+here, at the boundary instead". A consumer that does not understand
+`turn_degraded` still sees the `turn_queued` and is merely less informed, never
+wrong.
+
+An unknown `deliver` value is a malformed command, rejected by the relay's
+envelope validation. Defaulting an unreadable class to `boundary` would take a
+turn the sender asked to interrupt with and quietly park it behind an hour of
+work.
+
+### Fork amendment: the relay is the mailbox
+
+A `thread.turn.start` is durable on the relay from the moment it is accepted,
+and the provider's in-memory queue is a cache of it, never the record. Two
+consequences bind providers:
+
+1. **A command is consumed when its turn *starts*, not when it is received.**
+   A command accepted into the mailbox and not yet started is still
+   unconsumed, so a provider that dies between the two loses nothing.
+2. **On restart, a provider replays every unconsumed command from its
+   watermark, in `(created_at, id)` order**, and delivers them in that order.
+   A command whose turn already started is ignored as already-consumed, so a
+   replay can never run a turn twice.
+
+A client therefore does not need to hold an unsent turn in memory to deliver
+it later: publishing it with `deliver: "boundary"` is strictly safer, because
+the relay survives the client, the provider, and the machine either runs on.
+The consequence for a person is that a published turn cannot be recalled — the
+`turn_dropped`/`turn_refused` receipts are what say a turn will not run, and
+there is no client-side unsend.
 
 ## Authority
 
@@ -98,6 +166,7 @@ inherit the channel ACL (including private-project access) on the read path.
 | --- | --- |
 | Kind constant | `crates/buzz-core/src/kind.rs` |
 | Payload + target key | `crates/buzz-core/src/coding_session_command.rs` |
+| Desktop builder | `desktop/src/features/coding-sessions/lib/codingSessionCommand.ts` |
 | Envelope validation | `crates/buzz-relay/src/handlers/ingest.rs` |
 | Builder | `crates/buzz-sdk/src/builders.rs` |
 | Semantic keys | `crates/buzz-sdk/src/coding_session.rs` |

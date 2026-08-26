@@ -1,9 +1,17 @@
 /** UI model for the provider-neutral coding-session composer. */
 export function getCodingSessionComposerState({
+  canSteer = true,
   isMember,
   isWorking,
   text,
 }: {
+  /**
+   * Whether this execution's runtime advertised native steering. The label is
+   * the promise the button makes, so an execution that cannot steer must not
+   * offer to: its mid-turn send reaches the provider now and runs at the next
+   * turn boundary, which is "Send next", not "Steer".
+   */
+  canSteer?: boolean;
   isMember: boolean;
   isWorking: boolean;
   text: string;
@@ -15,7 +23,7 @@ export function getCodingSessionComposerState({
     // reading Stop is how an operator ends an execution while meaning to end a
     // turn (asked about live, 2026-08-24).
     primaryLabel: isWorking ? "Interrupt" : "Send",
-    sendLabel: isWorking ? "Steer" : "Send",
+    sendLabel: isWorking ? (canSteer ? "Steer" : "Send next") : "Send",
     showStopAction: isWorking,
     showAuthorityFailure: !isMember,
   };

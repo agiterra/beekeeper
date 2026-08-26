@@ -16,6 +16,7 @@ test("stacked composer keeps the editor and authorized actions in separate rows"
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {
       canInterrupt: true,
+      canSteer: true,
       channelId: "channel-1",
       isMember: true,
       isWorking: true,
@@ -207,12 +208,12 @@ test("immersive controls fail closed when authority and interrupt capability are
   assert.match(markup, />Provider runtime</);
   assert.doesNotMatch(markup, /coding-session-composer-steer/);
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, /aria-label="Queue next turn"/);
+  assert.match(markup, /aria-label="Send at the next turn boundary"/);
   assert.match(markup, /Current-turn interrupt is unavailable/);
   assert.match(markup, /coding-session-composer-interrupt[^>]*disabled=""/);
 });
 
-test("a running turn without live steer keeps the editor open and offers Queue", () => {
+test("a running turn without live steer sends at the boundary and says so", () => {
   const markup = renderToStaticMarkup(
     React.createElement(CodingSessionComposer, {
       canInterrupt: true,
@@ -226,13 +227,33 @@ test("a running turn without live steer keeps the editor open and offers Queue",
     }),
   );
 
-  assert.match(markup, /placeholder="Write the next turn…"/);
+  assert.match(markup, /placeholder="Send the next turn…"/);
   assert.doesNotMatch(
     markup,
     /aria-label="Coding-session instruction"[^>]*disabled=""/,
   );
   assert.match(markup, /coding-session-composer-queue/);
-  assert.match(markup, /aria-label="Queue next turn"/);
+  assert.match(markup, /aria-label="Send at the next turn boundary"/);
+  // The promise the button makes is the one the provider can keep: this
+  // execution advertised no native steering, so nothing here says "Steer".
+  assert.doesNotMatch(markup, />Steer</);
+});
+
+test("a non-steering execution never labels its mid-turn send a steer", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionComposer, {
+      canInterrupt: true,
+      canSteer: false,
+      channelId: "channel-1",
+      isMember: true,
+      isWorking: true,
+      layout: "stacked",
+      target,
+      variant: "floating",
+    }),
+  );
+  assert.match(markup, />Send next</);
+  assert.doesNotMatch(markup, />Steer</);
 });
 
 test("founder authority gates send, interrupt, resume, and stop together", () => {

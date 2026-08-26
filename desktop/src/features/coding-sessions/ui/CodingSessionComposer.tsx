@@ -6,6 +6,7 @@ import {
   publishCodingSessionCommand,
   publishCodingSessionInterrupt,
   type CodingSessionCommandTarget,
+  type CodingSessionTurnDelivery,
 } from "@/features/coding-sessions/lib/codingSessionCommand";
 import {
   forgetPendingCodingSessionTurn,
@@ -124,10 +125,6 @@ export function CodingSessionComposer({
   const [pendingAction, setPendingAction] = React.useState<
     "send" | "interrupt" | "resume" | "stop" | null
   >(null);
-  const [queuedDraft, setQueuedDraft] = React.useState<{
-    draft: string;
-    preparedText: string;
-  } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   // A reconnect is only finished when the provider's receipt names the
   // generation it resumed into; until then this composer is as busy as it is
@@ -184,6 +181,7 @@ export function CodingSessionComposer({
   });
   const preparedText = (prepareText ? prepareText(text) : text).trim();
   const state = getCodingSessionComposerState({
+    canSteer,
     isMember,
     isWorking,
     text: preparedText,
@@ -203,27 +201,20 @@ export function CodingSessionComposer({
       ? null
       : codingSessionWorkspaceStatusDetail(unreachableStatus);
   const isUnavailable = isDisconnected || isEnded || unreachableStatus !== null;
-  const canPublishText =
-    canControl &&
-    !isUnavailable &&
-    state.canSend &&
-    (!immersive || !isWorking || canSteer);
-  const canQueueText =
-    canControl &&
-    !isUnavailable &&
-    state.canSend &&
-    immersive &&
-    isWorking &&
-    !canSteer &&
-    queuedDraft === null;
-  const canSubmitText = canPublishText || canQueueText;
+  // Every sendable draft is publishable, working provider or not. What
+  // changes mid-turn is the *delivery class* the command asks for, which the
+  // provider then answers with its own signed receipt — a turn is never held
+  // in this client's memory waiting for a moment that a crash would erase.
+  const canSubmitText = canControl && !isUnavailable && state.canSend;
   const editorDisabled = !canControl || !isMember || isSending || isUnavailable;
 
   const publishPreparedText = React.useCallback(
     async ({
+      deliver,
       draft,
       preparedText: textToPublish,
     }: {
+      deliver: CodingSessionTurnDelivery;
       draft: string;
       preparedText: string;
     }) => {
@@ -250,6 +241,7 @@ export function CodingSessionComposer({
           commandId,
           target,
           text: textToPublish,
+          deliver,
         });
         markPendingCodingSessionTurnPublished(channelId, published.commandId);
         // Acceptance by the relay is not consent from the provider. The receipt
@@ -282,50 +274,26 @@ export function CodingSessionComposer({
   );
 
   const submit = React.useCallback(async () => {
-    if (!canPublishText || isSending) return;
+    if (!canSubmitText || isSending) return;
+    // Steering is asked for only where the execution advertised it and there
+    // is a turn to steer; everything else is an explicit boundary delivery.
+    // The provider may still downgrade a steer, and says so in a receipt.
+    const deliver: CodingSessionTurnDelivery =
+      isWorking && canSteer ? "steer" : "boundary";
     // Keep the person's own words, not the prepared wire text: a refusal has
     // to hand back exactly what they typed, routing handle and all.
     const draft = text;
     setText("");
-    await publishPreparedText({ draft, preparedText });
-  }, [canPublishText, isSending, preparedText, publishPreparedText, text]);
-
-  const queueNextTurn = React.useCallback(() => {
-    if (!canQueueText) return;
-    setQueuedDraft({ draft: text, preparedText });
-    setText("");
-  }, [canQueueText, preparedText, text]);
-
-  React.useEffect(() => {
-    if (
-      isWorking ||
-      isUnavailable ||
-      isSending ||
-      !canControl ||
-      !isMember ||
-      queuedDraft === null
-    )
-      return;
-    const next = queuedDraft;
-    setQueuedDraft(null);
-    void publishPreparedText(next);
+    await publishPreparedText({ deliver, draft, preparedText });
   }, [
+    canSteer,
+    canSubmitText,
     isSending,
-    isUnavailable,
     isWorking,
-    canControl,
-    isMember,
+    preparedText,
     publishPreparedText,
-    queuedDraft,
+    text,
   ]);
-
-  const handlePrimaryAction = React.useCallback(async () => {
-    if (canQueueText) {
-      queueNextTurn();
-      return;
-    }
-    await submit();
-  }, [canQueueText, queueNextTurn, submit]);
 
   const handleStop = React.useCallback(async () => {
     if (!canControl || !isMember || !canInterrupt || isSending) return;
@@ -439,19 +407,13 @@ export function CodingSessionComposer({
         isWorking={isWorking}
         layout={layout}
         onAddProvider={onAddProvider}
-        onCancelQueued={() => {
-          if (!queuedDraft) return;
-          setQueuedDraft(null);
-          restoreRefusedDraft(queuedDraft.draft);
-        }}
         onInterrupt={() => void handleStop()}
-        onPrimary={() => void handlePrimaryAction()}
+        onPrimary={() => void submit()}
         onReconnect={() => void handleResume()}
         onSessionStop={requestSessionEnd}
         onTextChange={setText}
         pendingAction={pendingAction}
         providerAuthorityPubkey={providerAuthorityPubkey}
-        queuedDraft={queuedDraft?.draft ?? null}
         recipientControl={recipientControl}
         sendLabel={state.sendLabel}
         showAuthorityFailure={state.showAuthorityFailure}

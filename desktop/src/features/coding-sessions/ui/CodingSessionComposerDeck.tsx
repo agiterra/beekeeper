@@ -237,10 +237,14 @@ export function CodingSessionComposerDeck({
                 : isWorking
                   ? canSteer
                     ? "Steer current turn"
-                    : "Queue next turn"
+                    : "Send at the next turn boundary"
                   : "Send message"
             }
             className="grid size-9 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform enabled:hover:scale-105 disabled:cursor-not-allowed disabled:opacity-30"
+            // `…-queue` is a historical selector, kept so specs that already
+            // point at the mid-turn action keep working. Nothing is queued in
+            // this client any more: the command is published now and the
+            // provider's mailbox holds it until the current turn ends.
             data-testid={
               isWorking
                 ? canSteer
@@ -254,7 +258,7 @@ export function CodingSessionComposerDeck({
               isWorking
                 ? canSteer
                   ? "Steer current turn"
-                  : "Queue next turn"
+                  : "Sends now; this provider runs it when the current turn ends, and it cannot be recalled"
                 : "Send message"
             }
             type="button"
