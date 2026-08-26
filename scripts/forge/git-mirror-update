@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Sync the bare git mirrors under /srv/git on the forge.
+#
+# Installed at /usr/local/bin/git-mirror-update on the forge incus container
+# (agincus), run by git-mirror.service / git-mirror.timer as user `git`.
+#
+# Two per-repo modes, selected by git config — remote names are never
+# hard-coded here (two pre-push guards broke the day remote names moved):
+#
+#   default             `git remote update --prune`: a pull-only mirror of
+#                       its remotes (e.g. repos whose canonical host is
+#                       GitHub).
+#   mirror.fetchRemote  the repo's canonical host (e.g. the hive relay).
+#                       Local refs are forced to exactly match it, prune
+#                       included.
+#   mirror.pushRemote   where to re-publish after a successful fetch (e.g.
+#                       the GitHub backup that Woodpecker watches). Forced
+#                       refspecs, but no deletions: refs existing only on
+#                       the push target are left alone until the cutover is
+#                       proven complete.
+#
+# Failures are logged per-repo; the loop continues. Exit 1 if any repo failed.
+set -u
+
+rc=0
+for repo in /srv/git/*.git; do
+    [ -d "$repo" ] || continue
+    echo "updating $repo"
+    fetch_remote=$(git -C "$repo" config --get mirror.fetchRemote || true)
+    push_remote=$(git -C "$repo" config --get mirror.pushRemote || true)
+
+    if [ -z "$fetch_remote" ]; then
+        if ! git -C "$repo" remote update --prune 2>&1; then
+            echo "FAIL: $repo (remote update)" >&2
+            rc=1
+        fi
+        continue
+    fi
+
+    if ! git -C "$repo" fetch --prune "$fetch_remote" \
+            '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' 2>&1; then
+        echo "FAIL: $repo (fetch $fetch_remote)" >&2
+        rc=1
+        continue
+    fi
+
+    if [ -n "$push_remote" ]; then
+        if ! git -C "$repo" push "$push_remote" \
+                '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' 2>&1; then
+            echo "FAIL: $repo (push $push_remote)" >&2
+            rc=1
+        fi
+    fi
+done
+exit $rc

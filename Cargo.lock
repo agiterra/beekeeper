@@ -1150,6 +1150,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-mirror-bridge"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "buzz-ws-client",
+ "clap",
+ "nostr 0.44.7",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "buzz-pair-relay"
 version = "0.1.0"
 dependencies = [
