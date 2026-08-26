@@ -147,7 +147,8 @@ selects `steer` only when `canSteer`).
 it is wrong about what this relay will hand it.** What the paragraph above
 establishes is only that *this fork's desktop* never asks for a steer, so no
 `turn_degraded` originates from it. A `steer` from any other client is accepted
-on the wire — the envelope validates all four delivery classes — and the
+on the wire — the envelope validates all four delivery classes
+(`crates/buzz-relay/src/handlers/ingest.rs:7474-7479`) — and the
 provider then degrades it out loud: `inject_native_steer` returns `false`
 unconditionally (`crates/buzz-session-provider/src/lib.rs:2227-2239`) and the
 arm behind the delivery publishes `turn_degraded` / `STEER_UNSUPPORTED` beside
