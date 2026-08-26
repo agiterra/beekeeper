@@ -153,7 +153,7 @@ test("a leading handle moves the selector and keeps the draft it was typed in", 
     assert.match(
       view.screen.getByTestId("coding-session-participant-picker-trigger")
         .textContent,
-      /GPT-5\.3 Codex/,
+      /Codex · gpt-5\.3-codex/,
     );
     assert.match(view.hint().textContent, /Sending to Codex/);
     assert.match(view.hint().textContent, /@codex is removed from the prompt/);

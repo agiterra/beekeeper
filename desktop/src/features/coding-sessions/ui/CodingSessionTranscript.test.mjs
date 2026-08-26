@@ -319,6 +319,19 @@ test("shows errors and a streaming working affordance in the primary turn", asyn
   assert.match(markup, /Compiler exited with status 1/);
   assert.match(markup, /coding-session-working/);
   assert.match(markup, /Working for/);
+  assert.doesNotMatch(markup, /coding-session-thinking/);
+});
+
+test("a signed running turn animates Thinking only before visible work begins", async () => {
+  const markup = await renderTranscript({
+    generationId: "generation-1",
+    isWorking: true,
+    items: [message("prompt", "user", "Inspect the session")],
+  });
+
+  assert.match(markup, /data-testid="coding-session-thinking"/);
+  assert.match(markup, /coding-session-live-activity-focus/);
+  assert.match(markup, />Thinking</);
 });
 
 test("keeps three successful tools visible after the previous-tool disclosure", async () => {

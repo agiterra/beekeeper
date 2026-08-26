@@ -136,8 +136,7 @@ test("N>1: recipient routing collapses into one human-readable control", () => {
     umbrella: multiExecutionUmbrella(),
   });
   assert.match(markup, /data-testid="coding-session-participant-selector"/);
-  assert.match(markup, /Send to Claude · Claude Opus 5/);
-  assert.doesNotMatch(markup, /claude-opus-5/);
+  assert.match(markup, /Send to Claude · claude-opus-5/);
   assert.doesNotMatch(markup, /coding-session-participant-execution/);
 });
 
@@ -184,7 +183,7 @@ test("a session prefill selects the lane target's execution and stages its text"
     },
     umbrella,
   });
-  assert.match(markup, /Send to Codex · GPT-5\.3 Codex/);
+  assert.match(markup, /Send to Codex · gpt-5\.3-codex/);
   assert.match(markup, /From Claude \(this session\)/);
 });
 

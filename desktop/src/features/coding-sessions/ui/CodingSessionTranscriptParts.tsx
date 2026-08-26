@@ -110,9 +110,11 @@ export function CodingSessionActiveTool({
 }
 
 export function CodingSessionWorking({
+  showThinking = false,
   startedAt,
   stepLabel = null,
 }: {
+  showThinking?: boolean;
   startedAt: string | null;
   stepLabel?: string | null;
 }) {
@@ -127,6 +129,28 @@ export function CodingSessionWorking({
       {stepLabel ? (
         <span className="ml-2 text-muted-foreground/60">· {stepLabel}</span>
       ) : null}
+      {showThinking ? <CodingSessionThinking /> : null}
+    </div>
+  );
+}
+
+function CodingSessionThinking() {
+  return (
+    <div
+      className="relative mt-1 min-h-6 w-fit max-w-full overflow-hidden rounded-md text-sm leading-relaxed"
+      data-testid="coding-session-thinking"
+    >
+      <span className="block py-0.5 text-muted-foreground/65">Thinking</span>
+      <span
+        aria-hidden
+        className="coding-session-live-activity-focus pointer-events-none absolute inset-y-0 select-none"
+      >
+        <span className="coding-session-live-activity-counter block">
+          <span className="coding-session-live-activity-aligned block py-0.5 text-foreground">
+            Thinking
+          </span>
+        </span>
+      </span>
     </div>
   );
 }

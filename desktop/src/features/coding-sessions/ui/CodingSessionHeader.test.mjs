@@ -46,8 +46,8 @@ test("umbrella header promotes the goal and aggregate agent status", () => {
     }),
   );
   assert.match(markup, /Make two-agent work read as one session/);
-  assert.match(markup, /2 agents · 1 working/);
   assert.match(markup, /Codex working · Claude idle/);
+  assert.doesNotMatch(markup, /coding-session-status-badge/);
   assert.doesNotMatch(markup, />generation 1<\/p>/);
 });
 

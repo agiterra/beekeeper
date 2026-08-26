@@ -610,10 +610,10 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   );
   await expect(executionRecipients).toHaveCount(2);
   await expect(executionRecipients.filter({ hasText: "Claude" })).toContainText(
-    "Claude Code · Sonnet",
+    "Claude Code · sonnet",
   );
   await expect(executionRecipients.filter({ hasText: "Codex" })).toContainText(
-    "Codex · GPT-5.6 Sol",
+    "Codex · gpt-5.6-sol",
   );
   // This fixture is deliberately a viewer: targets that imply agent control
   // stay visible but disabled, while the truthful session lane remains usable.
@@ -630,7 +630,8 @@ test("a multi-provider session exposes a resizable and collapsible agent rail", 
   await page.getByTestId("coding-session-participant-session").click();
   await expect(recipient).toContainText("Session");
 
-  await page.getByTestId("coding-session-surface-toggle-agents").click();
+  await page.getByTestId("coding-session-agent-focus-trigger").click();
+  await page.getByTestId("coding-session-agent-details-toggle").click();
   await expect(host).toContainText("All agents");
   await expect(host).toContainText("Claude");
   await expect(host).toContainText("Codex");

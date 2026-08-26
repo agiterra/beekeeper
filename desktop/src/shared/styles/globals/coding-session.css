@@ -1,0 +1,90 @@
+/* Coding-session liveness stays calm enough to leave on for a long turn. The
+   agent chip breathes as a surface; the live-activity highlight makes a single
+   status word feel active without adding a spinner or moving the layout. */
+@keyframes coding-session-agent-breathe {
+  0%,
+  40%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+  55%,
+  88% {
+    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+}
+
+@keyframes coding-session-live-activity-focus {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes coding-session-live-activity-counter {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+.coding-session-agent-breathe {
+  animation: coding-session-agent-breathe 2.4s ease-in-out infinite;
+}
+
+.coding-session-live-activity-focus {
+  --coding-session-live-focus-width: 4.5rem;
+
+  right: auto;
+  left: calc(-1 * var(--coding-session-live-focus-width));
+  width: calc(
+    100% +
+    var(--coding-session-live-focus-width) +
+    var(--coding-session-live-focus-width)
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--coding-session-live-focus-width),
+    transparent 100%
+  );
+  mask-repeat: no-repeat;
+  animation: coding-session-live-activity-focus 2.2s linear infinite;
+  will-change: transform;
+}
+
+.coding-session-live-activity-counter {
+  width: 100%;
+  animation: coding-session-live-activity-counter 2.2s linear infinite;
+  will-change: transform;
+}
+
+.coding-session-live-activity-aligned {
+  width: calc(
+    100% -
+    var(--coding-session-live-focus-width) -
+    var(--coding-session-live-focus-width)
+  );
+  margin-left: var(--coding-session-live-focus-width);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coding-session-agent-breathe,
+  .coding-session-live-activity-focus,
+  .coding-session-live-activity-counter {
+    animation: none;
+    will-change: auto;
+  }
+
+  .coding-session-live-activity-focus {
+    opacity: 0;
+  }
+}

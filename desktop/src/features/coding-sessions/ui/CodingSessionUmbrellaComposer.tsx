@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowUp, Bot, Check, ChevronDown, MessagesSquare } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, MessagesSquare } from "lucide-react";
 
 import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions/lib/codingSessionCommand";
 import { publishCodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionLanePublish";
@@ -17,14 +17,7 @@ import {
   stripCodingSessionMentionForTarget,
   type CodingSessionMentionResolution,
 } from "@/features/coding-sessions/lib/codingSessionMentionRouting";
-import {
-  formatCodingSessionModelDisplay,
-  formatCodingSessionRuntimeLabel,
-} from "@/features/coding-sessions/lib/codingSessionLabels";
-import {
-  codingSessionModelDisplayName,
-  codingSessionTraitsSummary,
-} from "@/features/coding-sessions/lib/codingSessionModelDisplay";
+import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
 import { deriveCodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import {
   UNKNOWN_CODING_SESSION_REACHABILITY,
@@ -36,6 +29,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import { CodingSessionComposer } from "./CodingSessionComposer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { codingSessionAgentAccent } from "./CodingSessionAgentFocus";
 
 /** A staged handoff: select the target execution and pre-load its editor. */
 export type CodingSessionUmbrellaComposerPrefill = {
@@ -355,6 +349,10 @@ function CodingSessionParticipantPicker({
   const selectedPresentation = selected
     ? participantPresentation(selected)
     : { title: "Choose recipient", detail: null };
+  const selectedAccent =
+    selected?.kind === "execution"
+      ? codingSessionAgentAccent(selected.executionKey)
+      : null;
   return (
     <div data-testid="coding-session-participant-selector">
       <Popover>
@@ -367,10 +365,22 @@ function CodingSessionParticipantPicker({
           >
             {selected?.kind === "session" ? (
               <MessagesSquare aria-hidden className="size-4 shrink-0" />
-            ) : (
-              <Bot aria-hidden className="size-4 shrink-0" />
-            )}
-            <span className="truncate">{selectedPresentation.title}</span>
+            ) : selectedAccent ? (
+              <span
+                aria-hidden
+                className={cn(
+                  "grid size-5 shrink-0 place-items-center rounded-full",
+                  selectedAccent.soft,
+                )}
+              >
+                <span
+                  className={cn("size-2 rounded-full", selectedAccent.dot)}
+                />
+              </span>
+            ) : null}
+            <span className="truncate">
+              Send to {selectedPresentation.title}
+            </span>
             <ChevronDown aria-hidden className="size-3.5 shrink-0 opacity-60" />
           </button>
         </PopoverTrigger>
@@ -392,6 +402,10 @@ function CodingSessionParticipantPicker({
                 participant.kind === "execution" &&
                 !authority.canPromptExecutions;
               const presentation = participantPresentation(participant);
+              const accent =
+                participant.kind === "execution"
+                  ? codingSessionAgentAccent(participant.executionKey)
+                  : null;
               return (
                 <button
                   aria-pressed={isSelected}
@@ -406,12 +420,20 @@ function CodingSessionParticipantPicker({
                   title={gated ? (authority.reason ?? undefined) : undefined}
                   type="button"
                 >
-                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted">
+                  <span
+                    className={cn(
+                      "grid size-8 shrink-0 place-items-center rounded-full",
+                      accent?.soft ?? "bg-muted",
+                    )}
+                  >
                     {participant.kind === "session" ? (
                       <MessagesSquare aria-hidden className="size-4" />
-                    ) : (
-                      <Bot aria-hidden className="size-4" />
-                    )}
+                    ) : accent ? (
+                      <span
+                        aria-hidden
+                        className={cn("size-2.5 rounded-full", accent.dot)}
+                      />
+                    ) : null}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-foreground">
@@ -449,21 +471,7 @@ function participantPresentation(
   if (participant.kind === "session") {
     return { title: "Session", detail: "Everyone in this session" };
   }
-  const record = participant.execution.activeGeneration;
-  const runtime =
-    record.runtime ?? record.provider ?? record.commandTarget?.driver;
-  const runtimeLabel = runtime
-    ? formatCodingSessionRuntimeLabel(runtime)
-    : "Agent";
-  if (!record.model) return { title: runtimeLabel, detail: null };
-  const model = formatCodingSessionModelDisplay(record.model);
-  return {
-    title: `${runtimeLabel} · ${codingSessionModelDisplayName(model.model)}`,
-    detail: codingSessionTraitsSummary({
-      thinking: model.thinking,
-      context: model.context,
-    }),
-  };
+  return { title: participant.label, detail: null };
 }
 
 /**

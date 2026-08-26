@@ -36,7 +36,8 @@ disagrees with an older document about *current state*, this one wins.
 _Last updated: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker
 rebuild, the session ceiling and silent-turn budget as settings, and the
 redaction rework) are fixed and pushed through CI #24; items 51-53 and 55-56
-are the full-screen session pass, and item 54 records the Claude
+are the full-screen session pass, item 57 is its final multi-agent interaction
+refinement, and item 54 records the Claude
 background-shell / unresolved-prompt failure proven in Andy's shared session.
 The latest multi-agent narrative work is on `fix/full-screen-session-ux` and
 awaits live confirmation after the development app is rebuilt._
@@ -1491,7 +1492,38 @@ written and `bash -n` clean but **was not executed** — that harness needs
       the provider signing-boundary test; the seven-session E2E workflow and
       the two-view surface-host workflow, including focus without recipient
       mutation and 2560px Agents auto-open; all captured states are pixel-
-      distinct. The repository-wide `just ci` gate passed on 2026-08-25.
+    distinct. The repository-wide `just ci` gate passed on 2026-08-25.
+
+57. **The multi-agent controls now preserve the story instead of competing
+    with it** (T3 Code comparison plus the four-execution UXV1 transcript,
+    2026-08-25). The crowded row of one chip per execution and a second
+    aggregate status badge is one compact `N agents · M working` control. Its
+    popover is the place to focus an execution or open full agent detail; the
+    working state has a restrained breathing accent derived from signed
+    activity, so the session feels alive without inventing progress.
+    - Focus remains a reading mode, never a routing mode. Choosing an agent
+      shows a small `Viewing …` notice above the narrative with an explicit
+      release action, leaves the composer recipient unchanged, and scrolls the
+      filtered transcript to its latest content instead of stranding the
+      reader near the first matching turn.
+    - The composer makes routing persistent and explicit as `Send to …`, with
+      the same execution accent and the participant's exact disambiguated
+      label. Completed turns now keep only `Reply` plus one `Send to…` menu;
+      empty folded turns no longer manufacture a generic `Signed execution
+      activity` row.
+    - T3's moving-highlight treatment is adapted for `Thinking`, but its truth
+      boundary is Bee Keeper's: it appears only after a signed running turn
+      exists and before any signed plan, tool, answer, or error becomes visible.
+      The optimistic unsent row remains silent. Breathing and text-sweep
+      animation both become static under reduced motion.
+    - Evidence: 62 focused component tests; both focused surface-host E2Es;
+      the five-test coding-session E2E; and nine pixel-distinct medium, narrow,
+      focused, surface-open, and ultrawide screenshots. The focus E2E starts at
+      the top, selects Codex, proves the viewport is within 8px of the bottom,
+      and proves the composer recipient did not change. The repository-wide
+      `just ci` gate passed on 2026-08-25: 6,177 desktop tests, 2,681 Tauri
+      tests, every mobile test, all workspace tests, and desktop/web production
+      builds are green.
 
 ## 2a. Direction settled 2026-08-18
 
@@ -1508,7 +1540,7 @@ than replace them, and it is not started.
 ## 3. Next — one track at a time, in this order
 
 **The active track as of 2026-08-25 night is live confirmation of the
-full-screen UI/UX pass — §2 items 52–53 and 55–56.** The implementation,
+full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
 focused wide-screen E2E workflow, and repository-wide `just ci` gate are green.
 It is landed on `fix/full-screen-session-ux`; only confirmation in the live
 desktop against hive remains. Everything below is the previous track, kept

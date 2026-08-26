@@ -1,4 +1,5 @@
 import * as React from "react";
+import { X } from "lucide-react";
 import { toast } from "sonner";
 
 import type { CodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionConversationLane";
@@ -60,6 +61,7 @@ import { CodingSessionExecutionRail } from "./CodingSessionExecutionRail";
 import {
   CodingSessionAgentFocus,
   type CodingSessionAgentFocusItem,
+  codingSessionAgentAccent,
 } from "./CodingSessionAgentFocus";
 import {
   CodingSessionActiveWorkDock,
@@ -139,6 +141,7 @@ export function UmbrellaCodingSessionWorkspace({
   const [focusedExecutionKey, setFocusedExecutionKey] = React.useState<
     string | null
   >(null);
+  const narrativeScrollRef = React.useRef<HTMLDivElement>(null);
   const composerParticipants = React.useMemo(
     () => listCodingSessionUmbrellaParticipants(umbrella),
     [umbrella],
@@ -300,6 +303,20 @@ export function UmbrellaCodingSessionWorkspace({
       }),
     [composerParticipants, resolveReachability],
   );
+  const focusedAgent =
+    agentFocusItems.find((item) => item.executionKey === focusedExecutionKey) ??
+    null;
+  const handleFocusExecution = React.useCallback(
+    (executionKey: string | null) => setFocusedExecutionKey(executionKey),
+    [],
+  );
+  React.useLayoutEffect(() => {
+    if (focusedExecutionKey === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollCodingSessionNarrativeToLatest(narrativeScrollRef.current);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusedExecutionKey]);
 
   const handlePopout = React.useCallback(() => {
     void openCodingSessionPopout(channelId, generationId).catch((error) => {
@@ -321,9 +338,15 @@ export function UmbrellaCodingSessionWorkspace({
           agentControls={
             isMultiExecution && !isNarrow ? (
               <CodingSessionAgentFocus
+                agentSurfaceOpen={surfaceHost.activeTab === "agents"}
                 focusedExecutionKey={focusedExecutionKey}
                 items={agentFocusItems}
-                onFocus={setFocusedExecutionKey}
+                onFocus={handleFocusExecution}
+                onOpenAgents={() => {
+                  composerTaskDock.close();
+                  surfaceHost.toggle("agents");
+                }}
+                surfaceHostId={surfaceHostId}
               />
             ) : undefined
           }
@@ -366,13 +389,15 @@ export function UmbrellaCodingSessionWorkspace({
           status={umbrellaWorkspaceStatus(umbrella)}
           statusLabelOverride={umbrellaAgentStatusSummary(agentFocusItems)}
           surfaceHostId={surfaceHostId}
-          surfaceTabs={surfaces.map((surfaceEntry) => ({
-            id: surfaceEntry.id,
-            label: surfaceEntry.label,
-            icon: surfaceEntry.id === "agents" ? "agents" : "changes",
-            count: surfaceEntry.count ?? 0,
-            active: surfaceHost.activeTab === surfaceEntry.id,
-          }))}
+          surfaceTabs={surfaces
+            .filter((surfaceEntry) => surfaceEntry.id !== "agents")
+            .map((surfaceEntry) => ({
+              id: surfaceEntry.id,
+              label: surfaceEntry.label,
+              icon: surfaceEntry.id === "agents" ? "agents" : "changes",
+              count: surfaceEntry.count ?? 0,
+              active: surfaceHost.activeTab === surfaceEntry.id,
+            }))}
           taskCount={
             isMultiExecution
               ? 0
@@ -408,9 +433,15 @@ export function UmbrellaCodingSessionWorkspace({
             {isMultiExecution && isNarrow ? (
               <div className="mt-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <CodingSessionAgentFocus
+                  agentSurfaceOpen={surfaceHost.activeTab === "agents"}
                   focusedExecutionKey={focusedExecutionKey}
                   items={agentFocusItems}
-                  onFocus={setFocusedExecutionKey}
+                  onFocus={handleFocusExecution}
+                  onOpenAgents={() => {
+                    composerTaskDock.close();
+                    surfaceHost.toggle("agents");
+                  }}
+                  surfaceHostId={surfaceHostId}
                 />
               </div>
             ) : null}
@@ -420,6 +451,8 @@ export function UmbrellaCodingSessionWorkspace({
               "min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
               CODING_SESSION_COLUMN_GUTTER,
             )}
+            data-testid="coding-session-narrative-scroll"
+            ref={narrativeScrollRef}
           >
             <CodingSessionColumn
               className={cn(
@@ -431,13 +464,19 @@ export function UmbrellaCodingSessionWorkspace({
               )}
               expanded={narrativeExpanded}
             >
+              {focusedAgent ? (
+                <CodingSessionFocusedAgentNotice
+                  agent={focusedAgent}
+                  onClear={() => handleFocusExecution(null)}
+                />
+              ) : null}
               <CodingSessionUmbrellaTimelineView
                 channelId={channelId}
                 currentUserPubkey={currentUserPubkey}
                 focusedExecutionKey={focusedExecutionKey}
                 laneMessages={lane.messages}
                 onHandoff={setPrefill}
-                onFocusExecution={setFocusedExecutionKey}
+                onFocusExecution={handleFocusExecution}
                 operatorProfiles={operatorProfiles}
                 umbrella={umbrella}
               />
@@ -459,7 +498,7 @@ export function UmbrellaCodingSessionWorkspace({
                     <CodingSessionActiveWorkDock
                       agents={activeWorkAgents}
                       focusedExecutionKey={focusedExecutionKey}
-                      onFocusAgent={setFocusedExecutionKey}
+                      onFocusAgent={handleFocusExecution}
                     />
                   </div>
                 ) : composerTaskDock.open && !isNarrow ? (
@@ -520,6 +559,55 @@ export function UmbrellaCodingSessionWorkspace({
       ) : null}
     </main>
   );
+}
+
+function CodingSessionFocusedAgentNotice({
+  agent,
+  onClear,
+}: {
+  agent: CodingSessionAgentFocusItem;
+  onClear: () => void;
+}) {
+  const accent = codingSessionAgentAccent(agent.executionKey);
+  const working = agent.status.kind === "working";
+  return (
+    <div
+      className="mb-5 flex min-h-8 items-center gap-2 border-b border-border/45 pb-3 text-xs text-muted-foreground"
+      data-testid="coding-session-focused-agent-notice"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "grid size-5 shrink-0 place-items-center rounded-full",
+          accent.soft,
+          working && "coding-session-agent-breathe",
+        )}
+      >
+        <span className={cn("size-2 rounded-full", accent.dot)} />
+      </span>
+      <span className="min-w-0 truncate">
+        Viewing{" "}
+        <span className={cn("font-medium", accent.text)}>{agent.label}</span>
+      </span>
+      <button
+        aria-label="Return to the complete session"
+        className="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        data-testid="coding-session-focused-agent-clear"
+        onClick={onClear}
+        title="Show the complete session"
+        type="button"
+      >
+        <X aria-hidden className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+export function scrollCodingSessionNarrativeToLatest(
+  viewport: Pick<HTMLElement, "scrollHeight" | "scrollTo"> | null,
+): void {
+  if (!viewport) return;
+  viewport.scrollTo({ behavior: "smooth", top: viewport.scrollHeight });
 }
 
 /**
