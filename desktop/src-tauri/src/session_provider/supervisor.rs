@@ -653,6 +653,20 @@ fn spawn_provider_child(
         // the same augmented PATH managed-agent launches use.
         augmented_path: crate::managed_agents::readiness::cli_probe::augmented_path_with_inherited(
         ),
+        // Read from the host's own environment at spawn: both are debugging
+        // switches, and the way somebody turns one on for a Finder-launched
+        // app is `launchctl setenv` or launching the bundle's binary from a
+        // shell. Read per spawn, so a restart of the provider picks up a
+        // change without relaunching the app.
+        rust_log: std::env::var("RUST_LOG").ok().filter(|v| !v.is_empty()),
+        emit_raw_sdk_frames: matches!(
+            std::env::var(crate::session_provider::env::EMIT_RAW_SDK_FRAMES_VAR)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
     });
     for (key, value) in env {
         command.env(key, value);
