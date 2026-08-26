@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "crew-refute-verdict",
+  "description": "Output shape for a crew tier-2 refuter pass (docs/CREW_REFUTE.md). Field names are identical to the crew workflow's VERDICT_SCHEMA (docs/CREW_SESSIONS_PLAN.md §1). Deliberately avoids JSON Schema keywords the Codex CLI's structured-output mode does not support (pattern, minimum, minItems, format) — every object sets additionalProperties:false and lists every property as required, per OpenAI's strict-schema subset.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lens", "verdict", "reviewedSha", "findings"],
+  "properties": {
+    "lens": {
+      "type": "string",
+      "description": "One-line statement of what this pass checked — normally the brief's named constraints, verbatim or paraphrased. For a no-op run (empty diff), states that there was nothing to refute."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["CONFIRMED", "NOT-REFUTED"],
+      "description": "CONFIRMED only when findings contains at least one entry naming a concrete failure scenario with a file:line. Otherwise NOT-REFUTED. There is no third option — 'I have concerns' is not a verdict."
+    },
+    "reviewedSha": {
+      "type": "string",
+      "description": "The commit SHA (full or abbreviated hex) at the worktree HEAD this verdict was produced against."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Empty when verdict is NOT-REFUTED. One entry per confirmed defect when verdict is CONFIRMED.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file", "line", "severity", "scenario", "fix"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Short stable identifier for this finding, e.g. F1."
+          },
+          "file": {
+            "type": "string",
+            "description": "Repo-relative path the finding is anchored to."
+          },
+          "line": {
+            "type": "integer",
+            "description": "1-indexed line the finding is anchored to."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "major", "minor"]
+          },
+          "scenario": {
+            "type": "string",
+            "description": "Concrete inputs/state -> wrong outcome or crash. Not a vague concern."
+          },
+          "fix": {
+            "type": "string",
+            "description": "What would resolve it."
+          }
+        }
+      }
+    }
+  }
+}
