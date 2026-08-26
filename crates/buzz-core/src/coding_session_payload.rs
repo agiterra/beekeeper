@@ -69,11 +69,32 @@ pub const STALE_GENERATION: &str = "STALE_GENERATION";
 /// The addressed execution was already durably stopped.
 pub const SESSION_CLOSED: &str = "SESSION_CLOSED";
 /// A turn could not be accepted because the execution's queue is full.
-///
-/// The only code a `turn_dropped` receipt ever carries: a drop names the
-/// queue, never anything else. A turn that was refused for an authority or
-/// addressing reason is a `turn_refused` with one of the codes above.
 pub const QUEUE_FULL: &str = "QUEUE_FULL";
+/// A turn addressed a persisted execution that has no live process behind it.
+///
+/// The command is *not* consumed when this is published: the execution can be
+/// resumed, and the turn is still owed. A drop is the honest answer to "where
+/// did my turn go", and it replaces the log line that used to be the only
+/// record of it.
+pub const NO_LIVE_EXECUTION: &str = "NO_LIVE_EXECUTION";
+/// A `steer` delivery was requested of a runtime that never advertised native
+/// mid-turn steering, so the turn was delivered at the next boundary instead.
+///
+/// The only code a `turn_degraded` receipt carries today. Degraded is not
+/// refused: the turn still runs, just later than the sender asked.
+pub const STEER_UNSUPPORTED: &str = "STEER_UNSUPPORTED";
+/// An interrupt addressed a live execution that had no turn in flight, so
+/// there was nothing to cancel.
+pub const NO_TURN_IN_FLIGHT: &str = "NO_TURN_IN_FLIGHT";
+
+/// Ceiling on a receipt error code, in UTF-8 bytes.
+///
+/// Turn-stage receipts no longer pin a closed list of codes — a provider that
+/// learns a new way to refuse a turn must be able to say so, and every current
+/// consumer already renders an unknown code verbatim. What stays enforced is
+/// that a code is a *code*: nonblank, free of control characters, and short
+/// enough to sit in a badge.
+pub const MAX_RECEIPT_ERROR_CODE_BYTES: usize = 64;
 
 /// Outcome of exactly one coding-session command (kind 44224).
 ///
@@ -156,6 +177,15 @@ pub enum ReceiptStatus {
     /// unknown, superseded, or closed.
     #[serde(rename = "turn_refused")]
     TurnRefused,
+    /// The turn was accepted, but not in the class the sender asked for — a
+    /// `steer` this runtime cannot honour, delivered at the next boundary
+    /// instead. A `turn_queued` follows; the turn is not lost.
+    #[serde(rename = "turn_degraded")]
+    TurnDegraded,
+    /// A `thread.turn.interrupt` reached a live turn and its cancel was
+    /// issued. The turn's own `result` item reports how it actually ended.
+    #[serde(rename = "interrupt_delivered")]
+    InterruptDelivered,
 }
 
 impl ReceiptStatus {
@@ -172,6 +202,8 @@ impl ReceiptStatus {
             Self::TurnStarted => "turn_started",
             Self::TurnDropped => "turn_dropped",
             Self::TurnRefused => "turn_refused",
+            Self::TurnDegraded => "turn_degraded",
+            Self::InterruptDelivered => "interrupt_delivered",
         }
     }
 
@@ -184,7 +216,12 @@ impl ReceiptStatus {
     pub const fn is_turn_stage(self) -> bool {
         matches!(
             self,
-            Self::TurnQueued | Self::TurnStarted | Self::TurnDropped | Self::TurnRefused
+            Self::TurnQueued
+                | Self::TurnStarted
+                | Self::TurnDropped
+                | Self::TurnRefused
+                | Self::TurnDegraded
+                | Self::InterruptDelivered
         )
     }
 }
@@ -321,29 +358,85 @@ impl LifecycleReceipt {
         }
     }
 
-    /// The turn could not be accepted because the execution's queue is full.
+    /// The turn was accepted by the provider and then not run: the queue was
+    /// full ([`QUEUE_FULL`]), or nothing live was there to run it
+    /// ([`NO_LIVE_EXECUTION`]).
     ///
-    /// Always [`QUEUE_FULL`]: a drop names the queue and nothing else.
-    pub fn turn_dropped(command_id: &str, target: &CodingSessionTarget, message: &str) -> Self {
+    /// The code is open rather than pinned. A provider that learns a new way
+    /// to lose a turn must be able to name it, and a code the consumer does
+    /// not recognize renders verbatim — which is strictly better than the turn
+    /// vanishing into a log line.
+    pub fn turn_dropped(
+        command_id: &str,
+        target: &CodingSessionTarget,
+        code: &str,
+        message: &str,
+    ) -> Self {
         Self {
             schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
             command_id: command_id.to_owned(),
             status: ReceiptStatus::TurnDropped,
             session: Some(target.clone()),
             error: Some(ReceiptError {
-                code: QUEUE_FULL.to_owned(),
+                code: code.to_owned(),
                 message: bounded_message(message),
             }),
             turn_id: None,
         }
     }
 
+    /// The turn was accepted, but downgraded out of the class the sender
+    /// asked for.
+    ///
+    /// Today that is only [`STEER_UNSUPPORTED`]: a `steer` addressed to a
+    /// runtime that never advertised native mid-turn steering. The turn is not
+    /// refused and not lost — a `turn_queued` follows and it runs at the next
+    /// boundary. Saying so is the whole point: a silent downgrade would let an
+    /// operator believe the agent was steered mid-thought.
+    pub fn turn_degraded(
+        command_id: &str,
+        target: &CodingSessionTarget,
+        code: &str,
+        message: &str,
+    ) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnDegraded,
+            session: Some(target.clone()),
+            error: Some(ReceiptError {
+                code: code.to_owned(),
+                message: bounded_message(message),
+            }),
+            turn_id: None,
+        }
+    }
+
+    /// A `thread.turn.interrupt` reached a live turn and its cancel was
+    /// issued.
+    ///
+    /// Says the cancel was delivered, not that the agent has stopped — the
+    /// turn's own `result` item reports how it actually ended. An interrupt
+    /// that reached no live turn is a `turn_refused`, never this.
+    pub fn interrupt_delivered(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::InterruptDelivered,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: None,
+        }
+    }
+
     /// The turn was refused before it reached the execution.
     ///
-    /// `code` is one of [`UNAUTHORIZED_OPERATOR`], [`UNKNOWN_TARGET`],
-    /// [`STALE_GENERATION`], or [`SESSION_CLOSED`] — the codes a consumer
-    /// already branches on. `target` is the target the 44220 addressed, which
-    /// is a fact even when no execution answers to it.
+    /// `code` is documented in NIP-CSL — [`UNAUTHORIZED_OPERATOR`],
+    /// [`UNKNOWN_TARGET`], [`STALE_GENERATION`], [`SESSION_CLOSED`],
+    /// [`NO_TURN_IN_FLIGHT`] — but the field is open: the decoder requires a
+    /// well-formed code, not a member of a list this build happens to know.
+    /// `target` is the target the 44220 addressed, which is a fact even when
+    /// no execution answers to it.
     pub fn turn_refused(
         command_id: &str,
         target: &CodingSessionTarget,
@@ -363,14 +456,6 @@ impl LifecycleReceipt {
         }
     }
 }
-
-/// Codes a `turn_refused` receipt is allowed to carry.
-const TURN_REFUSAL_CODES: [&str; 4] = [
-    UNAUTHORIZED_OPERATOR,
-    UNKNOWN_TARGET,
-    STALE_GENERATION,
-    SESSION_CLOSED,
-];
 
 /// Strictly decode and validate one immutable coding-session receipt.
 ///
@@ -415,6 +500,17 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
     }
     validate_lifecycle_receipt(&receipt)?;
     Ok(receipt)
+}
+
+/// Whether a turn-stage receipt error code is well formed: nonblank, free of
+/// control characters, and within [`MAX_RECEIPT_ERROR_CODE_BYTES`].
+///
+/// This replaced the closed per-status code lists. The known codes stay
+/// documented in NIP-CSL; the wire check is a shape check.
+fn is_receipt_error_code(code: &str) -> bool {
+    !code.trim().is_empty()
+        && code.len() <= MAX_RECEIPT_ERROR_CODE_BYTES
+        && !code.chars().any(char::is_control)
 }
 
 fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> {
@@ -489,20 +585,19 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
         ReceiptStatus::TurnQueued | ReceiptStatus::TurnStarted => {
             receipt.session.is_some() && receipt.error.is_none()
         }
-        ReceiptStatus::TurnDropped => {
+        // Open codes, deliberately. Pinning a list here meant a provider that
+        // learned a new way to lose or refuse a turn could not report it
+        // without a coordinated release of every reader — and the desktop
+        // already renders an unknown code verbatim. What is still enforced is
+        // that the code is well formed.
+        ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused | ReceiptStatus::TurnDegraded => {
             receipt.session.is_some()
                 && receipt
                     .error
                     .as_ref()
-                    .is_some_and(|error| error.code == QUEUE_FULL)
+                    .is_some_and(|error| is_receipt_error_code(&error.code))
         }
-        ReceiptStatus::TurnRefused => {
-            receipt.session.is_some()
-                && receipt
-                    .error
-                    .as_ref()
-                    .is_some_and(|error| TURN_REFUSAL_CODES.contains(&error.code.as_str()))
-        }
+        ReceiptStatus::InterruptDelivered => receipt.session.is_some() && receipt.error.is_none(),
     };
     if !valid_shape {
         return Err("lifecycle receipt status/session/error shape is inconsistent".into());
@@ -548,7 +643,16 @@ pub struct Capabilities {
     pub thread_turn_start: bool,
     /// An in-flight turn can be interrupted.
     pub thread_turn_interrupt: bool,
-    /// Mid-turn steering without cancelling. Not offered in v1.
+    /// Mid-turn steering without cancelling.
+    ///
+    /// **Per-execution truth, not a product-level promise.** The provider
+    /// learns this at `initialize` from the runtime actually behind *this*
+    /// generation and republishes it in that generation's metadata (44223).
+    /// Two executions of the same driver can legitimately disagree — one
+    /// adapter build advertises `_meta.steering.supported` and an older one on
+    /// the same host does not. A consumer that offers a "Steer" control reads
+    /// it from the execution's metadata, never from the catalog's static
+    /// vector.
     pub thread_steer: bool,
     /// Context-window summaries are published. Not offered in v1.
     pub context: bool,
@@ -591,6 +695,21 @@ impl Capabilities {
             context: false,
             diff: false,
             plan: false,
+        }
+    }
+
+    /// The same vector with `threadSteer` set to what *this* execution's
+    /// runtime advertised at `initialize`.
+    ///
+    /// The static vectors above are what a driver offers in general; this is
+    /// what the process behind one generation actually answered. Metadata for
+    /// a live generation must publish the latter — a `true` an operator's
+    /// Steer button relies on has to have been witnessed, and a `false` on a
+    /// runtime that does steer needlessly hides a working control.
+    pub const fn with_thread_steer(self, thread_steer: bool) -> Self {
+        Self {
+            thread_steer,
+            ..self
         }
     }
 
@@ -1724,7 +1843,7 @@ mod tests {
                 None,
             ),
             (
-                LifecycleReceipt::turn_dropped("t-1", &target(), "queue full"),
+                LifecycleReceipt::turn_dropped("t-1", &target(), QUEUE_FULL, "queue full"),
                 "turn_dropped",
                 Some(QUEUE_FULL),
             ),
@@ -1822,6 +1941,8 @@ mod tests {
             ReceiptStatus::TurnStarted,
             ReceiptStatus::TurnDropped,
             ReceiptStatus::TurnRefused,
+            ReceiptStatus::TurnDegraded,
+            ReceiptStatus::InterruptDelivered,
         ] {
             assert!(status.is_turn_stage(), "{status:?}");
         }
@@ -1839,23 +1960,130 @@ mod tests {
         assert_eq!(ReceiptStatus::Created.as_str(), "created");
     }
 
-    /// A turn refusal only ever carries a code a consumer already branches
-    /// on; a dropped turn only ever names the queue.
+    /// A turn-stage refusal, drop, or downgrade carries an *open* code: the
+    /// decoder checks that it is a well-formed code, not that this build has
+    /// heard of it.
+    ///
+    /// The closed list this replaced meant a provider that learned a new way
+    /// to lose a turn could not say so without a coordinated release of every
+    /// reader — and the alternative to saying so is a turn that vanishes. What
+    /// stays enforced is shape: nonblank, control-free, bounded.
     #[test]
-    fn turn_refusals_and_drops_carry_only_their_locked_codes() {
-        let mut wrong =
-            serde_json::to_value(LifecycleReceipt::turn_dropped("t-1", &target(), "full")).unwrap();
-        wrong["error"] = serde_json::json!({ "code": SESSION_LIMIT, "message": "full" });
-        assert!(decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err());
+    fn turn_stage_codes_are_open_but_still_have_to_be_codes() {
+        for (status, code) in [
+            (ReceiptStatus::TurnDropped, NO_LIVE_EXECUTION),
+            (
+                ReceiptStatus::TurnDropped,
+                "SOMETHING_THIS_BUILD_NEVER_HEARD_OF",
+            ),
+            (ReceiptStatus::TurnRefused, NO_TURN_IN_FLIGHT),
+            (ReceiptStatus::TurnDegraded, STEER_UNSUPPORTED),
+        ] {
+            let mut receipt = serde_json::to_value(LifecycleReceipt::turn_dropped(
+                "t-1",
+                &target(),
+                code,
+                "why",
+            ))
+            .unwrap_or_default();
+            receipt["status"] = serde_json::json!(status.as_str());
+            decode_coding_session_lifecycle_receipt(&receipt.to_string())
+                .unwrap_or_else(|error| panic!("{status:?}/{code} rejected: {error}"));
+        }
 
-        let mut queued =
-            serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+        for rejected in [
+            "",
+            "   ",
+            "HAS\nNEWLINE",
+            &"A".repeat(MAX_RECEIPT_ERROR_CODE_BYTES + 1),
+        ] {
+            let mut receipt = serde_json::to_value(LifecycleReceipt::turn_dropped(
+                "t-1",
+                &target(),
+                QUEUE_FULL,
+                "full",
+            ))
+            .unwrap_or_default();
+            receipt["error"] = serde_json::json!({ "code": rejected, "message": "full" });
+            assert!(
+                decode_coding_session_lifecycle_receipt(&receipt.to_string()).is_err(),
+                "accepted code {rejected:?}"
+            );
+        }
+
+        // Opening the code list changed nothing else about the shape.
+        let mut queued = serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target()))
+            .unwrap_or_default();
         queued["error"] = serde_json::json!({ "code": QUEUE_FULL, "message": "full" });
         assert!(decode_coding_session_lifecycle_receipt(&queued.to_string()).is_err());
 
-        let mut headless =
-            serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+        let mut headless = serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target()))
+            .unwrap_or_default();
         headless["session"] = serde_json::Value::Null;
         assert!(decode_coding_session_lifecycle_receipt(&headless.to_string()).is_err());
+    }
+
+    /// The two receipts this slice adds are exactly five keys each, and each
+    /// says one thing: `turn_degraded` always names why it was downgraded,
+    /// `interrupt_delivered` never carries an error because a delivered
+    /// cancel is not a failure.
+    #[test]
+    fn degraded_and_interrupt_delivered_hold_their_exact_shapes() {
+        let degraded = LifecycleReceipt::turn_degraded(
+            "t-1",
+            &target(),
+            STEER_UNSUPPORTED,
+            "cannot steer; queued for the next boundary",
+        );
+        let encoded = serde_json::to_value(&degraded).unwrap_or_default();
+        assert_eq!(
+            keys(&encoded),
+            vec!["commandId", "error", "schema", "session", "status"]
+        );
+        assert_eq!(encoded["status"], "turn_degraded");
+        assert_eq!(encoded["error"]["code"], STEER_UNSUPPORTED);
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&encoded.to_string())
+                .unwrap_or_else(|error| { panic!("turn_degraded rejected: {error}") }),
+            degraded
+        );
+
+        let delivered = LifecycleReceipt::interrupt_delivered("t-2", &target());
+        let encoded = serde_json::to_value(&delivered).unwrap_or_default();
+        assert_eq!(
+            keys(&encoded),
+            vec!["commandId", "error", "schema", "session", "status"]
+        );
+        assert_eq!(encoded["status"], "interrupt_delivered");
+        assert!(encoded["error"].is_null());
+        assert_eq!(
+            encoded["session"],
+            serde_json::to_value(target()).unwrap_or_default()
+        );
+        decode_coding_session_lifecycle_receipt(&encoded.to_string())
+            .unwrap_or_else(|error| panic!("interrupt_delivered rejected: {error}"));
+
+        // An interrupt that says it was delivered *and* failed is incoherent.
+        let mut contradictory = serde_json::to_value(&delivered).unwrap_or_default();
+        contradictory["error"] = serde_json::json!({ "code": QUEUE_FULL, "message": "full" });
+        assert!(decode_coding_session_lifecycle_receipt(&contradictory.to_string()).is_err());
+    }
+
+    /// A generation fold must ignore every turn stage, including the two new
+    /// ones: an interrupt receipt does not end a generation, and a degraded
+    /// turn does not start one.
+    #[test]
+    fn per_execution_thread_steer_overrides_only_that_capability() {
+        let base = Capabilities::v1_claude();
+        let steering = base.with_thread_steer(true);
+        assert!(steering.thread_steer);
+        assert_eq!(
+            Capabilities {
+                thread_steer: false,
+                ..steering
+            },
+            base
+        );
+        assert!(!base.with_thread_steer(false).thread_steer);
     }
 }

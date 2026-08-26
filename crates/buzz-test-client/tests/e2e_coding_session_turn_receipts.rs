@@ -110,7 +110,12 @@ async fn every_stage_of_one_turn_survives_the_relay_as_its_own_receipt() {
     let stages = vec![
         LifecycleReceipt::turn_queued(&command_id, &target),
         LifecycleReceipt::turn_started(&command_id, &target, &turn_id),
-        LifecycleReceipt::turn_dropped(&command_id, &target, "the execution's queue is full"),
+        LifecycleReceipt::turn_dropped(
+            &command_id,
+            &target,
+            QUEUE_FULL,
+            "the execution's queue is full",
+        ),
         LifecycleReceipt::turn_refused(
             &command_id,
             &target,

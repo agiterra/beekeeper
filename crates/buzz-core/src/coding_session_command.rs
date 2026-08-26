@@ -31,6 +31,65 @@ pub struct CodingSessionTarget {
     pub generation: u64,
 }
 
+/// How the sender asked the provider to deliver a turn.
+///
+/// The three classes are the wire form of the delivery contract: the sender
+/// chooses, the provider executes, and a provider that cannot honour the
+/// requested class says so in a receipt rather than silently doing something
+/// else.
+///
+/// - `boundary` — hold the turn and start it when the current one settles.
+///   This is the default, and the only behaviour that existed before the field
+///   did, so an absent `deliver` key means exactly this.
+/// - `steer` — inject into the running turn where the execution's runtime
+///   advertised native steering. Where it did not, the provider publishes a
+///   `turn_degraded` receipt and delivers at the next boundary instead. It
+///   never cancels a running turn to merge the two prompts.
+/// - `interrupt` — cancel the running turn first, then deliver at the boundary
+///   that cancel creates. Reserved to the session founder.
+///
+/// The wire form is exactly these three lowercase strings. Anything else fails
+/// to decode — [`CodingSessionCommandPayload`] carries `deny_unknown_fields`
+/// and this enum has no catch-all variant — so a provider can never guess at a
+/// class it does not implement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodingSessionDelivery {
+    /// Hold until the current turn settles. The default.
+    #[default]
+    Boundary,
+    /// Inject mid-turn where the runtime supports it; otherwise downgrade to
+    /// [`CodingSessionDelivery::Boundary`] and say so.
+    Steer,
+    /// Cancel the running turn, then deliver. Founder-only.
+    Interrupt,
+}
+
+impl CodingSessionDelivery {
+    /// The exact wire string this class serializes as.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Boundary => "boundary",
+            Self::Steer => "steer",
+            Self::Interrupt => "interrupt",
+        }
+    }
+
+    /// Decode one wire string, or `None` when it names no known class.
+    ///
+    /// The strict decoder rejects an unknown class outright; this exists for
+    /// callers that hold the raw string (a relay envelope check, a CLI flag)
+    /// and want the same answer without a serde round trip.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "boundary" => Some(Self::Boundary),
+            "steer" => Some(Self::Steer),
+            "interrupt" => Some(Self::Interrupt),
+            _ => None,
+        }
+    }
+}
+
 /// Supported coding-session actions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +99,11 @@ pub enum CodingSessionAction {
     ThreadTurnStart {
         /// Operator-entered turn text.
         text: String,
+        /// Requested delivery class. Absent on the wire means
+        /// [`CodingSessionDelivery::Boundary`], which is what every command
+        /// published before this field existed meant.
+        #[serde(default)]
+        deliver: CodingSessionDelivery,
     },
     /// Cancel the in-flight turn in the selected session generation.
     #[serde(rename = "thread.turn.interrupt")]
@@ -74,7 +138,10 @@ impl CodingSessionCommandPayload {
             return Err("target.generation must be a positive safe integer".into());
         }
         match &self.action {
-            CodingSessionAction::ThreadTurnStart { text } => {
+            // `deliver` needs no check here: it is a closed enum, so a class
+            // this build does not know never survives decoding to reach
+            // validation.
+            CodingSessionAction::ThreadTurnStart { text, deliver: _ } => {
                 if text.trim().is_empty() {
                     return Err("action.text must not be empty".into());
                 }
@@ -134,6 +201,7 @@ mod tests {
             },
             action: CodingSessionAction::ThreadTurnStart {
                 text: "Ship it".into(),
+                deliver: CodingSessionDelivery::Boundary,
             },
         }
     }
@@ -177,7 +245,10 @@ mod tests {
         payload.target.generation = 0;
         assert!(payload.validate().is_err());
         payload.target.generation = 1;
-        payload.action = CodingSessionAction::ThreadTurnStart { text: "   ".into() };
+        payload.action = CodingSessionAction::ThreadTurnStart {
+            text: "   ".into(),
+            deliver: CodingSessionDelivery::Boundary,
+        };
         assert!(payload.validate().is_err());
     }
 
@@ -195,10 +266,11 @@ mod tests {
         let mut payload = valid_payload();
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: "🐝".repeat(MAX_TURN_TEXT_BYTES / 4),
+            deliver: CodingSessionDelivery::Boundary,
         };
         assert_eq!(
             match &payload.action {
-                CodingSessionAction::ThreadTurnStart { text } => text.len(),
+                CodingSessionAction::ThreadTurnStart { text, .. } => text.len(),
                 CodingSessionAction::ThreadTurnInterrupt => unreachable!(),
             },
             MAX_TURN_TEXT_BYTES
@@ -207,14 +279,80 @@ mod tests {
 
         payload.action = CodingSessionAction::ThreadTurnStart {
             text: format!("{}a", "🐝".repeat(MAX_TURN_TEXT_BYTES / 4)),
+            deliver: CodingSessionDelivery::Boundary,
         };
         assert!(payload.validate().is_err());
 
-        payload.action = CodingSessionAction::ThreadTurnStart { text: "ok".into() };
+        payload.action = CodingSessionAction::ThreadTurnStart {
+            text: "ok".into(),
+            deliver: CodingSessionDelivery::Boundary,
+        };
         payload.target.session_id = "é".repeat(MAX_IDENTIFIER_BYTES / 2);
         assert_eq!(payload.target.session_id.len(), MAX_IDENTIFIER_BYTES);
         assert!(payload.validate().is_ok());
         payload.target.session_id.push('a');
         assert!(payload.validate().is_err());
+    }
+
+    /// The delivery class is optional on the wire and defaults to the one
+    /// behaviour that existed before it did. A command published by an older
+    /// client — no `deliver` key at all — must keep meaning "hold until the
+    /// current turn settles", or every pre-existing queued turn silently
+    /// changes class the day this field ships.
+    #[test]
+    fn an_absent_deliver_class_means_boundary() {
+        let decoded: CodingSessionCommandPayload = serde_json::from_str(
+            r#"{"schema":"buzz-coding-session-command/v1","commandId":"cmd-3","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":1},"action":{"type":"thread.turn.start","text":"go"}}"#,
+        )
+        .expect("decode a command with no deliver key");
+        assert_eq!(
+            decoded.action,
+            CodingSessionAction::ThreadTurnStart {
+                text: "go".into(),
+                deliver: CodingSessionDelivery::Boundary,
+            }
+        );
+        assert!(decoded.validate().is_ok());
+    }
+
+    /// All three classes round-trip as their exact lowercase wire strings, and
+    /// nothing else decodes: a provider must never have to guess what an
+    /// unrecognized class was supposed to do.
+    #[test]
+    fn deliver_classes_round_trip_and_reject_anything_else() {
+        for (wire, class) in [
+            ("boundary", CodingSessionDelivery::Boundary),
+            ("steer", CodingSessionDelivery::Steer),
+            ("interrupt", CodingSessionDelivery::Interrupt),
+        ] {
+            let mut payload = valid_payload();
+            payload.action = CodingSessionAction::ThreadTurnStart {
+                text: "go".into(),
+                deliver: class,
+            };
+            assert!(payload.validate().is_ok());
+            let encoded = serde_json::to_string(&payload.action).unwrap_or_default();
+            assert_eq!(
+                encoded,
+                format!(r#"{{"type":"thread.turn.start","text":"go","deliver":"{wire}"}}"#)
+            );
+            let decoded: CodingSessionCommandPayload =
+                serde_json::from_str(&serde_json::to_string(&payload).unwrap_or_default())
+                    .expect("round trip");
+            assert_eq!(decoded.action, payload.action);
+            assert_eq!(class.as_str(), wire);
+            assert_eq!(CodingSessionDelivery::from_wire(wire), Some(class));
+        }
+
+        for rejected in ["Boundary", "cancel", "", "steer "] {
+            let content = format!(
+                r#"{{"schema":"buzz-coding-session-command/v1","commandId":"cmd-4","target":{{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":1}},"action":{{"type":"thread.turn.start","text":"go","deliver":"{rejected}"}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<CodingSessionCommandPayload>(&content).is_err(),
+                "accepted deliver={rejected:?}"
+            );
+            assert_eq!(CodingSessionDelivery::from_wire(rejected), None);
+        }
     }
 }

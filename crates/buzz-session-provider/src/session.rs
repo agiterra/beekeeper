@@ -51,6 +51,24 @@ pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a cancelled agent has to acknowledge before the drain gives up.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(30);
 
+/// Whether this provider can deliver a *native* mid-turn steer to a runtime
+/// that advertised one.
+///
+/// `false`, and the reason is a visibility fact, not a design choice: the
+/// non-cancelling steer transport lives entirely inside `buzz-acp`'s read loop
+/// and is driven by `buzz_acp::pool::SteerRequest` / `SteerAck`, which sit in
+/// `mod pool` — a **private** module (`crates/buzz-acp/src/lib.rs:13`). Those
+/// types cannot be named from this crate, so `AcpClient::install_steer_rx`
+/// cannot be called from here at all. Making them nameable is a one-line
+/// re-export in a crate this change does not own.
+///
+/// Until then a `steer`-class turn is answered honestly: a `turn_degraded`
+/// receipt that says the injection did not happen, followed by ordinary
+/// boundary delivery, so the turn still runs and nobody is told it was
+/// injected mid-thought. The published `threadSteer` capability is gated on
+/// this too — a control an operator can press must be a control that works.
+pub const NATIVE_STEER_DELIVERABLE: bool = false;
+
 /// Continuity bootstrap for adapters that accept a system prompt on
 /// `session/new` — the required transport when one exists.
 ///
@@ -176,6 +194,15 @@ pub struct SessionStartup {
     /// Briefing text no `session/new` system prompt could carry — the actor
     /// prepends it to the first user turn. See [`OpenedSession`].
     pub pending_briefing: Option<String>,
+    /// Whether *this* execution's runtime advertised native mid-turn steering
+    /// (`_meta.steering.supported`) at `initialize`.
+    ///
+    /// Witnessed per process, not assumed per driver: two builds of the same
+    /// adapter on one host can legitimately disagree, and the capability an
+    /// operator's controls are drawn from has to be the one this generation's
+    /// process actually answered. See [`NATIVE_STEER_DELIVERABLE`] for why an
+    /// advertisement is necessary but not yet sufficient.
+    pub steering_supported: bool,
 }
 
 /// How the rehydration continuity bootstrap reached the agent.
@@ -223,6 +250,7 @@ impl std::fmt::Debug for SessionStartup {
             .field("model", &self.model)
             .field("continuity", &self.continuity)
             .field("bootstrap_transport", &self.bootstrap_transport)
+            .field("steering_supported", &self.steering_supported)
             .finish_non_exhaustive()
     }
 }
@@ -609,6 +637,9 @@ async fn start_agent(
     let model = apply_model(&mut client, &response, request.model.as_deref())
         .await
         .or_else(|| buzz_acp::acp::reported_model(&response.raw));
+    // Read before the client moves into the return value: this is the one
+    // place the `initialize` result is still reachable.
+    let steering_supported = client.steering_supported();
     Ok((
         client,
         SessionStartup {
@@ -618,6 +649,9 @@ async fn start_agent(
             continuity,
             bootstrap_transport,
             pending_briefing,
+            // Recorded from the `initialize` result of this exact process, via
+            // the ACP client that performed the handshake.
+            steering_supported,
         },
     ))
 }
@@ -1424,6 +1458,26 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
     *'"method":"session/cancel"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"cancelled"}}\n' "$LAST_PROMPT" ;;
+  esac
+done
+"#;
+
+    /// A cooperative agent that additionally advertises the cross-adapter
+    /// mid-turn steering extension at `initialize`
+    /// (`_meta.steering.supported`), the way claude-agent-acp and codex-acp
+    /// do.
+    pub(crate) const STEERING_AGENT: &str = r#"
+LAST_PROMPT=""
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"_meta":{"steering":{"supported":true}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-1"}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      LAST_PROMPT="$id"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id" ;;
   esac
 done
 "#;
@@ -2704,5 +2758,42 @@ done
         );
 
         assert_eq!(manager.live_session_ids().collect::<Vec<_>>(), vec!["live"]);
+    }
+
+    /// Whether an execution can be steered mid-turn is learned from *its own*
+    /// `initialize` result, not assumed from the driver slug.
+    ///
+    /// Two builds of the same adapter on one host can legitimately disagree,
+    /// so a capability published for a generation has to come from the process
+    /// behind that generation. This is the fact
+    /// [`crate::Provider::metadata_for`] publishes as `threadSteer`.
+    #[tokio::test]
+    async fn steering_support_is_witnessed_per_execution_at_initialize() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let quiet = fake_agent(dir.path(), "good-agent", GOOD_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let startup = manager
+            .create(request(quiet, dir.path()))
+            .await
+            .expect("create");
+        assert!(
+            !startup.steering_supported,
+            "an adapter that advertised nothing must not be credited with steering"
+        );
+        manager.shutdown("s1");
+
+        let steering = fake_agent(dir.path(), "steering-agent", STEERING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let startup = manager
+            .create(request(steering, dir.path()))
+            .await
+            .expect("create");
+        assert!(
+            startup.steering_supported,
+            "`_meta.steering.supported` at initialize is what this fact is made of"
+        );
+        manager.shutdown("s1");
     }
 }

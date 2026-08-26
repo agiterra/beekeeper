@@ -7429,6 +7429,62 @@ mod tests {
         );
     }
 
+    /// The relay must accept every delivery class the contract defines, and no
+    /// others.
+    ///
+    /// The relay does not execute a 44220 — it stores it — so its only job
+    /// here is to refuse to store a command no provider could act on. It gets
+    /// that for free by decoding through the shared `buzz-core` type; this
+    /// test pins that it *is* the shared type, because an envelope validator
+    /// that quietly diverged from the provider's decoder would let a command
+    /// into the mailbox that the provider then ignores as malformed — a turn
+    /// that vanishes with no receipt.
+    #[test]
+    fn coding_session_command_envelope_accepts_every_delivery_class() {
+        let channel = Uuid::new_v4().to_string();
+        let target = "coding-session/v1|10:provider-a10:instance-19:session-11:2";
+        let command = |deliver: Option<&str>| {
+            let mut action = serde_json::json!({ "type": "thread.turn.start", "text": "go" });
+            if let Some(deliver) = deliver {
+                action["deliver"] = serde_json::json!(deliver);
+            }
+            let content = serde_json::json!({
+                "schema": "buzz-coding-session-command/v1",
+                "commandId": "cmd-1",
+                "target": {
+                    "driver": "provider-a",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 2,
+                },
+                "action": action,
+            })
+            .to_string();
+            make_event_with_tags(
+                KIND_CODING_SESSION_COMMAND,
+                &content,
+                &[
+                    &["h", &channel],
+                    &["cs-v", "csc1-1"],
+                    &["cs-target", target],
+                ],
+            )
+        };
+
+        for deliver in [None, Some("boundary"), Some("steer"), Some("interrupt")] {
+            assert!(
+                validate_coding_session_command_envelope(&command(deliver)).is_ok(),
+                "rejected deliver={deliver:?}"
+            );
+        }
+        for deliver in ["cancel", "Boundary", ""] {
+            assert!(
+                validate_coding_session_command_envelope(&command(Some(deliver))).is_err(),
+                "accepted deliver={deliver:?}"
+            );
+        }
+    }
+
     #[test]
     fn coding_session_command_requires_exact_content_and_tags() {
         let channel = Uuid::new_v4().to_string();
