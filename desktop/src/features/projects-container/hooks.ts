@@ -34,6 +34,7 @@ import {
   compareProjectCodingSessionEntries,
   resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
+  withProjectCodingSessionProjectionError,
   type ProjectCodingSessionShelfEntry,
   type ProjectCodingSessionShelfState,
 } from "./lib/projectCodingSessionShelf";
@@ -483,7 +484,12 @@ export function useProjectCodingSessionBuckets(
     return {
       buckets: {
         ...bucketProjectCodingSessions(entries),
-        state: shelf.state,
+        // Closures and names ride their own reads; a shelf whose rows cannot
+        // say whether they are closed must not read as settled.
+        state: withProjectCodingSessionProjectionError(
+          shelf.state,
+          closureSnapshot.errorMessage ?? nameSnapshot.errorMessage,
+        ),
       },
       consumedKeys: applied.consumedKeys,
     };
@@ -491,6 +497,8 @@ export function useProjectCodingSessionBuckets(
     catalog,
     channelLabels,
     closureSnapshot.closures,
+    closureSnapshot.errorMessage,
+    nameSnapshot.errorMessage,
     nameSnapshot.names,
     pendingLifecycle,
     placementIndex,

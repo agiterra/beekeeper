@@ -9,6 +9,10 @@ import {
   KIND_CODING_SESSION_METADATA,
   KIND_CODING_SESSION_TRANSCRIPT,
 } from "@/shared/constants/kinds";
+import {
+  armCodingSessionDiscoveryOnConnect,
+  type CodingSessionDiscoveryArmingClient,
+} from "./codingSessionDiscoveryArming";
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
   filterShelfCacheEventsToChannels,
@@ -55,8 +59,7 @@ export type CodingSessionIngressClient = {
     filter: RelaySubscriptionFilter,
     onEvent: (event: RelayEvent) => void,
   ): Promise<() => void>;
-  subscribeToReconnects?(listener: () => void): () => void;
-};
+} & CodingSessionDiscoveryArmingClient;
 
 export type TrustedCodingSessionIngressHookSnapshot =
   TrustedCodingSessionIngressSnapshot & {
@@ -558,7 +561,7 @@ export function useTrustedCodingSessionIngress(
 
     publish();
     establishLive();
-    const unsubscribeReconnect = client.subscribeToReconnects?.(() => {
+    const disarm = armCodingSessionDiscoveryOnConnect(client, () => {
       if (unsubscribeLive) historyController.request();
       else establishLive();
     });
@@ -566,7 +569,7 @@ export function useTrustedCodingSessionIngress(
       cancelled = true;
       historyController.cancel();
       unsubscribeLive?.();
-      unsubscribeReconnect?.();
+      disarm();
       if (persistTimer !== null) {
         clearTimeout(persistTimer);
         // Flush the pending rewrite so a teardown (scope change, unmount)

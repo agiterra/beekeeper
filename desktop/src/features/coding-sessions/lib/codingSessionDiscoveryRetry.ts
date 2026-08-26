@@ -154,6 +154,16 @@ export function isCodingSessionRelayBackPressure(error: unknown): boolean {
 /**
  * Retry relay transport/back-pressure failures, never arbitrary parsing,
  * authority, or invalid-filter errors.
+ *
+ * The last three fragments are the cold-start shapes. A read armed before the
+ * socket is up fails with "Relay socket is not connected."; one that waits on
+ * the reconnect coordinator's scheduled attempt fails with "Relay reconnect
+ * failed."; a connect that throws surfaces "Failed to connect to relay.". None
+ * of them says anything about the *filter* — they say the app asked a beat too
+ * early — so treating them as fatal spent the whole projection on one unlucky
+ * boot. `relay session is terminal` is deliberately absent: that latch is
+ * cleared only by explicit re-engagement, and the connect it produces re-arms
+ * the read through {@link armCodingSessionDiscoveryOnConnect} instead.
  */
 export function isRetryableCodingSessionDiscoveryError(
   error: unknown,
@@ -171,6 +181,9 @@ export function isRetryableCodingSessionDiscoveryError(
     "connection reset",
     "failed to request channel history",
     "network error",
+    "relay socket is not connected",
+    "relay reconnect failed",
+    "failed to connect to relay",
   ].some((fragment) => message.includes(fragment));
 }
 

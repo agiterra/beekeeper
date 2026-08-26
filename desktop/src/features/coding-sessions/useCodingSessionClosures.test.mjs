@@ -145,3 +145,57 @@ test("a newly-added channel backfills closures only after its live fence is read
 
   unmount();
 });
+
+test("a closure read that failed before the relay connected recovers on the first connect", async () => {
+  const { act, renderHook } = await import("@testing-library/react");
+  const { codingSessionClosureKey } = await import(
+    "./lib/codingSessionClosure.ts"
+  );
+  const { useCodingSessionClosures } = await import(
+    "./useCodingSessionClosures.ts"
+  );
+  const closed = await closureEvent("closed", 1_800_000_020);
+  let connected = false;
+  const connectionListeners = new Set();
+  const client = {
+    fetchEvents: async () => {
+      // Fatal by classification, so nothing but a connect can repair it —
+      // which is what makes this a test of the arming, not of the backoff.
+      if (!connected) {
+        throw new Error("Relay session is terminal; cannot reconnect.");
+      }
+      return [closed];
+    },
+    subscribeLive: async () => {
+      if (!connected) throw new Error("Relay socket is not connected.");
+      return () => {};
+    },
+    // Deliberately silent: the relay client emits reconnects only *after* a
+    // first successful connect, which is exactly the boot the shelf lost.
+    subscribeToReconnects: () => () => {},
+    subscribeToConnectionState: (listener) => {
+      connectionListeners.add(listener);
+      listener(connected ? "connected" : "connecting");
+      return () => connectionListeners.delete(listener);
+    },
+  };
+  const founders = new Map([[GENESIS_REF, FOUNDER_PUBKEY]]);
+  const { result, unmount } = renderHook(() =>
+    useCodingSessionClosures([CHANNEL_ID], founders, client),
+  );
+
+  await act(async () => {});
+  const key = codingSessionClosureKey(CHANNEL_ID, SESSION_REF, GENESIS_REF);
+  assert.equal(result.current.closures.size, 0);
+  assert.match(String(result.current.errorMessage), /terminal|not connected/i);
+
+  connected = true;
+  await act(async () => {
+    for (const listener of connectionListeners) listener("connected");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  assert.equal(result.current.closures.get(key)?.action, "closed");
+  assert.equal(result.current.errorMessage, null);
+  unmount();
+});

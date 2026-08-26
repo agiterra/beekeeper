@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
+import { armCodingSessionDiscoveryOnConnect } from "./codingSessionDiscoveryArming";
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
   buildCodingSessionCreateObservationFilter,
@@ -219,7 +220,7 @@ export function useCodingSessionCreateObservations(
 
     publish();
     establishLive();
-    const unsubscribeReconnect = client.subscribeToReconnects?.(() => {
+    const disarm = armCodingSessionDiscoveryOnConnect(client, () => {
       if (unsubscribeLive) historyController.request();
       else establishLive();
     });
@@ -227,7 +228,7 @@ export function useCodingSessionCreateObservations(
       cancelled = true;
       historyController.cancel();
       unsubscribeLive?.();
-      unsubscribeReconnect?.();
+      disarm();
       unsubscribeObserved();
     };
   }, [client, scopeIdentity, stableChannelIds]);

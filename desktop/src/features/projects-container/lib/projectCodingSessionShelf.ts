@@ -284,6 +284,36 @@ export function resolveProjectCodingSessionShelf(
 }
 
 /**
+ * Fold a failed side-read into the shelf's own state.
+ *
+ * The rows come from the metadata catalog, but what a row *says about itself* —
+ * open or closed, and its durable name — arrives on separate relay reads. When
+ * one of those fails the rows still paint, and every closed session paints as
+ * live work under Open Sessions; the shelf is then stating something it does
+ * not know. It reports the degradation instead, exactly as it already does for
+ * a partial catalog. A catalog that is itself unavailable is the louder truth
+ * and keeps its message, and a still-loading catalog is not yet claiming
+ * anything to correct.
+ */
+export function withProjectCodingSessionProjectionError(
+  state: ProjectCodingSessionShelfState,
+  errorMessage: string | null,
+): ProjectCodingSessionShelfState {
+  if (
+    !errorMessage ||
+    state.kind === "unavailable" ||
+    state.kind === "loading"
+  ) {
+    return state;
+  }
+  return {
+    kind: "partial",
+    message: "Session state may be incomplete",
+    detail: errorMessage,
+  };
+}
+
+/**
  * The signed `projectRef` beats the channel fallback whenever it names a
  * project this client knows: a session that says which project it belongs to
  * is stating placement, while the channel is only inferring it.

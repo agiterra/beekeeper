@@ -1,8 +1,13 @@
 import * as React from "react";
 
 import { relayClient as defaultRelayClient } from "@/shared/api/relayClient";
-import type { RelaySubscriptionFilter } from "@/shared/api/relayClientShared";
+import type {
+  ConnectionState,
+  RelaySubscriptionFilter,
+} from "@/shared/api/relayClientShared";
 import type { RelayEvent } from "@/shared/api/types";
+import { armCodingSessionDiscoveryOnConnect } from "./lib/codingSessionDiscoveryArming";
+import { createCodingSessionDiscoveryController } from "./lib/codingSessionDiscoveryRetry";
 import {
   buildCodingSessionNameFilter,
   foldLatestCodingSessionNamesByFounder,
@@ -19,8 +24,18 @@ type NameClient = {
     onEvent: (event: RelayEvent) => void,
   ): Promise<() => void>;
   subscribeToReconnects?(listener: () => void): () => void;
+  subscribeToConnectionState?(
+    listener: (state: ConnectionState) => void,
+  ): () => void;
 };
 
+/**
+ * The durable human-authored name for every session in scope.
+ *
+ * Same read discipline as {@link useCodingSessionClosures}, and for the same
+ * reason: a name that never loads does not leave a gap on the shelf, it leaves
+ * the provider's generic label sitting where the person's own words belong.
+ */
 export function useCodingSessionNames(
   channelIds: readonly string[],
   client: NameClient = defaultRelayClient,
@@ -38,10 +53,21 @@ export function useCodingSessionNames(
   React.useEffect(() => {
     let cancelled = false;
     let unsubscribeLive: (() => void) | null = null;
+    let liveSubscribePending = false;
+    let historyError: string | null = null;
+    let liveError: string | null = null;
     setEvents(new Map());
     setErrorMessage(null);
     if (stableChannelIds.length === 0) return;
 
+    const publishError = () => {
+      if (cancelled) return;
+      setErrorMessage(
+        historyError && liveError
+          ? `${historyError}\n${liveError}`
+          : (historyError ?? liveError),
+      );
+    };
     const admit = (incoming: readonly RelayEvent[]) => {
       if (cancelled) return;
       setEvents((current) => {
@@ -50,61 +76,82 @@ export function useCodingSessionNames(
         return next;
       });
     };
-    const load = () => {
-      void client
-        .fetchEvents(
+
+    const historyController = createCodingSessionDiscoveryController({
+      async load() {
+        const history = await client.fetchEvents(
           buildCodingSessionNameFilter(stableChannelIds, NAME_HISTORY_LIMIT),
+        );
+        if (cancelled) return;
+        admit(history);
+      },
+      onAttemptStart() {},
+      onSuccess() {
+        historyError = null;
+        publishError();
+      },
+      onError(error, retry) {
+        // A scheduled retry is not yet a failure worth reporting.
+        historyError = retry.willRetry
+          ? null
+          : error instanceof Error
+            ? error.message
+            : "Failed to load session names.";
+        publishError();
+      },
+      retrySeed: `names:${scope}`,
+    });
+
+    const establishLive = () => {
+      if (unsubscribeLive || liveSubscribePending) return;
+      liveSubscribePending = true;
+      client
+        .subscribeLive(
+          buildCodingSessionNameFilter(stableChannelIds, 0),
+          (event) => admit([event]),
         )
-        .then((history) => {
-          admit(history);
-          if (!cancelled) setErrorMessage(null);
-        })
-        .catch((error: unknown) => {
-          if (!cancelled) {
-            setErrorMessage(
-              error instanceof Error
-                ? error.message
-                : "Failed to load session names.",
-            );
+        .then((unsubscribe) => {
+          liveSubscribePending = false;
+          if (cancelled) {
+            unsubscribe();
+            return;
           }
-        });
-    };
-    void client
-      .subscribeLive(
-        buildCodingSessionNameFilter(stableChannelIds, 0),
-        (event) => admit([event]),
-      )
-      .then((unsubscribe) => {
-        if (cancelled) unsubscribe();
-        else {
           unsubscribeLive = unsubscribe;
+          liveError = null;
+          publishError();
           // The live fence comes first; this history read then closes the
           // channel-add window without missing a name published in between.
-          load();
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setErrorMessage(
+          historyController.request();
+        })
+        .catch((error: unknown) => {
+          liveSubscribePending = false;
+          if (cancelled) return;
+          liveError =
             error instanceof Error
               ? error.message
-              : "Failed to watch session names.",
-          );
+              : "Failed to watch session names.";
+          publishError();
           // Degrade to history-only discovery when live setup fails.
-          load();
-        }
-      });
-    const unsubscribeReconnect = client.subscribeToReconnects?.(load);
+          historyController.request();
+        });
+    };
+
+    establishLive();
+    const disarm = armCodingSessionDiscoveryOnConnect(client, () => {
+      if (unsubscribeLive) historyController.request();
+      else establishLive();
+    });
     const unsubscribeAccepted = subscribeToAcceptedCodingSessionNames((event) =>
       admit([event]),
     );
     return () => {
       cancelled = true;
+      historyController.cancel();
       unsubscribeLive?.();
-      unsubscribeReconnect?.();
+      disarm();
       unsubscribeAccepted();
     };
-  }, [client, stableChannelIds]);
+  }, [client, scope, stableChannelIds]);
 
   const names = React.useMemo(
     () => foldLatestCodingSessionNamesByFounder([...events.values()]),

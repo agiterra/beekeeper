@@ -243,3 +243,24 @@ test("cancel removes a scheduled retry and prevents later requests", async () =>
   assert.deepEqual(cleared, [71]);
   assert.equal(controller.request(), false);
 });
+
+test("a cold-start relay connect failure is retryable, a terminal session is not", () => {
+  for (const message of [
+    "Relay socket is not connected.",
+    "Relay reconnect failed.",
+    "Failed to connect to relay.",
+  ]) {
+    assert.equal(
+      isRetryableCodingSessionDiscoveryError(new Error(message)),
+      true,
+      message,
+    );
+  }
+  // Cleared only by explicit re-engagement, whose connect re-arms the read.
+  assert.equal(
+    isRetryableCodingSessionDiscoveryError(
+      new Error("Relay session is terminal; cannot reconnect."),
+    ),
+    false,
+  );
+});

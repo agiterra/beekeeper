@@ -6,6 +6,7 @@ import {
   parseActiveProjectCodingSessionPath,
   resolveProjectCodingSessionPlacement,
   resolveProjectCodingSessionShelf,
+  withProjectCodingSessionProjectionError,
 } from "./projectCodingSessionShelf.ts";
 
 function session(overrides = {}) {
@@ -818,4 +819,35 @@ test("among several titled members the newest label wins, and a titled represent
     ]),
   );
   assert.equal(titledFace.entries[0].label, "Representative name");
+});
+
+test("a failed closure or name read stops the shelf reading as settled", () => {
+  const ready = resolveProjectCodingSessionShelf(
+    catalog([{ channelId: "channel-a", session: session() }]),
+  ).state;
+  assert.equal(ready.kind, "ready");
+
+  const degraded = withProjectCodingSessionProjectionError(
+    ready,
+    "Failed to load session closures.",
+  );
+  assert.equal(degraded.kind, "partial");
+  assert.equal(degraded.detail, "Failed to load session closures.");
+
+  // No error changes nothing, and a louder failure keeps its own message.
+  assert.equal(withProjectCodingSessionProjectionError(ready, null), ready);
+  const unavailable = resolveProjectCodingSessionShelf(
+    catalog([], { authorityErrorMessage: "Invalid bridge authority." }),
+  ).state;
+  assert.deepEqual(
+    withProjectCodingSessionProjectionError(unavailable, "closures failed"),
+    unavailable,
+  );
+  const loading = resolveProjectCodingSessionShelf(
+    catalog([], { isLoading: true }),
+  ).state;
+  assert.deepEqual(
+    withProjectCodingSessionProjectionError(loading, "closures failed"),
+    loading,
+  );
 });
