@@ -65,11 +65,14 @@ void main() {
       expect(verdict.leaseSequence, 2);
     });
 
+    // The lease's commandId matches on purpose: with a different one the
+    // command gate short-circuits and D8's current-generation filter is
+    // pinned nowhere. Only the generation mismatch is under test here.
     test('a lease for another generation does not answer for this one', () {
       final verdict = deriveCodingSessionReachability(
         leases: [_lease(forTarget: target(generation: 1), createdAt: 1990)],
         currentTarget: target(generation: 2),
-        acceptedCommandId: 'cmd-2',
+        acceptedCommandId: 'cmd-1',
         now: now,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
