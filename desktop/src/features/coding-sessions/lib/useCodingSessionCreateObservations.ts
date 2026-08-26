@@ -5,6 +5,7 @@ import { armCodingSessionDiscoveryOnConnect } from "./codingSessionDiscoveryArmi
 import { createCodingSessionDiscoveryController } from "./codingSessionDiscoveryRetry";
 import {
   buildCodingSessionCreateObservationFilter,
+  buildCodingSessionCreateObservationHistoryFilters,
   CodingSessionCreateObservationStore,
   type CodingSessionUmbrellaCreateObservation,
 } from "./codingSessionCreateObservations";
@@ -142,19 +143,34 @@ export function useCodingSessionCreateObservations(
 
     const historyController = createCodingSessionDiscoveryController({
       async load() {
-        const events = await client.fetchEvents(
-          buildCodingSessionCreateObservationFilter(
-            stableChannelIds,
-            CREATE_OBSERVATION_HISTORY_LIMIT,
-          ),
-        );
-        if (cancelled) return;
-        store.ingestRelayEvents(
-          events,
+        // One read per kind, each with its own row budget: per-turn 44224
+        // volume must never be able to push a channel's creates out of the
+        // newest-first window this store bootstraps from.
+        const errors: string[] = [];
+        for (const filter of buildCodingSessionCreateObservationHistoryFilters(
           stableChannelIds,
-          OPEN_CODING_SESSION_INGRESS_AUTHORITY,
-        );
-        fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
+          CREATE_OBSERVATION_HISTORY_LIMIT,
+        )) {
+          try {
+            const events = await client.fetchEvents(filter);
+            if (cancelled) return;
+            store.ingestRelayEvents(
+              events,
+              stableChannelIds,
+              OPEN_CODING_SESSION_INGRESS_AUTHORITY,
+            );
+            fanOutObservedCodingSessionEvents(events, receiveObservedEvents);
+          } catch (error) {
+            errors.push(
+              error instanceof Error
+                ? error.message
+                : "Failed to load coding-session create history.",
+            );
+          }
+        }
+        if (errors.length > 0) {
+          throw new Error([...new Set(errors)].join("\n"));
+        }
       },
       onAttemptStart() {
         historyLoading = true;
