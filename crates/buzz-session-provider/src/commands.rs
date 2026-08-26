@@ -541,6 +541,14 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         // downgrading to boundary) is the point: a control that quietly does
         // something milder than it says is the class of lie this project
         // treats as a bug.
+        //
+        // Narrow, and the message says so. This gate covers the *class* on a
+        // start; a plain `TurnAction::Interrupt` goes through
+        // `operator_may_steer` above, so a granted operator reaches the same
+        // effect in two commands. Making the command founder-only too would
+        // withdraw a capability grantees have today, which is authority work
+        // (plan D7), not delivery work — so the refusal points at the route
+        // that exists instead of pretending it does not.
         TurnAction::Start {
             deliver: CodingSessionDelivery::Interrupt,
             ..
@@ -548,7 +556,8 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
             command_id: command.command_id,
             target: command.target,
             message: "only the session founder may send an interrupt-class turn; \
-                      send it as boundary or steer, or ask the founder to interrupt"
+                      send it as boundary or steer, or send a separate \
+                      thread.turn.interrupt to cancel the running turn first"
                 .into(),
         },
         TurnAction::Start { text, deliver } => TurnDecision::Start {
@@ -1727,6 +1736,10 @@ mod tests {
     /// out loud rather than quietly downgraded — a control that silently does
     /// something milder than it says is the kind of lie this project treats as
     /// a bug.
+    ///
+    /// The refusal is narrow, and its words have to be: the *class* is
+    /// founder-only, while a plain `thread.turn.interrupt` is open to anyone
+    /// who may steer. Both halves are asserted here.
     #[test]
     fn interrupt_class_delivery_is_founder_only() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1745,11 +1758,35 @@ mod tests {
             1_000,
             &turn_content_delivering("turn-grantee-interrupt", "s1", 1, "interrupt"),
         ) {
-            TurnDecision::Fail { command_id, .. } => {
+            TurnDecision::Fail {
+                command_id,
+                message,
+                ..
+            } => {
                 assert_eq!(command_id, "turn-grantee-interrupt");
+                // The refusal must not claim more authority than the gate has.
+                // A granted operator *can* cancel a running turn — with a
+                // `thread.turn.interrupt`, checked just below — so telling
+                // them to ask the founder to interrupt is a comfortable
+                // sentence that is not true.
+                assert!(
+                    !message.contains("ask the founder"),
+                    "the refusal must not imply a grantee cannot interrupt: {message}"
+                );
             }
             other => panic!("a granted operator must not interrupt: {other:?}"),
         }
+        // The gap this refusal must not deny: the class is founder-only, the
+        // *command* is not. Recorded here so nobody reads the refusal above as
+        // a guarantee it does not make (NIP-CSL, and plan D7 for closing it).
+        assert!(matches!(
+            decide_turn(
+                &as_grantee,
+                1_000,
+                &interrupt_content("turn-grantee-cancel", "s1", 1)
+            ),
+            TurnDecision::Interrupt { .. }
+        ));
         // Everything else the grantee could already do is untouched.
         for class in ["boundary", "steer"] {
             assert!(

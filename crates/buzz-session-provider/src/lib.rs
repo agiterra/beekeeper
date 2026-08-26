@@ -8996,11 +8996,13 @@ mod tests {
         // Literals, not `session::NATIVE_STEER_DELIVERABLE`: asserting against
         // the same constant `metadata_for` multiplies in would hold for any
         // implementation at all, including one that hardcodes `false`.
-        assert!(
-            !session::NATIVE_STEER_DELIVERABLE,
-            "this provider cannot deliver a native steer yet; when it can, the expectation \
-             below becomes `true` and the capability starts tracking `steering`"
-        );
+        const {
+            assert!(
+                !session::NATIVE_STEER_DELIVERABLE,
+                "this provider cannot deliver a native steer yet; when it can, the expectation \
+                 below becomes `true` and the capability starts tracking `steering`"
+            )
+        };
         provider.steering.insert(target.session_id.clone(), true);
         assert!(
             !provider
