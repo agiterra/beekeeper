@@ -2,25 +2,21 @@ import type * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 
-/**
- * The reading measure for every coding-session surface.
- *
- * `max-w-3xl` is 48rem — deliberately a **rem** quantity, not px and not vw.
- * The desktop app implements Cmd +/- by scaling the root font size
- * (`app/useWebviewZoomShortcuts.ts`), so a rem measure widens with the glyphs
- * and holds a roughly constant character count. A px measure would freeze
- * against zoom (the PR #891 class of regression) and a vw measure would track
- * the window while ignoring zoom entirely.
- *
- * `min-w-0` is load-bearing, not decoration: without it a `pre` or table wider
- * than the column blows the flex/grid item out past its parent and the nearest
- * `overflow-hidden` ancestor clips it mid-word. With it, the wide child's own
- * `overflow-x-auto` engages and the content scrolls inside its block.
- */
-export const CODING_SESSION_COLUMN_CLASS = "mx-auto w-full min-w-0 max-w-3xl";
+import { useCodingSessionMeasure } from "../lib/codingSessionWidthPreference";
 
-/** Width used when no secondary rail is sharing the workspace. */
-export const CODING_SESSION_COLUMN_EXPANDED_CLASS = "max-w-6xl";
+/**
+ * Layout the reading measure needs whatever cap is in force.
+ *
+ * The cap itself is the person's choice and lives in
+ * `../lib/codingSessionWidthPreference`; what stays fixed is everything
+ * around it. `min-w-0` is load-bearing, not decoration: without it a `pre` or
+ * table wider than the column blows the flex/grid item out past its parent and
+ * the nearest `overflow-hidden` ancestor clips it mid-word. With it, the wide
+ * child's own `overflow-x-auto` engages and the content scrolls inside its
+ * block. `mx-auto` is what centres a capped column; at the Full width there is
+ * no cap left to centre and it does nothing.
+ */
+export const CODING_SESSION_COLUMN_CLASS = "mx-auto w-full min-w-0";
 
 /**
  * Fixed composer dock with a fade that ends before interactive content begins.
@@ -36,14 +32,16 @@ export const CODING_SESSION_COMPOSER_DOCK_CLASS =
 /**
  * Centers `children` in the coding-session reading measure.
  *
- * Apply `useCodingSessionColumnGutter()` (see
- * `../lib/codingSessionGutterPreference`) to the ancestor that owns the
- * viewport edge — the scroll container, the composer overlay, the goal row —
- * and pass only vertical rhythm and layout classes here. The gutter is the
- * person's to set, but where it hangs is not: padding belongs on the outer
- * surface, never on the measure box. Put it inside and the measure silently
- * shrinks by the padding, so a transcript written as `max-w-3xl px-5` no
- * longer lines up with a composer written as `px-5 > max-w-3xl` — which is
+ * `expanded` says no side surface is sharing the workspace, which earns a
+ * wider cap at every setting — a rail takes real width, and a column sized for
+ * an empty workspace would be cramped beside one.
+ *
+ * Apply `useCodingSessionColumnGutter()` to the ancestor that owns the
+ * viewport edge — the scroll container, the composer dock, the goal row — and
+ * pass only vertical rhythm and layout classes here. Padding belongs on the
+ * outer surface, never on the measure box. Put it inside and the measure
+ * silently shrinks by the padding, so a transcript written as `max-w-3xl px-5`
+ * no longer lines up with a composer written as `px-5 > max-w-3xl` — which is
  * exactly how the transcript text and the composer edge drifted out of
  * register.
  */
@@ -53,13 +51,11 @@ export function CodingSessionColumn({
   expanded = false,
   ...props
 }: React.ComponentPropsWithoutRef<"div"> & { expanded?: boolean }) {
+  const measure = useCodingSessionMeasure(expanded);
+
   return (
     <div
-      className={cn(
-        CODING_SESSION_COLUMN_CLASS,
-        expanded && CODING_SESSION_COLUMN_EXPANDED_CLASS,
-        className,
-      )}
+      className={cn(CODING_SESSION_COLUMN_CLASS, measure, className)}
       data-coding-session-column=""
       {...props}
     >

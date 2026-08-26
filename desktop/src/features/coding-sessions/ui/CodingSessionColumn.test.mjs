@@ -8,14 +8,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CODING_SESSION_COLUMN_CLASS,
-  CODING_SESSION_COLUMN_EXPANDED_CLASS,
   CodingSessionColumn,
 } from "./CodingSessionColumn.tsx";
 import {
   CODING_SESSION_GUTTER_CLASSES,
-  CODING_SESSION_GUTTER_OPTIONS,
-  DEFAULT_CODING_SESSION_GUTTER,
-} from "../lib/codingSessionGutterPreference.ts";
+  CODING_SESSION_MEASURE_CLASSES,
+  CODING_SESSION_WIDTH_OPTIONS,
+  DEFAULT_CODING_SESSION_WIDTH,
+} from "../lib/codingSessionWidthPreference.ts";
 
 function source(name) {
   return readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
@@ -28,12 +28,21 @@ const CALL_SITES = [
   "CodingSessionGoalPill.tsx",
 ];
 
-test("the measure stays in rem so Cmd +/- widens it with the glyphs", () => {
+test("every measure cap stays in rem so Cmd +/- widens it with the glyphs", () => {
   // px would freeze the column against the root-font-size zoom in
   // app/useWebviewZoomShortcuts.ts (the PR #891 class of regression); vw would
-  // track the window and ignore zoom entirely.
-  assert.match(CODING_SESSION_COLUMN_CLASS, /\bmax-w-3xl\b/);
-  assert.doesNotMatch(CODING_SESSION_COLUMN_CLASS, /max-w-\[[^\]]*(px|vw)\]/);
+  // track the window and ignore zoom entirely. `max-w-none` is the Full
+  // choice, which caps nothing at all.
+  for (const [width, caps] of Object.entries(CODING_SESSION_MEASURE_CLASSES)) {
+    for (const [state, cap] of Object.entries(caps)) {
+      assert.doesNotMatch(
+        cap,
+        /max-w-\[[^\]]*(px|vw)\]/,
+        `${width}.${state} must not pin the measure to px or vw`,
+      );
+      assert.match(cap, /^max-w-(none|\d?xl)$/, `${width}.${state}: ${cap}`);
+    }
+  }
 });
 
 test("the measure box carries min-w-0 so wide content scrolls instead of clipping", () => {
@@ -53,9 +62,40 @@ test("a hidden side surface gives the narrative the wider workspace measure", ()
       "body",
     ),
   );
-  assert.match(CODING_SESSION_COLUMN_EXPANDED_CLASS, /\bmax-w-6xl\b/);
+  // Server snapshot is the default width, so this renders Narrow's two caps.
   assert.match(expanded, /\bmax-w-6xl\b/);
   assert.doesNotMatch(expanded, /\bmax-w-3xl\b/);
+});
+
+test("a side surface open earns a narrower cap at every width", () => {
+  // A rail takes real width; a column sized for an empty workspace would be
+  // cramped beside one. Full is the exception — it caps nothing either way.
+  for (const [width, caps] of Object.entries(CODING_SESSION_MEASURE_CLASSES)) {
+    if (width === "full") {
+      assert.equal(caps.default, "max-w-none");
+      assert.equal(caps.expanded, "max-w-none");
+      continue;
+    }
+    assert.notEqual(
+      caps.default,
+      caps.expanded,
+      `${width}: a rail must not leave the cap unchanged`,
+    );
+  }
+});
+
+test("Wide is wider than Narrow, and Full caps nothing", () => {
+  // The order the settings page promises: each step gives back more window.
+  const rank = {
+    "max-w-3xl": 1,
+    "max-w-5xl": 2,
+    "max-w-6xl": 3,
+    "max-w-7xl": 4,
+  };
+  const { narrow, wide, full } = CODING_SESSION_MEASURE_CLASSES;
+  assert.ok(rank[wide.default] > rank[narrow.default]);
+  assert.ok(rank[wide.expanded] > rank[narrow.expanded]);
+  assert.equal(full.default, "max-w-none");
 });
 
 test("the gutter lives outside the measure, never inside it", () => {
@@ -64,33 +104,50 @@ test("the gutter lives outside the measure, never inside it", () => {
   assert.doesNotMatch(CODING_SESSION_COLUMN_CLASS, /(^|\s)p[xlrs]?-/);
 });
 
-test("Full is the default gutter, unchanged from before the setting existed", () => {
-  assert.equal(DEFAULT_CODING_SESSION_GUTTER, "full");
-  assert.match(CODING_SESSION_GUTTER_CLASSES.full, /\bpx-5\b/);
-  assert.match(CODING_SESSION_GUTTER_CLASSES.full, /\bsm:px-8\b/);
+test("Narrow is the default, so the app looks unchanged until asked", () => {
+  assert.equal(DEFAULT_CODING_SESSION_WIDTH, "narrow");
+  assert.equal(CODING_SESSION_MEASURE_CLASSES.narrow.default, "max-w-3xl");
+  assert.equal(CODING_SESSION_MEASURE_CLASSES.narrow.expanded, "max-w-6xl");
+  assert.match(CODING_SESSION_GUTTER_CLASSES.narrow, /\bpx-5\b/);
+  assert.match(CODING_SESSION_GUTTER_CLASSES.narrow, /\bsm:px-8\b/);
 });
 
-test("Light is half of Full, and None is a flat 10px at every width", () => {
-  // px-2.5 is 0.625rem — 10px at default zoom, and rem so it still tracks
-  // Cmd +/- like the measure does.
-  assert.equal(CODING_SESSION_GUTTER_CLASSES.light, "px-2.5 sm:px-4");
-  assert.equal(CODING_SESSION_GUTTER_CLASSES.none, "px-2.5");
-  assert.doesNotMatch(CODING_SESSION_GUTTER_CLASSES.none, /\bsm:/);
+test("Full starts where a DM conversation starts", () => {
+  // A DM timeline is the app's other uncapped full-width reading surface, and
+  // it sits at 20px: `px-5` on the composer dock, and px-2 + mx-1 + px-2 on a
+  // message row. A Full transcript beside one must not invent its own margin.
+  assert.equal(CODING_SESSION_GUTTER_CLASSES.full, "px-5");
+  // No `sm:` step: the capped widths widen their margin on a large window
+  // because they have room spare, and Full spends that room on text instead.
+  assert.doesNotMatch(CODING_SESSION_GUTTER_CLASSES.full, /\bsm:/);
+  assert.equal(
+    CODING_SESSION_GUTTER_CLASSES.wide,
+    CODING_SESSION_GUTTER_CLASSES.narrow,
+  );
 });
 
 test("every offered choice is named, described, and has classes to apply", () => {
-  // A choice with no description is the failure this setting exists to avoid:
-  // the difference between the three is a measurement, stated in the page.
-  const values = CODING_SESSION_GUTTER_OPTIONS.map((option) => option.value);
-  assert.deepEqual(values, ["full", "light", "none"]);
-  for (const option of CODING_SESSION_GUTTER_OPTIONS) {
+  const values = CODING_SESSION_WIDTH_OPTIONS.map((option) => option.value);
+  assert.deepEqual(values, ["narrow", "wide", "full"]);
+  for (const option of CODING_SESSION_WIDTH_OPTIONS) {
     assert.ok(option.label.length > 0, `${option.value} needs a label`);
     assert.ok(
       option.description.length > 0,
       `${option.value} needs a description`,
     );
+    // This is a settings dialog, not a layout inspector: the copy describes
+    // the reading experience and never quotes a measurement.
+    assert.doesNotMatch(
+      option.description,
+      /\d+\s*(px|rem|em|%)|\bpixels?\b/i,
+      `${option.value}: settings copy must not quote measurements`,
+    );
     assert.match(CODING_SESSION_GUTTER_CLASSES[option.value], /\bpx-/);
   }
+  assert.deepEqual(
+    Object.keys(CODING_SESSION_MEASURE_CLASSES).sort(),
+    [...values].sort(),
+  );
   assert.deepEqual(
     Object.keys(CODING_SESSION_GUTTER_CLASSES).sort(),
     [...values].sort(),
@@ -115,13 +172,17 @@ test("the column composes an extra className onto the measure", () => {
 });
 
 test("every coding-session surface routes its measure through the primitive", () => {
-  // A literal max-w-3xl anywhere in the feature is a call site that has
-  // drifted back out of the shared column.
+  // Any literal cap in a call site is a surface that has drifted back out of
+  // the shared column — and now also one that would ignore the person's
+  // chosen width, staying put while everything around it moved.
   for (const name of CALL_SITES) {
+    // Only the numbered caps — `max-w-none` is a general-purpose utility that
+    // legitimately appears on things that are not the reading measure (a
+    // SheetContent overriding its own default, for one).
     assert.doesNotMatch(
       source(name),
-      /max-w-3xl/,
-      `${name} should use CodingSessionColumn, not a literal max-w-3xl`,
+      /\bmax-w-(3xl|5xl|6xl|7xl)\b/,
+      `${name} should take its measure from the width preference, not a literal cap`,
     );
     assert.match(source(name), /CodingSessionColumn/);
   }

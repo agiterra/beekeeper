@@ -7,6 +7,7 @@ import type {
 } from "@/features/notifications/hooks";
 import type { SoundName, SoundSlot } from "@/features/notifications/lib/sound";
 import { BuiltinShellSettingsCard } from "@/features/builtin-shell/ui/BuiltinShellSettingsCard";
+import { CodingSessionWidthCard } from "@/features/coding-sessions/ui/CodingSessionWidthCard";
 import { CommunityMembersSettingsCard } from "@/features/community-members/ui/CommunityMembersSettingsCard";
 import { CustomEmojiSettingsCard } from "@/features/custom-emoji/ui/CustomEmojiSettingsCard";
 import { LocalArchiveSettingsCard } from "@/features/local-archive/ui/LocalArchiveSettingsCard";
@@ -661,6 +662,14 @@ function ThemeSettingsCard() {
         >
           <LinkPreviewStyleSetting />
           <ThreadLayoutSetting />
+        </SettingsOptionGroup>
+
+        <SettingsOptionGroup
+          data-testid="appearance-coding-session-width-card"
+          description="How much of the window a coding session's text uses."
+          title="Coding session width"
+        >
+          <CodingSessionWidthCard />
         </SettingsOptionGroup>
       </SettingsOptionGroupList>
     </section>

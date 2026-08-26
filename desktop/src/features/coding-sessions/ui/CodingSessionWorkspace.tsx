@@ -49,7 +49,7 @@ import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { cn } from "@/shared/lib/cn";
 
-import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
+import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CodingSessionColumn,

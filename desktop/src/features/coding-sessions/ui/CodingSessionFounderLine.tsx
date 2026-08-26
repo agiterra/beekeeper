@@ -4,7 +4,7 @@ import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { resolveUserLabel } from "@/features/profile/lib/identity";
 import { cn } from "@/shared/lib/cn";
 
-import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
+import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 
 /** Minimal provenance line for sessions whose linked genesis resolved. */
 export function CodingSessionFounderLine({

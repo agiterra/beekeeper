@@ -45,7 +45,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
-import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
+import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
   CODING_SESSION_COMPOSER_DOCK_CLASS,
   CodingSessionColumn,

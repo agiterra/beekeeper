@@ -12,7 +12,7 @@ import {
   pendingCodingSessionWorkspaceStatus,
   type NewCodingSessionHostPhase,
 } from "../lib/newCodingSessionModel";
-import { useCodingSessionColumnGutter } from "../lib/codingSessionGutterPreference";
+import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import { CodingSessionColumn } from "./CodingSessionColumn";
 import { CodingSessionHeader } from "./CodingSessionHeader";
 import { ProviderLoginNeeded } from "./NewCodingSessionProviderPicker";
