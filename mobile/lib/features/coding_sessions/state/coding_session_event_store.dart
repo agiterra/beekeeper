@@ -9,17 +9,22 @@ import '../domain/coding_sessions_domain.dart';
 /// let one chatty execution evict the middle of another one's history and the
 /// reader would never know a hole had been punched in it.
 ///
-/// Events that carry no `cs-target` — geneses, creates, names, goals,
-/// closures — share one bucket under [sessionScopedGeneration], capped the
-/// same way so a hostile channel cannot grow this store without bound.
+/// Events that carry no `cs-target` — receipts, creates, geneses, names,
+/// goals, closures — are bucketed by *kind* instead, each capped the same way.
+/// One shared bucket would let the 44224 receipt stream (one per turn on a
+/// busy channel) evict the handful of 44221 creates and 44226 geneses that
+/// resolve authority and the founder, and the page would quietly degrade to
+/// "Founder unresolved" and "authority unverified" with nothing to say why.
+/// The kinds this observer stores are a fixed, short list, so the number of
+/// buckets stays bounded.
 class CodingSessionEventStore {
   CodingSessionEventStore({this.cap = maxCodingSessionEventsPerGeneration});
 
   /// Maximum raw events retained per generation.
   final int cap;
 
-  /// Bucket key for events that name no generation.
-  static const sessionScopedGeneration = '';
+  /// Bucket key for events of [kind] that name no generation.
+  static String kindBucket(int kind) => 'kind $kind';
 
   final Map<String, List<NostrEvent>> _byGeneration = {};
   final Set<String> _ids = <String>{};
@@ -42,9 +47,10 @@ class CodingSessionEventStore {
   List<NostrEvent> eventsForGeneration(String generationKey) =>
       List.unmodifiable(_byGeneration[generationKey] ?? const <NostrEvent>[]);
 
-  /// The generation bucket [event] belongs to.
+  /// The bucket [event] belongs to: its generation, or its kind when it names
+  /// no generation.
   static String generationKeyOf(NostrEvent event) =>
-      event.getTagValue('cs-target') ?? sessionScopedGeneration;
+      event.getTagValue('cs-target') ?? kindBucket(event.kind);
 
   /// Add one event. Returns true when the store changed.
   ///

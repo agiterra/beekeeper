@@ -1,5 +1,6 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/features/coding_sessions/state/coding_sessions_state.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../domain/coding_session_fixtures.dart';
@@ -68,7 +69,7 @@ void main() {
       expect(store.generationCount, 2);
     });
 
-    test('events naming no generation share one capped bucket', () {
+    test('events naming no generation are capped per kind', () {
       final store = CodingSessionEventStore(cap: 2);
       store.add(nameEvent(content: 'one'));
       store.add(nameEvent(content: 'two'));
@@ -76,11 +77,59 @@ void main() {
 
       expect(
         store.eventsForGeneration(
-          CodingSessionEventStore.sessionScopedGeneration,
+          CodingSessionEventStore.kindBucket(EventKind.codingSessionName),
         ),
         hasLength(2),
       );
       expect(store.length, 2);
+    });
+
+    test('a flood of receipts never evicts the creates and geneses', () {
+      final store = CodingSessionEventStore(cap: 3);
+      store.add(genesisEvent(eventId: genesisEventIdA));
+      store.add(
+        createEvent(
+          commandId: 'cmd-1',
+          sessionRef: sessionRefA,
+          genesisRef: genesisEventIdA,
+        ),
+      );
+      // 44224 carries no cs-target, and D4 decodes a receipt per turn: a busy
+      // channel produces these by the thousand.
+      for (var index = 0; index < 10; index++) {
+        store.add(
+          receiptEvent(
+            commandId: 'cmd-turn-$index',
+            status: 'turn_started',
+            turnId: 'turn-$index',
+            createdAt: 2000 + index,
+          ),
+        );
+      }
+
+      expect(
+        store.events
+            .where(
+              (event) => event.kind == EventKind.codingSessionLifecycleCommand,
+            )
+            .length,
+        1,
+        reason: 'the create resolves the founder and the authority',
+      );
+      expect(
+        store.events
+            .where((event) => event.kind == EventKind.codingSessionGenesis)
+            .length,
+        1,
+      );
+      expect(
+        store.eventsForGeneration(
+          CodingSessionEventStore.kindBucket(
+            EventKind.codingSessionLifecycleReceipt,
+          ),
+        ),
+        hasLength(3),
+      );
     });
 
     test('clear drops everything, including the dedupe set', () {
