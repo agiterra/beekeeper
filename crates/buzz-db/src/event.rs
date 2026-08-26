@@ -19,7 +19,7 @@ use buzz_core::coding_session_genesis::{
 use buzz_core::coding_session_lifecycle_command::{
     decode_coding_session_lifecycle_command, validate_session_ref, CodingSessionLifecycleAction,
 };
-use buzz_core::coding_session_payload::LifecycleReceipt;
+use buzz_core::coding_session_payload::{LifecycleReceipt, ReceiptStatus};
 use buzz_core::kind::{
     event_kind_i32, is_ephemeral, is_parameterized_replaceable, KIND_AUTH,
     KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
@@ -1951,6 +1951,16 @@ async fn fetch_coding_session_event_tx(
 /// actual session — the same "command id echo" pattern
 /// [`creates_by_command_id_tx`]'s caller relies on elsewhere, reproduced here
 /// for one specific referenced pair instead of a scan across candidates.
+///
+/// "Minted" is enforced by status, not merely by `session` being present. A
+/// kind 44224 also carries the *turn* vocabulary (`turn_queued`,
+/// `turn_started`, `turn_dropped`, `turn_refused`), and every one of those
+/// names the addressed execution in `session` while proving nothing about a
+/// create — `turn_refused` proves the opposite, that the provider has no such
+/// session. Since a turn command's `commandId` is chosen by whoever signs the
+/// 44220, accepting a turn stage here would let anyone manufacture a receipt
+/// that echoes a create's `commandId` and adopt a create the provider
+/// refused. Only the four statuses that mint an execution join a create.
 fn receipt_joins_create(
     create: &LegacySessionCreate,
     receipt_signer: &[u8],
@@ -1965,7 +1975,14 @@ fn receipt_joins_create(
     let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(receipt_content) else {
         return false;
     };
-    receipt.command_id == create.command_id && receipt.session.is_some()
+    let mints_a_session = matches!(
+        receipt.status,
+        ReceiptStatus::Created
+            | ReceiptStatus::CreatedWithFailedInitialTurn
+            | ReceiptStatus::Resumed
+            | ReceiptStatus::ResumedWithoutContext
+    );
+    mints_a_session && receipt.command_id == create.command_id && receipt.session.is_some()
 }
 
 /// Verify an explicit `adopts` reference against the events it names.
@@ -4538,6 +4555,78 @@ mod tests {
 
     fn make_receipt(authority: &Keys, channel_id: Uuid, command_id: &str) -> nostr::Event {
         make_receipt_signed_by(authority, channel_id, command_id)
+    }
+
+    /// R15 step 2(c) asks whether a receipt *minted* the create's session.
+    /// Kind 44224 also carries the per-turn vocabulary, and every turn status
+    /// names an execution in `session` while proving nothing about a create —
+    /// `turn_refused` proves the provider has no such session. A turn
+    /// command's `commandId` is chosen by whoever signs the 44220, so a turn
+    /// receipt echoing a create's `commandId` is attacker-reachable: it must
+    /// never join a create.
+    #[test]
+    fn only_a_minting_receipt_joins_a_create() {
+        let authority = Keys::generate();
+        let create = LegacySessionCreate {
+            event_id: vec![1_u8; 32],
+            signer: vec![2_u8; 32],
+            command_id: "command-1".to_owned(),
+            session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".to_owned()),
+            provider_authority_pubkey: authority.public_key().to_hex(),
+        };
+        let signer = authority.public_key().to_bytes().to_vec();
+
+        let content = |status: &str, turn_id: Option<&str>| {
+            let mut body = serde_json::json!({
+                "schema": "buzz-coding-session-lifecycle-receipt/v1",
+                "commandId": create.command_id,
+                "status": status,
+                "session": {
+                    "driver": "claude",
+                    "instanceId": "instance-1",
+                    "sessionId": "session-1",
+                    "generation": 1,
+                },
+                "error": serde_json::Value::Null,
+            });
+            if let Some(turn_id) = turn_id {
+                body["turnId"] = serde_json::Value::String(turn_id.to_owned());
+            }
+            body.to_string()
+        };
+
+        for status in [
+            "created",
+            "created_with_failed_initial_turn",
+            "resumed",
+            "resumed_without_context",
+        ] {
+            assert!(
+                receipt_joins_create(&create, &signer, &content(status, None)),
+                "{status} mints an execution and must join its create"
+            );
+        }
+
+        for (status, turn_id) in [
+            ("turn_queued", None),
+            ("turn_started", Some("turn-1")),
+            ("turn_dropped", None),
+            ("turn_refused", None),
+        ] {
+            assert!(
+                !receipt_joins_create(&create, &signer, &content(status, turn_id)),
+                "{status} answers a 44220 turn, not this create"
+            );
+        }
+
+        // The signer check still bites first: a minting receipt from anyone
+        // other than the named authority joins nothing.
+        let impostor = Keys::generate().public_key().to_bytes().to_vec();
+        assert!(!receipt_joins_create(
+            &create,
+            &impostor,
+            &content("created", None)
+        ));
     }
 
     /// Store a legacy founding create + its joining receipt, returning their
