@@ -1513,9 +1513,19 @@ same morning and one left as a product question.
     Two test-only hitchhikers: pair-relay `test_cancellation_immediate` (a
     flake — passes on unpatched main) and the naming-settings test made
     keychain-free (it hung the Tauri step in a worktree).
-    Residuals: nothing ran against a relay or a live provider (the
-    relay-backed e2e is `#[ignore]`d, the app was never opened), so the Rust
-    and desktop halves have not met on the wire; `DeliverError::Gone` and the
+    **Proven live 2026-08-26 (Brian, dev instance on the S1 tree, Codex
+    `gpt-5.6-sol[medium]` against hive, session "S1 receipts test" in
+    channel `2a9c83e7-94c5-4503-bc4f-024f695f20d1`):** six turns, every
+    `user_prompt` carries its `csc-…` commandId; the two identical "Say
+    the word ping" prompts sent 2 s apart each got their own id, receipts,
+    and echo and settled in order on screen; 13 kind-44224 receipts —
+    `created` plus `turn_queued` (5 keys) → `turn_started` (6 keys,
+    `turnId`) per turn, no drops, no refusals; a draft queued locally
+    during a `sleep 40` turn showed as "Next: Say pong · Cancel" and
+    published as its own turn on settle. Not exercised live: the create-
+    embedded first turn (the desktop sends the first prompt as its own
+    44220), `turn_dropped`, `turn_refused`.
+    Residuals: `DeliverError::Gone` and the
     no-live-actor arm still eat a turn with only a `tracing::warn`; the
     mailbox-full drop receipt is untested; a `turn_queued` row still expires
     at the 3-minute pending TTL and the suppressed stall escalation is now
@@ -1821,10 +1831,8 @@ the echo + per-stage receipts) was built overnight by a Claude-only crew on
 crew/s1-truthful-turns@5f7ce22d**: gate green — `just ci` ran every recipe to completion (desktop 6172/0, mobile 1465, all Rust and Tauri suites ok; the runner reported early, the log proves the finish) and the lead's `just test` on 4b49249b passed 12/12 sections, 223 integration tests, 0 failed;
 refuters NOT-REFUTED (contract & runtime correctness) and NOT-REFUTED (test
 honesty and evidence), both same-family and therefore advisory, not the
-cross-family pass §1 requires for a tier-2 diff. Residuals: nothing was ever
-run against a relay or a live provider — the relay-backed e2e is `#[ignore]`d
-and the app was not opened, so the Rust and desktop halves have never met on
-the wire; `DeliverError::Gone` and the no-live-actor arm still consume the
+cross-family pass §1 requires for a tier-2 diff. Proven live 2026-08-26 on the dev instance against hive (see §2 item 58
+for the session and counts). Residuals: `DeliverError::Gone` and the no-live-actor arm still consume the
 command and drop the turn with only a `tracing::warn`, because the locked
 contract gives `turn_dropped` exactly one code (QUEUE_FULL); the mailbox-full
 `turn_dropped` path is implemented but untested (the actor mailbox could not
