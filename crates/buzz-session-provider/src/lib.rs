@@ -73,6 +73,7 @@ use buzz_core::kind::{
 use buzz_sdk::builders::{
     build_coding_session_lifecycle_receipt, build_coding_session_metadata,
     build_coding_session_provider_catalog, build_coding_session_transcript_item,
+    build_coding_session_turn_receipt, coding_session_turn_receipt_semantic_key,
 };
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
@@ -93,8 +94,8 @@ use payload::{
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{
-    CreateRequest, RehydrationMcpDescriptor, SessionCommand, SessionContinuity, SessionEvent,
-    SessionManager, TurnOutcome,
+    CreateRequest, DeliverError, RehydrationMcpDescriptor, SessionCommand, SessionContinuity,
+    SessionEvent, SessionManager, TurnOutcome,
 };
 use state::{now_ms, now_secs, CatalogState, OpenTurn, SessionRecord, StateStore};
 
@@ -1071,7 +1072,12 @@ impl Provider {
             (Some(_), None) => Some("session actor stopped before the first turn".to_owned()),
             (Some(text), Some(handle)) => handle
                 .deliver(SessionCommand::Turn {
-                    command_id: format!("{}:initial", plan.command_id),
+                    // The create's own `commandId`, not a derived one: the
+                    // first turn's `user_prompt` echo has to name a command
+                    // the operator actually sent, or the prompt they typed
+                    // into the create dialog is the one prompt in the session
+                    // they cannot join to anything.
+                    command_id: plan.command_id.clone(),
                     text: text.clone(),
                     // The create's verified signer *is* the operator driving
                     // this first turn — the same fact that made them founder.
@@ -1586,18 +1592,44 @@ impl Provider {
             created_at,
             content,
         );
-        let (command_id, session_id, message) = match decision {
+        let (command_id, target, message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
+                // An ignore that names a target this provider owns is a
+                // refusal the operator has to see; the rest stay silent so a
+                // provider never chatters about another provider's commands or
+                // answers the same command twice.
+                if let Some(refusal) = reason.refusal() {
+                    let receipt = LifecycleReceipt::turn_refused(
+                        refusal.command_id,
+                        refusal.target,
+                        refusal.code,
+                        refusal.message,
+                    );
+                    let command_id = refusal.command_id.to_owned();
+                    tracing::warn!(
+                        target: "csp",
+                        %command_id,
+                        code = refusal.code,
+                        "turn command refused: {}",
+                        refusal.message
+                    );
+                    return self.enqueue_receipt(channel_id, &command_id, &receipt);
+                }
                 return Ok(());
             }
             TurnDecision::Fail {
                 command_id,
+                target,
                 message,
             } => {
                 self.state.consume_command(&command_id, now_secs())?;
-                let receipt =
-                    LifecycleReceipt::failed(&command_id, UNAUTHORIZED_OPERATOR, &message);
+                let receipt = LifecycleReceipt::turn_refused(
+                    &command_id,
+                    &target,
+                    UNAUTHORIZED_OPERATOR,
+                    &message,
+                );
                 tracing::warn!(
                     target: "csp",
                     %command_id,
@@ -1612,7 +1644,7 @@ impl Provider {
                 text,
             } => (
                 command_id.clone(),
-                target.session_id,
+                target,
                 // `decide_turn` returns `Start` only after checking this exact
                 // signer against the session's founder/granted-operator set,
                 // so attributing the turn to them is a witnessed fact.
@@ -1624,32 +1656,49 @@ impl Provider {
             ),
             TurnDecision::Interrupt { command_id, target } => (
                 command_id.clone(),
-                target.session_id,
+                target,
                 SessionCommand::Interrupt { command_id },
             ),
         };
+        let session_id = target.session_id.clone();
 
         // A starting turn is the trigger for a bounded verified-context
         // refresh. Started, not awaited: the turn must not wait on a relay
         // fetch, and the sidecar picks the new generation up off disk on a
         // later tool call, so a refresh still in flight costs this turn
         // nothing. An interrupt is not a turn and refreshes nothing.
-        if matches!(message, SessionCommand::Turn { .. }) {
+        let is_turn = matches!(message, SessionCommand::Turn { .. });
+        if is_turn {
             self.spawn_context_refresh(&session_id);
         }
 
         self.state.consume_command(&command_id, now_secs())?;
         match self.sessions.handle(&session_id) {
-            Some(handle) => {
-                if let Err(error) = handle.deliver(message) {
+            Some(handle) => match handle.deliver(message) {
+                // Custody, not execution: the provider has the turn, and the
+                // `turn_started` receipt is what says it began.
+                Ok(()) if is_turn => {
+                    let receipt = LifecycleReceipt::turn_queued(&command_id, &target);
+                    self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                }
+                Ok(()) => {}
+                Err(error) => {
                     tracing::warn!(
                         target: "csp",
                         %command_id,
                         %session_id,
                         "could not deliver command to session: {error:?}"
                     );
+                    if is_turn && matches!(error, DeliverError::QueueFull) {
+                        let receipt = LifecycleReceipt::turn_dropped(
+                            &command_id,
+                            &target,
+                            "the execution's queue is full",
+                        );
+                        self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    }
                 }
-            }
+            },
             None => tracing::warn!(
                 target: "csp",
                 %command_id,
@@ -2067,7 +2116,15 @@ impl Provider {
         }
     }
 
-    /// Queue a lifecycle receipt (44224). Receipts drain ahead of transcripts.
+    /// Queue a receipt (44224). Receipts drain ahead of transcripts.
+    ///
+    /// The outbox fences on `(kind, semantic key)`, so the key has to match
+    /// the receipt's own uniqueness rule. A lifecycle command has one outcome
+    /// and keys by `commandId`; a turn command reports several stages and keys
+    /// by `(commandId, status)`. Keying a turn's stages by `commandId` alone
+    /// would fence the `turn_started` out as a duplicate of the `turn_queued`
+    /// before it, and the operator would watch a turn queue and never learn it
+    /// began.
     pub fn enqueue_receipt(
         &mut self,
         channel_id: Uuid,
@@ -2075,11 +2132,26 @@ impl Provider {
         receipt: &LifecycleReceipt,
     ) -> anyhow::Result<()> {
         let content = serde_json::to_string(receipt)?;
-        let event = build_coding_session_lifecycle_receipt(channel_id, command_id, &content)?
-            .sign_with_keys(&self.config.keys)?;
+        let (event, semantic_key) = if receipt.status.is_turn_stage() {
+            (
+                build_coding_session_turn_receipt(
+                    channel_id,
+                    command_id,
+                    receipt.status,
+                    &content,
+                )?,
+                coding_session_turn_receipt_semantic_key(command_id, receipt.status),
+            )
+        } else {
+            (
+                build_coding_session_lifecycle_receipt(channel_id, command_id, &content)?,
+                coding_session_lifecycle_receipt_semantic_key(command_id),
+            )
+        };
+        let event = event.sign_with_keys(&self.config.keys)?;
         self.outbox.enqueue(
             KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
-            &coding_session_lifecycle_receipt_semantic_key(command_id),
+            &semantic_key,
             Priority::High,
             event,
         )?;
@@ -2458,6 +2530,11 @@ impl Provider {
                         started_at_ms: now_ms(),
                     });
                 })?;
+                // The stage that lets a consumer stop guessing: it names the
+                // command that asked and the turn that answers it, so a
+                // pending row settles by id rather than by matching text.
+                let receipt = LifecycleReceipt::turn_started(&command_id, &target, &turn_id);
+                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
                 self.publish_metadata(channel_id, &target, SessionStatus::Running)?;
             }
             SessionEvent::TurnFinished {
@@ -2532,6 +2609,15 @@ impl Provider {
                     payload::status_item("turn_dropped:queue_full"),
                     Priority::High,
                 )?;
+                // The transcript item says it to a reader of the session; the
+                // receipt says it to the operator whose turn it was, keyed by
+                // the command they sent.
+                let receipt = LifecycleReceipt::turn_dropped(
+                    &command_id,
+                    &target,
+                    "the execution's queue is full",
+                );
+                self.enqueue_receipt(channel_id, &command_id, &receipt)?;
             }
             SessionEvent::Exited { session_id, reason } => {
                 let Some((channel_id, target)) = self.locate(&session_id) else {
@@ -5069,19 +5155,28 @@ mod tests {
         let sink = CollectingSink::new();
         provider.flush(&sink).await.expect("flush");
         let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
-        for command_id in [
-            "turn-unauthorized",
-            "stop-unauthorized",
-            "resume-unauthorized",
+        // A refused turn answers in the turn vocabulary and a refused
+        // lifecycle command in the lifecycle one; both name the same code, so
+        // an operator reads one reason either way.
+        for (command_id, status) in [
+            ("turn-unauthorized", "turn_refused"),
+            ("stop-unauthorized", "failed"),
+            ("resume-unauthorized", "failed"),
         ] {
             let receipt = receipts
                 .iter()
                 .find(|receipt| receipt["commandId"] == command_id)
                 .expect("unauthorized receipt");
-            assert_eq!(receipt["status"], "failed");
+            assert_eq!(receipt["status"], status);
             assert_eq!(receipt["error"]["code"], UNAUTHORIZED_OPERATOR);
             assert!(provider.state().is_command_consumed(command_id));
         }
+        let refused = receipts
+            .iter()
+            .find(|receipt| receipt["commandId"] == "turn-unauthorized")
+            .expect("turn receipt");
+        assert!(refused.get("turnId").is_none());
+        assert_eq!(refused["session"]["sessionId"], target.session_id);
     }
 
     #[tokio::test]
@@ -5273,7 +5368,7 @@ mod tests {
         let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
         let failed: Vec<&str> = receipts
             .iter()
-            .filter(|receipt| receipt["status"] == "failed")
+            .filter(|receipt| receipt["status"] == "failed" || receipt["status"] == "turn_refused")
             .filter_map(|receipt| receipt["commandId"].as_str())
             .collect();
         assert!(failed.contains(&"turn-before-grant"));
@@ -7171,5 +7266,258 @@ mod tests {
         }
         // Sequence 1 was spent on the create's own continuity disclosure.
         assert_eq!(seqs, vec![Some(2), Some(3), Some(4)]);
+    }
+
+    /// Every stage of one turn is on the wire, and the echo names the command
+    /// that asked for it. Before this, a consumer's only join between a turn
+    /// command and the transcript was the prompt text — which cannot tell two
+    /// identical prompts apart — and the only receipt a turn ever produced was
+    /// a refusal.
+    #[tokio::test]
+    async fn a_turn_publishes_queued_then_started_and_echoes_its_command_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        // Both stages survive the outbox: keyed by commandId alone the second
+        // would have been fenced out as a duplicate of the first.
+        let receipts: Vec<serde_json::Value> = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .filter(|receipt| receipt["commandId"] == "turn-1")
+            .collect();
+        let statuses: Vec<&str> = receipts
+            .iter()
+            .filter_map(|receipt| receipt["status"].as_str())
+            .collect();
+        assert_eq!(statuses, vec!["turn_queued", "turn_started"]);
+        for receipt in &receipts {
+            assert_eq!(receipt["session"], serde_json::to_value(&target).unwrap());
+            assert!(receipt["error"].is_null());
+            // Strict-decodable: the consumers read every 44224 with one decoder.
+            payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
+                .expect("strictly decodable turn receipt");
+        }
+        assert!(receipts[0].get("turnId").is_none());
+
+        let transcripts = transcript_items_in_sequence(&sink);
+        let prompt = transcripts
+            .iter()
+            .find(|item| item["item"]["kind"] == "user_prompt")
+            .expect("user_prompt item");
+        assert_eq!(prompt["item"]["commandId"], "turn-1");
+        // The receipt and the transcript name the same turn, so a consumer can
+        // join them without matching text.
+        assert_eq!(receipts[1]["turnId"], prompt["turnId"]);
+    }
+
+    /// The prompt an operator types into the create dialog is a turn like any
+    /// other: it has to name a command they actually sent, or it is the one
+    /// prompt in the session that joins to nothing.
+    #[tokio::test]
+    async fn the_first_turn_echo_names_the_create_that_asked_for_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        let create = create_event_with_initial_turn(&provider, channel_id, "create-1", "go");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let transcripts = transcript_items_in_sequence(&sink);
+        let prompt = transcripts
+            .iter()
+            .find(|item| item["item"]["kind"] == "user_prompt")
+            .expect("user_prompt item");
+        assert_eq!(prompt["item"]["commandId"], "create-1");
+
+        // The create's own lifecycle receipt is untouched, and the turn stages
+        // ride beside it on their own keys.
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        let statuses: Vec<&str> = receipts
+            .iter()
+            .filter(|receipt| receipt["commandId"] == "create-1")
+            .filter_map(|receipt| receipt["status"].as_str())
+            .collect();
+        assert!(statuses.contains(&"created"), "{statuses:?}");
+        assert!(statuses.contains(&"turn_started"), "{statuses:?}");
+    }
+
+    /// A turn this provider was addressed by, and cannot run, is refused out
+    /// loud. A turn it was *not* addressed by, or has already answered, stays
+    /// silent — a receipt there would be chatter about someone else's command
+    /// or a second answer to one already answered.
+    #[tokio::test]
+    async fn only_turns_naming_a_target_this_provider_owns_are_refused_out_loud() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        let mut unknown = target.clone();
+        unknown.session_id = "11111111-2222-3333-4444-555555555555".into();
+        let mut stale = target.clone();
+        stale.generation = target.generation + 1;
+        let mut elsewhere = target.clone();
+        elsewhere.instance_id = "another-instance".into();
+
+        for (command_id, addressed) in [
+            ("turn-unknown", &unknown),
+            ("turn-stale", &stale),
+            ("turn-elsewhere", &elsewhere),
+        ] {
+            provider
+                .handle_command_event(channel_id, &turn_event(channel_id, command_id, addressed))
+                .await
+                .expect("handle");
+        }
+        // Already consumed: the same command twice earns exactly one answer.
+        let replayed = turn_event(channel_id, "turn-replay", &target);
+        provider
+            .handle_command_event(channel_id, &replayed)
+            .await
+            .expect("handle");
+        provider
+            .handle_command_event(channel_id, &replayed)
+            .await
+            .expect("replay");
+
+        // A stop closes the execution; a turn after it is refused, not queued.
+        let stop = lifecycle_target_event(&provider, channel_id, "stop-1", "session.stop", &target);
+        provider
+            .handle_command_event(channel_id, &stop)
+            .await
+            .expect("stop");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-closed", &target))
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        let refusal = |command_id: &str| -> Option<serde_json::Value> {
+            receipts
+                .iter()
+                .find(|receipt| {
+                    receipt["commandId"] == command_id && receipt["status"] == "turn_refused"
+                })
+                .cloned()
+        };
+
+        for (command_id, code, addressed) in [
+            ("turn-unknown", payload::UNKNOWN_TARGET, &unknown),
+            ("turn-stale", payload::STALE_GENERATION, &stale),
+            ("turn-closed", payload::SESSION_CLOSED, &target),
+        ] {
+            let receipt = refusal(command_id).unwrap_or_else(|| panic!("{command_id} refused"));
+            assert_eq!(receipt["error"]["code"], code);
+            assert_eq!(receipt["session"], serde_json::to_value(addressed).unwrap());
+            assert!(receipt.get("turnId").is_none());
+            payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
+                .expect("strictly decodable refusal");
+        }
+
+        assert!(
+            refusal("turn-elsewhere").is_none(),
+            "a turn addressed to another instance must not be answered"
+        );
+        let replay_stages: Vec<&str> = receipts
+            .iter()
+            .filter(|receipt| receipt["commandId"] == "turn-replay")
+            .filter_map(|receipt| receipt["status"].as_str())
+            .collect();
+        assert_eq!(
+            replay_stages,
+            vec!["turn_queued"],
+            "a replayed turn earns no second answer"
+        );
+    }
+
+    /// A dropped turn was already visible to a reader of the transcript. It
+    /// now also answers the operator who sent it, keyed by their command.
+    #[tokio::test]
+    async fn a_dropped_turn_reports_both_a_transcript_item_and_a_receipt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let record = provider.state().sessions().next().expect("session").clone();
+        let target = record.target("instance-1");
+
+        provider
+            .handle_session_event(SessionEvent::TurnDropped {
+                session_id: record.session_id.clone(),
+                command_id: "turn-overflow".into(),
+            })
+            .expect("record the drop");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let items = transcript_items_in_sequence(&sink);
+        assert!(
+            items
+                .iter()
+                .any(|item| item["item"]["status"] == "turn_dropped:queue_full"),
+            "the visible drop item must survive"
+        );
+
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "turn-overflow")
+            .expect("drop receipt");
+        assert_eq!(receipt["status"], "turn_dropped");
+        assert_eq!(receipt["error"]["code"], payload::QUEUE_FULL);
+        assert_eq!(receipt["session"], serde_json::to_value(&target).unwrap());
+        payload::decode_coding_session_lifecycle_receipt(&receipt.to_string())
+            .expect("strictly decodable drop receipt");
     }
 }

@@ -68,21 +68,58 @@ pub const UNKNOWN_TARGET: &str = "UNKNOWN_TARGET";
 pub const STALE_GENERATION: &str = "STALE_GENERATION";
 /// The addressed execution was already durably stopped.
 pub const SESSION_CLOSED: &str = "SESSION_CLOSED";
+/// A turn could not be accepted because the execution's queue is full.
+///
+/// The only code a `turn_dropped` receipt ever carries: a drop names the
+/// queue, never anything else. A turn that was refused for an authority or
+/// addressing reason is a `turn_refused` with one of the codes above.
+pub const QUEUE_FULL: &str = "QUEUE_FULL";
 
-/// Lifecycle outcome for exactly one create, resume, or stop command (kind 44224).
+/// Outcome of exactly one coding-session command (kind 44224).
+///
+/// Two vocabularies share this event. The **lifecycle** statuses answer one
+/// 44221 create, resume, or stop with exactly one terminal outcome. The
+/// **turn** statuses ([`ReceiptStatus::is_turn_stage`]) answer one 44220
+/// `thread.turn.start` and are *per stage*: a single turn command can produce
+/// `turn_queued` and then `turn_started`, or a single `turn_dropped` /
+/// `turn_refused`. A consumer therefore keys a turn receipt by
+/// `(commandId, status)`, never by `commandId` alone, and a fold that decides
+/// what happened to a *generation* ignores the turn statuses entirely — a turn
+/// receipt never creates, confirms, or ends a generation.
+///
+/// ## Accepted JSON shapes
+///
+/// There are exactly two, and the strict decoder accepts nothing between or
+/// beyond them:
+///
+/// 1. The five keys `{schema, commandId, status, session, error}` — every
+///    lifecycle status, plus `turn_queued`, `turn_dropped`, `turn_refused`.
+/// 2. Those five plus `turnId` — `turn_started` and nothing else.
+///
+/// `turnId` is present *exactly* when the status is `turn_started`: a started
+/// receipt without one names no turn, and any other status carrying one claims
+/// a turn that has not begun. The key is additive and omitted rather than
+/// serialized as `null`, so shape 1 is byte-identical to the shape shipped
+/// before the turn vocabulary existed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LifecycleReceipt {
     /// Always [`LIFECYCLE_RECEIPT_SCHEMA`].
     pub schema: String,
-    /// The `commandId` of the lifecycle command this answers.
+    /// The `commandId` of the lifecycle or turn command this answers.
     pub command_id: String,
-    /// Exact lifecycle outcome.
+    /// Exact outcome, or — for the turn vocabulary — exact stage.
     pub status: ReceiptStatus,
-    /// The minted target, or `null` when the create failed outright.
+    /// The addressed target, or `null` when a create failed outright. Never
+    /// `null` for a turn status: a turn receipt always names the execution the
+    /// 44220 addressed.
     pub session: Option<CodingSessionTarget>,
-    /// Failure detail, or `null` for a clean `created`.
+    /// Failure detail, or `null` for a clean outcome.
     pub error: Option<ReceiptError>,
+    /// The provider's turn id, present exactly when `status` is
+    /// `turn_started`. Omitted entirely otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 /// Receipt outcomes recognized by current consumers.
@@ -106,6 +143,50 @@ pub enum ReceiptStatus {
     /// The execution was durably stopped.
     #[serde(rename = "stopped")]
     Stopped,
+    /// A turn command was accepted into the execution's mailbox.
+    #[serde(rename = "turn_queued")]
+    TurnQueued,
+    /// The accepted turn began running; carries the provider's `turnId`.
+    #[serde(rename = "turn_started")]
+    TurnStarted,
+    /// The turn could not be accepted because the queue is full.
+    #[serde(rename = "turn_dropped")]
+    TurnDropped,
+    /// The turn was refused: the signer lacked authority, or the target was
+    /// unknown, superseded, or closed.
+    #[serde(rename = "turn_refused")]
+    TurnRefused,
+}
+
+impl ReceiptStatus {
+    /// The exact wire string this status serializes as.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::CreatedWithFailedInitialTurn => "created_with_failed_initial_turn",
+            Self::Failed => "failed",
+            Self::Resumed => "resumed",
+            Self::ResumedWithoutContext => "resumed_without_context",
+            Self::Stopped => "stopped",
+            Self::TurnQueued => "turn_queued",
+            Self::TurnStarted => "turn_started",
+            Self::TurnDropped => "turn_dropped",
+            Self::TurnRefused => "turn_refused",
+        }
+    }
+
+    /// Whether this status reports a *stage* of one 44220 turn command rather
+    /// than the terminal outcome of one 44221 lifecycle command.
+    ///
+    /// A fold that decides the status of a session generation must skip these:
+    /// one turn command produces up to three of them, none of them creates,
+    /// confirms, or ends a generation.
+    pub const fn is_turn_stage(self) -> bool {
+        matches!(
+            self,
+            Self::TurnQueued | Self::TurnStarted | Self::TurnDropped | Self::TurnRefused
+        )
+    }
 }
 
 /// Machine-readable code plus an operator-facing message.
@@ -127,6 +208,7 @@ impl LifecycleReceipt {
             status: ReceiptStatus::Created,
             session: Some(target.clone()),
             error: None,
+            turn_id: None,
         }
     }
 
@@ -145,6 +227,7 @@ impl LifecycleReceipt {
                 code: INITIAL_TURN_FAILED.to_owned(),
                 message: bounded_message(message),
             }),
+            turn_id: None,
         }
     }
 
@@ -159,6 +242,7 @@ impl LifecycleReceipt {
                 code: code.to_owned(),
                 message: bounded_message(message),
             }),
+            turn_id: None,
         }
     }
 
@@ -170,6 +254,7 @@ impl LifecycleReceipt {
             status: ReceiptStatus::Resumed,
             session: Some(target.clone()),
             error: None,
+            turn_id: None,
         }
     }
 
@@ -188,6 +273,7 @@ impl LifecycleReceipt {
                 code: CONTEXT_NOT_RECOVERED.to_owned(),
                 message: bounded_message(message),
             }),
+            turn_id: None,
         }
     }
 
@@ -199,11 +285,100 @@ impl LifecycleReceipt {
             status: ReceiptStatus::Stopped,
             session: Some(target.clone()),
             error: None,
+            turn_id: None,
+        }
+    }
+
+    /// A turn command was accepted into the execution's mailbox.
+    ///
+    /// Says the provider took custody of the turn, not that it ran — the turn
+    /// may still be waiting behind another. `turn_started` is the stage that
+    /// says it began.
+    pub fn turn_queued(command_id: &str, target: &CodingSessionTarget) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnQueued,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: None,
+        }
+    }
+
+    /// The accepted turn began running under `turn_id`.
+    ///
+    /// `turn_id` is the provider's minted id, the same one every transcript
+    /// item of this turn carries, so a consumer joins the receipt to the
+    /// transcript without matching text.
+    pub fn turn_started(command_id: &str, target: &CodingSessionTarget, turn_id: &str) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnStarted,
+            session: Some(target.clone()),
+            error: None,
+            turn_id: Some(turn_id.to_owned()),
+        }
+    }
+
+    /// The turn could not be accepted because the execution's queue is full.
+    ///
+    /// Always [`QUEUE_FULL`]: a drop names the queue and nothing else.
+    pub fn turn_dropped(command_id: &str, target: &CodingSessionTarget, message: &str) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnDropped,
+            session: Some(target.clone()),
+            error: Some(ReceiptError {
+                code: QUEUE_FULL.to_owned(),
+                message: bounded_message(message),
+            }),
+            turn_id: None,
+        }
+    }
+
+    /// The turn was refused before it reached the execution.
+    ///
+    /// `code` is one of [`UNAUTHORIZED_OPERATOR`], [`UNKNOWN_TARGET`],
+    /// [`STALE_GENERATION`], or [`SESSION_CLOSED`] — the codes a consumer
+    /// already branches on. `target` is the target the 44220 addressed, which
+    /// is a fact even when no execution answers to it.
+    pub fn turn_refused(
+        command_id: &str,
+        target: &CodingSessionTarget,
+        code: &str,
+        message: &str,
+    ) -> Self {
+        Self {
+            schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+            command_id: command_id.to_owned(),
+            status: ReceiptStatus::TurnRefused,
+            session: Some(target.clone()),
+            error: Some(ReceiptError {
+                code: code.to_owned(),
+                message: bounded_message(message),
+            }),
+            turn_id: None,
         }
     }
 }
 
-/// Strictly decode and validate one immutable lifecycle receipt.
+/// Codes a `turn_refused` receipt is allowed to carry.
+const TURN_REFUSAL_CODES: [&str; 4] = [
+    UNAUTHORIZED_OPERATOR,
+    UNKNOWN_TARGET,
+    STALE_GENERATION,
+    SESSION_CLOSED,
+];
+
+/// Strictly decode and validate one immutable coding-session receipt.
+///
+/// Accepts exactly the two key-set shapes documented on [`LifecycleReceipt`]:
+/// the five base keys, or those five plus `turnId` when — and only when — the
+/// status is `turn_started`. Anything else, including a status/`turnId`
+/// mismatch in either direction, is a hard rejection rather than a tolerated
+/// half-truth.
 pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<LifecycleReceipt, String> {
     if content.len() > MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES {
         return Err(format!(
@@ -216,14 +391,28 @@ pub fn decode_coding_session_lifecycle_receipt(content: &str) -> Result<Lifecycl
         .as_object()
         .ok_or_else(|| "coding-session lifecycle receipt must be an object".to_owned())?;
     const FIELDS: [&str; 5] = ["schema", "commandId", "status", "session", "error"];
-    if object.len() != FIELDS.len()
+    const TURN_ID_FIELD: &str = "turnId";
+    let carries_turn_id = object.contains_key(TURN_ID_FIELD);
+    let expected_len = FIELDS.len() + usize::from(carries_turn_id);
+    if object.len() != expected_len
         || FIELDS.iter().any(|field| !object.contains_key(*field))
-        || object.keys().any(|field| !FIELDS.contains(&field.as_str()))
+        || object
+            .keys()
+            .any(|field| !FIELDS.contains(&field.as_str()) && field != TURN_ID_FIELD)
     {
         return Err("coding-session lifecycle receipt has missing or unsupported fields".into());
     }
     let receipt: LifecycleReceipt = serde_json::from_str(content)
         .map_err(|error| format!("malformed coding-session lifecycle receipt: {error}"))?;
+    // Keyed on the *key's* presence, not the parsed value: an explicit
+    // `"turnId": null` is a six-key object claiming the provider observed "no
+    // turn", which is a different claim from the five-key shape that carries
+    // no such key at all. Only the strict decoder can tell them apart —
+    // `Option<String>` has collapsed both to `None` by the time
+    // `validate_lifecycle_receipt` sees the struct.
+    if carries_turn_id != (receipt.status == ReceiptStatus::TurnStarted) {
+        return Err("receipt turnId key is present exactly when status is turn_started".into());
+    }
     validate_lifecycle_receipt(&receipt)?;
     Ok(receipt)
 }
@@ -257,6 +446,24 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
             return Err("receipt error message must be nonempty and bounded".into());
         }
     }
+    // `turnId` is present exactly when the turn started: a `turn_started`
+    // without one names no turn, and any other status carrying one claims a
+    // turn that has not begun.
+    let expects_turn_id = receipt.status == ReceiptStatus::TurnStarted;
+    match (&receipt.turn_id, expects_turn_id) {
+        (Some(turn_id), true) => {
+            if turn_id.trim().is_empty()
+                || turn_id.len() > MAX_IDENTIFIER_BYTES
+                || turn_id.chars().any(char::is_control)
+            {
+                return Err("receipt turnId must be a nonempty bounded identifier".into());
+            }
+        }
+        (None, false) => {}
+        _ => {
+            return Err("receipt turnId is present exactly when status is turn_started".into());
+        }
+    }
     let valid_shape = match receipt.status {
         ReceiptStatus::Created | ReceiptStatus::Resumed | ReceiptStatus::Stopped => {
             receipt.session.is_some() && receipt.error.is_none()
@@ -276,6 +483,26 @@ fn validate_lifecycle_receipt(receipt: &LifecycleReceipt) -> Result<(), String> 
                     .is_some_and(|error| error.code == CONTEXT_NOT_RECOVERED)
         }
         ReceiptStatus::Failed => receipt.session.is_none() && receipt.error.is_some(),
+        // Every turn status names the execution the 44220 addressed, even the
+        // refusals: "which session did this refer to" is the first thing an
+        // operator asks.
+        ReceiptStatus::TurnQueued | ReceiptStatus::TurnStarted => {
+            receipt.session.is_some() && receipt.error.is_none()
+        }
+        ReceiptStatus::TurnDropped => {
+            receipt.session.is_some()
+                && receipt
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == QUEUE_FULL)
+        }
+        ReceiptStatus::TurnRefused => {
+            receipt.session.is_some()
+                && receipt
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| TURN_REFUSAL_CODES.contains(&error.code.as_str()))
+        }
     };
     if !valid_shape {
         return Err("lifecycle receipt status/session/error shape is inconsistent".into());
@@ -786,26 +1013,53 @@ pub fn status_item_with_reason(status: &str, reason: Option<&str>) -> serde_json
 /// transcript cannot say who drove a turn and every reader has to guess it was
 /// itself.
 ///
-/// The key is **additive and optional**: it is emitted only for a well-formed
-/// 64-character lowercase-hex pubkey, and omitted entirely otherwise rather
-/// than sent as `null`, which would claim the provider observed "no operator".
-/// Items published before this field existed stay valid everywhere.
+/// `command_id` is the `commandId` of the 44220 `thread.turn.start` that
+/// started this turn — or, for the first turn embedded in a 44221 create, that
+/// create's own `commandId`, so *every* operator-originated prompt is joinable.
+/// Without it a consumer has to settle a pending turn by matching prompt text,
+/// which cannot tell two identical prompts apart.
+///
+/// Both keys are **additive and optional**: `operatorPubkey` is emitted only
+/// for a well-formed 64-character lowercase-hex pubkey, `commandId` only for a
+/// nonblank, control-free identifier within
+/// [`MAX_IDENTIFIER_BYTES`](crate::coding_session_command::MAX_IDENTIFIER_BYTES).
+/// Anything else is omitted entirely rather than sent as `null`, which would
+/// claim the provider observed an absence. Items published before either field
+/// existed stay valid everywhere.
 pub fn user_prompt_item(
     content: &str,
     steered: bool,
     operator_pubkey: Option<&str>,
+    command_id: Option<&str>,
 ) -> serde_json::Value {
     let mut item =
         serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered });
     // The literal above is an object, so this always matches; written as a
     // pattern rather than an `expect` so a future edit degrades into an
     // unattributed prompt rather than a panic at the head of a turn.
-    if let (Some(object), Some(pubkey)) = (item.as_object_mut(), operator_pubkey) {
+    let Some(object) = item.as_object_mut() else {
+        return item;
+    };
+    if let Some(pubkey) = operator_pubkey {
         if is_operator_pubkey(pubkey) {
             object.insert("operatorPubkey".into(), serde_json::json!(pubkey));
         }
     }
+    if let Some(command_id) = command_id {
+        if is_wire_identifier(command_id) {
+            object.insert("commandId".into(), serde_json::json!(command_id));
+        }
+    }
     item
+}
+
+/// Whether `value` could have travelled as a `commandId` on the wire: nonblank,
+/// bounded, and free of control characters — the same rule
+/// `coding_session_command`'s validator applies to the command itself.
+fn is_wire_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= crate::coding_session_command::MAX_IDENTIFIER_BYTES
+        && !value.chars().any(char::is_control)
 }
 
 /// Whether `pubkey` is the canonical 64-character lowercase-hex form.
@@ -1292,11 +1546,11 @@ mod tests {
     /// the three keys every existing consumer already reads.
     #[test]
     fn user_prompt_carries_the_operator_only_when_one_was_witnessed() {
-        let unattributed = user_prompt_item("go", false, None);
+        let unattributed = user_prompt_item("go", false, None, None);
         assert_eq!(keys(&unattributed), sorted(&["kind", "content", "steered"]));
 
         let operator = "a".repeat(64);
-        let attributed = user_prompt_item("go", true, Some(&operator));
+        let attributed = user_prompt_item("go", true, Some(&operator), None);
         assert_eq!(
             keys(&attributed),
             sorted(&["kind", "content", "steered", "operatorPubkey"])
@@ -1317,7 +1571,7 @@ mod tests {
             &"A".repeat(64),
             &format!("{}{}", "z", "a".repeat(63)),
         ] {
-            let item = user_prompt_item("go", false, Some(bad));
+            let item = user_prompt_item("go", false, Some(bad), None);
             assert!(
                 item.get("operatorPubkey").is_none(),
                 "{bad:?} must not be published as an operator"
@@ -1395,5 +1649,213 @@ mod tests {
             );
             assert_eq!(keys(&item), sorted(&["kind", "status"]));
         }
+    }
+
+    /// Contract A: the echo of an operator prompt names the command that
+    /// started the turn, so a consumer joins the transcript to the receipt by
+    /// id instead of by matching prompt text.
+    #[test]
+    fn user_prompt_carries_the_command_that_started_the_turn() {
+        let joined = user_prompt_item("go", false, None, Some("turn-1"));
+        assert_eq!(
+            keys(&joined),
+            sorted(&["kind", "content", "steered", "commandId"])
+        );
+        assert_eq!(joined["commandId"], "turn-1");
+
+        let operator = "a".repeat(64);
+        let both = user_prompt_item("go", true, Some(&operator), Some("turn-2"));
+        assert_eq!(
+            keys(&both),
+            sorted(&["kind", "content", "steered", "operatorPubkey", "commandId"])
+        );
+    }
+
+    /// The key is additive: an echo with no command keeps exactly the shape
+    /// every shipped consumer already reads, and a command id that could not
+    /// have come off the wire is dropped rather than published.
+    #[test]
+    fn user_prompt_omits_a_command_that_is_absent_or_unbounded() {
+        assert_eq!(
+            keys(&user_prompt_item("go", false, None, None)),
+            sorted(&["kind", "content", "steered"])
+        );
+        for bad in [
+            "",
+            "   ",
+            "with\u{1}control",
+            &"c".repeat(crate::coding_session_command::MAX_IDENTIFIER_BYTES + 1),
+        ] {
+            let item = user_prompt_item("go", false, None, Some(bad));
+            assert!(
+                item.get("commandId").is_none(),
+                "{bad:?} must not be published as a commandId"
+            );
+        }
+    }
+
+    /// Contract B: `turn_started` is the only status that carries `turnId`,
+    /// and it carries it always. Every other turn status keeps the five keys
+    /// the shipped consumers require.
+    #[test]
+    fn turn_receipts_carry_exactly_the_locked_key_sets() {
+        let started =
+            serde_json::to_value(LifecycleReceipt::turn_started("t-1", &target(), "turn-abc"))
+                .expect("serialize");
+        assert_eq!(
+            keys(&started),
+            sorted(&[
+                "schema",
+                "commandId",
+                "status",
+                "session",
+                "error",
+                "turnId"
+            ])
+        );
+        assert_eq!(started["status"], "turn_started");
+        assert_eq!(started["turnId"], "turn-abc");
+        assert!(started["error"].is_null());
+
+        for (receipt, status, code) in [
+            (
+                LifecycleReceipt::turn_queued("t-1", &target()),
+                "turn_queued",
+                None,
+            ),
+            (
+                LifecycleReceipt::turn_dropped("t-1", &target(), "queue full"),
+                "turn_dropped",
+                Some(QUEUE_FULL),
+            ),
+            (
+                LifecycleReceipt::turn_refused("t-1", &target(), STALE_GENERATION, "stale"),
+                "turn_refused",
+                Some(STALE_GENERATION),
+            ),
+        ] {
+            let value = serde_json::to_value(&receipt).expect("serialize");
+            assert_eq!(
+                keys(&value),
+                sorted(&["schema", "commandId", "status", "session", "error"]),
+                "{status} must not carry turnId"
+            );
+            assert_eq!(value["status"], status);
+            assert_eq!(value["session"], serde_json::to_value(target()).unwrap());
+            match code {
+                None => assert!(value["error"].is_null()),
+                Some(code) => assert_eq!(value["error"]["code"], code),
+            }
+            let json = serde_json::to_string(&receipt).unwrap();
+            assert_eq!(
+                decode_coding_session_lifecycle_receipt(&json).unwrap(),
+                receipt
+            );
+        }
+
+        let json = serde_json::to_string(&LifecycleReceipt::turn_started(
+            "t-1",
+            &target(),
+            "turn-abc",
+        ))
+        .unwrap();
+        assert_eq!(
+            decode_coding_session_lifecycle_receipt(&json).unwrap(),
+            LifecycleReceipt::turn_started("t-1", &target(), "turn-abc")
+        );
+    }
+
+    /// `turnId` is present exactly when the status is `turn_started`: a
+    /// started receipt without one names no turn, and a queued receipt with
+    /// one claims a turn that has not begun.
+    #[test]
+    fn strict_receipt_decoder_enforces_turn_id_presence_by_status() {
+        let mut started =
+            serde_json::to_value(LifecycleReceipt::turn_started("t-1", &target(), "turn-abc"))
+                .unwrap();
+        started.as_object_mut().unwrap().remove("turnId");
+        assert!(decode_coding_session_lifecycle_receipt(&started.to_string()).is_err());
+
+        for status in ["turn_queued", "turn_dropped", "turn_refused", "created"] {
+            let mut wrong =
+                serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+            wrong["status"] = serde_json::json!(status);
+            wrong["turnId"] = serde_json::json!("turn-abc");
+            assert!(
+                decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err(),
+                "{status} must not accept a turnId"
+            );
+        }
+
+        let mut blank =
+            serde_json::to_value(LifecycleReceipt::turn_started("t-1", &target(), "turn-abc"))
+                .unwrap();
+        blank["turnId"] = serde_json::json!("   ");
+        assert!(decode_coding_session_lifecycle_receipt(&blank.to_string()).is_err());
+
+        // An explicit `null` is a six-key object claiming an observed absence,
+        // not the five-key shape. Both directions are rejected.
+        for status in ["created", "turn_queued", "turn_dropped", "turn_refused"] {
+            let mut explicit_null =
+                serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+            explicit_null["status"] = serde_json::json!(status);
+            explicit_null["turnId"] = serde_json::Value::Null;
+            assert!(
+                decode_coding_session_lifecycle_receipt(&explicit_null.to_string()).is_err(),
+                "{status} must not accept an explicit null turnId"
+            );
+        }
+        let mut started_null =
+            serde_json::to_value(LifecycleReceipt::turn_started("t-1", &target(), "turn-abc"))
+                .unwrap();
+        started_null["turnId"] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&started_null.to_string()).is_err());
+    }
+
+    /// A turn receipt is not a lifecycle outcome: the shapes that a create,
+    /// resume, or stop receipt is allowed to take must stay closed against
+    /// the turn vocabulary, and vice versa.
+    #[test]
+    fn turn_statuses_are_distinguishable_from_lifecycle_statuses() {
+        for status in [
+            ReceiptStatus::TurnQueued,
+            ReceiptStatus::TurnStarted,
+            ReceiptStatus::TurnDropped,
+            ReceiptStatus::TurnRefused,
+        ] {
+            assert!(status.is_turn_stage(), "{status:?}");
+        }
+        for status in [
+            ReceiptStatus::Created,
+            ReceiptStatus::CreatedWithFailedInitialTurn,
+            ReceiptStatus::Failed,
+            ReceiptStatus::Resumed,
+            ReceiptStatus::ResumedWithoutContext,
+            ReceiptStatus::Stopped,
+        ] {
+            assert!(!status.is_turn_stage(), "{status:?}");
+        }
+        assert_eq!(ReceiptStatus::TurnStarted.as_str(), "turn_started");
+        assert_eq!(ReceiptStatus::Created.as_str(), "created");
+    }
+
+    /// A turn refusal only ever carries a code a consumer already branches
+    /// on; a dropped turn only ever names the queue.
+    #[test]
+    fn turn_refusals_and_drops_carry_only_their_locked_codes() {
+        let mut wrong =
+            serde_json::to_value(LifecycleReceipt::turn_dropped("t-1", &target(), "full")).unwrap();
+        wrong["error"] = serde_json::json!({ "code": SESSION_LIMIT, "message": "full" });
+        assert!(decode_coding_session_lifecycle_receipt(&wrong.to_string()).is_err());
+
+        let mut queued =
+            serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+        queued["error"] = serde_json::json!({ "code": QUEUE_FULL, "message": "full" });
+        assert!(decode_coding_session_lifecycle_receipt(&queued.to_string()).is_err());
+
+        let mut headless =
+            serde_json::to_value(LifecycleReceipt::turn_queued("t-1", &target())).unwrap();
+        headless["session"] = serde_json::Value::Null;
+        assert!(decode_coding_session_lifecycle_receipt(&headless.to_string()).is_err());
     }
 }
