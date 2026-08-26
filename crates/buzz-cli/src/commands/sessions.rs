@@ -1287,11 +1287,19 @@ async fn cmd_doctor(
     match format {
         crate::OutputFormat::Compact => {
             for turn in &turns {
-                let id = turn.turn_id.as_deref().unwrap_or("(no turn)");
-                let verdict = match turn.is_error {
-                    Some(true) => "FAILED",
-                    Some(false) => "ok",
-                    None => "unfinished",
+                // Items with no turn id are session-level facts — the opening
+                // `session_fresh` status, say. Calling that group "unfinished"
+                // reports a turn that never existed as one that failed to end,
+                // which is the same class of lie this command exists to catch.
+                let id = turn
+                    .turn_id
+                    .as_deref()
+                    .unwrap_or("(session-level, outside any turn)");
+                let verdict = match (turn.turn_id.is_some(), turn.is_error) {
+                    (false, _) => "-",
+                    (true, Some(true)) => "FAILED",
+                    (true, Some(false)) => "ok",
+                    (true, None) => "unfinished",
                 };
                 println!(
                     "{id}  {verdict}  {:.1}s  {} items{}",
@@ -1948,6 +1956,33 @@ mod tests {
             findings.contains("inferred"),
             "without a turn_wire row the quiet onset is inferred, and saying so \
              is the difference between a measurement and a guess: {findings}"
+        );
+    }
+
+    /// Items outside any turn are session-level facts, not a turn that failed
+    /// to finish. Reporting them as `unfinished` is the same shape of lie the
+    /// command exists to catch, so it is pinned.
+    #[test]
+    fn session_level_items_are_not_reported_as_an_unfinished_turn() {
+        let session = target("s-1", 1);
+        let events = vec![transcript_event(
+            &format!("{:064}", 1),
+            &"a".repeat(64),
+            1_700_000_000,
+            &session,
+            1,
+            None,
+            json!({ "kind": "status", "status": "session_fresh" }),
+        )];
+        let (records, _) = decode_transcripts(&events);
+        let turns = diagnose_turns(&records);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].turn_id, None);
+        assert_eq!(turns[0].is_error, None);
+        assert!(
+            turns[0].findings.is_empty(),
+            "a session-level group has nothing to diagnose: {:?}",
+            turns[0].findings
         );
     }
 
