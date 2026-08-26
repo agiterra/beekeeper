@@ -104,7 +104,10 @@ what it did in a [NIP-CSL](NIP-CSL.md) receipt. There are three classes.
   execution's runtime advertised native steering at initialize. Steering
   capability is a fact about the execution, not about the driver slug, and it
   is published per execution as `capabilities.threadSteer` in the
-  `kind:44223` metadata.
+  `kind:44223` metadata. **Boundary-only in this build:** see the
+  implementation-status note under the downgrade rule — native injection is
+  deferred until an adapter advertises it, so no execution publishes
+  `capabilities.threadSteer: true` today.
 - **`interrupt`.** The provider cancels the running turn and then delivers this
   turn at the boundary that creates. Authority for this class is the **session
   founder only**; any other signer — including an operator holding
@@ -128,6 +131,24 @@ here, at the boundary instead". A consumer that does not understand
 `turn_degraded` still sees the `turn_queued` and is merely less informed, never
 wrong.
 
+**Implementation status, 2026-08-26: `steer` is boundary-only in this build;
+native injection is deferred until an adapter advertises it.** The rule above
+is the contract, not a description of what ships today. In this fork's provider
+`NATIVE_STEER_DELIVERABLE` is `false`
+(`crates/buzz-session-provider/src/session.rs:78`) and `metadata_for`
+AND-gates the per-execution witness with it
+(`crates/buzz-session-provider/src/lib.rs:2759-2762`), so
+`capabilities.threadSteer` is `false` for **every** execution, the desktop
+composer never sends `deliver: "steer"`
+(`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:295`
+selects `steer` only when `canSteer`), and no `turn_degraded` /
+`STEER_UNSUPPORTED` receipt can be produced by this build. A `steer` from
+another client is still accepted and still degrades; that path has unit
+coverage with a hand-injected capability and no end-to-end evidence. Native
+mid-turn injection needs the `buzz-acp` steer types re-exported (`mod pool` is
+private at `crates/buzz-acp/src/lib.rs:13`) and is a later slice's work. Do not
+read this section as "steer shipped".
+
 An unknown `deliver` value is a malformed command, rejected by the relay's
 envelope validation. Defaulting an unreadable class to `boundary` would take a
 turn the sender asked to interrupt with and quietly park it behind an hour of
@@ -136,7 +157,7 @@ work.
 ### Fork amendment: the relay is the mailbox
 
 A `thread.turn.start` is durable on the relay from the moment it is accepted,
-and the provider's in-memory queue is a cache of it, never the record. Two
+and the provider's in-memory queue is a cache of it, never the record. Three
 consequences bind providers:
 
 1. **A command is consumed when its turn *starts*, not when it is received.**
