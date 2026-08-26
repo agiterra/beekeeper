@@ -1806,6 +1806,40 @@ written and `bash -n` clean but **was not executed** — that harness needs
 
 ### Found 2026-08-25 — the responsiveness pass, and the UI critique behind it
 
+60. **The relay as the mailbox for turn delivery (Slice 2), built but not
+    clean.** On `crew/s2-s6@ecb16a52`, not landed, not gated. On the wire,
+    kind 44220 gains a closed `deliver` class (`start` / `queue` / `steer` /
+    `interrupt` / `ignore`, rejected at decode rather than in `validate()`),
+    the provider consumes a boundary turn at *start* and replays unconsumed
+    turns from a persisted per-channel watermark in `(created_at, id)` order
+    behind a 1.5 s reorder window, and three receipt codes join the now-open
+    code list: `NO_LIVE_EXECUTION`, `NO_TURN_IN_FLIGHT`,
+    `QUEUE_FULL_TURN_KEPT` (any nonblank, control-free ≤64-byte code is legal
+    — the desktop decoder still bounds at 256, which is owed a NIP-CSL line).
+    **Scope was narrowed and the narrowing is ratified:** S2 delivers "a turn
+    is never silently lost", not "every accepted turn eventually runs" — a
+    turn reaching no live execution gets a terminal `turn_dropped` /
+    `NO_LIVE_EXECUTION` because `session.resume` mints generation N+1
+    (`lib.rs:1626-1628`) and the fence refuses the replayed generation-N
+    command, so any receipt promising a replay would have been a lie.
+    Evidence: no completed `just ci` at this head; per-crate green counts as
+    in §3 above; note that `just ci` runs **no** buzz-session-provider,
+    buzz-sdk or buzz-relay lib tests at all (`justfile:427-464`,
+    `scripts/run-tests.sh:78-146`) — only `.woodpecker/gate.yml:138` does.
+    Residuals: `mailbox-1` (watermark advanced past older held turns) and
+    `evidence-3` (a failed held delivery drops the untried remainder) are
+    CONFIRMED and unfixed at `ecb16a52`; native mid-turn steer is stubbed —
+    `NATIVE_STEER_DELIVERABLE` is `false` and `threadSteer` is therefore false
+    for every execution, so no degrade path in this build is reachable and all
+    steer evidence is hand-injected; two briefed acceptances were **not met**
+    (the kill-test now asserts both turns are *answered*, not that both *run*,
+    and the queued row does not survive an app restart — it is module-level
+    client state); a legacy ungoverned record still lets any channel member
+    publish `deliver:"interrupt"` (deferred to S3/D7); the late rate-gated
+    resubscribe in `buzz-acp` reopens a channel with no reorder window; and an
+    `interrupt_delivered` receipt is decoded and stored but no surface watches
+    it.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -1857,7 +1891,25 @@ main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
 `--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
 later that day with one docs conflict (this item is now 58) and re-gated:
-`just ci` exit 0 (desktop 6209/0, mobile 1465), `just test` exit 0 (2134 passed, 0 failed).
+**Slices 2–6 were built by a Claude-only crew on crew/s2-s6 on
+2026-08-26**: only S2 (the relay is the mailbox) was reached, and it is **not
+clean** — its `just ci`/`just test` gate at `ecb16a52` never finished, so the
+slice has no gate counts of its own; the green counts that exist are per-crate
+at the round-2 head (`cargo test -p buzz-session-provider` 277 lib + 2
+integration passed / 0 failed, desktop `coding-sessions` 857 passed / 0 failed,
+`tsc --noEmit`, `cargo clippy -p buzz-session-provider --all-targets` and
+`pnpm check:px-text` all exit 0, plus a relay-backed
+`e2e_coding_session_delivery_classes` run, 1 passed / 0 failed), and the last
+full green gate was at `3c8f2a15` (101 Rust `test result: ok` lines, desktop
+6236/0, mobile all-green) which predates every later fix. Both refuters came
+back CONFIRMED — contract & runtime correctness (2 blocking) and test honesty
+and evidence (2 blocking) — same-family, so advisory rather than the
+cross-family pass §1 requires. Five findings triaged fix-now are **not present
+at the checkpoint head** (chief among them `mailbox-1`: the replay hold branch
+still advances the watermark past older undelivered turns,
+`crates/buzz-session-provider/src/lib.rs:1058-1069`); deferred: 5 items
+recorded in the plan §7. S3–S6 were not started (blocked by S2). It builds on
+Slice 1 and lands with it as one fast-forward after Brian's live look.
 
 **The active track as of 2026-08-25 night is live confirmation of the
 full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
