@@ -1847,13 +1847,16 @@ because `TranscriptItem` lives in the agents lane). It is a topic branch
 awaiting Brian's live look; not landed on main. Rebased onto
 main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
-`--force-with-lease`.
+`--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
+later that day with one docs conflict (this item is now 58) and re-gated:
+`just ci` exit 0 (desktop 6209/0, mobile 1465), `just test` exit 0 (2134 passed, 0 failed).
 
-**The active track as of 2026-08-25 night is the full-screen UI/UX pass — §2
-item 52's ten points, in that order.** The first four are contained (the
-composer's leaking overlay, the raw JSON tool result, the flanking dead space,
-and the raw identifiers the picker already fixed elsewhere); the rest are
-hierarchy and action-weight work. Everything below is the previous track, kept
+**The active track as of 2026-08-25 night is live confirmation of the
+full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
+focused wide-screen E2E workflow, and repository-wide `just ci` gate are green.
+It landed on `main` as `b2298102` on 2026-08-26 (rebased onto Andy's
+`af3b9b66`, gated there, fast-forwarded); only confirmation in the live
+desktop against hive remains. Everything below is the previous track, kept
 because its live confirmations are still owed.
 
 **The previous track was the coding-session honesty pass — §2 items 37-44. As of
