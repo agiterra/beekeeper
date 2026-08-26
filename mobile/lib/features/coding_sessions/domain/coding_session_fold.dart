@@ -650,11 +650,22 @@ CodingSessionFoldedStatus foldCodingSessionUmbrellaStatus(
 /// own sequence is supposed to break that tie, so a tie means the snapshot
 /// cannot be trusted either way.
 ///
+/// [acceptedCommandId] is the command whose lifecycle receipt minted this
+/// generation ([CodingSessionExecution.commandId]). A lease carries the
+/// command it was taken under in its `csl-command` tag, and the desktop drops
+/// any lease naming a different one (`sessionCoordinationFold.ts`,
+/// `lease.commandId !== authority.command.commandId`); this does the same, so
+/// a 24223 that no accepted command backs cannot claim a provider is
+/// answering. `null` means no create was readable for the target at all — the
+/// D5 fallback, where there is no accepted command to compare against and the
+/// execution is already marked `authority unverified`.
+///
 /// [leasesRead] `== false` (no lease query has returned yet) always reads
 /// unknown. An unknown read must never be rendered as "nobody answering".
 CodingSessionReachability deriveCodingSessionReachability({
   required Iterable<CodingSessionLease> leases,
   required CodingSessionTarget currentTarget,
+  required String? acceptedCommandId,
   required DateTime now,
   String? authorityPubkey,
   bool leasesRead = true,
@@ -665,7 +676,8 @@ CodingSessionReachability deriveCodingSessionReachability({
     for (final lease in leases)
       if (lease.target.key == currentTarget.key &&
           (authorityPubkey == null ||
-              lease.ref.signerPubkey == authorityPubkey))
+              lease.ref.signerPubkey == authorityPubkey) &&
+          (acceptedCommandId == null || lease.commandId == acceptedCommandId))
         lease,
   ];
   if (own.isEmpty) {

@@ -352,7 +352,7 @@ NostrEvent leaseEvent({
   CodingSessionTarget? forTarget,
   String state = 'live',
   int leaseSequence = 1,
-  String commandId = 'command-1',
+  String commandId = 'cmd-1',
   String pubkey = providerPubkey,
   int createdAt = 1400,
   String? id,

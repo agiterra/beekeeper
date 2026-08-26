@@ -108,6 +108,7 @@ class CodingSessionChannelView {
       final verdict = deriveCodingSessionReachability(
         leases: facts.leases,
         currentTarget: execution.target,
+        acceptedCommandId: execution.commandId,
         authorityPubkey: execution.authority.pubkey,
         now: now,
         leasesRead: leasesRead,

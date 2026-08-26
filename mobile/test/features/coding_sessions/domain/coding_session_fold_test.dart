@@ -66,6 +66,7 @@ CodingSessionLease _lease({
   String state = 'live',
   int leaseSequence = 1,
   int createdAt = 1400,
+  String commandId = 'cmd-1',
   String? id,
 }) => decodeCodingSessionLease(
   leaseEvent(
@@ -73,6 +74,7 @@ CodingSessionLease _lease({
     state: state,
     leaseSequence: leaseSequence,
     createdAt: createdAt,
+    commandId: commandId,
     id: id,
   ),
 ).value!;
@@ -632,6 +634,105 @@ void main() {
       );
       expect(view.sessions.single.founder.pubkey, founderPubkey);
     });
+
+    // D8, read through the seam production uses. The three gates below are
+    // properties of `CodingSessionChannelView.reachabilityFor`, not of the
+    // pure function: they fail if the view stops passing the accepted command
+    // id, the authority pubkey, or the current-generation filter.
+    test('a lease no accepted command backs does not prove reachability', () {
+      CodingSessionReachability read(String leaseCommandId) {
+        final view = readCodingSessionChannel(
+          channelId: channelId,
+          verifier: null,
+          events: [
+            createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+            receiptEvent(commandId: 'cmd-1', status: 'created'),
+            metadataEvent(status: 'running', sessionRef: sessionRefA),
+            leaseEvent(commandId: leaseCommandId, createdAt: 2000),
+          ],
+        );
+        return view.reachabilityFor(
+          view.sessions.single,
+          now: DateTime.fromMillisecondsSinceEpoch(2010 * 1000, isUtc: true),
+        );
+      }
+
+      // Control: the lease the accepted create minted does prove it.
+      expect(read('cmd-1').kind, CodingSessionReachabilityKind.reachable);
+      expect(
+        read('a-command-that-minted-nothing').kind,
+        CodingSessionReachabilityKind.noProviderAnswering,
+      );
+    });
+
+    test('a lease from a signer no create named proves nothing', () {
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: [
+          createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+          receiptEvent(commandId: 'cmd-1', status: 'created'),
+          metadataEvent(status: 'running', sessionRef: sessionRefA),
+          leaseEvent(
+            commandId: 'cmd-1',
+            pubkey: otherProviderPubkey,
+            createdAt: 2000,
+          ),
+        ],
+      );
+      expect(
+        view
+            .reachabilityFor(
+              view.sessions.single,
+              now: DateTime.fromMillisecondsSinceEpoch(
+                2010 * 1000,
+                isUtc: true,
+              ),
+            )
+            .kind,
+        CodingSessionReachabilityKind.noProviderAnswering,
+      );
+    });
+
+    test('a superseded generation\'s live lease answers for nothing', () {
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: [
+          createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+          receiptEvent(commandId: 'cmd-1', status: 'created'),
+          metadataEvent(status: 'running', sessionRef: sessionRefA),
+          resumeEvent(commandId: 'cmd-2'),
+          receiptEvent(
+            commandId: 'cmd-2',
+            status: 'resumed',
+            forTarget: target(generation: 2),
+            createdAt: 1900,
+          ),
+          metadataEvent(
+            forTarget: target(generation: 2),
+            status: 'running',
+            sessionRef: sessionRefA,
+            createdAt: 1950,
+          ),
+          // Live, in date, signed by the authority — but for generation 1.
+          leaseEvent(commandId: 'cmd-1', createdAt: 2000),
+        ],
+      );
+      expect(view.sessions.single.executions, hasLength(2));
+      expect(
+        view
+            .reachabilityFor(
+              view.sessions.single,
+              now: DateTime.fromMillisecondsSinceEpoch(
+                2010 * 1000,
+                isUtc: true,
+              ),
+            )
+            .kind,
+        CodingSessionReachabilityKind.noProviderAnswering,
+      );
+    });
   });
 
   group('generation-aware status', () {
@@ -796,6 +897,7 @@ void main() {
         final verdict = deriveCodingSessionReachability(
           leases: [_lease(createdAt: 1900)],
           currentTarget: target(),
+          acceptedCommandId: 'cmd-1',
           now: now,
         );
         expect(verdict.kind, CodingSessionReachabilityKind.reachable);
@@ -807,6 +909,7 @@ void main() {
       final verdict = deriveCodingSessionReachability(
         leases: [_lease(createdAt: 1849)],
         currentTarget: target(),
+        acceptedCommandId: 'cmd-1',
         now: now,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
@@ -820,6 +923,7 @@ void main() {
           _lease(leaseSequence: 2, state: 'released', createdAt: 1995),
         ],
         currentTarget: target(),
+        acceptedCommandId: 'cmd-1',
         now: now,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
@@ -830,6 +934,7 @@ void main() {
       final verdict = deriveCodingSessionReachability(
         leases: [_lease(forTarget: target(generation: 1), createdAt: 1990)],
         currentTarget: target(generation: 2),
+        acceptedCommandId: 'cmd-2',
         now: now,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
@@ -842,16 +947,30 @@ void main() {
           _lease(leaseSequence: 3, createdAt: 1991, id: '0' * 63 + 'b'),
         ],
         currentTarget: target(),
+        acceptedCommandId: 'cmd-1',
         now: now,
       );
       expect(verdict.kind, CodingSessionReachabilityKind.unknown);
       expect(verdict.conflict, isTrue);
     });
 
+    test('a lease minted by a command nobody accepted proves nothing', () {
+      final verdict = deriveCodingSessionReachability(
+        leases: [
+          _lease(commandId: 'a-command-that-minted-nothing', createdAt: 1990),
+        ],
+        currentTarget: target(),
+        acceptedCommandId: 'cmd-1',
+        now: now,
+      );
+      expect(verdict.kind, CodingSessionReachabilityKind.noProviderAnswering);
+    });
+
     test('an unread lease query is unknown, never "nobody answering"', () {
       final verdict = deriveCodingSessionReachability(
         leases: const [],
         currentTarget: target(),
+        acceptedCommandId: 'cmd-1',
         now: now,
         leasesRead: false,
       );
