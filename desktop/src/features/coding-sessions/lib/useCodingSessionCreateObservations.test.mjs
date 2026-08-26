@@ -171,10 +171,18 @@ test("creates ride their own subscription and only bind once the receipt lands",
   // Its own subscription, deliberately not the trusted-ingress one: both
   // kinds, scoped to the channel, and no `authors` narrowing — any member may
   // found a session, so there is no allowlist a create could be scoped by.
-  assert.equal(historyCalls.length, 1);
-  assert.deepEqual(historyCalls[0].kinds, [44221, 44224, 44226]);
-  assert.deepEqual(historyCalls[0]["#h"], [CHANNEL_ID]);
-  assert.equal("authors" in historyCalls[0], false);
+  // The backfill is one read per kind: a relay filter's row budget is shared
+  // across every kind it names, and 44224 now grows by two receipts per turn,
+  // so a shared budget would eventually return only receipts and no creates.
+  // The live subscription has no budget to share, so it stays a single filter.
+  assert.deepEqual(
+    historyCalls.map((filter) => filter.kinds),
+    [[44221], [44224], [44226]],
+  );
+  for (const filter of historyCalls) {
+    assert.deepEqual(filter["#h"], [CHANNEL_ID]);
+    assert.equal("authors" in filter, false);
+  }
   assert.equal(liveSubscriptions.length, 1);
   assert.deepEqual(liveSubscriptions[0].filter.kinds, [44221, 44224, 44226]);
   assert.equal(result.current.isLoading, false);
@@ -300,7 +308,7 @@ test("a member who runs no providers still sees who founded the session", async 
     });
   }
 
-  assert.equal(historyCalls.length, 1);
+  assert.equal(historyCalls.length, 3);
   assert.equal(result.current.observations.length, 1);
   assert.equal(result.current.observations[0].signerPubkey, OPERATOR_PUBKEY);
   assert.deepEqual(result.current.observations[0].target, TARGET);
