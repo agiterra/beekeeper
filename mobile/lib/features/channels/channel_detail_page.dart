@@ -25,6 +25,7 @@ import '../profile/presence_cache_provider.dart';
 import '../profile/profile_provider.dart';
 import '../profile/user_cache_provider.dart';
 import '../profile/user_profile.dart';
+import '../coding_sessions/ui/coding_sessions_page.dart';
 import '../forum/forum_posts_view.dart';
 import 'android_ime_lift.dart';
 import 'channel.dart';

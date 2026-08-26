@@ -11,6 +11,7 @@ import '../../shared/theme/theme.dart';
 import '../../shared/widgets/buzz_loading_indicator.dart';
 import '../../shared/widgets/modal_presentation.dart';
 import '../../shared/widgets/sheet_divider.dart';
+import '../coding_sessions/ui/coding_sessions_page.dart';
 import 'channel.dart';
 import 'channel_management_provider.dart';
 import 'channel_mutes/channel_mutes_provider.dart';
@@ -161,6 +162,23 @@ class ChannelActionsSheet extends ConsumerWidget {
                 ),
                 const SizedBox(height: Grid.xs),
               ],
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(LucideIcons.squareTerminal),
+                title: const Text('Coding sessions'),
+                onTap: () {
+                  final navigator = Navigator.of(context, rootNavigator: true);
+                  close();
+                  navigator.push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CodingSessionsPage(
+                        channelId: channel.id,
+                        channelName: channel.isDm ? null : channel.name,
+                      ),
+                    ),
+                  );
+                },
+              ),
               if (!channel.isDm)
                 ListTile(
                   contentPadding: EdgeInsets.zero,

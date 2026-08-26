@@ -30,12 +30,66 @@ double _dmAppBarTitleContentHeight(BuildContext context) {
   return textHeight > _dmHeaderAvatarSize ? textHeight : _dmHeaderAvatarSize;
 }
 
+/// The channel header's member actions, plus the coding-session observer
+/// beside them.
+///
+/// The coding-session action lives here rather than in the page's own
+/// `actions:` list because this part file is the only header surface this
+/// change owns; it renders as a second compact icon next to Members.
 class _MembersButton extends ConsumerWidget {
   final String channelId;
   final Channel channel;
   final String? currentPubkey;
 
   const _MembersButton({
+    required this.channelId,
+    required this.channel,
+    required this.currentPubkey,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      _CodingSessionsButton(channel: channel),
+      _MembersIconButton(
+        channelId: channelId,
+        channel: channel,
+        currentPubkey: currentPubkey,
+      ),
+    ],
+  );
+}
+
+/// Opens the read-only coding-session observer for this channel.
+class _CodingSessionsButton extends StatelessWidget {
+  final Channel channel;
+
+  const _CodingSessionsButton({required this.channel});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: const ValueKey('channel-coding-sessions-action'),
+    color: context.colors.primary,
+    tooltip: 'Coding sessions',
+    onPressed: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CodingSessionsPage(
+          channelId: channel.id,
+          channelName: channel.isDm ? null : channel.name,
+        ),
+      ),
+    ),
+    icon: const Icon(LucideIcons.squareTerminal, size: 22),
+  );
+}
+
+class _MembersIconButton extends ConsumerWidget {
+  final String channelId;
+  final Channel channel;
+  final String? currentPubkey;
+
+  const _MembersIconButton({
     required this.channelId,
     required this.channel,
     required this.currentPubkey,
