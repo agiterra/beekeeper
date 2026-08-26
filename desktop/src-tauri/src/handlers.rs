@@ -423,6 +423,7 @@ pub(crate) fn invoke_handler(
         coding_sessions::workdir_store::pick_coding_session_workdir,
         coding_sessions::worktree::plan_coding_session_worktree,
         coding_sessions::worktree::create_coding_session_worktree,
+        coding_sessions::worktree::list_coding_session_worktree_branches,
         coding_sessions::naming::coding_session_naming_settings,
         coding_sessions::naming::set_coding_session_naming_settings,
         coding_sessions::naming::generate_coding_session_name,

@@ -3,11 +3,11 @@ import { invokeTauri } from "@/shared/api/tauri";
 /**
  * Git worktrees for coding sessions.
  *
- * A worktree gives a session its own directory and branch off the checkout's
- * HEAD, so an agent can commit and switch without disturbing what the person
- * has open. Like the working directories in
- * `@/shared/api/tauriCodingSessionWorkdirs`, none of this is ever published:
- * a worktree path names one machine's disk.
+ * A worktree gives a session its own directory and branch — off a chosen
+ * source branch, the trunk by default — so an agent can commit and switch
+ * without disturbing what the person has open. Like the working directories
+ * in `@/shared/api/tauriCodingSessionWorkdirs`, none of this is ever
+ * published: a worktree path names one machine's disk.
  *
  * Mirrors the Rust types in
  * `desktop/src-tauri/src/coding_sessions/worktree.rs`.
@@ -24,8 +24,22 @@ export type CodingSessionWorktreePlan = {
   slug: string | null;
   /** True when the requested slug was taken and this one differs. */
   disambiguated: boolean;
+  /**
+   * Branch the new branch starts from — the requested source, else the
+   * repository's default. Null means the checkout's current HEAD.
+   */
+  source: string | null;
   /** The one sentence explaining why no worktree can be planned. */
   problem: string | null;
+};
+
+export type CodingSessionWorktreeBranches = {
+  /** Local branches, most recently committed first. */
+  branches: string[];
+  /** `main` when it exists, else `master`, else null. */
+  defaultBranch: string | null;
+  /** The branch the checkout has checked out, when it is on one. */
+  headBranch: string | null;
 };
 
 export type CodingSessionWorktreeCreated = {
@@ -41,13 +55,29 @@ export type CodingSessionWorktreeCreated = {
 export async function planCodingSessionWorktree(input: {
   workdir: string;
   name: string;
+  source: string | null;
 }): Promise<CodingSessionWorktreePlan> {
   return invokeTauri<CodingSessionWorktreePlan>(
     "plan_coding_session_worktree",
     {
       workdir: input.workdir,
       name: input.name,
+      source: input.source,
     },
+  );
+}
+
+/**
+ * The branches a worktree in this working directory could start from, and
+ * which of them is the default. An empty list when the directory is not a
+ * git checkout.
+ */
+export async function listCodingSessionWorktreeBranches(input: {
+  workdir: string;
+}): Promise<CodingSessionWorktreeBranches> {
+  return invokeTauri<CodingSessionWorktreeBranches>(
+    "list_coding_session_worktree_branches",
+    { workdir: input.workdir },
   );
 }
 
@@ -61,9 +91,10 @@ export async function planCodingSessionWorktree(input: {
 export async function createCodingSessionWorktree(input: {
   workdir: string;
   name: string;
+  source: string | null;
 }): Promise<CodingSessionWorktreeCreated> {
   return invokeTauri<CodingSessionWorktreeCreated>(
     "create_coding_session_worktree",
-    { workdir: input.workdir, name: input.name },
+    { workdir: input.workdir, name: input.name, source: input.source },
   );
 }

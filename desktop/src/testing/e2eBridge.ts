@@ -292,6 +292,16 @@ type E2eConfig = {
     };
     /** Host runtime table for `coding_session_provider_runtimes`. */
     codingSessionProviderRuntimes?: RawCodingSessionProviderRuntime[];
+    /**
+     * Branch table for `list_coding_session_worktree_branches` — opt-in like
+     * the provider host commands; unconfigured, the command throws and the
+     * dialog hides its source-branch picker.
+     */
+    codingSessionWorktreeBranches?: {
+      branches: string[];
+      defaultBranch: string | null;
+      headBranch: string | null;
+    };
     /** Runtime table once a mocked connect (sign-in) has completed. */
     codingSessionProviderRuntimesAfterConnect?: RawCodingSessionProviderRuntime[];
     activePersonaIds?: string[];
@@ -12617,6 +12627,13 @@ export function maybeInstallE2eTauriMocks() {
           throw new Error(`Unsupported mocked Tauri command: ${command}`);
         }
         return status;
+      }
+      case "list_coding_session_worktree_branches": {
+        const branches = activeConfig?.mock?.codingSessionWorktreeBranches;
+        if (!branches) {
+          throw new Error(`Unsupported mocked Tauri command: ${command}`);
+        }
+        return branches;
       }
       case "coding_session_capacity_settings": {
         // Mirrors the host: stored values, the provider's own defaults, and

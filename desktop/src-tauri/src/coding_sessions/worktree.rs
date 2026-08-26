@@ -2,9 +2,9 @@
 //!
 //! A session that runs in the checkout a person is also editing shares one
 //! index, one HEAD, and one set of uncommitted changes with them. A worktree
-//! gives the session its own directory and its own branch off the checkout's
-//! current HEAD, so the agent can commit, switch, and stash without touching
-//! what the person has open.
+//! gives the session its own directory and its own branch — off a chosen
+//! source branch, the trunk by default — so the agent can commit, switch, and
+//! stash without touching what the person has open.
 //!
 //! Placement is a sibling of the repository — `<repo>.worktrees/<slug>` — for
 //! two reasons: nothing is written *inside* the repository (no untracked
@@ -40,8 +40,26 @@ pub struct CodingSessionWorktreePlan {
     pub slug: Option<String>,
     /// True when the requested slug was already taken and this one differs.
     pub disambiguated: bool,
+    /// Branch the new branch starts from: the requested source, else the
+    /// repository's default (`main`, then `master`). `None` means the
+    /// checkout's current `HEAD` — the fallback when neither exists.
+    pub source: Option<String>,
     /// The one sentence explaining why no worktree can be planned.
     pub problem: Option<String>,
+}
+
+/// The branches a session's worktree could start from.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingSessionWorktreeBranches {
+    /// Local branches, most recently committed first. Empty when the working
+    /// directory is not a git checkout.
+    pub branches: Vec<String>,
+    /// The branch a new session should start from unless told otherwise:
+    /// `main` when it exists, else `master`, else nothing.
+    pub default_branch: Option<String>,
+    /// The branch the checkout itself has checked out, when it is on one.
+    pub head_branch: Option<String>,
 }
 
 /// A worktree that now exists.
@@ -135,6 +153,60 @@ fn branch_exists(repo_root: &Path, branch: &str) -> Result<bool, String> {
     .is_ok())
 }
 
+/// Local branches of `repo_root`, most recently committed first.
+fn local_branches(repo_root: &Path) -> Result<Vec<String>, String> {
+    let auth = build_local_git_auth_config()?;
+    let output = run_git(
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
+        Some(repo_root),
+        &auth,
+    )?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// The branch a session starts from when nobody chose one.
+///
+/// `main`, then `master` — the trunk, not whatever the checkout happens to
+/// have checked out. Sessions used to branch from `HEAD`, and a checkout
+/// parked on an old topic branch quietly became the ancestor of every new
+/// session made from it. `None` when neither exists; only then does `HEAD`
+/// remain the start point.
+fn default_source(branches: &[String]) -> Option<String> {
+    for candidate in ["main", "master"] {
+        if branches.iter().any(|branch| branch == candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+/// The branch `repo_root` currently has checked out, when it is on one.
+fn head_branch(repo_root: &Path) -> Option<String> {
+    let auth = build_local_git_auth_config().ok()?;
+    let output = run_git(
+        &["symbolic-ref", "--short", "-q", "HEAD"],
+        Some(repo_root),
+        &auth,
+    )
+    .ok()?;
+    let branch = output.trim();
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_string())
+    }
+}
+
 /// The first slug whose directory and branch are both free, starting from
 /// `requested` and falling back to a random suffix.
 fn free_slug(repo_root: &Path, parent: &Path, requested: &str) -> Result<(String, bool), String> {
@@ -155,7 +227,11 @@ fn free_slug(repo_root: &Path, parent: &Path, requested: &str) -> Result<(String
 }
 
 /// Plan a worktree without creating anything.
-fn plan(workdir: &str, name: &str) -> Result<CodingSessionWorktreePlan, String> {
+fn plan(
+    workdir: &str,
+    name: &str,
+    source: Option<&str>,
+) -> Result<CodingSessionWorktreePlan, String> {
     let Some(slug) = worktree_slug(name) else {
         return Ok(CodingSessionWorktreePlan {
             problem: Some("Give the worktree a name — letters and numbers.".to_string()),
@@ -184,6 +260,25 @@ fn plan(workdir: &str, name: &str) -> Result<CodingSessionWorktreePlan, String> 
             ..Default::default()
         });
     };
+    // The start point is checked against the repository's real branches, not
+    // trusted from the caller: the branch list the dialog showed can go stale
+    // between opening it and submitting.
+    let branches = local_branches(&repo_root)?;
+    let source = match source.map(str::trim).filter(|source| !source.is_empty()) {
+        Some(requested) => {
+            if !branches.iter().any(|branch| branch == requested) {
+                return Ok(CodingSessionWorktreePlan {
+                    repo_root: Some(repo_root.to_string_lossy().into_owned()),
+                    problem: Some(format!(
+                        "That repository has no branch named \"{requested}\"."
+                    )),
+                    ..Default::default()
+                });
+            }
+            Some(requested.to_string())
+        }
+        None => default_source(&branches),
+    };
     let (slug, disambiguated) = free_slug(&repo_root, &parent, &slug)?;
     Ok(CodingSessionWorktreePlan {
         repo_root: Some(repo_root.to_string_lossy().into_owned()),
@@ -191,7 +286,31 @@ fn plan(workdir: &str, name: &str) -> Result<CodingSessionWorktreePlan, String> 
         branch: Some(slug.clone()),
         slug: Some(slug),
         disambiguated,
+        source,
         problem: None,
+    })
+}
+
+/// Branches of the repository containing `workdir`, for the source picker.
+///
+/// Not being in a repository is an empty answer, not an error: the dialog
+/// simply has no branches to offer, and the plan will say why in its own
+/// words.
+fn list_branches(workdir: &str) -> Result<CodingSessionWorktreeBranches, String> {
+    let workdir_path = Path::new(workdir);
+    if !workdir_path.is_dir() {
+        return Ok(CodingSessionWorktreeBranches::default());
+    }
+    let Some(repo_root) = repo_root_of(workdir_path)? else {
+        return Ok(CodingSessionWorktreeBranches::default());
+    };
+    let branches = local_branches(&repo_root)?;
+    let default_branch = default_source(&branches);
+    let head_branch = head_branch(&repo_root);
+    Ok(CodingSessionWorktreeBranches {
+        branches,
+        default_branch,
+        head_branch,
     })
 }
 
@@ -200,10 +319,21 @@ fn plan(workdir: &str, name: &str) -> Result<CodingSessionWorktreePlan, String> 
 pub async fn plan_coding_session_worktree(
     workdir: String,
     name: String,
+    source: Option<String>,
 ) -> Result<CodingSessionWorktreePlan, String> {
-    tauri::async_runtime::spawn_blocking(move || plan(&workdir, &name))
+    tauri::async_runtime::spawn_blocking(move || plan(&workdir, &name, source.as_deref()))
         .await
         .map_err(|error| format!("worktree plan task failed: {error}"))?
+}
+
+/// The branches a worktree here could start from, and which one is default.
+#[tauri::command]
+pub async fn list_coding_session_worktree_branches(
+    workdir: String,
+) -> Result<CodingSessionWorktreeBranches, String> {
+    tauri::async_runtime::spawn_blocking(move || list_branches(&workdir))
+        .await
+        .map_err(|error| format!("worktree branches task failed: {error}"))?
 }
 
 /// Create the worktree and its branch, and answer with where they landed.
@@ -212,43 +342,54 @@ pub async fn plan_coding_session_worktree(
 /// can pass between opening the dialog and submitting it, and creating a
 /// worktree over a directory that appeared in the meantime would be worse
 /// than renaming.
+fn create(
+    workdir: &str,
+    name: &str,
+    source: Option<&str>,
+) -> Result<CodingSessionWorktreeCreated, String> {
+    let planned = plan(workdir, name, source)?;
+    if let Some(problem) = planned.problem {
+        return Err(problem);
+    }
+    let (Some(repo_root), Some(path), Some(branch)) =
+        (planned.repo_root, planned.path, planned.branch)
+    else {
+        return Err("could not plan a worktree for this working directory".to_string());
+    };
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create worktree folder: {error}"))?;
+    }
+    let auth = build_local_git_auth_config()?;
+    // Branch from the planned source — the chosen branch, or the trunk — and
+    // from `HEAD` only when the repository has neither. No argument can read
+    // as an option: the path is absolute, the slug never starts with a
+    // hyphen, and the source is spelled as a full ref.
+    let start_point = match planned.source.as_deref() {
+        Some(source) => format!("refs/heads/{source}"),
+        None => "HEAD".to_string(),
+    };
+    run_git(
+        &["worktree", "add", "-b", &branch, &path, &start_point],
+        Some(Path::new(&repo_root)),
+        &auth,
+    )?;
+    Ok(CodingSessionWorktreeCreated {
+        path,
+        branch,
+        repo_root,
+    })
+}
+
 #[tauri::command]
 pub async fn create_coding_session_worktree(
     workdir: String,
     name: String,
+    source: Option<String>,
 ) -> Result<CodingSessionWorktreeCreated, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let planned = plan(&workdir, &name)?;
-        if let Some(problem) = planned.problem {
-            return Err(problem);
-        }
-        let (Some(repo_root), Some(path), Some(branch)) =
-            (planned.repo_root, planned.path, planned.branch)
-        else {
-            return Err("could not plan a worktree for this working directory".to_string());
-        };
-        if let Some(parent) = Path::new(&path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("create worktree folder: {error}"))?;
-        }
-        let auth = build_local_git_auth_config()?;
-        // Branch from the checkout's current HEAD: the session starts from
-        // what the person is looking at, which is what "use a worktree" means
-        // to them. Neither argument can read as an option — the path is
-        // absolute and the slug never starts with a hyphen.
-        run_git(
-            &["worktree", "add", "-b", &branch, &path, "HEAD"],
-            Some(Path::new(&repo_root)),
-            &auth,
-        )?;
-        Ok(CodingSessionWorktreeCreated {
-            path,
-            branch,
-            repo_root,
-        })
-    })
-    .await
-    .map_err(|error| format!("worktree create task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || create(&workdir, &name, source.as_deref()))
+        .await
+        .map_err(|error| format!("worktree create task failed: {error}"))?
 }
 
 #[cfg(test)]

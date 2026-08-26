@@ -72,7 +72,7 @@ fn disambiguator_is_four_hex_characters() {
 
 #[test]
 fn plan_reports_a_missing_working_directory_rather_than_failing() {
-    let planned = plan("/definitely/not/a/directory/here", "some name").expect("plan");
+    let planned = plan("/definitely/not/a/directory/here", "some name", None).expect("plan");
     assert!(planned.path.is_none());
     assert_eq!(
         planned.problem.as_deref(),
@@ -82,7 +82,7 @@ fn plan_reports_a_missing_working_directory_rather_than_failing() {
 
 #[test]
 fn plan_reports_an_unnameable_worktree() {
-    let planned = plan("/tmp", "!!!").expect("plan");
+    let planned = plan("/tmp", "!!!", None).expect("plan");
     assert!(planned.path.is_none());
     assert_eq!(
         planned.problem.as_deref(),
@@ -126,8 +126,11 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
     }
     let checkout_str = checkout.to_string_lossy().into_owned();
 
-    let planned = plan(&checkout_str, "Improve Coding Session Creation").expect("plan");
+    let planned = plan(&checkout_str, "Improve Coding Session Creation", None).expect("plan");
     assert_eq!(planned.problem, None);
+    // The scratch repository's one branch is `main`, so the default start
+    // point is `main` — even though `HEAD` would answer the same commit here.
+    assert_eq!(planned.source.as_deref(), Some("main"));
     assert_eq!(
         planned.slug.as_deref(),
         Some("improve-coding-session-creation")
@@ -167,7 +170,7 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
     );
 
     // The same name again: same request, different answer, and it says so.
-    let again = plan(&checkout_str, "Improve Coding Session Creation").expect("plan");
+    let again = plan(&checkout_str, "Improve Coding Session Creation", None).expect("plan");
     assert_eq!(again.problem, None);
     assert!(again.disambiguated, "a taken name must be disambiguated");
     assert_ne!(again.path, planned.path);
@@ -177,6 +180,127 @@ fn a_worktree_is_planned_created_and_then_disambiguated() {
         .as_deref()
         .expect("slug")
         .starts_with("improve-coding-session-creation-"));
+}
+
+/// An empty commit on whatever branch `dir` has checked out.
+fn scratch_commit(dir: &Path, message: &str) -> Result<(), String> {
+    let auth = build_local_git_auth_config()?;
+    run_git(
+        &[
+            "-c",
+            "user.name=Bee Keeper Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+        Some(dir),
+        &auth,
+    )?;
+    Ok(())
+}
+
+/// The commit a ref points at.
+fn rev_parse(dir: &Path, rev: &str) -> String {
+    let auth = build_local_git_auth_config().expect("git");
+    run_git(&["rev-parse", rev], Some(dir), &auth)
+        .expect("rev-parse")
+        .trim()
+        .to_string()
+}
+
+/// The scenario this feature exists for: the checkout is parked on a topic
+/// branch that has drifted from `main`, and a new session must not silently
+/// inherit that topic branch as its ancestor.
+#[test]
+fn a_worktree_starts_from_main_even_when_the_checkout_is_parked_elsewhere() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    if scratch_repo(&checkout).is_err() {
+        return;
+    }
+    let auth = build_local_git_auth_config().expect("git");
+    // A topic branch at the root commit, then `main` moves past it, then the
+    // checkout parks on the topic branch — exactly a stale session worktree.
+    run_git(&["branch", "old-topic"], Some(&checkout), &auth).expect("branch");
+    scratch_commit(&checkout, "main moved on").expect("commit");
+    run_git(&["checkout", "old-topic"], Some(&checkout), &auth).expect("checkout");
+    let checkout_str = checkout.to_string_lossy().into_owned();
+
+    let listed = list_branches(&checkout_str).expect("list");
+    assert!(listed.branches.iter().any(|branch| branch == "main"));
+    assert!(listed.branches.iter().any(|branch| branch == "old-topic"));
+    assert_eq!(listed.default_branch.as_deref(), Some("main"));
+    assert_eq!(listed.head_branch.as_deref(), Some("old-topic"));
+
+    // Create with no explicit source, the way the dialog's default submits.
+    let created = create(&checkout_str, "fresh session", None).expect("create");
+    assert_eq!(
+        rev_parse(Path::new(&created.path), "HEAD"),
+        rev_parse(&checkout, "main"),
+        "the worktree must start at main's tip, not the parked topic branch"
+    );
+
+    // An explicit source is honored too.
+    let from_topic =
+        create(&checkout_str, "topic followup", Some("old-topic")).expect("create from topic");
+    assert_eq!(
+        rev_parse(Path::new(&from_topic.path), "HEAD"),
+        rev_parse(&checkout, "old-topic"),
+    );
+
+    // A source that does not exist is one sentence, not a git error.
+    let missing = plan(&checkout_str, "ghost", Some("no-such-branch")).expect("plan");
+    assert_eq!(
+        missing.problem.as_deref(),
+        Some("That repository has no branch named \"no-such-branch\".")
+    );
+}
+
+/// A repository with neither `main` nor `master` keeps the old behavior:
+/// the worktree branches from the checkout's `HEAD`.
+#[test]
+fn a_repository_without_a_trunk_falls_back_to_head() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let checkout = root.path().join("beekeeper");
+    std::fs::create_dir_all(&checkout).expect("create checkout");
+    let auth = match build_local_git_auth_config() {
+        Ok(auth) => auth,
+        Err(_) => return,
+    };
+    if run_git(
+        &["init", "--initial-branch=trunk", "."],
+        Some(&checkout),
+        &auth,
+    )
+    .is_err()
+    {
+        return;
+    }
+    scratch_commit(&checkout, "root").expect("commit");
+    let checkout_str = checkout.to_string_lossy().into_owned();
+
+    let listed = list_branches(&checkout_str).expect("list");
+    assert_eq!(listed.branches, vec!["trunk".to_string()]);
+    assert_eq!(listed.default_branch, None);
+
+    let planned = plan(&checkout_str, "no trunk name", None).expect("plan");
+    assert_eq!(planned.problem, None);
+    assert_eq!(planned.source, None, "no trunk means HEAD, and it says so");
+}
+
+/// Somewhere that is not a git checkout has no branches and no default —
+/// an empty answer, not an error.
+#[test]
+fn listing_branches_outside_a_repository_is_empty() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let listed = list_branches(&root.path().to_string_lossy()).expect("list");
+    assert!(listed.branches.is_empty());
+    assert_eq!(listed.default_branch, None);
+    assert_eq!(listed.head_branch, None);
 }
 
 #[test]
@@ -189,7 +313,7 @@ fn a_directory_inside_a_repository_plans_against_the_repository_root() {
         return;
     }
 
-    let planned = plan(&nested.to_string_lossy(), "nested start").expect("plan");
+    let planned = plan(&nested.to_string_lossy(), "nested start", None).expect("plan");
     assert_eq!(planned.problem, None);
     // Not `crates/buzz-core.worktrees` — the worktree belongs to the repo.
     assert_eq!(

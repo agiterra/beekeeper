@@ -261,6 +261,9 @@ export function NewCodingSessionForm({
   const [workdir, setWorkdir] = React.useState("");
   const [useWorktree, setUseWorktree] = React.useState(true);
   const [worktreeName, setWorktreeName] = React.useState("");
+  const [worktreeSource, setWorktreeSource] = React.useState<string | null>(
+    null,
+  );
   const {
     text: draftText,
     setText: setDraftText,
@@ -357,6 +360,7 @@ export function NewCodingSessionForm({
           const created = await createCodingSessionWorktree({
             workdir: effectiveWorkdir,
             name: worktreeName.trim(),
+            source: worktreeSource,
           });
           effectiveWorkdir = created.path;
         } catch (error) {
@@ -395,6 +399,7 @@ export function NewCodingSessionForm({
     useWorktree,
     workdir,
     worktreeName,
+    worktreeSource,
   ]);
 
   // Once a transaction exists, the create is a session-in-waiting and renders
@@ -568,7 +573,9 @@ export function NewCodingSessionForm({
           name={worktreeName}
           onCheckedChange={setUseWorktree}
           onNameChange={setWorktreeName}
+          onSourceChange={setWorktreeSource}
           sessionName={title}
+          source={worktreeSource}
           workdir={workdir}
         />
 
