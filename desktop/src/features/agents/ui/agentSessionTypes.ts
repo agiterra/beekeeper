@@ -93,6 +93,16 @@ export type TranscriptItemIdentity = {
     pubkey: string;
     label: string;
   } | null;
+  /**
+   * The **provider's own** session UUID, as it appears in the `cs-target`.
+   *
+   * Distinct from `sessionId`, which is a display/scope key
+   * (`coding-session-transcript-generation/v1:…`) built to keep items from
+   * colliding across channels and targets. Anything that has to name this
+   * session to the *host* — the redaction vault is keyed by it — needs this
+   * one, and passing `sessionId` there silently addresses nothing.
+   */
+  providerSessionId?: string | null;
 };
 
 export type TranscriptItem =

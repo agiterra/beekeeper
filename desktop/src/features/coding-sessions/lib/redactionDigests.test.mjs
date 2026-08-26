@@ -26,7 +26,11 @@ function message(text, overrides = {}) {
     title: "Response",
     text,
     timestamp: "2026-08-26T00:00:00Z",
-    sessionId: "session-1",
+    // The display scope key and the provider's own UUID are deliberately
+    // different here: the vault is keyed by the latter, and asking with the
+    // former addresses nothing at all.
+    sessionId: "coding-session-transcript-generation/v1:chan:signer:1",
+    providerSessionId: "session-1",
     bridgeSource: { pubkey: SIGNER, label: "provider" },
     ...overrides,
   };
@@ -77,7 +81,8 @@ test("markers in tool titles, args, results, and previews are all found", () => 
       timestamp: "2026-08-26T00:00:00Z",
       startedAt: null,
       completedAt: null,
-      sessionId: "session-1",
+      sessionId: "coding-session-transcript-generation/v1:chan:signer:1",
+      providerSessionId: "session-1",
       bridgeSource: { pubkey: SIGNER, label: "provider" },
     },
   ]);
@@ -103,9 +108,31 @@ test("a transcript spanning two signers is refused rather than guessed", () => {
 test("a transcript spanning two sessions is refused rather than guessed", () => {
   const scope = collectRedactionLookupScope([
     message(`a ${marker(148, 1)}`),
-    message(`b ${marker(9, 2)}`, { id: "item-2", sessionId: "session-2" }),
+    message(`b ${marker(9, 2)}`, {
+      id: "item-2",
+      providerSessionId: "session-2",
+    }),
   ]);
   assert.equal(scope, null);
+});
+
+// The bug this file exists to prevent recurring. `sessionId` is a display
+// scope key that also encodes channel, signer, and generation; the host keys
+// its vault by the provider's bare UUID and rejects anything else as an unsafe
+// path component. Sending the wrong one resolved nothing, silently, through a
+// whole round of live testing.
+test("the session asked for is the provider's UUID, not the display scope key", () => {
+  const scope = collectRedactionLookupScope([message(`a ${marker(148, 1)}`)]);
+  assert.equal(scope.sessionId, "session-1");
+});
+
+test("an item with no providerSessionId has no machine to ask", () => {
+  assert.equal(
+    collectRedactionLookupScope([
+      message(`a ${marker(148, 1)}`, { providerSessionId: null }),
+    ]),
+    null,
+  );
 });
 
 test("an unattributed transcript has no machine to ask", () => {
@@ -117,7 +144,7 @@ test("an unattributed transcript has no machine to ask", () => {
   );
   assert.equal(
     collectRedactionLookupScope([
-      message(`a ${marker(148, 1)}`, { sessionId: null }),
+      message(`a ${marker(148, 1)}`, { providerSessionId: null }),
     ]),
     null,
   );

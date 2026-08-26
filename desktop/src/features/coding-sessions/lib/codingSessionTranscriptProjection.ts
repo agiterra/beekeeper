@@ -377,6 +377,7 @@ function toIntermediate(
           eventSeq === null ? "unknown-seq" : String(eventSeq),
         ),
         sessionId,
+        providerSessionId: target.sessionId,
         targetKey,
         channelId,
         timestamp,

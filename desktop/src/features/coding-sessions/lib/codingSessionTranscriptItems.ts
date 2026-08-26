@@ -47,6 +47,8 @@ export type CodingSessionItemIdentity = {
   declaredTurnId?: string;
   acpSource?: string;
   bridgeSource?: CodingSessionBridgeSource | null;
+  /** The provider's own session UUID; see `TranscriptItemIdentity`. */
+  providerSessionId?: string | null;
 };
 
 /** Stamp the signer's display identity onto a finished item. */
@@ -54,7 +56,13 @@ export function finalizeCodingSessionItem(
   item: TranscriptItem,
   ctx: Identity,
 ): TranscriptItem {
-  return ctx.bridgeSource ? { ...item, bridgeSource: ctx.bridgeSource } : item;
+  const stamped =
+    ctx.providerSessionId != null
+      ? { ...item, providerSessionId: ctx.providerSessionId }
+      : item;
+  return ctx.bridgeSource
+    ? { ...stamped, bridgeSource: ctx.bridgeSource }
+    : stamped;
 }
 
 type Identity = CodingSessionItemIdentity;

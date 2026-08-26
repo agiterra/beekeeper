@@ -119,9 +119,13 @@ export function useRedactionDictionary(
         }
         if (!cancelled) setResolved(new Map(entries));
       })
-      .catch(() => {
+      .catch((error) => {
         // A vault this machine cannot read is a machine that cannot answer,
-        // not a transient fault. The honest fallback is the pill.
+        // not a transient fault: the honest fallback is the pill. But it is
+        // logged, because a *rejected* lookup and an empty one render
+        // identically, and swallowing the difference is what hid the original
+        // session-id bug for a whole round of live testing.
+        console.warn("redaction lookup failed", error);
       });
     return () => {
       cancelled = true;

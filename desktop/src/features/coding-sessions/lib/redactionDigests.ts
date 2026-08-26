@@ -26,6 +26,13 @@ export type RedactionLookupScope = {
  * Collect the distinct redaction digests in `items`, with the session and
  * signer they belong to.
  *
+ * The session is the item's **`providerSessionId`**, not its `sessionId`.
+ * `sessionId` is a display/scope key that also encodes the channel, signer, and
+ * generation; the vault on disk is keyed by the provider's bare session UUID,
+ * and asking with the scope key addresses nothing at all. That was the original
+ * bug here, and it was silent — the backend rejected the composite key as an
+ * unsafe path component and the client swallowed the error.
+ *
  * Returns `null` — meaning "do not ask" — when the transcript carries no
  * marker, or when it does not name a single signer and session. A transcript
  * with items from two signers is not a state the provider produces; refusing
@@ -54,7 +61,7 @@ export function collectRedactionLookupScope(
       }
     }
     if (digests.length === 0) continue;
-    const itemSession = item.sessionId ?? null;
+    const itemSession = item.providerSessionId ?? null;
     const itemSigner = item.bridgeSource?.pubkey ?? null;
     if (itemSession) {
       if (sessionId !== null && sessionId !== itemSession) return null;

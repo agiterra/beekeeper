@@ -1007,8 +1007,12 @@ fn sanitize_text(value: &str, log: &mut RedactionLog) -> String {
         } else if contains_shaped_secret(word) {
             // A credential is masked, not hashed: see `mask_credential_value`.
             sanitized.push_str(&mask_credential_value(word));
-        } else if contains_host_path(word) {
-            sanitized.push_str(&elide_str(word, RedactionClass::HostPath, log));
+        } else if let Some((start, end)) = host_path_span(word) {
+            // The path goes; the quote, bracket, or full stop around it stays
+            // where the author put it.
+            sanitized.push_str(&word[..start]);
+            sanitized.push_str(&elide_str(&word[start..end], RedactionClass::HostPath, log));
+            sanitized.push_str(&word[end..]);
         } else {
             sanitized.push_str(word);
         }
@@ -1250,15 +1254,48 @@ const SYSTEM_COMMAND_PATHS: &[&str] = &[
     "/usr/bin/env",
 ];
 
-fn contains_host_path(word: &str) -> bool {
-    let token = word.trim_matches(|character: char| {
-        matches!(
-            character,
-            '\'' | '"' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
-        )
-    });
-    let candidate = token.rsplit_once('=').map_or(token, |(_, value)| value);
+/// Byte range of the host path inside `word`, if it holds one.
+///
+/// Returning a *span* rather than a bool is what lets the redactor replace the
+/// path and leave the punctuation around it alone. Redacting the whole word
+/// ate the quote in `"/Applications/Bee` and the full stop in
+/// `/Applications.`, which made a marker look like it had swallowed more of
+/// the sentence than it had (observed live 2026-08-26).
+fn host_path_span(word: &str) -> Option<(usize, usize)> {
+    // Punctuation that brackets a path in prose or in a shell line. The
+    // sentence-enders are new: prose ends clauses with a path, and `.`/`,`
+    // were being redacted as if they were part of the filename.
+    const EDGE: &[char] = &[
+        '\'', '"', '`', '(', ')', '[', ']', '{', '}', ',', ';', ':', '.', '!', '?',
+    ];
+    let start_trimmed = word.trim_start_matches(EDGE);
+    let start = word.len() - start_trimmed.len();
+    let token = start_trimmed.trim_end_matches(EDGE);
+    if token.is_empty() {
+        return None;
+    }
+    // `KEY=/some/path` carries the path on the value side only.
+    let (offset, candidate) = match token.rsplit_once('=') {
+        Some((key, value)) => (start + key.len() + 1, value),
+        None => (start, token),
+    };
+    if candidate.is_empty() || !contains_host_path(candidate) {
+        return None;
+    }
+    Some((offset, offset + candidate.len()))
+}
+
+/// Does this token, already stripped of surrounding punctuation, name host
+/// layout?
+fn contains_host_path(candidate: &str) -> bool {
     if SYSTEM_COMMAND_PATHS.contains(&candidate) {
+        return false;
+    }
+    // A separator with nothing under it is not this machine's layout, and
+    // neither is a regex or glob anchor that merely starts with one. Live
+    // transcripts redacted a bare `/` and the pattern `/^worktree` as though
+    // both were private paths.
+    if !has_named_first_segment(candidate) {
         return false;
     }
     let lowered = candidate.to_ascii_lowercase();
@@ -1300,6 +1337,30 @@ fn contains_host_path(word: &str) -> bool {
             && candidate.as_bytes()[0].is_ascii_alphabetic()
             && candidate.as_bytes()[1] == b':'
             && matches!(candidate.as_bytes()[2], b'\\' | b'/'))
+}
+
+/// Does the first path segment name something, rather than anchor a pattern?
+///
+/// A real reference has a segment after its first separator, and that segment
+/// starts the way a file name does. `^`, `$`, `*`, and `|` start a regex or a
+/// glob — `/^worktree` is a `sed` address, not a directory.
+///
+/// Only the *first* segment is checked. Deeper segments are the ones most
+/// likely to be genuinely unusual (a branch name, a temp directory), and
+/// judging them would narrow the guard rather than sharpen it.
+fn has_named_first_segment(candidate: &str) -> bool {
+    let rest = candidate
+        .strip_prefix("~/")
+        .or_else(|| candidate.strip_prefix('/'))
+        .unwrap_or(candidate);
+    // Windows and UNC forms, `file://`, and `C:\…` are judged by the shape
+    // tests below rather than by their first segment.
+    if rest == candidate && !candidate.starts_with('/') {
+        return true;
+    }
+    rest.chars()
+        .next()
+        .is_some_and(|first| first.is_alphanumeric() || matches!(first, '_' | '-' | '.'))
 }
 
 /// Which rule, if any, claims a value by the name of the key holding it — and

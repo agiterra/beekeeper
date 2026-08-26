@@ -922,3 +922,95 @@ fn re_redacting_an_already_redacted_item_records_nothing() {
     assert_eq!(twice, once);
     assert!(second.is_empty(), "{second:?}");
 }
+
+// ── What the guard mistook for host layout (found live 2026-08-26) ───────────
+//
+// Andy ran a real session and the vault filled with things that are not paths:
+// a bare `/`, a sentence's full stop, and a `sed` address. Each cost a
+// perfectly readable word and taught the reader nothing.
+
+/// A separator with nothing under it describes no machine.
+#[test]
+fn a_bare_separator_is_not_a_host_path() {
+    for text in [
+        "split the arguments on / and re-ran it",
+        "the ratio was 3 / 4 across both runs",
+    ] {
+        assert_eq!(sanitize_coding_session_context_text(text), text, "{text}");
+    }
+}
+
+/// `/^worktree` is a `sed` address. It was recorded as a host path.
+#[test]
+fn a_regex_or_glob_anchor_is_not_a_host_path() {
+    for text in [
+        "ran sed -n '/^worktree/p' over the list",
+        "the pattern /$/ ends every line",
+    ] {
+        assert_eq!(sanitize_coding_session_context_text(text), text, "{text}");
+    }
+}
+
+/// The path goes; the sentence's punctuation stays where the author put it.
+#[test]
+fn redaction_takes_the_path_and_leaves_the_punctuation_around_it() {
+    let sanitized = sanitize_coding_session_context_text("it lives under /Users/andy/Code.");
+    assert!(sanitized.starts_with("it lives under ["), "{sanitized}");
+    assert!(
+        sanitized.ends_with("].") && !sanitized.contains("Code"),
+        "the full stop belongs to the sentence, not the filename: {sanitized}"
+    );
+
+    let quoted = sanitize_coding_session_context_text("opened \"/Users/andy/notes\" twice");
+    assert!(quoted.starts_with("opened \"["), "{quoted}");
+    assert!(quoted.contains("\" twice"), "{quoted}");
+    assert!(!quoted.contains("notes"), "{quoted}");
+}
+
+/// The value side of an assignment still carries the path, and the key side
+/// still survives — the span must not swallow the variable name.
+#[test]
+fn an_assignment_keeps_its_key_and_redacts_only_the_value() {
+    let sanitized = sanitize_coding_session_context_text("set CARGO_HOME=/Users/andy/.cargo now");
+    assert!(sanitized.starts_with("set CARGO_HOME=["), "{sanitized}");
+    assert!(!sanitized.contains(".cargo"), "{sanitized}");
+}
+
+/// The narrowing must not reopen the hole it was narrowed around: every shape
+/// that was redacted before still is, and the recorded plaintext is now the
+/// path alone rather than the path plus whatever punctuation touched it.
+#[test]
+fn real_paths_are_still_redacted_and_recorded_without_their_punctuation() {
+    for text in [
+        "read /Users/andy/Code/thing.rs",
+        "read ~/Code/thing.rs",
+        "read /Users/andy/.config/git/credentials",
+        "read C:\\Users\\andy\\thing.rs",
+        "read file:///Users/andy/thing.rs",
+    ] {
+        let sanitized = sanitize_coding_session_context_text(text);
+        assert!(
+            sanitized.contains("[elided private context: "),
+            "no longer redacted: {text}"
+        );
+    }
+
+    let (_, log) = sanitize_coding_session_context_content_recording(&serde_json::json!({
+        "text": "wrote \"/Users/andy/Code/thing.rs\", then stopped."
+    }));
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert_eq!(log[0].plaintext, "/Users/andy/Code/thing.rs");
+}
+
+/// The stock-interpreter exemption still applies once punctuation is stripped,
+/// which it did not have to survive before the span rewrite.
+#[test]
+fn a_quoted_stock_interpreter_is_still_exempt() {
+    for text in [
+        "ran \"/bin/zsh\" -lc true",
+        "ran /usr/bin/env node.",
+        "ran '/bin/bash';",
+    ] {
+        assert_eq!(sanitize_coding_session_context_text(text), text, "{text}");
+    }
+}

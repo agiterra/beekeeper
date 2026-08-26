@@ -218,6 +218,8 @@ type MockBridgeOptions = {
   >;
   /** The provider pubkey this desktop counts as its own — the locality gate. */
   codingSessionRedactionLocalPubkey?: string;
+  /** The provider session UUID this vault belongs to. */
+  codingSessionRedactionSessionId?: string;
   /** Host runtime table for the coding-session create flow. */
   codingSessionProviderRuntimes?: Record<string, unknown>[];
   /** Runtime table once a mocked connect (sign-in) has completed. */

@@ -196,6 +196,10 @@ async function openSeededSession(
     ...(vault
       ? {
           codingSessionRedactionLocalPubkey: vault.localPubkey,
+          // The vault is keyed by the provider's bare session UUID, so the
+          // mock refuses anything else — a client that sent the display scope
+          // key instead would fail here rather than silently resolve.
+          codingSessionRedactionSessionId: session.sessionId,
           codingSessionRedactionVault: vault.entries,
         }
       : {}),

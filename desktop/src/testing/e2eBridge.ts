@@ -306,6 +306,14 @@ type E2eConfig = {
      * a transcript signed by it resolves anything — the locality gate.
      */
     codingSessionRedactionLocalPubkey?: string;
+    /**
+     * The provider session UUID this vault belongs to.
+     *
+     * Modelled because the host keys the vault by it: a client that sends the
+     * display scope key instead addresses nothing, and a mock that ignored the
+     * field let exactly that ship.
+     */
+    codingSessionRedactionSessionId?: string;
     /** Host runtime table for `coding_session_provider_runtimes`. */
     codingSessionProviderRuntimes?: RawCodingSessionProviderRuntime[];
     /**
@@ -12663,7 +12671,23 @@ export function maybeInstallE2eTauriMocks() {
         const vault = activeConfig?.mock?.codingSessionRedactionVault;
         const localPubkey =
           activeConfig?.mock?.codingSessionRedactionLocalPubkey;
+        const vaultSessionId =
+          activeConfig?.mock?.codingSessionRedactionSessionId;
         if (!vault || !localPubkey || request.providerPubkey !== localPubkey) {
+          return {};
+        }
+        // The host proves the session id is one safe path component before it
+        // opens anything, and the vault file is named by it. Reject the same
+        // way rather than resolving regardless of what was asked for.
+        if (
+          typeof request.sessionId !== "string" ||
+          !/^[A-Za-z0-9_-]{1,128}$/.test(request.sessionId)
+        ) {
+          throw new Error(
+            `redaction vault: unsafe session id: ${request.sessionId}`,
+          );
+        }
+        if (vaultSessionId && request.sessionId !== vaultSessionId) {
           return {};
         }
         const resolved: Record<string, { class: string; plaintext: string }> =
