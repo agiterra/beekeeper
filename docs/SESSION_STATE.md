@@ -1855,7 +1855,10 @@ because `TranscriptItem` lives in the agents lane). It is a topic branch
 awaiting Brian's live look; not landed on main. Rebased onto
 main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
-`--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
+`--force-with-lease`. Rebased again onto main@2c50e19b (relay-canonical
+process + restored ledger) the same afternoon and re-gated there (`just ci`
+exit 0, desktop 6215/0, mobile 1465; `just test` exit 0, 2134 passed, 0 failed); pushed to
+the relay. Rebased again onto main@b2298102 (the UX pass)
 later that day with one docs conflict (this item is now 58) and re-gated:
 `just ci` exit 0 (desktop 6209/0, mobile 1465), `just test` exit 0 (2134 passed, 0 failed).
 
