@@ -247,6 +247,15 @@ naming the pre-genesis `session.create` (44221) and its joining receipt
 mirroring `sessionRef` for the relay's uniqueness probe and for diagnostics
 only.
 
+A receipt *joins* a create only when the create's named provider authority
+signed it, it echoes the create's `commandId`, and its status is one that
+**minted** an execution: `created`, `created_with_failed_initial_turn`,
+`resumed`, or `resumed_without_context`. The per-turn statuses
+(`turn_queued`, `turn_started`, `turn_dropped`, `turn_refused`) answer a
+44220 turn command whose `commandId` is chosen by whoever signed it, and they
+prove nothing about a create — `turn_refused` proves the opposite. The relay
+refuses an adoption that names one.
+
 **Fold rule: there isn't one.** Canonical identity is this event's own **id**,
 never the `csg-session` tag or the `sessionRef` label — a consumer must
 resolve a founder by following an explicit genesis event id (reached from the
