@@ -274,7 +274,7 @@ by the ACP harness into managed agent subprocesses. In development, set
 cargo build --release -p buzz-cli
 ```
 
-Binary location: `./target/release/buzz`. Add `./target/release` to `PATH`
+Binary location: `./target/release/bee`. Add `./target/release` to `PATH`
 or invoke with the full path.
 
 ### Deep Links
