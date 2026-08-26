@@ -449,6 +449,256 @@ impl TurnWireSummary {
 /// `_meta.claudeCode.emitRawSDKMessages`.
 const RAW_SDK_FRAME_METHOD: &str = "_claude/sdkMessage";
 
+/// What kind of background work a task is.
+///
+/// Read from `task_type` on `task_started`, **not** from `subagent_type`.
+/// claude-agent-acp reads `subagent_type` off that same frame to decide whether
+/// to hold a turn open — and the frame does not carry it, which is why its hold
+/// never arms. `task_type` is present and says the same thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundTaskKind {
+    /// A `Task`/`Agent` tool subagent.
+    Subagent,
+    /// A shell command detached into the background.
+    Shell,
+    /// Something newer than this code. Reported as background work regardless —
+    /// the operator cares that work is outstanding, not what flavour it is.
+    Other,
+}
+
+impl BackgroundTaskKind {
+    fn from_task_type(task_type: Option<&str>) -> Self {
+        match task_type {
+            Some("local_agent") => Self::Subagent,
+            Some("local_bash") => Self::Shell,
+            _ => Self::Other,
+        }
+    }
+
+    /// A word for a status row. No host content.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Subagent => "subagent",
+            Self::Shell => "shell",
+            Self::Other => "task",
+        }
+    }
+}
+
+/// One live or finished piece of background work.
+///
+/// **Structural facts only.** The frames also carry `description` and `prompt`,
+/// which are verbatim host content — a real one reads
+/// `"PATH=/Users/andy/…/bin:$PATH pnpm test"`. Nothing in this struct may become
+/// a place for those to hide: `fit_item` is a size cap, not a path scrubber, so
+/// anything stored here that reaches a published row reaches it unredacted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackgroundTask {
+    pub kind: BackgroundTaskKind,
+    /// The subagent's declared type (`"Explore"`), when a `task_progress` frame
+    /// named one. Absent for shells and for subagents that never reported
+    /// progress.
+    pub flavour: Option<String>,
+    started_at: tokio::time::Instant,
+    ended_at: Option<tokio::time::Instant>,
+}
+
+impl BackgroundTask {
+    pub fn is_live(&self) -> bool {
+        self.ended_at.is_none()
+    }
+
+    /// How long it ran, or has been running.
+    pub fn elapsed(&self, now: tokio::time::Instant) -> std::time::Duration {
+        self.ended_at
+            .unwrap_or(now)
+            .saturating_duration_since(self.started_at)
+    }
+}
+
+/// Background work this session has launched, folded from raw SDK frames.
+///
+/// Exists because the adapter tells the wire nothing about it. Every lifecycle
+/// frame is consumed internally with a bare `break` (`acp-agent.js:2307-2351`),
+/// so without the raw-frame channel a client cannot know that a session has a
+/// build or a subagent still running — which is how a turn ends with an agent
+/// promising a report that nothing can deliver.
+#[derive(Debug, Default)]
+pub struct BackgroundTasks {
+    tasks: std::collections::BTreeMap<String, BackgroundTask>,
+}
+
+impl BackgroundTasks {
+    /// Fold one `_claude/sdkMessage` payload in.
+    ///
+    /// Returns `true` when the live set changed, which is the only thing worth
+    /// telling the operator about — progress frames arrive by the dozen and say
+    /// nothing new about whether work is outstanding.
+    fn observe(&mut self, message: &serde_json::Value, now: tokio::time::Instant) -> bool {
+        if message.get("type").and_then(|v| v.as_str()) != Some("system") {
+            return false;
+        }
+        let Some(task_id) = message.get("task_id").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        match message.get("subtype").and_then(|v| v.as_str()) {
+            Some("task_started") => {
+                // Foreground shells land here too and are not background work:
+                // 16 of the 17 tasks in the first live sample were ordinary
+                // commands the turn was already waiting on. Reporting those
+                // would bury the one that matters.
+                if message.get("is_backgrounded").and_then(|v| v.as_bool()) != Some(true) {
+                    return false;
+                }
+                let kind = BackgroundTaskKind::from_task_type(
+                    message.get("task_type").and_then(|v| v.as_str()),
+                );
+                self.tasks.insert(
+                    task_id.to_owned(),
+                    BackgroundTask {
+                        kind,
+                        flavour: None,
+                        started_at: now,
+                        ended_at: None,
+                    },
+                );
+                true
+            }
+            Some("task_progress") => {
+                // The only frame that names the subagent's type. Recorded when
+                // it arrives, never required — a task registered without one is
+                // still a task.
+                let named = message
+                    .get("subagent_type")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| !value.is_empty());
+                if let (Some(task), Some(flavour)) = (self.tasks.get_mut(task_id), named) {
+                    if task.flavour.is_none() {
+                        task.flavour = Some(flavour.to_owned());
+                    }
+                }
+                false
+            }
+            // Both terminal paths, matching the adapter's own rules at
+            // `:2339` and `:2350` so the two cannot disagree about "ended".
+            Some("task_notification") => self.end(task_id, now),
+            Some("task_updated") => {
+                let terminal = matches!(
+                    message.pointer("/patch/status").and_then(|v| v.as_str()),
+                    Some("completed" | "failed" | "killed")
+                );
+                terminal && self.end(task_id, now)
+            }
+            _ => false,
+        }
+    }
+
+    fn end(&mut self, task_id: &str, now: tokio::time::Instant) -> bool {
+        match self.tasks.get_mut(task_id) {
+            Some(task) if task.is_live() => {
+                task.ended_at = Some(now);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Tasks still running, oldest first.
+    pub fn live(&self) -> Vec<&BackgroundTask> {
+        self.tasks.values().filter(|task| task.is_live()).collect()
+    }
+
+    pub fn live_count(&self) -> usize {
+        self.tasks.values().filter(|task| task.is_live()).count()
+    }
+
+    /// The most recently finished task, for reporting a completion.
+    pub fn last_finished(&self) -> Option<&BackgroundTask> {
+        self.tasks
+            .values()
+            .filter(|task| !task.is_live())
+            .max_by_key(|task| task.ended_at)
+    }
+}
+
+/// Whether an adapter reads the `_meta.claudeCode` namespace at all.
+///
+/// It is claude-agent-acp's own; codex-acp and goose ignore it, so a key sent
+/// to them rides every `session/new` for the session's life and never does
+/// anything. Matched on the normalized agent name, the same discriminator the
+/// system-prompt transport already selects on.
+fn agent_reads_claude_meta(agent_name: &str) -> bool {
+    agent_name.contains("claude")
+}
+
+/// How much of the SDK's own message stream to ask the adapter to forward.
+///
+/// The adapter consumes the entire task lifecycle internally with a bare
+/// `break` (`acp-agent.js:2307-2351`), so these frames are the *only* way a
+/// client can learn that background work exists at all. That makes them worth
+/// having on by default — but only at [`Lifecycle`](Self::Lifecycle) volume: an
+/// unfiltered two-hour session produced 8447 frames, 6072 of them
+/// `stream_event` deltas, and grew the provider log from 1 MB to 9.7 MB. The
+/// curated set covering the same lifecycle was 80 frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RawSdkFrames {
+    /// Send no `emitRawSDKMessages` key at all.
+    ///
+    /// Absent rather than `false`, so a session that opted out is byte-identical
+    /// to one from before the option existed.
+    Off,
+    /// Task lifecycle, session init, and turn results. The default.
+    #[default]
+    Lifecycle,
+    /// Everything the SDK emits. For one debugging session, not for standing use.
+    All,
+}
+
+impl RawSdkFrames {
+    /// The value to write at `_meta.claudeCode.emitRawSDKMessages`, or `None`
+    /// when the key should be omitted.
+    ///
+    /// `shouldEmitRawMessage` (`acp-agent.js:5241-5249`) accepts `true`, `false`,
+    /// or an array of `{type, subtype?, origin?}` matchers where an absent field
+    /// means "any". A matcher list is therefore a whitelist, and anything not
+    /// named here never crosses the wire.
+    fn to_meta_value(self) -> Option<serde_json::Value> {
+        match self {
+            Self::Off => None,
+            Self::All => Some(serde_json::Value::Bool(true)),
+            // `task_progress` earns its place despite being the chattiest of the
+            // set: it is the only frame that names a subagent's `subagent_type`,
+            // because `task_started` — the frame claude-agent-acp itself reads
+            // that field from — does not carry it.
+            Self::Lifecycle => Some(serde_json::json!([
+                { "type": "system", "subtype": "init" },
+                { "type": "system", "subtype": "task_started" },
+                { "type": "system", "subtype": "task_progress" },
+                { "type": "system", "subtype": "task_notification" },
+                { "type": "system", "subtype": "task_updated" },
+                { "type": "system", "subtype": "background_tasks_changed" },
+                { "type": "result" },
+            ])),
+        }
+    }
+}
+
+impl std::str::FromStr for RawSdkFrames {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "false" | "no" | "none" => Ok(Self::Off),
+            "" | "lifecycle" | "1" | "true" | "yes" | "on" => Ok(Self::Lifecycle),
+            "all" => Ok(Self::All),
+            other => Err(format!(
+                "unrecognized raw-frame mode {other:?}; expected lifecycle \
+                 (the default), all, or off"
+            )),
+        }
+    }
+}
+
 /// Drain a child's stderr into `tail`, re-emitting each line through `tracing`.
 ///
 /// Both halves matter: the re-emission is what keeps the harness terminal's
@@ -715,12 +965,13 @@ pub struct AcpClient {
     /// the host stops waiting. `None` disables the watch. See
     /// [`AnswerStallWatch`].
     answer_stall_timeout: Option<std::time::Duration>,
-    /// Ask claude-agent-acp to forward every raw SDK message it sees.
+    /// How much of the SDK's own message stream to ask the adapter to forward.
     ///
-    /// Off by default and deliberately not a published fact: these frames are
-    /// the adapter's own internals, unredacted, and they are wanted for one
-    /// debugging session at a time rather than for a session's life.
-    emit_raw_sdk_frames: bool,
+    /// Deliberately not a published fact: these frames are the adapter's own
+    /// internals, unredacted, and they go to the local log only.
+    raw_sdk_frames: RawSdkFrames,
+    /// Background work folded out of those frames. Structural facts only.
+    background_tasks: BackgroundTasks,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
     ///
@@ -1146,7 +1397,8 @@ impl AcpClient {
             standard_adapter,
             stderr_tail,
             answer_stall_timeout: None,
-            emit_raw_sdk_frames: false,
+            raw_sdk_frames: RawSdkFrames::Off,
+            background_tasks: BackgroundTasks::default(),
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1383,13 +1635,16 @@ impl AcpClient {
             // Merge — _meta may already carry systemPrompt from ClaudeMeta above.
             params["_meta"]["sessionTitle"] = serde_json::Value::String(title.to_owned());
         }
-        if self.emit_raw_sdk_frames {
-            // claude-agent-acp reads this once, here, and forwards every SDK
-            // message as a `_claude/sdkMessage` ext-notification thereafter.
-            // `true` means unfiltered; the adapter also accepts a filter list,
-            // which is not exposed because the reason to turn this on is not
-            // knowing yet which frames matter.
-            params["_meta"]["claudeCode"]["emitRawSDKMessages"] = serde_json::Value::Bool(true);
+        // claude-agent-acp reads this once, here, and forwards matching SDK
+        // messages as `_claude/sdkMessage` ext-notifications thereafter.
+        //
+        // Gated on the adapter: `_meta.claudeCode` is claude-agent-acp's own
+        // namespace and means nothing to codex-acp, which would carry the key
+        // for the session's life without ever acting on it.
+        if agent_reads_claude_meta(self.agent_name()) {
+            if let Some(value) = self.raw_sdk_frames.to_meta_value() {
+                params["_meta"]["claudeCode"]["emitRawSDKMessages"] = value;
+            }
         }
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
@@ -1698,7 +1953,7 @@ impl AcpClient {
     /// also carry the adapter's unredacted internals, so they go to `tracing`
     /// and are deliberately **not** handed to the observer, whose frames become
     /// signed transcript items.
-    fn log_raw_sdk_frame(&self, msg: &serde_json::Value) {
+    fn log_raw_sdk_frame(&mut self, msg: &serde_json::Value) {
         let message = &msg["params"]["message"];
         tracing::info!(
             target: "acp::sdk_frame",
@@ -1707,10 +1962,31 @@ impl AcpClient {
             origin = message.pointer("/origin/kind").and_then(|v| v.as_str()).unwrap_or(""),
             "{message}"
         );
+        // The frame itself stops here. Only the structural facts folded out of
+        // it travel any further — see `BackgroundTask`.
+        if self
+            .background_tasks
+            .observe(message, tokio::time::Instant::now())
+        {
+            tracing::info!(
+                target: "acp::background",
+                live = self.background_tasks.live_count(),
+                "background work changed"
+            );
+        }
     }
 
-    pub fn set_emit_raw_sdk_frames(&mut self, emit: bool) {
-        self.emit_raw_sdk_frames = emit;
+    /// Background work this session has launched and not yet finished.
+    pub fn background_tasks(&self) -> &BackgroundTasks {
+        &self.background_tasks
+    }
+
+    /// Ask the adapter to forward raw SDK frames for this session.
+    ///
+    /// Must be set before `session/new`: the adapter reads the value once, off
+    /// that request's `_meta`, and never re-reads it.
+    pub fn set_raw_sdk_frames(&mut self, frames: RawSdkFrames) {
+        self.raw_sdk_frames = frames;
     }
 
     pub fn set_answer_stall_timeout(&mut self, timeout: Option<std::time::Duration>) {
@@ -5007,20 +5283,226 @@ mod tests {
         );
     }
 
+    // ── Raw-frame mode + background-task registry ─────────────────────────
+
+    /// The curated list is a whitelist, so anything missing from it never
+    /// arrives. These six subtypes are the whole basis for knowing background
+    /// work exists; dropping one silently removes a capability.
+    #[test]
+    fn the_lifecycle_filter_names_every_frame_the_registry_reads() {
+        let value = RawSdkFrames::Lifecycle
+            .to_meta_value()
+            .expect("lifecycle sends a value");
+        let matchers = value.as_array().expect("a matcher array");
+        let subtypes: Vec<&str> = matchers
+            .iter()
+            .filter_map(|m| m.get("subtype").and_then(|v| v.as_str()))
+            .collect();
+        for required in [
+            "task_started",
+            "task_progress",
+            "task_notification",
+            "task_updated",
+            "background_tasks_changed",
+        ] {
+            assert!(
+                subtypes.contains(&required),
+                "{required} drives the registry and must be whitelisted: {subtypes:?}"
+            );
+        }
+        assert!(
+            !matchers
+                .iter()
+                .any(|m| m.get("type") == Some(&serde_json::json!("stream_event"))),
+            "stream_event was 6072 of 8447 frames — it must stay out"
+        );
+    }
+
+    /// Off means the key is absent, not `false`: a session that opted out has
+    /// to be byte-identical to one from before the option existed.
+    #[test]
+    fn off_omits_the_key_and_all_sends_the_bare_boolean() {
+        assert_eq!(RawSdkFrames::Off.to_meta_value(), None);
+        assert_eq!(
+            RawSdkFrames::All.to_meta_value(),
+            Some(serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn the_raw_frame_mode_parses_the_words_people_will_type() {
+        use std::str::FromStr;
+        for (input, expected) in [
+            ("", RawSdkFrames::Lifecycle),
+            ("lifecycle", RawSdkFrames::Lifecycle),
+            ("TRUE", RawSdkFrames::Lifecycle),
+            ("1", RawSdkFrames::Lifecycle),
+            ("all", RawSdkFrames::All),
+            ("  All  ", RawSdkFrames::All),
+            ("off", RawSdkFrames::Off),
+            ("false", RawSdkFrames::Off),
+            ("0", RawSdkFrames::Off),
+        ] {
+            assert_eq!(RawSdkFrames::from_str(input), Ok(expected), "for {input:?}");
+        }
+        let refused = RawSdkFrames::from_str("verbose").expect_err("must refuse");
+        for expected in ["lifecycle", "all", "off"] {
+            assert!(
+                refused.contains(expected),
+                "the refusal must name the valid modes: {refused}"
+            );
+        }
+    }
+
+    /// `_meta.claudeCode` is claude-agent-acp's namespace. Sending it to codex
+    /// would carry a key for the session's life that nothing ever reads.
+    #[test]
+    fn only_a_claude_adapter_is_asked_for_raw_frames() {
+        assert!(agent_reads_claude_meta("claude-agent-acp"));
+        assert!(!agent_reads_claude_meta("codex-acp"));
+        assert!(!agent_reads_claude_meta("goose"));
+    }
+
+    /// Verbatim from the 2026-08-26 provider log. The shape is the whole point:
+    /// `task_started` carries `task_type` and **no** `subagent_type`, which is
+    /// the field claude-agent-acp reads and the reason its own hold never arms.
+    fn real_task_started() -> serde_json::Value {
+        serde_json::json!({
+            "description": "Trace new-session channel creation",
+            "is_backgrounded": true,
+            "prompt": "In the repo /Users/andy/Code/agiterra-beekeeper.worktrees/…",
+            "session_id": "85a1c579-f726-4639-8bf7-e69fca2cff40",
+            "subtype": "task_started",
+            "task_id": "a6522ff1683ff2069",
+            "task_type": "local_agent",
+            "tool_use_id": "toolu_012QjB621HJuhJ1izPEN9j6K",
+            "type": "system"
+        })
+    }
+
+    #[test]
+    fn a_backgrounded_subagent_is_classified_without_subagent_type() {
+        let now = tokio::time::Instant::now();
+        let mut tasks = BackgroundTasks::default();
+        assert!(tasks.observe(&real_task_started(), now), "must register");
+        assert_eq!(tasks.live_count(), 1);
+        let task = tasks.live()[0];
+        assert_eq!(
+            task.kind,
+            BackgroundTaskKind::Subagent,
+            "task_type=local_agent is the discriminator, not subagent_type"
+        );
+        assert_eq!(task.flavour, None, "task_started names no flavour");
+    }
+
+    /// 16 of the 17 tasks in the first live sample were ordinary foreground
+    /// commands the turn was already waiting on. Reporting those as background
+    /// work would bury the one that mattered.
+    #[test]
+    fn a_foreground_shell_is_not_background_work() {
+        let now = tokio::time::Instant::now();
+        let mut tasks = BackgroundTasks::default();
+        let frame = serde_json::json!({
+            "description": "PATH=\"/Users/andy/…/bin:$PATH\" pnpm test 2>&1 | tail -25",
+            "is_backgrounded": false,
+            "subtype": "task_started",
+            "task_id": "bsv9elwas",
+            "task_type": "local_bash",
+            "type": "system"
+        });
+        assert!(!tasks.observe(&frame, now));
+        assert_eq!(tasks.live_count(), 0);
+    }
+
+    #[test]
+    fn a_progress_frame_supplies_the_flavour_and_reports_no_change() {
+        let now = tokio::time::Instant::now();
+        let mut tasks = BackgroundTasks::default();
+        tasks.observe(&real_task_started(), now);
+        let progress = serde_json::json!({
+            "description": "Running List repo and coding-sessions files",
+            "last_tool_name": "Bash",
+            "subagent_type": "Explore",
+            "subtype": "task_progress",
+            "task_id": "a6522ff1683ff2069",
+            "type": "system"
+        });
+        assert!(
+            !tasks.observe(&progress, now),
+            "progress arrives by the dozen and changes nothing the operator needs"
+        );
+        assert_eq!(tasks.live()[0].flavour.as_deref(), Some("Explore"));
+    }
+
+    #[test]
+    fn only_a_terminal_status_ends_a_task() {
+        let now = tokio::time::Instant::now();
+        let mut tasks = BackgroundTasks::default();
+        tasks.observe(&real_task_started(), now);
+
+        let running = serde_json::json!({
+            "patch": {"status": "running"},
+            "subtype": "task_updated",
+            "task_id": "a6522ff1683ff2069",
+            "type": "system"
+        });
+        assert!(!tasks.observe(&running, now));
+        assert_eq!(tasks.live_count(), 1);
+
+        let done = serde_json::json!({
+            "patch": {"end_time": 1_787_738_949_182i64, "status": "completed"},
+            "subtype": "task_updated",
+            "task_id": "a6522ff1683ff2069",
+            "type": "system"
+        });
+        assert!(tasks.observe(&done, now), "the live set changed");
+        assert_eq!(tasks.live_count(), 0);
+        assert!(tasks.last_finished().is_some());
+
+        // The adapter sends both a terminal patch and a (deduplicated)
+        // notification. The second must not re-report.
+        let notification = serde_json::json!({
+            "subtype": "task_notification",
+            "task_id": "a6522ff1683ff2069",
+            "type": "system"
+        });
+        assert!(!tasks.observe(&notification, now), "already ended");
+    }
+
+    /// The registry is the one thing derived from these frames that outlives
+    /// them, so it is the one place host content could hide. It stores no
+    /// string it did not choose.
+    #[test]
+    fn the_registry_keeps_no_host_content() {
+        let now = tokio::time::Instant::now();
+        let mut tasks = BackgroundTasks::default();
+        tasks.observe(&real_task_started(), now);
+        let stored = format!("{:?}", tasks);
+        for leaked in ["/Users/andy", "Trace new-session", "toolu_012QjB"] {
+            assert!(
+                !stored.contains(leaked),
+                "{leaked:?} must not be retained: {stored}"
+            );
+        }
+    }
+
     /// The flag has to reach `session/new`, because that is the only place the
     /// adapter ever reads it. A later toggle is silently inert.
-    #[tokio::test]
-    async fn raw_sdk_frames_are_requested_on_the_session_that_opts_in() {
-        let script = r#"
+    /// A script whose `initialize` names claude-agent-acp and echoes back the
+    /// `session/new` it received, so a test can read what was actually sent.
+    const CLAUDE_ECHO_SCRIPT: &str = r#"
             read -t 2 _init
-            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"claude-agent-acp","version":"0.70.0"}}}'
             read -t 2 REQ
             echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
             sleep 1
         "#;
-        let mut client = spawn_script(script).await;
+
+    #[tokio::test]
+    async fn raw_sdk_frames_are_requested_on_the_session_that_opts_in() {
+        let mut client = spawn_script(CLAUDE_ECHO_SCRIPT).await;
         client.initialize().await.expect("initialize");
-        client.set_emit_raw_sdk_frames(true);
+        client.set_raw_sdk_frames(RawSdkFrames::All);
         let response = client
             .session_new_full("/tmp", vec![], None, None)
             .await
@@ -5033,20 +5515,67 @@ mod tests {
         );
     }
 
-    /// Default off, and off means the key is absent rather than `false`.
-    /// A session that never asked should be byte-identical to one from before
-    /// the flag existed.
+    /// The default mode has to arrive as the matcher array, not as `true` —
+    /// the whole point of defaulting it on is that it stays cheap.
     #[tokio::test]
-    async fn a_session_that_did_not_opt_in_sends_no_raw_frame_key() {
+    async fn the_default_session_asks_for_the_filtered_lifecycle() {
+        let mut client = spawn_script(CLAUDE_ECHO_SCRIPT).await;
+        client.initialize().await.expect("initialize");
+        client.set_raw_sdk_frames(RawSdkFrames::Lifecycle);
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        let asked = sent
+            .pointer("/_meta/claudeCode/emitRawSDKMessages")
+            .expect("the key must be present");
+        assert!(
+            asked.is_array(),
+            "lifecycle must send a matcher array, not the firehose: {asked}"
+        );
+        assert!(
+            asked.to_string().contains("task_started"),
+            "the array must carry the lifecycle matchers: {asked}"
+        );
+    }
+
+    /// codex-acp does not read `_meta.claudeCode`. Sending it there would ride
+    /// every session/new for the session's life and never do anything.
+    #[tokio::test]
+    async fn a_non_claude_adapter_is_never_asked_for_raw_frames() {
         let script = r#"
             read -t 2 _init
-            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"codex-acp","version":"1.0.0"}}}'
             read -t 2 REQ
             echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
             sleep 1
         "#;
         let mut client = spawn_script(script).await;
         client.initialize().await.expect("initialize");
+        client.set_raw_sdk_frames(RawSdkFrames::All);
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode"),
+            None,
+            "codex must be sent no claudeCode namespace at all: {sent}"
+        );
+    }
+
+    /// Default off, and off means the key is absent rather than `false`.
+    /// A session that never asked should be byte-identical to one from before
+    /// the flag existed.
+    #[tokio::test]
+    async fn a_session_that_did_not_opt_in_sends_no_raw_frame_key() {
+        // A claude adapter deliberately, so this proves `Off` omits the key
+        // rather than the adapter gate doing it.
+        let mut client = spawn_script(CLAUDE_ECHO_SCRIPT).await;
+        client.initialize().await.expect("initialize");
+        client.set_raw_sdk_frames(RawSdkFrames::Off);
         let response = client
             .session_new_full("/tmp", vec![], None, None)
             .await

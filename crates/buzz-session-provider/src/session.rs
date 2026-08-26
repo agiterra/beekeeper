@@ -28,8 +28,8 @@ use uuid::Uuid;
 use tokio::sync::broadcast;
 
 use buzz_acp::acp::{
-    AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, StopReason, SystemPromptTransport,
-    TurnWireSummary,
+    AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod, RawSdkFrames, StopReason,
+    SystemPromptTransport, TurnWireSummary,
 };
 use buzz_acp::observer::{context_for, ObserverEvent, ObserverHandle};
 use buzz_acp::TurnUsage;
@@ -126,8 +126,8 @@ pub struct CreateRequest {
     /// Budget for silence after the turn has finished answering, or `None` when
     /// disabled.
     pub answer_stall_timeout: Option<Duration>,
-    /// Ask the adapter to forward raw SDK messages to the local log.
-    pub emit_raw_sdk_frames: bool,
+    /// How much of the SDK's own message stream to ask the adapter for.
+    pub raw_sdk_frames: RawSdkFrames,
     /// Per-turn wall-clock ceiling.
     pub max_turn_duration: Duration,
     /// Idle window before the subprocess is reclaimed.
@@ -585,7 +585,7 @@ async fn start_agent(
     client.set_answer_stall_timeout(request.answer_stall_timeout);
     // Before session/new: the adapter reads the flag off that request's
     // `_meta` exactly once.
-    client.set_emit_raw_sdk_frames(request.emit_raw_sdk_frames);
+    client.set_raw_sdk_frames(request.raw_sdk_frames);
 
     if let Err(failure) = client
         .initialize()
@@ -1832,7 +1832,7 @@ done
             agent_env: Vec::new(),
             idle_timeout: Duration::from_secs(5),
             answer_stall_timeout: None,
-            emit_raw_sdk_frames: false,
+            raw_sdk_frames: RawSdkFrames::Off,
             max_turn_duration: Duration::from_secs(10),
             idle_shutdown: Duration::from_secs(30),
             include_thoughts: true,
@@ -2182,7 +2182,7 @@ done
         let (tx, mut rx) = mpsc::channel(64);
         let mut manager = SessionManager::new(tx);
         let mut create = request(agent, dir.path());
-        create.emit_raw_sdk_frames = true;
+        create.raw_sdk_frames = RawSdkFrames::All;
         manager.create(create).await.expect("create");
         manager
             .handle("s1")

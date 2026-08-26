@@ -659,14 +659,12 @@ fn spawn_provider_child(
         // shell. Read per spawn, so a restart of the provider picks up a
         // change without relaunching the app.
         rust_log: std::env::var("RUST_LOG").ok().filter(|v| !v.is_empty()),
-        emit_raw_sdk_frames: matches!(
-            std::env::var(crate::session_provider::env::EMIT_RAW_SDK_FRAMES_VAR)
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-                .as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
+        // Verbatim: the provider parses the mode and owns the vocabulary, so
+        // re-interpreting it here would give the same word two meanings.
+        raw_sdk_frames: std::env::var(crate::session_provider::env::EMIT_RAW_SDK_FRAMES_VAR)
+            .ok()
+            .map(|mode| mode.trim().to_owned())
+            .filter(|mode| !mode.is_empty()),
     });
     for (key, value) in env {
         command.env(key, value);

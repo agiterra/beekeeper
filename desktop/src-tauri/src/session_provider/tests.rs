@@ -230,7 +230,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         max_sessions: None,
         turn_idle_timeout_secs: None,
         rust_log: None,
-        emit_raw_sdk_frames: false,
+        raw_sdk_frames: None,
     })
 }
 
@@ -315,7 +315,7 @@ fn env_omits_an_empty_runtime_list() {
         max_sessions: None,
         turn_idle_timeout_secs: None,
         rust_log: None,
-        emit_raw_sdk_frames: false,
+        raw_sdk_frames: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
@@ -649,13 +649,13 @@ fn codex_model_ids_survive_the_response_decoder() {
 /// The person's ceiling has to reach the child, and an unset one must stay
 /// unset — exporting a number equal to the provider's default would make a
 /// later change to that default silently not apply (asked for 2026-08-24).
-/// The debug switch has to survive the trip from the host's environment into
-/// the child, and has to be absent — not `false` — when nobody asked. A
-/// provider that never asked must send no `emitRawSDKMessages` key at all.
+/// The mode has to survive the trip from the host's environment into the child
+/// verbatim, and has to be absent when nobody chose one — the provider owns
+/// both the vocabulary and the default.
 #[test]
 fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
     let record = sample_record();
-    let base = |emit_raw_sdk_frames| ProviderEnvInputs {
+    let base = |raw_sdk_frames: Option<String>| ProviderEnvInputs {
         record: &record,
         relay_url: RELAY,
         state_dir: Path::new("/tmp/session-provider/aaaa"),
@@ -667,15 +667,19 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         max_sessions: None,
         turn_idle_timeout_secs: None,
         rust_log: None,
-        emit_raw_sdk_frames,
+        raw_sdk_frames,
     };
 
-    assert!(!build_provider_env(&base(false)).contains_key("BUZZ_CSP_EMIT_RAW_SDK_FRAMES"));
+    assert!(
+        !build_provider_env(&base(None)).contains_key("BUZZ_CSP_EMIT_RAW_SDK_FRAMES"),
+        "unset means the provider's own default, not a value chosen here"
+    );
     assert_eq!(
-        build_provider_env(&base(true))
+        build_provider_env(&base(Some("all".into())))
             .get("BUZZ_CSP_EMIT_RAW_SDK_FRAMES")
             .map(String::as_str),
-        Some("true")
+        Some("all"),
+        "the mode passes through verbatim — the provider owns the vocabulary"
     );
 }
 
@@ -697,7 +701,7 @@ fn a_chosen_log_filter_beats_the_default() {
         max_sessions: None,
         turn_idle_timeout_secs: None,
         rust_log,
-        emit_raw_sdk_frames: false,
+        raw_sdk_frames: None,
     };
 
     assert_eq!(
@@ -731,7 +735,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         max_sessions,
         turn_idle_timeout_secs: None,
         rust_log: None,
-        emit_raw_sdk_frames: false,
+        raw_sdk_frames: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
@@ -768,7 +772,7 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         max_sessions: None,
         turn_idle_timeout_secs,
         rust_log: None,
-        emit_raw_sdk_frames: false,
+        raw_sdk_frames: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_IDLE_TIMEOUT"));

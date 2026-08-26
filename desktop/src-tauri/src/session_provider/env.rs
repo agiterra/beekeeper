@@ -28,13 +28,17 @@ pub(crate) const PROJECTS_FILE_NAME: &str = "projects.json";
 /// A **default**, not an override — see `rust_log` on [`ProviderEnvInputs`].
 pub(crate) const DEFAULT_RUST_LOG: &str = "info,buzz_session_provider=info";
 
-/// Debug switch asking the adapter to forward every raw SDK message.
+/// How much of the SDK's own message stream the provider asks for.
 ///
 /// Passed through explicitly rather than left to inheritance. The child does
 /// inherit the desktop's environment, so this would arrive anyway — but a
-/// documented debug switch that works by accident is one `env_clear()` away
-/// from silently doing nothing, and the failure would look like the adapter
+/// documented switch that works by accident is one `env_clear()` away from
+/// silently doing nothing, and the failure would look like the adapter
 /// ignoring the request.
+///
+/// **Unset is not off.** The provider defaults to its filtered lifecycle set,
+/// which is what background-task visibility is built on. This variable exists
+/// to say `all` for a debugging session, or `off` to opt out entirely.
 pub(crate) const EMIT_RAW_SDK_FRAMES_VAR: &str = "BUZZ_CSP_EMIT_RAW_SDK_FRAMES";
 
 /// Everything the env map is derived from.
@@ -72,9 +76,9 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// discarded — the one moment somebody actually cares what the child
     /// logs.
     pub rust_log: Option<String>,
-    /// Whether to ask the adapter for raw SDK frames. See
-    /// [`EMIT_RAW_SDK_FRAMES_VAR`].
-    pub emit_raw_sdk_frames: bool,
+    /// Raw-frame mode chosen for this run, or `None` to leave the provider's
+    /// own default in charge. See [`EMIT_RAW_SDK_FRAMES_VAR`].
+    pub raw_sdk_frames: Option<String>,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -155,10 +159,11 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
             .clone()
             .unwrap_or_else(|| DEFAULT_RUST_LOG.to_string()),
     );
-    if inputs.emit_raw_sdk_frames {
-        // Absent rather than "false" when off, so a provider that never asked
-        // sends no `emitRawSDKMessages` key at all.
-        env.insert(EMIT_RAW_SDK_FRAMES_VAR.to_string(), "true".to_string());
+    if let Some(mode) = &inputs.raw_sdk_frames {
+        // Exported only when somebody chose one: an unset variable and a
+        // variable that happens to name the provider's default are different
+        // facts, and the provider owns the default.
+        env.insert(EMIT_RAW_SDK_FRAMES_VAR.to_string(), mode.clone());
     }
     if let Some(cli) = &inputs.claude_code_executable {
         env.insert(

@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use buzz_acp::acp::RawSdkFrames;
 use buzz_core::coding_session_runtime::{parse_runtime_descriptors, RuntimeDescriptor};
 use nostr::Keys;
 
@@ -124,12 +125,14 @@ pub struct Config {
     pub max_turn_duration: Duration,
     /// Whether `agent_thought_chunk` updates become `reasoning` transcript items.
     pub include_thoughts: bool,
-    /// Ask the adapter to forward raw SDK messages to the local log.
+    /// How much of the SDK's own message stream to ask the adapter to forward.
     ///
-    /// Off by default. This is a debugging instrument, not a setting: the
-    /// frames are the adapter's unredacted internals and they are wanted for
-    /// one investigation at a time. See `BUZZ_CSP_EMIT_RAW_SDK_FRAMES`.
-    pub emit_raw_sdk_frames: bool,
+    /// Defaults to the filtered lifecycle set — those frames are the only way
+    /// this provider can learn that a session has background work running, and
+    /// at ~80 frames per session they are affordable to leave on. `all` is the
+    /// unfiltered firehose and is for one debugging session at a time.
+    /// See `BUZZ_CSP_EMIT_RAW_SDK_FRAMES`.
+    pub raw_sdk_frames: RawSdkFrames,
     /// Age past which an unseen command is ignored rather than acted on.
     pub command_horizon: Duration,
 }
@@ -217,7 +220,15 @@ impl Config {
             DEFAULT_COMMAND_HORIZON_SECS,
         )?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
-        let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
+        let raw_sdk_frames = match lookup("BUZZ_CSP_EMIT_RAW_SDK_FRAMES") {
+            None => RawSdkFrames::default(),
+            Some(raw) => raw
+                .parse::<RawSdkFrames>()
+                .map_err(|reason| ConfigError::Invalid {
+                    name: "BUZZ_CSP_EMIT_RAW_SDK_FRAMES",
+                    reason,
+                })?,
+        };
 
         Ok(Self {
             keys,
@@ -234,7 +245,7 @@ impl Config {
             max_turn_duration,
             answer_stall_timeout,
             include_thoughts,
-            emit_raw_sdk_frames,
+            raw_sdk_frames,
             command_horizon,
         })
     }
@@ -479,15 +490,50 @@ mod tests {
     /// pair; this side accepted it.
     /// Raw frames are a debugging instrument, so the default has to be off —
     /// a switch that defaults on stops being a switch.
+    /// The default has to be the filtered set, not the firehose and not off:
+    /// background-task visibility is built on these frames, so a default of
+    /// `off` would make the feature depend on somebody remembering a switch,
+    /// and a default of `all` would cost 8447 frames a session to get 80.
     #[test]
-    fn raw_sdk_frames_are_off_until_asked_for() {
+    fn raw_frames_default_to_the_filtered_lifecycle() {
         let mut vars = minimal();
-        assert!(
-            !load(&vars).expect("config").emit_raw_sdk_frames,
-            "a debugging instrument that defaults on is not a switch"
+        assert_eq!(
+            load(&vars).expect("config").raw_sdk_frames,
+            RawSdkFrames::Lifecycle
         );
-        vars.insert("BUZZ_CSP_EMIT_RAW_SDK_FRAMES", "true".to_owned());
-        assert!(load(&vars).expect("config").emit_raw_sdk_frames);
+
+        for (value, expected) in [
+            ("all", RawSdkFrames::All),
+            ("off", RawSdkFrames::Off),
+            ("lifecycle", RawSdkFrames::Lifecycle),
+        ] {
+            vars.insert("BUZZ_CSP_EMIT_RAW_SDK_FRAMES", value.to_owned());
+            assert_eq!(
+                load(&vars).expect("config").raw_sdk_frames,
+                expected,
+                "for {value:?}"
+            );
+        }
+    }
+
+    /// A typo must be refused rather than silently falling back — a mode that
+    /// quietly reverts to the default is how somebody debugs for an hour
+    /// wondering why the frames never arrived.
+    #[test]
+    fn an_unrecognized_raw_frame_mode_is_refused_by_name() {
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_EMIT_RAW_SDK_FRAMES", "verbose".to_owned());
+        let error = load(&vars).expect_err("must refuse");
+        assert!(
+            matches!(
+                &error,
+                ConfigError::Invalid {
+                    name: "BUZZ_CSP_EMIT_RAW_SDK_FRAMES",
+                    reason,
+                } if reason.contains("lifecycle") && reason.contains("all")
+            ),
+            "the refusal must name the variable and the valid modes: {error:?}"
+        );
     }
 
     #[test]
