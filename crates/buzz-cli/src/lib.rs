@@ -2341,6 +2341,122 @@ pub enum SessionsCmd {
         #[arg(long)]
         genesis: String,
     },
+    /// Send a turn to a coding-session execution (kind 44220).
+    ///
+    /// `--to` names one execution three ways, tried in that order: an exact
+    /// `cs-target` key, a provider session id, or a role slug. A role only
+    /// resolves inside one umbrella — pass `--session-ref`, or run as a
+    /// seated actor whose own umbrella scopes the lookup — and an ambiguous
+    /// name is an error listing every candidate, never a guess.
+    #[command(
+        after_help = "Examples:\n  echo 'rebase and re-run the gate' | bee sessions send --channel <uuid> --to builder --session-ref <uuid> --content -\n  bee sessions send --channel <uuid> --to '<cs-target>' --deliver interrupt --content 'stop'\n  bee sessions send --channel <uuid> --readdress <commandId>"
+    )]
+    Send {
+        /// Channel UUID the session lives in
+        #[arg(long)]
+        channel: String,
+        /// Addressee: a `cs-target` key, a provider session id, or a role slug
+        #[arg(long, required_unless_present = "readdress")]
+        to: Option<String>,
+        /// Umbrella session reference (lowercase UUID) scoping a role lookup
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+        /// Delivery class: boundary (default), steer, or interrupt
+        #[arg(long, value_enum, default_value = "boundary")]
+        deliver: DeliveryArg,
+        /// Turn text, or `-` to read it from stdin
+        #[arg(long, required_unless_present = "readdress")]
+        content: Option<String>,
+        /// Re-send an owed turn: the `commandId` of a 44220 answered
+        /// `turn_dropped`/NO_LIVE_EXECUTION or `turn_refused`/STALE_GENERATION
+        #[arg(long, conflicts_with_all = ["to", "content"])]
+        readdress: Option<String>,
+        /// Refused: 44220 carries no reply reference (see the error text)
+        #[arg(long = "reply-to")]
+        reply_to: Option<String>,
+    },
+    /// Create a coding-session execution (kind 44221 `session.create`).
+    ///
+    /// The brief becomes the create's `initialTurn`. Seated (agent) creates
+    /// are refused here: an actor's key material is host-local custody the
+    /// CLI does not hold — see `--actor`.
+    #[command(
+        after_help = "Examples:\n  bee sessions create --channel <uuid> --session-ref <uuid> --genesis <hex> --provider-instance <ref> --provider-authority <hex> --model <id> --brief -"
+    )]
+    Create {
+        /// Channel UUID to publish the create into
+        #[arg(long)]
+        channel: String,
+        /// Umbrella session reference (lowercase UUID) this execution joins
+        #[arg(long = "session-ref")]
+        session_ref: Option<String>,
+        /// Genesis event id (64-char hex) founding the umbrella
+        #[arg(long)]
+        genesis: Option<String>,
+        /// Capability-advertised provider instance reference
+        #[arg(long = "provider-instance")]
+        provider_instance: String,
+        /// Signing pubkey (64-char lowercase hex) of the provider catalog authority
+        #[arg(long = "provider-authority")]
+        provider_authority: String,
+        /// Provider-neutral model identifier
+        #[arg(long)]
+        model: Option<String>,
+        /// Operator-facing session title
+        #[arg(long)]
+        title: Option<String>,
+        /// NIP-MP project coordinate (`30621:<owner>:<d>`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Repository coordinate within the project
+        #[arg(long)]
+        repo: Option<String>,
+        /// First turn to deliver after creation, or `-` to read it from stdin
+        #[arg(long)]
+        brief: Option<String>,
+        /// Refused: actor custody is host-local (see the error text)
+        #[arg(long)]
+        actor: Option<String>,
+        /// Refused: a role is half of the actor/role pair (see the error text)
+        #[arg(long)]
+        role: Option<String>,
+        /// Refused: the driver slug is minted by the provider (see the error text)
+        #[arg(long)]
+        driver: Option<String>,
+    },
+    /// List turns addressed to executions this identity is seated on.
+    ///
+    /// Oldest first, each row carrying the newest receipt stage its command
+    /// has been answered with.
+    #[command(
+        after_help = "Examples:\n  bee sessions inbox --channel <uuid>\n  bee sessions inbox --channel <uuid> --since <event-id>"
+    )]
+    Inbox {
+        /// Channel UUID to read
+        #[arg(long)]
+        channel: String,
+        /// Exclusive cursor: the event id of the last row already handled
+        #[arg(long)]
+        since: Option<String>,
+    },
+    /// Per-execution liveness, seat, and open-turn state for a channel.
+    #[command(after_help = "Examples:\n  bee sessions status --channel <uuid>")]
+    Status {
+        /// Channel UUID to read
+        #[arg(long)]
+        channel: String,
+    },
+}
+
+/// Delivery class for `bee sessions send`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum DeliveryArg {
+    /// Hold the turn and start it when the current one settles (default).
+    Boundary,
+    /// Inject mid-turn where the runtime advertises native steering.
+    Steer,
+    /// Cancel the running turn, then deliver. Founder-only.
+    Interrupt,
 }
 
 /// Shared-terminal commands (NIP-ST kind 30623 announces + kind 24312 input).
@@ -2958,12 +3074,16 @@ mod tests {
         assert_eq!(
             names(&cmd, "sessions"),
             vec![
+                "create",
                 "doctor",
                 "export",
                 "grant",
+                "inbox",
                 "list",
                 "revoke",
                 "roster",
+                "send",
+                "status",
                 "tools",
                 "transcript"
             ]
@@ -3009,7 +3129,7 @@ mod tests {
             ("pulse", 4),
             ("reactions", 3),
             ("repos", 5),
-            ("sessions", 8),
+            ("sessions", 12),
             ("social", 7),
             ("terminals", 5),
             ("upload", 1),

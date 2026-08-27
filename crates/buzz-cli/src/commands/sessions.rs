@@ -53,6 +53,13 @@ use crate::client::BuzzClient;
 use crate::error::CliError;
 use crate::validate::validate_uuid;
 
+pub mod crew;
+pub mod crew_cmds;
+#[cfg(test)]
+mod crew_tests;
+#[cfg(test)]
+mod crew_wire_tests;
+
 /// Item kinds the 44225 contract recognizes. Anything else is counted as
 /// `other` rather than dropped — a provider that learns a new item kind must
 /// not make this command lie about how much it did not understand.
@@ -2053,6 +2060,64 @@ pub async fn dispatch(
         SessionsCmd::Roster { channel, genesis } => {
             cmd_authority_roster(client, &channel, &genesis).await
         }
+        SessionsCmd::Send {
+            channel,
+            to,
+            session_ref,
+            deliver,
+            content,
+            readdress,
+            reply_to,
+        } => {
+            crew_cmds::cmd_send(
+                client,
+                &channel,
+                to.as_deref(),
+                session_ref.as_deref(),
+                deliver,
+                content.as_deref(),
+                readdress.as_deref(),
+                reply_to.as_deref(),
+            )
+            .await
+        }
+        SessionsCmd::Create {
+            channel,
+            session_ref,
+            genesis,
+            provider_instance,
+            provider_authority,
+            model,
+            title,
+            project,
+            repo,
+            brief,
+            actor,
+            role,
+            driver,
+        } => {
+            crew_cmds::cmd_create(
+                client,
+                &channel,
+                session_ref.as_deref(),
+                genesis.as_deref(),
+                &provider_instance,
+                &provider_authority,
+                model.as_deref(),
+                title.as_deref(),
+                project.as_deref(),
+                repo.as_deref(),
+                brief.as_deref(),
+                actor.as_deref(),
+                role.as_deref(),
+                driver.as_deref(),
+            )
+            .await
+        }
+        SessionsCmd::Inbox { channel, since } => {
+            crew_cmds::cmd_inbox(client, &channel, since.as_deref(), format).await
+        }
+        SessionsCmd::Status { channel } => crew_cmds::cmd_status(client, &channel, format).await,
     }
 }
 

@@ -638,6 +638,227 @@ and confirming `roster` marks it `"agent": true` from a live `agentRef` —
 is left open pending that lane; the unit tests above pin the decode/marking
 logic against synthetic metadata in the meantime.
 
+#### 6.13.3 Crew verbs — `send` / `create` / `inbox` / `status` (S4 Lane 4A)
+
+`bee sessions` gained the four write/mailbox verbs of plan D5. They address a
+*seat* — one provider execution — and every one of them refuses rather than
+guesses when a name is ambiguous.
+
+**Status: RUN LIVE — see the recorded run at the end of this block for what was
+and was not exercised.**
+
+Two envelope facts govern the writes, and both come from the relay's own
+validators rather than from taste:
+
+- Kinds 44220 and 44221 accept **exactly three tags** (`h`, `cs-v`/`csl-v`,
+  `cs-target`/`csl-command`) — `validate_coding_session_command_envelope` and
+  `validate_coding_session_lifecycle_command_envelope` in
+  `crates/buzz-relay/src/handlers/ingest.rs`. So these two kinds are signed
+  with `sign_event_unchecked`, never with `sign_event`, whose NIP-OA `auth`
+  tag injection would make the event **invalid**. Membership delegation still
+  reaches the relay: `submit_event` sends the same tag in the `x-auth-tag`
+  header, which is where `POST /events` reads it
+  (`crates/buzz-relay/src/api/bridge.rs`). If a run under `BUZZ_AUTH_TAG`
+  ever comes back `invalid: unsupported coding-session command tag`, that
+  regression is the cause.
+- A `boundary` turn **omits** the `deliver` key. The payload is
+  `deny_unknown_fields`, so a relay built before the field existed refuses any
+  payload carrying it, and `boundary` is what an absent key already meant.
+  Confirm on the wire:
+
+  ```bash
+  bee messages … # (any read that shows the raw 44220; or query directly)
+  curl -s -X POST "$RELAY_HTTP/query" -H 'Content-Type: application/json' \
+    -d "[{\"kinds\":[44220],\"#h\":[\"$CHANNEL_ID\"]}]" \
+    | jq -r '.[0].content | fromjson | .action'
+  # boundary → {"type":"thread.turn.start","text":"..."}    (no "deliver" key)
+  # steer    → {"type":"thread.turn.start","text":"...","deliver":"steer"}
+  ```
+
+```bash
+# ── status ────────────────────────────────────────────────────────────────
+# One row per execution: seat, liveness, open turn, queue depth.
+bee sessions status --channel "$CHANNEL_ID" | jq .
+# → {"channel":"...","executions":[{"target":"coding-session/v1|...",
+#      "actor":null,"role":null,"sessionRef":null,"seat":"claude·claude-opus",
+#      "live":"quiet 3m","liveness":"quiet","lastSignedSeq":41,
+#      "openTurn":null,"queuedTurns":0}, ...],
+#    "leaseSnapshotRecords":0}
+bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
+
+# `live` comes from a kind-24223 lease, which is EPHEMERAL: the relay serves it
+# from a Redis snapshot, never from stored events, so it describes this instant
+# and has no history. `leaseSnapshotRecords` is how many the snapshot held —
+# 0 means no provider is attached right now, and every row then reads `quiet`
+# (age since its newest signed 44225) or `unknown` (nothing signed yet), never
+# `live`. `released` is a positive claim: a `released` lease, or a durably
+# stopped execution.
+
+# ── inbox ─────────────────────────────────────────────────────────────────
+# Turns addressed to executions whose `agentRef` equals THIS identity's pubkey,
+# oldest first, each with the newest receipt stage its commandId was answered
+# with. A sibling's traffic never appears here even though the relay serves it.
+bee sessions inbox --channel "$CHANNEL_ID" | jq .
+# → {"channel":"...","identity":"<my pubkey>","seats":1,
+#    "turns":[{"eventId":"...","from":"...","commandId":"...","deliver":"boundary",
+#              "text":"rebase and re-run the gate","stage":"turn_started",
+#              "turnId":"...","errorCode":null}, ...]}
+
+# Cursor: exclusive, and it must name a row of MINE — a cursor pointing at
+# somebody else's turn is refused rather than silently restarting the inbox.
+LAST=$(bee sessions inbox --channel "$CHANNEL_ID" | jq -r '.turns[-1].eventId')
+bee sessions inbox --channel "$CHANNEL_ID" --since "$LAST" | jq '.turns | length'
+# → 0
+bee sessions inbox --channel "$CHANNEL_ID" --since 0000000000000000000000000000000000000000000000000000000000000000 2>&1; echo "exit: $?"
+# stderr: {"error":"not_found","message":"--since ... names no turn addressed to this identity ..."}
+# exit: 1
+
+# ── send ──────────────────────────────────────────────────────────────────
+# `--to` is tried as an exact cs-target key, then a session id, then a role.
+TARGET=$(bee sessions list --channel "$CHANNEL_ID" | jq -r '.[0].target')
+echo 'rebase and re-run the gate' \
+  | bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --content - | jq .
+# → {"event_id":"...","accepted":true,"message":"","seat":"...","role":null,
+#    "sessionRef":null,"liveness":"quiet 3m","commandId":"<uuid>",
+#    "target":"coding-session/v1|...","deliver":"boundary"}
+
+# By session id → the NEWEST generation of that execution.
+bee sessions send --channel "$CHANNEL_ID" --to "$SESSION" --content 'go' | jq '.target'
+
+# By role. A role is only unique inside one umbrella, so a role lookup needs
+# one: --session-ref, or the umbrella the caller's own seat sits in. Without a
+# scope it is REFUSED, never widened.
+bee sessions send --channel "$CHANNEL_ID" --to builder \
+  --session-ref "$UMBRELLA" --content 'take the build lane' | jq .
+bee sessions send --channel "$CHANNEL_ID" --to builder --content 'x' 2>&1; echo "exit: $?"
+# stderr: "... role 'builder' is only unique inside one umbrella session, and
+#          none was given — pass --session-ref (seen here: ...)"
+# exit: 1
+
+# Ambiguity is an error listing the candidates — never a guess:
+# stderr: "role 'builder' in umbrella u-1 matches 2 executions — pass --to with
+#          one of: coding-session/v1|..., coding-session/v1|..."
+
+# Delivery classes. `steer` and `interrupt` are written to the wire; `boundary`
+# is omitted (above). NOTE: `capabilities.threadSteer` is false for every v1
+# runtime in this build (plan ruling R3), so a `steer` earns a
+# `turn_degraded`/`STEER_UNSUPPORTED` receipt beside its `turn_queued` and runs
+# at the next boundary. That is the honest downgrade, not a failure.
+bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --deliver steer --content 'while you are there…' | jq .
+bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --deliver interrupt --content 'stop' | jq .
+
+# --reply-to is REFUSED, and says why:
+bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --content 'x' --reply-to 7 2>&1; echo "exit: $?"
+# stderr: "--reply-to is refused: kind 44220 carries no reply reference. Its
+#          envelope is exactly three tags (h, cs-v, cs-target) and its payload
+#          is deny_unknown_fields ..."
+# exit: 1
+
+# ── send --readdress (plan ruling R1) ─────────────────────────────────────
+# A turn answered `turn_dropped`/NO_LIVE_EXECUTION or
+# `turn_refused`/STALE_GENERATION did not run and will not run: re-addressing
+# it is the SENDER's job. `--readdress <commandId>` re-signs the same text
+# against the CURRENT generation of the same execution.
+OWED=$(bee sessions inbox --channel "$CHANNEL_ID" \
+  | jq -r '.turns[] | select(.errorCode=="NO_LIVE_EXECUTION") | .commandId' | tail -1)
+bee sessions send --channel "$CHANNEL_ID" --readdress "$OWED" | jq .
+# → {"event_id":"...","accepted":true,"readdressOf":"<old commandId>",
+#    "readdressReason":"turn_dropped/NO_LIVE_EXECUTION",
+#    "readdressedFromGeneration":3,"resumedBy":"<pubkey that signed the resume>",
+#    "commandId":"<new uuid>","target":"coding-session/v1|...","deliver":"boundary"}
+#
+# The three questions R1 left open, each answered by a refusal rather than a
+# guess:
+#   which generation? the highest generation of the same
+#     (driver, instanceId, sessionId). If that is still the generation that
+#     refused the turn AND no `live` lease answers for it, the re-send is
+#     refused: "resume it … and re-address then".
+#   who resumed it?   the signer of the newest 44221 `session.resume` naming an
+#     earlier generation, reported as `resumedBy` (null when none is on record).
+#   session closed?   refused: "execution … was durably stopped (generation N,
+#     status stopped) — a stopped session accepts no turns; create a new one".
+#
+# A commandId that was answered anything else is refused rather than re-sent:
+bee sessions send --channel "$CHANNEL_ID" --readdress "$STARTED_COMMAND_ID" 2>&1; echo "exit: $?"
+# stderr: "command '...' was answered turn_started — --readdress is only for a
+#          turn_dropped/NO_LIVE_EXECUTION or turn_refused/STALE_GENERATION"
+# exit: 1
+
+# ── create ────────────────────────────────────────────────────────────────
+# Publishes one 44221 `session.create`; the brief becomes `initialTurn`.
+echo 'stand up the fixture harness' | bee sessions create \
+  --channel "$CHANNEL_ID" \
+  --session-ref "$UMBRELLA" --genesis "$GENESIS" \
+  --provider-instance "$PROVIDER_INSTANCE_REF" \
+  --provider-authority "$PROVIDER_AUTHORITY_HEX" \
+  --model claude-opus --title 'fixture harness' --brief - | jq .
+# → {"event_id":"...","accepted":true,"message":"","commandId":"<uuid>","seated":false}
+
+# Three flags are REFUSED here, each naming the mechanism rather than a policy:
+bee sessions create --channel "$CHANNEL_ID" --provider-instance x \
+  --provider-authority "$PROVIDER_AUTHORITY_HEX" --actor "$AGENT_HEX" 2>&1; echo "exit: $?"
+# stderr: "--actor is refused …: an agent seat's key material is host-local
+#          custody the CLI does not hold, so a seat created here would be
+#          answered ACTOR_UNAVAILABLE by the provider. Create seated executions
+#          from the desktop …"
+# --role   → "ACTOR_ROLE_PAIR — a role and an actor are a pair and neither is
+#             valid alone, and --actor is refused here."
+# --driver → "a create names a provider instance (--provider-instance) and its
+#             catalog authority (--provider-authority); the driver slug is
+#             minted by the provider into the target it returns."
+# exit: 1 for each.
+```
+
+##### Recorded live run
+
+Run **2026-08-27 04:00–04:06 UTC** against a local `buzz-relay` built from this
+branch (`cargo build -p buzz-relay`, debug) on `http://localhost:3000`, backed
+by the docker `buzz-postgres` / `buzz-redis` dev services. Identity:
+`93240b3e…` (`buzz-admin generate-key`). Channel
+`944a3b6e-d43c-4a72-aa05-8cc4e2473919`, umbrella
+`f75b3f56-ca72-4277-a1f9-4b6aee727929`.
+
+Three kind-44223 metadata events were published directly (a `builder` seat at
+generations 1 and 2, a `verifier` seat at generation 1, all seated on the
+caller's own pubkey), plus one kind-44224 `turn_dropped`/`NO_LIVE_EXECUTION`
+and one kind-44221 `session.resume`. The relay has **no envelope validator for
+provider-authored kinds** (`ingest.rs`: "The four provider-authored
+coding-session kinds get no envelope validator"), which is why a seeder can
+stand in for a provider here.
+
+| check | result |
+| --- | --- |
+| `sessions status` on an empty channel | `{"executions":[],"leaseSnapshotRecords":0}`, exit 0 |
+| `sessions inbox` on an empty channel | `{"seats":0,"turns":[]}`, exit 0 |
+| `sessions status` after seeding | 3 executions, each `seat":"93240b3e·builder"`/`·verifier`, `"live":"unknown"` (no lease answered), `"sessionRef"` echoed |
+| `sessions create` (unseated, 44221) | `accepted:true`, event `1faf7a2a…` — **this is the proof that `sign_event_unchecked` + exactly-three-tags is right**; `sign_event` would have added an `auth` tag and been rejected `invalid: unsupported coding-session lifecycle command tag` |
+| `sessions create --actor` | refused, exit 1, message names `ACTOR_UNAVAILABLE` |
+| `sessions create --role` | refused, exit 1, message names `ACTOR_ROLE_PAIR` |
+| `sessions create --driver` | refused, exit 1, message names `--provider-instance` |
+| `sessions send --to builder` (no `--session-ref`) | resolved through the caller's own seat to umbrella `f75b3f56…`, and to **generation 2** — the newest — event `5ce7e81f…`, `accepted:true` |
+| boundary payload on the wire | `{"type":"thread.turn.start","text":"rebase and re-run the gate"}` — **no `deliver` key**, read back out of Postgres |
+| `--deliver steer` on the wire | `{"type":"thread.turn.start","text":"…","deliver":"steer"}`, `accepted:true` |
+| `sessions inbox` after two sends | both rows, oldest first, `deliver` `boundary` then `steer`, `stage:null` (no provider to answer) |
+| `sessions send --to <gen-1 cs-target key>` | addressed generation 1 explicitly, `accepted:true` |
+| `sessions send --readdress <that commandId>` | after seeding the `turn_dropped`/`NO_LIVE_EXECUTION`: `readdressOf` the old id, `readdressReason:"turn_dropped/NO_LIVE_EXECUTION"`, `readdressedFromGeneration:1`, `resumedBy:"93240b3e…"` (the 44221 resume's signer), new `target` = **generation 2** |
+| re-addressed text on the wire | byte-identical to the original 44220's `text`, verified in Postgres |
+| `--to builder --session-ref <foreign uuid>` | `not_found`, exit 1: "no seat holds role 'builder' in umbrella …; the role exists in: f75b3f56…" — the role did **not** resolve across umbrellas |
+| `--readdress` of a command with no turn receipt | refused, exit 1: "has no turn receipt yet — nothing says it did not run" |
+| `sessions inbox --since <last eventId>` | 0 turns |
+| `sessions inbox --since <unknown id>` | `not_found`, exit 1 |
+| `sessions send --reply-to` | refused, exit 1, message names the three-tag envelope and `deny_unknown_fields` |
+
+**Not exercised live, and why.** No real provider was attached, so no
+`turn_queued`/`turn_started` receipt, no lease, and no transcript existed:
+`status`'s `live`/`quiet <age>`/`released` branches, `openTurn`, `queuedTurns`,
+and inbox `stage`/`turnId` were exercised only by the unit tests in
+`crates/buzz-cli/src/commands/sessions/crew_tests.rs`. Neither was
+`--deliver interrupt` end to end (nothing was running to cancel), nor the
+`STALE_GENERATION` arm of `--readdress`, nor the "durably stopped" refusal, nor
+a run under `BUZZ_AUTH_TAG` (which is the case the `sign_event_unchecked`
+choice exists for — see the envelope note above). Those remain open until the
+S4 acceptance run seats two managed agents in one umbrella.
+
 ---
 
 ## 7. Error Path Testing
