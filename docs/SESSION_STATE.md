@@ -2105,6 +2105,9 @@ written and `bash -n` clean but **was not executed** — that harness needs
    gaps (metadata conflicts missing from `isClean`, target-less receipt
    refusals uncounted) fixed with it; `order-1` (arrival-order
    `commandIdByTarget`) deferred as unreachable, named in the doc comment.
+   Deferred-items pass 2026-08-26: `order-1` now files a generation under the
+   command its signed order names (`943dd41c`); D10 eviction, per-kind refusal
+   grounds and prompt attachment counts are now disclosed on both pages.
 
 ## 2a. Direction settled 2026-08-18
 
