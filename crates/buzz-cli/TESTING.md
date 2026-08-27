@@ -585,6 +585,59 @@ What to check in `content`, once a live 44220 turn command produces receipts:
   running the same check against a live relay is the residual this block
   leaves open.
 
+#### 6.13.2 Authority grants (kind 44228) — npub/hex targets, agent-marked roster — NOT YET RUN LIVE
+
+**Status: unit-tested only (`cargo test -p buzz-cli --lib` —
+`grantee_pubkey_resolves_hex_and_npub_to_the_same_value`,
+`grantee_pubkey_rejects_a_display_name_and_malformed_input`,
+`roster_marks_only_pubkeys_the_channel_metadata_named_as_actors`,
+`roster_agent_set_is_empty_when_no_execution_ever_named_an_actor`); not yet
+observed against a live relay.** `bee sessions grant`/`revoke` accept
+`--pubkey` as either a 64-char lowercase hex pubkey or an `npub1…` bech32 key
+(`nostr::PublicKey::parse`, the same resolver `messages.rs`'s `--author` and
+`--mention` use) — never a display name, so a grant target is always exact.
+Both forms resolve to the identical hex before the 44228 transition is built;
+the wire content (NIP-CSAT) and the relay never see the npub form.
+
+```bash
+# grant by hex (existing behavior, unchanged)
+bee sessions grant --channel "$CHANNEL_ID" --genesis "$GENESIS" \
+  --pubkey "$AGENT_HEX_PUBKEY" --role collaborator | jq .
+
+# grant by npub — resolves to the same hex on the wire
+bee sessions grant --channel "$CHANNEL_ID" --genesis "$GENESIS" \
+  --pubkey "$AGENT_NPUB" --role collaborator | jq .
+# Confirm both submissions produced the same granteePubkey in the roster:
+bee sessions roster --channel "$CHANNEL_ID" --genesis "$GENESIS" | jq '.grants'
+
+# revoke by npub
+bee sessions revoke --channel "$CHANNEL_ID" --genesis "$GENESIS" --pubkey "$AGENT_NPUB" | jq .
+
+# malformed --pubkey (neither hex nor npub) → usage error before any relay call
+bee sessions grant --channel "$CHANNEL_ID" --genesis "$GENESIS" \
+  --pubkey "not-a-key" --role collaborator 2>&1; echo "exit: $?"
+# exit: 1
+```
+
+`bee sessions roster` marks each grant (and each pending, un-receipted
+transition) `"agent": true` when the channel's coding-session metadata
+(kind 44223) has ever named that pubkey as a seated actor (`agentRef`,
+plan D1/D6 — see NIP-CSL's "Actor and role" section). This is a fact about
+the pubkey gathered from the channel's own metadata history, never a guess
+from the pubkey's shape:
+
+```bash
+bee sessions roster --channel "$CHANNEL_ID" --genesis "$GENESIS" | jq .
+# → {"genesisRef":"...","headEventId":"...","headSeq":N,
+#    "grants":[{"pubkey":"...","role":"collaborator","agent":true}, ...],
+#    "pending":[...]}
+```
+
+This residual — seating an actual managed-agent seat (Slice 3, Lane 3A/3B)
+and confirming `roster` marks it `"agent": true` from a live `agentRef` —
+is left open pending that lane; the unit tests above pin the decode/marking
+logic against synthetic metadata in the meantime.
+
 ---
 
 ## 7. Error Path Testing

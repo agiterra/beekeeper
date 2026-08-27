@@ -86,8 +86,8 @@ bee sessions transcript --channel <uuid> --target <cs-target> | --session <sessi
                          [--format md|jsonl]
 bee sessions tools      --channel <uuid> [--target <cs-target>]
 bee sessions export     --channel <uuid> --out <dir>
-bee sessions grant      --channel <uuid> --genesis <event-id> --pubkey <hex> --role collaborator|viewer
-bee sessions revoke     --channel <uuid> --genesis <event-id> --pubkey <hex>
+bee sessions grant      --channel <uuid> --genesis <event-id> --pubkey <hex|npub> --role collaborator|viewer
+bee sessions revoke     --channel <uuid> --genesis <event-id> --pubkey <hex|npub>
 bee sessions roster     --channel <uuid> --genesis <event-id>
 ```
 
@@ -111,12 +111,19 @@ bee sessions roster     --channel <uuid> --genesis <event-id>
   `grant --role collaborator` mints a `grant-operator` transition, `grant
   --role viewer` mints `grant-viewer`, `revoke` mints `revoke`. Only the
   session owner (the genesis signer) may call these; the relay rejects
-  anything else atomically with storage.
+  anything else atomically with storage. `--pubkey` accepts 64-char hex or an
+  `npub1…` bech32 key — resolved to hex locally before the transition is
+  built, so the signed 44228 content is always hex, never a bech32 form.
 - **`roster`** — a session's folded grant map plus any pending transitions.
   Grants are folded from relay-signed acceptance receipts (kind 40099) in
   `seq` order, not from raw 44228 rows directly, so a transition with no
   matching receipt shows up separately as pending rather than silently
-  granting standing it never received.
+  granting standing it never received. Each grant (and pending transition) is
+  additionally marked `"agent": true` when the channel's `kind:44223`
+  metadata has ever named that pubkey as a seated actor (`agentRef`, see
+  [NIP-CSL's actor/role amendment](nips/NIP-CSL.md#fork-amendment-actor-and-role-agent-seats)) —
+  a fact read back from the channel's own record, never inferred from the
+  pubkey's shape.
 
 There is no CLI surface yet for genesis (44226), goal (44227), name (44229),
 closure (44230), or Pulse (44240, which is besides still unsplit from `wip/*`) —
@@ -210,6 +217,31 @@ WHERE kind = 44223
 GROUP BY project_ref
 ORDER BY sessions DESC;
 ```
+
+### Agent-seated executions (`agentRef` / `role`, NIP-CSL actor amendment)
+
+`agentRef` is a base metadata field since v1 (always present, `null` for an
+execution with no seated actor); `role` is a newer key, present only
+alongside a non-null `agentRef`. Neither key ever carries key material — see
+[NIP-CSL's actor-custody amendment](nips/NIP-CSL.md#fork-amendment-actor-custody-is-host-local-never-on-the-wire).
+
+```sql
+SELECT
+    (content::jsonb) ->> 'agentRef' AS actor,
+    (content::jsonb) ->> 'role'     AS role,
+    COUNT(DISTINCT (content::jsonb) #>> '{session,sessionId}') AS executions
+FROM events
+WHERE kind = 44223
+  AND deleted_at IS NULL
+  AND (content::jsonb) ->> 'agentRef' IS NOT NULL
+GROUP BY actor, role
+ORDER BY executions DESC;
+```
+
+`bee sessions roster` folds this same fact per-grantee (`"agent": true`)
+rather than requiring this query by hand — prefer it for anything scoped to
+one authority chain; reach for the SQL above only when the question spans a
+whole channel's executions instead.
 
 ### Full transcript dump for one generation
 

@@ -133,11 +133,34 @@ fold on every read path. Where isolation between sessions matters, **run one
 transport channel per session** — the recommended deployment shape — and the
 viewer scope collapses to exactly the granted session.
 
+## Agent grantees
+
+`granteePubkey` is just a pubkey — the chain draws no distinction between a
+human's and an agent's. An agent seated on a sibling execution (`actor` on its
+`session.create`, [NIP-CSL](NIP-CSL.md)) is granted `grant-operator` the same
+way any collaborator is: a 44228 transition naming its pubkey. Grant tooling
+(`bee sessions grant`/`revoke`) accepts that pubkey as 64-char lowercase hex or
+an `npub1…` bech32 key — resolved locally to hex before the transition is
+built, so the signed 44228 content and this chain's fold never see anything
+but hex. `bee sessions roster` additionally marks a folded grant `agent: true`
+when the channel's `kind:44223` metadata has ever named that pubkey as a
+seated actor (`agentRef`) — a fact read back from the channel's own record,
+not asserted by the roster reader.
+
+Key custody for an agent grantee is never part of this chain. Resolving
+*which* private key answers for an `actor` pubkey, injecting it into that
+seat's process, and adding the actor to the channel so its signed 44220s are
+even eligible are all host-local steps performed before the grant — see
+[NIP-CSL § actor custody is host-local](NIP-CSL.md#fork-amendment-actor-custody-is-host-local-never-on-the-wire).
+A `grant-operator` receipt on this chain is authority to steer, never a claim
+about how the grantee holds its key.
+
 ## Relation to other NIPs
 
 - **NIP-CSG** supplies the genesis (`kind:44226`) the chain roots at and the
   founder identity the relay checks signers against.
 - **NIP-CSC / NIP-CSL** supply the command surfaces whose authorization reads
-  the folded chain (founder or operator may steer).
+  the folded chain (founder or operator may steer). NIP-CSL also supplies the
+  `actor`/`role` seat and its host-local custody, above.
 - **NIP-MP** supplies project membership, the other route to transport-channel
   read access.

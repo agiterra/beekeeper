@@ -1758,6 +1758,27 @@ fn validate_lower_hex64(label: &str, value: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Resolve a `--pubkey` grant/revoke/roster target to a 64-character
+/// lowercase hex pubkey.
+///
+/// Accepts 64-char hex or an `npub1…` bech32 key via `nostr::PublicKey::parse`
+/// (the same resolver `messages.rs::resolve_author` uses for `--author`) —
+/// never a display name: a grant target must be exact, never a NIP-50 search
+/// that could resolve ambiguously. The wire payload (NIP-CSAT) always carries
+/// hex, so this is the one place npub tolerance is added; everything
+/// downstream — the transition payload, the chain fold, the roster — keeps
+/// seeing hex, unchanged.
+fn resolve_grantee_pubkey(label: &str, value: &str) -> Result<String, CliError> {
+    let trimmed = value.trim();
+    nostr::PublicKey::parse(trimmed)
+        .map(|pk| pk.to_hex())
+        .map_err(|_| {
+            CliError::Usage(format!(
+                "{label} must be a 64-character lowercase hex pubkey or an npub1… key: {value}"
+            ))
+        })
+}
+
 /// Fetch the raw kind:40099 receipts for a channel and fold the chain state
 /// for one genesis.
 async fn fetch_authority_state(
@@ -1795,7 +1816,8 @@ async fn submit_authority_transition(
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     validate_lower_hex64("--genesis", genesis)?;
-    validate_lower_hex64("--pubkey", grantee)?;
+    let grantee = resolve_grantee_pubkey("--pubkey", grantee)?;
+    let grantee = grantee.as_str();
 
     for attempt in 0..2 {
         let state = fetch_authority_state(client, channel_id, genesis).await?;
@@ -1896,8 +1918,24 @@ async fn cmd_revoke(
     .await
 }
 
+/// Every `agentRef` a channel's coding-session metadata (kind 44223) has
+/// ever named — an agent's identity is a fact about the pubkey, not about
+/// which grant it happens to hold, so this is gathered once per channel
+/// rather than per grantee. `agentRef` is `null` for every execution with no
+/// seated actor (D1/D6), so an empty set here means "no actor seat has
+/// published metadata in this channel yet", not a decode failure.
+fn agent_pubkeys_in_channel(metadata: &[Value]) -> HashSet<String> {
+    let (records, _stats) = decode_metadata(metadata);
+    records
+        .into_iter()
+        .filter_map(|record| record.metadata.agent_ref)
+        .collect()
+}
+
 /// `bee sessions roster` — the folded grant map plus pending (un-receipted)
-/// transitions.
+/// transitions, each grantee marked `"agent": true` when the channel's
+/// coding-session metadata has ever named that pubkey as a seated actor
+/// (`agentRef`, D1/D6) — never a guess from the pubkey's shape alone.
 async fn cmd_authority_roster(
     client: &BuzzClient,
     channel_id: &str,
@@ -1920,6 +1958,10 @@ async fn cmd_authority_roster(
         .collect();
     let state = fold_authority_receipts(receipts.clone());
 
+    let metadata_raw =
+        fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_METADATA]).await?;
+    let agents = agent_pubkeys_in_channel(&metadata_raw);
+
     // A transition with no matching receipt is pending: submitted but not
     // (or not yet) accepted as a chain link.
     let pending: Vec<Value> = transitions
@@ -1933,11 +1975,14 @@ async fn cmd_authority_roster(
             if content.get("genesisRef")?.as_str()? != genesis {
                 return None;
             }
+            let grantee_pubkey = content.get("granteePubkey")?.as_str()?.to_owned();
+            let is_agent = agents.contains(&grantee_pubkey);
             Some(json!({
                 "eventId": id,
                 "seq": content.get("seq"),
                 "type": content.get("type"),
-                "granteePubkey": content.get("granteePubkey"),
+                "granteePubkey": grantee_pubkey,
+                "agent": is_agent,
             }))
         })
         .collect();
@@ -1945,7 +1990,9 @@ async fn cmd_authority_roster(
     let grants: Vec<Value> = state
         .grants
         .iter()
-        .map(|(pubkey, role)| json!({ "pubkey": pubkey, "role": role }))
+        .map(|(pubkey, role)| {
+            json!({ "pubkey": pubkey, "role": role, "agent": agents.contains(pubkey) })
+        })
         .collect();
 
     println!(
@@ -3355,5 +3402,79 @@ mod tests {
         assert!(!is_chain_head_conflict(&CliError::Other(
             "relay rejected event: invalid: only the session owner may extend the chain".into()
         )));
+    }
+
+    // ── npub-tolerant grant/revoke targets ──────────────────────────────────
+
+    #[test]
+    fn grantee_pubkey_resolves_hex_and_npub_to_the_same_value() {
+        use nostr::ToBech32;
+        let hex = "c".repeat(64);
+        let npub = nostr::PublicKey::from_hex(&hex)
+            .unwrap()
+            .to_bech32()
+            .unwrap();
+        assert!(npub.starts_with("npub1"));
+
+        assert_eq!(resolve_grantee_pubkey("--pubkey", &hex).unwrap(), hex);
+        assert_eq!(resolve_grantee_pubkey("--pubkey", &npub).unwrap(), hex);
+        // Whitespace around either form is tolerated, matching --author.
+        assert_eq!(
+            resolve_grantee_pubkey("--pubkey", &format!("  {npub}  ")).unwrap(),
+            hex
+        );
+    }
+
+    #[test]
+    fn grantee_pubkey_rejects_a_display_name_and_malformed_input() {
+        for bad in [
+            "not-a-key",
+            "npub1invalid",
+            &"a".repeat(63),
+            &"g".repeat(64),
+        ] {
+            assert!(
+                resolve_grantee_pubkey("--pubkey", bad).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    // ── roster agent marking ────────────────────────────────────────────────
+
+    #[test]
+    fn roster_marks_only_pubkeys_the_channel_metadata_named_as_actors() {
+        let human_session = target("s-human", 1);
+        let agent_session = target("s-agent", 1);
+        let agent_pubkey = "d".repeat(64);
+        let human_pubkey = "e".repeat(64);
+
+        let mut agent_metadata = metadata_payload(&agent_session, SessionStatus::Idle, None, None);
+        agent_metadata.agent_ref = Some(agent_pubkey.clone());
+        let human_metadata = metadata_payload(&human_session, SessionStatus::Idle, None, None);
+        assert!(human_metadata.agent_ref.is_none());
+
+        let events = vec![
+            metadata_event(&format!("{:064}", 1), "signer-1", 100, &agent_metadata),
+            metadata_event(&format!("{:064}", 2), "signer-2", 100, &human_metadata),
+        ];
+
+        let agents = agent_pubkeys_in_channel(&events);
+        assert!(agents.contains(&agent_pubkey));
+        assert!(!agents.contains(&human_pubkey));
+        assert_eq!(agents.len(), 1);
+    }
+
+    #[test]
+    fn roster_agent_set_is_empty_when_no_execution_ever_named_an_actor() {
+        let session = target("s-1", 1);
+        let payload = metadata_payload(&session, SessionStatus::Idle, None, None);
+        let events = vec![metadata_event(
+            &format!("{:064}", 1),
+            "signer-1",
+            100,
+            &payload,
+        )];
+        assert!(agent_pubkeys_in_channel(&events).is_empty());
     }
 }
