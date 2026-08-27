@@ -533,7 +533,7 @@ pub struct Provider {
     ///
     /// A `thread.turn.interrupt` is not a turn, so it never enters
     /// [`Provider::in_flight`] — and everything that runs *after* its delivery
-    /// (the consumed/refused ledger append, then the receipt) is fallible. When
+    /// (the receipt, then the consumed/refused ledger append) is fallible. When
     /// one of those fails the command is handed back for a later try, and both
     /// ledgers roll their in-memory entry back on a failed append, so without
     /// this set a redelivery walked every `decide_turn` fence and cancelled
@@ -541,10 +541,13 @@ pub struct Provider {
     /// ledger entry.
     ///
     /// The fence is silent (`Ignored::AlreadyAccepted`), so it may only close
-    /// over a cancel that has *already* been answered — which is why the
-    /// receipt is enqueued into the durable outbox before the ledger append,
-    /// and why an entry here is released only once that append succeeds and
-    /// the durable ledger takes the fence over.
+    /// over a cancel that has *already* been answered — which is why an id is
+    /// recorded here only once `enqueue_receipt` has returned `Ok` and the
+    /// answer is durably in the crash-safe outbox, and why the entry is
+    /// released only once the ledger append behind it succeeds and takes the
+    /// fence over. An enqueue that fails records nothing: the command goes
+    /// back to `replay.held` unfenced, which is what leaves the later try able
+    /// to answer it.
     ///
     /// An append that keeps failing would otherwise keep its entry for the
     /// life of the process, so the queue is bounded at
@@ -2128,17 +2131,6 @@ impl Provider {
                 // An interrupt is answered by whether the cancel reached a
                 // live turn, which is a fact this loop already holds.
                 Ok(()) => {
-                    // Custody of the cancel itself, recorded before anything
-                    // that can fail. `handle.deliver` has already put the
-                    // `SessionCommand::Interrupt` in the actor's mailbox and
-                    // nothing can take it back, while both writes below can
-                    // fail and hand this command back to `replay.held` for a
-                    // later try. `in_flight` is deliberately not the place for
-                    // it — this is not a turn, and an entry there would poison
-                    // the `open_turn` predicate three lines down, the
-                    // `watermark_ceiling` clamp and `report_lost_mailbox`'s
-                    // `is_turn` receipt.
-                    self.remember_delivered_cancel(command_id.clone());
                     // Custody, not just the fold: a turn this provider has
                     // accepted and not yet seen start is in flight as surely
                     // as one whose `TurnStarted` has already been folded. The
@@ -2163,18 +2155,39 @@ impl Provider {
                             "the execution is live but had no turn in flight to cancel",
                         )
                     };
-                    // The answer first, the fence second, and the order is the
-                    // whole point. Both writes can fail; only one of them is
-                    // what the operator receives, and the outbox is itself a
-                    // durable, crash-safe queue, so a receipt enqueued here
-                    // outlives a ledger append that fails right behind it.
-                    // Ledger-first did the opposite: the append failed, `?`
-                    // returned in front of the receipt, and `delivered_cancels`
-                    // — correctly — made the relay's redelivery silent, so a
-                    // cancel that had already destroyed a running turn was
-                    // answered by nothing at all, in this process and after a
-                    // restart. Contracts D and E both forbid that.
+                    // The answer first, then the process-local fence, then
+                    // the durable one, and that order is the whole point.
+                    // `handle.deliver` has already put the
+                    // `SessionCommand::Interrupt` in the actor's mailbox and
+                    // nothing can take it back, while every write below can
+                    // fail and hand this command back to `replay.held` for a
+                    // later try. The fence is silent
+                    // (`Ignored::AlreadyAccepted`), so it may only ever close
+                    // over a cancel that has *already* been answered, and both
+                    // earlier orders broke that. Ledger-first: the append
+                    // failed, `?` returned in front of the receipt, and the
+                    // fence — correctly — made the relay's redelivery silent,
+                    // so a cancel that had destroyed a running turn was
+                    // answered by nothing at all. Fence-first had the same
+                    // hole through the sibling write: `outbox.jsonl` and
+                    // `commands.jsonl` share one state directory, so the
+                    // failure class this fence is bounded for (full,
+                    // read-only, gone) takes the *receipt* first. Enqueuing
+                    // into the crash-safe outbox before recording anything
+                    // leaves that failure recoverable: nothing is fenced, the
+                    // command stays held, the channel floor stays behind it,
+                    // and the later try answers it. Contracts D and E both
+                    // forbid the alternative.
                     self.enqueue_receipt(channel_id, &command_id, &receipt)?;
+                    // Answered durably, so the process-local fence may close:
+                    // it is what stops the relay's redelivery reaching a
+                    // second mailbox in the window before the ledger below
+                    // takes that job over. `in_flight` is deliberately not the
+                    // place for it — this is not a turn, and an entry there
+                    // would poison the `open_turn` predicate above, the
+                    // `watermark_ceiling` clamp and `report_lost_mailbox`'s
+                    // `is_turn` receipt.
+                    self.remember_delivered_cancel(command_id.clone());
                     // Now the durable fence. Consumed when the cancel was
                     // issued, which is the whole of what an interrupt does;
                     // refused when there was nothing to cancel — the two
@@ -9979,6 +9992,115 @@ mod tests {
                 .session(&target.session_id)
                 .is_some_and(|record| record.open_turn.is_some()),
             "turn-2 is still running: the redelivered cancel reached no mailbox"
+        );
+    }
+
+    /// A cancel whose answer could not even be queued is not fenced.
+    ///
+    /// The answer and the fence are two writes to the same state directory,
+    /// and the outbox is the one that fails *first* under the failure class
+    /// this fence is bounded for: `outbox.jsonl` and `commands.jsonl` are
+    /// siblings, so "full, read-only or gone" takes the receipt before it
+    /// takes the ledger. Recording the id in front of `enqueue_receipt`
+    /// therefore closed a *silent* fence — `Ignored::AlreadyAccepted`
+    /// publishes nothing — over a cancel that had reached the actor, ended a
+    /// running turn, and been answered by nothing at all; the redelivery that
+    /// was the only thing left able to answer it returned `Ok(())`, so the
+    /// channel floor then walked past it and the restart could not recover it
+    /// either. The id is remembered only once the answer is durably queued.
+    #[tokio::test]
+    async fn a_cancel_whose_answer_cannot_be_queued_is_not_fenced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let state_dir = dir.path().join("state");
+        let mut provider = stalling_provider(&state_dir, Some(&projects));
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+
+        // Held, so the delivery runs out of `deliver_held_commands` — the one
+        // path that hands a failed command back for a later try.
+        let cancel = interrupt_event(channel_id, "int-held", &target);
+        let cancel_at = cancel.created_at.as_secs();
+        provider.open_replay_window(channel_id);
+        provider
+            .handle_command_event(channel_id, &cancel)
+            .await
+            .expect("hold");
+        let floor_before = provider.state().watermark(channel_id);
+
+        // A directory where the outbox belongs. `Outbox::append` re-opens the
+        // path on every append, so every one of them fails EISDIR — the same
+        // structural, root-hermetic sabotage the sibling ledger test uses,
+        // applied to the sibling file.
+        let outbox = state_dir.join("outbox.jsonl");
+        if outbox.exists() {
+            std::fs::remove_file(&outbox).expect("clear the outbox file");
+        }
+        std::fs::create_dir(&outbox).expect("sabotage");
+        provider
+            .flush_replays_now()
+            .await
+            .expect_err("the receipt cannot even be queued");
+
+        assert!(
+            !provider.delivered_cancels.contains(&"int-held".to_owned()),
+            "an unanswered cancel is not fenced: the silent `AlreadyAccepted` arm would \
+             swallow the one redelivery still able to answer it"
+        );
+        assert!(
+            provider
+                .replay
+                .held
+                .iter()
+                .any(|held| held.channel_id == channel_id && held.content.contains("int-held")),
+            "the command goes back to `replay.held` for a later try"
+        );
+        assert_eq!(
+            provider.state().watermark(channel_id),
+            floor_before,
+            "and the channel floor does not walk past a command still owed an answer"
+        );
+
+        // The state directory recovers and the window reopens. This is the
+        // later try the hand-back promised, and it is the assertion the fence
+        // ordering exists for: under the old order `decide_turn` answered the
+        // retry `AlreadyAccepted`, published nothing, and let the floor
+        // advance anyway.
+        std::fs::remove_dir(&outbox).expect("restore");
+        provider.open_replay_window(channel_id);
+        provider
+            .flush_replays_now()
+            .await
+            .expect("the retry has a working state directory");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(
+            !receipt_stages(&sink, "int-held").is_empty(),
+            "the cancel that reached the actor is answered on the retry, not swallowed"
+        );
+        assert!(
+            provider
+                .state()
+                .watermark(channel_id)
+                .is_some_and(|mark| mark >= cancel_at),
+            "and only now, behind an answered command, does the floor advance"
         );
     }
 
