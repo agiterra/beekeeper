@@ -101,9 +101,17 @@ pub struct StagedActorSeat {
 ///    the instance-side pair is `None` on records built today
 ///    (`AgentDefinition::into_agent_record`).
 ///
-/// Returns `None` — never a guess — when neither resolves to a directory that
-/// exists. A staged pack the provider cannot read would fail the create; a
-/// seat with no pack is a legal seat that carries no role skills.
+/// Returns `None` — never a guess — when neither resolves to a pack that
+/// actually holds that persona. **A directory that exists is not the test.**
+/// The provenance arm pairs a slug with whatever directory the agent's team
+/// names, and those two facts can disagree: an agent whose definition arrived
+/// from another device carries the kind:30175 `d` tag as its slug, a persona
+/// may be renamed or dropped from its pack, and a team directory may be
+/// something else entirely. Staging such a pair is not a harmless guess — the
+/// provider's `materialize_seat_skills` turns an unreadable pack into
+/// `CreateFailure{PROVIDER_UNAVAILABLE}`, so a guess here refuses a create
+/// that used to work. A seat with no pack is a legal seat that carries no role
+/// skills; that is the honest answer when the persona does not resolve.
 pub(crate) fn resolve_seat_pack(
     record: &crate::managed_agents::types::ManagedAgentRecord,
     teams: &[crate::managed_agents::types::TeamRecord],
@@ -128,6 +136,17 @@ pub(crate) fn resolve_seat_pack(
         }
     };
     if persona.trim().is_empty() || !dir.is_dir() {
+        return None;
+    }
+    // The only question that matters: can the provider read this persona out
+    // of this pack? Ask the same resolver the provider will.
+    if let Err(error) = buzz_persona_pkg::resolve::resolve_persona_by_name(&dir, &persona) {
+        tracing::debug!(
+            pack = %dir.display(),
+            persona = %persona,
+            %error,
+            "seat stages no role pack: this computer has no such persona in that pack"
+        );
         return None;
     }
     Some((dir, persona))
@@ -385,10 +404,32 @@ mod tests {
         }
     }
 
+    /// A directory that really is a role pack, with one persona in it.
+    fn role_pack(root: &Path, persona: &str) -> PathBuf {
+        let pack = root.join("pack");
+        std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+        std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+        std::fs::write(
+            pack.join(".plugin/plugin.json"),
+            format!(
+                r#"{{"id":"com.test.roles","name":"Roles","version":"0.1.0","personas":["personas/{persona}.persona.md"]}}"#
+            ),
+        )
+        .expect("plugin.json");
+        std::fs::write(
+            pack.join(format!("personas/{persona}.persona.md")),
+            format!(
+                "---\nname: {persona}\ndisplay_name: {persona}\ndescription: Builds.\nrole: builder\n---\nYou build.\n"
+            ),
+        )
+        .expect("persona");
+        pack
+    }
+
     #[test]
     fn a_seat_carries_the_pack_its_agent_was_installed_from() {
-        let dir = std::env::temp_dir().join(format!("buzz-seat-pack-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("pack dir");
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let dir = role_pack(tmp.path(), "builder");
         let record = agent_record(Some("team-1"), Some("builder"));
         let teams = vec![team_record("team-1", Some(dir.clone()))];
         let pack =
@@ -414,7 +455,56 @@ mod tests {
             json.get("personaId").and_then(|v| v.as_str()),
             Some("builder")
         );
-        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_pack_that_does_not_hold_the_persona_stages_no_pack() {
+        // The provenance fallback used to pair the agent's slug with whatever
+        // directory its team names, checking only that the directory exists.
+        // An agent whose definition arrived from another device carries the
+        // 30175 d-tag uuid as its slug (persona_events.rs), and no pack has a
+        // persona by that name — so the seat was staged with a pack the
+        // provider cannot read, and the provider's materialize_seat_skills
+        // turns that into CreateFailure{PROVIDER_UNAVAILABLE}: a create that
+        // worked before role packs existed, refused afterwards. A seat with no
+        // readable pack is a packless seat, not a refused create.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let dir = role_pack(tmp.path(), "builder");
+        let teams = vec![team_record("team-1", Some(dir.clone()))];
+
+        assert!(
+            resolve_seat_pack(
+                &agent_record(Some("team-1"), Some("9f2c8d1e-inbound-uuid")),
+                &teams,
+            )
+            .is_none(),
+            "a slug the pack has no persona for is not a pack"
+        );
+        // Same for a renamed or removed persona reached by the instance-side
+        // link rather than the provenance fallback.
+        let mut linked = agent_record(None, None);
+        linked.persona_team_dir = Some(dir.clone());
+        linked.persona_name_in_team = Some("architect".into());
+        assert!(
+            resolve_seat_pack(&linked, &teams).is_none(),
+            "a persona no longer in the pack is not a pack"
+        );
+        // A directory that is not a pack at all.
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).expect("plain dir");
+        assert!(
+            resolve_seat_pack(
+                &agent_record(Some("team-2"), Some("builder")),
+                &[team_record("team-2", Some(plain))],
+            )
+            .is_none(),
+            "an ordinary directory is not a pack"
+        );
+        // The persona the pack really holds still resolves.
+        assert_eq!(
+            resolve_seat_pack(&agent_record(Some("team-1"), Some("builder")), &teams),
+            Some((dir, "builder".to_owned())),
+        );
     }
 
     #[test]
