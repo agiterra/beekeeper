@@ -895,8 +895,15 @@ pub struct SessionMetadata {
 /// can exceed `limit` — the founder is never refused — and that is reported as
 /// it happened rather than clamped, because a clamped count would hide who
 /// spent what.
+///
+/// The object is exact: `deny_unknown_fields` here is what keeps this side
+/// reading the same bytes the desktop's decoder reads, which rejects an extra
+/// key inside `turnBudget` and drops the whole 44223 for it. A nested shape
+/// that is strict on one side only is the divergence the ingress rules
+/// forbid — the same signed event would show a session to one reader and
+/// nothing to the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnBudget {
     /// Turns started under this umbrella by the provider publishing this.
     pub used: u64,
@@ -1783,6 +1790,17 @@ mod tests {
             .expect("13-key form")
             .turn_budget
             .is_none());
+
+        // The nested object is exact too. The desktop's decoder rejects an
+        // extra key inside `turnBudget` and drops the whole 44223 for it, so a
+        // shape this side tolerated would be a divergence: two readers of the
+        // same signed bytes, one showing the session and one not.
+        let mut smuggled = base.clone();
+        smuggled["turnBudget"] = serde_json::json!({ "used": 1, "limit": 200, "remaining": 199 });
+        assert!(decode_coding_session_metadata(&smuggled.to_string()).is_err());
+        let mut halved = base.clone();
+        halved["turnBudget"] = serde_json::json!({ "used": 1 });
+        assert!(decode_coding_session_metadata(&halved.to_string()).is_err());
 
         // Serialization is the mirror image: absent, not null.
         let mut metadata = decode_coding_session_metadata(&base.to_string()).expect("14-key form");
