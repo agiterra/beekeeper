@@ -131,6 +131,11 @@ re-addressing affordance — desktop "Resend to the resumed execution" from a
 to boundary and say so in the receipt** — never cancel-and-merge for agent
 traffic), `interrupt` (founder/lead only: cancel, then deliver). Carried as an
 optional `deliver` field on `thread.turn.start`; absent means `boundary`.
+*D3 amended 2026-08-26:* senders **omit** `deliver` when it is `boundary`, so a
+relay that predates the field still accepts the default path; `steer` and
+`interrupt` are written and require a relay that validates the field. General
+rule: a new optional field on a relay-validated (`deny_unknown_fields`) kind is
+omitted at its default value until the relay carrying it is deployed.
 
 **D4. Every turn command gets receipts, keyed per stage.** Stages:
 `turn_queued`, `turn_started` (carries `turnId`), `turn_degraded` (steer →
