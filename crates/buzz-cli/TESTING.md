@@ -702,10 +702,14 @@ bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
 #   compact: "turnBudget": "7/20"
 # `exhausted` (json only) mirrors `used >= limit`, the same condition that
 # makes the provider answer the next non-founder turn `turn_refused` /
-# `BUDGET_EXHAUSTED` (NIP-CSL). This command reads the count straight off the
-# newest metadata's raw content — it is not a typed `SessionMetadata` field —
-# so an older `bee` build reads `turnBudget:null` from a provider that has
-# started publishing it rather than failing to decode the row.
+# `BUDGET_EXHAUSTED` (NIP-CSL). The count is the typed optional `turnBudget`
+# field of `SessionMetadata`, read off the newest metadata row; a `bee` build
+# that predates the field ignores the key rather than failing to decode the
+# row, while a half-written `turnBudget` (one of `used`/`limit` missing) drops
+# the whole metadata record as malformed rather than reading as `null`.
+# The number reported is the umbrella's, not one execution's: every row that
+# claims the same `sessionRef` prints the highest `used` any of them has
+# echoed, so an idle seat never advertises room the umbrella no longer has.
 
 # ── inbox ─────────────────────────────────────────────────────────────────
 # Turns addressed to executions whose `agentRef` equals THIS identity's pubkey,

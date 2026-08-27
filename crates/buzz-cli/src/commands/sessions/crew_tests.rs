@@ -120,10 +120,12 @@ fn metadata_event(
 /// Inject a `turnBudget` key into a metadata event's content, exactly as a
 /// provider that has started publishing contract-B budgets would.
 ///
-/// `SessionMetadata` has no `turnBudget` field yet in this build (see
-/// [`super::crew::turn_budget_of`]), so the key can only be added by editing
-/// the already-serialized content JSON rather than through the typed
-/// `metadata_event` builder above.
+/// `SessionMetadata` does carry the typed `turn_budget` field, but
+/// `metadata_event` above takes a fixed parameter list and cannot express a
+/// *malformed* budget at all — the typed field would refuse to serialize one.
+/// Editing the already-serialized content JSON is therefore the only way to
+/// synthesize both the well-formed and the half-written shapes this section
+/// tests.
 fn with_turn_budget(mut event: Value, budget: Value) -> Value {
     let content = event["content"].as_str().expect("content is a string");
     let mut decoded: Value = serde_json::from_str(content).expect("valid JSON content");
@@ -519,14 +521,22 @@ fn build_executions_carries_the_seat_the_umbrella_and_the_lease() {
 
 // ── turn budget (plan D9 / contract B) ──────────────────────────────────────
 
-/// `bee sessions status` reads the budget straight from the newest
-/// metadata's raw content — see [`turn_budget_of`]'s doc for why that is not
-/// a typed `SessionMetadata` field in this build.
+/// `bee sessions status` reads the budget off the newest metadata's typed
+/// `turnBudget` field, beside the `sessionRef` a provider only ever publishes
+/// it with.
 #[test]
 fn build_executions_reads_the_turn_budget_off_the_newest_metadata() {
     let target = target("s-1", 1);
     let event = with_turn_budget(
-        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        metadata_event(
+            "m-1",
+            1_000,
+            &target,
+            SessionStatus::Idle,
+            None,
+            None,
+            Some("u-1"),
+        ),
         json!({"used": 3, "limit": 10}),
     );
     let (metadata, _) = decode_metadata(&[event]);
@@ -540,27 +550,52 @@ fn build_executions_reads_the_turn_budget_off_the_newest_metadata() {
 #[test]
 fn build_executions_reads_no_budget_when_the_key_is_absent() {
     let target = target("s-1", 1);
-    let event = metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None);
+    let event = metadata_event(
+        "m-1",
+        1_000,
+        &target,
+        SessionStatus::Idle,
+        None,
+        None,
+        Some("u-1"),
+    );
     let (metadata, _) = decode_metadata(&[event]);
     let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].turn_budget, None);
 }
 
-/// A `turnBudget` missing a required half (here, `limit`) is dropped, not
-/// guessed — the same "malformed reads as absent" rule the rest of this
-/// command applies to every other fact it cannot parse cleanly.
+/// A `turnBudget` missing a required half (here, `limit`) drops the whole
+/// metadata record and is counted malformed — it does not read as a row with
+/// an absent budget.
+///
+/// This is the strict reading, and it is the only one that can be true here:
+/// `turnBudget` is a typed `SessionMetadata` field, so a half-written one
+/// fails the same decode any other malformed known field fails, and
+/// `buzz-core`'s `decode_coding_session_metadata` rejects the identical bytes
+/// on the relay side. Reporting the rest of a record whose signer wrote a
+/// number this command cannot read would be guessing about the very fact the
+/// row exists to disclose.
 #[test]
-fn build_executions_drops_a_turn_budget_missing_a_key() {
+fn decode_metadata_drops_a_record_whose_turn_budget_is_missing_a_key() {
     let target = target("s-1", 1);
     let event = with_turn_budget(
-        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        metadata_event(
+            "m-1",
+            1_000,
+            &target,
+            SessionStatus::Idle,
+            None,
+            None,
+            Some("u-1"),
+        ),
         json!({"used": 3}),
     );
-    let (metadata, _) = decode_metadata(&[event]);
+    let (metadata, stats) = decode_metadata(&[event]);
+    assert!(metadata.is_empty());
+    assert_eq!(stats.malformed, 1);
     let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].turn_budget, None);
+    assert!(rows.is_empty());
 }
 
 /// The newest metadata wins, exactly as it does for every other fact this
@@ -570,11 +605,27 @@ fn build_executions_drops_a_turn_budget_missing_a_key() {
 fn build_executions_takes_the_turn_budget_from_the_newest_metadata_row() {
     let target = target("s-1", 1);
     let older = with_turn_budget(
-        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        metadata_event(
+            "m-1",
+            1_000,
+            &target,
+            SessionStatus::Idle,
+            None,
+            None,
+            Some("u-1"),
+        ),
         json!({"used": 1, "limit": 10}),
     );
     let newer = with_turn_budget(
-        metadata_event("m-2", 2_000, &target, SessionStatus::Idle, None, None, None),
+        metadata_event(
+            "m-2",
+            2_000,
+            &target,
+            SessionStatus::Idle,
+            None,
+            None,
+            Some("u-1"),
+        ),
         json!({"used": 9, "limit": 10}),
     );
     let (metadata, _) = decode_metadata(&[older, newer]);
