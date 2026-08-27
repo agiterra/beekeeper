@@ -81,8 +81,6 @@ export type CodingSessionGenerationRecord = {
   /** Distinct payloads that could not be resolved; each one renders nothing. */
   conflictCount: number;
   transcript: ProjectedTranscriptItem[];
-  /** True when history for this generation came back at the page limit. */
-  historyTruncated: boolean;
 };
 
 /** One provider runtime session across its generations, per signer. */

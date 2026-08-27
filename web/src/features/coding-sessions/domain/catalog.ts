@@ -291,7 +291,6 @@ export class CodingSessionObserverStore {
             scope.target,
           ),
         }),
-        historyTruncated: false,
       });
       if (authority.acceptedCommandId !== null) {
         acceptedCommandIdByGenerationId.set(
