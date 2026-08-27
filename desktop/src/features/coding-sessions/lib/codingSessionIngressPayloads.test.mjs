@@ -281,6 +281,26 @@ test("a crew turn budget decodes only beside the umbrella it describes", () => {
   assert.equal(Object.hasOwn(unbudgeted, "turnBudget"), false);
 });
 
+test("an explicit null turnBudget decodes as unbudgeted, as Rust reads it", () => {
+  // The mirror of the null-role rule two hundred lines above: Rust's
+  // `Option<TurnBudget>` is serde-defaulted, so `contains_key` sees the key,
+  // the shape check passes, and the value reads as `None`. Dropping the whole
+  // metadata here would lose the status, the model and the capabilities over a
+  // key that says nothing.
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({ sessionRef: UMBRELLA, turnBudget: null }),
+  );
+  assert.notEqual(parsed, null);
+  assert.equal(Object.hasOwn(parsed, "turnBudget"), false);
+
+  // Even without an umbrella: a null budget makes no claim about one.
+  const loose = parseBuzzCodingSessionMetadata(
+    metadataContent({ turnBudget: null }),
+  );
+  assert.notEqual(loose, null);
+  assert.equal(Object.hasOwn(loose, "turnBudget"), false);
+});
+
 test("an agentRef that is not a 64-hex pubkey is refused, as Rust refuses it", () => {
   // `validate_actor_pubkey` bounds this to lowercase 64-hex; a decoder that
   // only bounds the length hands a display name to `useUsersBatchQuery` and

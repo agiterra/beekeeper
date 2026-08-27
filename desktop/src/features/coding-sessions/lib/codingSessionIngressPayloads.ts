@@ -577,8 +577,12 @@ export function parseBuzzCodingSessionMetadata(
   // `sessionRef`, and a `limit` of zero would read as "no turns allowed"
   // rather than "unbudgeted" — the producer omits the key instead. Both are
   // rejections rather than tolerated dialects, matching the Rust decoder.
+  // An explicit `turnBudget: null` is neither claim: Rust's serde-defaulted
+  // `Option<TurnBudget>` reads it as absent, exactly as the `role: null` arm
+  // above, so dropping the metadata over it would lose every fact beside it.
   if (
     Object.hasOwn(value, "turnBudget") &&
+    value.turnBudget !== null &&
     !isCodingSessionTurnBudget(value.turnBudget, value.sessionRef)
   ) {
     return null;
