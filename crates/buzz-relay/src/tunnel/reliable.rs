@@ -7,14 +7,15 @@
 //! client-facing WebSocket/bridge bytes; this module supplies the routing and
 //! mesh-frame discipline shared by that handler.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use buzz_core::CommunityId;
 use buzz_relay_mesh::{
     BoxFuture, FencedHeader, GoodbyeReason, MeshError, MeshStream, MeshStreamFrame, Profile,
-    RelayPeerTransport, RuntimeId, StreamHello, StreamRole,
+    RelayPeerTransport, RuntimeId, StreamHello, StreamRecvHalf, StreamRole, StreamSendHalf,
 };
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -231,34 +232,54 @@ pub struct ReliableInbound {
     pub stream: ReliableMeshStream,
 }
 
+/// Frames the reader task may hold ahead of the caller. Bounded so a slow
+/// consumer parks the reader instead of letting the wire buffer without limit;
+/// the task waits for room and never drops a frame to make it.
+const READER_QUEUE_FRAMES: usize = 1;
+
 /// A reliable mesh stream pinned to one fenced session.
+///
+/// The receive half is owned by a task, never by a caller's future, so no
+/// consumer can cancel a wire read or a fence check. See
+/// [`ReliableMeshStream::recv_validated`].
 pub struct ReliableMeshStream {
     fenced: FencedHeader,
-    stream: MeshStream,
-    community_id: Option<CommunityId>,
-    /// Frame already taken off the wire but not yet fence-validated. Non-empty
-    /// only when a [`ReliableMeshStream::recv_validated`] future was dropped
-    /// while the directory check was in flight; the next receive resumes from
-    /// that check instead of reading the wire again. Boxed so the idle stream
-    /// (and `ReliableJoin::Forwarded`, which carries one) does not grow by a
-    /// whole frame header.
-    pending: Option<Box<PendingFrame>>,
+    send: Box<dyn StreamSendHalf>,
+    /// Community latched by the first stateful frame in either direction.
+    /// Shared with the reader task, which validates inbound frames against it.
+    community_id: Arc<OnceLock<CommunityId>>,
+    reader: Reader,
 }
 
-/// One decoded session frame held between the wire read and the fence check.
-struct PendingFrame {
+/// Receive side of a reliable stream.
+enum Reader {
+    /// No receive yet, so the recv half waits here. `None` only while the
+    /// reader task is being spawned out of it.
+    Idle(Option<Box<dyn StreamRecvHalf>>),
+    /// The task owns the wire; validated frames — and the one terminal error —
+    /// arrive in order on `rx`.
+    Running {
+        rx: mpsc::Receiver<Result<ReliableFrame, ReliableStreamError>>,
+        task: JoinHandle<()>,
+    },
+}
+
+/// Everything the reader task needs to validate one frame.
+struct ReaderContext {
     fenced: FencedHeader,
-    frame: ReliableWireFrame,
+    community_id: Arc<OnceLock<CommunityId>>,
+    fence: Arc<dyn FrameFence>,
 }
 
 impl ReliableMeshStream {
     /// Wrap a raw mesh stream for one fenced reliable session.
     pub fn new(fenced: FencedHeader, stream: MeshStream) -> Self {
+        let (send, recv) = stream.into_halves();
         Self {
             fenced,
-            stream,
-            community_id: None,
-            pending: None,
+            send,
+            community_id: Arc::new(OnceLock::new()),
+            reader: Reader::Idle(Some(recv)),
         }
     }
 
@@ -270,12 +291,12 @@ impl ReliableMeshStream {
 
     /// Return the community/tenant latched from the first stateful frame.
     pub fn community_id(&self) -> Option<CommunityId> {
-        self.community_id
+        self.community_id.get().copied()
     }
 
     /// Pin this outbound stream to a community before sending payload frames.
-    pub fn with_community(mut self, community_id: CommunityId) -> Self {
-        self.community_id = Some(community_id);
+    pub fn with_community(self, community_id: CommunityId) -> Self {
+        let _ = self.community_id.set(community_id);
         self
     }
 
@@ -297,7 +318,7 @@ impl ReliableMeshStream {
                 payload: chunk.to_vec(),
             }
             .encode();
-            self.stream
+            self.send
                 .send_frame(MeshStreamFrame::Data {
                     fenced: self.fenced,
                     payload,
@@ -311,7 +332,7 @@ impl ReliableMeshStream {
     /// owner-side stream is draining before the first validated frame has
     /// latched its community id.
     pub fn finish(&mut self) -> Result<(), ReliableStreamError> {
-        self.stream.finish()?;
+        self.send.finish()?;
         Ok(())
     }
 
@@ -327,170 +348,228 @@ impl ReliableMeshStream {
             reason,
         }
         .encode();
-        self.stream
+        self.send
             .send_frame(MeshStreamFrame::Data {
                 fenced: self.fenced,
                 payload,
             })
             .await?;
-        self.stream.finish()?;
+        self.send.finish()?;
         Ok(())
     }
 
     /// Receive and validate the next session frame.
     ///
-    /// Every incoming `Data`/`Goodbye` frame is checked against both the stream's
-    /// pinned fenced tuple and the Redis directory. This is the reliable-stream
-    /// equivalent of Dawn's hot-path media floor, but authoritative: stale or
-    /// mismatched frames fail the session rather than being dropped silently.
+    /// Every incoming `Data`/`Goodbye` frame is checked against both the
+    /// stream's pinned fenced tuple and the Redis directory. This is the
+    /// reliable-stream equivalent of Dawn's hot-path media floor, but
+    /// authoritative: stale or mismatched frames fail the session rather than
+    /// being dropped silently. Such a frame ends the stream — its error is
+    /// delivered once, and later receives report end of stream.
+    ///
+    /// The first call spawns the reader task with a clone of `directory`, and
+    /// that clone fences every frame for the life of the stream; later calls
+    /// pass a directory handle that is only used if the task is not up yet.
     ///
     /// # Cancellation
     ///
-    /// Safe to drop across the directory round-trip: a frame that has been read
-    /// off the wire is buffered on the stream *before* the fence check is
-    /// awaited, so a dropped future leaves it queued and the next call resumes
-    /// at the fence check. That is what lets consumers put this call in a
-    /// `tokio::select!` (see `mesh_boot::run_demo_echo`, which races it against
-    /// a drain tick) without losing frames. Dropping the future while the wire
-    /// read itself is still in flight remains lossy — that window belongs to
-    /// `MeshStream::recv_frame` in `buzz-relay-mesh`, which reads a partial
-    /// frame with no buffer of its own.
+    /// Cancel-safe at every await point. The wire read, the decode and the
+    /// directory round-trip all run in a task that owns the receive half, and
+    /// the only thing this future awaits is a bounded channel, so dropping it
+    /// loses nothing and restarts nothing: the frame in flight is still read,
+    /// still fenced exactly once, and delivered to the next caller in order.
+    /// That is what lets consumers put this call in a `tokio::select!` (see
+    /// `mesh_boot::run_demo_echo`, which races it against a drain tick).
     pub async fn recv_validated(
         &mut self,
         directory: &SessionDirectory,
     ) -> Result<Option<ReliableFrame>, ReliableStreamError> {
-        self.recv_validated_with(directory).await
+        self.recv_next(|| -> Arc<dyn FrameFence> { Arc::new(directory.clone()) })
+            .await
     }
 
-    /// `recv_validated` over any fence check. Production passes the Redis
-    /// [`SessionDirectory`]; tests pass a fence whose await point they control.
-    async fn recv_validated_with<F: FrameFence + ?Sized>(
+    /// `recv_validated` over any fence check. Tests pass a fence whose await
+    /// point they control; production always goes through `recv_validated`.
+    #[cfg(test)]
+    async fn recv_validated_with(
         &mut self,
-        fence: &F,
+        fence: Arc<dyn FrameFence>,
     ) -> Result<Option<ReliableFrame>, ReliableStreamError> {
-        let (fenced, community_id) = match self.pending.as_ref() {
-            // A previous call was cancelled at the fence check; the frame it
-            // read is still here, so do not touch the wire.
-            Some(pending) => (pending.fenced, pending.frame.community_id()),
-            None => {
-                let Some(frame) = self.stream.recv_frame().await? else {
-                    return Ok(None);
-                };
-                let (fenced, payload) = match frame {
-                    MeshStreamFrame::Data { fenced, payload } => (fenced, payload),
-                    MeshStreamFrame::Goodbye { .. } => {
-                        return Err(ReliableStreamError::UnexpectedFrame("goodbye"));
-                    }
-                    MeshStreamFrame::Hello(_) => {
-                        return Err(ReliableStreamError::UnexpectedFrame("hello"));
-                    }
-                    MeshStreamFrame::Gossip { .. } => {
-                        return Err(ReliableStreamError::UnexpectedFrame("gossip"));
-                    }
-                };
-                // Decode and buffer with no await in between: from here on the
-                // frame survives this future being dropped.
-                let frame = ReliableWireFrame::decode(&payload)?;
-                let community_id = frame.community_id();
-                self.pending = Some(Box::new(PendingFrame { fenced, frame }));
-                (fenced, community_id)
-            }
+        self.recv_next(move || fence).await
+    }
+
+    async fn recv_next(
+        &mut self,
+        fence: impl FnOnce() -> Arc<dyn FrameFence>,
+    ) -> Result<Option<ReliableFrame>, ReliableStreamError> {
+        self.start_reader(fence);
+        let Reader::Running { rx, .. } = &mut self.reader else {
+            // Unreachable: `start_reader` always leaves the reader running.
+            // Reported as end of stream rather than panicking on it.
+            return Ok(None);
         };
-
-        if let Err(error) = self
-            .validate_frame_fence(fence, community_id, &fenced)
-            .await
-        {
-            // A rejected frame fails the session; drop it so a caller that
-            // keeps receiving cannot spin on the same invalid frame.
-            self.pending = None;
-            return Err(error);
-        }
-
-        match self.pending.take().map(|pending| *pending) {
-            Some(PendingFrame {
-                frame: ReliableWireFrame::Data { payload, .. },
-                ..
-            }) => Ok(Some(ReliableFrame::Data(payload))),
-            Some(PendingFrame {
-                frame: ReliableWireFrame::Goodbye { reason, .. },
-                ..
-            }) => Ok(Some(ReliableFrame::Goodbye(reason))),
-            // Unreachable: the buffer was filled above or already held a frame.
-            // Reported as end-of-stream rather than panicking on it.
+        // The one await a caller can cancel, and `Receiver::recv` is
+        // cancel-safe: a dropped future leaves the frame queued.
+        match rx.recv().await {
+            Some(result) => result.map(Some),
             None => Ok(None),
         }
     }
 
-    async fn validate_frame_fence<F: FrameFence + ?Sized>(
-        &mut self,
-        fence: &F,
-        community_id: CommunityId,
-        fenced: &FencedHeader,
-    ) -> Result<(), ReliableStreamError> {
-        if *fenced != self.fenced {
-            return Err(ReliableStreamError::FrameFenceMismatch {
-                expected: self.fenced,
-                actual: *fenced,
-            });
-        }
-        match self.community_id {
-            Some(expected) if expected != community_id => {
-                return Err(ReliableStreamError::CommunityMismatch {
-                    expected,
-                    actual: community_id,
-                });
-            }
-            Some(_) | None => {}
-        }
-        fence.validate_frame(community_id, fenced).await?;
-        if self.community_id.is_none() {
-            self.community_id = Some(community_id);
-        }
-        Ok(())
+    /// Move the receive half into its own task on the first receive. Later
+    /// calls are a no-op, so the wire has exactly one reader.
+    fn start_reader(&mut self, fence: impl FnOnce() -> Arc<dyn FrameFence>) {
+        let Reader::Idle(slot) = &mut self.reader else {
+            return;
+        };
+        let Some(recv) = slot.take() else {
+            return;
+        };
+        let (tx, rx) = mpsc::channel(READER_QUEUE_FRAMES);
+        let context = ReaderContext {
+            fenced: self.fenced,
+            community_id: Arc::clone(&self.community_id),
+            fence: fence(),
+        };
+        let task = tokio::spawn(run_reader(recv, context, tx));
+        self.reader = Reader::Running { rx, task };
     }
 
     fn ensure_outbound_community(
         &mut self,
         community_id: CommunityId,
     ) -> Result<(), ReliableStreamError> {
-        match self.community_id {
-            Some(expected) if expected != community_id => {
-                Err(ReliableStreamError::CommunityMismatch {
-                    expected,
-                    actual: community_id,
-                })
+        latch_community(&self.community_id, community_id)
+    }
+}
+
+impl Drop for ReliableMeshStream {
+    fn drop(&mut self) {
+        // The reader owns the receive half; dropping the stream retires it.
+        if let Reader::Running { task, .. } = &self.reader {
+            task.abort();
+        }
+    }
+}
+
+/// Own the receive half for the life of the stream: read, decode, fence, and
+/// hand each validated frame to the caller in order. Nothing in here is ever
+/// cancelled by a consumer, which is what makes `recv_validated` cancel-safe.
+async fn run_reader(
+    mut recv: Box<dyn StreamRecvHalf>,
+    context: ReaderContext,
+    tx: mpsc::Sender<Result<ReliableFrame, ReliableStreamError>>,
+) {
+    loop {
+        match read_validated(&mut recv, &context).await {
+            // Clean end of stream: dropping `tx` reports it to the caller.
+            Ok(None) => return,
+            // Parks while the caller is behind; it never drops a frame.
+            Ok(Some(frame)) => {
+                if tx.send(Ok(frame)).await.is_err() {
+                    return;
+                }
             }
-            Some(_) => Ok(()),
-            None => {
-                self.community_id = Some(community_id);
-                Ok(())
+            // A frame the fence rejects fails the session, so stop reading.
+            Err(error) => {
+                let _ = tx.send(Err(error)).await;
+                return;
             }
         }
     }
 }
 
-/// The per-frame fence check applied by [`ReliableMeshStream::recv_validated`].
+/// Read one frame off the wire and fence it. Exactly one fence check per
+/// frame, because the frame's owner is the task, not a receive attempt.
+async fn read_validated(
+    recv: &mut Box<dyn StreamRecvHalf>,
+    context: &ReaderContext,
+) -> Result<Option<ReliableFrame>, ReliableStreamError> {
+    let Some(frame) = recv.recv_frame().await? else {
+        return Ok(None);
+    };
+    let (fenced, payload) = match frame {
+        MeshStreamFrame::Data { fenced, payload } => (fenced, payload),
+        MeshStreamFrame::Goodbye { .. } => {
+            return Err(ReliableStreamError::UnexpectedFrame("goodbye"));
+        }
+        MeshStreamFrame::Hello(_) => {
+            return Err(ReliableStreamError::UnexpectedFrame("hello"));
+        }
+        MeshStreamFrame::Gossip { .. } => {
+            return Err(ReliableStreamError::UnexpectedFrame("gossip"));
+        }
+    };
+    let wire = ReliableWireFrame::decode(&payload)?;
+    let community_id = wire.community_id();
+    validate_frame_fence(context, community_id, fenced).await?;
+    Ok(Some(match wire {
+        ReliableWireFrame::Data { payload, .. } => ReliableFrame::Data(payload),
+        ReliableWireFrame::Goodbye { reason, .. } => ReliableFrame::Goodbye(reason),
+    }))
+}
+
+async fn validate_frame_fence(
+    context: &ReaderContext,
+    community_id: CommunityId,
+    fenced: FencedHeader,
+) -> Result<(), ReliableStreamError> {
+    if fenced != context.fenced {
+        return Err(ReliableStreamError::FrameFenceMismatch {
+            expected: context.fenced,
+            actual: fenced,
+        });
+    }
+    if let Some(expected) = context.community_id.get().copied() {
+        if expected != community_id {
+            return Err(ReliableStreamError::CommunityMismatch {
+                expected,
+                actual: community_id,
+            });
+        }
+    }
+    context.fence.validate_frame(community_id, fenced).await?;
+    latch_community(&context.community_id, community_id)
+}
+
+/// Latch the stream's community on first use and reject any later mismatch.
+/// One atomic decides for both directions, so a send and an inbound frame
+/// cannot latch different communities.
+fn latch_community(
+    latched: &OnceLock<CommunityId>,
+    community_id: CommunityId,
+) -> Result<(), ReliableStreamError> {
+    let expected = *latched.get_or_init(|| community_id);
+    if expected != community_id {
+        return Err(ReliableStreamError::CommunityMismatch {
+            expected,
+            actual: community_id,
+        });
+    }
+    Ok(())
+}
+
+/// The per-frame fence check applied by the reader task.
 ///
 /// Production always uses the Redis [`SessionDirectory`]. The trait exists so
 /// tests can own the await point between the wire read and the directory
-/// round-trip — the window the receive must survive being cancelled in.
-trait FrameFence {
+/// round-trip — the window a cancelled receive must survive.
+trait FrameFence: Send + Sync + 'static {
     /// Validate one frame's fenced tuple for `community_id`.
-    fn validate_frame<'a>(
-        &'a self,
+    fn validate_frame(
+        &self,
         community_id: CommunityId,
-        fenced: &'a FencedHeader,
-    ) -> BoxFuture<'a, Result<(), MeshError>>;
+        fenced: FencedHeader,
+    ) -> BoxFuture<'_, Result<(), MeshError>>;
 }
 
 impl FrameFence for SessionDirectory {
-    fn validate_frame<'a>(
-        &'a self,
+    fn validate_frame(
+        &self,
         community_id: CommunityId,
-        fenced: &'a FencedHeader,
-    ) -> BoxFuture<'a, Result<(), MeshError>> {
-        Box::pin(self.validate_fenced_header(community_id, fenced))
+        fenced: FencedHeader,
+    ) -> BoxFuture<'_, Result<(), MeshError>> {
+        Box::pin(async move { self.validate_fenced_header(community_id, &fenced).await })
     }
 }
 
@@ -744,7 +823,7 @@ fn spawn_lease_renewer_with_interval(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     use buzz_relay_mesh::endpoint::MeshEndpoint;
@@ -1039,25 +1118,27 @@ mod tests {
         }
     }
 
-    /// Fence whose first check parks forever on a oneshot the test never
-    /// completes, so the caller's receive future can be dropped exactly in the
-    /// read-then-validate window. Later checks pass immediately.
+    /// Fence whose first check parks on a gate the test owns, so the caller's
+    /// receive can be dropped exactly in the read-then-validate window. Later
+    /// checks pass immediately.
     struct GatedFence {
-        gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
-        calls: AtomicUsize,
+        gate: Arc<tokio::sync::Notify>,
+        gated: AtomicBool,
+        calls: Arc<AtomicUsize>,
     }
 
     impl FrameFence for GatedFence {
-        fn validate_frame<'a>(
-            &'a self,
+        fn validate_frame(
+            &self,
             _community_id: CommunityId,
-            _fenced: &'a FencedHeader,
-        ) -> BoxFuture<'a, Result<(), MeshError>> {
+            _fenced: FencedHeader,
+        ) -> BoxFuture<'_, Result<(), MeshError>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            let gate = self.gate.lock().expect("gate lock").take();
+            let gate = Arc::clone(&self.gate);
+            let gated = self.gated.swap(false, Ordering::Relaxed);
             Box::pin(async move {
-                if let Some(gate) = gate {
-                    let _ = gate.await;
+                if gated {
+                    gate.notified().await;
                 }
                 Ok(())
             })
@@ -1065,62 +1146,300 @@ mod tests {
     }
 
     /// A receive cancelled between the wire read and the fence check must not
-    /// destroy the frame: the next call has to deliver it without touching the
-    /// wire again. This is the hazard `mesh_boot::run_demo_echo` hits when its
-    /// 100 ms drain tick wins the `select!`.
+    /// destroy the frame, and must not restart the check: the next call has to
+    /// deliver it without touching the wire or Redis again. This is the hazard
+    /// `mesh_boot::run_demo_echo` hits when its 100 ms drain tick wins the
+    /// `select!`.
     #[tokio::test(start_paused = true)]
     async fn recv_validated_keeps_the_frame_when_the_fence_check_is_cancelled() {
-        let community_id = community();
-        let fenced = FencedHeader {
-            session_id: Uuid::new_v4(),
-            generation: 7,
-            owner_runtime_id: runtime(3),
-        };
-        let payload = ReliableWireFrame::Data {
-            community_id,
-            payload: b"echo me".to_vec(),
-        }
-        .encode();
+        let fenced = demo_fenced();
         let reads = Arc::new(AtomicUsize::new(0));
         let stream = MeshStream::new(
             Box::new(DiscardSend),
             Box::new(OneFrameRecv {
-                frame: Some(MeshStreamFrame::Data { fenced, payload }),
+                frame: Some(echo_frame(fenced)),
                 reads: Arc::clone(&reads),
             }),
         );
         let mut reliable = ReliableMeshStream::new(fenced, stream);
 
-        let (_tx, rx) = tokio::sync::oneshot::channel();
-        let fence = GatedFence {
-            gate: Mutex::new(Some(rx)),
-            calls: AtomicUsize::new(0),
-        };
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fence: Arc<dyn FrameFence> = Arc::new(GatedFence {
+            gate: Arc::clone(&gate),
+            gated: AtomicBool::new(true),
+            calls: Arc::clone(&calls),
+        });
 
         // Drop the receive future while the fence check is still pending —
         // exactly what `select!` does when the drain tick wins the race.
         let cancelled = tokio::time::timeout(
             Duration::from_millis(100),
-            reliable.recv_validated_with(&fence),
+            reliable.recv_validated_with(Arc::clone(&fence)),
         )
         .await;
         assert!(cancelled.is_err(), "fence check should still be pending");
         assert_eq!(reads.load(Ordering::Relaxed), 1, "one wire read so far");
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "one fence check so far");
 
-        let frame = reliable
-            .recv_validated_with(&fence)
-            .await
-            .expect("second receive succeeds");
+        // The fence answers after the caller gave up on that receive.
+        gate.notify_one();
+
+        let frame = tokio::time::timeout(
+            Duration::from_secs(5),
+            reliable.recv_validated_with(Arc::clone(&fence)),
+        )
+        .await
+        .expect("second receive completes")
+        .expect("second receive succeeds");
         assert!(
             matches!(frame, Some(ReliableFrame::Data(ref bytes)) if bytes == b"echo me"),
             "cancelled receive lost the frame: {frame:?}"
         );
         assert_eq!(
-            reads.load(Ordering::Relaxed),
+            calls.load(Ordering::Relaxed),
             1,
-            "the buffered frame must not be re-read from the wire"
+            "the fence must run once per frame, not once per receive attempt"
         );
-        assert_eq!(fence.calls.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            reliable
+                .recv_validated_with(Arc::clone(&fence))
+                .await
+                .expect("end of stream"),
+            None
+        );
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            2,
+            "the frame's read plus the end-of-stream read — never a re-read"
+        );
+    }
+
+    /// Frame the way the QUIC recv half does: u32-LE length, then the
+    /// postcard body.
+    fn framed(frame: &MeshStreamFrame) -> Vec<u8> {
+        let bytes = buzz_relay_mesh::wire::encode(frame).expect("encode mesh stream frame");
+        let mut out = (bytes.len() as u32).to_le_bytes().to_vec();
+        out.extend_from_slice(&bytes);
+        out
+    }
+
+    /// Recv half that models quinn's `read_exact` framing over a byte queue it
+    /// owns: pop the 4-byte length prefix, park once *inside* the frame (where
+    /// a real `read_exact` waits for the rest of the body), then pop the body.
+    /// Bytes already popped are gone if the future is dropped — the data loss
+    /// `RecvStream::read_exact` documents for cancellation.
+    struct MidBodyParkRecv {
+        bytes: std::collections::VecDeque<u8>,
+        gate: Option<Arc<tokio::sync::Notify>>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl buzz_relay_mesh::StreamRecvHalf for MidBodyParkRecv {
+        fn recv_frame(&mut self) -> BoxFuture<'_, Result<Option<MeshStreamFrame>, MeshError>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async move {
+                if self.bytes.is_empty() {
+                    return Ok(None);
+                }
+                let mut len = [0u8; 4];
+                for slot in len.iter_mut() {
+                    *slot = self
+                        .bytes
+                        .pop_front()
+                        .ok_or_else(|| MeshError::Transport("short length prefix".into()))?;
+                }
+                if let Some(gate) = self.gate.take() {
+                    gate.notified().await;
+                }
+                let len = u32::from_le_bytes(len) as usize;
+                let max = buzz_relay_mesh::wire::MAX_STREAM_FRAME as usize;
+                if len > max {
+                    return Err(MeshError::FrameTooLarge { size: len, max });
+                }
+                let mut body = vec![0u8; len];
+                for slot in body.iter_mut() {
+                    *slot = self
+                        .bytes
+                        .pop_front()
+                        .ok_or_else(|| MeshError::Transport("short frame body".into()))?;
+                }
+                buzz_relay_mesh::wire::decode::<MeshStreamFrame>(&body).map(Some)
+            })
+        }
+    }
+
+    /// Fence that always passes, counting the checks it starts.
+    #[derive(Default)]
+    struct PassFence {
+        calls: AtomicUsize,
+    }
+
+    impl FrameFence for PassFence {
+        fn validate_frame(
+            &self,
+            _community_id: CommunityId,
+            _fenced: FencedHeader,
+        ) -> BoxFuture<'_, Result<(), MeshError>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// Fence slower than the caller's cancel period, counting the checks it
+    /// starts so a per-attempt restart is visible.
+    struct SlowFence {
+        delay: Duration,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl FrameFence for SlowFence {
+        fn validate_frame(
+            &self,
+            _community_id: CommunityId,
+            _fenced: FencedHeader,
+        ) -> BoxFuture<'_, Result<(), MeshError>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let delay = self.delay;
+            Box::pin(async move {
+                tokio::time::sleep(delay).await;
+                Ok(())
+            })
+        }
+    }
+
+    fn demo_fenced() -> FencedHeader {
+        FencedHeader {
+            session_id: Uuid::from_u128(0x5E5_5104),
+            generation: 7,
+            owner_runtime_id: runtime(3),
+        }
+    }
+
+    fn echo_frame(fenced: FencedHeader) -> MeshStreamFrame {
+        MeshStreamFrame::Data {
+            fenced,
+            payload: ReliableWireFrame::Data {
+                community_id: community(),
+                payload: b"echo me".to_vec(),
+            }
+            .encode(),
+        }
+    }
+
+    /// A receive cancelled while the *wire read* is parked mid-frame must not
+    /// corrupt the stream: the bytes already off the wire belong to the
+    /// stream, not to the caller's future, so the next receive still yields
+    /// the whole frame. `mesh_boot::run_demo_echo` cancels exactly here every
+    /// time its 100 ms drain tick wins the `select!`.
+    #[tokio::test(start_paused = true)]
+    async fn recv_validated_survives_cancellation_while_the_wire_read_is_parked() {
+        let fenced = demo_fenced();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let reads = Arc::new(AtomicUsize::new(0));
+        let stream = MeshStream::new(
+            Box::new(DiscardSend),
+            Box::new(MidBodyParkRecv {
+                bytes: framed(&echo_frame(fenced)).into_iter().collect(),
+                gate: Some(Arc::clone(&gate)),
+                reads: Arc::clone(&reads),
+            }),
+        );
+        let mut reliable = ReliableMeshStream::new(fenced, stream);
+        let fence: Arc<dyn FrameFence> = Arc::new(PassFence::default());
+
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(100),
+            reliable.recv_validated_with(Arc::clone(&fence)),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the wire read should still be parked");
+        assert_eq!(reads.load(Ordering::Relaxed), 1, "one wire read so far");
+
+        // The body arrives after the caller gave up on that receive.
+        gate.notify_one();
+
+        let frame = tokio::time::timeout(
+            Duration::from_secs(5),
+            reliable.recv_validated_with(Arc::clone(&fence)),
+        )
+        .await
+        .expect("second receive completes")
+        .expect("second receive succeeds");
+        assert!(
+            matches!(frame, Some(ReliableFrame::Data(ref bytes)) if bytes == b"echo me"),
+            "cancelled wire read corrupted the stream: {frame:?}"
+        );
+        assert_eq!(
+            reliable
+                .recv_validated_with(Arc::clone(&fence))
+                .await
+                .expect("end of stream"),
+            None
+        );
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            2,
+            "the frame's read plus the end-of-stream read — never a re-read"
+        );
+    }
+
+    /// A fence check slower than the caller's cancel period must still finish:
+    /// the check belongs to the frame, not to the receive attempt. Otherwise a
+    /// degraded Redis (150 ms) against the 100 ms drain tick starves the
+    /// session forever while every attempt starts a fresh round trip.
+    #[tokio::test(start_paused = true)]
+    async fn a_fence_slower_than_the_cancel_period_still_delivers_the_frame() {
+        let fenced = demo_fenced();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let stream = MeshStream::new(
+            Box::new(DiscardSend),
+            Box::new(OneFrameRecv {
+                frame: Some(echo_frame(fenced)),
+                reads: Arc::clone(&reads),
+            }),
+        );
+        let mut reliable = ReliableMeshStream::new(fenced, stream);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fence: Arc<dyn FrameFence> = Arc::new(SlowFence {
+            delay: Duration::from_millis(150),
+            calls: Arc::clone(&calls),
+        });
+
+        let mut delivered = None;
+        for _ in 0..10 {
+            if let Ok(result) = tokio::time::timeout(
+                Duration::from_millis(100),
+                reliable.recv_validated_with(Arc::clone(&fence)),
+            )
+            .await
+            {
+                delivered = Some(result.expect("receive succeeds"));
+                break;
+            }
+        }
+
+        assert!(
+            matches!(delivered, Some(Some(ReliableFrame::Data(ref bytes))) if bytes == b"echo me"),
+            "a fence slower than the cancel period starved the caller: {delivered:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "the fence must run once per frame, not once per receive attempt"
+        );
+        assert_eq!(
+            reliable
+                .recv_validated_with(Arc::clone(&fence))
+                .await
+                .expect("end of stream"),
+            None
+        );
+        assert_eq!(
+            reads.load(Ordering::Relaxed),
+            2,
+            "the frame's read plus the end-of-stream read — never a re-read"
+        );
     }
 
     #[test]

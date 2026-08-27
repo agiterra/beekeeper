@@ -265,12 +265,12 @@ mod tests {
     /// echo loop races `recv_validated` against a 100 ms `drain_tick.tick()`
     /// in a `select!`, and `tokio::time::interval` fires its first tick
     /// immediately, so on iteration 1 both branches are usually ready. Before
-    /// `ReliableMeshStream` buffered the frame ahead of the Redis fence check
-    /// (`tunnel/reliable.rs`), a receive that lost that race was dropped after
-    /// pulling the frame off the wire and the frame was gone for good: this
-    /// test then waited out `ECHO_TIMEOUT` (10 s) and asserted 504 != 200,
-    /// measured at 1 pass / 8 standalone runs and 0 / 3 under the full `--lib`
-    /// suite. A passing run finishes in ~0.1 s.
+    /// `ReliableMeshStream` moved the receive half into its own reader task
+    /// (`tunnel/reliable.rs`), a receive that lost that race was dropped
+    /// mid-wire-read and the frame was gone for good: this test then waited
+    /// out `ECHO_TIMEOUT` (10 s) and asserted 504 != 200, measured at 1 pass /
+    /// 8 standalone runs and 0 / 3 under the full `--lib` suite. A passing run
+    /// finishes in ~0.1 s.
     #[tokio::test]
     async fn demo_join_forwarded_arm_round_trips_echo() {
         let Some(directory) = redis_directory_if_available().await else {

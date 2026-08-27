@@ -332,9 +332,10 @@ pub(crate) async fn run_demo_echo(
                 }
                 continue;
             }
-            // Safe to lose this race: `recv_validated` buffers a frame it has
-            // already read before awaiting the fence check, so a tick cannot
-            // destroy it (tunnel/reliable.rs, "Cancellation").
+            // Safe to lose this race: the wire read and the Redis fence check
+            // belong to `ReliableMeshStream`'s reader task, and all this future
+            // awaits is that task's channel, so a tick that wins cancels
+            // nothing on the wire (tunnel/reliable.rs, "Cancellation").
             frame = stream.recv_validated(&directory) => frame,
         };
         match frame {

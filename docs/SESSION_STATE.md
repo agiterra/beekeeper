@@ -2142,7 +2142,7 @@ written and `bash -n` clean but **was not executed** — that harness needs
     green hooks is retried once with `--no-verify` on the identical SHA —
     never on a SHA the hooks did not see.
 
-63. **A `select!` in the mesh demo echo loop drops frames — and the same
+72. **A `select!` in the mesh demo echo loop drops frames — and the same
     cancel-safety hazard sits in `tunnel/reliable.rs`.** Found 2026-08-26 while
     making two `buzz-relay` lib tests hermetic (branch
     `crew/relay-test-flakes@470e8562`). `mesh_boot::run_demo_echo` awaits
@@ -2162,11 +2162,16 @@ written and `bash -n` clean but **was not executed** — that harness needs
     `tracing::enabled!`, whose cached callsite interest folds over every live
     dispatcher in the process, so any other test's subscriber flipped it; it now
     asks this subscriber's own dispatch (verified non-vacuous). `cargo test -p
-    buzz-relay --lib` 957 passed / 0 failed / 54 ignored, three runs. (Numbered
-    63 because 58, 60, 61 and 62 are taken by the crew branches in flight.)
-    **Fixed 2026-08-26 (`crew/relay-cancel-safety`):** `ReliableMeshStream` now
-    buffers the decoded frame before awaiting the fence, so a dropped receive
-    resumes at the fence check; test un-ignored, `--lib` 959/0/53 three runs.
+    buzz-relay --lib` 957 passed / 0 failed / 54 ignored, three runs. (Drafted
+    as 63 while the crew branches were in flight; renumbered on landing to
+    follow the last item `main` carries.)
+    **Fixed 2026-08-26 (`crew/relay-cancel-safety`, round 2):** round 1's
+    buffer only covered the fence window — the refuter showed a cancelled
+    `read_exact` still misframes the stream (`short frame body`) and a fence
+    slower than the cancel period restarts forever; `ReliableMeshStream` now
+    moves the receive half into a reader task that reads, decodes and fences
+    each frame exactly once into a bounded channel, so `recv_validated` is
+    cancel-safe at every await. Test un-ignored; `--lib` 961/0/53, three runs.
 
 ## 2a. Direction settled 2026-08-18
 

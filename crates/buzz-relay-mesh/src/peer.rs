@@ -199,4 +199,16 @@ impl MeshStream {
     pub fn new(send: Box<dyn StreamSendHalf>, recv: Box<dyn StreamRecvHalf>) -> Self {
         Self { send, recv }
     }
+
+    /// Take the framing halves apart so sends and receives can be driven from
+    /// independent tasks.
+    ///
+    /// A `read_exact` on the recv half is not cancel-safe (bytes already read
+    /// are lost when the future is dropped), so a session layer that races its
+    /// receive against anything else must move the recv half into a task that
+    /// never cancels it — which requires owning it separately from the send
+    /// half. See `buzz_relay::tunnel::reliable::ReliableMeshStream`.
+    pub fn into_halves(self) -> (Box<dyn StreamSendHalf>, Box<dyn StreamRecvHalf>) {
+        (self.send, self.recv)
+    }
 }
