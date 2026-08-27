@@ -863,13 +863,15 @@ pub struct SessionMetadata {
 
 /// Expected JSON key sets for [`SessionMetadata`], oldest first.
 ///
-/// Two independent additive amendments have landed on this struct at
-/// different times — the `sessionRef` echo, then B1's four coordinate-fact
-/// keys — so there are four valid shapes, not two: base, base+sessionRef,
-/// base+facts, and base+sessionRef+facts. Mirrors the exact-fields
-/// discipline in `coding_session_lifecycle_command.rs`
+/// Three independent additive amendments have landed on this struct at
+/// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
+/// then the agent seat's `role` — and each one is present or absent on its
+/// own, so the base key set has **eight** valid shapes, not four: base, and
+/// base plus any combination of `sessionRef`, `role`, and the four fact keys
+/// taken together. Mirrors the exact-fields discipline in
+/// `coding_session_lifecycle_command.rs`
 /// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
-/// in between or beyond these four — a partial subset of the four fact
+/// in between or beyond those eight — a partial subset of the four fact
 /// keys, or any field this struct does not know — is rejected, not
 /// tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
@@ -888,13 +890,13 @@ const METADATA_BASE_FIELDS: &[&str] = &[
 ];
 const METADATA_SESSION_REF_FIELD: &str = "sessionRef";
 /// The agent-seat amendment's one additive key. Independent of both earlier
-/// amendments, so it doubles the accepted shape count to eight.
+/// amendments, so it doubles the accepted shape count from four to eight.
 const METADATA_ROLE_FIELD: &str = "role";
 const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachable", "verifiedAt"];
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
-/// Accepts exactly the four field-set shapes documented above
+/// Accepts exactly the eight field-set shapes documented above
 /// `METADATA_BASE_FIELDS`; anything else — an unknown key, or a B1 fact
 /// key present without its three siblings — is a hard rejection. A second
 /// pass through `serde_json` (after the shape check) picks up serde's own
