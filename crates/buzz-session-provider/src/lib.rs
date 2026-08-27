@@ -1361,8 +1361,8 @@ impl Provider {
         // underneath us between the decision and the dispatch. That is still a
         // refusal, and the same one: an execution labelled as an agent that
         // cannot act as one is the lie this code exists to prevent.
-        let (seat_identity, post_fence_env) = match plan.actor.as_deref() {
-            None => (None, Vec::new()),
+        let (seat_identity, post_fence_env, seat_skills) = match plan.actor.as_deref() {
+            None => (None, Vec::new(), None),
             Some(actor) => {
                 let seats = crate::actor_seats::ActorSeatsFile::load(
                     self.config.actor_seats_file.as_deref(),
@@ -1374,7 +1374,11 @@ impl Provider {
                             role: plan.role.clone().unwrap_or_default(),
                             relay_url: seat.relay_url.clone(),
                         };
-                        (Some(identity), seat.post_fence_env())
+                        // The pack is a host-local path staged beside the key,
+                        // read here for the same reason the key is: it names
+                        // machine state a signed create must never carry.
+                        let skills = seat_skills(seat);
+                        (Some(identity), seat.post_fence_env(), skills)
                     }
                     _ => {
                         self.forget_actor_seat(&plan.command_id);
@@ -1407,6 +1411,7 @@ impl Provider {
                 .collect(),
             seat: seat_identity,
             post_fence_env,
+            seat_skills,
             idle_timeout: self.config.idle_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
@@ -1886,8 +1891,8 @@ impl Provider {
         // generation whose 44223 still says `agentRef: <seat>` while the
         // process behind it holds no credentials at all, which is precisely the
         // "control that lies about what it enforces" class of bug.
-        let (seat_identity, post_fence_env) = match record.actor.as_deref() {
-            None => (None, Vec::new()),
+        let (seat_identity, post_fence_env, seat_skills) = match record.actor.as_deref() {
+            None => (None, Vec::new(), None),
             Some(actor) => {
                 let seats = crate::actor_seats::ActorSeatsFile::load(
                     self.config.actor_seats_file.as_deref(),
@@ -1899,7 +1904,11 @@ impl Provider {
                             role: record.role.clone().unwrap_or_default(),
                             relay_url: seat.relay_url.clone(),
                         };
-                        (Some(identity), seat.post_fence_env())
+                        // A resume re-materializes the pack's skills: the
+                        // workdir may have moved on since the create, and the
+                        // write is a no-op when it has not.
+                        let skills = seat_skills(seat);
+                        (Some(identity), seat.post_fence_env(), skills)
                     }
                     _ => {
                         self.state.consume_command(&plan.command_id, now_secs())?;
@@ -1939,6 +1948,7 @@ impl Provider {
                 .collect(),
             seat: seat_identity,
             post_fence_env,
+            seat_skills,
             idle_timeout: self.config.idle_timeout,
             max_turn_duration: self.config.max_turn_duration,
             idle_shutdown: self.config.session_idle_shutdown,
@@ -4213,6 +4223,18 @@ fn turn_cost(usage: &TurnUsage) -> payload::TurnCost {
         output_tokens: usage.turn_output_tokens,
         total_tokens: usage.turn_total_tokens,
     }
+}
+
+/// The role pack a seat entry names, as the session layer wants it.
+///
+/// `None` when the launcher staged no pack — an actor seat without a role pack
+/// is legal and materializes nothing.
+fn seat_skills(seat: &crate::actor_seats::ActorSeat) -> Option<session::SeatSkills> {
+    seat.pack_coordinates()
+        .map(|(pack_dir, persona_id)| session::SeatSkills {
+            pack_dir: pack_dir.to_path_buf(),
+            persona_id: persona_id.to_owned(),
+        })
 }
 
 fn log_ignored(what: &str, reason: &Ignored) {

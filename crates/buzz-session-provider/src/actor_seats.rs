@@ -31,7 +31,7 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -53,6 +53,24 @@ pub struct ActorSeat {
     pub auth_tag: Option<String>,
     /// The relay the seat authenticates against.
     pub relay_url: String,
+    /// Host-local path to the role pack this seat was launched from, when the
+    /// launcher staged one.
+    ///
+    /// Not a secret and not on the wire: a pack is ordinary repo data, but the
+    /// *path to it on this machine* is host-local in exactly the way a working
+    /// directory is, so it travels by the same file rather than by the create.
+    /// Its only use is [`crate::session::SeatSkills`] — materializing the
+    /// pack's skills into the seat's working directory before the child is
+    /// spawned.
+    #[serde(default)]
+    pub pack_dir: Option<PathBuf>,
+    /// The persona within [`Self::pack_dir`] this seat runs as.
+    ///
+    /// Matched against `ResolvedPersona::name`. Absent (or absent alongside
+    /// `pack_dir`) means "this seat has no pack" — the seat still runs, it
+    /// simply materializes nothing.
+    #[serde(default)]
+    pub persona_id: Option<String>,
 }
 
 // The whole point of this type is that its second field never appears in a log
@@ -65,11 +83,25 @@ impl std::fmt::Debug for ActorSeat {
             .field("pubkey", &self.pubkey)
             .field("has_auth_tag", &self.auth_tag.is_some())
             .field("relay_url", &self.relay_url)
+            .field("has_pack", &self.pack_coordinates().is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl ActorSeat {
+    /// The role pack this seat runs from, as `(pack directory, persona name)`.
+    ///
+    /// `None` unless the launcher staged both halves: a pack path with no
+    /// persona names nothing, and a persona name with no pack has nowhere to
+    /// read from, so a half-staged entry is treated as no pack at all rather
+    /// than guessed at.
+    pub fn pack_coordinates(&self) -> Option<(&Path, &str)> {
+        match (self.pack_dir.as_deref(), self.persona_id.as_deref()) {
+            (Some(dir), Some(persona)) if !persona.is_empty() => Some((dir, persona)),
+            _ => None,
+        }
+    }
+
     /// The environment an actor seat's adapter is given **after** the fence.
     ///
     /// Exactly four variables and never a fifth: the signing key, the relay it
@@ -260,6 +292,58 @@ mod tests {
         );
         assert_eq!(env[0].1, NSEC);
         assert_eq!(env[1].1, NSEC, "the NOSTR_PRIVATE_KEY mirror");
+    }
+
+    /// The launcher's pack coordinates survive the round trip, and a seat that
+    /// names no pack simply has none.
+    #[test]
+    fn pack_coordinates_are_read_from_the_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let body = format!(
+            r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{}","nsec":"{NSEC}","relayUrl":"wss://relay.example","packDir":"/packs/roles","personaId":"builder"}}}}}}"#,
+            "cd".repeat(32)
+        );
+        let path = write_seats(dir.path(), &body);
+        let file = ActorSeatsFile::load(Some(&path));
+        let seat = file.seat("create-1").expect("the seat is held here");
+
+        let (pack_dir, persona) = seat.pack_coordinates().expect("pack coordinates");
+        assert_eq!(pack_dir, Path::new("/packs/roles"));
+        assert_eq!(persona, "builder");
+
+        // Pack coordinates never join the closed four-variable environment.
+        assert!(
+            seat.post_fence_env()
+                .iter()
+                .all(|(name, value)| !name.contains("PACK") && value != "/packs/roles"),
+            "the pack path leaked into the seat environment"
+        );
+    }
+
+    /// Half a pack — a directory with no persona, or a persona with no
+    /// directory — is no pack. Guessing which persona a pack means is how a
+    /// seat ends up holding another role's craft.
+    #[test]
+    fn half_staged_pack_coordinates_are_no_pack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for fragment in [
+            r#","packDir":"/packs/roles""#,
+            r#","personaId":"builder""#,
+            r#","packDir":"/packs/roles","personaId":"""#,
+            "",
+        ] {
+            let body = format!(
+                r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{}","nsec":"{NSEC}","relayUrl":"wss://relay.example"{fragment}}}}}}}"#,
+                "cd".repeat(32)
+            );
+            let path = write_seats(dir.path(), &body);
+            let file = ActorSeatsFile::load(Some(&path));
+            let seat = file.seat("create-1").expect("the seat is held here");
+            assert!(
+                seat.pack_coordinates().is_none(),
+                "half-staged entry {fragment:?} was treated as a pack"
+            );
+        }
     }
 
     /// A seat with no attestation omits the variable rather than exporting an

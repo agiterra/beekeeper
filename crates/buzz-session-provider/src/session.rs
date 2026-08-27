@@ -19,7 +19,7 @@
 //! `last_prompt_id` set, which is exactly what the cleanup drain needs.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch};
@@ -149,6 +149,19 @@ pub struct SeatIdentity {
     pub relay_url: String,
 }
 
+/// Where a seat's role-pack skills are read from, host-locally.
+///
+/// Staged by the launcher in the seat's `actor-seats.json` entry
+/// (`packDir` / `personaId`), never carried by the signed create: a pack path
+/// is machine state in the same way a working directory is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatSkills {
+    /// Absolute path to the persona pack directory.
+    pub pack_dir: PathBuf,
+    /// The persona within that pack this seat runs as.
+    pub persona_id: String,
+}
+
 /// Everything needed to bring one session up.
 #[derive(Clone)]
 pub struct CreateRequest {
@@ -191,6 +204,11 @@ pub struct CreateRequest {
     /// Never logged: [`CreateRequest`]'s hand-written `Debug` reports only
     /// whether it is empty.
     pub post_fence_env: Vec<(String, String)>,
+    /// The role pack whose skills are materialized into [`Self::cwd`] before
+    /// the adapter is spawned, or `None` when this execution has no pack.
+    ///
+    /// Host-local paths, so it stays out of `Debug` like `cwd` does.
+    pub seat_skills: Option<SeatSkills>,
     /// Per-turn silence budget.
     pub idle_timeout: Duration,
     /// Per-turn wall-clock ceiling.
@@ -730,11 +748,56 @@ impl SessionManager {
     }
 }
 
+/// Write a seat's role-pack skills into its working directory.
+///
+/// Runs before the adapter is spawned so the child sees `.agents/skills/*`
+/// from its first tool call, and per working directory so two seats of one
+/// crew never share (or overwrite) each other's copy.
+///
+/// A failure here fails the create. The alternative — spawn anyway — produces
+/// a seat whose role prompt names craft that is not on disk, which is the
+/// "control that lies about what it enforces" class of bug this project treats
+/// as severe. The code is [`PROVIDER_UNAVAILABLE`] because that is what it is:
+/// this host could not stand the execution up as asked.
+fn materialize_seat_skills(skills: &SeatSkills, cwd: &Path) -> Result<(), CreateFailure> {
+    let persona =
+        buzz_persona::resolve::resolve_persona_by_name(&skills.pack_dir, &skills.persona_id)
+            .map_err(|error| CreateFailure {
+                code: PROVIDER_UNAVAILABLE,
+                message: format!(
+                    "could not read the role pack for persona \"{}\": {error}",
+                    skills.persona_id
+                ),
+            })?;
+    let written =
+        buzz_persona::skills::materialize_skills(&persona, cwd).map_err(|error| CreateFailure {
+            code: PROVIDER_UNAVAILABLE,
+            message: format!(
+                "could not materialize the role skills for persona \"{}\": {error}",
+                skills.persona_id
+            ),
+        })?;
+    tracing::info!(
+        target: "csp::session",
+        persona = %skills.persona_id,
+        skills = written.len(),
+        refreshed = written.iter().filter(|s| s.written).count(),
+        "seat skills materialized"
+    );
+    Ok(())
+}
+
 /// Spawn the adapter and open one ACP session in `request.cwd`.
 async fn start_agent(
     request: &CreateRequest,
     observer: &ObserverHandle,
 ) -> Result<(AcpClient, SessionStartup), CreateFailure> {
+    // Before the child exists, not after: a skill the agent cannot read on its
+    // first turn is a skill it does not have.
+    if let Some(skills) = &request.seat_skills {
+        materialize_seat_skills(skills, &request.cwd)?;
+    }
+
     // The adapter inherits this process's environment plus the descriptor's
     // per-runtime `agent_env` — that is how a runtime-specific CLI override
     // (e.g. `CLAUDE_CODE_EXECUTABLE`) reaches the adapter: the desktop host
@@ -1818,6 +1881,7 @@ done
         CreateRequest {
             seat: None,
             post_fence_env: Vec::new(),
+            seat_skills: None,
             target: CodingSessionTarget {
                 driver: "claude-agent-acp".into(),
                 instance_id: "instance-1".into(),
@@ -1989,6 +2053,192 @@ done
             "the fence emptied the agent's environment:\n{dumped}"
         );
         manager.shutdown("s1");
+    }
+
+    /// Write a minimal one-persona role pack with one skill, and return its
+    /// directory.
+    fn role_pack(root: &Path, skill_body: &str) -> std::path::PathBuf {
+        let pack = root.join("pack");
+        std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+        std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+        std::fs::create_dir_all(pack.join("skills/brief")).expect("skill dir");
+        std::fs::write(
+            pack.join(".plugin/plugin.json"),
+            r#"{"id":"com.test.roles","name":"Roles","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
+        )
+        .expect("manifest");
+        std::fs::write(
+            pack.join("personas/builder.persona.md"),
+            "---\nname: builder\ndisplay_name: Builder\ndescription: Builds.\nrole: builder\n---\nYou build.\n",
+        )
+        .expect("persona");
+        std::fs::write(pack.join("skills/brief/SKILL.md"), skill_body).expect("skill");
+        pack
+    }
+
+    /// D8: the seat's role skills are readable *by the adapter process*, with
+    /// the pack's bytes, in the seat's own working directory.
+    ///
+    /// The child reports what it actually read, so this fails if the skill is
+    /// written to the wrong directory or with the wrong content. Ordering
+    /// against the spawn is pinned separately by
+    /// `a_failed_spawn_still_materialized_the_seats_skills` — a running child
+    /// races the parent too loosely to prove ordering here.
+    #[tokio::test]
+    async fn a_seats_role_skills_are_readable_by_its_adapter() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief template");
+        let workdir = dir.path().join("work");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let dump = dir.path().join("skill-seen");
+        let skill = workdir.join(".agents/skills/brief/SKILL.md");
+
+        // The child's first act is to read the materialized skill. If the
+        // write happened after the spawn, this reads nothing.
+        let agent = fake_agent(
+            dir.path(),
+            "skill-reading-agent",
+            &format!(
+                r#"
+cat "{skill}" > "{dump}" 2>&1 || echo "MISSING" > "{dump}"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"acp-session-1"}}}}\n' "$id" ;;
+  esac
+done
+"#,
+                skill = skill.display(),
+                dump = dump.display()
+            ),
+        );
+
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, &workdir);
+        create.seat_skills = Some(SeatSkills {
+            pack_dir: pack.clone(),
+            persona_id: "builder".into(),
+        });
+        manager.create(create).await.expect("create");
+
+        assert_eq!(
+            std::fs::read_to_string(&dump).expect("the agent reported what it saw"),
+            "# Brief template",
+            "the seat's skill was not readable when its adapter started"
+        );
+    }
+
+    /// The materialization happens before the adapter is spawned: a create
+    /// whose spawn fails outright still left the skills on disk, which is only
+    /// possible if the write precedes the spawn.
+    #[tokio::test]
+    async fn a_failed_spawn_still_materialized_the_seats_skills() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief");
+        let workdir = dir.path().join("work");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request_command(
+            dir.path()
+                .join("no-such-adapter-binary")
+                .to_string_lossy()
+                .into_owned(),
+            &workdir,
+        );
+        create.seat_skills = Some(SeatSkills {
+            pack_dir: pack,
+            persona_id: "builder".into(),
+        });
+
+        let failure = manager.create(create).await.expect_err("the spawn fails");
+        assert_eq!(failure.code, PROVIDER_UNAVAILABLE, "{failure:?}");
+        assert_eq!(
+            std::fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md"))
+                .expect("the skills were written before the spawn was attempted"),
+            "# Brief"
+        );
+    }
+
+    /// A pack that cannot be read fails the create with a named reason rather
+    /// than spawning a seat whose role prompt claims craft it does not hold.
+    #[test]
+    fn an_unreadable_role_pack_refuses_the_create() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let failure = materialize_seat_skills(
+            &SeatSkills {
+                pack_dir: dir.path().join("no-such-pack"),
+                persona_id: "builder".into(),
+            },
+            dir.path(),
+        )
+        .expect_err("an absent pack is a refusal");
+
+        assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
+        assert!(
+            failure.message.contains("builder"),
+            "the refusal names the persona: {}",
+            failure.message
+        );
+    }
+
+    /// A persona the pack does not contain is a refusal too, and says which.
+    #[test]
+    fn a_missing_persona_refuses_the_create() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief");
+        let failure = materialize_seat_skills(
+            &SeatSkills {
+                pack_dir: pack,
+                persona_id: "verifier".into(),
+            },
+            dir.path(),
+        )
+        .expect_err("an absent persona is a refusal");
+
+        assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
+        assert!(
+            failure.message.contains("verifier"),
+            "the refusal names the persona: {}",
+            failure.message
+        );
+        assert!(
+            !dir.path().join(".agents").exists(),
+            "a refused create wrote skills anyway"
+        );
+    }
+
+    /// Two seats of one crew, two working directories: each gets its own copy,
+    /// and re-materializing is a no-op rather than a rewrite.
+    #[test]
+    fn each_seat_workdir_gets_its_own_copy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pack = role_pack(dir.path(), "# Brief");
+        let one = dir.path().join("seat-one");
+        let two = dir.path().join("seat-two");
+        std::fs::create_dir_all(&one).expect("one");
+        std::fs::create_dir_all(&two).expect("two");
+        let skills = SeatSkills {
+            pack_dir: pack,
+            persona_id: "builder".into(),
+        };
+
+        materialize_seat_skills(&skills, &one).expect("seat one");
+        materialize_seat_skills(&skills, &two).expect("seat two");
+        materialize_seat_skills(&skills, &one).expect("seat one again");
+
+        for seat in [&one, &two] {
+            assert_eq!(
+                std::fs::read_to_string(seat.join(".agents/skills/brief/SKILL.md"))
+                    .expect("skill present"),
+                "# Brief"
+            );
+        }
     }
 
     /// D6/C: an agent seat's adapter holds *its own* identity and nothing else

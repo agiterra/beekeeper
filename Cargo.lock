@@ -1391,6 +1391,7 @@ dependencies = [
  "axum",
  "buzz-acp",
  "buzz-core",
+ "buzz-persona",
  "buzz-sdk",
  "chrono",
  "hex",

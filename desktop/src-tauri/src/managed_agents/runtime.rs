@@ -516,8 +516,29 @@ pub fn spawn_agent_child(
         nvm_bin,
     );
 
+    // ── Role-pack skills ─────────────────────────────────────────────────────
+    //
+    // A pack persona's `skills:` are craft its prompt refers to; the agent can
+    // read them only if they exist in the directory it runs in. Materialize
+    // them before the child exists, into that same directory.
+    //
+    // Best-effort by design *on this path*: a managed agent has never had its
+    // pack skills materialized, so a pack that cannot be read leaves the agent
+    // exactly as it was rather than refusing a spawn that used to work. The
+    // failure is written to the agent's own runtime log, where the operator
+    // reading "why doesn't it know its skill" will find it. (The crew-seat
+    // path in `buzz-session-provider` refuses instead: there the pack is the
+    // point of the seat.)
+    let workdir = super::default_agent_workdir();
+    if let Some(workdir) = workdir.as_deref() {
+        if let Err(error) = materialize_persona_skills(record, workdir) {
+            let _ = append_log_marker(&log_path, &format!("skills: {error}"));
+            eprintln!("buzz-desktop: {error}");
+        }
+    }
+
     let mut command = std::process::Command::new(&resolved_acp_command);
-    if let Some(home) = super::default_agent_workdir() {
+    if let Some(home) = workdir {
         command.current_dir(home);
     }
     command.stdin(std::process::Stdio::null());
@@ -924,6 +945,43 @@ pub fn spawn_agent_child(
     })
 }
 
+/// Write the pack skills of the persona this agent was created from into
+/// `workdir` as `.agents/skills/<name>/SKILL.md`.
+///
+/// A no-op for an agent with no pack behind it (a hand-built agent, or one
+/// whose team was not installed from a directory) — those have no skills to
+/// write and no pack to read.
+///
+/// `workdir` is whatever directory this spawn path runs the child in. Note
+/// that for managed agents that is the shared nest
+/// (`managed_agents::default_agent_workdir`), so two personas that ship a
+/// skill of the same name write the same file; per-workdir isolation is real
+/// only where the workdir is per-seat, as it is for crew seats.
+fn materialize_persona_skills(
+    record: &ManagedAgentRecord,
+    workdir: &std::path::Path,
+) -> Result<Vec<buzz_persona_pkg::skills::MaterializedSkill>, String> {
+    let (Some(pack_dir), Some(persona_name)) = (
+        record.persona_team_dir.as_deref(),
+        record.persona_name_in_team.as_deref(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let persona = buzz_persona_pkg::resolve::resolve_persona_by_name(pack_dir, persona_name)
+        .map_err(|error| {
+            format!(
+                "cannot read persona {persona_name:?} in pack {}: {error}",
+                pack_dir.display()
+            )
+        })?;
+    buzz_persona_pkg::skills::materialize_skills(&persona, workdir).map_err(|error| {
+        format!(
+            "cannot materialize skills for persona {persona_name:?} into {}: {error}",
+            workdir.display()
+        )
+    })
+}
+
 fn child_rust_log_filter() -> String {
     match std::env::var("RUST_LOG") {
         Ok(existing) if existing.contains("buzz_acp") => existing,
@@ -987,6 +1045,129 @@ pub fn start_managed_agent_process(
 
     runtimes.insert(key, ManagedAgentPairRuntime::starting(process));
     Ok(())
+}
+
+#[cfg(test)]
+mod skill_materialization_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn role_pack(root: &Path) -> PathBuf {
+        let pack = root.join("pack");
+        fs::create_dir_all(pack.join(".plugin")).unwrap();
+        fs::create_dir_all(pack.join("personas")).unwrap();
+        fs::create_dir_all(pack.join("skills/brief")).unwrap();
+        fs::write(
+            pack.join(".plugin/plugin.json"),
+            r#"{"id":"com.test.roles","name":"Roles","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            pack.join("personas/builder.persona.md"),
+            "---\nname: builder\ndisplay_name: Builder\ndescription: Builds.\nrole: builder\n---\nYou build.\n",
+        )
+        .unwrap();
+        fs::write(pack.join("skills/brief/SKILL.md"), "# Brief").unwrap();
+        pack
+    }
+
+    fn record(pack_dir: Option<PathBuf>, persona: Option<&str>) -> ManagedAgentRecord {
+        let mut record = crate::managed_agents::types::AgentDefinition {
+            id: "def".into(),
+            display_name: "Builder".into(),
+            avatar_url: None,
+            system_prompt: String::new(),
+            runtime: None,
+            model: None,
+            provider: None,
+            name_pool: vec![],
+            is_builtin: false,
+            is_active: true,
+            shared: false,
+            source_team: None,
+            source_team_persona_slug: None,
+            catalog_source: None,
+            env_vars: Default::default(),
+            respond_to: None,
+            respond_to_allowlist: vec![],
+            parallelism: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+        .into_agent_record();
+        record.persona_team_dir = pack_dir;
+        record.persona_name_in_team = persona.map(str::to_owned);
+        record
+    }
+
+    #[test]
+    fn a_pack_persona_gets_its_skills_in_the_workdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pack = role_pack(tmp.path());
+        let workdir = tmp.path().join("nest");
+        fs::create_dir_all(&workdir).unwrap();
+
+        let written = materialize_persona_skills(&record(Some(pack), Some("builder")), &workdir)
+            .expect("materializes");
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(
+            fs::read_to_string(workdir.join(".agents/skills/brief/SKILL.md")).unwrap(),
+            "# Brief"
+        );
+        assert!(written[0].written);
+    }
+
+    #[test]
+    fn a_second_spawn_rewrites_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pack = role_pack(tmp.path());
+        let workdir = tmp.path().join("nest");
+        fs::create_dir_all(&workdir).unwrap();
+        let record = record(Some(pack), Some("builder"));
+
+        materialize_persona_skills(&record, &workdir).expect("first spawn");
+        let again = materialize_persona_skills(&record, &workdir).expect("second spawn");
+
+        assert!(!again[0].written, "an unchanged skill is rewritten");
+    }
+
+    #[test]
+    fn an_agent_with_no_pack_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = tmp.path().join("nest");
+        fs::create_dir_all(&workdir).unwrap();
+
+        // Hand-built agent: no pack at all.
+        assert!(materialize_persona_skills(&record(None, None), &workdir)
+            .expect("no-op")
+            .is_empty());
+        // Half-linked record: a pack with no persona named in it.
+        let pack = role_pack(tmp.path());
+        assert!(
+            materialize_persona_skills(&record(Some(pack), None), &workdir)
+                .expect("no-op")
+                .is_empty()
+        );
+        assert!(!workdir.join(".agents").exists());
+    }
+
+    #[test]
+    fn an_unreadable_pack_is_reported_not_swallowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = tmp.path().join("nest");
+        fs::create_dir_all(&workdir).unwrap();
+
+        let error = materialize_persona_skills(
+            &record(Some(tmp.path().join("missing-pack")), Some("builder")),
+            &workdir,
+        )
+        .expect_err("an absent pack is an error");
+
+        assert!(error.contains("builder"), "{error}");
+        assert!(error.contains("missing-pack"), "{error}");
+    }
 }
 
 #[cfg(test)]

@@ -1269,6 +1269,7 @@ dependencies = [
  "anyhow",
  "buzz-acp",
  "buzz-core",
+ "buzz-persona",
  "buzz-sdk",
  "chrono",
  "hex",

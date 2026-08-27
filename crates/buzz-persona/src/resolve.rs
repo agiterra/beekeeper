@@ -11,7 +11,7 @@
 //! - **ACP-shaped**: `ResolvedPersona` maps 1:1 to ACP's needs.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::merge::TriggersData;
 use crate::pack::{self, LoadedPack, LoadedPersona, PackError};
@@ -27,6 +27,11 @@ pub struct ResolvedPersona {
     pub description: String,
     pub avatar: Option<String>,
     pub version: String,
+    /// Crew role slug this persona holds, or `None` for an ordinary persona.
+    ///
+    /// Published on the seat's execution by the session provider; resolved by
+    /// `bee sessions send --to <role>` within one umbrella.
+    pub role: Option<String>,
 
     // → Config.system_prompt (persona body only)
     pub system_prompt: String,
@@ -57,8 +62,19 @@ pub struct ResolvedPersona {
     // Hooks (parsed, not executed — reserved for future use, not yet wired)
     pub hooks: Option<ResolvedHooks>,
 
-    // Skills (bare names — reserved for future use, not yet wired)
+    /// Effective skill names for this persona: the ones its frontmatter claims
+    /// plus every unclaimed (shared) skill directory in the pack, each
+    /// normalized to a bare directory name.
+    ///
+    /// Materialized into a seat's working directory by
+    /// [`crate::skills::materialize_skills`].
     pub skills: Vec<String>,
+
+    /// Absolute path to the pack's `skills/` directory, when it has one.
+    ///
+    /// Host-local: it is the source [`crate::skills::materialize_skills`]
+    /// copies from, and it never reaches a signed payload.
+    pub skills_dir: Option<PathBuf>,
 
     // Env var projection for agent subprocess
     pub runtime_env_vars: Vec<(String, String)>,
@@ -159,6 +175,12 @@ pub fn resolve_loaded_pack(loaded: &LoadedPack) -> Result<ResolvedPack, PackErro
     let pack_instructions = loaded.pack_instructions.as_deref();
     let shared_mcp = loaded.shared_mcp_config.as_ref();
 
+    // Effective skills per persona: frontmatter-claimed plus the pack's
+    // unclaimed (shared) skill directories. `ResolvedPersona.skills` used to
+    // echo the raw frontmatter list, which named skills that may not exist and
+    // omitted the shared ones the persona actually gets.
+    let effective_skills = pack::resolve_skills(&loaded.root, &loaded.personas);
+
     let mut personas = Vec::with_capacity(loaded.personas.len());
     for lp in &loaded.personas {
         personas.push(resolve_one_persona(
@@ -166,6 +188,8 @@ pub fn resolve_loaded_pack(loaded: &LoadedPack) -> Result<ResolvedPack, PackErro
             pack_version,
             pack_instructions,
             shared_mcp,
+            effective_skills.get(&lp.name).cloned().unwrap_or_default(),
+            loaded.skills_dir.clone(),
         ));
     }
 
@@ -196,6 +220,8 @@ fn resolve_one_persona(
     pack_version: &str,
     pack_instructions: Option<&str>,
     shared_mcp: Option<&serde_json::Value>,
+    skills: Vec<String>,
+    skills_dir: Option<PathBuf>,
 ) -> ResolvedPersona {
     let system_prompt = lp.prompt.clone();
     let pack_instructions = pack_instructions
@@ -233,6 +259,7 @@ fn resolve_one_persona(
         description: lp.description.clone(),
         avatar: lp.avatar.clone(),
         version,
+        role: lp.role.clone(),
         system_prompt,
         pack_instructions,
         model,
@@ -246,7 +273,8 @@ fn resolve_one_persona(
         broadcast_replies: lp.broadcast_replies,
         mcp_servers,
         hooks,
-        skills: lp.skills.clone(),
+        skills,
+        skills_dir,
         runtime_env_vars,
     }
 }
@@ -875,6 +903,7 @@ mod tests {
             display_name: "Test".into(),
             description: "A test persona.".into(),
             avatar: None,
+            role: None,
             model: model.map(str::to_owned),
             runtime: None,
             temperature,
@@ -888,5 +917,120 @@ mod tests {
             hooks: None,
             prompt: "You are a test.".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod crew_role_tests {
+    use super::*;
+    use std::fs;
+
+    /// Build a pack with two personas and two skill dirs: one claimed by
+    /// `lead`, one claimed by nobody.
+    fn crew_pack(root: &Path) {
+        fs::create_dir_all(root.join(".plugin")).unwrap();
+        fs::create_dir_all(root.join("personas")).unwrap();
+        fs::write(
+            root.join(".plugin/plugin.json"),
+            r#"{
+                "id": "com.test.crew",
+                "name": "Crew",
+                "version": "0.1.0",
+                "personas": ["personas/lead.persona.md", "personas/builder.persona.md"]
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("personas/lead.persona.md"),
+            "---\nname: lead\ndisplay_name: Lead\ndescription: Runs the crew.\nrole: lead\nskills:\n  - skills/brief\n---\nYou are the lead.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("personas/builder.persona.md"),
+            "---\nname: builder\ndisplay_name: Builder\ndescription: Builds.\nrole: builder\n---\nYou build.\n",
+        )
+        .unwrap();
+        for skill in ["brief", "report"] {
+            fs::create_dir_all(root.join("skills").join(skill)).unwrap();
+            fs::write(
+                root.join("skills").join(skill).join("SKILL.md"),
+                format!("# {skill}"),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn role_reaches_the_resolved_persona() {
+        let tmp = tempfile::tempdir().unwrap();
+        crew_pack(tmp.path());
+        let pack = resolve_pack(tmp.path()).expect("resolves");
+
+        let lead = pack.personas.iter().find(|p| p.name == "lead").unwrap();
+        let builder = pack.personas.iter().find(|p| p.name == "builder").unwrap();
+        assert_eq!(lead.role.as_deref(), Some("lead"));
+        assert_eq!(builder.role.as_deref(), Some("builder"));
+    }
+
+    #[test]
+    fn resolved_skills_are_bare_names_including_shared_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        crew_pack(tmp.path());
+        let pack = resolve_pack(tmp.path()).expect("resolves");
+
+        let lead = pack.personas.iter().find(|p| p.name == "lead").unwrap();
+        assert_eq!(lead.skills, vec!["brief".to_owned(), "report".to_owned()]);
+        // `report` is claimed by nobody, so every persona gets it; `brief` is
+        // the lead's alone.
+        let builder = pack.personas.iter().find(|p| p.name == "builder").unwrap();
+        assert_eq!(builder.skills, vec!["report".to_owned()]);
+        assert_eq!(
+            lead.skills_dir.as_deref(),
+            Some(tmp.path().canonicalize().unwrap().join("skills").as_path())
+        );
+    }
+
+    #[test]
+    fn a_resolved_persona_materializes_its_own_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        crew_pack(tmp.path());
+        let workdir = tempfile::tempdir().unwrap();
+        let pack = resolve_pack(tmp.path()).expect("resolves");
+        let builder = pack.personas.iter().find(|p| p.name == "builder").unwrap();
+
+        let written =
+            crate::skills::materialize_skills(builder, workdir.path()).expect("materializes");
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(
+            fs::read_to_string(workdir.path().join(".agents/skills/report/SKILL.md")).unwrap(),
+            "# report"
+        );
+        assert!(
+            !workdir.path().join(".agents/skills/brief").exists(),
+            "a persona never receives another persona's claimed skill"
+        );
+    }
+
+    #[test]
+    fn a_persona_without_a_role_resolves_to_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".plugin")).unwrap();
+        fs::create_dir_all(tmp.path().join("personas")).unwrap();
+        fs::write(
+            tmp.path().join(".plugin/plugin.json"),
+            r#"{"id":"com.test.plain","name":"Plain","version":"0.1.0","personas":["personas/p.persona.md"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("personas/p.persona.md"),
+            "---\nname: p\ndisplay_name: P\ndescription: Plain.\n---\nbody\n",
+        )
+        .unwrap();
+
+        let pack = resolve_pack(tmp.path()).expect("resolves");
+        assert_eq!(pack.personas[0].role, None);
+        assert!(pack.personas[0].skills.is_empty());
+        assert!(pack.personas[0].skills_dir.is_none());
     }
 }

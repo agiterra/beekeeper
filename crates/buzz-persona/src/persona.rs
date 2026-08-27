@@ -23,6 +23,12 @@ pub const MAX_FRONTMATTER_BYTES: usize = 1_048_576;
 /// Maximum persona prompt (markdown body) size in bytes (256 KiB).
 pub const MAX_BODY_BYTES: usize = 262_144;
 
+/// Maximum length of a crew `role` slug, in bytes.
+///
+/// Matches the ceiling the session provider enforces on the `role` a create
+/// carries, so a pack that resolves here cannot be refused there for length.
+pub const MAX_ROLE_BYTES: usize = 64;
+
 #[derive(Debug, thiserror::Error)]
 pub enum PersonaError {
     #[error("failed to read file: {0}")]
@@ -45,6 +51,22 @@ pub enum PersonaError {
 
     #[error("missing required field: {0}")]
     MissingField(String),
+
+    #[error("invalid field: {0}")]
+    InvalidField(String),
+}
+
+/// Whether `role` is a legal crew role slug: 1..=[`MAX_ROLE_BYTES`] bytes of
+/// `[a-z0-9-]`.
+///
+/// The same shape the coding-session create validates, kept here so a bad slug
+/// is a pack-load error rather than a launch-time refusal.
+pub fn is_valid_role_slug(role: &str) -> bool {
+    !role.is_empty()
+        && role.len() <= MAX_ROLE_BYTES
+        && role
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// Controls which messages trigger a response.
@@ -112,6 +134,13 @@ pub struct PersonaConfig {
     /// One-line description. Required.
     pub description: String,
 
+    /// Crew role slug this persona holds (`lead`, `builder`, `verifier`, …).
+    ///
+    /// Optional: a persona with no role is an ordinary persona. When present
+    /// it is the slug the session provider publishes on the seat's execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 
@@ -178,6 +207,7 @@ struct Frontmatter {
     display_name: Option<String>,
     avatar: Option<String>,
     description: Option<String>,
+    role: Option<String>,
     version: Option<String>,
     author: Option<String>,
     #[serde(default)]
@@ -236,11 +266,23 @@ pub fn parse_persona_md(content: &str) -> Result<PersonaConfig, PersonaError> {
         return Err(PersonaError::MissingField("description (empty)".into()));
     }
 
+    // A role slug is a wire value: it is published on the seat's execution and
+    // resolved by `bee sessions send --to <role>`. Refusing it here means a
+    // malformed pack fails at load, not halfway through a crew launch.
+    if let Some(role) = fm.role.as_deref() {
+        if !is_valid_role_slug(role) {
+            return Err(PersonaError::InvalidField(format!(
+                "role must be 1-{MAX_ROLE_BYTES} bytes of [a-z0-9-]: {role:?}"
+            )));
+        }
+    }
+
     Ok(PersonaConfig {
         name,
         display_name,
         avatar: fm.avatar,
         description,
+        role: fm.role,
         version: fm.version,
         author: fm.author,
         skills: fm.skills,
@@ -641,5 +683,40 @@ You are Full Bot.
     /// Trim leading newline from indented string literals.
     fn indoc(s: &str) -> &str {
         s.strip_prefix('\n').unwrap_or(s)
+    }
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    fn with_role(role: &str) -> String {
+        format!(
+            "---\nname: lead\ndisplay_name: Lead\ndescription: Runs the crew.\nrole: {role}\n---\nYou are the lead.\n"
+        )
+    }
+
+    #[test]
+    fn role_parses_into_the_config() {
+        let p = parse_persona_md(&with_role("lead")).expect("role frontmatter parses");
+        assert_eq!(p.role.as_deref(), Some("lead"));
+    }
+
+    #[test]
+    fn role_is_absent_when_not_declared() {
+        let p = parse_persona_md(
+            "---\nname: plain\ndisplay_name: Plain\ndescription: No role.\n---\nbody\n",
+        )
+        .expect("parses");
+        assert_eq!(p.role, None);
+    }
+
+    #[test]
+    fn an_invalid_role_slug_is_refused() {
+        let err = parse_persona_md(&with_role("Lead Seat")).expect_err("invalid slug is refused");
+        assert!(
+            matches!(err, PersonaError::InvalidField(ref field) if field.starts_with("role")),
+            "unexpected error: {err}"
+        );
     }
 }

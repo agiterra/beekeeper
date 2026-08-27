@@ -62,6 +62,8 @@ impl From<ManifestError> for PackError {
 /// A fully loaded persona pack.
 #[derive(Debug)]
 pub struct LoadedPack {
+    /// Canonical pack root on this host. Host-local — never published.
+    pub root: PathBuf,
     pub manifest: PackManifestData,
     pub personas: Vec<LoadedPersona>,
     /// Content of instructions.md, if present.
@@ -80,6 +82,8 @@ pub struct LoadedPersona {
     pub display_name: String,
     pub description: String,
     pub avatar: Option<String>,
+    /// Crew role slug declared in frontmatter, or `None`.
+    pub role: Option<String>,
     pub model: Option<String>,
     /// Preferred ACP runtime ID from the persona config (e.g., 'goose', 'claude').
     pub runtime: Option<String>,
@@ -232,6 +236,7 @@ pub fn load_pack(pack_dir: &Path) -> Result<LoadedPack, PackError> {
     };
 
     Ok(LoadedPack {
+        root: pack_root.clone(),
         manifest,
         personas,
         pack_instructions,
@@ -429,6 +434,7 @@ fn parse_persona_file(
         display_name: pc.display_name,
         description: pc.description,
         avatar: pc.avatar,
+        role: pc.role,
         model: resolved.model,
         runtime: pc.runtime.clone(),
         temperature: resolved.temperature,
@@ -612,6 +618,7 @@ You are Berry, a fast and direct worker.
             display_name: name.to_owned(),
             description: String::new(),
             avatar: None,
+            role: None,
             model: None,
             runtime: None,
             temperature: None,

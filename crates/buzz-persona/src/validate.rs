@@ -1068,3 +1068,70 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod crew_role_validation_tests {
+    use super::*;
+
+    fn write_pack(dir: &Path, persona_body: &str) {
+        std::fs::create_dir_all(dir.join(".plugin")).unwrap();
+        std::fs::create_dir_all(dir.join("personas")).unwrap();
+        std::fs::write(
+            dir.join(".plugin/plugin.json"),
+            r#"{"id":"com.test.role","name":"Role Pack","version":"0.1.0","personas":["personas/lead.persona.md"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("personas/lead.persona.md"), persona_body).unwrap();
+    }
+
+    /// `bee pack validate` on a role pack: clean, no warnings.
+    #[test]
+    fn a_role_pack_validates_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_pack(
+            tmp.path(),
+            "---\nname: lead\ndisplay_name: Lead\ndescription: Runs the crew.\nrole: lead\n---\nYou are the lead.\n",
+        );
+
+        let report = validate_pack(tmp.path());
+        assert!(!report.has_errors(), "{:?}", report.diagnostics);
+        assert!(!report.has_warnings(), "{:?}", report.diagnostics);
+        assert_eq!(report.exit_code(), 0);
+    }
+
+    /// A pack that declares no role is byte-for-byte the case it was before
+    /// roles existed: still clean, still exit 0.
+    #[test]
+    fn a_pack_without_a_role_is_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_pack(
+            tmp.path(),
+            "---\nname: lead\ndisplay_name: Lead\ndescription: Runs the crew.\n---\nYou are the lead.\n",
+        );
+
+        let report = validate_pack(tmp.path());
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        assert_eq!(report.exit_code(), 0);
+    }
+
+    /// A malformed slug fails the pack at load, so it can never reach a launch.
+    #[test]
+    fn a_malformed_role_fails_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_pack(
+            tmp.path(),
+            "---\nname: lead\ndisplay_name: Lead\ndescription: Runs the crew.\nrole: Lead Seat\n---\nYou are the lead.\n",
+        );
+
+        let report = validate_pack(tmp.path());
+        assert!(report.has_errors(), "{:?}", report.diagnostics);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| format!("{d:?}").contains("role")),
+            "the diagnostic names the offending field: {:?}",
+            report.diagnostics
+        );
+    }
+}
