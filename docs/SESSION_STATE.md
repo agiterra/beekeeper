@@ -2032,6 +2032,40 @@ written and `bash -n` clean but **was not executed** — that harness needs
     skill-write path still has no canonicalize/symlink guard on the target —
     so Slice 5 stays **not clean**.
 
+68. **Budgets and liveness (Slice 6), built and gated GREEN on
+    `crew/s2-s6`@`83c386fc`, not pushed.** A per-umbrella turn budget
+    (`BUZZ_CSP_TURN_BUDGET`, a Settings control, a `turnBudget` key on 44223,
+    a `bee sessions status` line) that refuses further agent-originated turns
+    with `BUDGET_EXHAUSTED` once a crew has spent its allowance, with the
+    human founder exempt. Gate: `cargo test -p <crate> --lib` over 8 crates
+    3708 passed / 0 failed — the run `just ci` does not make — plus clippy
+    `-D warnings` clean, desktop `pnpm test` 6365/0 over 72 suites, Tauri
+    2712/0/18 (+7 csp, +3 rodio), `pnpm typecheck` and `pnpm check:px-text`
+    clean, `just test` 12/12 with the workspace-integration binary 8/8. No
+    full `just ci`, and **nothing ran live**: no provider was started with a
+    budget, no `turnBudget` was seen on a wire, the Settings control was never
+    clicked, and the end-to-end test drives the spend through
+    `handle_session_event(SessionEvent::TurnStarted)` rather than a real
+    adapter. The same-family advisory refuter CONFIRMED one blocking finding;
+    two were fixed here, each pinned red first — an agent seat holding
+    `BUZZ_PRIVATE_KEY` could make itself the umbrella's founder and so exempt
+    itself from the budget forever (`claim_umbrella_founder`,
+    `state.rs:519`), and an out-of-range `BUZZ_CSP_TURN_BUDGET` made the
+    desktop drop the entire 44223 with no error surfaced. Five are deferred
+    and unfixed: a create with no `sessionRef` is outside the budget
+    (contract-1b); a queued batch can overshoot the limit by up to
+    `SESSION_QUEUE_DEPTH` = 8 because `used` is charged at TurnStarted
+    (contract-2); the create-path refusal reports `INITIAL_TURN_FAILED` with
+    `BUDGET_EXHAUSTED` only in its message (contract-3); counts are
+    provider-local, so an umbrella split across two provider hosts is
+    disclosed wrong (contract-5); and the strict-decode deploy order needs a
+    relay-before-desktop note (contract-6). `thread.turn.interrupt` is
+    deliberately **not** budgeted, so a spent crew can still cancel its own
+    runaway turn. The branch could not be pushed: the pre-push branch-skew
+    guard reports it behind `origin/main` on 24 files it also touches, and
+    hermit `just` was missing from the hook subshell so six other hook steps
+    exited 127 before branch-skew ran.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -2084,30 +2118,29 @@ main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 `--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
 later that day with one docs conflict (this item is now 58) and re-gated:
 **Slices 2–6 were built by a Claude-only crew on crew/s2-s6; as of 2026-08-27
-S2–S5 are reached, S3 has since been gated green, and S5 is red.** S2 (the
-relay is the mailbox) is gated and proven live at `1a3ee24d`. S3 (agent
-seats), which had no gate at all when it was first recorded, was gated green
-by the lead on `298a69f6` (lib 3439 passed / 0 failed, clippy clean, desktop
-6285/0, Tauri 2701/0, px clean, `just test` 2150 passed / 0 failed). S4
-(agents talk) is built through `cbbdf7e2` and **gated green**: per-crate
-`cargo test -p <crate> --lib` over 8 crates (846/523/426/133/127/958/303/327
-passed, 0 failed — the run `just ci` does not make), clippy 0 warnings,
-desktop 6294/0 over 72 suites, Tauri 2691/0/18, px-text clean, `just test`
-12/12 suites; it is on the relay (`88397e93..cbbdf7e2`). S5 (role packs and
-crew launch) is built through `6168f63e` and **red**: lib 3674/0, clippy
-clean, desktop 6335/0, `just test` 0 failed, but the Tauri suite fails
-`a_shared_workdir_is_refused_rather_than_written_into` (`nest.rs:907`) because
-the test asserts against the operator's real `$HOME`, which contains a stray
-`~/.agents/skills/brief/SKILL.md` this program itself wrote before the guard
-landed — so the same test failed the pre-push chain and **S5 was never
-pushed**. Neither S4 nor S5 ran a full `just ci`, and neither was exercised
-against a live relay or a real provider. Both refuters were same-family
-(advisory, not the cross-family tier-2 pass §1 requires) and both returned
-CONFIRMED; S4's five findings were all applied, S5's five are recorded and
-**none are applied**. S6 is not started, blocked by S5. What is owed before
-any of this lands: S5's five fix-now findings, a green Tauri suite that does
-not depend on `$HOME`, a full repository gate, and one crew launch watched in
-the app.
+all five are reached, S2–S4 and S6 are gated green, and S5 is green but
+carries two advisory notes.** S2 (the relay is the mailbox) is gated and
+proven live at `1a3ee24d`. S3 (agent seats) was gated green by the lead on
+`298a69f6`. S4 (agents talk) is green at `cbbdf7e2` and is on the relay. S5
+(role packs and crew launch) was re-gated green at `d7eca684` after round 3
+closed both blocking findings — the `"default"` adapter alias now resolves to
+vendor `unknown`, and `materialize_skills` resolves its destination the way it
+resolves its source. S6 (budgets and liveness) is built through `83c386fc` and
+**gated green**: `cargo test -p <crate> --lib` over 8 crates 3708 passed / 0
+failed (the run `just ci` does not make), clippy clean, desktop 6365/0 over 72
+suites, Tauri 2712/0/18 plus 7 and 3, px-text clean, `just test` 12/12. Its
+same-family refuter returned CONFIRMED; two fix-now findings were applied
+(contract-1, an agent seat could mint the founder exemption the budget bounds;
+contract-4, an out-of-range `BUZZ_CSP_TURN_BUDGET` silently dropped every
+budgeted 44223 in the desktop) and five are deferred (contract-1b, -2, -3, -5,
+-6). **Nothing here has run against a relay or a real provider**, no full
+`just ci` has run on this branch, every refuter was same-family (advisory, not
+the cross-family tier-2 pass §1 requires), and the checkpoint could not push:
+the pre-push branch-skew guard reports the branch behind `origin/main` on 24
+files it also touches, and hermit `just` was missing from the hook subshell so
+six other hook steps exited 127 before it. What is owed before any of this
+lands: a reconciliation with the moved `origin/main`, a full repository gate,
+and one crew launch watched in the app.
 
 **The active track as of 2026-08-25 night is live confirmation of the
 full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
