@@ -2109,6 +2109,19 @@ written and `bash -n` clean but **was not executed** — that harness needs
    command its signed order names (`943dd41c`); D10 eviction, per-kind refusal
    grounds and prompt attachment counts are now disclosed on both pages.
 
+70. **Web coding-session observer (read-only).** `web/` gained
+    `/sessions/:channel/:sessionId`, rendering the umbrella/founder header,
+    the D3-D10 status fold with lease semantics, and the projected
+    transcript, mirroring the mobile front's binding contract (target key,
+    decoders, trust, generation resolution) rather than reimplementing it.
+    Gate is red on this branch: `pnpm typecheck`, `pnpm check` (biome, 111
+    files), and pubkey-truncation are clean, but `pnpm test` is 136/146
+    (10 fail — every new/updated test fails once its fix is reverted,
+    confirming they test real behavior), `pnpm build` and
+    `just file-size-check` pass. Refuters returned same-family
+    CONFIRMED/NOT-REFUTED findings, advisory only. Net: not clean, and not
+    yet opened against a live relay.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
