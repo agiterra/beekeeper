@@ -58,6 +58,7 @@ fn built_in_team_records(built_ins: &[BuiltInTeam], now: &str) -> Vec<TeamRecord
             description: team.description.map(|s| s.to_string()),
             instructions: None,
             persona_ids: team.persona_ids.iter().map(|s| s.to_string()).collect(),
+            crew: None,
             is_builtin: true,
             source_dir: None,
             is_symlink: false,
