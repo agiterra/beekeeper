@@ -71,7 +71,6 @@ import {
 import { InlineEmojiPopover } from "./markdown/InlineEmojiPopover";
 import { createLinkPreviewImageLightbox } from "./markdown/LinkPreviewImageLightbox";
 import { MarkdownInput } from "./markdown/MarkdownInput";
-import { MarkdownPrivateContext } from "./MarkdownPrivateContext";
 import {
   MediaContextMenu,
   type MediaContextMenuPosition,
@@ -1693,7 +1692,6 @@ export function createMarkdownComponents(
         />
       );
     },
-    "private-context": MarkdownPrivateContext,
   } as Components;
 }
 
