@@ -1945,6 +1945,10 @@ written and `bash -n` clean but **was not executed** — that harness needs
     193 s, and the branch is on the relay. Owed: a real gate on this base with
     per-crate `--lib` counts, and one seated create watched on the dev
     instance.
+    **Lead gate 2026-08-26 23:05 on 298a69f6 green:** lib 3439 passed, 0 failed; clippy
+    clean; desktop 6285/0; Tauri 2701 passed, 0 failed; px clean; `just test` 2150 passed, 0 failed. (This
+    item is 65 on this branch; the web branch also uses 65 — renumber at
+    landing.)
 
 ## 2a. Direction settled 2026-08-18
 
