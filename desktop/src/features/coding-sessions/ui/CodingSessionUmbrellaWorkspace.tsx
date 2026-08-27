@@ -9,7 +9,11 @@ import {
   type CodingSessionHandoffLink,
 } from "@/features/coding-sessions/lib/codingSessionHandoff";
 import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hooks/useCodingSessionOperatorProfiles";
-import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  listCodingSessionUmbrellaParticipants,
+  type CodingSessionActorNameResolver,
+} from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import { useCodingSessionActorNameResolver } from "@/features/coding-sessions/lib/useCodingSessionActorNames";
 import {
   codingSessionUmbrellaParticipantKey,
   defaultCodingSessionUmbrellaParticipantKey,
@@ -143,9 +147,10 @@ export function UmbrellaCodingSessionWorkspace({
     string | null
   >(null);
   const narrativeScrollRef = React.useRef<HTMLDivElement>(null);
+  const workspaceActorName = useCodingSessionActorNameResolver(umbrella);
   const composerParticipants = React.useMemo(
-    () => listCodingSessionUmbrellaParticipants(umbrella),
-    [umbrella],
+    () => listCodingSessionUmbrellaParticipants(umbrella, workspaceActorName),
+    [umbrella, workspaceActorName],
   );
   const [composerParticipantKey, setComposerParticipantKey] = React.useState<
     string | null
@@ -221,7 +226,12 @@ export function UmbrellaCodingSessionWorkspace({
         id: "agents",
         label: "Agents",
         count: umbrella.executions.length,
-        content: <CodingSessionExecutionRail umbrella={umbrella} />,
+        content: (
+          <CodingSessionExecutionRail
+            actorNames={workspaceActorName}
+            umbrella={umbrella}
+          />
+        ),
       },
       {
         id: "changes",
@@ -230,7 +240,7 @@ export function UmbrellaCodingSessionWorkspace({
         content: <CodingSessionChangesRail files={changedFiles} />,
       },
     ],
-    [changedFiles, umbrella],
+    [changedFiles, umbrella, workspaceActorName],
   );
   const surfaceIds = React.useMemo(
     () => surfaces.map((surfaceEntry) => surfaceEntry.id),
@@ -478,6 +488,7 @@ export function UmbrellaCodingSessionWorkspace({
                 laneMessages={lane.messages}
                 onHandoff={setPrefill}
                 onFocusExecution={handleFocusExecution}
+                actorNames={workspaceActorName}
                 operatorProfiles={operatorProfiles}
                 umbrella={umbrella}
               />
@@ -507,6 +518,7 @@ export function UmbrellaCodingSessionWorkspace({
                   </div>
                 ) : null}
                 <CodingSessionUmbrellaComposer
+                  actorNames={workspaceActorName}
                   acceptedOperators={acceptedOperators}
                   channelId={channelId}
                   currentUserPubkey={identity.data?.pubkey ?? null}
@@ -613,6 +625,7 @@ export function scrollCodingSessionNarrativeToLatest(
  * cross-ordered between executions — interleaving is between blocks only.
  */
 export function CodingSessionUmbrellaTimelineView({
+  actorNames,
   channelId,
   currentUserPubkey = null,
   focusedExecutionKey = null,
@@ -635,11 +648,17 @@ export function CodingSessionUmbrellaTimelineView({
   onFocusExecution?: (executionKey: string | null) => void;
   /** Profiles for the umbrella's operators, resolved once by the workspace. */
   operatorProfiles?: UserProfileLookup;
+  /**
+   * Names for the umbrella's seated actors, resolved once by the workspace
+   * for the same reason its operator profiles are. Absent, a seat labels
+   * itself by its role alone.
+   */
+  actorNames?: CodingSessionActorNameResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
-    () => listCodingSessionUmbrellaParticipants(umbrella),
-    [umbrella],
+    () => listCodingSessionUmbrellaParticipants(umbrella, actorNames),
+    [actorNames, umbrella],
   );
   const labelsByExecutionKey = React.useMemo(() => {
     const labels = new Map<string, string>();

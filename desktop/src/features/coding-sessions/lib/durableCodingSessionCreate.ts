@@ -353,19 +353,32 @@ const DURABLE_CREATE_INPUT_KEYS = [
  * create without its sessionRef. Transactions persisted before either field
  * existed must stay resumable forever, and the byte-exact event verification
  * below is what actually guarantees their integrity.
+ *
+ * Any of the three forms may additionally carry the agent seat — `actor` and
+ * `role` together, never one alone, mirroring the wire rule the builder
+ * enforces. An unseated create's key set is unchanged.
  */
 function isCreateInput(
   value: unknown,
 ): value is DurableCodingSessionCreateInput {
+  if (!isPlainRecord(value)) return false;
+  const hasActor = Object.hasOwn(value, "actor");
+  const hasRole = Object.hasOwn(value, "role");
+  if (hasActor !== hasRole) return false;
+  const seatKeys = hasActor ? (["actor", "role"] as const) : ([] as const);
   return (
-    isPlainRecord(value) &&
-    (hasExactKeySet(value, DURABLE_CREATE_INPUT_KEYS) ||
-      hasExactKeySet(value, [...DURABLE_CREATE_INPUT_KEYS, "sessionRef"]) ||
-      hasExactKeySet(value, [
-        ...DURABLE_CREATE_INPUT_KEYS,
-        "sessionRef",
-        "genesisRef",
-      ]))
+    hasExactKeySet(value, [...DURABLE_CREATE_INPUT_KEYS, ...seatKeys]) ||
+    hasExactKeySet(value, [
+      ...DURABLE_CREATE_INPUT_KEYS,
+      "sessionRef",
+      ...seatKeys,
+    ]) ||
+    hasExactKeySet(value, [
+      ...DURABLE_CREATE_INPUT_KEYS,
+      "sessionRef",
+      "genesisRef",
+      ...seatKeys,
+    ])
   );
 }
 

@@ -11,10 +11,7 @@
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { encodeStructuredKey } from "./codingSessionKeys";
-import {
-  formatCodingSessionModelSummary,
-  formatCodingSessionRuntimeLabel,
-} from "./codingSessionLabels";
+import { formatCodingSessionExecutionLabel } from "./codingSessionLabels";
 import type {
   CodingSessionCatalogRecord,
   CodingSessionExecution,
@@ -169,9 +166,10 @@ export function umbrellaHasCollapsedHistory(
 
 export function listCodingSessionUmbrellaParticipants(
   umbrella: CodingSessionUmbrellaRecord,
+  resolveActorName?: CodingSessionActorNameResolver,
 ): CodingSessionUmbrellaParticipant[] {
   const labels = umbrella.executions.map((execution) =>
-    executionLabel(execution),
+    executionLabel(execution, resolveActorName),
   );
   const counts = new Map<string, number>();
   for (const label of labels) {
@@ -524,12 +522,32 @@ function executionShortId(execution: CodingSessionExecution): string {
     : sessionId.slice(0, 8);
 }
 
-function executionLabel(execution: CodingSessionExecution): string {
+/**
+ * Resolve a seated execution's actor to a display name.
+ *
+ * The participant list is pure, and profile lookup is a hook — so the
+ * resolver is passed in by the surface that has one
+ * ({@link useUsersBatchQuery}). Without it a seat still labels itself by its
+ * role, which is the honest half.
+ */
+export type CodingSessionActorNameResolver = (
+  actorPubkey: string,
+) => string | null;
+
+function executionLabel(
+  execution: CodingSessionExecution,
+  resolveActorName?: CodingSessionActorNameResolver,
+): string {
   const record = execution.activeGeneration;
   const runtime =
     record.runtime ?? record.commandTarget?.driver ?? "coding session";
-  const runtimeLabel = formatCodingSessionRuntimeLabel(runtime);
-  return record.model
-    ? `${runtimeLabel} · ${formatCodingSessionModelSummary(record.model)}`
-    : runtimeLabel;
+  return formatCodingSessionExecutionLabel({
+    agentRef: record.agentRef,
+    role: record.role,
+    agentDisplayName: record.agentRef
+      ? (resolveActorName?.(record.agentRef) ?? null)
+      : null,
+    runtime,
+    model: record.model,
+  }).primary;
 }

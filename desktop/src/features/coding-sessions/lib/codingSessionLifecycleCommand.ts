@@ -2,6 +2,10 @@ import { relayClient } from "@/shared/api/relayClient";
 import { signRelayEvent } from "@/shared/api/tauri";
 import type { RelayEvent } from "@/shared/api/types";
 import { KIND_CODING_SESSION_LIFECYCLE_COMMAND } from "@/shared/constants/kinds";
+import {
+  isCodingSessionRoleSlug,
+  MAX_CODING_SESSION_ROLE_BYTES,
+} from "./codingSessionActorSeat";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { isCodingSessionSessionRef } from "./codingSessionWireDecode";
 
@@ -30,6 +34,13 @@ export const MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES = 12 * 1024;
  * `genesisRef` is the immutable authority anchor. It is present only in the
  * 10-key form and requires a non-null `sessionRef`; omitting it preserves the
  * historical 8-key form or the interim 9-key umbrella form exactly.
+ *
+ * `actor` and `role` are the agent seat (NIP-CSL): the managed agent's public
+ * key whose identity the provider injects into this execution, and the role
+ * slug that labels it. They are present together or not at all — one without
+ * the other is malformed and refused before signing — and their absence
+ * leaves every earlier form byte-for-byte unchanged. The secret half of the
+ * actor's identity is staged host-locally and never appears here.
  */
 export type CodingSessionCreateAction = {
   type: "session.create";
@@ -37,6 +48,8 @@ export type CodingSessionCreateAction = {
   repoRef: string | null;
   sessionRef?: string | null;
   genesisRef?: string;
+  actor?: string;
+  role?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -104,6 +117,10 @@ export function buildCodingSessionCreateEvent(input: {
   sessionRef?: string | null;
   /** Event id of the genesis this create explicitly names (10-key form). */
   genesisRef?: string;
+  /** Lowercase 64-hex pubkey of the managed agent seated on this execution. */
+  actor?: string;
+  /** Role slug for the seat. Required exactly when `actor` is present. */
+  role?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -128,6 +145,10 @@ export function buildCodingSessionCreateEvent(input: {
       ...(input.genesisRef !== undefined
         ? { genesisRef: input.genesisRef }
         : {}),
+      // The seat pair is validated as a pair above, so this spread can never
+      // emit half of it.
+      ...(input.actor !== undefined ? { actor: input.actor } : {}),
+      ...(input.role !== undefined ? { role: input.role } : {}),
       providerInstanceRef: input.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
       model: input.model,
@@ -159,6 +180,8 @@ export function validateCodingSessionCreateInput(input: {
   repoRef: string | null;
   sessionRef?: string | null;
   genesisRef?: string;
+  actor?: string;
+  role?: string;
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
@@ -201,6 +224,21 @@ export function validateCodingSessionCreateInput(input: {
     if (!/^[0-9a-f]{64}$/.test(input.genesisRef)) {
       throw new Error("action.genesisRef must be a lowercase 64-hex event id");
     }
+  }
+  // Both halves of the seat or neither: a lone `actor` is an unaddressable
+  // seat and a lone `role` labels a seat nobody holds. The provider refuses
+  // the same pairing with ACTOR_ROLE_PAIR; refusing here means the malformed
+  // create is never signed at all.
+  if ((input.actor === undefined) !== (input.role === undefined)) {
+    throw new Error("action.actor and action.role must be present together");
+  }
+  if (input.actor !== undefined && !/^[0-9a-f]{64}$/.test(input.actor)) {
+    throw new Error("action.actor must be a lowercase 64-hex public key");
+  }
+  if (input.role !== undefined && !isCodingSessionRoleSlug(input.role)) {
+    throw new Error(
+      `action.role must be [a-z0-9-]+ and at most ${MAX_CODING_SESSION_ROLE_BYTES} bytes`,
+    );
   }
   validateRequired(
     input.providerInstanceRef,

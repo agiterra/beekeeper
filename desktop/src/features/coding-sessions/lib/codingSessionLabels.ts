@@ -89,3 +89,74 @@ export function formatCodingSessionModelSummary(modelId: string): string {
 function titleCaseLabel(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1).toLowerCase()}`;
 }
+
+/**
+ * How one execution names itself.
+ *
+ * A human-created execution is its runtime and model — there is nothing else
+ * to say about it. A *seated* execution is an agent doing a job, so the agent
+ * and the job lead, and the runtime it happens to be running on is demoted to
+ * the secondary line (the hover in the participant rail, the subtitle in the
+ * header). Getting this backwards was the honest complaint about the crew
+ * surface: three chips reading `Claude · sonnet` for three different seats.
+ */
+export type CodingSessionExecutionLabel = {
+  /** The line that identifies the execution. */
+  primary: string;
+  /** Runtime/model, when it is not already the primary line. */
+  secondary: string | null;
+};
+
+/**
+ * Label an execution, seated or not.
+ *
+ * `agentDisplayName` is whatever profile lookup resolved for the actor; when
+ * it is null the caller has not resolved a name yet, and the label falls back
+ * to the role alone rather than inventing one — a seat labelled with a
+ * truncated key reads as a bug, and the role is the honest part.
+ */
+export function formatCodingSessionExecutionLabel(input: {
+  /** Absent, null, or empty all mean the same thing: no seat. */
+  agentRef: string | null | undefined;
+  role: string | null | undefined;
+  agentDisplayName?: string | null;
+  runtime: string | null | undefined;
+  model: string | null | undefined;
+}): CodingSessionExecutionLabel {
+  const runtimeLabel = input.runtime
+    ? formatCodingSessionRuntimeLabel(input.runtime)
+    : null;
+  const model = nonEmpty(input.model);
+  const runtimeSummary =
+    runtimeLabel && model
+      ? `${runtimeLabel} · ${formatCodingSessionModelSummary(model)}`
+      : (runtimeLabel ??
+        (model ? formatCodingSessionModelSummary(model) : null));
+  // A seat is both halves. Half a seat — an actor with no role, a role with
+  // no actor, or a record projected before either key existed — is not a seat
+  // and must label itself exactly as it did before this feature.
+  const agentRef = nonEmpty(input.agentRef);
+  const role = nonEmpty(input.role);
+  if (agentRef === null || role === null) {
+    return { primary: runtimeSummary ?? "Coding session", secondary: null };
+  }
+  const roleLabel = formatCodingSessionRoleLabel(role);
+  const name = input.agentDisplayName?.trim();
+  return {
+    primary: name ? `${name} · ${roleLabel}` : roleLabel,
+    secondary: runtimeSummary,
+  };
+}
+
+/** A role slug as a person reads it: `code-reviewer` → `Code Reviewer`. */
+export function formatCodingSessionRoleLabel(role: string): string {
+  return role
+    .split("-")
+    .filter(Boolean)
+    .map((token) => `${token.slice(0, 1).toUpperCase()}${token.slice(1)}`)
+    .join(" ");
+}
+
+function nonEmpty(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
