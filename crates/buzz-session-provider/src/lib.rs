@@ -4370,7 +4370,6 @@ mod tests {
         }
     }
 
-    /// Drain and record session reports until one satisfies `done`.
     /// Set a file's mode. Used to make a durable ledger unwritable, which is
     /// the `io::Error` class a full or read-only state directory raises.
     fn chmod(path: &Path, mode: u32) {
@@ -4378,6 +4377,7 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
     }
 
+    /// Drain and record session reports until one satisfies `done`.
     async fn pump_until(provider: &mut Provider, done: impl Fn(&SessionEvent) -> bool) {
         loop {
             let event =
