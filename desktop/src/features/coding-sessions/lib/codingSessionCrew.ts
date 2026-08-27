@@ -18,6 +18,7 @@
  */
 
 import {
+  CODING_SESSION_ADAPTER_DEFAULT_MODEL,
   codingSessionModelChoices,
   splitCodingSessionModelId,
 } from "./codingSessionModelChoice";
@@ -56,6 +57,13 @@ export type CodingSessionSeatVendorResolution =
       source: "conflict";
       declared: CodingSessionModelVendor;
       derived: CodingSessionModelVendor;
+    }
+  | {
+      /** The seat names the adapter's `default` alias, so no model is fixed. */
+      vendor: null;
+      source: "adapter-default";
+      /** What the seat said anyway, for copy that can name the hope. */
+      declared: CodingSessionModelVendor | null;
     };
 
 /** One seat as the team published it. */
@@ -107,6 +115,24 @@ export function deriveCodingSessionModelVendor(
 }
 
 /**
+ * Does this seat's model id name the adapter's `default` alias?
+ *
+ * `default` is what an adapter publishes for "you choose" — a runtime with no
+ * live model discovery publishes exactly `allowedModels: ["default"]`. It is
+ * not a model, so nothing about it names a vendor, and a bracketed form
+ * (`default[1m]`) is the same alias with a decision packed on.
+ */
+export function isCodingSessionAdapterDefaultModel(
+  model: string | null | undefined,
+): boolean {
+  const id = (model ?? "").trim().toLowerCase();
+  if (id.length === 0) return false;
+  return (
+    splitCodingSessionModelId(id).model === CODING_SESSION_ADAPTER_DEFAULT_MODEL
+  );
+}
+
+/**
  * Resolve a seat's model vendor: what it declared, else what its model id
  * unambiguously names, else nothing — and *nothing* again when the two
  * disagree.
@@ -123,6 +149,16 @@ export function resolveCodingSessionSeatVendor(seat: {
   vendor?: string | null;
 }): CodingSessionSeatVendorResolution {
   const declared = (seat.vendor ?? "").trim().toLowerCase();
+  // The `default` alias outranks a declaration for the same reason the table
+  // does: it is a statement about a model the adapter has not picked yet, so
+  // the vendor the seat names is a hope, not something this build checked.
+  if (isCodingSessionAdapterDefaultModel(seat.model)) {
+    return {
+      vendor: null,
+      source: "adapter-default",
+      declared: declared.length > 0 ? declared : null,
+    };
+  }
   const derived = deriveCodingSessionModelVendor(seat.model);
   if (declared.length > 0) {
     return derived !== null && derived !== declared
@@ -174,6 +210,10 @@ export function describeCodingSessionSeatVendor(
         : resolution.vendor;
     case "conflict":
       return `declared ${resolution.declared}, but ${(seat.model ?? "").trim()} is ${resolution.derived}`;
+    case "adapter-default":
+      return options?.annotateSource
+        ? `unknown — ${CODING_SESSION_ADAPTER_DEFAULT_MODEL} lets the adapter pick the model`
+        : "unknown";
     default:
       return options?.annotateSource ? "vendor not declared" : "unknown";
   }
@@ -199,7 +239,9 @@ export type CodingSessionCrewFamilyVerdict =
  * The launch's hard family check (plan D8, operator ruling 2026-08-26).
  *
  * Refuses when a verifier seat's vendor equals any builder seat's vendor, and
- * refuses when any verifier or builder seat's vendor cannot be established.
+ * refuses when any verifier or builder seat's vendor cannot be established —
+ * including the seat that carries the adapter's `default` alias, whose vendor
+ * *nothing* has decided yet no matter what the seat declares.
  * Hard, not advisory: the caller must not publish anything when this returns
  * `ok: false`.
  *
@@ -242,6 +284,22 @@ export function checkCodingSessionCrewFamilies(
         `A seat's declared vendor contradicts its model id: ${said}. This ` +
         "build will not guess which of the two is true, and the verifier " +
         `rule is decided on the vendor. ${CODING_SESSION_CREW_EDIT_HINT}`,
+    };
+  }
+
+  const aliased = [...verifiers, ...builders].filter(
+    (seat) => resolveCodingSessionSeatVendor(seat).source === "adapter-default",
+  );
+  if (aliased.length > 0) {
+    return {
+      ok: false,
+      reason:
+        `Give ${aliased.map(named).join(", ")} a model id: ` +
+        `"${CODING_SESSION_ADAPTER_DEFAULT_MODEL}" is the alias that lets the ` +
+        "adapter pick, so every seat carrying it runs whatever that one " +
+        "runtime chose — and a vendor declared on such a seat is a claim " +
+        "about a model nothing has picked yet. A verifier has to run on a " +
+        `different vendor than every builder. ${CODING_SESSION_CREW_EDIT_HINT}`,
     };
   }
 

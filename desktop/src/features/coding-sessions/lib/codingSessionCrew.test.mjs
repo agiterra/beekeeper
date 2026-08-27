@@ -306,6 +306,83 @@ test("an unknown catalog is refused, never treated as a passing check", () => {
   assert.match(verdict.reason, /cannot see which models/);
 });
 
+test("the adapter's `default` alias is a vendor nobody knows, not a vendor", () => {
+  // `default` is the alias adapters publish for "you choose" — a runtime
+  // without live model discovery publishes exactly allowedModels: ["default"].
+  // A seat carrying it declares a vendor for a model the adapter has not
+  // picked yet, so the declaration is a hope, not an answer.
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ model: "default", vendor: "openai" }),
+    { vendor: null, source: "adapter-default", declared: "openai" },
+  );
+  assert.deepEqual(resolveCodingSessionSeatVendor({ model: " Default " }), {
+    vendor: null,
+    source: "adapter-default",
+    declared: null,
+  });
+  // A bracketed alias is the same alias.
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ model: "default[1m]", vendor: "xai" }),
+    { vendor: null, source: "adapter-default", declared: "xai" },
+  );
+});
+
+test("two seats that both say `default` cannot pass the family check", () => {
+  // Both run the one adapter's own model, so "openai verifier reviewing an
+  // anthropic builder" is two declarations about a model nothing ran.
+  const verdict = checkCodingSessionCrewFamilies([
+    {
+      role: "builder",
+      actorLabel: "Codey",
+      model: "default",
+      vendor: "anthropic",
+    },
+    {
+      role: "verifier",
+      actorLabel: "Grokker",
+      model: "default",
+      vendor: "openai",
+    },
+  ]);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /builder \(Codey\)/);
+  assert.match(verdict.reason, /verifier \(Grokker\)/);
+  assert.match(verdict.reason, /default/);
+  assert.match(verdict.reason, /teams\.json/);
+});
+
+test("the alias defeats the family check even where the catalog offers it", () => {
+  // The seat-model check passes — the runtime really does publish `default` —
+  // and the family check must still refuse, because passing the first one says
+  // nothing about which vendor runs.
+  assert.deepEqual(
+    checkCodingSessionCrewSeatModels(
+      [
+        { role: "builder", model: "default", vendor: "anthropic" },
+        { role: "verifier", model: "default", vendor: "openai" },
+      ],
+      { label: "claude-agent-acp", allowedModels: ["default"] },
+    ),
+    { ok: true },
+  );
+  assert.equal(
+    checkCodingSessionCrewFamilies([
+      { role: "builder", model: "default", vendor: "anthropic" },
+      { role: "verifier", model: "default", vendor: "openai" },
+    ]).ok,
+    false,
+  );
+});
+
+test("the roster says the alias names no vendor rather than the seat's hope", () => {
+  const roster = codingSessionCrewRosterText({
+    seats: [{ ...SEATS[0], model: "default", vendor: "anthropic" }],
+    primaryPersonaId: "p-lead",
+  });
+  assert.doesNotMatch(roster, /anthropic/);
+  assert.match(roster, /unknown/);
+});
+
 test("only the seats the vendor rule decides are checked", () => {
   // A crew with no verifier has no family separation to violate, so this
   // check has no opinion about its models either.

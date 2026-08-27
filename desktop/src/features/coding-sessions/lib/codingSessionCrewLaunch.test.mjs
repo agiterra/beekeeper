@@ -112,6 +112,33 @@ test("a seat whose model the selected provider cannot run is refused before anyt
   assert.equal(result.sessionRef, null);
 });
 
+test("a crew whose whole catalog is the `default` alias publishes nothing", async () => {
+  // A runtime without live model discovery publishes allowedModels:
+  // ["default"], and every seat is created with model "default". apply_model
+  // then finds no such model, logs "using its default", and every seat runs
+  // the one adapter's model — so the verifier rule would have checked a model
+  // nothing ran. Refuse before anything is signed.
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    {
+      ...INPUT,
+      seats: [
+        { ...LEAD, model: "default" },
+        { ...BUILDER, model: "default", vendor: "anthropic" },
+        { ...VERIFIER, model: "default", vendor: "openai" },
+      ],
+      provider: { label: "claude-agent-acp", allowedModels: ["default"] },
+    },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
+  assert.match(result.failureReason, /default/);
+  assert.deepEqual(deps.log, [], "nothing may be signed");
+  assert.equal(result.genesisRef, null);
+  assert.equal(result.sessionRef, null);
+});
+
 test("a seat with no model at all cannot be vendor-checked, so it is refused", async () => {
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
