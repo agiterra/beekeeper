@@ -158,7 +158,7 @@ pub fn validate_pack(pack_dir: &Path) -> ValidationReport {
     // Step 3: advisory checks on raw files.
     advisory_check_manifest_keys(pack_dir, &mut report);
     advisory_check_respond_to_types(pack_dir, &mut report);
-    advisory_check_skill_names(pack_dir, &loaded, &mut report);
+    check_skill_directories(pack_dir, &loaded, &mut report);
 
     report
 }
@@ -349,9 +349,22 @@ fn advisory_check_manifest_keys(pack_dir: &Path, report: &mut ValidationReport) 
     }
 }
 
-/// For each skill directory referenced by a loaded persona, check that the
-/// SKILL.md `name:` field matches the directory name. Emits warnings.
-fn advisory_check_skill_names(
+/// Check every skill directory in the pack.
+///
+/// Two things this must agree with, at one point rather than three:
+///
+/// - [`crate::skills::materialize_skills`] refuses a claimed skill whose
+///   directory is missing or holds no `SKILL.md`, and a refusal there fails a
+///   create. So both are **errors** here — a pack this tool calls valid and
+///   every seat spawn refuses is the tool lying about the pack.
+/// - [`pack::resolve_skills`] no longer shares a directory that holds no
+///   `SKILL.md`, so such a directory reaches nobody. That is not an error (the
+///   pack still works), but it is a **warning**, because a directory sitting
+///   under `skills/` looks like a skill and is not one.
+///
+/// The `SKILL.md` `name:` / directory-name mismatch check is advisory, as
+/// before.
+fn check_skill_directories(
     pack_dir: &Path,
     loaded: &pack::LoadedPack,
     report: &mut ValidationReport,
@@ -367,7 +380,24 @@ fn advisory_check_skill_names(
                 .unwrap_or(skill_ref.as_str())
                 .to_owned();
             let candidate = pack_dir.join("skills").join(&skill_name);
-            if candidate.is_dir() && !skill_paths.contains(&candidate) {
+            if !candidate.is_dir() {
+                report.error(format!(
+                    "persona \"{}\" claims skill \"{skill_name}\" but there is no \
+                     skills/{skill_name} directory in the pack",
+                    persona.name
+                ));
+                continue;
+            }
+            if !candidate.join("SKILL.md").is_file() {
+                report.error(format!(
+                    "persona \"{}\" claims skill \"{skill_name}\" but \
+                     skills/{skill_name}/SKILL.md does not exist — materializing this \
+                     persona's skills into a seat's workdir would fail",
+                    persona.name
+                ));
+                continue;
+            }
+            if !skill_paths.contains(&candidate) {
                 skill_paths.push(candidate);
             }
         }
@@ -380,6 +410,20 @@ fn advisory_check_skill_names(
             for entry in entries.flatten() {
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     let p = entry.path();
+                    if p.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with('.'))
+                    {
+                        continue;
+                    }
+                    if !p.join("SKILL.md").is_file() {
+                        report.warn(format!(
+                            "skills/{} has no SKILL.md, so it is not a skill: no persona \
+                             receives it",
+                            p.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                        continue;
+                    }
                     if !skill_paths.contains(&p) {
                         skill_paths.push(p);
                     }
@@ -390,9 +434,6 @@ fn advisory_check_skill_names(
 
     for skill_dir in &skill_paths {
         let skill_md = skill_dir.join("SKILL.md");
-        if !skill_md.exists() {
-            continue; // load_pack handles missing SKILL.md if it's required
-        }
 
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
@@ -783,6 +824,87 @@ mod tests {
         assert!(report.has_warnings(), "expected naming mismatch warning");
         let msg = format!("{report}");
         assert!(msg.contains("code_review"), "got: {msg}");
+    }
+
+    #[test]
+    fn validate_pack_reports_a_skill_directory_with_no_skill_md() {
+        // `Valid.` on a pack every create refuses is the disagreement this
+        // pins: materialize_skills hard-errors MissingSkillMd, so validate
+        // must not pass the same shape.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(dir.join(".plugin")).unwrap();
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        std::fs::create_dir_all(dir.join("skills/brief")).unwrap();
+        std::fs::write(
+            dir.join(".plugin/plugin.json"),
+            r#"{"id":"t","name":"T","version":"0.1.0","personas":["agents/t.persona.md"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("agents/t.persona.md"),
+            "---\nname: t\ndisplay_name: T\ndescription: T.\nskills:\n  - skills/brief\n---\n",
+        )
+        .unwrap();
+
+        let report = validate_pack(&dir);
+        assert!(
+            report.has_errors(),
+            "a claimed skill with no SKILL.md must be an error, got: {report}"
+        );
+        assert!(format!("{report}").contains("brief"), "got: {report}");
+    }
+
+    #[test]
+    fn validate_pack_reports_a_claimed_skill_with_no_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(dir.join(".plugin")).unwrap();
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        std::fs::write(
+            dir.join(".plugin/plugin.json"),
+            r#"{"id":"t","name":"T","version":"0.1.0","personas":["agents/t.persona.md"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("agents/t.persona.md"),
+            "---\nname: t\ndisplay_name: T\ndescription: T.\nskills:\n  - skills/ghost\n---\n",
+        )
+        .unwrap();
+
+        let report = validate_pack(&dir);
+        assert!(
+            report.has_errors(),
+            "a claimed skill with no directory must be an error, got: {report}"
+        );
+        assert!(format!("{report}").contains("ghost"), "got: {report}");
+    }
+
+    #[test]
+    fn validate_pack_warns_about_an_unclaimed_directory_that_is_not_a_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(dir.join(".plugin")).unwrap();
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        std::fs::create_dir_all(dir.join("skills/notes")).unwrap();
+        std::fs::write(
+            dir.join(".plugin/plugin.json"),
+            r#"{"id":"t","name":"T","version":"0.1.0","personas":["agents/t.persona.md"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("agents/t.persona.md"),
+            "---\nname: t\ndisplay_name: T\ndescription: T.\n---\n",
+        )
+        .unwrap();
+
+        let report = validate_pack(&dir);
+        assert!(!report.has_errors(), "not an error, got: {report}");
+        assert!(
+            report.has_warnings(),
+            "an unclaimed directory with no SKILL.md is shared with nobody and should say so"
+        );
+        assert!(format!("{report}").contains("notes"), "got: {report}");
     }
 
     /// Zero personas in manifest → hard error.

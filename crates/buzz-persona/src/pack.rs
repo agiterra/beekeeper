@@ -271,7 +271,17 @@ pub fn resolve_skills(pack_dir: &Path, personas: &[LoadedPersona]) -> HashMap<St
         }
     }
 
-    // Enumerate skills directory — directories only, skip dotfiles.
+    // Enumerate skills directory — directories only, skip dotfiles, and skip
+    // any directory with no `SKILL.md`.
+    //
+    // That last filter is the one that keeps this function honest with
+    // [`crate::skills::materialize_skills`], which hard-errors on a skill
+    // directory holding no `SKILL.md`. Sharing such a directory with every
+    // persona meant a pack could be valid to `bee pack validate` and refuse
+    // every create — the tool blessing what the spawn path rejects. A
+    // directory that is not a skill is shared with nobody; a persona that
+    // *claims* one keeps it, because that is a broken pack and validation
+    // says so rather than this quietly papering over it.
     let skills_path = pack_dir.join("skills");
     let all_skills: Vec<String> = if skills_path.is_dir() {
         std::fs::read_dir(&skills_path)
@@ -285,11 +295,10 @@ pub fn resolve_skills(pack_dir: &Path, personas: &[LoadedPersona]) -> HashMap<St
                     return None;
                 }
                 // Directories only (skip plain files and unresolvable entries)
-                if entry.file_type().ok()?.is_dir() {
-                    Some(name)
-                } else {
-                    None
+                if !entry.file_type().ok()?.is_dir() {
+                    return None;
                 }
+                entry.path().join("SKILL.md").is_file().then_some(name)
             })
             .collect()
     } else {
@@ -641,7 +650,9 @@ You are Berry, a fast and direct worker.
         let skills_dir = root.join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(skills_dir.join("web-search")).unwrap();
+        fs::write(skills_dir.join("web-search/SKILL.md"), "# Search").unwrap();
         fs::create_dir_all(skills_dir.join("code-review")).unwrap();
+        fs::write(skills_dir.join("code-review/SKILL.md"), "# Review").unwrap();
 
         let personas = vec![
             make_loaded_persona("alpha", vec!["web-search"]),
@@ -666,6 +677,7 @@ You are Berry, a fast and direct worker.
         let skills_dir = root.join("skills");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(skills_dir.join("shared-skill")).unwrap();
+        fs::write(skills_dir.join("shared-skill/SKILL.md"), "# Shared").unwrap();
 
         let personas = vec![
             make_loaded_persona("alpha", vec![]),
@@ -675,6 +687,35 @@ You are Berry, a fast and direct worker.
         let map = resolve_skills(root, &personas);
         assert!(map["alpha"].contains(&"shared-skill".to_owned()));
         assert!(map["beta"].contains(&"shared-skill".to_owned()));
+    }
+
+    #[test]
+    fn a_directory_with_no_skill_md_is_not_a_shared_skill() {
+        // The seam this closes: an unclaimed directory under `skills/` used to
+        // be handed to every persona, and materialization then hard-failed on
+        // the missing SKILL.md — refusing a create for a pack `bee pack
+        // validate` had just called valid.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let skills_dir = root.join("skills");
+        fs::create_dir_all(skills_dir.join("web-search")).unwrap();
+        fs::write(skills_dir.join("web-search/SKILL.md"), "# Search").unwrap();
+        fs::create_dir_all(skills_dir.join("notes")).unwrap();
+
+        let map = resolve_skills(root, &[make_loaded_persona("alpha", vec![])]);
+        assert_eq!(map["alpha"], vec!["web-search".to_owned()]);
+    }
+
+    #[test]
+    fn a_claimed_directory_with_no_skill_md_is_still_the_personas_problem() {
+        // Claimed skills are NOT filtered: dropping one would hide a broken
+        // pack instead of failing it. `validate_pack` reports exactly this.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("skills/notes")).unwrap();
+
+        let map = resolve_skills(root, &[make_loaded_persona("alpha", vec!["notes"])]);
+        assert_eq!(map["alpha"], vec!["notes".to_owned()]);
     }
 
     #[test]
