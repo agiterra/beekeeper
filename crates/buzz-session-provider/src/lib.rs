@@ -2154,7 +2154,7 @@ impl Provider {
             created_at,
             content,
         );
-        let (command_id, target, deliver, message) = match decision {
+        let (command_id, target, deliver, mut message) = match decision {
             TurnDecision::Ignore(reason) => {
                 log_ignored("turn", &reason);
                 // An ignore that names a target this provider owns is a
@@ -2288,6 +2288,22 @@ impl Provider {
         let steer_injected = is_turn
             && deliver == CodingSessionDelivery::Steer
             && self.inject_native_steer(&session_id);
+        // The frame is captured with the class the sender *asked* for, because
+        // that is all `decide_turn` knows. It is the only place the
+        // **recipient** reads the class — the `turn_degraded` receipt answers
+        // the sender — so once the injection has been attempted and refused,
+        // the frame has to name the delivery that actually happened. Telling
+        // the receiving agent "Delivery: steer" about a turn that was queued
+        // to the next boundary is the silent downgrade under a different name.
+        if deliver == CodingSessionDelivery::Steer && !steer_injected {
+            if let SessionCommand::Turn {
+                framing: Some(framing),
+                ..
+            } = &mut message
+            {
+                framing.delivery = CodingSessionDelivery::Boundary;
+            }
+        }
 
         match self.sessions.handle(&session_id) {
             Some(handle) => match handle.deliver(message) {
@@ -9955,6 +9971,126 @@ mod tests {
             vec!["turn_queued".to_owned(), "turn_dropped".to_owned()]
         );
         assert!(!provider.state().is_command_consumed("turn-2"));
+    }
+
+    /// An agent that answers `session/prompt` and appends every prompt request
+    /// to `log_path`, so a test can read the text the model actually received.
+    fn prompt_logging_agent(log_path: &str) -> String {
+        format!(
+            r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":2}}}}\n' "$id" ;;
+    *'"method":"session/new"'*)
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"sessionId":"acp-session-1"}}}}\n' "$id" ;;
+    *'"method":"session/prompt"'*)
+      printf '%s\n' "$line" >> "{log_path}"
+      printf '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"acp-session-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"working"}}}}}}}}\n'
+      printf '{{"jsonrpc":"2.0","id":%s,"result":{{"stopReason":"end_turn"}}}}\n' "$id" ;;
+  esac
+done
+"#
+        )
+    }
+
+    /// The frame must name the delivery the recipient actually got.
+    ///
+    /// `inject_native_steer` returns false in this build, so *every* `steer`
+    /// degrades — but the frame was captured with the class the sender asked
+    /// for, before the injection was attempted. The receiving agent was told
+    /// "Delivery: steer" for a turn that had been queued to the next boundary,
+    /// and the frame is the only place a recipient reads the class: the
+    /// `turn_degraded` receipt goes to the sender.
+    #[tokio::test]
+    async fn a_degraded_steer_is_framed_as_the_boundary_delivery_it_became() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let log_path = dir.path().join("prompts.log");
+        let agent = fake_agent(
+            dir.path(),
+            "logging-agent",
+            &prompt_logging_agent(&log_path.to_string_lossy()),
+        );
+        let mut provider = Provider::new(config_of(
+            Keys::generate(),
+            &dir.path().join("state"),
+            Some(&projects),
+            agent,
+        ))
+        .expect("provider");
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("create");
+        let session_id = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .session_id
+            .clone();
+        let target = provider
+            .state()
+            .session(&session_id)
+            .expect("session")
+            .target(&provider.config.instance_id);
+        // The sender is a granted operator, not the founder, so the turn is
+        // authorized and framed.
+        let sender = test_operator_keys().public_key().to_hex();
+        provider
+            .state
+            .update_session(&session_id, |record| {
+                record.founder_pubkey = Some("ab".repeat(32));
+                record.genesis_ref = Some("cd".repeat(32));
+                record.granted_operators.insert(sender.clone());
+            })
+            .expect("grant");
+
+        provider
+            .handle_command_event(
+                channel_id,
+                &command_event(
+                    channel_id,
+                    "turn-steer",
+                    &target,
+                    serde_json::json!({
+                        "type": "thread.turn.start",
+                        "text": "actually, use the other approach",
+                        "deliver": "steer",
+                    }),
+                ),
+            )
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+
+        let logged = std::fs::read_to_string(&log_path).expect("prompt log");
+        let request: serde_json::Value = logged
+            .lines()
+            .find(|line| line.contains("session/prompt"))
+            .map(|line| serde_json::from_str(line).expect("json"))
+            .expect("a prompt reached the adapter");
+        let sent = request["params"]["prompt"][0]["text"]
+            .as_str()
+            .expect("prompt text")
+            .to_owned();
+        assert!(sent.starts_with("[Context]"), "the turn is framed: {sent}");
+        assert!(
+            sent.contains("Delivery: boundary"),
+            "a steer nothing injected reached this agent at the next boundary, and the frame is \
+             the only place it reads the class: {sent}"
+        );
+        assert!(!sent.contains("Delivery: steer"), "{sent}");
+
+        // And the sender still learns about the downgrade in its own receipt.
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(receipt_stages(&sink, "turn-steer").contains(&"turn_degraded".to_owned()));
     }
 
     /// The downgrade is a fact about the *injection*, not about the
