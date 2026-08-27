@@ -45,11 +45,10 @@ pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// cost a reconnect. Four hours matches how long a coding session actually
 /// rests between turns; the cap on concurrently live sessions still bounds
 /// how many adapters can be held. Override with
-/// Default file name of the agent-seat custody file, beside the projects file.
-pub const ACTOR_SEATS_FILE_NAME: &str = "actor-seats.json";
-
 /// `BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
 pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
+/// Default file name of the agent-seat custody file, beside the projects file.
+pub const ACTOR_SEATS_FILE_NAME: &str = "actor-seats.json";
 /// Default per-turn silence budget, mirroring the buzz-acp harness.
 pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 /// Default per-turn wall-clock ceiling, mirroring the buzz-acp harness.
