@@ -1336,9 +1336,34 @@ pub fn project_session_context(
 
 /// One verified turn-stage receipt, reduced to what the inbox reports.
 struct StageFact {
+    /// The stage itself.
     status: ReceiptStatus,
+    /// Receipt `created_at`, Unix seconds.
     created_at: u64,
+    /// The receipt's `error.code`, sanitized, when it carried one.
     code: Option<String>,
+    /// Signed event id of the receipt, kept as the final tie-break so two
+    /// receipts sharing a second and a stage fold deterministically.
+    event_id: String,
+}
+
+/// Order two stages of one command that share a second.
+///
+/// Second-granular `created_at` cannot separate `turn_queued` from the
+/// `turn_started` that follows it, and the provider publishes `turn_degraded`
+/// and `turn_queued` back to back from one code path — so ties are the norm,
+/// not the edge. Ranking by the contract's own progression is what makes this
+/// package agree with `bee sessions inbox`, which folds the same receipts with
+/// the same rank (`buzz-cli` `commands::sessions::crew::stage_rank`).
+fn stage_rank(status: ReceiptStatus) -> u8 {
+    match status {
+        ReceiptStatus::TurnQueued => 1,
+        ReceiptStatus::TurnDegraded => 2,
+        ReceiptStatus::TurnStarted => 3,
+        ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused => 4,
+        ReceiptStatus::InterruptDelivered => 5,
+        _ => 0,
+    }
 }
 
 /// Project the umbrella's addressed 44220s, newest-bounded, oldest first.
@@ -1442,7 +1467,8 @@ fn project_inbox(
     Ok(items)
 }
 
-/// Index the newest verified stage per `(commandId, provider authority)`.
+/// Index the newest verified stage per `(commandId, provider authority)`,
+/// ordered by `(created_at, stage rank, event id)`.
 ///
 /// Keyed by the signer as well as the command because a turn receipt is only
 /// evidence about the execution whose provider authority signed it: another
@@ -1488,10 +1514,17 @@ fn index_turn_stages(input: &ContextProjectionInput) -> HashMap<(String, String)
             continue;
         }
         let created_at = event.created_at.as_secs();
+        let event_id = event.id.to_hex();
         let key = (receipt.command_id.clone(), event.pubkey.to_hex());
-        let newer = stages
-            .get(&key)
-            .is_none_or(|existing| created_at >= existing.created_at);
+        let rank = stage_rank(receipt.status);
+        let newer = stages.get(&key).is_none_or(|existing| {
+            (created_at, rank, event_id.as_str())
+                > (
+                    existing.created_at,
+                    stage_rank(existing.status),
+                    existing.event_id.as_str(),
+                )
+        });
         if newer {
             let code = receipt
                 .error
@@ -1504,6 +1537,7 @@ fn index_turn_stages(input: &ContextProjectionInput) -> HashMap<(String, String)
                     status: receipt.status,
                     created_at,
                     code,
+                    event_id,
                 },
             );
         }
@@ -2652,6 +2686,59 @@ mod tests {
         let breakdown = package.provenance.source_event_breakdown.clone().unwrap();
         assert_eq!(breakdown.inbox_events, 2);
         assert_eq!(breakdown.total(), package.provenance.source_event_count);
+    }
+
+    /// Two stages of one command sharing a second must fold the same way in
+    /// either input order.
+    ///
+    /// `created_at` is second-granular and the provider publishes
+    /// `turn_degraded` and `turn_queued` back to back from one code path, with
+    /// `turn_started` usually in the same second. Keeping the receipt that
+    /// arrived last means the seat's inbox reports a running turn as merely
+    /// queued about half the time, and disagrees with `bee sessions inbox`,
+    /// which already ranks the stages (`buzz-cli` `crew::stage_rank`).
+    #[test]
+    fn stages_sharing_a_second_fold_by_contract_order_not_arrival_order() {
+        let sender = Keys::generate();
+        for reversed in [false, true] {
+            let mut fixture = fixture(1);
+            let channel_id = fixture.input.channel_id;
+            fixture.input.turn_commands = vec![turn_command(
+                channel_id,
+                "turn-1",
+                &fixture.target,
+                "go",
+                CodingSessionDelivery::Boundary,
+                100,
+                &sender,
+            )];
+            let mut receipts = vec![
+                turn_stage(
+                    channel_id,
+                    LifecycleReceipt::turn_queued("turn-1", &fixture.target),
+                    110,
+                    &fixture.provider,
+                ),
+                turn_stage(
+                    channel_id,
+                    LifecycleReceipt::turn_started("turn-1", &fixture.target, "t-1"),
+                    110,
+                    &fixture.provider,
+                ),
+            ];
+            if reversed {
+                receipts.reverse();
+            }
+            fixture.input.turn_receipts = receipts;
+
+            let package = project_session_context(&fixture.input).unwrap();
+            assert_eq!(
+                package.inbox[0].stage,
+                Some(ReceiptStatus::TurnStarted),
+                "queued and started in one second must fold to started \
+                 (reversed input order: {reversed})"
+            );
+        }
     }
 
     /// A command from a seated sibling is labelled with that sibling's role,
