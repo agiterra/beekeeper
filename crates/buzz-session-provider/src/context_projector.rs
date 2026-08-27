@@ -1261,6 +1261,9 @@ pub fn project_session_context(
     }
 
     let inbox = project_inbox(input, &seats, &mut notes)?;
+    // One per retained command, plus the receipt that named its stage. Each
+    // attributed stage belongs to exactly one item — `project_inbox` withholds
+    // a stage two items would both claim — so no receipt is counted twice.
     let inbox_events = inbox
         .iter()
         .map(|item| 1 + u64::from(item.stage.is_some()))
@@ -1407,15 +1410,6 @@ fn project_inbox(
                 item.sender_role = roles
                     .get(item.sender.as_str())
                     .map(|role| (*role).to_owned());
-                let authority = by_target
-                    .get(&coding_session_target_key(&item.target))
-                    .map(|seat| seat.provider_authority.as_str())
-                    .unwrap_or_default();
-                if let Some(stage) = stages.get(&(item.command_id.clone(), authority.to_owned())) {
-                    item.stage = Some(stage.status);
-                    item.stage_at = Some(stage.created_at);
-                    item.stage_code = stage.code.clone();
-                }
                 items.push(item);
             }
             Ok(None) => {}
@@ -1450,10 +1444,43 @@ fn project_inbox(
     dropped += kept_from as u64;
     items.drain(..kept_from);
 
+    // Stage attribution runs after the trim, and only where the join is
+    // unambiguous. Nothing enforces `commandId` uniqueness — not the relay,
+    // not this projector — so two commands can claim one receipt, and a
+    // package that stamped both would be claiming a witness it does not have
+    // for the second. Silence is the honest answer; the duplication is
+    // disclosed instead.
+    let mut claims: HashMap<(String, String), usize> = HashMap::new();
+    for item in &items {
+        *claims.entry(inbox_stage_key(item, &by_target)).or_default() += 1;
+    }
+    let mut ambiguous = 0u64;
+    for item in &mut items {
+        let key = inbox_stage_key(item, &by_target);
+        let Some(stage) = stages.get(&key) else {
+            continue;
+        };
+        if claims.get(&key).copied().unwrap_or_default() > 1 {
+            ambiguous += 1;
+            continue;
+        }
+        item.stage = Some(stage.status);
+        item.stage_at = Some(stage.created_at);
+        item.stage_code = stage.code.clone();
+    }
+
     if dropped > 0 {
         record_note(
             notes,
             format!("Omitted {dropped} oldest addressed turn commands to satisfy the inbox bound"),
+        );
+    }
+    if ambiguous > 0 {
+        record_note(
+            notes,
+            format!(
+                "{ambiguous} inbox commands reuse a commandId another retained command already claims; their receipt stage is withheld rather than guessed"
+            ),
         );
     }
     if skipped > 0 {
@@ -1465,6 +1492,22 @@ fn project_inbox(
         );
     }
     Ok(items)
+}
+
+/// The key one inbox item joins its receipts on.
+///
+/// A receipt is evidence about the execution whose provider authority signed
+/// it, so the authority of the addressed seat is half the key; an unseated
+/// target contributes an empty authority and therefore joins nothing.
+fn inbox_stage_key(
+    item: &CodingSessionContextInboxItem,
+    by_target: &HashMap<String, &SeatFacts>,
+) -> (String, String) {
+    let authority = by_target
+        .get(&coding_session_target_key(&item.target))
+        .map(|seat| seat.provider_authority.clone())
+        .unwrap_or_default();
+    (item.command_id.clone(), authority)
 }
 
 /// Index the newest verified stage per `(commandId, provider authority)`,
@@ -2761,6 +2804,72 @@ mod tests {
         let package = project_session_context(&fixture.input).unwrap();
         assert_eq!(package.inbox[0].sender_role.as_deref(), Some("lead"));
         assert_eq!(package.inbox[0].stage, None, "no receipt, no claimed stage");
+    }
+
+    /// A second command reusing a live `commandId` must not inherit the first
+    /// one's answer.
+    ///
+    /// Stage attribution keys on `(commandId, provider authority)`, nothing
+    /// enforces `commandId` uniqueness at the relay or in the provider, and a
+    /// repeat is answered with silence (`AlreadyConsumed`). Stamping both
+    /// items with the one receipt makes the package claim a witness it does
+    /// not have for the second command — the one thing it is built not to do.
+    #[test]
+    fn a_repeated_command_id_leaves_both_items_without_a_claimed_stage() {
+        let sender = Keys::generate();
+        let mut fixture = fixture(1);
+        let channel_id = fixture.input.channel_id;
+        fixture.input.turn_commands = vec![
+            turn_command(
+                channel_id,
+                "turn-1",
+                &fixture.target,
+                "the original",
+                CodingSessionDelivery::Boundary,
+                100,
+                &sender,
+            ),
+            turn_command(
+                channel_id,
+                "turn-1",
+                &fixture.target,
+                "a different message under the same id",
+                CodingSessionDelivery::Boundary,
+                101,
+                &sender,
+            ),
+        ];
+        fixture.input.turn_receipts = vec![turn_stage(
+            channel_id,
+            LifecycleReceipt::turn_started("turn-1", &fixture.target, "t-1"),
+            110,
+            &fixture.provider,
+        )];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert_eq!(package.inbox.len(), 2, "both commands are still shown");
+        assert!(
+            package.inbox.iter().all(|item| item.stage.is_none()),
+            "neither may claim the single receipt: {:?}",
+            package.inbox
+        );
+        assert!(
+            package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("reuse a commandId")),
+            "the ambiguity is disclosed: {:?}",
+            package.provenance.notes
+        );
+        let breakdown = package.provenance.source_event_breakdown.clone().unwrap();
+        assert_eq!(
+            breakdown.inbox_events, 2,
+            "two commands, no attributed receipt -- and no receipt counted twice"
+        );
+        assert_eq!(breakdown.total(), package.provenance.source_event_count);
     }
 
     /// A command addressed here that does not verify is skipped and *said* to
