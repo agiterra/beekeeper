@@ -15,6 +15,7 @@ import {
   CODING_SESSION_TURN_RECEIPT_STATUSES,
   codingSessionReceiptSemanticKey,
   isCodingSessionTurnReceiptStatus,
+  parseBuzzCodingSessionMetadata,
   parseCodingSessionLifecycleReceipt,
 } from "./codingSessionIngressPayloads.ts";
 
@@ -163,5 +164,81 @@ test("both new statuses are turn statuses, so their keys name the stage", () => 
   assert.equal(
     codingSessionReceiptSemanticKey("csc-1", "created"),
     "coding-session-lifecycle-receipt/v1|5:csc-1",
+  );
+});
+
+/**
+ * The 44223 decoder has a twin in Rust (`decode_coding_session_metadata`,
+ * `crates/buzz-core/src/coding_session_payload.rs`), and the two must accept
+ * exactly the same signed events. Where they disagree, one half of the system
+ * acts on a metadata the other half silently drops — the execution appears
+ * seated in the desktop and unseated in the pulse fold, or the reverse — with
+ * nothing anywhere saying the event was refused.
+ */
+function metadataContent(extra) {
+  return JSON.stringify({
+    schema: "buzz-coding-session-metadata/v1",
+    session: SESSION,
+    projectRef: null,
+    repoRef: null,
+    title: null,
+    agentRef: null,
+    provider: null,
+    runtime: "claude",
+    model: null,
+    status: "idle",
+    branch: null,
+    capabilities: {
+      threadTurnStart: true,
+      threadTurnInterrupt: true,
+      threadSteer: false,
+      context: false,
+      diff: false,
+      plan: false,
+    },
+    ...extra,
+  });
+}
+
+const SEAT_ACTOR = "ab".repeat(32);
+
+test("an explicit null role decodes as an unseated execution, as Rust reads it", () => {
+  // Rust's `(_, None) => {}` arm accepts the key with a null value and the
+  // producer's own doc forbids emitting it, so the only way this shape reaches
+  // a client is from a producer this one does not control. Dropping the whole
+  // metadata over it loses the status, the model and the capabilities too.
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({ role: null }),
+  );
+  assert.notEqual(parsed, null);
+  assert.equal(Object.hasOwn(parsed, "role"), false);
+
+  const seated = parseBuzzCodingSessionMetadata(
+    metadataContent({ agentRef: SEAT_ACTOR, role: null }),
+  );
+  assert.equal(seated?.agentRef, SEAT_ACTOR);
+  assert.equal(Object.hasOwn(seated, "role"), false);
+});
+
+test("an agentRef that is not a 64-hex pubkey is refused, as Rust refuses it", () => {
+  // `validate_actor_pubkey` bounds this to lowercase 64-hex; a decoder that
+  // only bounds the length hands a display name to `useUsersBatchQuery` and
+  // renders a seat that no key can hold.
+  for (const agentRef of [
+    "not-a-pubkey",
+    "AB".repeat(32),
+    "ab".repeat(31),
+    `${"ab".repeat(32)}f`,
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataContent({ agentRef })),
+      null,
+      `accepted a non-pubkey agentRef: ${agentRef}`,
+    );
+  }
+  assert.equal(
+    parseBuzzCodingSessionMetadata(metadataContent({ agentRef: SEAT_ACTOR }))
+      ?.agentRef,
+    SEAT_ACTOR,
   );
 });

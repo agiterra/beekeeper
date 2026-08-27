@@ -453,6 +453,22 @@ function parseTurnReceipt(
   });
 }
 
+/**
+ * A seat actor as the wire defines it: lowercase 64-hex, or an explicit null.
+ *
+ * The same bound `validate_actor_pubkey` applies in
+ * `crates/buzz-core/src/coding_session_lifecycle_command.rs`, and the two
+ * decoders must agree: a length-only check here would accept a display name
+ * where the Rust half refuses one, so the desktop would resolve a seat no key
+ * can hold while the pulse fold silently dropped the same signed event.
+ */
+function isSeatActorPubkeyOrNull(value: unknown): boolean {
+  return (
+    value === null ||
+    (typeof value === "string" && /^[0-9a-f]{64}$/.test(value))
+  );
+}
+
 export function parseBuzzCodingSessionMetadata(
   content: unknown,
 ): Readonly<BuzzCodingSessionMetadataV1> | null {
@@ -502,7 +518,7 @@ export function parseBuzzCodingSessionMetadata(
     !boundedNullable(value.projectRef, MAX_REFERENCE_BYTES) ||
     !boundedNullable(value.repoRef, MAX_REFERENCE_BYTES) ||
     !boundedNullable(value.title, MAX_LABEL_BYTES) ||
-    !boundedNullable(value.agentRef, MAX_REFERENCE_BYTES) ||
+    !isSeatActorPubkeyOrNull(value.agentRef) ||
     !boundedNullable(value.provider, MAX_LABEL_BYTES) ||
     !boundedNullable(value.runtime, MAX_LABEL_BYTES) ||
     !boundedNullable(value.model, MAX_LABEL_BYTES) ||
@@ -521,9 +537,13 @@ export function parseBuzzCodingSessionMetadata(
   }
   // A seat's role travels with its actor. A `role` without an `agentRef` is
   // malformed, not a partial dialect: it would label an execution with a seat
-  // nobody holds.
+  // nobody holds. An explicit `role: null` is not that claim and is not
+  // rejected — the Rust decoder's `(_, None)` arm accepts it, and dropping the
+  // whole metadata over a key the producer should not have emitted would also
+  // drop the status, model and capabilities carried beside it.
   if (
     Object.hasOwn(value, "role") &&
+    value.role !== null &&
     (typeof value.agentRef !== "string" || !isCodingSessionRoleSlug(value.role))
   ) {
     return null;
