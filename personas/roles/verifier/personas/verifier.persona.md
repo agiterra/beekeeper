@@ -1,5 +1,6 @@
 ---
 name: verifier
+role: verifier
 display_name: "Verifier"
 description: "One pass over a tier-2 diff against the brief's named constraints; a terminal verdict, never a re-argued one."
 skills:

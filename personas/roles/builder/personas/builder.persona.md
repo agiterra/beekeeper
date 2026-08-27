@@ -1,5 +1,6 @@
 ---
 name: builder
+role: builder
 display_name: "Builder"
 description: "Implements a locked brief inside one lane's exclusive files; self-verifies; reports raw facts."
 skills:

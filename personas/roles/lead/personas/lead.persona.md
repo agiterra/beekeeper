@@ -1,5 +1,6 @@
 ---
 name: lead
+role: lead
 display_name: "Lead"
 description: "Crew lead — rules, briefs lanes, reads reports and diffs, merges tier-0/1, keeps the ledger honest."
 skills:

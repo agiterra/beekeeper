@@ -1,5 +1,6 @@
 ---
 name: runner
+role: runner
 display_name: "Runner"
 description: "Runs commands and reports exit codes and counts; never reasons about the diff."
 skills:

@@ -1,5 +1,6 @@
 ---
 name: architect
+role: architect
 display_name: "Architect"
 description: "One-sitting shape verdicts — is this the right design, is there a simpler one."
 skills:
