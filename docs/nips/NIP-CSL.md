@@ -221,6 +221,80 @@ convenience for catalog grouping; the operator-signed create remains the
 authoritative membership claim. If they ever disagree, consumers trust the
 create and flag the record.
 
+### Fork amendment: `actor` and `role` (agent seats)
+
+A `session.create` may seat an **agent identity** on the execution it creates,
+rather than leaving it operated only by whoever steers it. Two new keys,
+always **both present or both absent** — never one without the other:
+
+- `actor`: the agent's pubkey, lowercase 64-hex.
+- `role`: a slug naming the seat's function within its crew (`lead`,
+  `architect`, `builder`, `verifier`, `runner`, `poker`, ...), 1–64 bytes,
+  matching `[a-z0-9-]+`.
+
+A create carrying exactly one of the two is malformed — refused with
+`ACTOR_ROLE_PAIR` — the same "no partial shape" discipline `sessionRef` and
+`genesisRef` already follow above. `actor`/`role` compose with every existing
+form: the action is exactly one of the historical 8-key, 9-key (`sessionRef`),
+or 10-key (`sessionRef` + `genesisRef`) sets described above, **or** those same
+three sets with `actor` and `role` also present (10-, 11-, and 12-key sets
+respectively) — nothing between, nothing beyond. A create with no `actor`
+(and no `role`) behaves byte-for-byte as it does today; this amendment adds
+shapes, it does not change any existing one.
+
+An unresolvable `actor` — no host-local record identifies key material for
+that pubkey — refuses the create with a lifecycle receipt
+`failed` / `ACTOR_UNAVAILABLE`; no execution, metadata, or transcript is ever
+produced for it.
+
+The provider echoes the seat into `kind:44223` metadata: the existing
+`agentRef` key (previously always `null` — no execution held an identity)
+carries the create's `actor`, and a **new optional key**, `role`, echoes the
+create's `role` — present only when `agentRef` is non-null, never as an
+explicit `null`, mirroring the `sessionRef` echo's optionality above. A
+metadata event for an execution with no seated actor keeps today's shapes
+byte-for-byte: `agentRef` stays present-but-`null` (a base field since v1),
+and `role` is simply absent. Decoders reject `role` present alongside a
+`null` `agentRef`, and reject `agentRef` non-null with no `role` — the pair
+travels together on the metadata echo exactly as it does on the create.
+
+### Fork amendment: actor custody is host-local, never on the wire
+
+Seating an actor is not a key-distribution protocol. The `actor` key above
+names *whose* identity the seat holds; it never carries *how* the provider
+gets that identity's signing material. Custody, private-key injection, and
+channel membership for the seat are decided and executed entirely on the
+founder's own machine, before or alongside publishing the create — none of
+it is a signed event, a wire field, or a fact this NIP's contract can express,
+and that is deliberate:
+
+- **Key material never crosses the wire.** The provider resolves `actor`'s
+  private key, relay URL, and (if any) auth tag from a host-local record
+  (keyed by the create's `commandId`, written by the desktop *before* it
+  publishes the create) — never from the signed `session.create` content,
+  never from a relay query, never logged. A `session.create` names an actor
+  the same way a `providerAuthorityPubkey` names an adapter: as a public
+  reference to resolve locally, not as a credential to carry.
+- **The env fence still strips everything by default.** Past that fence, an
+  actor seat's spawned process additionally receives exactly
+  `BUZZ_PRIVATE_KEY`, `BUZZ_RELAY_URL`, `BUZZ_AUTH_TAG` (omitted when null),
+  and a `NOSTR_PRIVATE_KEY` mirror — the same three-and-a-mirror shape managed
+  agents already receive at spawn, and nothing else. A create with no `actor`
+  is fenced exactly as before: the fence's exemption list does not grow.
+- **Channel membership is a separate, host-executed step, not a wire
+  consequence of the create.** The relay only accepts a `kind:44220` from a
+  channel member (per NIP-CSC), so before publishing an actor create the
+  desktop adds the actor's pubkey to the session's channel as its own,
+  independently observable membership fact — never inferred from the create
+  event itself. A membership failure leaves the create unpublished with a
+  named reason; an unauthorized actor pubkey is never silently seated.
+
+None of this — the host-local custody record, the post-fence env injection,
+or the membership addition — is part of this contract's wire shape. A relay,
+a sibling execution, or any other reader of the signed record sees only
+`actor` (a pubkey) and `role` (a slug); it never sees, stores, or transmits
+the key material or the local record that resolved it.
+
 ### Tags
 
 Exactly these three two-field tags, in this order:
