@@ -20,8 +20,17 @@
 //! ```json
 //! { "pending": { "<commandId>": {
 //!     "pubkey": "<64-hex>", "nsec": "nsec1…",
-//!     "authTag": "[\"…\"]" | null, "relayUrl": "wss://…" } } }
+//!     "authTag": "[\"…\"]" | null, "relayUrl": "wss://…",
+//!     "packDir": "/…/teams/roles" | absent,
+//!     "personaId": "builder" | absent } } }
 //! ```
+//!
+//! `packDir`/`personaId` are the seat's role pack (contract D8-A). They travel
+//! by this file for the same reason the nsec does — not because they are
+//! secret, but because a *path on this machine* is host-local. They are
+//! resolved here, in Rust, from the agent's own provenance; the webview never
+//! sends a path, so a compromised or merely wrong renderer cannot point the
+//! provider's skill materialization at a directory of its choosing.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -60,6 +69,68 @@ pub struct ActorSeatEntry {
     pub auth_tag: Option<String>,
     /// Relay the seat authenticates against.
     pub relay_url: String,
+    /// Host-local directory of the role pack this seat's persona came from.
+    ///
+    /// Absent when this computer has no pack behind the agent — the seat still
+    /// runs, it simply materializes no role skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_dir: Option<PathBuf>,
+    /// The persona's name inside [`Self::pack_dir`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_id: Option<String>,
+}
+
+/// What one staging call did, for a caller that has to be honest about it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedActorSeat {
+    /// Whether a role pack was staged with the seat. `false` means the seat
+    /// will run with its prompt alone: no `.agents/skills` will appear in its
+    /// working directory, and any copy claiming otherwise is wrong.
+    pub pack_staged: bool,
+}
+
+/// Where a seat's role pack lives on this computer, as `(pack dir, persona)`.
+///
+/// Two sources, in order:
+///
+/// 1. The instance-side link (`persona_team_dir` + `persona_name_in_team`),
+///    for records that carry one.
+/// 2. The definition's provenance: the team directory the persona was
+///    installed from, plus its slug inside that pack. This is the live path —
+///    the instance-side pair is `None` on records built today
+///    (`AgentDefinition::into_agent_record`).
+///
+/// Returns `None` — never a guess — when neither resolves to a directory that
+/// exists. A staged pack the provider cannot read would fail the create; a
+/// seat with no pack is a legal seat that carries no role skills.
+pub(crate) fn resolve_seat_pack(
+    record: &crate::managed_agents::types::ManagedAgentRecord,
+    teams: &[crate::managed_agents::types::TeamRecord],
+) -> Option<(PathBuf, String)> {
+    let (dir, persona) = match (
+        record.persona_team_dir.as_ref(),
+        record.persona_name_in_team.as_ref(),
+    ) {
+        (Some(dir), Some(persona)) => (dir.clone(), persona.clone()),
+        _ => {
+            let persona = record.source_team_persona_slug.as_ref()?;
+            let team_id = record
+                .source_team
+                .as_deref()
+                .or(record.team_id.as_deref())?;
+            let dir = teams
+                .iter()
+                .find(|team| team.id == team_id)?
+                .source_dir
+                .clone()?;
+            (dir, persona.clone())
+        }
+    };
+    if persona.trim().is_empty() || !dir.is_dir() {
+        return None;
+    }
+    Some((dir, persona))
 }
 
 /// The whole file: pending seats keyed by the create's `commandId`.
@@ -85,6 +156,7 @@ pub(crate) fn build_actor_seat_entry(
     nsec: &str,
     auth_tag: Option<&str>,
     relay_url: &str,
+    pack: Option<(PathBuf, String)>,
 ) -> Result<ActorSeatEntry, String> {
     if !crate::managed_agents::is_lowercase_hex_pubkey(pubkey) {
         return Err("an agent seat's pubkey must be 64-character lowercase hex".to_string());
@@ -98,11 +170,17 @@ pub(crate) fn build_actor_seat_entry(
     if relay_url.trim().is_empty() {
         return Err("an agent seat needs a relay URL".to_string());
     }
+    let (pack_dir, persona_id) = match pack {
+        Some((dir, persona)) => (Some(dir), Some(persona)),
+        None => (None, None),
+    };
     Ok(ActorSeatEntry {
         pubkey: pubkey.to_string(),
         nsec: nsec.to_string(),
         auth_tag: auth_tag.map(str::to_string),
         relay_url: relay_url.to_string(),
+        pack_dir,
+        persona_id,
     })
 }
 
@@ -179,18 +257,25 @@ fn actor_seats_file_path(
     Ok(Some(actor_seats_path(&state_dir)))
 }
 
-/// Stage a managed agent's identity for one exact coding-session create.
+/// Stage a managed agent's identity — and its role pack — for one exact
+/// coding-session create.
 ///
 /// Refuses when the agent is unknown or its secret is unavailable (a keyring
 /// outage), so a create naming an actor the provider could never impersonate
 /// is never published.
+///
+/// The role pack is resolved here rather than passed in: the caller names an
+/// agent, and this computer decides which directory that agent's skills come
+/// from. The returned [`StagedActorSeat`] says whether one was found, because
+/// a seat launched with no pack carries no role skills and the screen has to
+/// be able to say so.
 #[tauri::command]
 pub async fn stage_coding_session_actor_seat(
     app: AppHandle,
     state: State<'_, AppState>,
     command_id: String,
     agent_pubkey: String,
-) -> Result<(), String> {
+) -> Result<StagedActorSeat, String> {
     let relay_url = relay_ws_url_with_override(&state);
     let Some(path) = actor_seats_file_path(&app, &state)? else {
         return Err(
@@ -199,6 +284,7 @@ pub async fn stage_coding_session_actor_seat(
         );
     };
     let pubkey = agent_pubkey.trim().to_string();
+    let teams = crate::managed_agents::teams::load_teams(&app).unwrap_or_default();
     let entry = {
         let _store_guard = state
             .managed_agents_store_lock
@@ -214,11 +300,16 @@ pub async fn stage_coding_session_actor_seat(
             &record.private_key_nsec,
             record.auth_tag.as_deref(),
             &relay_url,
+            resolve_seat_pack(record, &teams),
         )?
+    };
+    let staged = StagedActorSeat {
+        pack_staged: entry.pack_dir.is_some(),
     };
     let mut file = read_actor_seats(&path)?;
     stage_actor_seat(&mut file, &command_id, entry)?;
-    write_actor_seats(&path, &file)
+    write_actor_seats(&path, &file)?;
+    Ok(staged)
 }
 
 /// Drop a staged seat. Succeeds when the provider already consumed it.
@@ -244,9 +335,117 @@ mod tests {
 
     const PUBKEY: &str = "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66";
 
+    fn agent_record(
+        source_team: Option<&str>,
+        slug: Option<&str>,
+    ) -> crate::managed_agents::types::ManagedAgentRecord {
+        crate::managed_agents::types::AgentDefinition {
+            id: "def".into(),
+            display_name: "Builder".into(),
+            avatar_url: None,
+            system_prompt: String::new(),
+            runtime: None,
+            model: None,
+            provider: None,
+            name_pool: vec![],
+            is_builtin: false,
+            is_active: true,
+            shared: false,
+            source_team: source_team.map(str::to_owned),
+            source_team_persona_slug: slug.map(str::to_owned),
+            catalog_source: None,
+            env_vars: Default::default(),
+            respond_to: None,
+            respond_to_allowlist: vec![],
+            parallelism: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+        .into_agent_record()
+    }
+
+    fn team_record(
+        id: &str,
+        source_dir: Option<PathBuf>,
+    ) -> crate::managed_agents::types::TeamRecord {
+        crate::managed_agents::types::TeamRecord {
+            id: id.into(),
+            name: id.into(),
+            description: None,
+            instructions: None,
+            persona_ids: vec![],
+            crew: None,
+            is_builtin: false,
+            source_dir,
+            is_symlink: false,
+            symlink_target: None,
+            version: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_seat_carries_the_pack_its_agent_was_installed_from() {
+        let dir = std::env::temp_dir().join(format!("buzz-seat-pack-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("pack dir");
+        let record = agent_record(Some("team-1"), Some("builder"));
+        let teams = vec![team_record("team-1", Some(dir.clone()))];
+        let pack =
+            resolve_seat_pack(&record, &teams).expect("the pack is host-local, not on the wire");
+        assert_eq!(pack.0, dir);
+        assert_eq!(pack.1, "builder");
+
+        let entry = build_actor_seat_entry(
+            PUBKEY,
+            "nsec1secret",
+            None,
+            "wss://relay.example",
+            Some(pack),
+        )
+        .expect("seat");
+        let json = serde_json::to_value(&entry).expect("serialize");
+        assert_eq!(
+            json.get("packDir").and_then(|v| v.as_str()),
+            Some(dir.to_string_lossy().as_ref()),
+            "the provider reads packDir/personaId off this entry"
+        );
+        assert_eq!(
+            json.get("personaId").and_then(|v| v.as_str()),
+            Some("builder")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_agent_with_no_pack_on_this_computer_stages_no_pack() {
+        // No provenance at all.
+        assert!(resolve_seat_pack(&agent_record(None, None), &[]).is_none());
+        // A slug whose team is JSON-only: there is no directory to read.
+        assert!(resolve_seat_pack(
+            &agent_record(Some("team-1"), Some("builder")),
+            &[team_record("team-1", None)],
+        )
+        .is_none());
+        // A team directory that no longer exists is not a pack either.
+        assert!(resolve_seat_pack(
+            &agent_record(Some("team-1"), Some("builder")),
+            &[team_record("team-1", Some(PathBuf::from("/nope/not/here")))],
+        )
+        .is_none());
+
+        let entry =
+            build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None).expect("seat");
+        let json = serde_json::to_value(&entry).expect("serialize");
+        assert!(
+            json.get("packDir").is_none() && json.get("personaId").is_none(),
+            "a packless seat writes no pack keys: {json}"
+        );
+    }
+
     #[test]
     fn a_seat_without_a_key_in_the_keyring_is_refused() {
-        let error = build_actor_seat_entry(PUBKEY, "", None, "wss://relay.example")
+        let error = build_actor_seat_entry(PUBKEY, "", None, "wss://relay.example", None)
             .expect_err("an empty nsec must refuse the seat");
         assert!(error.contains("keyring"), "unexpected refusal: {error}");
         assert!(
@@ -254,20 +453,24 @@ mod tests {
             "refusal must name the agent: {error}"
         );
         // Whitespace is not a key either.
-        assert!(build_actor_seat_entry(PUBKEY, "   ", None, "wss://relay.example").is_err());
+        assert!(build_actor_seat_entry(PUBKEY, "   ", None, "wss://relay.example", None).is_err());
     }
 
     #[test]
     fn a_seat_pubkey_must_be_lowercase_hex() {
-        assert!(build_actor_seat_entry("not-a-pubkey", "nsec1x", None, "wss://r").is_err());
-        assert!(build_actor_seat_entry(&PUBKEY.to_uppercase(), "nsec1x", None, "wss://r").is_err());
+        assert!(build_actor_seat_entry("not-a-pubkey", "nsec1x", None, "wss://r", None).is_err());
+        assert!(
+            build_actor_seat_entry(&PUBKEY.to_uppercase(), "nsec1x", None, "wss://r", None)
+                .is_err()
+        );
     }
 
     #[test]
     fn the_file_shape_is_the_providers_read_contract() {
         let mut file = ActorSeatsFile::default();
-        let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://relay.example")
-            .expect("a hydrated key seats an agent");
+        let entry =
+            build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://relay.example", None)
+                .expect("a hydrated key seats an agent");
         stage_actor_seat(&mut file, "csl-1234", entry).expect("stage");
         let json: serde_json::Value =
             serde_json::from_slice(&serde_json::to_vec(&file).expect("serialize"))
@@ -300,6 +503,7 @@ mod tests {
             "nsec1secret",
             Some("[\"tag\",\"value\"]"),
             "wss://relay.example",
+            None,
         )
         .expect("seat");
         assert_eq!(entry.auth_tag.as_deref(), Some("[\"tag\",\"value\"]"));
@@ -308,7 +512,8 @@ mod tests {
     #[test]
     fn staging_needs_a_command_id() {
         let mut file = ActorSeatsFile::default();
-        let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r").expect("seat");
+        let entry =
+            build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None).expect("seat");
         assert!(stage_actor_seat(&mut file, "  ", entry.clone()).is_err());
         assert!(stage_actor_seat(&mut file, &"c".repeat(257), entry).is_err());
         assert!(file.pending.is_empty());
@@ -317,7 +522,8 @@ mod tests {
     #[test]
     fn clearing_reports_whether_the_provider_beat_us_to_it() {
         let mut file = ActorSeatsFile::default();
-        let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r").expect("seat");
+        let entry =
+            build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None).expect("seat");
         stage_actor_seat(&mut file, "csl-9", entry).expect("stage");
         assert!(clear_actor_seat(&mut file, "csl-9"));
         assert!(!clear_actor_seat(&mut file, "csl-9"));
@@ -340,7 +546,8 @@ mod tests {
             ActorSeatsFile::default()
         );
         let mut file = ActorSeatsFile::default();
-        let entry = build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r").expect("seat");
+        let entry =
+            build_actor_seat_entry(PUBKEY, "nsec1secret", None, "wss://r", None).expect("seat");
         stage_actor_seat(&mut file, "csl-7", entry).expect("stage");
         write_actor_seats(&path, &file).expect("write");
         #[cfg(unix)]

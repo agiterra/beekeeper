@@ -220,3 +220,21 @@ test("progress is reported step by step", async () => {
     seen.at(-1).includes(`${CODING_SESSION_CREW_LAUNCH_TURN_STEP}:done`),
   );
 });
+
+test("a seat staged without a role pack says so, and is not called seated craft", async () => {
+  const deps = recordingDeps({
+    publishSeatCreate: async ({ seat, index }) => {
+      deps.log.push(`publish:${seat.role}`);
+      return { commandId: `cmd-${index}`, packStaged: seat.role !== "builder" };
+    },
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.seatsWithoutRolePack, ["Codey"]);
+  const byId = new Map(result.steps.map((entry) => [entry.id, entry]));
+  const builderStep = byId.get(codingSessionCrewLaunchSeatStepId(1));
+  assert.equal(builderStep.state, "done");
+  assert.match(builderStep.detail, /no role skills/);
+  // The seats that did carry a pack say nothing extra.
+  assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(0)).detail, null);
+});

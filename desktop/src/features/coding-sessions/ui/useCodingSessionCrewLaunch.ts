@@ -95,6 +95,10 @@ export function useCodingSessionCrewLaunch(input: {
             genesisRef,
           }) => {
             const commandId = createCodingSessionLifecycleCommandId();
+            // What the staging call found on this computer, kept so the step
+            // list can say a seat carries no role skills instead of implying
+            // it does.
+            let packStaged = false;
             if (current.workdir) {
               await stageCodingSessionCreateHint({
                 commandId,
@@ -108,7 +112,11 @@ export function useCodingSessionCrewLaunch(input: {
               seatLabel: seat.actorLabel,
               deps: {
                 ensureMembership: ensureActorChannelMembership,
-                stageSeat: stageCodingSessionActorSeat,
+                stageSeat: async (staging) => {
+                  const staged = await stageCodingSessionActorSeat(staging);
+                  packStaged = staged.packStaged;
+                  return staged;
+                },
                 clearSeat: clearCodingSessionActorSeat,
               },
               publish: async () => {
@@ -142,7 +150,7 @@ export function useCodingSessionCrewLaunch(input: {
                 );
               },
             });
-            return { commandId };
+            return { commandId, packStaged };
           },
           awaitSeatReceipt: ({ commandId }) =>
             awaitCodingSessionCreateReceipt({
