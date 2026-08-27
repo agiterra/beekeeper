@@ -642,9 +642,9 @@ fn commit_inbound_team(
 ///
 /// Matches the local record whose `id` equals the event's d-tag (the d-tag IS
 /// the team id — see `build_team_event`). On match, overwrite ONLY the three
-/// shared fields (`name`, `description`, `persona_ids`); install-specific local
-/// fields (`source_dir`, `is_symlink`, `symlink_target`, `is_builtin`,
-/// `version`, `created_at`) are preserved. On no match, insert a fresh record
+/// shared fields (`name`, `description`, `persona_ids`, `instructions`,
+/// `crew`); install-specific local fields (`source_dir`, `is_symlink`,
+/// `symlink_target`, `is_builtin`, `version`, `created_at`) are preserved. On no match, insert a fresh record
 /// reusing the d-tag as the id so a re-received event stays idempotent —
 /// symmetric to the persona path, since a team (like a persona) is a secretless
 /// definition that another device may legitimately learn about from the relay.
@@ -663,6 +663,12 @@ fn apply_inbound_team(teams: &mut Vec<TeamRecord>, d_tag: String, inbound: TeamE
             if let Some(persona_ids) = inbound.persona_ids {
                 local.persona_ids = persona_ids;
             }
+            // Same tri-state as `instructions`: absent means the publisher
+            // predates the crew block, so the local crew is preserved rather
+            // than silently dissolved by an older client's edit.
+            if let Some(crew) = inbound.crew {
+                local.crew = crew;
+            }
         }
         None => teams.push(TeamRecord {
             id: d_tag,
@@ -672,6 +678,7 @@ fn apply_inbound_team(teams: &mut Vec<TeamRecord>, d_tag: String, inbound: TeamE
             // pre-fix client simply means no known value.
             instructions: inbound.instructions.unwrap_or_default(),
             persona_ids: inbound.persona_ids.unwrap_or_default(),
+            crew: inbound.crew.unwrap_or_default(),
             is_builtin: false,
             source_dir: None,
             is_symlink: false,
@@ -680,5 +687,94 @@ fn apply_inbound_team(teams: &mut Vec<TeamRecord>, d_tag: String, inbound: TeamE
             created_at: now_iso(),
             updated_at: now_iso(),
         }),
+    }
+}
+
+/// Crew-block reconcile rules (plan D8), kept beside the code they pin.
+///
+/// The sibling `inbound_tests` module covers the pre-crew fields; these are
+/// the three shapes the crew block adds, and the first of them is the one
+/// that matters: an older client's team edit must not dissolve a crew it
+/// cannot see.
+#[cfg(test)]
+mod crew_inbound_tests {
+    use super::*;
+    use crate::managed_agents::team_events::{TeamCrew, TeamCrewSeat};
+
+    fn crew() -> TeamCrew {
+        TeamCrew {
+            primary: "p1".to_string(),
+            seats: vec![TeamCrewSeat {
+                persona_id: "p1".to_string(),
+                role: "lead".to_string(),
+                driver: None,
+                model: Some("claude-opus-5".to_string()),
+                vendor: Some("anthropic".to_string()),
+            }],
+        }
+    }
+
+    fn local_crew_team() -> TeamRecord {
+        TeamRecord {
+            id: "team-1".to_string(),
+            name: "Crew".to_string(),
+            description: None,
+            instructions: None,
+            persona_ids: vec!["p1".to_string()],
+            crew: Some(crew()),
+            is_builtin: false,
+            source_dir: None,
+            is_symlink: false,
+            symlink_target: None,
+            version: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn inbound(crew: Option<Option<TeamCrew>>) -> TeamEventContent {
+        TeamEventContent {
+            name: "Crew".to_string(),
+            description: None,
+            instructions: Some(None),
+            persona_ids: Some(vec!["p1".to_string()]),
+            crew,
+        }
+    }
+
+    #[test]
+    fn an_older_clients_edit_preserves_the_local_crew() {
+        let mut teams = vec![local_crew_team()];
+        apply_inbound_team(&mut teams, "team-1".to_string(), inbound(None));
+        assert_eq!(teams[0].crew, Some(crew()));
+    }
+
+    #[test]
+    fn an_explicit_null_clears_the_crew() {
+        let mut teams = vec![local_crew_team()];
+        apply_inbound_team(&mut teams, "team-1".to_string(), inbound(Some(None)));
+        assert_eq!(teams[0].crew, None);
+    }
+
+    #[test]
+    fn an_inbound_crew_overwrites_and_a_fresh_insert_keeps_it() {
+        let mut teams = vec![local_crew_team()];
+        let mut other = crew();
+        other.primary = "p2".to_string();
+        other.seats[0].persona_id = "p2".to_string();
+        apply_inbound_team(
+            &mut teams,
+            "team-1".to_string(),
+            inbound(Some(Some(other.clone()))),
+        );
+        assert_eq!(teams[0].crew, Some(other.clone()));
+
+        let mut empty: Vec<TeamRecord> = vec![];
+        apply_inbound_team(
+            &mut empty,
+            "team-2".to_string(),
+            inbound(Some(Some(other.clone()))),
+        );
+        assert_eq!(empty[0].crew, Some(other));
     }
 }

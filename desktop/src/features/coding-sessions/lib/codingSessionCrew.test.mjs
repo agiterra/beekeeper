@@ -1,0 +1,182 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  checkCodingSessionCrewFamilies,
+  codingSessionCrewFirstTurnText,
+  codingSessionCrewRosterText,
+  deriveCodingSessionModelVendor,
+  parseCodingSessionCrew,
+  resolveCodingSessionSeatVendor,
+} from "./codingSessionCrew.ts";
+
+test("the derivation table maps exactly the ids that name a vendor", () => {
+  assert.equal(deriveCodingSessionModelVendor("claude-opus-5"), "anthropic");
+  assert.equal(deriveCodingSessionModelVendor("gpt-5.6-sol"), "openai");
+  assert.equal(deriveCodingSessionModelVendor("o3-mini"), "openai");
+  assert.equal(deriveCodingSessionModelVendor("o1"), "openai");
+  assert.equal(deriveCodingSessionModelVendor("grok-4"), "xai");
+  assert.equal(deriveCodingSessionModelVendor("gemini-3-pro"), "google");
+  assert.equal(deriveCodingSessionModelVendor("llama-4-70b"), "meta");
+  // Case and surrounding space are typing, not meaning.
+  assert.equal(deriveCodingSessionModelVendor("  Claude-Opus-5 "), "anthropic");
+});
+
+test("an id that does not name a vendor derives nothing, never a guess", () => {
+  assert.equal(deriveCodingSessionModelVendor("qwen3-coder"), null);
+  assert.equal(deriveCodingSessionModelVendor("openrouter/auto"), null);
+  assert.equal(deriveCodingSessionModelVendor(""), null);
+  assert.equal(deriveCodingSessionModelVendor(null), null);
+  // `o*` is the OpenAI reasoning series, not every id starting with o.
+  assert.equal(deriveCodingSessionModelVendor("olmo-2"), null);
+});
+
+test("a declared vendor wins over the model id", () => {
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ model: "claude-opus-5", vendor: "local" }),
+    { vendor: "local", source: "declared" },
+  );
+  assert.deepEqual(resolveCodingSessionSeatVendor({ model: "claude-opus-5" }), {
+    vendor: "anthropic",
+    source: "derived",
+  });
+  assert.deepEqual(resolveCodingSessionSeatVendor({ model: "mystery-1" }), {
+    vendor: null,
+    source: "unknown",
+  });
+});
+
+test("family is the model vendor, not the ACP runtime", () => {
+  // Two Goose seats on different vendors are two families.
+  assert.deepEqual(
+    checkCodingSessionCrewFamilies([
+      { role: "builder", model: "gpt-5.6-sol", vendor: "openai" },
+      { role: "verifier", model: "claude-opus-5", vendor: "anthropic" },
+    ]),
+    { ok: true },
+  );
+  // Claude Code and Goose-on-Anthropic are one family, and refused.
+  const clash = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "claude-opus-5" },
+    { role: "verifier", model: "claude-sonnet-5", vendor: "anthropic" },
+  ]);
+  assert.equal(clash.ok, false);
+  assert.match(clash.reason, /anthropic/);
+});
+
+test("an unknown vendor on a verifier or builder is refused, not assumed", () => {
+  const verifier = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "gpt-5.6-sol" },
+    { role: "verifier", model: "qwen3-coder", actorLabel: "Quinn" },
+  ]);
+  assert.equal(verifier.ok, false);
+  assert.match(verifier.reason, /Declare the model vendor/);
+  assert.match(verifier.reason, /Quinn/);
+
+  const builder = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "qwen3-coder" },
+    { role: "verifier", model: "claude-opus-5" },
+  ]);
+  assert.equal(builder.ok, false);
+  assert.match(builder.reason, /Declare the model vendor/);
+});
+
+test("a crew with no verifier/builder pair has no family rule to break", () => {
+  assert.deepEqual(
+    checkCodingSessionCrewFamilies([
+      { role: "lead", model: "mystery-1" },
+      { role: "runner", model: "mystery-2" },
+    ]),
+    { ok: true },
+  );
+  assert.deepEqual(
+    checkCodingSessionCrewFamilies([
+      { role: "builder", model: "mystery-1" },
+      { role: "lead", model: "mystery-2" },
+    ]),
+    { ok: true },
+  );
+});
+
+const SEATS = [
+  {
+    personaId: "p-lead",
+    role: "lead",
+    actor: "a".repeat(64),
+    actorLabel: "Fable",
+    model: "claude-opus-5",
+    vendor: null,
+  },
+  {
+    personaId: "p-build",
+    role: "builder",
+    actor: "b".repeat(64),
+    actorLabel: "Codey",
+    model: "gpt-5.6-sol",
+    vendor: null,
+  },
+];
+
+test("the roster names every seat, its vendor, and which one is you", () => {
+  const roster = codingSessionCrewRosterText({
+    seats: SEATS,
+    primaryPersonaId: "p-lead",
+  });
+  assert.match(roster, /^\[Crew\]/);
+  assert.match(roster, /- lead: Fable \(anthropic · claude-opus-5\) — you/);
+  assert.match(roster, /- builder: Codey \(openai · gpt-5\.6-sol\)$/m);
+});
+
+test("the first turn carries the goal and then the roster", () => {
+  const text = codingSessionCrewFirstTurnText({
+    goal: "  Close ledger item 53.  ",
+    seats: SEATS,
+    primaryPersonaId: "p-lead",
+  });
+  assert.ok(text.startsWith("Close ledger item 53.\n\n[Crew]"));
+  assert.match(text, /Codey/);
+});
+
+test("a malformed crew block is no crew at all", () => {
+  assert.equal(parseCodingSessionCrew(null), null);
+  assert.equal(parseCodingSessionCrew({ seats: [] }), null);
+  assert.equal(
+    parseCodingSessionCrew({ primary: "p1", seats: [{ role: "lead" }] }),
+    null,
+  );
+  // A primary that names no seat is a crew nothing can be addressed to.
+  assert.equal(
+    parseCodingSessionCrew({
+      primary: "p9",
+      seats: [{ personaId: "p1", role: "lead" }],
+    }),
+    null,
+  );
+});
+
+test("a well-formed crew keeps seat order and drops unknown keys", () => {
+  const crew = parseCodingSessionCrew({
+    primary: "p1",
+    seats: [
+      { personaId: "p1", role: "lead", model: "claude-opus-5", extra: 1 },
+      {
+        personaId: "p2",
+        role: "builder",
+        vendor: "openai",
+        driver: "codex-acp",
+      },
+    ],
+  });
+  assert.deepEqual(crew, {
+    primary: "p1",
+    seats: [
+      { personaId: "p1", role: "lead", model: "claude-opus-5" },
+      {
+        personaId: "p2",
+        role: "builder",
+        driver: "codex-acp",
+        vendor: "openai",
+      },
+    ],
+  });
+});

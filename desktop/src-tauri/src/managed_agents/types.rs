@@ -759,54 +759,6 @@ pub struct AgentModelInfo {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamRecord {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    /// Runtime-layered instructions shared by every member deployment.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<String>,
-    pub persona_ids: Vec<String>,
-    #[serde(default)]
-    pub is_builtin: bool,
-    /// Absolute path to the team's backing directory (if directory-backed).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_dir: Option<PathBuf>,
-    /// Whether `source_dir` is a symlink to an external directory.
-    #[serde(default)]
-    pub is_symlink: bool,
-    /// Resolved symlink target path (for display). Only set when `is_symlink` is true.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub symlink_target: Option<String>,
-    /// Version from the team's `plugin.json` manifest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateTeamRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub instructions: Option<String>,
-    #[serde(default)]
-    pub persona_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateTeamRequest {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub instructions: Option<String>,
-    #[serde(default)]
-    pub persona_ids: Vec<String>,
-}
-
 pub const DEFAULT_ACP_COMMAND: &str = "buzz-acp";
 /// ~5 min (320s) — matches the CLI harness default (BUZZ_ACP_IDLE_TIMEOUT).
 pub const DEFAULT_AGENT_TURN_TIMEOUT_SECONDS: u64 = 320;
@@ -989,6 +941,8 @@ pub fn resolve_mint_behavioral_defaults(
     })
 }
 
+mod team;
+pub use team::*;
 mod catalog_source;
 pub use catalog_source::CatalogSource;
 mod requests;

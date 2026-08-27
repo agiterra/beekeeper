@@ -166,6 +166,7 @@ fn stale_inbound_head(
         description: None,
         instructions: None,
         persona_ids: bare_persona_ids.iter().map(|s| s.to_string()).collect(),
+        crew: None,
         is_builtin: false,
         source_dir: None,
         is_symlink: false,

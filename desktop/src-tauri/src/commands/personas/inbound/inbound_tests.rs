@@ -400,6 +400,7 @@ fn local_team() -> TeamRecord {
         description: Some("local desc".to_string()),
         instructions: None,
         persona_ids: vec!["p-local".to_string()],
+        crew: None,
         is_builtin: false,
         source_dir: Some(std::path::PathBuf::from("/local/team/dir")),
         is_symlink: true,
@@ -416,6 +417,7 @@ fn team_content(name: &str) -> TeamEventContent {
         description: Some("remote desc".to_string()),
         instructions: Some(Some("remote instructions".to_string())),
         persona_ids: Some(vec!["p-remote-1".to_string(), "p-remote-2".to_string()]),
+        crew: None,
     }
 }
 
@@ -427,6 +429,7 @@ fn team_content_omitting_optional_fields(name: &str) -> TeamEventContent {
         description: Some("remote desc".to_string()),
         instructions: None,
         persona_ids: None,
+        crew: None,
     }
 }
 
@@ -438,6 +441,7 @@ fn team_content_clearing_optional_fields(name: &str) -> TeamEventContent {
         description: Some("remote desc".to_string()),
         instructions: Some(None),
         persona_ids: Some(vec![]),
+        crew: None,
     }
 }
 
@@ -586,6 +590,7 @@ fn inbound_team_add_binds_unbound_instance_through_wiring() {
             description: None,
             instructions: None,
             persona_ids: Some(vec!["p-existing".to_string(), "p-added".to_string()]),
+            crew: None,
         },
         |_| Ok(()),
         || Ok(existing.clone()),
@@ -630,6 +635,7 @@ fn inbound_team_removal_detaches_instance_through_wiring() {
             description: None,
             instructions: None,
             persona_ids: Some(vec![]),
+            crew: None,
         },
         |_| Ok(()),
         || Ok(existing.clone()),
@@ -695,6 +701,7 @@ fn inbound_team_swallows_agent_store_failure() {
             description: None,
             instructions: None,
             persona_ids: Some(vec!["p-added".to_string()]),
+            crew: None,
         },
         |_| Ok(()),
         || Err("agent store unreadable".to_string()),

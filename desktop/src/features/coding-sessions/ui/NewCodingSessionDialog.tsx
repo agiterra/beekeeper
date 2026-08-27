@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Input } from "@/shared/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
@@ -40,6 +41,7 @@ import {
   ProviderLoginNeeded,
 } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField";
+import { NewCodingSessionCrewTab } from "./NewCodingSessionCrewTab";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { PendingCodingSessionScreen } from "./PendingCodingSessionScreen";
@@ -261,6 +263,9 @@ export function NewCodingSessionForm({
   });
 
   const [title, setTitle] = React.useState("");
+  // One session or a whole crew. Two answers to "what am I starting?", so two
+  // tabs rather than a checkbox that silently changes what Create means.
+  const [mode, setMode] = React.useState<"session" | "crew">("session");
   const [seatActor, setSeatActor] = React.useState<string | null>(null);
   const [seatRole, setSeatRole] = React.useState("");
   const managedAgentsQuery = useManagedAgentsQuery();
@@ -473,8 +478,60 @@ export function NewCodingSessionForm({
     );
   }
 
+  const modeTabs = (
+    <Tabs
+      className="shrink-0"
+      onValueChange={(value) => setMode(value === "crew" ? "crew" : "session")}
+      value={mode}
+    >
+      <TabsList>
+        <TabsTrigger
+          data-testid="new-coding-session-tab-session"
+          value="session"
+        >
+          One session
+        </TabsTrigger>
+        <TabsTrigger data-testid="new-coding-session-tab-crew" value="crew">
+          Crew
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  if (mode === "crew") {
+    return (
+      <>
+        {modeTabs}
+        <div className="-mx-px flex max-h-[65vh] min-h-0 flex-col overflow-y-auto px-px">
+          <NewCodingSessionCrewTab
+            channelId={channelId}
+            disabled={transaction !== null}
+            model={effectiveModel}
+            // A crew launch mints one execution per seat and resolves no
+            // single generation to open, so it closes the dialog and leaves
+            // the seats to appear in the sidebar rather than guessing which
+            // one the person wanted to look at.
+            onLaunched={() => onDone()}
+            providerAuthorityPubkey={selectedTarget?.signerPubkey ?? null}
+            providerInstanceRef={
+              selectedTarget?.provider.providerInstanceRef ?? null
+            }
+            providerLabel={
+              targets.find(
+                (entry) => entry.provider === selectedTarget?.provider,
+              )?.availability?.label ??
+              selectedTarget?.provider.runtime ??
+              null
+            }
+          />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
+      {modeTabs}
       <div
         // `overflow-y-auto` clips the x-axis as well — CSS has no way to
         // scroll one axis and leave the other visible — so a `w-full` child

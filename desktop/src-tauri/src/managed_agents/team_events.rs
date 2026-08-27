@@ -12,6 +12,50 @@ use serde::{Deserialize, Serialize};
 
 use super::TeamRecord;
 
+/// One seat in a crew: which persona fills it, what role it plays, and —
+/// when the team wants to pin them — which driver, model, and model *vendor*
+/// that seat runs on.
+///
+/// `vendor` is the **model vendor** (`anthropic`, `openai`, `xai`, `google`,
+/// `meta`, `local`, …), never the ACP runtime. Two Goose seats pointed at
+/// different vendors are different families; Claude Code and Goose-on-
+/// Anthropic are the same family. The launch check that keeps a verifier out
+/// of its builder's family reads this field, and refuses rather than guesses
+/// when it is absent and the model id does not name a vendor unambiguously.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamCrewSeat {
+    /// Persona pack id the seat is filled from.
+    pub persona_id: String,
+    /// Role slug (`lead`, `architect`, `builder`, `verifier`, `runner`,
+    /// `poker`, or any other `[a-z0-9-]` slug a crew invents).
+    pub role: String,
+    /// ACP runtime that executes the seat, when the team pins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver: Option<String>,
+    /// Model id the seat runs on, when the team pins one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Declared model vendor. Absent means "derive from the model id, or
+    /// treat as unknown" — it never means "same as everyone else".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
+}
+
+/// The crew composition a team carries: an ordered seat list and the one
+/// seat the launch addresses its first turn to.
+///
+/// A `KIND_TEAM` whose personas carry roles is a *crew* (plan D8). Seat order
+/// is launch order, so it is preserved exactly as published.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamCrew {
+    /// Persona id of the seat that receives the launch's first turn.
+    pub primary: String,
+    /// Seats in launch order.
+    pub seats: Vec<TeamCrewSeat>,
+}
+
 /// The JSON body stored in a team event's content field.
 ///
 /// Explicit opt-IN projection of the public team fields. A team carries no
@@ -45,6 +89,18 @@ pub struct TeamEventContent {
     /// membership (see the Sietch Tabr incident).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_ids: Option<Vec<String>>,
+    /// Crew composition (plan D8). Tri-state with the same PERMANENT wire
+    /// semantics as `instructions`: absent = the publisher predates the field
+    /// (its true value is unknown — reconcile must preserve local), `null` =
+    /// explicitly no crew, an object = the crew. New clients always publish
+    /// the outer `Some`, so a team that stops being a crew round-trips as
+    /// `null` instead of reading back as "unknown".
+    #[serde(
+        default,
+        deserialize_with = "crate::util::double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub crew: Option<Option<TeamCrew>>,
 }
 
 /// Project a `TeamRecord` onto the content fields published in team events.
@@ -59,6 +115,7 @@ pub fn team_event_content(record: &TeamRecord) -> TeamEventContent {
         // the struct doc comments).
         instructions: Some(record.instructions.clone()),
         persona_ids: Some(record.persona_ids.clone()),
+        crew: Some(record.crew.clone()),
     }
 }
 
@@ -111,6 +168,7 @@ mod tests {
             description: Some("A test team".to_string()),
             instructions: Some("Coordinate carefully.".to_string()),
             persona_ids: vec!["p1".to_string(), "p2".to_string()],
+            crew: None,
             is_builtin: false,
             source_dir: Some(PathBuf::from("/local/only/path")),
             is_symlink: true,
@@ -239,6 +297,81 @@ mod tests {
         assert_eq!(event_content.instructions, Some(None));
         let json = serde_json::to_string(&event_content).unwrap();
         assert!(json.contains("\"instructions\":null"));
+    }
+
+    // ── crew wire semantics (plan D8) ────────────────────────────────────
+
+    fn sample_crew() -> TeamCrew {
+        TeamCrew {
+            primary: "p1".to_string(),
+            seats: vec![
+                TeamCrewSeat {
+                    persona_id: "p1".to_string(),
+                    role: "lead".to_string(),
+                    driver: Some("claude-agent-acp".to_string()),
+                    model: Some("claude-opus-5".to_string()),
+                    vendor: Some("anthropic".to_string()),
+                },
+                TeamCrewSeat {
+                    persona_id: "p2".to_string(),
+                    role: "builder".to_string(),
+                    driver: None,
+                    model: Some("gpt-5.6-sol".to_string()),
+                    vendor: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn crew_publishes_camel_case_seats_in_order() {
+        let mut team = sample_team();
+        team.crew = Some(sample_crew());
+        let json = serde_json::to_string(&team_event_content(&team)).unwrap();
+        assert!(json.contains("\"primary\":\"p1\""));
+        assert!(json.contains("\"personaId\":\"p1\""));
+        assert!(json.contains("\"vendor\":\"anthropic\""));
+        // Seat order is launch order and must survive the wire verbatim.
+        let lead = json.find("\"personaId\":\"p1\"").unwrap();
+        let builder = json.find("\"personaId\":\"p2\"").unwrap();
+        assert!(lead < builder);
+        // Absent optionals are omitted, never published as null.
+        assert!(!json.contains("\"driver\":null"));
+    }
+
+    #[test]
+    fn crew_round_trips() {
+        let mut team = sample_team();
+        team.crew = Some(sample_crew());
+        let event_content = team_event_content(&team);
+        let json = serde_json::to_string(&event_content).unwrap();
+        let restored: TeamEventContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, event_content);
+        assert_eq!(restored.crew, Some(Some(sample_crew())));
+    }
+
+    #[test]
+    fn content_from_old_clients_without_crew_parses_none() {
+        // A publisher that predates the field says nothing about the crew;
+        // reading that back as "no crew" would wipe a local one.
+        let legacy = r#"{"name":"Old Team","persona_ids":["p1"]}"#;
+        let restored: TeamEventContent = serde_json::from_str(legacy).unwrap();
+        assert_eq!(restored.crew, None);
+    }
+
+    #[test]
+    fn content_with_explicit_null_crew_parses_some_none() {
+        let json = r#"{"name":"Team","persona_ids":["p1"],"crew":null}"#;
+        let restored: TeamEventContent = serde_json::from_str(json).unwrap();
+        assert_eq!(restored.crew, Some(None));
+    }
+
+    #[test]
+    fn content_publishes_some_none_when_team_has_no_crew() {
+        let event_content = team_event_content(&sample_team());
+        assert_eq!(event_content.crew, Some(None));
+        let json = serde_json::to_string(&event_content).unwrap();
+        assert!(json.contains("\"crew\":null"));
     }
 
     #[test]
