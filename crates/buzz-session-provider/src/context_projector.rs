@@ -20,14 +20,19 @@ use uuid::Uuid;
 
 use buzz_acp::relay::RestClient;
 
-use buzz_core::coding_session_command::{coding_session_target_key, CodingSessionTarget};
+use buzz_core::coding_session_command::{
+    coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
+    CodingSessionTarget, CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES,
+};
 use buzz_core::coding_session_context::{
     coding_session_context_role_for_item_kind, sanitize_coding_session_context_content,
     sanitize_coding_session_context_text, CodingSessionContextHistoryItem,
-    CodingSessionContextIdentity, CodingSessionContextPackage, CodingSessionContextProvenance,
-    CodingSessionContextSourceBreakdown, CODING_SESSION_CONTEXT_PACKAGE_VERSION,
-    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_PACKAGE_BYTES, MAX_CONTEXT_PROVENANCE_NOTES,
-    MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
+    CodingSessionContextIdentity, CodingSessionContextInboxItem, CodingSessionContextPackage,
+    CodingSessionContextProvenance, CodingSessionContextRosterEntry,
+    CodingSessionContextSeatStatus, CodingSessionContextSourceBreakdown,
+    CODING_SESSION_CONTEXT_PACKAGE_VERSION, MAX_CONTEXT_HISTORY_ITEMS,
+    MAX_CONTEXT_INBOX_CONTENT_BYTES, MAX_CONTEXT_INBOX_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
+    MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES, MAX_CONTEXT_ROSTER_ENTRIES,
 };
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
@@ -44,15 +49,17 @@ use buzz_core::coding_session_name::{
 };
 use buzz_core::coding_session_payload::{
     decode_coding_session_metadata, LifecycleReceipt, ReceiptStatus, SessionMetadata,
-    TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA, TRANSCRIPT_SCHEMA,
+    SessionStatus, TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
+    TRANSCRIPT_SCHEMA,
 };
 use buzz_core::kind::{
-    event_kind_u32, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_GENESIS,
-    KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    event_kind_u32, KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_GOAL, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA, KIND_CODING_SESSION_NAME,
     KIND_CODING_SESSION_TRANSCRIPT, KIND_SYSTEM_MESSAGE,
 };
 use buzz_core::verify_event;
+use buzz_sdk::builders::coding_session_turn_receipt_semantic_key;
 use buzz_sdk::coding_session::{
     coding_session_lifecycle_receipt_semantic_key, coding_session_metadata_semantic_key,
     coding_session_transcript_semantic_key, CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION,
@@ -62,6 +69,18 @@ use buzz_sdk::coding_session::{
 
 use crate::authority::{verify_acceptance_receipt, verify_accepted_transition};
 
+/// Maximum serialized bytes of inbox items one package retains.
+///
+/// The inbox is a bounded convenience beside the history, not a second
+/// transcript: 256 KiB of the package's 8 MiB ceiling. Oldest candidates are
+/// dropped first and the drop is disclosed in a provenance note, so a seat
+/// never reads a silently shortened inbox.
+pub const MAX_CONTEXT_INBOX_PROJECTION_BYTES: usize = 256 * 1024;
+/// Maximum signed content bytes accepted from one candidate kind-44220.
+///
+/// The turn-text ceiling plus envelope overhead; a larger candidate is
+/// something other than a command this projector recognizes.
+const MAX_COMMAND_CONTENT_BYTES: usize = 16 * 1024;
 /// Maximum signed source events one projection call will examine.
 pub const MAX_CONTEXT_SOURCE_EVENTS: usize = 16_384;
 /// Maximum total signed-content bytes one projection call will examine.
@@ -158,6 +177,27 @@ pub struct ContextProjectionInput {
     pub name_revisions: Vec<Event>,
     /// Candidate founder-authored goal revisions for this session only.
     pub goal_revisions: Vec<Event>,
+    /// Candidate kind-44220 turn commands from this session's channel.
+    ///
+    /// Candidates, not facts: each is verified here, and one that fails is
+    /// skipped and counted rather than failing the projection. A stranger's
+    /// malformed command addressed at this umbrella must not be able to deny
+    /// every seat its context.
+    pub turn_commands: Vec<Event>,
+    /// Candidate kind-44224 *turn-stage* receipts from this session's channel.
+    ///
+    /// Same candidate discipline as `turn_commands`. Lifecycle outcomes are
+    /// not read from here — those travel inside the execution bundles.
+    pub turn_receipts: Vec<Event>,
+    /// Whether a package with no verified execution chain is acceptable.
+    ///
+    /// `false` everywhere a package is meant to carry prior context: an
+    /// umbrella with no proved create chain has nothing to rehydrate and the
+    /// projection fails rather than serving an empty package that looks like
+    /// a session with no history. `true` for the one caller that deliberately
+    /// wants the empty case — the first execution under a fresh genesis, which
+    /// gets the crew tools and an honestly empty roster (plan S4/B).
+    pub allow_no_executions: bool,
     /// Source-query coverage and explanation.
     pub coverage: ContextSourceCoverage,
     /// Epoch milliseconds when the source-query attempt began.
@@ -177,6 +217,10 @@ pub struct ContextProjectionRequest {
     pub genesis_ref: String,
     /// Relay identity witnessed during connection setup, when advertised.
     pub relay_self_pubkey: Option<String>,
+    /// Whether an umbrella with no proved create chain yields an empty package
+    /// instead of an error. See
+    /// [`ContextProjectionInput::allow_no_executions`].
+    pub allow_no_executions: bool,
     /// Epoch milliseconds when this source-query attempt began.
     ///
     /// When every partition proves complete, this becomes `completeAsOf`.
@@ -230,6 +274,52 @@ struct VerifiedGeneration {
     provider_instance_ref: String,
     project_ref: Option<String>,
     title: Option<String>,
+    /// Agent seat pubkey from this generation's verified metadata, or `None`
+    /// for a human-created execution.
+    actor: Option<String>,
+    /// Role slug from that same metadata.
+    role: Option<String>,
+    /// Lifecycle status that metadata last reported.
+    status: SessionStatus,
+}
+
+/// One verified execution generation, reduced to what the roster publishes.
+#[derive(Debug)]
+struct SeatFacts {
+    target: CodingSessionTarget,
+    provider_authority: String,
+    actor: Option<String>,
+    role: Option<String>,
+    status: CodingSessionContextSeatStatus,
+    last_signed_seq: Option<u64>,
+    last_signed_at_ms: Option<i64>,
+}
+
+/// Map one generation's signed metadata status onto a roster seat status.
+///
+/// `superseded` wins over everything: a later generation of the same execution
+/// exists, so this one will refuse any command addressed to it whatever its
+/// last metadata said. `Disconnected` deliberately becomes `unknown` rather
+/// than `ended` — the provider published that it detached, which is not a
+/// claim that the work finished, and guessing either way would be the kind of
+/// comfortable lie the roster exists to avoid.
+fn seat_status(status: SessionStatus, superseded: bool) -> CodingSessionContextSeatStatus {
+    if superseded {
+        return CodingSessionContextSeatStatus::Superseded;
+    }
+    match status {
+        SessionStatus::Completed | SessionStatus::Stopped | SessionStatus::Failed => {
+            CodingSessionContextSeatStatus::Ended
+        }
+        SessionStatus::Disconnected | SessionStatus::Unknown => {
+            CodingSessionContextSeatStatus::Unknown
+        }
+        SessionStatus::Starting
+        | SessionStatus::Idle
+        | SessionStatus::Running
+        | SessionStatus::WaitingForInput
+        | SessionStatus::Interrupted => CodingSessionContextSeatStatus::Active,
+    }
 }
 
 #[derive(Debug)]
@@ -274,8 +364,10 @@ pub async fn fetch_and_project_session_context(
     let mut ids = HashSet::new();
     ids.insert(events[0].id);
     let mut transcript_complete = true;
+    let mut command_complete = true;
     for kind in [
         KIND_CODING_SESSION_AUTHORITY_TRANSITION,
+        KIND_CODING_SESSION_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_COMMAND,
         KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
         KIND_CODING_SESSION_METADATA,
@@ -286,12 +378,19 @@ pub async fn fetch_and_project_session_context(
     ] {
         let partition = query_kind_partition(rest, request.channel_id, kind).await?;
         if partition.saturated {
-            if kind == KIND_CODING_SESSION_TRANSCRIPT {
-                transcript_complete = false;
-            } else {
-                return Err(ContextProjectionError::Bound(format!(
-                    "relay kind-{kind} partition could not be exhausted within {MAX_CONTROL_PARTITION_PAGES} pages of {RELAY_QUERY_PAGE_LIMIT} rows; refusing potentially incomplete authority/linkage facts"
-                )));
+            match kind {
+                KIND_CODING_SESSION_TRANSCRIPT => transcript_complete = false,
+                // The inbox is a bounded convenience beside the history, never
+                // a link in the proof chain, so a channel with more turn
+                // traffic than this walk can exhaust gets a shorter inbox and
+                // a note — not a refused package. Failing closed here would
+                // let ordinary volume take rehydration away from every seat.
+                KIND_CODING_SESSION_COMMAND => command_complete = false,
+                _ => {
+                    return Err(ContextProjectionError::Bound(format!(
+                        "relay kind-{kind} partition could not be exhausted within {MAX_CONTROL_PARTITION_PAGES} pages of {RELAY_QUERY_PAGE_LIMIT} rows; refusing potentially incomplete authority/linkage facts"
+                    )));
+                }
             }
         }
         for event in partition.events {
@@ -300,7 +399,7 @@ pub async fn fetch_and_project_session_context(
             }
         }
     }
-    let coverage = if transcript_complete {
+    let mut coverage = if transcript_complete {
         ContextSourceCoverage {
             complete: true,
             total_history_items: None,
@@ -317,6 +416,13 @@ pub async fn fetch_and_project_session_context(
             )],
         }
     };
+    if !command_complete {
+        // `complete` is a statement about history, so it is deliberately not
+        // flipped here; the inbox's own gap gets its own sentence.
+        coverage.notes.push(format!(
+            "Turn-command query reached the relay's {RELAY_QUERY_PAGE_LIMIT}-row clamp; the inbox may omit older addressed commands"
+        ));
+    }
     group_and_project_session_context_events(request, &events, coverage)
 }
 
@@ -350,26 +456,21 @@ struct KindPartition {
     saturated: bool,
 }
 
-/// Whether an event from `kind`'s partition is a fact this projection reads.
+/// Every event a partition returns is retained.
 ///
-/// Kind 44224 carries two vocabularies and only one of them is a linkage fact.
-/// Turn-stage receipts are published per turn — at least two for every prompt —
-/// so a channel that has run any real work has a 44224 partition that is almost
-/// entirely turn traffic, all of which [`receipt_for_command`] discards anyway.
-/// Dropping them as the pages arrive is what stops that traffic from crowding
-/// the lifecycle receipts the create chain is proved from out of the fact set.
-fn partition_event_is_projection_fact(kind: u32, event: &Event) -> bool {
-    if kind != KIND_CODING_SESSION_LIFECYCLE_RECEIPT {
-        return true;
-    }
-    // A receipt this projector cannot parse is kept, not filtered: naming a
-    // receipt malformed is `receipt_for_command`'s job, and it can only do it
-    // for a receipt it was given.
-    serde_json::from_str::<LifecycleReceipt>(&event.content)
-        .map(|receipt| !receipt.status.is_turn_stage())
-        .unwrap_or(true)
-}
-
+/// Kind 44224 carries two vocabularies, and this used to keep only one of
+/// them: the lifecycle outcomes prove the create chain, and the turn stages
+/// were dropped as the pages arrived. The package inbox now reports the stage
+/// each addressed 44220 reached, which it cannot do from receipts it never
+/// saw, so both are kept.
+///
+/// Partition *saturation* is measured in relay pages, not in retained rows, so
+/// keeping this traffic cannot crowd a lifecycle receipt out of the fact set —
+/// which is the regression
+/// `a_receipt_partition_of_turn_traffic_still_yields_the_lifecycle_receipt`
+/// pins. What it costs is memory, bounded by the same
+/// [`MAX_CONTEXT_SOURCE_EVENTS`]/[`MAX_CONTEXT_SOURCE_CONTENT_BYTES`] ceilings
+/// every other kind pays.
 /// Walk one kind partition newest-first until it is exhausted or bounded.
 ///
 /// `fetch_page` receives the exclusive-in-effect `until` cursor (a second-
@@ -379,7 +480,6 @@ fn partition_event_is_projection_fact(kind: u32, event: &Event) -> bool {
 /// events sharing one second is a wall, not an end — so it reports saturated
 /// rather than looping.
 async fn collect_kind_partition<F, Fut>(
-    kind: u32,
     page_limit: usize,
     max_pages: usize,
     mut fetch_page: F,
@@ -403,9 +503,7 @@ where
                 continue;
             }
             fresh += 1;
-            if partition_event_is_projection_fact(kind, &event) {
-                events.push(event);
-            }
+            events.push(event);
         }
         match oldest {
             Some(oldest) if page_was_full && fresh > 0 => until = Some(oldest),
@@ -437,7 +535,7 @@ async fn query_kind_partition(
     } else {
         MAX_CONTROL_PARTITION_PAGES
     };
-    collect_kind_partition(kind, RELAY_QUERY_PAGE_LIMIT, max_pages, |until| {
+    collect_kind_partition(RELAY_QUERY_PAGE_LIMIT, max_pages, |until| {
         query_kind_partition_page(rest, channel_id, kind, until)
     })
     .await
@@ -502,6 +600,26 @@ fn group_and_project_session_context_events(
 
     let authority_links = group_authority_links(request, events)?;
     let executions = group_executions(request, events)?;
+    if executions.is_empty() && !request.allow_no_executions {
+        return Err(ContextProjectionError::InvalidFact(
+            "no successful create chain links this session and genesis".into(),
+        ));
+    }
+    let turn_commands = events
+        .iter()
+        .filter(|event| event_kind_u32(event) == KIND_CODING_SESSION_COMMAND)
+        .cloned()
+        .collect();
+    let turn_receipts = events
+        .iter()
+        .filter(|event| {
+            event_kind_u32(event) == KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+                && serde_json::from_str::<LifecycleReceipt>(&event.content)
+                    .map(|receipt| receipt.status.is_turn_stage())
+                    .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
     let name_revisions = events
         .iter()
         .filter(|event| {
@@ -536,6 +654,9 @@ fn group_and_project_session_context_events(
         executions,
         name_revisions,
         goal_revisions,
+        turn_commands,
+        turn_receipts,
+        allow_no_executions: request.allow_no_executions,
         coverage,
         generated_at: request.generated_at,
         limits: request.limits,
@@ -757,11 +878,6 @@ fn group_executions(
         }
         executions.push(ContextExecutionFacts { generations });
     }
-    if executions.is_empty() {
-        return Err(ContextProjectionError::InvalidFact(
-            "no successful create chain links this session and genesis".into(),
-        ));
-    }
     Ok(executions)
 }
 
@@ -896,12 +1012,13 @@ pub fn project_session_context(
         KIND_CODING_SESSION_GOAL,
     )?;
 
-    if input.executions.is_empty() {
+    if input.executions.is_empty() && !input.allow_no_executions {
         return Err(ContextProjectionError::InvalidFact(
             "at least one provider execution chain is required".into(),
         ));
     }
 
+    let mut seats: Vec<SeatFacts> = Vec::new();
     let mut candidates = Vec::new();
     let mut project_ref: Option<Option<String>> = None;
     let mut fallback_title: Option<String> = None;
@@ -915,9 +1032,19 @@ pub fn project_session_context(
             ));
         }
         let mut previous: Option<VerifiedGeneration> = None;
+        let last_index = execution.generations.len().saturating_sub(1);
         for (index, facts) in execution.generations.iter().enumerate() {
             let generation = verify_generation(input, &founder, &grants, previous.as_ref(), facts)?;
             let target_key = coding_session_target_key(&generation.target);
+            let mut seat = SeatFacts {
+                target: generation.target.clone(),
+                provider_authority: generation.provider_authority.clone(),
+                actor: generation.actor.clone(),
+                role: generation.role.clone(),
+                status: seat_status(generation.status, index < last_index),
+                last_signed_seq: None,
+                last_signed_at_ms: None,
+            };
             if !generation_targets.insert(target_key.clone()) {
                 return Err(ContextProjectionError::Conflict(format!(
                     "generation target {target_key} appears in more than one execution bundle"
@@ -953,8 +1080,16 @@ pub fn project_session_context(
                         key.0, key.1, candidate.item.event_id
                     )));
                 }
+                if seat
+                    .last_signed_seq
+                    .is_none_or(|seq| seq < candidate.item.event_seq)
+                {
+                    seat.last_signed_seq = Some(candidate.item.event_seq);
+                    seat.last_signed_at_ms = Some(candidate.timestamp_ms);
+                }
                 candidates.push(candidate);
             }
+            seats.push(seat);
             previous = Some(generation);
         }
     }
@@ -1012,6 +1147,32 @@ pub fn project_session_context(
         )?;
     }
 
+    let mut roster: Vec<CodingSessionContextRosterEntry> = seats
+        .iter()
+        .map(|seat| CodingSessionContextRosterEntry {
+            target: seat.target.clone(),
+            actor: seat.actor.clone(),
+            role: seat.actor.as_ref().and(seat.role.clone()),
+            status: seat.status,
+            last_signed_seq: seat.last_signed_seq,
+            last_signed_at_ms: seat.last_signed_at_ms,
+        })
+        .collect();
+    if roster.len() > MAX_CONTEXT_ROSTER_ENTRIES {
+        let dropped = roster.len() - MAX_CONTEXT_ROSTER_ENTRIES;
+        roster.drain(..dropped);
+        record_note(
+            &mut notes,
+            format!("Omitted {dropped} oldest roster seats to satisfy the roster bound"),
+        );
+    }
+
+    let inbox = project_inbox(input, &seats, &mut notes)?;
+    let inbox_events = inbox
+        .iter()
+        .map(|item| 1 + u64::from(item.stage.is_some()))
+        .sum();
+
     let identity = CodingSessionContextIdentity {
         session_ref: input.session_ref.clone(),
         genesis_ref: input.genesis_ref.clone(),
@@ -1023,7 +1184,8 @@ pub fn project_session_context(
         project_ref: project_ref.flatten(),
     };
 
-    let breakdown = source_event_breakdown(input);
+    let mut breakdown = source_event_breakdown(input);
+    breakdown.inbox_events = inbox_events;
 
     loop {
         // Built per iteration, not once before the loop: every pass drops one
@@ -1051,6 +1213,8 @@ pub fn project_session_context(
                 notes: iteration_notes,
             },
             history,
+            roster: roster.clone(),
+            inbox: inbox.clone(),
         };
         let encoded_len = serde_json::to_vec(&package)
             .map_err(|error| ContextProjectionError::InvalidFact(error.to_string()))?
@@ -1064,7 +1228,7 @@ pub fn project_session_context(
         history = package.history;
         if history.is_empty() {
             return Err(ContextProjectionError::Bound(format!(
-                "identity and provenance alone exceed {} package bytes",
+                "identity, provenance, roster and inbox alone exceed {} package bytes",
                 input.limits.max_package_bytes
             )));
         }
@@ -1075,6 +1239,249 @@ pub fn project_session_context(
             format!("Omitted {omitted} oldest verified history items to satisfy package bounds"),
         )?;
     }
+}
+
+/// One verified turn-stage receipt, reduced to what the inbox reports.
+struct StageFact {
+    status: ReceiptStatus,
+    created_at: u64,
+    code: Option<String>,
+}
+
+/// Project the umbrella's addressed 44220s, newest-bounded, oldest first.
+///
+/// Every candidate is verified against the same rules the provider itself
+/// applies before it will run a turn — exact kind, exact tag envelope, strict
+/// payload, and a target that is one of *this* umbrella's verified
+/// generations. A candidate that fails is skipped and counted in a provenance
+/// note, never allowed to fail the projection: an inbox is a convenience
+/// beside the history, and one malformed command signed by a stranger must not
+/// be able to deny every seat its context.
+///
+/// A command addressed at another umbrella is not "skipped" — it was never
+/// addressed here, and counting it would make every busy channel look like it
+/// was full of broken facts.
+fn project_inbox(
+    input: &ContextProjectionInput,
+    seats: &[SeatFacts],
+    notes: &mut Vec<String>,
+) -> Result<Vec<CodingSessionContextInboxItem>, ContextProjectionError> {
+    if seats.is_empty() || input.turn_commands.is_empty() {
+        return Ok(Vec::new());
+    }
+    let by_target: HashMap<String, &SeatFacts> = seats
+        .iter()
+        .map(|seat| (coding_session_target_key(&seat.target), seat))
+        .collect();
+    let mut roles: HashMap<&str, &str> = HashMap::new();
+    for seat in seats {
+        if let (Some(actor), Some(role)) = (seat.actor.as_deref(), seat.role.as_deref()) {
+            roles.insert(actor, role);
+        }
+    }
+    let stages = index_turn_stages(input);
+
+    let mut skipped = 0u64;
+    let mut items = Vec::new();
+    for event in &input.turn_commands {
+        match verify_inbox_command(event, input.channel_id, &by_target) {
+            Ok(Some(mut item)) => {
+                item.sender_role = roles
+                    .get(item.sender.as_str())
+                    .map(|role| (*role).to_owned());
+                let authority = by_target
+                    .get(&coding_session_target_key(&item.target))
+                    .map(|seat| seat.provider_authority.as_str())
+                    .unwrap_or_default();
+                if let Some(stage) = stages.get(&(item.command_id.clone(), authority.to_owned())) {
+                    item.stage = Some(stage.status);
+                    item.stage_at = Some(stage.created_at);
+                    item.stage_code = stage.code.clone();
+                }
+                items.push(item);
+            }
+            Ok(None) => {}
+            Err(_) => skipped += 1,
+        }
+    }
+    items.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+
+    let mut dropped = 0u64;
+    if items.len() > MAX_CONTEXT_INBOX_ITEMS {
+        dropped = (items.len() - MAX_CONTEXT_INBOX_ITEMS) as u64;
+        items.drain(..dropped as usize);
+    }
+    // Newest-first byte budget: the oldest addressed commands are the ones a
+    // seat is least likely to still owe an answer for.
+    let mut bytes = 0usize;
+    let mut kept_from = items.len();
+    for (index, item) in items.iter().enumerate().rev() {
+        let encoded = serde_json::to_vec(item)
+            .map_err(|error| ContextProjectionError::InvalidFact(error.to_string()))?
+            .len();
+        if bytes.saturating_add(encoded) > MAX_CONTEXT_INBOX_PROJECTION_BYTES {
+            break;
+        }
+        bytes += encoded;
+        kept_from = index;
+    }
+    dropped += kept_from as u64;
+    items.drain(..kept_from);
+
+    if dropped > 0 {
+        record_note(
+            notes,
+            format!("Omitted {dropped} oldest addressed turn commands to satisfy the inbox bound"),
+        );
+    }
+    if skipped > 0 {
+        record_note(
+            notes,
+            format!(
+                "Skipped {skipped} unverifiable turn commands addressed to this session's executions"
+            ),
+        );
+    }
+    Ok(items)
+}
+
+/// Index the newest verified stage per `(commandId, provider authority)`.
+///
+/// Keyed by the signer as well as the command because a turn receipt is only
+/// evidence about the execution whose provider authority signed it: another
+/// provider's receipt naming the same `commandId` is not this seat's answer.
+fn index_turn_stages(input: &ContextProjectionInput) -> HashMap<(String, String), StageFact> {
+    let mut stages: HashMap<(String, String), StageFact> = HashMap::new();
+    for event in &input.turn_receipts {
+        if event_kind_u32(event) != KIND_CODING_SESSION_LIFECYCLE_RECEIPT
+            || event.content.len() > MAX_LIFECYCLE_RECEIPT_CONTENT_BYTES
+        {
+            continue;
+        }
+        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(&event.content) else {
+            continue;
+        };
+        if receipt.schema != LIFECYCLE_RECEIPT_SCHEMA || !receipt.status.is_turn_stage() {
+            continue;
+        }
+        if tag_value(event, "csl-command").as_deref() != Some(receipt.command_id.as_str()) {
+            continue;
+        }
+        if require_exact_tags(
+            event,
+            &[
+                ("h", input.channel_id.to_string()),
+                (
+                    "cslr-v",
+                    CODING_SESSION_LIFECYCLE_RECEIPT_TAG_VERSION.into(),
+                ),
+                ("csl-command", receipt.command_id.clone()),
+                (
+                    "csl-key",
+                    coding_session_turn_receipt_semantic_key(&receipt.command_id, receipt.status),
+                ),
+            ],
+            "turn receipt",
+        )
+        .is_err()
+        {
+            continue;
+        }
+        if verify_signed(event, "turn receipt").is_err() {
+            continue;
+        }
+        let created_at = event.created_at.as_secs();
+        let key = (receipt.command_id.clone(), event.pubkey.to_hex());
+        let newer = stages
+            .get(&key)
+            .is_none_or(|existing| created_at >= existing.created_at);
+        if newer {
+            let code = receipt
+                .error
+                .as_ref()
+                .map(|error| sanitize_coding_session_context_text(&error.code))
+                .filter(|code| !code.trim().is_empty() && code.len() <= MAX_IDENTIFIER_BYTES);
+            stages.insert(
+                key,
+                StageFact {
+                    status: receipt.status,
+                    created_at,
+                    code,
+                },
+            );
+        }
+    }
+    stages
+}
+
+/// Verify one candidate 44220 against this umbrella's seats.
+///
+/// `Ok(None)` means "not addressed here, and not this projection's business":
+/// another umbrella's target, or an interrupt, which carries no words for a
+/// seat to read.
+fn verify_inbox_command(
+    event: &Event,
+    channel_id: Uuid,
+    by_target: &HashMap<String, &SeatFacts>,
+) -> Result<Option<CodingSessionContextInboxItem>, ContextProjectionError> {
+    if event_kind_u32(event) != KIND_CODING_SESSION_COMMAND {
+        return Ok(None);
+    }
+    if event.content.len() > MAX_COMMAND_CONTENT_BYTES {
+        return Err(ContextProjectionError::Bound(
+            "turn command content exceeds the projection bound".into(),
+        ));
+    }
+    let Ok(payload) = serde_json::from_str::<CodingSessionCommandPayload>(&event.content) else {
+        // Undecodable content cannot name a target, so it cannot be shown to
+        // be addressed here. Silent, for the same reason a foreign target is.
+        return Ok(None);
+    };
+    let target_key = coding_session_target_key(&payload.target);
+    if !by_target.contains_key(&target_key) {
+        return Ok(None);
+    }
+    // Everything below is a fact about *this* umbrella, so a failure is a
+    // skip this projection has to disclose.
+    payload
+        .validate()
+        .map_err(ContextProjectionError::InvalidFact)?;
+    require_exact_tags(
+        event,
+        &[
+            ("h", channel_id.to_string()),
+            ("cs-v", CODING_SESSION_COMMAND_TAG_VERSION.into()),
+            ("cs-target", target_key),
+        ],
+        "turn command",
+    )?;
+    let CodingSessionAction::ThreadTurnStart { text, deliver } = &payload.action else {
+        return Ok(None);
+    };
+    verify_signed(event, "turn command")?;
+    let content = sanitize_coding_session_context_text(text);
+    if content.trim().is_empty() || content.len() > MAX_CONTEXT_INBOX_CONTENT_BYTES {
+        return Err(ContextProjectionError::Bound(
+            "turn command text does not fit the inbox after redaction".into(),
+        ));
+    }
+    Ok(Some(CodingSessionContextInboxItem {
+        event_id: event.id.to_hex(),
+        created_at: event.created_at.as_secs(),
+        command_id: payload.command_id.clone(),
+        sender: event.pubkey.to_hex(),
+        sender_role: None,
+        target: payload.target.clone(),
+        delivery: deliver.as_str().to_owned(),
+        content,
+        stage: None,
+        stage_at: None,
+        stage_code: None,
+    }))
 }
 
 fn record_omission_note(
@@ -1165,6 +1572,9 @@ fn source_event_breakdown(input: &ContextProjectionInput) -> CodingSessionContex
         transcript_events: generations()
             .map(|generation| generation.transcript.len() as u64)
             .sum(),
+        // Filled in by the caller once the inbox is projected: the count is a
+        // property of what was *retained*, not of what was fetched.
+        inbox_events: 0,
     }
 }
 
@@ -1200,7 +1610,14 @@ fn source_delta_note(
 }
 
 fn validate_source_bound(input: &ContextProjectionInput) -> Result<(), ContextProjectionError> {
-    let count = source_event_count(input);
+    // Inbox candidates are counted here but not in the provenance breakdown:
+    // the bound is about what this call has to *examine*, while the breakdown
+    // reports what the package *retained*. Conflating them would either let
+    // unbounded candidates through the guard or make `sourceEventCount`
+    // describe events the package does not carry.
+    let count = source_event_count(input)
+        .saturating_add(input.turn_commands.len())
+        .saturating_add(input.turn_receipts.len());
     if count > MAX_CONTEXT_SOURCE_EVENTS {
         return Err(ContextProjectionError::Bound(format!(
             "source has {count} events, max {MAX_CONTEXT_SOURCE_EVENTS}"
@@ -1230,6 +1647,8 @@ fn all_events(input: &ContextProjectionInput) -> impl Iterator<Item = &Event> {
         )
         .chain(input.name_revisions.iter())
         .chain(input.goal_revisions.iter())
+        .chain(input.turn_commands.iter())
+        .chain(input.turn_receipts.iter())
         .chain(input.executions.iter().flat_map(|execution| {
             execution.generations.iter().flat_map(|generation| {
                 [
@@ -1482,6 +1901,9 @@ fn verify_generation(
         provider_authority,
         provider_instance_ref,
         project_ref,
+        actor: metadata.agent_ref.clone(),
+        role: metadata.role.clone(),
+        status: metadata.status,
         title: metadata.title.or(title),
     })
 }
@@ -1787,6 +2209,8 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Timestamp};
 
+    use buzz_core::coding_session_command::CodingSessionDelivery;
+    use buzz_core::coding_session_context::CodingSessionContextSeatStatus;
     use buzz_core::coding_session_genesis::CodingSessionGenesisPayload;
     use buzz_core::coding_session_lifecycle_command::{
         CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
@@ -1804,9 +2228,17 @@ mod tests {
     struct Fixture {
         input: ContextProjectionInput,
         provider: Keys,
+        target: CodingSessionTarget,
     }
 
     fn fixture(items: usize) -> Fixture {
+        fixture_seated(items, None)
+    }
+
+    /// The same fixture, optionally with an agent seated on the one
+    /// generation: `(actor pubkey, role slug)`, exactly as a create's `actor`
+    /// and `role` would reach the generation's 44223.
+    fn fixture_seated(items: usize, seat: Option<(&str, &str)>) -> Fixture {
         let founder = Keys::generate();
         let provider = Keys::generate();
         let relay = Keys::generate();
@@ -1832,8 +2264,8 @@ mod tests {
                 model: Some("default".into()),
                 title: Some("Rehydrate me".into()),
                 initial_turn: None,
-                actor: None,
-                role: None,
+                actor: seat.map(|(actor, _)| actor.to_owned()),
+                role: seat.map(|(_, role)| role.to_owned()),
             },
         };
         let create_event = build_coding_session_lifecycle_command(channel_id, &create)
@@ -1862,8 +2294,8 @@ mod tests {
             project_ref: None,
             repo_ref: None,
             title: Some("Rehydrate me".into()),
-            agent_ref: None,
-            role: None,
+            agent_ref: seat.map(|(actor, _)| actor.to_owned()),
+            role: seat.map(|(_, role)| role.to_owned()),
             provider: Some("codex-primary".into()),
             runtime: Some("codex".into()),
             model: Some("default".into()),
@@ -1910,6 +2342,9 @@ mod tests {
             .collect();
         Fixture {
             input: ContextProjectionInput {
+                turn_commands: Vec::new(),
+                turn_receipts: Vec::new(),
+                allow_no_executions: false,
                 channel_id,
                 session_ref: SESSION_REF.into(),
                 genesis_ref,
@@ -1935,7 +2370,247 @@ mod tests {
                 limits: ContextProjectionLimits::default(),
             },
             provider,
+            target,
         }
+    }
+
+    fn turn_command(
+        channel_id: Uuid,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        text: &str,
+        deliver: CodingSessionDelivery,
+        created_at: u64,
+        signer: &Keys,
+    ) -> Event {
+        let payload = CodingSessionCommandPayload {
+            schema: buzz_core::coding_session_command::CODING_SESSION_COMMAND_SCHEMA.into(),
+            command_id: command_id.into(),
+            target: target.clone(),
+            action: CodingSessionAction::ThreadTurnStart {
+                text: text.into(),
+                deliver,
+            },
+        };
+        buzz_sdk::builders::build_coding_session_command(channel_id, &payload)
+            .unwrap()
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .sign_with_keys(signer)
+            .unwrap()
+    }
+
+    fn turn_stage(
+        channel_id: Uuid,
+        receipt: LifecycleReceipt,
+        created_at: u64,
+        provider: &Keys,
+    ) -> Event {
+        let content = serde_json::to_string(&receipt).unwrap();
+        build_coding_session_turn_receipt(channel_id, &receipt.command_id, receipt.status, &content)
+            .unwrap()
+            .custom_created_at(Timestamp::from_secs(created_at))
+            .sign_with_keys(provider)
+            .unwrap()
+    }
+
+    /// The roster is the read side of "a seat can see its siblings": every
+    /// verified generation appears, with who sits on it and how far its signed
+    /// transcript has got. A seat that is missing from the roster is a seat
+    /// nobody can address.
+    #[test]
+    fn the_roster_names_every_seat_with_its_last_signed_sequence() {
+        let actor = "ab".repeat(32);
+        let fixture = fixture_seated(4, Some((&actor, "builder")));
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert_eq!(package.roster.len(), 1);
+        let seat = &package.roster[0];
+        assert_eq!(seat.target, fixture.target);
+        assert_eq!(seat.actor.as_deref(), Some(actor.as_str()));
+        assert_eq!(seat.role.as_deref(), Some("builder"));
+        assert_eq!(seat.status, CodingSessionContextSeatStatus::Active);
+        assert_eq!(
+            seat.last_signed_seq,
+            Some(4),
+            "the roster reports the newest sequence this seat signed"
+        );
+        assert_eq!(seat.last_signed_at_ms, Some(4_000));
+
+        // A human-created execution is on the roster too, with no seat.
+        let human = fixture_seated(2, None);
+        let unseated = project_session_context(&human.input).unwrap();
+        assert_eq!(unseated.roster.len(), 1);
+        assert_eq!(unseated.roster[0].actor, None);
+        assert_eq!(unseated.roster[0].role, None);
+        assert_eq!(unseated.roster[0].last_signed_seq, Some(2));
+    }
+
+    /// A seat that has never signed anything still appears, and says so with
+    /// nulls rather than a fabricated sequence.
+    #[test]
+    fn a_silent_seat_is_on_the_roster_with_no_last_signed_sequence() {
+        let package = project_session_context(&fixture(0).input).unwrap();
+        assert_eq!(package.roster.len(), 1);
+        assert_eq!(package.roster[0].last_signed_seq, None);
+        assert_eq!(package.roster[0].last_signed_at_ms, None);
+    }
+
+    /// The inbox carries the commands addressed to this umbrella's executions,
+    /// each with the newest stage its provider actually published — and
+    /// nothing addressed anywhere else.
+    #[test]
+    fn the_inbox_carries_addressed_commands_with_their_newest_stage() {
+        let actor = "ab".repeat(32);
+        let sender = Keys::generate();
+        let mut fixture = fixture_seated(2, Some((&actor, "builder")));
+        let channel_id = fixture.input.channel_id;
+        let foreign = CodingSessionTarget {
+            session_id: "someone-elses-session".into(),
+            ..fixture.target.clone()
+        };
+        fixture.input.turn_commands = vec![
+            turn_command(
+                channel_id,
+                "turn-1",
+                &fixture.target,
+                "look at the failing test",
+                CodingSessionDelivery::Boundary,
+                100,
+                &sender,
+            ),
+            turn_command(
+                channel_id,
+                "turn-2",
+                &foreign,
+                "not your mail",
+                CodingSessionDelivery::Steer,
+                101,
+                &sender,
+            ),
+        ];
+        fixture.input.turn_receipts = vec![
+            turn_stage(
+                channel_id,
+                LifecycleReceipt::turn_queued("turn-1", &fixture.target),
+                110,
+                &fixture.provider,
+            ),
+            turn_stage(
+                channel_id,
+                LifecycleReceipt::turn_started("turn-1", &fixture.target, "t-1"),
+                120,
+                &fixture.provider,
+            ),
+        ];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert_eq!(
+            package.inbox.len(),
+            1,
+            "only commands addressed to a verified generation of this session are carried"
+        );
+        let item = &package.inbox[0];
+        assert_eq!(item.command_id, "turn-1");
+        assert_eq!(item.target, fixture.target);
+        assert_eq!(item.sender, sender.public_key().to_hex());
+        assert_eq!(item.delivery, "boundary");
+        assert_eq!(item.content, "look at the failing test");
+        assert_eq!(
+            item.stage,
+            Some(ReceiptStatus::TurnStarted),
+            "the newest stage wins: queued then started means started"
+        );
+        assert_eq!(item.stage_at, Some(120));
+        assert_eq!(item.stage_code, None);
+
+        // The breakdown accounts for what the inbox retained: one command plus
+        // the one receipt that named its stage.
+        let breakdown = package.provenance.source_event_breakdown.clone().unwrap();
+        assert_eq!(breakdown.inbox_events, 2);
+        assert_eq!(breakdown.total(), package.provenance.source_event_count);
+    }
+
+    /// A command from a seated sibling is labelled with that sibling's role,
+    /// resolved from the roster rather than from anything the command claimed.
+    #[test]
+    fn an_inbox_item_from_a_seated_sibling_carries_its_role() {
+        let sender = Keys::generate();
+        let actor = sender.public_key().to_hex();
+        let mut fixture = fixture_seated(1, Some((&actor, "lead")));
+        let channel_id = fixture.input.channel_id;
+        fixture.input.turn_commands = vec![turn_command(
+            channel_id,
+            "turn-1",
+            &fixture.target,
+            "status?",
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        )];
+        let package = project_session_context(&fixture.input).unwrap();
+        assert_eq!(package.inbox[0].sender_role.as_deref(), Some("lead"));
+        assert_eq!(package.inbox[0].stage, None, "no receipt, no claimed stage");
+    }
+
+    /// A command addressed here that does not verify is skipped and *said* to
+    /// be skipped; it never fails the projection, because one stranger's
+    /// malformed command must not deny every seat its context.
+    #[test]
+    fn an_unverifiable_addressed_command_is_skipped_and_disclosed() {
+        let mut fixture = fixture(1);
+        let channel_id = fixture.input.channel_id;
+        let sender = Keys::generate();
+        let mut tampered = turn_command(
+            channel_id,
+            "turn-1",
+            &fixture.target,
+            "trust me",
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        );
+        tampered.tags = nostr::Tags::new();
+        fixture.input.turn_commands = vec![tampered];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        assert!(package.inbox.is_empty());
+        assert!(
+            package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("Skipped 1 unverifiable turn commands")),
+            "the skip must be disclosed: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    /// An umbrella with no proved create chain is an error for every caller
+    /// that wants prior context, and an honestly empty package for the one
+    /// caller that asked for the first-execution case.
+    #[test]
+    fn an_umbrella_with_no_execution_is_empty_only_when_the_caller_allows_it() {
+        let mut fixture = fixture(1);
+        fixture.input.executions = Vec::new();
+        fixture.input.coverage.total_history_items = Some(0);
+        let error = project_session_context(&fixture.input).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("at least one provider execution"),
+            "{error}"
+        );
+
+        fixture.input.allow_no_executions = true;
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        assert!(package.history.is_empty());
+        assert!(package.roster.is_empty());
+        assert!(package.inbox.is_empty());
+        assert_eq!(package.session.genesis_ref, fixture.input.genesis_ref);
     }
 
     #[test]
@@ -1974,7 +2649,8 @@ mod tests {
         };
 
         for (seq, operator) in [(1u64, None), (2u64, Some("d".repeat(64)))] {
-            let item = crate::payload::user_prompt_item("go", false, operator.as_deref(), None);
+            let item =
+                crate::payload::user_prompt_item("go", false, operator.as_deref(), None, None);
             let envelope =
                 TranscriptEnvelope::new(&target, seq, seq as i64 * 1_000, Some("turn-1"), item);
             let content = serde_json::to_string(&envelope).unwrap();
@@ -2060,6 +2736,7 @@ mod tests {
         ];
         events.extend(generation.transcript.iter().cloned());
         let request = ContextProjectionRequest {
+            allow_no_executions: false,
             channel_id: fixture.input.channel_id,
             session_ref: fixture.input.session_ref.clone(),
             genesis_ref: fixture.input.genesis_ref.clone(),
@@ -2117,6 +2794,7 @@ mod tests {
         }
         events.extend(generation.transcript.iter().cloned());
         let request = ContextProjectionRequest {
+            allow_no_executions: false,
             channel_id: fixture.input.channel_id,
             session_ref: fixture.input.session_ref.clone(),
             genesis_ref: fixture.input.genesis_ref.clone(),
@@ -2150,8 +2828,10 @@ mod tests {
     /// relay page of it no longer reaches that channel's creates — and a
     /// single-page read turns that into a hard `Bound` refusal, i.e. every
     /// later create/resume in a busy channel silently loses its verified
-    /// context. The partition is paged now, and turn receipts never enter the
-    /// fact set at all.
+    /// context. The partition is paged now, so the create is reached however
+    /// much turn traffic sits in front of it — and the turn receipts are kept
+    /// as well, because the package inbox reports the stage each command
+    /// reached and cannot do that from receipts it never saw.
     #[tokio::test]
     async fn a_receipt_partition_of_turn_traffic_still_yields_the_lifecycle_receipt() {
         let provider = Keys::generate();
@@ -2208,23 +2888,25 @@ mod tests {
                 .unwrap(),
         );
 
-        let clamped =
-            collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 1, |until| {
-                let rows = receipt_page(&partition, until, 2);
-                async move { Ok(rows) }
-            })
-            .await
-            .unwrap();
+        let clamped = collect_kind_partition(2, 1, |until| {
+            let rows = receipt_page(&partition, until, 2);
+            async move { Ok(rows) }
+        })
+        .await
+        .unwrap();
         assert!(
             clamped.saturated,
             "one page of a turn-dominated receipt partition is not the whole partition"
         );
         assert!(
-            clamped.events.is_empty(),
+            clamped
+                .events
+                .iter()
+                .all(|event| tag_value(event, "csl-command").as_deref() != Some("create-1")),
             "the newest page of that partition holds no lifecycle receipt at all"
         );
 
-        let paged = collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 8, |until| {
+        let paged = collect_kind_partition(2, 8, |until| {
             let rows = receipt_page(&partition, until, 2);
             async move { Ok(rows) }
         })
@@ -2236,13 +2918,26 @@ mod tests {
         );
         assert_eq!(
             paged.events.len(),
-            1,
-            "only the lifecycle receipt is a projection fact"
+            5,
+            "every receipt in the partition is retained: the create chain's and the turn stages the inbox reports"
         );
-        assert_eq!(
-            tag_value(&paged.events[0], "csl-command").as_deref(),
-            Some("create-1")
+        assert!(
+            paged
+                .events
+                .iter()
+                .any(|event| tag_value(event, "csl-command").as_deref() == Some("create-1")),
+            "the paged walk must still reach the lifecycle receipt behind the turn traffic"
         );
+        let turn_stages = paged
+            .events
+            .iter()
+            .filter(|event| {
+                serde_json::from_str::<LifecycleReceipt>(&event.content)
+                    .map(|receipt| receipt.status.is_turn_stage())
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(turn_stages, 4, "the turn stages are kept for the inbox");
     }
 
     /// A page's worth of events sharing one second cannot advance a
@@ -2271,13 +2966,12 @@ mod tests {
             );
         }
 
-        let collected =
-            collect_kind_partition(KIND_CODING_SESSION_LIFECYCLE_RECEIPT, 2, 8, |until| {
-                let rows = receipt_page(&partition, until, 2);
-                async move { Ok(rows) }
-            })
-            .await
-            .unwrap();
+        let collected = collect_kind_partition(2, 8, |until| {
+            let rows = receipt_page(&partition, until, 2);
+            async move { Ok(rows) }
+        })
+        .await
+        .unwrap();
         assert!(collected.saturated);
         assert_eq!(collected.events.len(), 2);
     }
@@ -2294,6 +2988,7 @@ mod tests {
         ];
         events.extend(generation.transcript.iter().cloned());
         let request = ContextProjectionRequest {
+            allow_no_executions: false,
             channel_id: fixture.input.channel_id,
             session_ref: fixture.input.session_ref.clone(),
             genesis_ref: fixture.input.genesis_ref.clone(),
@@ -2503,6 +3198,7 @@ mod tests {
         // A source whose count already equals the history counts has nothing to
         // reconcile, and says nothing.
         let reconciled = CodingSessionContextSourceBreakdown {
+            inbox_events: 0,
             genesis_events: 0,
             authority_link_events: 0,
             name_revision_events: 0,

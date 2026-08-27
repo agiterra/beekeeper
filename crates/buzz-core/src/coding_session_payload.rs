@@ -1204,18 +1204,27 @@ pub fn status_item_with_reason(status: &str, reason: Option<&str>) -> serde_json
 /// Without it a consumer has to settle a pending turn by matching prompt text,
 /// which cannot tell two identical prompts apart.
 ///
-/// Both keys are **additive and optional**: `operatorPubkey` is emitted only
-/// for a well-formed 64-character lowercase-hex pubkey, `commandId` only for a
-/// nonblank, control-free identifier within
-/// [`MAX_IDENTIFIER_BYTES`](crate::coding_session_command::MAX_IDENTIFIER_BYTES).
-/// Anything else is omitted entirely rather than sent as `null`, which would
-/// claim the provider observed an absence. Items published before either field
-/// existed stay valid everywhere.
+/// `sender_role` is the crew role slug the signer held on its own seat in this
+/// umbrella at the moment the turn was delivered — `null` for the founder and
+/// for any operator who holds no seat. It is what lets a reader say *lead
+/// asked for this* without joining the prompt back to a roster it may no
+/// longer be able to fetch. It describes the **sender**, never the execution
+/// running the turn: that seat's role is in its own 44223 metadata.
+///
+/// All three keys are **additive and optional**: `operatorPubkey` is emitted
+/// only for a well-formed 64-character lowercase-hex pubkey, `commandId` only
+/// for a nonblank, control-free identifier within
+/// [`MAX_IDENTIFIER_BYTES`](crate::coding_session_command::MAX_IDENTIFIER_BYTES),
+/// and `senderRole` only for a valid role slug. Anything else is omitted
+/// entirely rather than sent as `null`, which would claim the provider
+/// observed an absence. Items published before any of these fields existed
+/// stay valid everywhere.
 pub fn user_prompt_item(
     content: &str,
     steered: bool,
     operator_pubkey: Option<&str>,
     command_id: Option<&str>,
+    sender_role: Option<&str>,
 ) -> serde_json::Value {
     let mut item =
         serde_json::json!({ "kind": "user_prompt", "content": content, "steered": steered });
@@ -1233,6 +1242,11 @@ pub fn user_prompt_item(
     if let Some(command_id) = command_id {
         if is_wire_identifier(command_id) {
             object.insert("commandId".into(), serde_json::json!(command_id));
+        }
+    }
+    if let Some(role) = sender_role {
+        if crate::coding_session_lifecycle_command::validate_role_slug(role).is_ok() {
+            object.insert("senderRole".into(), serde_json::json!(role));
         }
     }
     item
@@ -1848,11 +1862,11 @@ mod tests {
     /// the three keys every existing consumer already reads.
     #[test]
     fn user_prompt_carries_the_operator_only_when_one_was_witnessed() {
-        let unattributed = user_prompt_item("go", false, None, None);
+        let unattributed = user_prompt_item("go", false, None, None, None);
         assert_eq!(keys(&unattributed), sorted(&["kind", "content", "steered"]));
 
         let operator = "a".repeat(64);
-        let attributed = user_prompt_item("go", true, Some(&operator), None);
+        let attributed = user_prompt_item("go", true, Some(&operator), None, None);
         assert_eq!(
             keys(&attributed),
             sorted(&["kind", "content", "steered", "operatorPubkey"])
@@ -1873,7 +1887,7 @@ mod tests {
             &"A".repeat(64),
             &format!("{}{}", "z", "a".repeat(63)),
         ] {
-            let item = user_prompt_item("go", false, Some(bad), None);
+            let item = user_prompt_item("go", false, Some(bad), None, None);
             assert!(
                 item.get("operatorPubkey").is_none(),
                 "{bad:?} must not be published as an operator"
@@ -1958,7 +1972,7 @@ mod tests {
     /// id instead of by matching prompt text.
     #[test]
     fn user_prompt_carries_the_command_that_started_the_turn() {
-        let joined = user_prompt_item("go", false, None, Some("turn-1"));
+        let joined = user_prompt_item("go", false, None, Some("turn-1"), None);
         assert_eq!(
             keys(&joined),
             sorted(&["kind", "content", "steered", "commandId"])
@@ -1966,7 +1980,7 @@ mod tests {
         assert_eq!(joined["commandId"], "turn-1");
 
         let operator = "a".repeat(64);
-        let both = user_prompt_item("go", true, Some(&operator), Some("turn-2"));
+        let both = user_prompt_item("go", true, Some(&operator), Some("turn-2"), None);
         assert_eq!(
             keys(&both),
             sorted(&["kind", "content", "steered", "operatorPubkey", "commandId"])
@@ -1979,7 +1993,7 @@ mod tests {
     #[test]
     fn user_prompt_omits_a_command_that_is_absent_or_unbounded() {
         assert_eq!(
-            keys(&user_prompt_item("go", false, None, None)),
+            keys(&user_prompt_item("go", false, None, None, None)),
             sorted(&["kind", "content", "steered"])
         );
         for bad in [
@@ -1988,7 +2002,7 @@ mod tests {
             "with\u{1}control",
             &"c".repeat(crate::coding_session_command::MAX_IDENTIFIER_BYTES + 1),
         ] {
-            let item = user_prompt_item("go", false, None, Some(bad));
+            let item = user_prompt_item("go", false, None, Some(bad), None);
             assert!(
                 item.get("commandId").is_none(),
                 "{bad:?} must not be published as a commandId"

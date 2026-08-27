@@ -20,7 +20,7 @@ use buzz_core::coding_session_command::{coding_session_target_key, CodingSession
 use buzz_core::coding_session_context::{
     coding_session_first_turn_brief, CodingSessionContextHistoryItem, CodingSessionContextPackage,
     CodingSessionContextProvenance, CodingSessionContextRole, MAX_CONTEXT_HISTORY_CONTENT_BYTES,
-    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
+    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_INBOX_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
 };
 use rmcp::ErrorData;
 use schemars::JsonSchema;
@@ -35,11 +35,21 @@ pub const SESSION_CONTEXT_PACKAGE_ENV: &str = "BUZZ_SESSION_CONTEXT_PACKAGE";
 /// write a newer verified generation into this directory while the session
 /// runs, and this server serves the newest generation it can fully validate.
 pub const SESSION_CONTEXT_PACKAGE_DIR_ENV: &str = "BUZZ_SESSION_CONTEXT_PACKAGE_DIR";
+/// Launcher-only `cs-target` key of the execution this server serves.
+///
+/// A public wire identity, not a credential: every event that execution
+/// publishes already carries it. Without it `session_inbox` cannot tell which
+/// of the umbrella's commands were addressed to *this* seat, and says so
+/// rather than paging a sibling's mail.
+pub const SESSION_CONTEXT_SELF_TARGET_ENV: &str = "BUZZ_SESSION_CONTEXT_SELF_TARGET";
 
 const DEFAULT_HISTORY_LIMIT: usize = 200;
 /// The package ceiling itself, imported rather than restated, so the page cap
 /// and the package cap can never drift apart again.
 const MAX_HISTORY_LIMIT: usize = MAX_CONTEXT_HISTORY_ITEMS;
+const DEFAULT_INBOX_LIMIT: usize = 50;
+/// The package's own inbox ceiling, imported rather than restated.
+const MAX_INBOX_LIMIT: usize = MAX_CONTEXT_INBOX_ITEMS;
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_LIMIT: usize = 200;
 const MAX_SEARCH_QUERY_BYTES: usize = 256;
@@ -98,6 +108,19 @@ pub struct SessionHistoryParams {
     pub limit: Option<usize>,
 }
 
+/// Pagination arguments for this execution's verified command inbox.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionInboxParams {
+    /// Cursor: the signed source event id of the last command already read.
+    /// The page starts at the command after it.
+    #[serde(default)]
+    pub since: Option<String>,
+    /// Number of commands to return. Defaults to 50; maximum 256.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 /// Search arguments for verified session history.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -152,6 +175,8 @@ pub(crate) struct SessionContextState {
     loaded: RwLock<LoadedPackage>,
     /// Launcher-chosen generation directory, absent in legacy single-file mode.
     dir: Option<PathBuf>,
+    /// The `cs-target` key this server serves, when the launcher named one.
+    self_target: Option<String>,
     /// Generation named by the previous response this server rendered.
     ///
     /// rmcp dispatches every inbound request on its own task, and agents issue
@@ -204,6 +229,7 @@ impl SessionContextState {
                     return Ok(Self {
                         loaded: RwLock::new(LoadedPackage::new(seq, package)),
                         dir: Some(dir.to_path_buf()),
+                        self_target: self_target_from_env(),
                         last_reported_seq: AtomicU64::new(seq),
                     })
                 }
@@ -228,6 +254,7 @@ impl SessionContextState {
         Ok(Self {
             loaded: RwLock::new(LoadedPackage::new(0, load_package(path)?)),
             dir: None,
+            self_target: self_target_from_env(),
             last_reported_seq: AtomicU64::new(0),
         })
     }
@@ -431,6 +458,21 @@ impl SessionContextState {
         Self {
             loaded: RwLock::new(LoadedPackage::new(0, package)),
             dir: None,
+            self_target: None,
+            last_reported_seq: AtomicU64::new(0),
+        }
+    }
+
+    /// The same, for a server the launcher told which execution it serves.
+    ///
+    /// The env variable itself is read once at construction and is not safe to
+    /// set from a threaded test runner, so tests inject the resolved value.
+    #[cfg(test)]
+    fn from_package_serving(package: CodingSessionContextPackage, self_target: &str) -> Self {
+        Self {
+            loaded: RwLock::new(LoadedPackage::new(0, package)),
+            dir: None,
+            self_target: Some(self_target.to_owned()),
             last_reported_seq: AtomicU64::new(0),
         }
     }
@@ -450,6 +492,116 @@ impl SessionContextState {
         );
         response.insert("availableHistoryItems".into(), json!(package.history.len()));
         response.insert("historyByRole".into(), json!(history_by_role));
+        response.insert("selfTarget".into(), json!(self.self_target));
+        response.insert(
+            "roster".into(),
+            json!(roster_view(package, self.self_target.as_deref())),
+        );
+        response.insert("rosterSemantics".into(), roster_semantics());
+        response.insert(
+            "availableInboxItems".into(),
+            json!(self.inbox_items(package).len()),
+        );
+        render(Value::Object(response))
+    }
+
+    /// The umbrella's addressed commands that this execution is the target of.
+    ///
+    /// An empty slice when the launcher named no self target: without it there
+    /// is no honest way to tell this seat's mail from a sibling's, and showing
+    /// a sibling's would be exactly the cross-execution leak the package
+    /// bounds exist to prevent. The refusal is disclosed in the response, not
+    /// silently rendered as "no mail".
+    fn inbox_items<'a>(
+        &self,
+        package: &'a CodingSessionContextPackage,
+    ) -> Vec<&'a buzz_core::coding_session_context::CodingSessionContextInboxItem> {
+        let Some(self_target) = self.self_target.as_deref() else {
+            return Vec::new();
+        };
+        package
+            .inbox
+            .iter()
+            .filter(|item| coding_session_target_key(&item.target) == self_target)
+            .collect()
+    }
+
+    pub(crate) fn inbox(&self, params: SessionInboxParams) -> Result<String, ErrorData> {
+        let (loaded, refresh) = self.serve();
+        let limit = bounded_limit(
+            params.limit,
+            DEFAULT_INBOX_LIMIT,
+            MAX_INBOX_LIMIT,
+            "session_inbox",
+        )?;
+        let items = self.inbox_items(&loaded.package);
+        let total = items.len();
+
+        let start = match params.since.as_deref() {
+            Some(cursor) => match items.iter().position(|item| item.event_id == cursor) {
+                Some(offset) => offset.saturating_add(1).min(total),
+                None => {
+                    let mut response = base_response(&loaded, &refresh);
+                    response.insert("selfTarget".into(), json!(self.self_target));
+                    response.insert(
+                        "scope".into(),
+                        json!(match self.self_target {
+                            Some(_) => "commands_addressed_to_this_execution",
+                            None => "unavailable_no_self_target",
+                        }),
+                    );
+                    response.insert("limit".into(), json!(limit));
+                    response.insert("returned".into(), json!(0));
+                    response.insert("availableInboxItems".into(), json!(total));
+                    response.insert("stoppedBy".into(), json!("cursorMiss"));
+                    response.insert("cursorResolution".into(), json!("not_in_package"));
+                    response.insert("nextCursor".into(), Value::Null);
+                    response.insert("items".into(), json!([]));
+                    return render(Value::Object(response));
+                }
+            },
+            None => 0,
+        };
+        let page: Vec<Value> = items[start..]
+            .iter()
+            .take(limit)
+            .map(|item| json!(item))
+            .collect();
+        let end = start.saturating_add(page.len());
+
+        let mut response = base_response(&loaded, &refresh);
+        response.insert("selfTarget".into(), json!(self.self_target));
+        response.insert(
+            "scope".into(),
+            json!(match self.self_target {
+                Some(_) => "commands_addressed_to_this_execution",
+                None => "unavailable_no_self_target",
+            }),
+        );
+        response.insert("offset".into(), json!(start));
+        response.insert("limit".into(), json!(limit));
+        response.insert("returned".into(), json!(page.len()));
+        response.insert("availableInboxItems".into(), json!(total));
+        response.insert(
+            "stoppedBy".into(),
+            json!(if end >= total { "end" } else { "limit" }),
+        );
+        response.insert(
+            "cursorResolution".into(),
+            match params.since {
+                Some(_) => json!("resolved"),
+                None => Value::Null,
+            },
+        );
+        response.insert(
+            "nextCursor".into(),
+            json!((end < total)
+                .then(|| items.get(end.saturating_sub(1)))
+                .flatten()
+                .map(|item| item.event_id.clone())),
+        );
+        response.insert("inboxSemantics".into(), inbox_semantics());
+        response.insert("items".into(), json!(page));
         render(Value::Object(response))
     }
 
@@ -653,6 +805,68 @@ fn base_response(
     response.insert("provenanceSemantics".into(), provenance_semantics());
     response.insert("staleness".into(), staleness(&loaded.package.provenance));
     response
+}
+
+/// The `cs-target` key the launcher named for this server, when it named one.
+///
+/// Read once at construction, like every other launcher-only input: a tool
+/// call cannot redirect the server at another execution's mail.
+fn self_target_from_env() -> Option<String> {
+    std::env::var(SESSION_CONTEXT_SELF_TARGET_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+/// The roster, with the seat this server serves marked.
+///
+/// `isSelf` is computed here rather than left to the reader: an agent that has
+/// to guess which row is itself will sooner or later address a message to
+/// itself and wait for an answer that cannot come.
+fn roster_view(package: &CodingSessionContextPackage, self_target: Option<&str>) -> Vec<Value> {
+    package
+        .roster
+        .iter()
+        .map(|entry| {
+            let target_key = coding_session_target_key(&entry.target);
+            let is_self = self_target.is_some_and(|value| value == target_key);
+            json!({
+                "target": entry.target,
+                "targetKey": target_key,
+                "isSelf": is_self,
+                "actor": entry.actor,
+                "role": entry.role,
+                "status": entry.status.as_str(),
+                "lastSignedSeq": entry.last_signed_seq,
+                "lastSignedAtMs": entry.last_signed_at_ms,
+                "quietForMs": entry
+                    .last_signed_at_ms
+                    .map(|at| package.provenance.generated_at.saturating_sub(at)),
+            })
+        })
+        .collect()
+}
+
+/// What the roster does and does not claim.
+fn roster_semantics() -> Value {
+    json!({
+        "targetKey": "the cs-target key to address with `bee sessions send --to <targetKey>`",
+        "status": "active | superseded | ended | unknown, derived from signed metadata and the resume chain only",
+        "liveness": "no lease is read here: a seat that is `active` may still be a stopped process. quietForMs is measured from the projection time, not from now — add staleness.ageSinceProjectionMs.",
+        "quietForMs": "milliseconds between this seat's newest signed transcript item and this package's projection",
+        "role": "null for a human-created execution; a role slug only for a seated agent",
+    })
+}
+
+/// What one inbox item does and does not claim.
+fn inbox_semantics() -> Value {
+    json!({
+        "items": "verified kind-44220 turn commands addressed to this execution, oldest first",
+        "stage": "the newest turn receipt this package could verify for the command: turn_queued, turn_started, turn_degraded, turn_dropped, turn_refused or interrupt_delivered; null means no verifiable receipt was in the fact set, never that none exists",
+        "stageCode": "the receipt's error code when it carried one; the code vocabulary is open",
+        "content": "the command's text as signed, after the package's fail-closed redaction",
+        "ordering": "createdAt is the signed event time in Unix seconds; a page cursor is an eventId, stable across a package refresh",
+    })
 }
 
 /// How old the served snapshot is at the moment this response is rendered.
@@ -1308,6 +1522,196 @@ mod tests {
         package.provenance.total_history_items = None;
         package.validate().expect("synthetic package fixture");
         package
+    }
+
+    /// The fixture package plus a two-seat roster and three addressed
+    /// commands: two for this execution, one for a sibling.
+    fn crew_package() -> (CodingSessionContextPackage, CodingSessionTarget) {
+        use buzz_core::coding_session_context::{
+            CodingSessionContextInboxItem, CodingSessionContextRosterEntry,
+            CodingSessionContextSeatStatus,
+        };
+        use buzz_core::coding_session_payload::ReceiptStatus;
+
+        let mut package = package();
+        let mine = package.history[0].target.clone();
+        let sibling = CodingSessionTarget {
+            session_id: "sibling-session".into(),
+            ..mine.clone()
+        };
+        package.roster = vec![
+            CodingSessionContextRosterEntry {
+                target: mine.clone(),
+                actor: Some("ab".repeat(32)),
+                role: Some("builder".into()),
+                status: CodingSessionContextSeatStatus::Active,
+                last_signed_seq: Some(2),
+                last_signed_at_ms: Some(11_000),
+            },
+            CodingSessionContextRosterEntry {
+                target: sibling.clone(),
+                actor: Some("cd".repeat(32)),
+                role: Some("lead".into()),
+                status: CodingSessionContextSeatStatus::Superseded,
+                last_signed_seq: None,
+                last_signed_at_ms: None,
+            },
+        ];
+        let item =
+            |seq: u64, target: &CodingSessionTarget, text: &str| CodingSessionContextInboxItem {
+                event_id: format!("{seq:064x}"),
+                created_at: 100 + seq,
+                command_id: format!("turn-{seq}"),
+                sender: "cd".repeat(32),
+                sender_role: Some("lead".into()),
+                target: target.clone(),
+                delivery: "boundary".into(),
+                content: text.into(),
+                stage: Some(ReceiptStatus::TurnQueued),
+                stage_at: Some(200 + seq),
+                stage_code: None,
+            };
+        package.inbox = vec![
+            item(1, &mine, "first, for me"),
+            item(2, &sibling, "for the sibling"),
+            item(3, &mine, "second, for me"),
+        ];
+        package.validate().expect("crew fixture is a valid package");
+        (package, mine)
+    }
+
+    fn inbox_page(state: &SessionContextState, params: SessionInboxParams) -> Value {
+        serde_json::from_str(&state.inbox(params).expect("inbox page")).expect("inbox JSON")
+    }
+
+    /// The whole reason the sidecar is told its own target: a seat reads its
+    /// own mail, and never a sibling's.
+    #[test]
+    fn session_inbox_returns_only_commands_addressed_to_this_execution() {
+        let (package, mine) = crew_package();
+        let state =
+            SessionContextState::from_package_serving(package, &coding_session_target_key(&mine));
+
+        let page = inbox_page(&state, SessionInboxParams::default());
+        assert_eq!(page["scope"], "commands_addressed_to_this_execution");
+        assert_eq!(page["availableInboxItems"], 2);
+        assert_eq!(page["returned"], 2);
+        assert_eq!(page["stoppedBy"], "end");
+        let commands: Vec<&str> = page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["commandId"].as_str().expect("commandId"))
+            .collect();
+        assert_eq!(commands, vec!["turn-1", "turn-3"]);
+        assert_eq!(page["items"][0]["stage"], "turn_queued");
+        assert_eq!(page["items"][0]["senderRole"], "lead");
+    }
+
+    /// Paging is by event id, and a page that ends short of the end says so
+    /// and hands back the cursor that continues it.
+    #[test]
+    fn session_inbox_pages_by_cursor() {
+        let (package, mine) = crew_package();
+        let state =
+            SessionContextState::from_package_serving(package, &coding_session_target_key(&mine));
+
+        let first = inbox_page(
+            &state,
+            SessionInboxParams {
+                since: None,
+                limit: Some(1),
+            },
+        );
+        assert_eq!(first["returned"], 1);
+        assert_eq!(first["stoppedBy"], "limit");
+        let cursor = first["nextCursor"].as_str().expect("cursor").to_owned();
+        assert_eq!(cursor, first["items"][0]["eventId"]);
+
+        let second = inbox_page(
+            &state,
+            SessionInboxParams {
+                since: Some(cursor),
+                limit: None,
+            },
+        );
+        assert_eq!(second["returned"], 1);
+        assert_eq!(second["items"][0]["commandId"], "turn-3");
+        assert_eq!(second["nextCursor"], Value::Null);
+
+        let missed = inbox_page(
+            &state,
+            SessionInboxParams {
+                since: Some("ff".repeat(32)),
+                limit: None,
+            },
+        );
+        assert_eq!(missed["stoppedBy"], "cursorMiss");
+        assert_eq!(missed["returned"], 0);
+    }
+
+    /// Without a self target the server cannot tell this seat's mail from a
+    /// sibling's, and says so instead of guessing either way.
+    #[test]
+    fn session_inbox_without_a_self_target_returns_nothing_and_names_why() {
+        let (package, _) = crew_package();
+        let state = SessionContextState::from_package(package);
+        let page = inbox_page(&state, SessionInboxParams::default());
+        assert_eq!(page["scope"], "unavailable_no_self_target");
+        assert_eq!(page["selfTarget"], Value::Null);
+        assert_eq!(page["returned"], 0);
+        assert_eq!(page["availableInboxItems"], 0);
+    }
+
+    /// The overview carries the roster, marks which row is this execution, and
+    /// states plainly that it is not reporting liveness.
+    #[test]
+    fn session_overview_carries_the_roster_and_marks_this_seat() {
+        let (package, mine) = crew_package();
+        let state =
+            SessionContextState::from_package_serving(package, &coding_session_target_key(&mine));
+        let overview: Value = serde_json::from_str(
+            &state
+                .overview(SessionOverviewParams::default())
+                .expect("overview"),
+        )
+        .expect("overview JSON");
+
+        let roster = overview["roster"].as_array().expect("roster");
+        assert_eq!(roster.len(), 2);
+        assert_eq!(roster[0]["isSelf"], true);
+        assert_eq!(roster[0]["role"], "builder");
+        assert_eq!(roster[0]["status"], "active");
+        assert_eq!(roster[0]["targetKey"], coding_session_target_key(&mine));
+        assert_eq!(roster[1]["isSelf"], false);
+        assert_eq!(roster[1]["status"], "superseded");
+        assert_eq!(roster[1]["lastSignedSeq"], Value::Null);
+        assert_eq!(overview["availableInboxItems"], 2);
+        assert!(
+            overview["rosterSemantics"]["liveness"]
+                .as_str()
+                .expect("liveness disclosure")
+                .contains("no lease is read here"),
+            "the roster must not be mistaken for a liveness answer"
+        );
+    }
+
+    /// A package written before the crew fields existed still loads, and
+    /// simply has nothing to report.
+    #[test]
+    fn a_package_without_roster_or_inbox_still_loads() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("context.json");
+        write_package(&path, &package_json());
+        let state = SessionContextState::load(&path).expect("legacy package loads");
+        let overview: Value = serde_json::from_str(
+            &state
+                .overview(SessionOverviewParams::default())
+                .expect("overview"),
+        )
+        .expect("overview JSON");
+        assert_eq!(overview["roster"], json!([]));
+        assert_eq!(overview["availableInboxItems"], 0);
     }
 
     fn history_page(state: &SessionContextState, params: SessionHistoryParams) -> Value {
