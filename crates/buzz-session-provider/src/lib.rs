@@ -1335,11 +1335,14 @@ impl Provider {
         };
         let rehydration = self
             .prepare_rehydration_context(
-                &plan.command_id,
-                plan.channel_id,
-                plan.session_ref.as_deref(),
-                plan.genesis_ref.as_deref(),
-                &target.session_id,
+                RehydrationTarget {
+                    scope: RehydrationScope::Create,
+                    command_id: &plan.command_id,
+                    channel_id: plan.channel_id,
+                    session_ref: plan.session_ref.as_deref(),
+                    genesis_ref: plan.genesis_ref.as_deref(),
+                    package_id: &target.session_id,
+                },
                 relay,
             )
             .await;
@@ -1650,13 +1653,17 @@ impl Provider {
     /// the operator.
     async fn prepare_rehydration_context(
         &self,
-        command_id: &str,
-        channel_id: Uuid,
-        session_ref: Option<&str>,
-        genesis_ref: Option<&str>,
-        package_id: &str,
+        target: RehydrationTarget<'_>,
         relay: Option<&HarnessRelay>,
     ) -> RehydrationOutcome {
+        let RehydrationTarget {
+            scope,
+            command_id,
+            channel_id,
+            session_ref,
+            genesis_ref,
+            package_id,
+        } = target;
         let Some(command) = self.config.context_mcp_command.as_ref() else {
             tracing::info!(
                 target: "csp::context",
@@ -1704,10 +1711,11 @@ impl Provider {
             relay_self_pubkey: self.relay_self.clone(),
             // The first execution under a fresh genesis has no create chain to
             // prove yet, and it is exactly the execution that most needs the
-            // crew tools. An empty verified package attaches the MCP with an
-            // honestly empty roster instead of leaving the seat toolless
-            // (plan S4/B).
-            allow_no_executions: true,
+            // crew tools, so a create attaches the MCP with an honestly empty
+            // roster instead of leaving the seat toolless (plan S4/B). A
+            // resume has an earlier generation behind it and gets no such
+            // licence: for it, an empty umbrella is an unverifiable one.
+            allow_no_executions: scope.allows_an_empty_umbrella(),
             generated_at: now_ms(),
             limits: ContextProjectionLimits::default(),
         };
@@ -1855,11 +1863,14 @@ impl Provider {
         let package_id = Uuid::new_v4().to_string();
         let rehydration = self
             .prepare_rehydration_context(
-                &plan.command_id,
-                record.channel_id,
-                record.session_ref.as_deref(),
-                record.genesis_ref.as_deref(),
-                &package_id,
+                RehydrationTarget {
+                    scope: RehydrationScope::Resume,
+                    command_id: &plan.command_id,
+                    channel_id: record.channel_id,
+                    session_ref: record.session_ref.as_deref(),
+                    genesis_ref: record.genesis_ref.as_deref(),
+                    package_id: &package_id,
+                },
                 relay,
             )
             .await;
@@ -4146,6 +4157,59 @@ fn turn_result(
     }
 }
 
+/// Which lifecycle path is asking for verified prior context.
+///
+/// The two paths differ in exactly one way, and it is load-bearing: a create is
+/// entitled to find no execution chain at all — under a fresh genesis it is
+/// minting the first one, and the seat that most needs the crew tools would
+/// otherwise be the one seat without them. A resume is not: an earlier
+/// generation of this very execution already ran, so an umbrella that projects
+/// to zero executions means the chain could not be verified, never that there
+/// was nothing to verify.
+///
+/// Collapsing the two turned an enumerated, operator-visible continuity loss
+/// into a silent one: the resumed agent was told in its own system prompt that
+/// there is no earlier verified work under this session to reconstruct, over
+/// hours of its own signed transcript, and the operator saw no reason at all
+/// because the projection had *succeeded*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RehydrationScope {
+    /// A `session-create`: the umbrella may legitimately hold no execution yet.
+    Create,
+    /// A `session-resume`: an execution already ran, so an empty projection is
+    /// a verification failure and is reported as one.
+    Resume,
+}
+
+impl RehydrationScope {
+    /// Whether a projection on this path may accept an umbrella with no
+    /// verified execution chain.
+    const fn allows_an_empty_umbrella(self) -> bool {
+        matches!(self, Self::Create)
+    }
+}
+
+/// Everything one rehydration attempt is about except the relay it reads.
+///
+/// Grouped rather than passed one by one because the six move together: every
+/// caller has all of them or none, and the pair that decides whether there is
+/// an umbrella at all — `session_ref` and `genesis_ref` — is easy to transpose
+/// in a positional argument list.
+struct RehydrationTarget<'a> {
+    /// Which lifecycle path is asking.
+    scope: RehydrationScope,
+    /// The lifecycle command driving this attempt; tracing only.
+    command_id: &'a str,
+    /// The community channel the facts are scoped to.
+    channel_id: Uuid,
+    /// The umbrella session id, when the execution has one.
+    session_ref: Option<&'a str>,
+    /// The umbrella's canonical genesis event id, when the execution has one.
+    genesis_ref: Option<&'a str>,
+    /// The identifier the projected package is persisted under.
+    package_id: &'a str,
+}
+
 /// What one attempt to attach verified prior context produced.
 ///
 /// Exactly one side is populated: a descriptor when the package was built and
@@ -5898,11 +5962,14 @@ mod tests {
         assert_eq!(
             no_sidecar
                 .prepare_rehydration_context(
-                    "cmd-1",
-                    channel_id,
-                    Some(session_ref),
-                    Some(&genesis_ref),
-                    &package_id,
+                    RehydrationTarget {
+                        scope: RehydrationScope::Create,
+                        command_id: "cmd-1",
+                        channel_id,
+                        session_ref: Some(session_ref),
+                        genesis_ref: Some(&genesis_ref),
+                        package_id: &package_id,
+                    },
                     None,
                 )
                 .await
@@ -5918,11 +5985,14 @@ mod tests {
         assert_eq!(
             relative
                 .prepare_rehydration_context(
-                    "cmd-2",
-                    channel_id,
-                    Some(session_ref),
-                    Some(&genesis_ref),
-                    &package_id,
+                    RehydrationTarget {
+                        scope: RehydrationScope::Create,
+                        command_id: "cmd-2",
+                        channel_id,
+                        session_ref: Some(session_ref),
+                        genesis_ref: Some(&genesis_ref),
+                        package_id: &package_id,
+                    },
                     None,
                 )
                 .await
@@ -5934,11 +6004,14 @@ mod tests {
         assert_eq!(
             provider
                 .prepare_rehydration_context(
-                    "cmd-3",
-                    channel_id,
-                    None,
-                    Some(&genesis_ref),
-                    &package_id,
+                    RehydrationTarget {
+                        scope: RehydrationScope::Create,
+                        command_id: "cmd-3",
+                        channel_id,
+                        session_ref: None,
+                        genesis_ref: Some(&genesis_ref),
+                        package_id: &package_id,
+                    },
                     None,
                 )
                 .await
@@ -5949,11 +6022,14 @@ mod tests {
         assert_eq!(
             provider
                 .prepare_rehydration_context(
-                    "cmd-4",
-                    channel_id,
-                    Some(session_ref),
-                    None,
-                    &package_id,
+                    RehydrationTarget {
+                        scope: RehydrationScope::Create,
+                        command_id: "cmd-4",
+                        channel_id,
+                        session_ref: Some(session_ref),
+                        genesis_ref: None,
+                        package_id: &package_id,
+                    },
                     None,
                 )
                 .await
@@ -5963,11 +6039,14 @@ mod tests {
         assert_eq!(
             provider
                 .prepare_rehydration_context(
-                    "cmd-5",
-                    channel_id,
-                    Some(session_ref),
-                    Some(&genesis_ref),
-                    &package_id,
+                    RehydrationTarget {
+                        scope: RehydrationScope::Create,
+                        command_id: "cmd-5",
+                        channel_id,
+                        session_ref: Some(session_ref),
+                        genesis_ref: Some(&genesis_ref),
+                        package_id: &package_id,
+                    },
                     None,
                 )
                 .await
@@ -5980,11 +6059,14 @@ mod tests {
         let (relay, _queries, server) = spawn_test_relay(&provider.config.keys, None).await;
         let outcome = provider
             .prepare_rehydration_context(
-                "cmd-6",
-                channel_id,
-                Some(session_ref),
-                Some(&genesis_ref),
-                &package_id,
+                RehydrationTarget {
+                    scope: RehydrationScope::Create,
+                    command_id: "cmd-6",
+                    channel_id,
+                    session_ref: Some(session_ref),
+                    genesis_ref: Some(&genesis_ref),
+                    package_id: &package_id,
+                },
                 Some(&relay),
             )
             .await;
@@ -5998,6 +6080,77 @@ mod tests {
                 "{slug} must be publishable"
             );
         }
+    }
+
+    /// A resume must never be told its own umbrella is fresh.
+    ///
+    /// `allow_no_executions` was set inside the helper both paths share, so a
+    /// resume whose create chain could not be verified — the create receipt
+    /// lost in the crash window S2's replay machinery exists for, say —
+    /// projected to an *empty* package rather than an error. Empty history and
+    /// empty roster make `prior_context` false, which installs the fresh-crew
+    /// bootstrap prefix: the resumed agent is instructed, as a launcher fact,
+    /// to say there is no earlier verified work under this session. The
+    /// operator sees no reason at all, because nothing failed.
+    ///
+    /// The create keeps its licence: under a fresh genesis there is genuinely
+    /// no chain yet, and that seat is the one that most needs the crew tools.
+    #[tokio::test]
+    async fn a_resume_with_no_verifiable_execution_chain_is_a_named_loss_not_a_fresh_start() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let session_ref = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let genesis = genesis_event(channel_id, session_ref);
+        let genesis_ref = genesis.id.to_hex();
+        let provider = provider_with_sidecar(&dir.path().join("state"), None);
+        let (relay, _queries, server) =
+            spawn_test_relay_with_events(&provider.config.keys, vec![genesis]).await;
+
+        let created = provider
+            .prepare_rehydration_context(
+                RehydrationTarget {
+                    scope: RehydrationScope::Create,
+                    command_id: "cmd-create",
+                    channel_id,
+                    session_ref: Some(session_ref),
+                    genesis_ref: Some(&genesis_ref),
+                    package_id: &Uuid::new_v4().to_string(),
+                },
+                Some(&relay),
+            )
+            .await;
+        assert_eq!(
+            created.unavailable_reason, None,
+            "the first execution under a fresh genesis still attaches its tools"
+        );
+        let descriptor = created
+            .descriptor
+            .expect("a create attaches the context MCP");
+        assert!(
+            !descriptor.prior_context,
+            "with nothing verified there is no prior context to claim"
+        );
+
+        let resumed = provider
+            .prepare_rehydration_context(
+                RehydrationTarget {
+                    scope: RehydrationScope::Resume,
+                    command_id: "cmd-resume",
+                    channel_id,
+                    session_ref: Some(session_ref),
+                    genesis_ref: Some(&genesis_ref),
+                    package_id: &Uuid::new_v4().to_string(),
+                },
+                Some(&relay),
+            )
+            .await;
+        assert_eq!(
+            resumed.unavailable_reason,
+            Some("unverifiable_source_fact"),
+            "a resume that cannot verify its own chain says so"
+        );
+        assert!(resumed.descriptor.is_none());
+        server.abort();
     }
 
     /// The exact regression this slice exists to prevent: on 2026-08-18 a
