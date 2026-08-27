@@ -97,8 +97,10 @@ export function receiptEvent(signer, options = {}) {
   const isTurn = [
     "turn_queued",
     "turn_started",
+    "turn_degraded",
     "turn_dropped",
     "turn_refused",
+    "interrupt_delivered",
   ].includes(status);
   const content = {
     schema: "buzz-coding-session-lifecycle-receipt/v1",

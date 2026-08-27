@@ -73,12 +73,14 @@ test("turnId is legal only on turn_started", () => {
   );
 });
 
-test("the four turn statuses are named exactly", () => {
+test("the six turn statuses are named exactly", () => {
   for (const status of [
     "turn_queued",
     "turn_started",
+    "turn_degraded",
     "turn_dropped",
     "turn_refused",
+    "interrupt_delivered",
   ]) {
     assert.equal(isCodingSessionTurnReceiptStatus(status), true, status);
   }
@@ -92,6 +94,40 @@ test("the four turn statuses are named exactly", () => {
   ]) {
     assert.equal(isCodingSessionTurnReceiptStatus(status), false, status);
   }
+});
+
+test("an interrupt and a degraded steer decode, they are not malformed", () => {
+  const interrupt = parseCodingSessionLifecycleReceipt(
+    receiptJson({ status: "interrupt_delivered" }),
+  );
+  assert.ok(interrupt, "the provider publishes interrupt_delivered");
+  assert.equal(interrupt.error, null, "an interrupt carries no error");
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({
+        status: "interrupt_delivered",
+        error: { code: "NOPE", message: "no" },
+      }),
+    ),
+    null,
+    "and an interrupt with an error is malformed",
+  );
+
+  const degraded = parseCodingSessionLifecycleReceipt(
+    receiptJson({
+      status: "turn_degraded",
+      error: { code: "STEER_UNSUPPORTED", message: "queued for the boundary" },
+    }),
+  );
+  assert.ok(degraded, "a degraded steer is a relabelling, not a failure");
+  assert.equal(degraded.error.code, "STEER_UNSUPPORTED");
+  assert.equal(
+    parseCodingSessionLifecycleReceipt(
+      receiptJson({ status: "turn_degraded" }),
+    ),
+    null,
+    "and a degraded steer without a reason is malformed",
+  );
 });
 
 test("a failed receipt must carry a null session and an error", () => {
