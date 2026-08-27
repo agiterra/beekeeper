@@ -471,6 +471,65 @@ mod tests {
         assert!(logs[10].get("span_id").is_none());
     }
 
+    /// Stand-in callsite for the assertion below. Declared here rather than
+    /// produced by `tracing::enabled!` so the subscriber under test can be
+    /// asked about it directly — see
+    /// [`trace_context_lookup_does_not_enable_callsites`].
+    struct FilterProbeCallsite;
+
+    static FILTER_PROBE_CALLSITE: FilterProbeCallsite = FilterProbeCallsite;
+
+    static FILTER_PROBE_METADATA: tracing::Metadata<'static> = tracing::Metadata::new(
+        "trace_context_lookup_filter_probe",
+        "trace_context_lookup_filter_test",
+        tracing::Level::ERROR,
+        None,
+        None,
+        None,
+        tracing::field::FieldSet::new(
+            &["message"],
+            tracing::callsite::Identifier(&FILTER_PROBE_CALLSITE),
+        ),
+        tracing::metadata::Kind::EVENT,
+    );
+
+    impl tracing::callsite::Callsite for FilterProbeCallsite {
+        fn set_interest(&self, _interest: tracing::subscriber::Interest) {}
+
+        fn metadata(&self) -> &tracing::Metadata<'_> {
+            &FILTER_PROBE_METADATA
+        }
+    }
+
+    /// A `TraceContextLookup` behind `LevelFilter::OFF` must leave its
+    /// callsites disabled: capturing the dispatch in `on_register_dispatch`
+    /// must not make the layer interested in everything.
+    ///
+    /// This deliberately does **not** use `tracing::enabled!`, which is what
+    /// made the old version of this test order-dependent. That macro caches
+    /// one `Interest` per callsite, and `tracing-core` computes it by folding
+    /// `register_callsite` over its process-global list of *every* registered
+    /// dispatcher — in a test binary, that includes whatever subscribers other
+    /// tests have live under `with_default`/`set_default` at that instant.
+    /// With a second dispatcher registered the fold yields `sometimes` instead
+    /// of `never`, so the macro falls through to `Dispatch::enabled`, and there
+    /// a per-layer filter answers `true` by design (`Filtered::enabled` returns
+    /// `true` so later layers still get asked). The macro then reported
+    /// "enabled" for a callsite this subscriber filters off, and the test
+    /// failed or passed depending on which other test happened to be running.
+    ///
+    /// Measured (scratch run, 2026-08-26): `enabled!` under this exact
+    /// filtered-off subscriber is `false` when that subscriber is the only one
+    /// registered, and `true` with one unrelated `set_default` dispatcher also
+    /// live — same subscriber, opposite answer.
+    ///
+    /// Asking this subscriber's own dispatch for the callsite's `Interest` is
+    /// both hermetic — nothing outside this test can change the answer, and
+    /// the probe callsite is never registered globally, so it cannot perturb
+    /// anyone else — and the stronger claim: `register_callsite` is the hook
+    /// that actually gates production callsites. Guarded against vacuity: the
+    /// same assertion reports `always=true` if the `LevelFilter::OFF` below is
+    /// relaxed to `TRACE`.
     #[test]
     fn trace_context_lookup_does_not_enable_callsites() {
         let context_lookup = TraceContextLookup::default();
@@ -486,10 +545,15 @@ mod tests {
                 .get()
                 .and_then(tracing::dispatcher::WeakDispatch::upgrade)
                 .is_some());
-            assert!(!tracing::enabled!(
-                target: "trace_context_lookup_filter_test",
-                tracing::Level::ERROR
-            ));
+            let interest = tracing::dispatcher::get_default(|dispatch| {
+                dispatch.register_callsite(&FILTER_PROBE_METADATA)
+            });
+            assert!(
+                interest.is_never(),
+                "filtered-off callsite should be `never`, got sometimes={} always={}",
+                interest.is_sometimes(),
+                interest.is_always()
+            );
         });
     }
 
