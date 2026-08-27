@@ -1,5 +1,6 @@
 /**
- * The order a seated create must happen in, as one testable step.
+ * The order a seated create — and a seated reconnect — must happen in, as one
+ * testable step.
  *
  * Two things must be true before an actor create is published, and both can
  * fail: the actor has to be a member of the session channel (the relay takes
@@ -9,8 +10,12 @@
  * create is NOT published and the reason is named — a half-seated session
  * that looks created and answers nothing is the failure this prevents.
  *
- * The publish itself is injected so the guarantee is a property of this
- * function rather than a comment in the create hook.
+ * A resume needs only the second of those: the actor is already a member from
+ * the create, but its custody entry was consumed when the first adapter
+ * spawned, so the reconnect stages its own under its own `commandId`.
+ *
+ * The publish itself is injected so the guarantee is a property of these
+ * functions rather than a comment in the create hook.
  */
 import type { CodingSessionActorSeat } from "./codingSessionActorSeat";
 
