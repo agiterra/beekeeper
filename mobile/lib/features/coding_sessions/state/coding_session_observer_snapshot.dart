@@ -55,6 +55,15 @@ class CodingSessionObserverSnapshot {
   /// True when a history page came back full, so older facts exist unread.
   final bool truncatedAt1000;
 
+  /// How many raw events this device's own retention cap threw away, per
+  /// generation (`cs-target`), or per kind bucket for the kinds that name no
+  /// generation.
+  ///
+  /// A separate admission from [truncatedAt1000]: that one is history the
+  /// relay never sent, this one is history it did send and this device could
+  /// not keep. Both make the transcript on screen shorter than the truth.
+  final Map<String, int> evictedByGeneration;
+
   final CodingSessionObserverConnection connection;
 
   /// `null` before the first read; `false` when this device could not verify
@@ -76,6 +85,7 @@ class CodingSessionObserverSnapshot {
     required this.transcriptBlocksByExecution,
     required this.counts,
     required this.truncatedAt1000,
+    required this.evictedByGeneration,
     required this.connection,
     required this.signaturesVerified,
     required this.lastError,
@@ -93,6 +103,7 @@ class CodingSessionObserverSnapshot {
        transcriptBlocksByExecution = const {},
        counts = const CodingSessionReadCounts(),
        truncatedAt1000 = false,
+       evictedByGeneration = const {},
        signaturesVerified = null,
        leasesRead = false;
 
@@ -101,6 +112,7 @@ class CodingSessionObserverSnapshot {
     CodingSessionChannelView view, {
     required CodingSessionObserverConnection connection,
     String? lastError,
+    Map<String, int> evictedByGeneration = const {},
   }) {
     final executions =
         [for (final session in view.sessions) ...session.executions]
@@ -131,6 +143,7 @@ class CodingSessionObserverSnapshot {
       }),
       counts: view.counts,
       truncatedAt1000: view.historyTruncated,
+      evictedByGeneration: Map.unmodifiable(evictedByGeneration),
       connection: connection,
       signaturesVerified: view.signaturesVerified,
       lastError: lastError,
@@ -151,6 +164,7 @@ class CodingSessionObserverSnapshot {
     transcriptBlocksByExecution: transcriptBlocksByExecution,
     counts: counts,
     truncatedAt1000: truncatedAt1000,
+    evictedByGeneration: evictedByGeneration,
     connection: connection ?? this.connection,
     signaturesVerified: signaturesVerified,
     lastError: clearError ? null : (lastError ?? this.lastError),

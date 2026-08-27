@@ -38,12 +38,27 @@ class CodingSessionEventStore {
 
   final Map<String, List<NostrEvent>> _byGeneration = {};
   final Set<String> _ids = <String>{};
+  final Map<String, int> _evictedByGeneration = {};
 
   /// Number of retained events.
   int get length => _ids.length;
 
   /// Number of generations currently retained.
   int get generationCount => _byGeneration.length;
+
+  /// How many events the cap threw away, per generation.
+  ///
+  /// Keyed by the generation's `cs-target` value, or by [kindBucket] for the
+  /// kinds that name no generation. The reader is told about this: a
+  /// transcript this device silently shortened looks exactly like a short
+  /// transcript, and D10's cap is a property of *this device*, not of what
+  /// the channel holds.
+  Map<String, int> get evictedByGeneration =>
+      Map.unmodifiable(_evictedByGeneration);
+
+  /// How many events the cap threw away across the whole read.
+  int get evictedCount =>
+      _evictedByGeneration.values.fold(0, (total, count) => total + count);
 
   /// Every retained event, oldest generation-bucket first.
   ///
@@ -103,16 +118,32 @@ class CodingSessionEventStore {
   }
 
   /// Drop everything, for a full refetch.
+  ///
+  /// The eviction tally goes with it: a fresh read has dropped nothing yet,
+  /// and carrying the old number over would make the page disclose a loss
+  /// that is no longer on screen.
   void clear() {
     _byGeneration.clear();
     _ids.clear();
+    _evictedByGeneration.clear();
   }
 
   void _evict(String key, List<NostrEvent> bucket) {
     final retained = retainNewestCodingSessionEvents(bucket, cap: cap);
     final retainedIds = {for (final event in retained) event.id};
     for (final event in bucket) {
-      if (!retainedIds.contains(event.id)) _ids.remove(event.id);
+      if (retainedIds.contains(event.id)) continue;
+      _ids.remove(event.id);
+      // Every event in a bucket shares a generation, so the label is the
+      // same whichever evicted one it is read from. The two separately
+      // capped targeted kinds report under their generation rather than
+      // their sub-bucket: what the reader lost is history for *that*
+      // generation, however this store filed it.
+      _evictedByGeneration.update(
+        event.getTagValue('cs-target') ?? kindBucket(event.kind),
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
     }
     _byGeneration[key] = [...retained];
   }

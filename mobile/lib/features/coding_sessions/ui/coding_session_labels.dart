@@ -14,6 +14,16 @@ const codingSessionsEmptyLabel = 'No coding sessions in this channel';
 const codingSessionTruncatedLabel =
     'History truncated at 1000 events — older activity was not fetched';
 
+/// What this device's own retention cap cost the reader (D10).
+///
+/// Separate from [codingSessionTruncatedLabel]: that one is history the relay
+/// never sent, this one is history it sent and this device threw away to stay
+/// bounded. Saying neither would leave a silently shortened transcript looking
+/// like a short one.
+const codingSessionEvictedLabel =
+    'Older events were dropped on this device (kept the newest '
+    '$maxCodingSessionEventsPerGeneration)';
+
 /// The chip text for a folded umbrella status (D8).
 String codingSessionStatusLabel(CodingSessionFoldedStatus status) =>
     switch (status.kind) {

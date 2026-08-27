@@ -287,6 +287,10 @@ void main() {
         expect(items.first.eventSeq, 101);
         expect(items.last.eventSeq, 2100);
         expect(snapshot.sessions.single.executions.single.metadata, isNotNull);
+        // D10's other loss, and the one only this device knows about: 100
+        // events it read and threw away. Both pages disclose it, so the
+        // shortened transcript above is never presented as a short one.
+        expect(snapshot.evictedByGeneration[target().key], 100);
       },
     );
   });

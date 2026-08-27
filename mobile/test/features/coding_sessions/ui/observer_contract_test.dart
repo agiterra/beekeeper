@@ -48,6 +48,16 @@ void main() {
     expect(projected.transcriptBlocksByExecution, isEmpty);
   });
 
+  testWidgets('carries this device\'s own losses to the pages', (tester) async {
+    final projected = await _watch(
+      tester,
+      _read(leasesRead: true, evictedByGeneration: {target().key: 42}),
+    );
+
+    expect(projected.evictedEventCount, 42);
+    expect(projected.evictedFor(projected.sessions.single), 42);
+  });
+
   testWidgets('keys reachability by the session key the pages look up', (
     tester,
   ) async {
@@ -89,6 +99,7 @@ state.CodingSessionObserverSnapshot _read({
   required bool leasesRead,
   bool historyTruncated = false,
   List<NostrEvent> extra = const [],
+  Map<String, int> evictedByGeneration = const {},
 }) {
   final view = readCodingSessionChannel(
     channelId: channelId,
@@ -110,6 +121,7 @@ state.CodingSessionObserverSnapshot _read({
   return state.CodingSessionObserverSnapshot.fromView(
     view,
     connection: state.CodingSessionObserverConnection.open,
+    evictedByGeneration: evictedByGeneration,
   );
 }
 

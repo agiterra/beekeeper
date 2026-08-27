@@ -52,6 +52,15 @@ class CodingSessionObserverSnapshot {
   /// True when a history page came back full at the 1000-event limit.
   final bool truncatedAt1000;
 
+  /// Raw events this device's retention cap dropped, per generation
+  /// (`cs-target`), or per kind bucket for the kinds naming no generation.
+  ///
+  /// Distinct from [truncatedAt1000]: that is history the relay did not send,
+  /// this is history it sent and this device could not keep. Either way the
+  /// transcript on screen is shorter than the one the channel holds, and the
+  /// pages say so.
+  final Map<String, int> evictedByGeneration;
+
   final CodingSessionObserverConnection connection;
 
   /// Whether this device verified the signatures behind these facts.
@@ -76,11 +85,40 @@ class CodingSessionObserverSnapshot {
     this.transcriptBlocksByExecution = const {},
     this.counts = const CodingSessionReadCounts(),
     this.truncatedAt1000 = false,
+    this.evictedByGeneration = const {},
     this.connection = CodingSessionObserverConnection.idle,
     this.signaturesVerified,
     this.lastError,
     this.reachabilityBySession = const {},
   });
+
+  /// How many events this device dropped across the whole read.
+  int get evictedEventCount =>
+      evictedByGeneration.values.fold(0, (total, count) => total + count);
+
+  /// How many events this device dropped that [session] is read from.
+  ///
+  /// Its own generations' losses plus the losses in the buckets that name no
+  /// generation — receipts, creates, geneses, names, closures — because those
+  /// are what resolve *every* session's authority, founder and name. A drop
+  /// there shortens this session's read just as surely as a drop in its own
+  /// transcript.
+  int evictedFor(CodingSessionUmbrella session) {
+    var total = 0;
+    for (final entry in evictedByGeneration.entries) {
+      final ownsGeneration = session.executions.any(
+        (execution) => execution.targetKey == entry.key,
+      );
+      if (ownsGeneration || !entry.key.startsWith(_generationKeyPrefix)) {
+        total += entry.value;
+      }
+    }
+    return total;
+  }
+
+  /// The prefix every `cs-target` carries (D3), used to tell a generation key
+  /// from a kind bucket.
+  static const _generationKeyPrefix = '$codingSessionTargetKeyDomain|';
 
   /// True while the first read for this channel is still outstanding.
   ///
@@ -241,6 +279,7 @@ final class RelayCodingSessionObserverBinding
       transcriptBlocksByExecution: read.transcriptBlocksByExecution,
       counts: read.counts,
       truncatedAt1000: read.truncatedAt1000,
+      evictedByGeneration: read.evictedByGeneration,
       connection: _connection(read.connection),
       signaturesVerified: read.signaturesVerified,
       lastError: read.lastError,

@@ -392,6 +392,49 @@ void main() {
     );
   });
 
+  // D10 again, per generation: the notice belongs to the session whose own
+  // history this device shortened.
+  testWidgets('discloses events this device dropped for this session', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        envelopes: _conversation(),
+        evictedByGeneration: {testTarget().key: 500},
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-session-evicted')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Older events were dropped on this device (kept the newest 2000)',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('another generation\'s losses are not claimed as this one\'s', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        envelopes: _conversation(),
+        evictedByGeneration: {
+          testTarget(sessionId: 'someone-elses-session').key: 500,
+        },
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(find.byKey(const ValueKey('coding-session-evicted')), findsNothing);
+  });
+
   testWidgets('discloses a failed read behind a transcript it still shows', (
     tester,
   ) async {

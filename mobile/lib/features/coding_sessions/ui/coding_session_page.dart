@@ -118,6 +118,15 @@ class _CodingSessionBody extends StatelessWidget {
           icon: LucideIcons.history,
           text: codingSessionTruncatedLabel,
         ),
+      // What this device dropped for *this* session's generations (plus the
+      // shared buckets its authority and founder are read from). A transcript
+      // this device shortened must not read as a short transcript.
+      if (snapshot.evictedFor(resolved) > 0)
+        const _SessionNotice(
+          key: ValueKey('coding-session-evicted'),
+          icon: LucideIcons.trash2,
+          text: codingSessionEvictedLabel,
+        ),
       if (counts != null)
         _SessionNotice(
           key: const ValueKey('coding-session-counts'),

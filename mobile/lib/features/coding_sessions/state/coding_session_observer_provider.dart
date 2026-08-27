@@ -354,6 +354,7 @@ class CodingSessionChannelObserverNotifier
       view,
       connection: connection,
       lastError: _lastError,
+      evictedByGeneration: _store.evictedByGeneration,
     );
   }
 }

@@ -173,6 +173,37 @@ void main() {
     );
   });
 
+  // D10: the 2000-per-generation cap is a property of this device, not of the
+  // channel. A transcript this device shortened must not read as a short one.
+  testWidgets('discloses events this device dropped', (tester) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(evictedByGeneration: {testTarget().key: 137}),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-sessions-evicted')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Older events were dropped on this device (kept the newest 2000)',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('says nothing about eviction when nothing was dropped', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(testSnapshot());
+
+    await _pump(tester, binding);
+
+    expect(find.byKey(const ValueKey('coding-sessions-evicted')), findsNothing);
+  });
+
   testWidgets('shows an error state with a retry that refreshes', (
     tester,
   ) async {

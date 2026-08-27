@@ -170,6 +170,11 @@ class _CodingSessionsBody extends StatelessWidget {
           key: ValueKey('coding-sessions-truncated'),
           text: codingSessionTruncatedLabel,
         ),
+      if (snapshot.evictedEventCount > 0)
+        const _CodingSessionsNotice(
+          key: ValueKey('coding-sessions-evicted'),
+          text: codingSessionEvictedLabel,
+        ),
       if (counts != null)
         _CodingSessionsNotice(
           key: const ValueKey('coding-sessions-counts'),

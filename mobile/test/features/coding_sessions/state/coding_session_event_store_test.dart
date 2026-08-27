@@ -224,6 +224,69 @@ void main() {
       );
     });
 
+    // D10: the cap is this device's limit, not the channel's. The store
+    // counts what it threw away so both pages can say so rather than
+    // presenting a shortened transcript as a whole one.
+    test('counts what the cap threw away, per generation', () {
+      final store = CodingSessionEventStore(cap: 3);
+      final busy = target(sessionId: 'busy');
+      final quiet = target(sessionId: 'quiet');
+
+      for (var seq = 1; seq <= 10; seq++) {
+        store.add(
+          transcriptEvent(
+            eventSeq: seq,
+            forTarget: busy,
+            item: {'kind': 'assistant_text', 'text': 'row \$seq'},
+          ),
+        );
+      }
+      store.add(
+        transcriptEvent(
+          eventSeq: 1,
+          forTarget: quiet,
+          item: {'kind': 'assistant_text', 'text': 'quiet'},
+        ),
+      );
+
+      expect(store.evictedByGeneration[busy.key], 7);
+      expect(store.evictedByGeneration.containsKey(quiet.key), isFalse);
+      expect(store.evictedCount, 7);
+    });
+
+    test('a separately capped kind reports under its own generation', () {
+      // 44223 and 24223 get their own sub-buckets, but what the reader lost
+      // is history for that generation, not for a bucket name they have
+      // never heard of.
+      final store = CodingSessionEventStore(cap: 1);
+      final generation = target();
+      store.add(metadataEvent(forTarget: generation, createdAt: 1000));
+      store.add(metadataEvent(forTarget: generation, createdAt: 1001));
+      store.add(nameEvent(content: 'one', createdAt: 1000));
+      store.add(nameEvent(content: 'two', createdAt: 1001));
+
+      expect(store.evictedByGeneration[generation.key], 1);
+      expect(
+        store.evictedByGeneration[CodingSessionEventStore.kindBucket(
+          EventKind.codingSessionName,
+        )],
+        1,
+      );
+      expect(store.evictedCount, 2);
+    });
+
+    test('clear forgets the eviction tally too', () {
+      final store = CodingSessionEventStore(cap: 1);
+      store.add(nameEvent(content: 'one', createdAt: 1000));
+      store.add(nameEvent(content: 'two', createdAt: 1001));
+      expect(store.evictedCount, 1);
+
+      store.clear();
+
+      expect(store.evictedCount, 0);
+      expect(store.evictedByGeneration, isEmpty);
+    });
+
     test('clear drops everything, including the dedupe set', () {
       final store = CodingSessionEventStore();
       final event = metadataEvent(id: 'b' * 64);
