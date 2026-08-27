@@ -526,8 +526,14 @@ pub struct Provider {
     /// ledgers roll their in-memory entry back on a failed append, so without
     /// this set a redelivery walked every `decide_turn` fence and cancelled
     /// whatever turn was running by then: no receipt, no transcript item, no
-    /// ledger entry. Entries are removed the moment a ledger write makes the
-    /// durable fences answer, so this holds only the failure window.
+    /// ledger entry.
+    ///
+    /// The fence is silent (`Ignored::AlreadyAccepted`), so it may only close
+    /// over a cancel that has *already* been answered — which is why the
+    /// receipt is enqueued into the durable outbox before the ledger append,
+    /// and why an entry here is released only once that append succeeds and
+    /// the durable ledger takes the fence over. An append that keeps failing
+    /// therefore keeps its entry for the life of the process.
     ///
     /// In-memory for the same reason as `in_flight`: after a restart there is
     /// no mailbox, so no entry in it could still be true.
@@ -1045,7 +1051,7 @@ impl Provider {
                 // `SessionHandle::deliver` took the turn, because the
                 // `turn_queued` (or `turn_degraded`) `enqueue_receipt` right
                 // behind the delivery is itself fallible, and for an interrupt
-                // so is the ledger append in front of that receipt. What makes
+                // so is the ledger append behind that receipt. What makes
                 // the redelivery safe on that path is a pair of process-local
                 // fences, both of which make `decide_turn` answer
                 // `Ignored::AlreadyAccepted` (`commands.rs`): `in_flight` for a
@@ -2132,15 +2138,8 @@ impl Provider {
                             .values()
                             .any(|turn| turn.session_id == session_id);
                     let receipt = if open_turn {
-                        // Consumed: the cancel was issued, which is the whole
-                        // of what an interrupt does.
-                        self.state.consume_command(&command_id, now_secs())?;
                         LifecycleReceipt::interrupt_delivered(&command_id, &target)
                     } else {
-                        // Refused, not consumed — the two ledgers answer
-                        // different questions and a command belongs in exactly
-                        // one of them.
-                        self.state.record_refusal(&command_id, now_secs())?;
                         LifecycleReceipt::turn_refused(
                             &command_id,
                             &target,
@@ -2148,10 +2147,32 @@ impl Provider {
                             "the execution is live but had no turn in flight to cancel",
                         )
                     };
+                    // The answer first, the fence second, and the order is the
+                    // whole point. Both writes can fail; only one of them is
+                    // what the operator receives, and the outbox is itself a
+                    // durable, crash-safe queue, so a receipt enqueued here
+                    // outlives a ledger append that fails right behind it.
+                    // Ledger-first did the opposite: the append failed, `?`
+                    // returned in front of the receipt, and `delivered_cancels`
+                    // — correctly — made the relay's redelivery silent, so a
+                    // cancel that had already destroyed a running turn was
+                    // answered by nothing at all, in this process and after a
+                    // restart. Contracts D and E both forbid that.
                     self.enqueue_receipt(channel_id, &command_id, &receipt)?;
-                    // Durably answered: one of the two ledgers now fences a
-                    // redelivery, so the process-local record has nothing left
-                    // to say.
+                    // Now the durable fence. Consumed when the cancel was
+                    // issued, which is the whole of what an interrupt does;
+                    // refused when there was nothing to cancel — the two
+                    // ledgers answer different questions and a command belongs
+                    // in exactly one of them. A redelivery answered here is
+                    // rejected by `decide_turn` before it can reach a mailbox,
+                    // which is what makes the silence above legitimate.
+                    if open_turn {
+                        self.state.consume_command(&command_id, now_secs())?;
+                    } else {
+                        self.state.record_refusal(&command_id, now_secs())?;
+                    }
+                    // Durably answered *and* durably fenced: the process-local
+                    // record has nothing left to say.
                     self.delivered_cancels.remove(&command_id);
                 }
                 Err(error) => {
@@ -9797,20 +9818,24 @@ mod tests {
         );
     }
 
-    /// A cancel the actor already has is not delivered a second time by a
-    /// redelivery.
+    /// A cancel that reached the actor is answered, once, even when the
+    /// ledger append behind it fails.
     ///
-    /// `on_turn` records custody in `in_flight` only on the `Ok(()) if is_turn`
-    /// arm, and `is_turn` is false for `TurnAction::Interrupt`. So a plain
-    /// `thread.turn.interrupt` whose `SessionHandle::deliver` succeeded and
-    /// whose ledger append then failed was handed back to `replay.held` with
-    /// nothing anywhere recording that the actor already had it: the
-    /// consumed/refused sets roll their in-memory entry back when the append
-    /// fails, `in_flight` never held it, and the relay's next redelivery walked
-    /// through every `decide_turn` fence and cancelled whatever turn was
-    /// running by then — no receipt, no transcript item, no ledger entry.
+    /// Two guarantees on one path. `on_turn` records custody in `in_flight`
+    /// only on the `Ok(()) if is_turn` arm, and `is_turn` is false for
+    /// `TurnAction::Interrupt`, so `delivered_cancels` is the only thing that
+    /// stops a relay redelivery walking every `decide_turn` fence and
+    /// cancelling whatever turn is running by then. But that fence answers
+    /// `Ignored::AlreadyAccepted`, which is *silent* — so it swallows the one
+    /// redelivery that could still have produced an answer. The answer must
+    /// therefore already be durable when the fence closes, and it is: the
+    /// receipt is enqueued into the crash-safe outbox in front of the
+    /// consumed/refused append, and the append is the write this test breaks.
+    /// Ledger-first left the operator's turn cancelled with no receipt, no
+    /// transcript item and no ledger entry, and then no replay either, because
+    /// the silent redelivery advanced the channel watermark past it.
     #[tokio::test]
-    async fn a_delivered_cancel_is_not_issued_twice_after_a_failed_ledger_append() {
+    async fn a_delivered_cancel_is_answered_once_even_when_the_ledger_append_fails() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().join("checkout");
         std::fs::create_dir_all(&cwd).expect("mkdir");
@@ -9876,32 +9901,46 @@ mod tests {
             "and no refusal either"
         );
 
+        // The operator's answer survived it anyway. This is the whole of the
+        // fix: an interrupt that destroyed a running turn is never answered by
+        // silence, whatever the state directory is doing.
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert_eq!(
+            receipt_stages(&sink, "int-held"),
+            vec!["interrupt_delivered"],
+            "the cancel reached the actor, so the operator is told so before the ledger \
+             append that fences a redelivery is even attempted"
+        );
+
         // A second turn, running, and a relay redelivery of the same cancel —
         // the reconnect shape. Nothing about this command is new; the actor has
-        // already had it.
+        // already had it, and it has already been answered.
         provider
             .handle_command_event(channel_id, &turn_event(channel_id, "turn-2", &target))
             .await
             .expect("handle");
         pump_until_turn_started(&mut provider).await;
-        provider.flush(&CollectingSink::new()).await.expect("drain");
 
         provider
             .handle_command_event(channel_id, &cancel)
             .await
             .expect("handle");
 
-        let sink = CollectingSink::new();
-        provider.flush(&sink).await.expect("flush");
+        let redelivery = CollectingSink::new();
+        provider.flush(&redelivery).await.expect("flush");
         assert!(
-            receipt_stages(&sink, "int-held").is_empty(),
-            "a redelivered cancel this provider already handed to the actor is silent; \
-             an `interrupt_delivered` here is published from the same arm that issues the \
-             second `SessionCommand::Interrupt`, so it means turn-2 was cancelled too"
+            receipt_stages(&redelivery, "int-held").is_empty(),
+            "answered once and only once: a second `interrupt_delivered` here is published \
+             from the same arm that issues the second `SessionCommand::Interrupt`, so it \
+             would mean turn-2 was cancelled too"
         );
         assert!(
-            !provider.state().is_command_consumed("int-held"),
-            "the redelivery consumed nothing, because it delivered nothing"
+            provider
+                .state()
+                .session(&target.session_id)
+                .is_some_and(|record| record.open_turn.is_some()),
+            "turn-2 is still running: the redelivered cancel reached no mailbox"
         );
     }
 
