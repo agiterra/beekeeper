@@ -29,6 +29,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod actor_seats;
 mod agent_fence;
 pub mod authority;
 pub mod catalog;
@@ -1211,8 +1212,12 @@ impl Provider {
         // Re-read on every command so an operator can fix a missing working
         // directory and republish without restarting the provider.
         let projects = ProjectsFile::load(self.config.projects_file.as_deref());
+        // Same cadence and the same reason: an operator who fixes a missing
+        // seat entry can republish the create without restarting the provider.
+        let actor_seats =
+            crate::actor_seats::ActorSeatsFile::load(self.config.actor_seats_file.as_deref());
         let decision = decide_lifecycle(
-            &self.context(&projects, operator_pubkey),
+            &self.context(&projects, &actor_seats, operator_pubkey),
             channel_id,
             created_at,
             content,
@@ -1281,6 +1286,25 @@ impl Provider {
         }
     }
 
+    /// Delete one seat's host-local key material, whatever became of the spawn.
+    ///
+    /// Best-effort and never fatal: the create has already succeeded or failed
+    /// by the time this runs, and refusing a working execution because a
+    /// cleanup write did not land would be the worse outcome. A failure is
+    /// logged with the `commandId` and the path only — never the file's
+    /// contents.
+    fn forget_actor_seat(&self, command_id: &str) {
+        if let Err(error) =
+            crate::actor_seats::consume_seat(self.config.actor_seats_file.as_deref(), command_id)
+        {
+            tracing::warn!(
+                target: "csp::seats",
+                %command_id,
+                "could not clear the agent seat's key material: {error}"
+            );
+        }
+    }
+
     async fn create_session(
         &mut self,
         plan: CreatePlan,
@@ -1326,6 +1350,47 @@ impl Provider {
             .map(|descriptor| descriptor.package_id.clone());
         let unavailable_reason = rehydration.unavailable_reason;
         let rehydration_mcp = rehydration.descriptor;
+
+        // Custody, resolved as late as possible and held as briefly as
+        // possible: the seat is read here, converted straight into the child's
+        // post-fence environment, and dropped at the end of this function. It
+        // is deliberately not carried in `CreatePlan`, in `SessionRecord`, or
+        // in anything this function logs.
+        //
+        // `decide_lifecycle` already refused a create whose seat this host does
+        // not hold, so reaching this branch with no entry means the file moved
+        // underneath us between the decision and the dispatch. That is still a
+        // refusal, and the same one: an execution labelled as an agent that
+        // cannot act as one is the lie this code exists to prevent.
+        let (seat_identity, post_fence_env) = match plan.actor.as_deref() {
+            None => (None, Vec::new()),
+            Some(actor) => {
+                let seats = crate::actor_seats::ActorSeatsFile::load(
+                    self.config.actor_seats_file.as_deref(),
+                );
+                match seats.seat(&plan.command_id) {
+                    Some(seat) if seat.pubkey == actor => {
+                        let identity = session::SeatIdentity {
+                            actor_pubkey: seat.pubkey.clone(),
+                            role: plan.role.clone().unwrap_or_default(),
+                            relay_url: seat.relay_url.clone(),
+                        };
+                        (Some(identity), seat.post_fence_env())
+                    }
+                    _ => {
+                        self.forget_actor_seat(&plan.command_id);
+                        self.discard_orphaned_context_package(context_package_id.as_deref());
+                        let receipt = LifecycleReceipt::failed(
+                            &plan.command_id,
+                            payload::ACTOR_UNAVAILABLE,
+                            "the agent seat's key material is no longer held by this host",
+                        );
+                        return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+                    }
+                }
+            }
+        };
+
         let request = CreateRequest {
             target: target.clone(),
             channel_id: plan.channel_id,
@@ -1341,6 +1406,8 @@ impl Provider {
                 .iter()
                 .map(|env| (env.name.clone(), env.value.clone()))
                 .collect(),
+            seat: seat_identity,
+            post_fence_env,
             idle_timeout: self.config.idle_timeout,
             answer_stall_timeout: self.config.answer_stall_timeout,
             emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
@@ -1351,10 +1418,15 @@ impl Provider {
 
         let events = self.sessions.event_sender();
         let startup_future = SessionManager::start(request, events);
-        let started = match self
+        let started = self
             .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
-            .await
-        {
+            .await;
+        // One-shot, whichever way the spawn went: the child either has the key
+        // or never will, so the copy at rest has no further purpose.
+        if plan.actor.is_some() {
+            self.forget_actor_seat(&plan.command_id);
+        }
+        let started = match started {
             Ok(started) => started,
             Err(failure) => {
                 tracing::warn!(
@@ -1391,6 +1463,8 @@ impl Provider {
             repo_ref: plan.repo_ref.clone(),
             session_ref: plan.session_ref.clone(),
             genesis_ref: plan.genesis_ref.clone(),
+            actor: plan.actor.clone(),
+            role: plan.role.clone(),
             founder_pubkey: Some(plan.founder_pubkey.clone()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
@@ -1774,6 +1848,48 @@ impl Provider {
             other => other,
         };
         let rehydration_mcp = rehydration.descriptor;
+
+        // A resumed agent seat needs its identity again, and the entry that
+        // carried it was consumed by the create. So the resume names its own
+        // custody entry, keyed by the resume command's own `commandId` — the
+        // same one-shot hand-off, one generation later.
+        //
+        // Refusing is the only honest answer when it is absent. The alternative
+        // — reattach the execution with the fence intact — produces a
+        // generation whose 44223 still says `agentRef: <seat>` while the
+        // process behind it holds no credentials at all, which is precisely the
+        // "control that lies about what it enforces" class of bug.
+        let (seat_identity, post_fence_env) = match record.actor.as_deref() {
+            None => (None, Vec::new()),
+            Some(actor) => {
+                let seats = crate::actor_seats::ActorSeatsFile::load(
+                    self.config.actor_seats_file.as_deref(),
+                );
+                match seats.seat(&plan.command_id) {
+                    Some(seat) if seat.pubkey == actor => {
+                        let identity = session::SeatIdentity {
+                            actor_pubkey: seat.pubkey.clone(),
+                            role: record.role.clone().unwrap_or_default(),
+                            relay_url: seat.relay_url.clone(),
+                        };
+                        (Some(identity), seat.post_fence_env())
+                    }
+                    _ => {
+                        self.state.consume_command(&plan.command_id, now_secs())?;
+                        self.forget_actor_seat(&plan.command_id);
+                        self.discard_orphaned_context_package(context_package_id.as_deref());
+                        let receipt = LifecycleReceipt::failed(
+                            &plan.command_id,
+                            payload::ACTOR_UNAVAILABLE,
+                            "this host holds no key material for the agent seated on this \
+                             execution; publish the resume from the host that holds it",
+                        );
+                        return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+                    }
+                }
+            }
+        };
+
         let request = CreateRequest {
             target: target.clone(),
             channel_id: record.channel_id,
@@ -1789,6 +1905,8 @@ impl Provider {
                 .iter()
                 .map(|env| (env.name.clone(), env.value.clone()))
                 .collect(),
+            seat: seat_identity,
+            post_fence_env,
             idle_timeout: self.config.idle_timeout,
             answer_stall_timeout: self.config.answer_stall_timeout,
             emit_raw_sdk_frames: self.config.emit_raw_sdk_frames,
@@ -1798,10 +1916,13 @@ impl Provider {
         };
         let events = self.sessions.event_sender();
         let startup_future = SessionManager::start(request, events);
-        let started = match self
+        let started = self
             .await_with_lease_maintenance(startup_future, relay.map(HarnessRelay::event_publisher))
-            .await
-        {
+            .await;
+        if record.actor.is_some() {
+            self.forget_actor_seat(&plan.command_id);
+        }
+        let started = match started {
             Ok(started) => started,
             Err(failure) => {
                 self.state.consume_command(&plan.command_id, now_secs())?;
@@ -1979,8 +2100,11 @@ impl Provider {
         content: &str,
     ) -> anyhow::Result<()> {
         let projects = ProjectsFile::default();
+        // A turn never resolves a working directory or a seat; both empty maps
+        // keep the context type honest without touching the disk.
+        let actor_seats = crate::actor_seats::ActorSeatsFile::default();
         let decision = commands::decide_turn(
-            &self.context(&projects, operator_pubkey),
+            &self.context(&projects, &actor_seats, operator_pubkey),
             created_at,
             content,
         );
@@ -2800,6 +2924,7 @@ impl Provider {
     fn context<'a>(
         &'a self,
         projects: &'a ProjectsFile,
+        actor_seats: &'a crate::actor_seats::ActorSeatsFile,
         operator_pubkey: &'a str,
     ) -> CommandContext<'a> {
         CommandContext {
@@ -2813,6 +2938,7 @@ impl Provider {
             active_session_count: self.sessions.live_count(),
             state: &self.state,
             projects,
+            actor_seats,
             in_flight: &self.in_flight,
             delivered_cancels: &self.delivered_cancels,
         }
@@ -2850,7 +2976,14 @@ impl Provider {
             project_ref: record.and_then(|record| record.project_ref.clone()),
             repo_ref: record.and_then(|record| record.repo_ref.clone()),
             title: payload::nullable(record.and_then(|record| record.title.as_deref())),
-            agent_ref: None,
+            // D1: `agentRef` stops being unconditionally null. It is null for
+            // every human-created execution — that work really is supervised,
+            // not performed by a participant — and names the seat for a create
+            // that carried an `actor`. The pubkey is the whole of what is
+            // published about that seat; its key lives in host-local custody
+            // and never reaches this struct or any other signed payload.
+            agent_ref: record.and_then(|record| record.actor.clone()),
+            role: record.and_then(|record| record.role.clone()),
             provider: Some(provider_ref),
             runtime: Some(runtime_slug.clone()),
             model: record
@@ -4326,6 +4459,11 @@ mod tests {
             auth_tag: None,
             state_dir: state_dir.to_path_buf(),
             projects_file: projects.map(Path::to_path_buf),
+            // Mirrors production discovery: the custody file is the projects
+            // file's sibling, so a test writes one beside the other.
+            actor_seats_file: projects
+                .and_then(Path::parent)
+                .map(|parent| parent.join(config::ACTOR_SEATS_FILE_NAME)),
             context_mcp_command: None,
             instance_id: "instance-1".into(),
             runtimes,
@@ -4630,6 +4768,8 @@ mod tests {
             repo_ref: None,
             session_ref: Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10".into()),
             genesis_ref: Some(genesis_ref.to_owned()),
+            actor: None,
+            role: None,
             founder_pubkey: Some(test_operator_keys().public_key().to_hex()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
@@ -7146,6 +7286,181 @@ mod tests {
         assert_eq!(record.session_ref.as_deref(), Some(umbrella));
     }
 
+    /// The seated create, end to end: an execution is created as an agent, its
+    /// 44223 says so, the seat's key material is gone from the host afterwards,
+    /// and nothing signed or logged ever contained it.
+    #[tokio::test]
+    async fn a_seated_create_publishes_the_seat_and_consumes_its_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let seats = write_actor_seats(dir.path(), "create-1", &"cd".repeat(32));
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event =
+            seated_create_event(&provider, channel_id, "create-1", &"cd".repeat(32), "lead");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "created");
+
+        // D1: `agentRef` stops being always-null, and `role` rides beside it.
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0]["agentRef"], "cd".repeat(32));
+        assert_eq!(metadata[0]["role"], "lead");
+
+        // Durable, so every later publication says the same thing.
+        let record = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("one session record");
+        assert_eq!(record.actor.as_deref(), Some("cd".repeat(32).as_str()));
+        assert_eq!(record.role.as_deref(), Some("lead"));
+        // …and the record is not where the key lives.
+        assert!(!format!("{record:?}").contains("nsec"));
+
+        // One-shot custody: the entry is gone and the key is not in the file.
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains(TEST_SEAT_NSEC),
+            "the seat's key is still at rest: {body}"
+        );
+        assert!(!body.contains("create-1"), "{body}");
+
+        // Nothing signed ever carried it.
+        for event in sink.events.lock().expect("lock").iter() {
+            assert!(
+                !event.content.contains(TEST_SEAT_NSEC),
+                "a signed event carried the seat's key: {}",
+                event.content
+            );
+        }
+    }
+
+    /// A create whose seat this host does not hold is refused with
+    /// `ACTOR_UNAVAILABLE`, and nothing is created: no session record, no
+    /// metadata, no adapter.
+    #[tokio::test]
+    async fn a_seated_create_with_no_custody_entry_is_refused_and_spawns_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event =
+            seated_create_event(&provider, channel_id, "create-1", &"cd".repeat(32), "lead");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(receipts[0]["error"]["code"], payload::ACTOR_UNAVAILABLE);
+        assert!(
+            sink.contents_of(KIND_CODING_SESSION_METADATA).is_empty(),
+            "a refused create published metadata"
+        );
+        assert_eq!(provider.state().sessions().count(), 0);
+        assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// The unseated path is unchanged: `agentRef` is null and `role` is not a
+    /// key at all, so a pre-amendment consumer's exact-key check still passes.
+    #[tokio::test]
+    async fn an_unseated_create_publishes_no_role_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let event = create_event(&provider, channel_id, "create-1");
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let metadata = sink.contents_of(KIND_CODING_SESSION_METADATA);
+        assert_eq!(metadata.len(), 1);
+        assert!(metadata[0]["agentRef"].is_null());
+        assert!(
+            metadata[0].get("role").is_none(),
+            "an unseated execution published a role key: {}",
+            metadata[0]
+        );
+    }
+
+    const TEST_SEAT_NSEC: &str = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+
+    fn write_actor_seats(dir: &Path, command_id: &str, pubkey: &str) -> std::path::PathBuf {
+        let path = dir.join(config::ACTOR_SEATS_FILE_NAME);
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "version": 1,
+                "pending": {
+                    command_id: {
+                        "pubkey": pubkey,
+                        "nsec": TEST_SEAT_NSEC,
+                        "authTag": null,
+                        "relayUrl": "wss://seat.example",
+                    }
+                },
+            })
+            .to_string(),
+        )
+        .expect("write actor seats");
+        path
+    }
+
+    fn seated_create_event(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        actor: &str,
+        role: &str,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "actor": actor,
+                "role": role,
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": null,
+            },
+        })
+        .to_string();
+        signed_lifecycle_event(channel_id, content)
+    }
+
     /// Multi-runtime routing: a create naming a second runtime's ref must spawn
     /// *that* runtime's adapter and mint its driver into the target.
     #[tokio::test]
@@ -7748,6 +8063,8 @@ mod tests {
                     repo_ref: None,
                     session_ref: None,
                     genesis_ref: None,
+                    actor: None,
+                    role: None,
                     founder_pubkey: Some("ab".repeat(32)),
                     granted_operators: std::collections::BTreeSet::new(),
                     granted_viewers: std::collections::BTreeSet::new(),

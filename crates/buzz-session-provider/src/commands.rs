@@ -24,8 +24,8 @@ use buzz_core::coding_session_lifecycle_command::{
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::payload::{
-    PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION,
-    UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
+    ACTOR_UNAVAILABLE, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT,
+    STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
 };
 use crate::state::StateStore;
 
@@ -185,6 +185,16 @@ pub struct CreatePlan {
     pub title: Option<String>,
     /// First turn to deliver after creation, or `None`.
     pub initial_turn: Option<String>,
+    /// The agent seat this execution runs as, or `None` for a human-created
+    /// execution.
+    ///
+    /// The pubkey only. Its key material is fetched from host-local custody at
+    /// spawn time and never enters this plan — a `CreatePlan` is `Debug` and
+    /// travels through the create path, so it is exactly the wrong place for a
+    /// signing key.
+    pub actor: Option<String>,
+    /// The role slug that seat holds. Set exactly when `actor` is.
+    pub role: Option<String>,
 }
 
 /// A validated request to reattach one exact prior generation.
@@ -268,6 +278,11 @@ pub struct CommandContext<'a> {
     pub state: &'a StateStore,
     /// Host-local working-directory map, freshly read.
     pub projects: &'a ProjectsFile,
+    /// Host-local agent-seat custody, freshly read.
+    ///
+    /// Consulted for presence and identity only — a decision never carries key
+    /// material out of it.
+    pub actor_seats: &'a crate::actor_seats::ActorSeatsFile,
     /// `commandId`s this process has accepted into a mailbox and not yet run.
     ///
     /// Consumption now happens when a turn *starts*, so the durable ledger
@@ -408,6 +423,8 @@ pub fn decide_lifecycle(
         model,
         title,
         initial_turn,
+        actor,
+        role,
     } = &payload.action
     else {
         unreachable!()
@@ -455,6 +472,36 @@ pub fn decide_lifecycle(
         };
     }
 
+    // Custody before anything expensive: a seat this host does not hold is a
+    // refusal, never an execution that is labelled as an agent and cannot act
+    // as one. The check reads presence and identity out of the custody file
+    // and nothing else — the key itself is fetched at spawn time.
+    if let Some(actor) = actor {
+        match context.actor_seats.seat(&payload.command_id) {
+            Some(seat) if seat.pubkey == *actor => {}
+            Some(_) => {
+                return LifecycleDecision::Fail {
+                    command_id: payload.command_id.clone(),
+                    code: ACTOR_UNAVAILABLE,
+                    message: "the agent seat this host holds for this create names a different \
+                              pubkey than the create's actor"
+                        .into(),
+                };
+            }
+            None => {
+                return LifecycleDecision::Fail {
+                    command_id: payload.command_id.clone(),
+                    code: ACTOR_UNAVAILABLE,
+                    message: format!(
+                        "this host holds no key material for agent {actor}; an agent seat's key \
+                         never travels on the wire, so the create must be published from the host \
+                         that holds it"
+                    ),
+                };
+            }
+        }
+    }
+
     let Some(cwd) =
         context
             .projects
@@ -485,6 +532,8 @@ pub fn decide_lifecycle(
         model: model.clone(),
         title: title.clone(),
         initial_turn: initial_turn.clone(),
+        actor: actor.clone(),
+        role: role.clone(),
     }))
 }
 
@@ -570,12 +619,12 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         TurnAction::Start {
             deliver: CodingSessionDelivery::Interrupt,
             ..
-        } if !operator_owns_session(record, context.operator_pubkey) => TurnDecision::Fail {
+        } if !operator_may_interrupt(context, record) => TurnDecision::Fail {
             command_id: command.command_id,
             target: command.target,
-            message: "only the session founder may send an interrupt-class turn; \
-                      send it as boundary or steer, or send a separate \
-                      thread.turn.interrupt to cancel the running turn first"
+            message: "only the session founder, or an operator holding the umbrella's lead seat, \
+                      may send an interrupt-class turn; send it as boundary or steer, or send a \
+                      separate thread.turn.interrupt to cancel the running turn first"
                 .into(),
         },
         TurnAction::Start { text, deliver } => TurnDecision::Start {
@@ -614,6 +663,51 @@ fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &st
         return true;
     }
     record.genesis_ref.is_some() && record.granted_operators.contains(operator_pubkey)
+}
+
+/// The role slug that carries interrupt authority within an umbrella (D7).
+pub const LEAD_ROLE: &str = "lead";
+
+/// Interrupt-class authority: the founder always, and — since the agent-seat
+/// amendment — a granted operator who *is* the umbrella's `lead` seat.
+///
+/// Two facts, both already verified locally, and neither of them claimed by
+/// the sender:
+///
+/// 1. `record.granted_operators` contains the signer. Each entry was applied
+///    from a relay-signed 40099 acceptance receipt plus the resolved
+///    transition ([`crate::authority`]) — the same chain `operator_may_steer`
+///    consults, so this never widens *who* may steer, only what a steer may
+///    do.
+/// 2. Some execution **this provider owns**, under the same umbrella
+///    (`session_ref`), is seated on that same pubkey with `role == "lead"`.
+///    The role is a fact this provider witnessed on a create it accepted and
+///    persisted itself, not something the interrupting command asserts.
+///
+/// The second fact is deliberately provider-local. A lead seated on *another*
+/// host is not recognized here, which is a real limit and the honest one: this
+/// provider can verify a role it minted, and cannot verify a 44223 claim
+/// signed by a provider it does not trust for authority. Founder authority is
+/// untouched either way — stop, resume, and end never move to a seat.
+fn operator_may_interrupt(
+    context: &CommandContext<'_>,
+    record: &crate::state::SessionRecord,
+) -> bool {
+    if operator_owns_session(record, context.operator_pubkey) {
+        return true;
+    }
+    if record.genesis_ref.is_none() || !record.granted_operators.contains(context.operator_pubkey) {
+        return false;
+    }
+    let Some(session_ref) = record.session_ref.as_deref() else {
+        // No umbrella means no siblings, so there is no lead seat to hold.
+        return false;
+    };
+    context.state.sessions().any(|sibling| {
+        sibling.session_ref.as_deref() == Some(session_ref)
+            && sibling.actor.as_deref() == Some(context.operator_pubkey)
+            && sibling.role.as_deref() == Some(LEAD_ROLE)
+    })
 }
 
 /// A decoded 44220 payload, covering both donor actions.
@@ -788,6 +882,13 @@ mod tests {
         })
     }
 
+    /// No agent seats: the shape of every test that predates crew seats.
+    fn no_actor_seats() -> &'static crate::actor_seats::ActorSeatsFile {
+        static EMPTY: std::sync::OnceLock<crate::actor_seats::ActorSeatsFile> =
+            std::sync::OnceLock::new();
+        EMPTY.get_or_init(crate::actor_seats::ActorSeatsFile::default)
+    }
+
     fn ctx<'a>(
         state: &'a StateStore,
         projects: &'a ProjectsFile,
@@ -802,6 +903,16 @@ mod tests {
         now_secs: u64,
         operator_pubkey: &'a str,
     ) -> CommandContext<'a> {
+        ctx_seated(state, projects, no_actor_seats(), now_secs, operator_pubkey)
+    }
+
+    fn ctx_seated<'a>(
+        state: &'a StateStore,
+        projects: &'a ProjectsFile,
+        actor_seats: &'a crate::actor_seats::ActorSeatsFile,
+        now_secs: u64,
+        operator_pubkey: &'a str,
+    ) -> CommandContext<'a> {
         CommandContext {
             provider_pubkey: AUTHORITY,
             operator_pubkey,
@@ -813,6 +924,7 @@ mod tests {
             active_session_count: state.live_session_count(),
             state,
             projects,
+            actor_seats,
             in_flight: no_commands_in_flight(),
             delivered_cancels: no_delivered_cancels(),
         }
@@ -886,6 +998,8 @@ mod tests {
             repo_ref: None,
             session_ref: None,
             genesis_ref: None,
+            actor: None,
+            role: None,
             founder_pubkey: Some(AUTHORITY.into()),
             granted_operators: std::collections::BTreeSet::new(),
             granted_viewers: std::collections::BTreeSet::new(),
@@ -1756,17 +1870,18 @@ mod tests {
         ));
     }
 
-    /// Interrupt-class delivery stops work someone else may be watching, so it
-    /// stays with the founder. A granted operator who asks for it is refused
-    /// out loud rather than quietly downgraded — a control that silently does
-    /// something milder than it says is the kind of lie this project treats as
-    /// a bug.
+    /// Interrupt-class delivery stops work someone else may be watching, so a
+    /// granted operator with no lead seat is refused out loud rather than
+    /// quietly downgraded — a control that silently does something milder than
+    /// it says is the kind of lie this project treats as a bug.
     ///
-    /// The refusal is narrow, and its words have to be: the *class* is
-    /// founder-only, while a plain `thread.turn.interrupt` is open to anyone
-    /// who may steer. Both halves are asserted here.
+    /// The refusal is narrow, and its words have to be: the *class* needs
+    /// founder or lead standing, while a plain `thread.turn.interrupt` is open
+    /// to anyone who may steer. Both halves are asserted here. The lead half of
+    /// the gate is pinned separately in
+    /// `the_umbrellas_lead_seat_may_interrupt_and_a_builder_may_not`.
     #[test]
-    fn interrupt_class_delivery_is_founder_only() {
+    fn interrupt_class_delivery_is_refused_to_a_grantee_with_no_lead_seat() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut state = store(dir.path());
         let grantee = "ef".repeat(32);
@@ -1883,5 +1998,245 @@ mod tests {
                 "{command_id} must not be answered twice"
             );
         }
+    }
+    /// D7: interrupt-class authority extends to a granted operator who holds
+    /// this umbrella's `lead` seat, and to nobody else.
+    ///
+    /// Both agents in this test are granted operators on the same execution,
+    /// so the *only* difference between them is the role on the seat this
+    /// provider minted for each. The builder is refused; the lead is not.
+    /// Founder authority is asserted unchanged for both: a lead seat is not a
+    /// founder, and `session.stop` proves it.
+    #[test]
+    fn the_umbrellas_lead_seat_may_interrupt_and_a_builder_may_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let lead = "ef".repeat(32);
+        let builder = "ab".repeat(31) + "cd";
+
+        // The execution being steered: governed, under the umbrella, with both
+        // agents granted operator standing.
+        let mut target = session("s1", dir.path());
+        target.genesis_ref = Some("12".repeat(32));
+        target.session_ref = Some(umbrella.to_owned());
+        target.granted_operators = [lead.clone(), builder.clone()].into_iter().collect();
+        target.authority_seq = 1;
+        state.insert_session(target).expect("insert");
+
+        // The two sibling seats, minted by this provider under the same
+        // umbrella. This is where the role comes from — never from the command.
+        for (session_id, actor, role) in [
+            ("s-lead", &lead, "lead"),
+            ("s-builder", &builder, "builder"),
+        ] {
+            let mut seat = session(session_id, dir.path());
+            seat.genesis_ref = Some("12".repeat(32));
+            seat.session_ref = Some(umbrella.to_owned());
+            seat.actor = Some(actor.clone());
+            seat.role = Some(role.to_owned());
+            state.insert_session(seat).expect("insert seat");
+        }
+
+        let projects = ProjectsFile::default();
+
+        let as_lead = ctx_as(&state, &projects, 1_000, &lead);
+        assert!(
+            matches!(
+                decide_turn(
+                    &as_lead,
+                    1_000,
+                    &turn_content_delivering("turn-lead-interrupt", "s1", 1, "interrupt")
+                ),
+                TurnDecision::Start {
+                    deliver: CodingSessionDelivery::Interrupt,
+                    ..
+                }
+            ),
+            "the umbrella's lead seat must be allowed the interrupt class"
+        );
+
+        let as_builder = ctx_as(&state, &projects, 1_000, &builder);
+        assert!(
+            matches!(
+                decide_turn(
+                    &as_builder,
+                    1_000,
+                    &turn_content_delivering("turn-builder-interrupt", "s1", 1, "interrupt")
+                ),
+                TurnDecision::Fail { .. }
+            ),
+            "a builder seat must not hold interrupt-class authority"
+        );
+
+        // Founder authority never moves: the lead may cancel a turn, and may
+        // not stop, resume, or end the execution.
+        assert!(matches!(
+            decide_lifecycle(
+                &as_lead,
+                Uuid::nil(),
+                1_000,
+                &lifecycle_target_content("session.stop", "stop-lead", "s1", 1),
+            ),
+            LifecycleDecision::Fail {
+                code: UNAUTHORIZED_OPERATOR,
+                ..
+            }
+        ));
+
+        // And the role has to be *in this umbrella*: the same lead pubkey
+        // seated under a different umbrella confers nothing here.
+        let mut elsewhere = store(&dir.path().join("elsewhere"));
+        let mut other_target = session("s1", dir.path());
+        other_target.genesis_ref = Some("12".repeat(32));
+        other_target.session_ref = Some("11111111-2222-3333-4444-555555555555".to_owned());
+        other_target.granted_operators = [lead.clone()].into_iter().collect();
+        other_target.authority_seq = 1;
+        elsewhere.insert_session(other_target).expect("insert");
+        let mut foreign_lead = session("s-lead", dir.path());
+        foreign_lead.genesis_ref = Some("12".repeat(32));
+        foreign_lead.session_ref = Some(umbrella.to_owned());
+        foreign_lead.actor = Some(lead.clone());
+        foreign_lead.role = Some("lead".to_owned());
+        elsewhere.insert_session(foreign_lead).expect("insert");
+        let cross = ctx_as(&elsewhere, &projects, 1_000, &lead);
+        assert!(
+            matches!(
+                decide_turn(
+                    &cross,
+                    1_000,
+                    &turn_content_delivering("turn-cross-umbrella", "s1", 1, "interrupt")
+                ),
+                TurnDecision::Fail { .. }
+            ),
+            "a lead seat in another umbrella must not interrupt this one"
+        );
+    }
+
+    /// D6: a create that seats an agent this host holds no key for is refused
+    /// with `ACTOR_UNAVAILABLE` — never created, never spawned.
+    ///
+    /// Three cases, because they fail for three different reasons and an
+    /// operator has to be able to tell them apart: no custody file at all, a
+    /// custody file with no entry for this `commandId`, and an entry for this
+    /// `commandId` that names a different pubkey than the create did.
+    #[test]
+    fn a_create_seating_an_actor_this_host_cannot_resolve_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let channel = Uuid::new_v4();
+        let projects = projects_with_channel(channel, dir.path());
+        let actor = "cd".repeat(32);
+
+        let decide = |seats: &crate::actor_seats::ActorSeatsFile, actor_hex: &str| {
+            let context = ctx_seated(&state, &projects, seats, 1_000, AUTHORITY);
+            decide_lifecycle(
+                &context,
+                channel,
+                1_000,
+                &seated_create_content("create-1", actor_hex, "lead"),
+            )
+        };
+
+        let empty = crate::actor_seats::ActorSeatsFile::default();
+        assert!(
+            matches!(
+                decide(&empty, &actor),
+                LifecycleDecision::Fail {
+                    code: ACTOR_UNAVAILABLE,
+                    ..
+                }
+            ),
+            "a host with no custody file must refuse a seated create"
+        );
+
+        let seats_path = dir.path().join("actor-seats.json");
+        std::fs::write(
+            &seats_path,
+            format!(
+                r#"{{"version":1,"pending":{{"create-other":{{"pubkey":"{actor}","nsec":"nsec1x","authTag":null,"relayUrl":"wss://relay.example"}}}}}}"#
+            ),
+        )
+        .expect("write seats");
+        let wrong_command = crate::actor_seats::ActorSeatsFile::load(Some(&seats_path));
+        assert!(matches!(
+            decide(&wrong_command, &actor),
+            LifecycleDecision::Fail {
+                code: ACTOR_UNAVAILABLE,
+                ..
+            }
+        ));
+
+        std::fs::write(
+            &seats_path,
+            format!(
+                r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{}","nsec":"nsec1x","authTag":null,"relayUrl":"wss://relay.example"}}}}}}"#,
+                "ab".repeat(32)
+            ),
+        )
+        .expect("write seats");
+        let wrong_pubkey = crate::actor_seats::ActorSeatsFile::load(Some(&seats_path));
+        match decide(&wrong_pubkey, &actor) {
+            LifecycleDecision::Fail { code, message, .. } => {
+                assert_eq!(code, ACTOR_UNAVAILABLE);
+                assert!(
+                    message.contains("different pubkey"),
+                    "a mismatched seat must say so: {message}"
+                );
+            }
+            other => panic!("a mismatched seat must be refused: {other:?}"),
+        }
+
+        // And the matching entry plans a create that carries the seat.
+        std::fs::write(
+            &seats_path,
+            format!(
+                r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{actor}","nsec":"nsec1x","authTag":null,"relayUrl":"wss://relay.example"}}}}}}"#
+            ),
+        )
+        .expect("write seats");
+        let held = crate::actor_seats::ActorSeatsFile::load(Some(&seats_path));
+        match decide(&held, &actor) {
+            LifecycleDecision::Create(plan) => {
+                assert_eq!(plan.actor.as_deref(), Some(actor.as_str()));
+                assert_eq!(plan.role.as_deref(), Some("lead"));
+                // The plan is `Debug` and travels through the create path, so
+                // it must never be able to carry the key.
+                let rendered = format!("{plan:?}");
+                assert!(!rendered.contains("nsec"), "{rendered}");
+            }
+            other => panic!("a held seat must plan a create: {other:?}"),
+        }
+    }
+
+    /// An unseated create is unchanged by all of the above: no custody lookup,
+    /// no seat on the plan.
+    #[test]
+    fn an_unseated_create_never_consults_custody() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = store(dir.path());
+        let channel = Uuid::new_v4();
+        let projects = projects_with_channel(channel, dir.path());
+        let seats = crate::actor_seats::ActorSeatsFile::default();
+        let context = ctx_seated(&state, &projects, &seats, 1_000, AUTHORITY);
+        match decide_lifecycle(
+            &context,
+            channel,
+            1_000,
+            &create_content("create-1", "null", AUTHORITY),
+        ) {
+            LifecycleDecision::Create(plan) => {
+                assert!(plan.actor.is_none());
+                assert!(plan.role.is_none());
+            }
+            other => panic!("expected a create: {other:?}"),
+        }
+    }
+
+    /// A seated create's signed content, as the desktop writes it.
+    fn seated_create_content(command_id: &str, actor: &str, role: &str) -> String {
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"{command_id}","action":{{"type":"session.create","projectRef":null,"repoRef":null,"providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{AUTHORITY}","actor":"{actor}","role":"{role}","model":null,"title":null,"initialTurn":null}}}}"#
+        )
     }
 }

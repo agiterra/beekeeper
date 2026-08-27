@@ -33,6 +33,7 @@ use serde_json::Value;
 use crate::coding_session_command::{
     CodingSessionTarget, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
 };
+use crate::coding_session_payload::ACTOR_ROLE_PAIR;
 use crate::kind::KIND_PROJECT;
 
 /// The currently supported coding-session lifecycle command envelope schema.
@@ -48,6 +49,12 @@ pub const MAX_LIFECYCLE_REFERENCE_BYTES: usize = 2 * 1024;
 pub const MAX_LIFECYCLE_INITIAL_TURN_BYTES: usize = 12 * 1024;
 /// Maximum UTF-8 byte length for the complete signed event content.
 pub const MAX_LIFECYCLE_CONTENT_BYTES: usize = 16 * 1024;
+/// Maximum bytes in an agent seat's `role` slug.
+///
+/// A role is a label a human reads in an execution row and a sibling seat
+/// resolves by name (`bee sessions send --to lead`), not prose: short enough to
+/// fit a label, long enough for `verifier-secondary`.
+pub const MAX_ROLE_SLUG_BYTES: usize = 64;
 
 /// The kind segment every `projectRef` coordinate must carry.
 ///
@@ -100,6 +107,27 @@ pub enum CodingSessionLifecycleAction {
         title: Option<String>,
         /// Optional first turn to deliver after session creation.
         initial_turn: Option<String>,
+        /// Optional agent seat: the pubkey whose identity this execution runs
+        /// as, lowercase 64-hex (plan D1).
+        ///
+        /// The pubkey only *names* the seat. Its key material never appears
+        /// here or anywhere else on the wire — the provider resolves it
+        /// host-locally and refuses the create when it cannot
+        /// ([`crate::coding_session_payload::ACTOR_UNAVAILABLE`]).
+        ///
+        /// Emitted only for a seated create, always together with
+        /// [`role`](Self::SessionCreate::role); neither key is ever written as
+        /// an explicit `null`, so an unseated create keeps the exact key sets
+        /// pre-amendment consumers require.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+        /// Optional role slug this seat holds within the umbrella, e.g.
+        /// `lead`, `architect`, `builder`.
+        ///
+        /// `[a-z0-9-]+`, 1..=[`MAX_ROLE_SLUG_BYTES`] bytes. Present exactly
+        /// when [`actor`](Self::SessionCreate::actor) is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
     },
     /// Reattach a disconnected, non-stopped execution as a new generation.
     #[serde(rename = "session.resume")]
@@ -153,7 +181,10 @@ impl CodingSessionLifecycleCommandPayload {
                 model,
                 title,
                 initial_turn,
+                actor,
+                role,
             } => {
+                validate_actor_role_pair(actor.as_deref(), role.as_deref())?;
                 if let Some(project_ref) = project_ref {
                     validate_required(
                         project_ref,
@@ -187,6 +218,12 @@ impl CodingSessionLifecycleCommandPayload {
                     "action.initialTurn",
                     MAX_LIFECYCLE_INITIAL_TURN_BYTES,
                 )?;
+                if let Some(actor) = actor {
+                    validate_actor_pubkey(actor)?;
+                }
+                if let Some(role) = role {
+                    validate_role_slug(role)?;
+                }
             }
             CodingSessionLifecycleAction::SessionResume {
                 session,
@@ -228,45 +265,24 @@ pub fn decode_coding_session_lifecycle_command(
         .ok_or_else(|| "coding-session lifecycle command payload missing action".to_string())?;
     match action.get("type").and_then(Value::as_str) {
         Some("session.create") => {
-            require_exact_field_forms(
-                action,
-                &[
-                    &[
-                        "type",
-                        "projectRef",
-                        "repoRef",
-                        "providerInstanceRef",
-                        "providerAuthorityPubkey",
-                        "model",
-                        "title",
-                        "initialTurn",
-                    ],
-                    &[
-                        "type",
-                        "projectRef",
-                        "repoRef",
-                        "sessionRef",
-                        "providerInstanceRef",
-                        "providerAuthorityPubkey",
-                        "model",
-                        "title",
-                        "initialTurn",
-                    ],
-                    &[
-                        "type",
-                        "projectRef",
-                        "repoRef",
-                        "sessionRef",
-                        "genesisRef",
-                        "providerInstanceRef",
-                        "providerAuthorityPubkey",
-                        "model",
-                        "title",
-                        "initialTurn",
-                    ],
-                ],
-                "action",
-            )?;
+            // The seat pair is checked before the shape so a half-written seat
+            // is answered by name rather than by the generic shape error.
+            require_seat_pair_shape(action)?;
+            let seated = action.get("actor").is_some();
+            let mut forms: Vec<Vec<&str>> = Vec::with_capacity(6);
+            for base in CREATE_ACTION_FORMS {
+                let mut seated_form = base.to_vec();
+                seated_form.push("actor");
+                seated_form.push("role");
+                forms.push(base.to_vec());
+                forms.push(seated_form);
+            }
+            let forms: Vec<&[&str]> = forms
+                .iter()
+                .filter(|form| form.contains(&"actor") == seated)
+                .map(Vec::as_slice)
+                .collect();
+            require_exact_field_forms(action, &forms, "action")?;
             if action.get("genesisRef").is_some()
                 && (action.get("sessionRef").and_then(Value::as_str).is_none()
                     || action.get("genesisRef").and_then(Value::as_str).is_none())
@@ -368,6 +384,120 @@ pub fn validate_event_id_hex(field: &str, value: &str) -> Result<(), String> {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return Err(format!("{field} must be a lowercase 64-hex event id"));
+    }
+    Ok(())
+}
+
+/// The three historical create key sets, oldest first, before the additive
+/// agent-seat pair. Each is accepted alone or with `actor` + `role` appended.
+const CREATE_ACTION_FORMS: &[&[&str]] = &[
+    &[
+        "type",
+        "projectRef",
+        "repoRef",
+        "providerInstanceRef",
+        "providerAuthorityPubkey",
+        "model",
+        "title",
+        "initialTurn",
+    ],
+    &[
+        "type",
+        "projectRef",
+        "repoRef",
+        "sessionRef",
+        "providerInstanceRef",
+        "providerAuthorityPubkey",
+        "model",
+        "title",
+        "initialTurn",
+    ],
+    &[
+        "type",
+        "projectRef",
+        "repoRef",
+        "sessionRef",
+        "genesisRef",
+        "providerInstanceRef",
+        "providerAuthorityPubkey",
+        "model",
+        "title",
+        "initialTurn",
+    ],
+];
+
+/// Check that a create action carries both seat keys as non-null strings, or
+/// neither of them.
+///
+/// Runs on the raw JSON, before the key-set check, because "half a seat" is a
+/// distinguishable mistake that deserves its own name
+/// ([`ACTOR_ROLE_PAIR`]) rather than the shape check's catch-all.
+fn require_seat_pair_shape(action: &Value) -> Result<(), String> {
+    let actor = action.get("actor");
+    let role = action.get("role");
+    if actor.is_none() && role.is_none() {
+        return Ok(());
+    }
+    let both_named = actor
+        .and_then(Value::as_str)
+        .zip(role.and_then(Value::as_str))
+        .is_some();
+    if both_named {
+        return Ok(());
+    }
+    Err(format!(
+        "{ACTOR_ROLE_PAIR}: coding-session lifecycle command action.actor and action.role \
+         must both be present as non-null strings, or both be absent"
+    ))
+}
+
+/// Same rule, applied to the decoded type so a programmatic producer cannot
+/// build half a seat and sign it.
+fn validate_actor_role_pair(actor: Option<&str>, role: Option<&str>) -> Result<(), String> {
+    if actor.is_some() == role.is_some() {
+        return Ok(());
+    }
+    Err(format!(
+        "{ACTOR_ROLE_PAIR}: action.actor and action.role must both be set or both be unset"
+    ))
+}
+
+/// Check that an agent seat's pubkey is canonical lowercase 64-hex.
+///
+/// Same canonical form as every other pubkey on this contract: the value is
+/// compared byte-for-byte against relay-signed authority facts, so an `npub`
+/// or an uppercase copy is rejected rather than coerced.
+pub fn validate_actor_pubkey(value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("action.actor must be a lowercase 64-hex public key".into());
+    }
+    Ok(())
+}
+
+/// Check that a role slug is `[a-z0-9-]+` within
+/// [`MAX_ROLE_SLUG_BYTES`].
+///
+/// A role is resolved by name across a crew, so the same rule that makes a
+/// `d` tag addressable applies: one canonical spelling, no case folding, no
+/// whitespace.
+pub fn validate_role_slug(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > MAX_ROLE_SLUG_BYTES {
+        return Err(format!(
+            "action.role must be 1..={MAX_ROLE_SLUG_BYTES} bytes (got {} bytes)",
+            value.len()
+        ));
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return Err(format!(
+            "action.role must be a lowercase [a-z0-9-] slug (got {value:?})"
+        ));
     }
     Ok(())
 }
@@ -490,6 +620,8 @@ mod tests {
                 model: Some("claude-sonnet-4-6".into()),
                 title: Some("Advance Buzz live sessions".into()),
                 initial_turn: Some("Start with the highest priority task.".into()),
+                actor: None,
+                role: None,
             },
         }
     }
@@ -939,5 +1071,132 @@ mod tests {
     fn rejects_signed_content_over_16_kib() {
         let content = " ".repeat(MAX_LIFECYCLE_CONTENT_BYTES + 1);
         assert!(decode_coding_session_lifecycle_command(&content).is_err());
+    }
+    /// A create that seats an agent: the 10-key authority-aware action plus
+    /// the `actor`/`role` pair (D1). Written as raw JSON so the shape under
+    /// test is the wire's, not this struct's serializer's.
+    fn lifecycle_content_with_seat(actor_json: &str, role_json: &str) -> String {
+        let mut keys = String::new();
+        if actor_json != "<absent>" {
+            keys.push_str(&format!(r#","actor":{actor_json}"#));
+        }
+        if role_json != "<absent>" {
+            keys.push_str(&format!(r#","role":{role_json}"#));
+        }
+        format!(
+            r#"{{"schema":"buzz-coding-session-lifecycle-command/v1","commandId":"create-1","action":{{"type":"session.create","projectRef":null,"repoRef":null,"sessionRef":"{}","genesisRef":"{}","providerInstanceRef":"claude-primary","providerAuthorityPubkey":"{}"{keys},"model":null,"title":null,"initialTurn":null}}}}"#,
+            session_reference(),
+            "12".repeat(32),
+            "ab".repeat(32),
+        )
+    }
+
+    /// D1: a create may seat an agent by naming its pubkey and role, and the
+    /// pair decodes back out unchanged.
+    #[test]
+    fn a_create_may_seat_an_actor_with_a_role() {
+        let content = lifecycle_content_with_seat(&format!("\"{}\"", "cd".repeat(32)), "\"lead\"");
+        let decoded = decode_coding_session_lifecycle_command(&content).expect("seated create");
+        let CodingSessionLifecycleAction::SessionCreate { actor, role, .. } = &decoded.action
+        else {
+            panic!("expected create action")
+        };
+        assert_eq!(actor.as_deref(), Some("cd".repeat(32).as_str()));
+        assert_eq!(role.as_deref(), Some("lead"));
+
+        // Round-trips: a re-serialized seated create decodes to itself.
+        let reserialized = serde_json::to_string(&decoded).expect("serialize");
+        assert_eq!(
+            decode_coding_session_lifecycle_command(&reserialized).expect("round trip"),
+            decoded
+        );
+    }
+
+    /// The pairing rule, in both directions, with the code the refusal names.
+    #[test]
+    fn an_actor_without_a_role_is_refused_as_actor_role_pair() {
+        for (actor, role) in [
+            (format!("\"{}\"", "cd".repeat(32)), "<absent>".to_owned()),
+            ("<absent>".to_owned(), "\"lead\"".to_owned()),
+            (format!("\"{}\"", "cd".repeat(32)), "null".to_owned()),
+            ("null".to_owned(), "\"lead\"".to_owned()),
+            ("null".to_owned(), "null".to_owned()),
+        ] {
+            let error = decode_coding_session_lifecycle_command(&lifecycle_content_with_seat(
+                &actor, &role,
+            ))
+            .expect_err("a lone or null seat key must be refused");
+            assert!(
+                error.contains(ACTOR_ROLE_PAIR),
+                "the refusal must name {ACTOR_ROLE_PAIR}, got {error:?}"
+            );
+        }
+    }
+
+    /// The seat's two values are bounded exactly like every other reference on
+    /// this action: a pubkey is canonical lowercase 64-hex, a role is a short
+    /// `[a-z0-9-]` slug.
+    #[test]
+    fn a_seat_pubkey_is_canonical_hex_and_a_role_is_a_bounded_slug() {
+        for actor in [
+            "cd".repeat(32).to_uppercase(),
+            "cd".repeat(31),
+            format!("{}g", "cd".repeat(31) + "c"),
+            format!("npub1{}", "cd".repeat(20)),
+        ] {
+            assert!(
+                decode_coding_session_lifecycle_command(&lifecycle_content_with_seat(
+                    &format!("\"{actor}\""),
+                    "\"lead\""
+                ))
+                .is_err(),
+                "actor {actor:?} was accepted"
+            );
+        }
+        for role in [
+            String::new(),
+            "Lead".to_owned(),
+            "lead builder".to_owned(),
+            "lead_builder".to_owned(),
+            "a".repeat(MAX_ROLE_SLUG_BYTES + 1),
+        ] {
+            assert!(
+                decode_coding_session_lifecycle_command(&lifecycle_content_with_seat(
+                    &format!("\"{}\"", "cd".repeat(32)),
+                    &format!("\"{role}\"")
+                ))
+                .is_err(),
+                "role {role:?} was accepted"
+            );
+        }
+        for role in [
+            "lead",
+            "architect",
+            "builder-2",
+            "a",
+            &"a".repeat(MAX_ROLE_SLUG_BYTES),
+        ] {
+            assert!(
+                decode_coding_session_lifecycle_command(&lifecycle_content_with_seat(
+                    &format!("\"{}\"", "cd".repeat(32)),
+                    &format!("\"{role}\"")
+                ))
+                .is_ok(),
+                "role {role:?} was refused"
+            );
+        }
+    }
+
+    /// A create that seats nobody is byte-for-byte what it was before this
+    /// amendment: the two keys are never written as explicit nulls.
+    #[test]
+    fn an_unseated_create_never_writes_the_seat_keys() {
+        let payload = valid_payload();
+        let content = serde_json::to_string(&payload).expect("serialize");
+        assert!(
+            !content.contains("\"actor\"") && !content.contains("\"role\""),
+            "an unseated create wrote a seat key: {content}"
+        );
+        assert!(decode_coding_session_lifecycle_command(&content).is_ok());
     }
 }

@@ -156,6 +156,24 @@ pub struct SessionRecord {
     /// Explicit genesis event id for authority-aware sessions.
     #[serde(default)]
     pub genesis_ref: Option<String>,
+    /// The agent seat this execution runs as, lowercase 64-hex, or `None` for
+    /// a human-created execution (plan D1).
+    ///
+    /// The pubkey only. The seat's key material is one-shot host-local custody
+    /// ([`crate::actor_seats`]) and is deliberately *not* persisted here: a
+    /// record that carried it would put a signing key in `state.json` for the
+    /// lifetime of the execution, which is exactly the at-rest credential the
+    /// custody file exists to avoid. Defaults to `None` for records written
+    /// before the field existed.
+    #[serde(default)]
+    pub actor: Option<String>,
+    /// The role slug this seat holds within its umbrella, or `None`.
+    ///
+    /// Set exactly when [`SessionRecord::actor`] is. Republished in every
+    /// 44223 for this generation and consulted for the umbrella's `lead`
+    /// interrupt authority (plan D7).
+    #[serde(default)]
+    pub role: Option<String>,
     /// Founder pubkey resolved from genesis, or the locally witnessed create
     /// signer for legacy sessions. `None` is retained for pre-field records.
     #[serde(default)]
@@ -715,6 +733,8 @@ mod tests {
             repo_ref: None,
             session_ref: None,
             genesis_ref: None,
+            actor: None,
+            role: None,
             founder_pubkey: Some("ab".repeat(32)),
             granted_operators: BTreeSet::new(),
             granted_viewers: BTreeSet::new(),

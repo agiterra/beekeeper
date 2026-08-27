@@ -60,6 +60,20 @@ pub const SESSION_ALREADY_ATTACHED: &str = "SESSION_ALREADY_ATTACHED";
 pub const CONTEXT_NOT_RECOVERED: &str = "CONTEXT_NOT_RECOVERED";
 /// A create named a genesis event that could not be resolved and verified.
 pub const GENESIS_NOT_FOUND: &str = "GENESIS_NOT_FOUND";
+/// A create named an `actor` without a `role`, or a `role` without an `actor`.
+///
+/// The two are a pair: an agent seat is a pubkey *and* the role it holds, and
+/// half of one describes nothing a consumer can render or a provider can seat.
+/// Structural, not semantic — the payload is refused before it is stored, so
+/// this code appears in a relay rejection rather than in a receipt.
+pub const ACTOR_ROLE_PAIR: &str = "ACTOR_ROLE_PAIR";
+/// A create seated an `actor` whose key material this host does not hold.
+///
+/// Custody is host-local by design (plan D6): the seat's key never crosses the
+/// wire, so a provider that cannot resolve it locally refuses the create rather
+/// than starting an execution that is labelled as an agent and cannot act as
+/// one.
+pub const ACTOR_UNAVAILABLE: &str = "ACTOR_UNAVAILABLE";
 /// The command signer is not authorized to operate the addressed session.
 pub const UNAUTHORIZED_OPERATOR: &str = "UNAUTHORIZED_OPERATOR";
 /// The addressed provider has no execution matching the requested target.
@@ -773,8 +787,25 @@ pub struct SessionMetadata {
     pub repo_ref: Option<String>,
     /// Operator-facing title, or `null`.
     pub title: Option<String>,
-    /// Managed-agent reference. Always `null`: this provider is not one.
+    /// The agent seat this execution runs as, lowercase 64-hex, or `null`.
+    ///
+    /// `null` is still the answer for every human-created execution: that work
+    /// is supervised by the provider, not performed by a Buzz participant
+    /// acting as itself. A non-null value is the seat named by the create's
+    /// `actor` (plan D1) and is the *only* thing about that seat that is
+    /// published — its key material is resolved host-locally and never
+    /// crosses the wire.
     pub agent_ref: Option<String>,
+    /// The role slug this seat holds within its umbrella, or `null`.
+    ///
+    /// The one additive key of this amendment: emitted only alongside a
+    /// non-null `agentRef`, never as an explicit `null`, so metadata for an
+    /// unseated execution keeps the exact key sets pre-amendment consumers
+    /// require. Validated as
+    /// [`crate::coding_session_lifecycle_command::validate_role_slug`] does,
+    /// because it is the same value echoed from the create.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     /// Advertised provider instance reference.
     pub provider: Option<String>,
     /// Runtime slug behind the driver.
@@ -856,6 +887,9 @@ const METADATA_BASE_FIELDS: &[&str] = &[
     "capabilities",
 ];
 const METADATA_SESSION_REF_FIELD: &str = "sessionRef";
+/// The agent-seat amendment's one additive key. Independent of both earlier
+/// amendments, so it doubles the accepted shape count to eight.
+const METADATA_ROLE_FIELD: &str = "role";
 const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachable", "verifiedAt"];
 
 /// Strictly decode and validate signed metadata content (kind 44223).
@@ -879,6 +913,7 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
         .ok_or_else(|| "coding-session metadata must be an object".to_string())?;
 
     let has_session_ref = object.contains_key(METADATA_SESSION_REF_FIELD);
+    let has_role = object.contains_key(METADATA_ROLE_FIELD);
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -892,6 +927,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     let mut expected: Vec<&str> = METADATA_BASE_FIELDS.to_vec();
     if has_session_ref {
         expected.push(METADATA_SESSION_REF_FIELD);
+    }
+    if has_role {
+        expected.push(METADATA_ROLE_FIELD);
     }
     if has_all_facts {
         expected.extend_from_slice(METADATA_FACT_FIELDS);
@@ -938,6 +976,22 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
     }
     if let Some(session_ref) = &metadata.session_ref {
         validate_session_ref(session_ref)?;
+    }
+    if let Some(agent_ref) = &metadata.agent_ref {
+        crate::coding_session_lifecycle_command::validate_actor_pubkey(agent_ref)
+            .map_err(|error| error.replace("action.actor", "metadata agentRef"))?;
+    }
+    match (&metadata.agent_ref, &metadata.role) {
+        (Some(_), Some(role)) => {
+            crate::coding_session_lifecycle_command::validate_role_slug(role)
+                .map_err(|error| error.replace("action.role", "metadata role"))?;
+        }
+        (_, None) => {}
+        (None, Some(_)) => {
+            return Err(format!(
+                "{ACTOR_ROLE_PAIR}: metadata role describes a seat, so it requires a non-null agentRef"
+            ));
+        }
     }
     if metadata.relay_reachable.is_none() != metadata.verified_at.is_none() {
         return Err(
@@ -1387,6 +1441,7 @@ mod tests {
             repo_ref: None,
             title: nullable(Some("  ")),
             agent_ref: None,
+            role: None,
             provider: Some("claude-primary".into()),
             runtime: Some("claude".into()),
             model: Some("claude-sonnet-4-6".into()),
@@ -1454,6 +1509,7 @@ mod tests {
             repo_ref: None,
             title: None,
             agent_ref: None,
+            role: None,
             provider: Some("codex-primary".into()),
             runtime: Some("codex".into()),
             model: None,
@@ -1622,6 +1678,121 @@ mod tests {
         mixed["observedCommit"] = serde_json::json!(null);
         let error = decode_coding_session_metadata(&mixed.to_string()).expect_err("mixed shape");
         assert!(error.contains("some but not all"));
+    }
+
+    /// D1: an agent seat's metadata names the seat (`agentRef`) and the role
+    /// it holds, and the `role` key is additive — present only for a seat.
+    #[test]
+    fn decode_metadata_accepts_the_agent_seat_forms() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": "cd".repeat(32),
+            "role": "lead",
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+        });
+        let decoded = decode_coding_session_metadata(&base.to_string()).expect("seated 13-key");
+        assert_eq!(decoded.agent_ref.as_deref(), Some("cd".repeat(32).as_str()));
+        assert_eq!(decoded.role.as_deref(), Some("lead"));
+
+        // The seat key composes with both earlier amendments.
+        let mut full = base.clone();
+        full["sessionRef"] = serde_json::json!("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+        full["observedCommit"] = serde_json::json!(null);
+        full["dirty"] = serde_json::json!(null);
+        full["relayReachable"] = serde_json::json!(null);
+        full["verifiedAt"] = serde_json::json!(null);
+        let decoded = decode_coding_session_metadata(&full.to_string()).expect("seated 18-key");
+        assert_eq!(decoded.role.as_deref(), Some("lead"));
+        assert_eq!(
+            decoded.session_ref.as_deref(),
+            Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
+        );
+    }
+
+    /// A `role` describes a seat, so it can never appear without one, and it
+    /// obeys the same slug rule the create's `role` does.
+    #[test]
+    fn metadata_role_requires_an_agent_ref_and_a_valid_slug() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": null,
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "idle",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+        });
+
+        let mut orphan = base.clone();
+        orphan["role"] = serde_json::json!("lead");
+        let error = decode_coding_session_metadata(&orphan.to_string())
+            .expect_err("a role with no seat must be refused");
+        assert!(error.contains(ACTOR_ROLE_PAIR), "got {error:?}");
+
+        for role in ["", "Lead", "lead builder"] {
+            let mut bad = base.clone();
+            bad["agentRef"] = serde_json::json!("cd".repeat(32));
+            bad["role"] = serde_json::json!(role);
+            assert!(
+                decode_coding_session_metadata(&bad.to_string()).is_err(),
+                "role {role:?} was accepted"
+            );
+        }
+    }
+
+    /// The byte-for-byte guarantee: metadata for an execution with no seat is
+    /// exactly what it was before this amendment.
+    #[test]
+    fn unseated_metadata_never_writes_the_role_key() {
+        let metadata = SessionMetadata {
+            schema: METADATA_SCHEMA.to_owned(),
+            session: target(),
+            project_ref: None,
+            repo_ref: None,
+            title: None,
+            agent_ref: None,
+            role: None,
+            provider: Some("claude-primary".to_owned()),
+            runtime: Some("claude".to_owned()),
+            model: None,
+            status: SessionStatus::Idle,
+            branch: None,
+            capabilities: Capabilities::v1_claude(),
+            session_ref: None,
+            observed_commit: None,
+            dirty: None,
+            relay_reachable: None,
+            verified_at: None,
+        };
+        let content = serde_json::to_string(&metadata).expect("serialize");
+        assert!(
+            !content.contains("\"role\""),
+            "an unseated execution wrote a role key: {content}"
+        );
+        assert_eq!(
+            serde_json::to_value(&metadata)
+                .expect("value")
+                .as_object()
+                .expect("object")
+                .len(),
+            16,
+            "unseated metadata is still the exact base + B1-facts shape"
+        );
+        assert!(decode_coding_session_metadata(&content).is_ok());
     }
 
     #[test]

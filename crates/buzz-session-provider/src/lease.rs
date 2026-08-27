@@ -110,6 +110,8 @@ mod tests {
             repo_ref: None,
             session_ref: None,
             genesis_ref: None,
+            actor: None,
+            role: None,
             founder_pubkey: Some("ab".repeat(32)),
             granted_operators: BTreeSet::new(),
             granted_viewers: BTreeSet::new(),

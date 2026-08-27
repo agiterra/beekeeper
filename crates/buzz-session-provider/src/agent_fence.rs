@@ -108,6 +108,37 @@ pub(crate) const FENCE: EnvFence = EnvFence {
 /// pins both halves.
 pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider.\n\nThe provider's Buzz identity is not yours. Every BUZZ_* variable is deliberately removed from this process's environment before you start, so the `bee` CLI cannot authenticate from your shell and this session holds no relay credentials. Do not run `bee` commands that talk to the relay, do not go looking for a key in .env, ~/.config/buzz/, or the environment, and do not report the missing key as a misconfiguration — the absence is the design, not a broken setup.\n\nYou do not need those credentials to be seen. The provider itself observes and publishes this session's state — branch, HEAD commit, dirty worktree, and verified liveness — so when this session's channel belongs to a project, that published state is what the project's Pulse and Bee Keeper Desktop show for you. Routine progress needs no post from you.\n\nYou will not receive a Project Pulse digest in this session and you cannot read one from here. If you need to know what other sessions or people are working on before you touch shared code, say so and ask your operator in this conversation: they can see the Pulse and can post an entry on your behalf.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes — nothing will wake you to do so, and your operator will be left watching a session that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go.";
 
+/// The same briefing, for an execution that **is** an agent seat.
+///
+/// The fence still runs — every `BUZZ_*` the sidecar holds is still removed —
+/// and then exactly four variables are put back, all of them the *seat's* own
+/// ([`crate::actor_seats::ActorSeat::post_fence_env`]). So the unseated
+/// briefing above is now a lie for this process, in the specific way this
+/// project treats as a bug: it would tell an agent that holds working relay
+/// credentials that it holds none, and a competent agent would then either
+/// refuse to use them or report a misconfiguration that is not one.
+///
+/// This text therefore says the true thing instead, and says it narrowly:
+///
+/// - The identity in this shell is **the seat's**, named by pubkey, and the
+///   relay it authenticates against is named too — a seat that does not know
+///   which community it is speaking into cannot tell a sibling from a
+///   stranger.
+/// - It is *not* the provider's identity. The distinction matters because the
+///   provider signs the transcript and metadata a human reads as fact; a seat
+///   that believed it could sign those would be forging its own record.
+/// - The role it holds, so a crew's conventions have something to attach to.
+///
+/// It deliberately does **not** hand out a task list of `bee` commands. What a
+/// seat may usefully do with its identity is a slice-4 question (`bee sessions
+/// send`, the inbox, the roster); promising verbs that do not exist yet would
+/// reproduce the 2026-08-21 failure in the opposite direction.
+pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
+    format!(
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. The `bee` CLI works here and speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +215,69 @@ mod tests {
             buzz_acp::BASE_PROMPT.contains("post it yourself with `bee pulse update`"),
             "the managed-agent base prompt lost its Pulse write instruction"
         );
+    }
+
+    /// The seated half of the same rule: a briefing must describe the process
+    /// it is actually installed in.
+    ///
+    /// The unseated text says `bee` cannot authenticate, which is true for a
+    /// fenced execution and false for a seat that was handed its own key — so
+    /// the two variants are asserted against each other here, not separately,
+    /// because the defect this pins is the pair drifting into agreement.
+    #[test]
+    fn the_actor_seat_briefing_states_the_identity_the_seat_actually_holds() {
+        let actor = "cd".repeat(32);
+        let briefing = actor_seat_briefing(&actor, "lead", "wss://relay.example");
+
+        assert!(briefing.contains(&actor), "the seat is not named");
+        assert!(briefing.contains("wss://relay.example"), "no relay named");
+        assert!(briefing.contains("\"lead\""), "no role named");
+        assert!(
+            briefing.contains("You hold your own Buzz identity"),
+            "the seated briefing must say the shell is authenticated"
+        );
+
+        // The exact sentence the unseated briefing exists to deliver must not
+        // survive into the seated one: it is false here.
+        assert!(
+            !briefing.contains("cannot authenticate"),
+            "the seated briefing repeats the fenced briefing's claim"
+        );
+        assert!(
+            FENCED_SESSION_BRIEFING.contains("cannot authenticate"),
+            "the unseated briefing must still say why `bee` will not work there"
+        );
+
+        // Neither variant promises Pulse writes, and neither leaks a key.
+        for text in [FENCED_SESSION_BRIEFING.to_owned(), briefing.clone()] {
+            for forbidden in ["bee pulse update", "bee pulse digest", "nsec1"] {
+                assert!(
+                    !text.contains(forbidden),
+                    "a session briefing contains `{forbidden}`"
+                );
+            }
+        }
+
+        // The seat is told the boundary that makes the provider's record
+        // trustworthy: its key is not the provider's.
+        assert!(
+            briefing.contains("not the provider's"),
+            "the seated briefing must separate the seat from the provider"
+        );
+    }
+
+    /// The fence itself is unchanged by seating: `EXEMPT` stays empty, so a
+    /// seat's variables arrive by explicit post-fence injection and never by
+    /// weakening the namespace rule.
+    #[test]
+    fn seating_an_agent_never_widens_the_fence() {
+        assert!(
+            EXEMPT.is_empty(),
+            "an exemption was added instead of a post-fence injection"
+        );
+        for key in ["BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL", "BUZZ_AUTH_TAG"] {
+            assert!(FENCE.covers(key), "{key} is no longer fenced");
+        }
     }
 
     /// Over-fencing is the other failure mode: an agent that cannot find its

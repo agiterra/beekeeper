@@ -2038,6 +2038,7 @@ mod tests {
             repo_ref: None,
             title: title.map(str::to_owned),
             agent_ref: None,
+            role: None,
             provider: Some("claude-primary".into()),
             runtime: Some("claude".into()),
             model: model.map(str::to_owned),
