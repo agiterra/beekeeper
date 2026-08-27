@@ -10312,13 +10312,21 @@ mod tests {
         let start = source
             .find("pub async fn run_with(")
             .expect("run_with is this crate's run loop");
-        // Bounded at the test module so this test's own doc comment, which
-        // names both functions, cannot satisfy the assertions below.
+        // Bounded at `run_with`'s own closing brace — the first lone `}` at
+        // column zero after it, which in this file only ends a top-level item.
+        // The window used to run to the test module instead, i.e. over every
+        // line of production code in the file, so the same literal appearing
+        // in any doc comment or log message ~3,700 lines away satisfied the
+        // assertions below while the run loop no longer called anything.
         let end = start
             + source[start..]
-                .find("\n#[cfg(test)]")
-                .expect("the test module follows the run loop");
+                .find("\n}\n")
+                .expect("run_with's body is brace-delimited");
         let run_loop = &source[start..end];
+        assert!(
+            run_loop.contains("tokio::select! {"),
+            "the window no longer covers the run loop's select"
+        );
         for call in [
             "provider.flush_due_replays()",
             "provider.reopen_replay_windows_after_reconnect()",
