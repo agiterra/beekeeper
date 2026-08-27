@@ -462,7 +462,7 @@ function parseTurnReceipt(
  * where the Rust half refuses one, so the desktop would resolve a seat no key
  * can hold while the pulse fold silently dropped the same signed event.
  */
-function isSeatActorPubkeyOrNull(value: unknown): boolean {
+function isSeatActorPubkeyOrNull(value: unknown): value is string | null {
   return (
     value === null ||
     (typeof value === "string" && /^[0-9a-f]{64}$/.test(value))

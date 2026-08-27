@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { publishSeatedCodingSessionCreate } from "./codingSessionSeatedCreate.ts";
+import {
+  publishSeatedCodingSessionCreate,
+  publishSeatedCodingSessionResume,
+} from "./codingSessionSeatedCreate.ts";
 
 const SEAT = {
   actor: "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66",
@@ -134,4 +137,56 @@ test("a failed publish takes the staged seat down with it", async () => {
     /relay refused/,
   );
   assert.deepEqual(calls.at(-1), ["clearSeat", "csl-5"]);
+});
+
+test("a resume stages the seat again under the resume's own commandId", async () => {
+  // The create's entry was consumed when the first adapter spawned, so a
+  // reconnect that stages nothing is refused `ACTOR_UNAVAILABLE` forever.
+  const { calls, deps } = recorder();
+  let published = 0;
+  const result = await publishSeatedCodingSessionResume({
+    commandId: "csl-resume-1",
+    actorPubkey: SEAT.actor,
+    deps,
+    publish: async () => {
+      published += 1;
+      return "resumed";
+    },
+  });
+  assert.equal(result, "resumed");
+  assert.equal(published, 1);
+  assert.deepEqual(calls, [
+    ["stageSeat", { commandId: "csl-resume-1", agentPubkey: SEAT.actor }],
+  ]);
+});
+
+test("a resume of an unseated execution touches no custody at all", async () => {
+  const { calls, deps } = recorder();
+  const result = await publishSeatedCodingSessionResume({
+    commandId: "csl-resume-2",
+    actorPubkey: null,
+    deps,
+    publish: async () => "resumed",
+  });
+  assert.equal(result, "resumed");
+  assert.deepEqual(calls, []);
+});
+
+test("a resume that never went out takes its staged key back", async () => {
+  const { calls, deps } = recorder();
+  await assert.rejects(
+    publishSeatedCodingSessionResume({
+      commandId: "csl-resume-3",
+      actorPubkey: SEAT.actor,
+      deps,
+      publish: async () => {
+        throw new Error("relay rejected the resume");
+      },
+    }),
+    /relay rejected the resume/,
+  );
+  assert.deepEqual(calls, [
+    ["stageSeat", { commandId: "csl-resume-3", agentPubkey: SEAT.actor }],
+    ["clearSeat", "csl-resume-3"],
+  ]);
 });

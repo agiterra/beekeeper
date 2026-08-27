@@ -14,21 +14,76 @@
  */
 import type { CodingSessionActorSeat } from "./codingSessionActorSeat";
 
-export type SeatedCodingSessionCreateDeps = {
+export type CodingSessionSeatCustody = {
+  /** Write the host-local custody entry for this exact command. */
+  stageSeat: (input: {
+    commandId: string;
+    agentPubkey: string;
+  }) => Promise<void>;
+  /** Drop the custody entry again. Best effort; never fails the publish. */
+  clearSeat: (commandId: string) => Promise<void>;
+};
+
+export type SeatedCodingSessionCreateDeps = CodingSessionSeatCustody & {
   /** Add the actor to the channel; throws with actionable copy on failure. */
   ensureMembership: (input: {
     channelId: string;
     actorPubkey: string;
     actorLabel: string | null;
   }) => Promise<void>;
-  /** Write the host-local custody entry for this exact command. */
-  stageSeat: (input: {
-    commandId: string;
-    agentPubkey: string;
-  }) => Promise<void>;
-  /** Drop the custody entry again. Best effort; never fails the create. */
-  clearSeat: (commandId: string) => Promise<void>;
 };
+
+/**
+ * Stage a seat's key material, publish, and take the entry back if nothing
+ * went out.
+ *
+ * Custody is keyed by `commandId`, and the provider consumes the entry on the
+ * command that names it — so **every** command that spawns a process for a
+ * seat needs its own entry, not just the create. A resume is exactly that: it
+ * mints a fresh `commandId` and starts a new adapter process, which needs the
+ * same identity the create gave the first one.
+ */
+async function publishWithStagedSeat<T>(input: {
+  commandId: string;
+  actorPubkey: string;
+  publish: () => Promise<T>;
+  deps: CodingSessionSeatCustody;
+}): Promise<T> {
+  await input.deps.stageSeat({
+    commandId: input.commandId,
+    agentPubkey: input.actorPubkey,
+  });
+  try {
+    return await input.publish();
+  } catch (error) {
+    // Nothing went out, so the staged secret has no command to belong to.
+    await input.deps.clearSeat(input.commandId).catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Reconnect a seated execution, staging its identity for the new generation.
+ *
+ * The create's custody entry was consumed when the first adapter spawned, so
+ * a resume that stages nothing is refused by the provider with
+ * `ACTOR_UNAVAILABLE` — permanently, on the very host that holds the key.
+ * With no actor this is exactly `publish()`.
+ */
+export async function publishSeatedCodingSessionResume<T>(input: {
+  commandId: string;
+  actorPubkey: string | null;
+  publish: () => Promise<T>;
+  deps: CodingSessionSeatCustody;
+}): Promise<T> {
+  if (!input.actorPubkey) return input.publish();
+  return publishWithStagedSeat({
+    commandId: input.commandId,
+    actorPubkey: input.actorPubkey,
+    publish: input.publish,
+    deps: input.deps,
+  });
+}
 
 /**
  * Publish a create, seating an agent first when one was chosen.
@@ -51,15 +106,10 @@ export async function publishSeatedCodingSessionCreate<T>(input: {
     actorPubkey: input.seat.actor,
     actorLabel: input.seatLabel ?? null,
   });
-  await input.deps.stageSeat({
+  return publishWithStagedSeat({
     commandId: input.commandId,
-    agentPubkey: input.seat.actor,
+    actorPubkey: input.seat.actor,
+    publish: input.publish,
+    deps: input.deps,
   });
-  try {
-    return await input.publish();
-  } catch (error) {
-    // Nothing went out, so the staged secret has no create to belong to.
-    await input.deps.clearSeat(input.commandId).catch(() => {});
-    throw error;
-  }
 }

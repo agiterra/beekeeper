@@ -1864,11 +1864,16 @@ impl Provider {
                         self.state.consume_command(&plan.command_id, now_secs())?;
                         self.forget_actor_seat(&plan.command_id);
                         self.discard_orphaned_context_package(context_package_id.as_deref());
+                        // Precise about which fact is missing: this host may
+                        // well hold the agent's key and simply have staged
+                        // nothing under *this* command. Saying "this host does
+                        // not hold the key" on the machine that does is the
+                        // falsehood class this project treats as a bug.
                         let receipt = LifecycleReceipt::failed(
                             &plan.command_id,
                             payload::ACTOR_UNAVAILABLE,
-                            "this host holds no key material for the agent seated on this \
-                             execution; publish the resume from the host that holds it",
+                            "no key material was staged for this reconnect; reconnect from the \
+                             host that holds this agent's key",
                         );
                         return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
                     }
@@ -7252,6 +7257,81 @@ mod tests {
         );
         assert_eq!(provider.state().sessions().count(), 0);
         assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// A seated execution reconnects when its identity is staged again.
+    ///
+    /// The create consumed the entry that carried the seat's key, so the
+    /// resume brings its own — keyed by the *resume's* `commandId`. Without
+    /// this the desktop's Reconnect is refused `ACTOR_UNAVAILABLE` forever and
+    /// a seated execution is single-use, which is why the composer stages
+    /// custody before publishing a resume.
+    #[tokio::test]
+    async fn a_seated_resume_reattaches_when_its_key_material_is_staged_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let previous = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        assert_eq!(previous.generation, 1);
+        provider.sessions.shutdown(&previous.session_id);
+
+        // The reconnect's own one-shot hand-off, same pubkey, new command.
+        let seats = write_actor_seats(dir.path(), "resume-1", &actor);
+        let resume = lifecycle_target_event(
+            &provider,
+            channel_id,
+            "resume-1",
+            "session.resume",
+            &previous,
+        );
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        let resumed = receipts
+            .iter()
+            .find(|receipt| receipt["commandId"] == "resume-1")
+            .expect("the resume was answered");
+        // Either resumed shape is a reattachment; which one depends on what
+        // the adapter advertises, not on the seat. What must never appear is
+        // `failed`/`ACTOR_UNAVAILABLE`.
+        assert!(
+            resumed["status"] == "resumed" || resumed["status"] == "resumed_without_context",
+            "a staged seat must reattach, not be refused: {resumed}"
+        );
+        let current = provider
+            .state()
+            .session(&previous.session_id)
+            .expect("session");
+        assert_eq!(current.generation, 2);
+        assert_eq!(current.actor.as_deref(), Some(actor.as_str()));
+        assert!(provider.sessions.handle(&previous.session_id).is_some());
+
+        // Still one-shot: the reconnect's key is gone from the host too.
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(!body.contains(TEST_SEAT_NSEC), "{body}");
+        assert!(!body.contains("resume-1"), "{body}");
     }
 
     /// The unseated path is unchanged: `agentRef` is null and `role` is not a
