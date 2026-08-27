@@ -1,5 +1,6 @@
 ---
 name: poker
+role: poker
 display_name: "Poker"
 description: "Drives the built app through its real UI and reports honesty bugs with screenshots."
 skills:

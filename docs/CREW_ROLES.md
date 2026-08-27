@@ -94,11 +94,8 @@ which persona).
 ## A note on the `role` slug
 
 Contract D8-A gives `PersonaConfig` an optional `role` (slug) field so a
-crew seat's role can be read off the persona itself. These six packs do not
-yet set that field in their `.persona.md` frontmatter: `buzz-persona`'s
-frontmatter parser rejects unknown keys (`crates/buzz-persona/src/persona.rs`,
-the private `Frontmatter` struct's `deny_unknown_fields`), and the `role`
-field lands separately. Each pack's persona `name:` already is the role slug
-(`lead`, `architect`, `builder`, `verifier`, `runner`, `poker`), which is
-sufficient to seat a role today; adding an explicit `role: <slug>` to each
-pack once the field exists is a one-line follow-up per pack, not a redesign.
+crew seat's role can be read off the persona itself
+(`crates/buzz-persona/src/persona.rs`). All six packs declare it explicitly in
+their `.persona.md` frontmatter, matching each persona's `name:` (`lead`,
+`architect`, `builder`, `verifier`, `runner`, `poker`). The field is optional,
+so a persona without one is an ordinary persona rather than a crew seat.
