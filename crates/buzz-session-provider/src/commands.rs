@@ -9,7 +9,7 @@
 //! through the shared `buzz_core::coding_session_command` type, so the
 //! provider and the relay can never disagree about what is valid.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -280,11 +280,13 @@ pub struct CommandContext<'a> {
     /// mailbox and has not yet answered durably.
     ///
     /// An interrupt is not a turn, so it never appears in `in_flight`, and the
-    /// ledger append that would durably answer it happens *after* the delivery
-    /// and can fail — rolling its own in-memory entry back. Without this set a
-    /// redelivery of such a command reaches the actor a second time and cancels
-    /// an unrelated running turn. In-memory for the same reason as `in_flight`.
-    pub delivered_cancels: &'a HashSet<String>,
+    /// ledger append that would durably answer it happens *after* the receipt
+    /// that answers the operator and can fail — rolling its own in-memory entry
+    /// back. Without this queue a redelivery of such a command reaches the
+    /// actor a second time and cancels an unrelated running turn. In-memory for
+    /// the same reason as `in_flight`, and bounded: see
+    /// `crate::DELIVERED_CANCEL_FENCE_CAPACITY`.
+    pub delivered_cancels: &'a VecDeque<String>,
 }
 
 impl CommandContext<'_> {
@@ -824,10 +826,10 @@ mod tests {
         EMPTY.get_or_init(HashMap::new)
     }
 
-    /// The empty delivered-cancel set, leaked once for the same reason.
-    fn no_delivered_cancels() -> &'static HashSet<String> {
-        static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
-        EMPTY.get_or_init(HashSet::new)
+    /// The empty delivered-cancel queue, leaked once for the same reason.
+    fn no_delivered_cancels() -> &'static VecDeque<String> {
+        static EMPTY: std::sync::OnceLock<VecDeque<String>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(VecDeque::new)
     }
 
     fn create_content(command_id: &str, project_ref: &str, authority: &str) -> String {
@@ -1863,7 +1865,7 @@ mod tests {
         );
         // A cancel already in an actor's mailbox whose ledger append failed:
         // no durable fence answers it, so this in-memory one has to.
-        let delivered_cancels: HashSet<String> = ["cancel-delivered".to_owned()].into();
+        let delivered_cancels: VecDeque<String> = ["cancel-delivered".to_owned()].into();
         let mut context = ctx(&state, &projects, 1_000);
         context.in_flight = &in_flight;
         context.delivered_cancels = &delivered_cancels;

@@ -159,6 +159,18 @@ const REPLAY_REORDER_WINDOW: Duration = Duration::from_millis(1_500);
 /// lets a new fact get its own word instead of being folded into an old one.
 const QUEUE_FULL_TURN_KEPT: &str = "QUEUE_FULL_TURN_KEPT";
 
+/// Ceiling on [`Provider::delivered_cancels`].
+///
+/// Every entry is released as soon as the ledger append behind its receipt
+/// succeeds, so in normal operation the set holds at most the one cancel
+/// currently being answered. It only accumulates when that append keeps
+/// failing — a state directory that is full, read-only, or gone — and an
+/// unbounded `HashSet` under that condition is a leak that outlives the
+/// condition. The oldest entry is dropped first: it is also the one whose
+/// receipt was enqueued longest ago, so a redelivery that gets past it is a
+/// redelivery of a cancel the operator has already been told about.
+const DELIVERED_CANCEL_FENCE_CAPACITY: usize = 256;
+
 /// The operator-facing sentence a `turn_degraded` receipt carries.
 ///
 /// One sentence, not a per-execution explanation: see
@@ -542,12 +554,16 @@ pub struct Provider {
     /// over a cancel that has *already* been answered — which is why the
     /// receipt is enqueued into the durable outbox before the ledger append,
     /// and why an entry here is released only once that append succeeds and
-    /// the durable ledger takes the fence over. An append that keeps failing
-    /// therefore keeps its entry for the life of the process.
+    /// the durable ledger takes the fence over.
+    ///
+    /// An append that keeps failing would otherwise keep its entry for the
+    /// life of the process, so the queue is bounded at
+    /// [`DELIVERED_CANCEL_FENCE_CAPACITY`] and evicts oldest-first. Insertion
+    /// order, not hashing, is what makes that eviction well defined.
     ///
     /// In-memory for the same reason as `in_flight`: after a restart there is
     /// no mailbox, so no entry in it could still be true.
-    delivered_cancels: HashSet<String>,
+    delivered_cancels: VecDeque<String>,
     /// Whether each live execution's runtime advertised native mid-turn
     /// steering at `initialize`, keyed by session id.
     ///
@@ -670,7 +686,7 @@ impl Provider {
             established_leases: HashSet::new(),
             first_lease_prerequisites: HashMap::new(),
             in_flight: HashMap::new(),
-            delivered_cancels: HashSet::new(),
+            delivered_cancels: VecDeque::new(),
             steering: HashMap::new(),
             replay: ReplayWindow::default(),
         })
@@ -2142,7 +2158,7 @@ impl Provider {
                     // the `open_turn` predicate three lines down, the
                     // `watermark_ceiling` clamp and `report_lost_mailbox`'s
                     // `is_turn` receipt.
-                    self.delivered_cancels.insert(command_id.clone());
+                    self.remember_delivered_cancel(command_id.clone());
                     // Custody, not just the fold: a turn this provider has
                     // accepted and not yet seen start is in flight as surely
                     // as one whose `TurnStarted` has already been folded. The
@@ -2193,7 +2209,7 @@ impl Provider {
                     }
                     // Durably answered *and* durably fenced: the process-local
                     // record has nothing left to say.
-                    self.delivered_cancels.remove(&command_id);
+                    self.forget_delivered_cancel(&command_id);
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -2879,6 +2895,25 @@ impl Provider {
                 .get(&target.session_id)
                 .map(|fact| fact.verified_at),
         }
+    }
+
+    /// Record that this process handed `command_id`'s cancel to a mailbox and
+    /// has not yet written the ledger entry that fences its redelivery.
+    ///
+    /// Bounded at [`DELIVERED_CANCEL_FENCE_CAPACITY`], oldest evicted first.
+    fn remember_delivered_cancel(&mut self, command_id: String) {
+        if self.delivered_cancels.contains(&command_id) {
+            return;
+        }
+        self.delivered_cancels.push_back(command_id);
+        while self.delivered_cancels.len() > DELIVERED_CANCEL_FENCE_CAPACITY {
+            self.delivered_cancels.pop_front();
+        }
+    }
+
+    /// Release a cancel whose durable ledger entry now fences its redelivery.
+    fn forget_delivered_cancel(&mut self, command_id: &str) {
+        self.delivered_cancels.retain(|held| held != command_id);
     }
 
     /// Queue a receipt (44224). Receipts drain ahead of transcripts.
@@ -10212,6 +10247,51 @@ mod tests {
                 .session(&target.session_id)
                 .is_some_and(|record| record.open_turn.is_some()),
             "turn-2 is still running: the redelivered cancel reached no mailbox"
+        );
+    }
+
+    /// The delivered-cancel fence is bounded.
+    ///
+    /// An entry is released the moment the ledger append behind its receipt
+    /// succeeds, so in normal operation the queue holds at most the cancel
+    /// currently being answered. It grows only while that append keeps failing
+    /// — a full, read-only or missing state directory — and an unbounded set
+    /// under that condition is a leak that outlives the condition.
+    #[test]
+    fn the_delivered_cancel_fence_evicts_its_oldest_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut provider = provider(&dir.path().join("state"), None);
+        let newest = format!("int-{}", DELIVERED_CANCEL_FENCE_CAPACITY + 2);
+        for index in 0..=(DELIVERED_CANCEL_FENCE_CAPACITY + 2) {
+            provider.remember_delivered_cancel(format!("int-{index}"));
+        }
+
+        assert_eq!(
+            provider.delivered_cancels.len(),
+            DELIVERED_CANCEL_FENCE_CAPACITY,
+            "the fence never grows past its ceiling"
+        );
+        assert!(
+            !provider.delivered_cancels.contains(&"int-0".to_owned()),
+            "the oldest entry is the one dropped: its receipt was enqueued longest ago"
+        );
+        assert!(
+            provider.delivered_cancels.contains(&newest),
+            "and the cancel most recently handed to a mailbox is still fenced"
+        );
+
+        // A redelivery this process re-records must not push a duplicate.
+        provider.remember_delivered_cancel(newest.clone());
+        assert_eq!(
+            provider.delivered_cancels.len(),
+            DELIVERED_CANCEL_FENCE_CAPACITY,
+            "re-recording an id already held is not a second entry"
+        );
+
+        provider.forget_delivered_cancel(&newest);
+        assert!(
+            !provider.delivered_cancels.contains(&newest),
+            "and the durable ledger taking over releases it"
         );
     }
 
