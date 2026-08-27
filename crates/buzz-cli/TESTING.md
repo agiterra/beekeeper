@@ -802,12 +802,12 @@ bee sessions send --channel "$CHANNEL_ID" --readdress "$STARTED_COMMAND_ID" 2>&1
 # exit: 1
 
 # ── doctor, on the same owed turn ─────────────────────────────────────────
-# `doctor` reads 44224 receipts alongside 44225 transcripts, because every
-# `turn_dropped`/`turn_refused` site in the provider publishes a receipt and no
-# transcript item. So a refused command is a row of its own with verdict
-# `answered` and the commandId `--readdress` takes — it is not silently absent,
-# and a turn whose items exist but whose command was later refused is not
-# reported `unfinished`.
+# `doctor` reads 44224 receipts and 44220 commands alongside 44225 transcripts,
+# because every `turn_dropped`/`turn_refused` site in the provider publishes a
+# receipt and no transcript item, and the receipt never says what was asked. So
+# a refused command is a row of its own with verdict `answered` and the
+# commandId `--readdress` takes — it is not silently absent, and a turn whose
+# items exist but whose command was later refused is not reported `unfinished`.
 bee --format compact sessions doctor --channel "$CHANNEL_ID" --target "$TARGET"
 # → "<commandId>  answered  0.0s  0 items"
 #   "    - answered turn_dropped (NO_LIVE_EXECUTION) with no turn: these words
@@ -816,12 +816,18 @@ bee --format compact sessions doctor --channel "$CHANNEL_ID" --target "$TARGET"
 bee sessions doctor --channel "$CHANNEL_ID" --target "$TARGET" \
   | jq '.turns[] | {turnId, commandId, answeredStage, answeredCode}'
 # The `--readdress` line appears only for the two answers `--readdress` accepts
-# (`turn_dropped`/NO_LIVE_EXECUTION, `turn_refused`/STALE_GENERATION). A final
-# answer — a `QUEUE_FULL` drop, or the `NO_TURN_IN_FLIGHT` a cancel with nothing
-# in flight earns — still gets its row, stage and code, but no recovery verb:
+# (`turn_dropped`/NO_LIVE_EXECUTION, `turn_refused`/STALE_GENERATION) *and* only
+# over a `thread.turn.start`, read from the 44220 itself. A final answer — a
+# `QUEUE_FULL` drop, or the `NO_TURN_IN_FLIGHT` a cancel with nothing in flight
+# earns — still gets its row, stage and code, but no recovery verb:
 #   "    - answered turn_dropped (QUEUE_FULL) with no turn: these words never
 #          ran and never will"
-# Advising a re-send there would point at a command `send --readdress` refuses.
+# A `thread.turn.interrupt` refused for a stale generation is answered with the
+# same status and code as a refused turn, so only the command tells them apart:
+# it gets the same row and no verb, because `--readdress` refuses it for
+# carrying no text. Same for a commandId whose 44220 is not in the channel.
+# Advising a re-send in any of those cases points at a command `send
+# --readdress` refuses.
 
 # ── create ────────────────────────────────────────────────────────────────
 # Publishes one 44221 `session.create`; the brief becomes `initialTurn`.

@@ -1207,7 +1207,7 @@ fn doctor_only_offers_readdress_for_the_answers_readdress_accepts() {
         )];
         let (with_turn, _) = decode_transcripts(&echoed);
         for records in [with_turn, Vec::new()] {
-            let turns = diagnose_turns(&records, &stages);
+            let turns = diagnose_turns(&records, &commands, &stages);
             assert_eq!(turns.len(), 1, "{code}: {turns:?}");
             let turn = &turns[0];
             // The answer and its code are still reported — silence would be
@@ -1234,7 +1234,8 @@ fn doctor_only_offers_readdress_for_the_answers_readdress_accepts() {
 }
 
 /// The pinned other side: the two codes that *are* recoverable keep the advice,
-/// naming the commandId `--readdress` takes.
+/// naming the commandId `--readdress` takes — on a `thread.turn.start`, the
+/// only action carrying text to re-send.
 #[test]
 fn doctor_still_names_readdress_for_a_recoverable_refusal() {
     let addressed = target("s-1", 1);
@@ -1242,17 +1243,21 @@ fn doctor_still_names_readdress_for_a_recoverable_refusal() {
         (ReceiptStatus::TurnDropped, NO_LIVE_EXECUTION),
         (ReceiptStatus::TurnRefused, STALE_GENERATION),
     ] {
-        let events = vec![receipt_event(
-            "r-1",
-            1_005,
-            "cmd-1",
-            status,
-            &addressed,
-            Some((code, "did not run")),
-            None,
-        )];
+        let events = vec![
+            turn_event("e-1", ALICE, 1_000, "cmd-1", &addressed, "go"),
+            receipt_event(
+                "r-1",
+                1_005,
+                "cmd-1",
+                status,
+                &addressed,
+                Some((code, "did not run")),
+                None,
+            ),
+        ];
+        let (commands, _) = decode_turn_commands(&events);
         let (receipts, _) = decode_receipts(&events);
-        let turns = diagnose_turns(&[], &newest_turn_stages(&receipts));
+        let turns = diagnose_turns(&[], &commands, &newest_turn_stages(&receipts));
         assert_eq!(turns.len(), 1, "{code}");
         assert!(
             turns[0]
@@ -1263,4 +1268,102 @@ fn doctor_still_names_readdress_for_a_recoverable_refusal() {
             turns[0].findings
         );
     }
+}
+
+/// A refused *interrupt* is answered exactly like a refused turn, and only the
+/// 44220 tells them apart.
+///
+/// The provider refuses every turn command aimed at a superseded generation
+/// with `turn_refused`/`STALE_GENERATION`, whatever its action — so the receipt
+/// alone cannot say whether the sender asked for a turn or asked to cancel one.
+/// A `thread.turn.interrupt` carries no text, and `plan_readdress` refuses it
+/// for exactly that reason. `doctor` therefore has to read the command before
+/// it names the verb: the answer and its code are still reported, the recovery
+/// advice is not.
+#[test]
+fn doctor_does_not_offer_readdress_for_a_refused_interrupt() {
+    let addressed = target("s-1", 1);
+    let events = vec![
+        command_event(
+            "e-1",
+            ALICE,
+            1_000,
+            "cmd-1",
+            &addressed,
+            CodingSessionAction::ThreadTurnInterrupt,
+        ),
+        receipt_event(
+            "r-1",
+            1_005,
+            "cmd-1",
+            ReceiptStatus::TurnRefused,
+            &addressed,
+            Some((STALE_GENERATION, "generation 1 is superseded")),
+            None,
+        ),
+    ];
+    let (commands, _) = decode_turn_commands(&events);
+    let (receipts, _) = decode_receipts(&events);
+    let stages = newest_turn_stages(&receipts);
+
+    let turns = diagnose_turns(&[], &commands, &stages);
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    let turn = &turns[0];
+    // Silence would be its own lie: the refusal is still on the report.
+    assert_eq!(
+        turn.answered_stage.as_deref(),
+        Some(ReceiptStatus::TurnRefused.as_str())
+    );
+    assert_eq!(turn.answered_code.as_deref(), Some(STALE_GENERATION));
+    assert!(
+        !turn
+            .findings
+            .iter()
+            .any(|finding| finding.contains("readdress")),
+        "a refused interrupt was advertised as re-addressable: {:?}",
+        turn.findings
+    );
+
+    // …and the verb `doctor` would have named refuses this exact command.
+    let mut live = execution("s-1", 2, None, None, None);
+    live.liveness = Liveness::Live;
+    let message =
+        usage_message(plan_readdress(&commands, &stages, &[live], &[], "cmd-1").unwrap_err());
+    assert!(
+        message.contains("carries no text to re-address"),
+        "got {message}"
+    );
+}
+
+/// The same rule for a command that is not in view at all.
+///
+/// A `commandId` with a refusal receipt but no 44220 in the channel is a
+/// command `doctor` has never read — it cannot say the action was a turn start,
+/// and `plan_readdress` will answer `no coding-session command with commandId`.
+/// Guessing "re-address it" over that is the same lie as guessing over an
+/// interrupt.
+#[test]
+fn doctor_does_not_offer_readdress_for_a_command_it_never_read() {
+    let addressed = target("s-1", 1);
+    let events = vec![receipt_event(
+        "r-1",
+        1_005,
+        "cmd-1",
+        ReceiptStatus::TurnDropped,
+        &addressed,
+        Some((NO_LIVE_EXECUTION, "did not run")),
+        None,
+    )];
+    let (receipts, _) = decode_receipts(&events);
+    let turns = diagnose_turns(&[], &[], &newest_turn_stages(&receipts));
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0].answered_code.as_deref(), Some(NO_LIVE_EXECUTION));
+    assert!(
+        !turns[0]
+            .findings
+            .iter()
+            .any(|finding| finding.contains("readdress")),
+        "an unread command was advertised as re-addressable: {:?}",
+        turns[0].findings
+    );
 }

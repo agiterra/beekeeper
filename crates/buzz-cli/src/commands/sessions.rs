@@ -43,7 +43,9 @@ use buzz_core::coding_session_command::{coding_session_target_key, CodingSession
 use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionMetadata, TranscriptEnvelope,
 };
-use buzz_core::kind::{KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_SYSTEM_MESSAGE};
+use buzz_core::kind::{
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND, KIND_SYSTEM_MESSAGE,
+};
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_TRANSCRIPT,
@@ -1396,6 +1398,34 @@ fn result_has_no_usage(input: Option<u64>, output: Option<u64>) -> bool {
     matches!((input, output), (None, None) | (Some(0), Some(0)))
 }
 
+/// Whether `doctor` may name `--readdress` over this answer.
+///
+/// Two facts have to agree, and a receipt only carries one of them. The answer
+/// has to be one a re-send recovers ([`crew::readdressable_reason`]) — and the
+/// command that earned it has to be a `thread.turn.start`, the only action that
+/// carries text to re-send. The provider refuses every turn command addressed
+/// at a superseded generation with the same `turn_refused`/`STALE_GENERATION`,
+/// whatever its action, so a `thread.turn.interrupt` is answered exactly like a
+/// turn and the receipt cannot tell them apart. Only the 44220 can, which is
+/// why `doctor` reads it: [`crew::plan_readdress`] refuses an interrupt for
+/// carrying no text, and advice pointing at that refusal is a command telling
+/// its reader to run something it will not run. A command that is not in view
+/// at all is not assumed to be either — `plan_readdress` would refuse it as
+/// unknown.
+fn readdress_advice_applies(
+    commands: &[crew::TurnCommand],
+    stage: &crew::TurnStage,
+    command_id: &str,
+) -> bool {
+    crew::readdressable_reason(stage).is_some()
+        && commands
+            .iter()
+            .filter(|command| command.command_id == command_id)
+            // The same command `plan_readdress` would resolve: newest wins.
+            .max_by_key(|command| (command.created_at, command.event_id.clone()))
+            .is_some_and(|command| command.text().is_some())
+}
+
 /// Group a generation's items by turn and report on each.
 ///
 /// `stages` is the newest turn stage per 44220 command id
@@ -1406,8 +1436,15 @@ fn result_has_no_usage(input: Option<u64>, output: Option<u64>) -> bool {
 /// nothing else — so without the receipts this command is silent about turns
 /// that were owed an answer and got one, and reports an in-flight turn its
 /// sender has already been told will never run as merely unfinished.
+///
+/// `commands` is the channel's decoded 44220s ([`crew::decode_turn_commands`]),
+/// scoped the same way as `records` and `stages`. Only they say *what* was
+/// asked, which is what [`readdress_advice_applies`] needs before naming
+/// `--readdress`; pass an empty slice to read receipts alone, and no re-address
+/// advice is offered for a command that is not in view.
 pub fn diagnose_turns(
     records: &[TranscriptRecord],
+    commands: &[crew::TurnCommand],
     stages: &HashMap<String, crew::TurnStage>,
 ) -> Vec<TurnDiagnosis> {
     let mut order: Vec<Option<String>> = Vec::new();
@@ -1549,15 +1586,19 @@ pub fn diagnose_turns(
                     stage.status.as_str(),
                     stage.error_code.as_deref().unwrap_or("no code")
                 );
-                // Only the answers `--readdress` accepts get told to use it.
-                // A `QUEUE_FULL` drop or the `NO_TURN_IN_FLIGHT` a cancel earns
-                // is final, and `crew::plan_readdress` refuses it — so naming
-                // the verb here would send the reader into that refusal.
+                // Only the answers `--readdress` accepts, on the commands it
+                // accepts, get told to use it. A `QUEUE_FULL` drop or the
+                // `NO_TURN_IN_FLIGHT` a cancel earns is final, and a refused
+                // `thread.turn.interrupt` carries no text — `crew::plan_readdress`
+                // refuses all three, so naming the verb here would send the
+                // reader into that refusal.
                 findings.push(match command_id.as_deref() {
-                    Some(command_id) if crew::readdressable_reason(stage).is_some() => format!(
-                        "{answer} — re-address it with \
-                         `bee sessions send --readdress {command_id}`"
-                    ),
+                    Some(command_id) if readdress_advice_applies(commands, stage, command_id) => {
+                        format!(
+                            "{answer} — re-address it with \
+                             `bee sessions send --readdress {command_id}`"
+                        )
+                    }
                     _ => answer,
                 });
             }
@@ -1622,13 +1663,15 @@ pub fn diagnose_turns(
                 );
                 // Same rule as the turn rows above: the answer and its code are
                 // always reported, the recovery verb only when
-                // `crew::plan_readdress` would honour it.
-                match crew::readdressable_reason(stage) {
-                    Some(_) => format!(
+                // `crew::plan_readdress` would honour it — which takes the
+                // 44220 as well as the receipt.
+                if readdress_advice_applies(commands, stage, command_id) {
+                    format!(
                         "{answer} — re-address them with \
                          `bee sessions send --readdress {command_id}`"
-                    ),
-                    None => answer,
+                    )
+                } else {
+                    answer
                 }
             }],
         });
@@ -1645,13 +1688,17 @@ async fn cmd_doctor(
     validate_uuid(channel_id)?;
     // Receipts as well as transcripts: a terminally refused turn publishes a
     // receipt and no transcript item, so reading transcripts alone makes this
-    // command silent about exactly the turns a reader is looking for.
+    // command silent about exactly the turns a reader is looking for. And the
+    // 44220 commands themselves: a receipt says how a command was answered but
+    // never what it asked for, and `--readdress` recovers a `thread.turn.start`
+    // and refuses a `thread.turn.interrupt` — the two are answered identically.
     let events = fetch_channel_events(
         client,
         channel_id,
         &[
             KIND_CODING_SESSION_TRANSCRIPT,
             KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            KIND_CODING_SESSION_COMMAND,
         ],
     )
     .await?;
@@ -1671,8 +1718,18 @@ async fn cmd_doctor(
             .collect(),
         None => receipts,
     };
+    let (commands, _) = crew::decode_turn_commands(&events);
+    let commands: Vec<crew::TurnCommand> = match target {
+        // Same scoping rule again: `--target` narrows every half of the report
+        // or none of it.
+        Some(target) => commands
+            .into_iter()
+            .filter(|command| command.target_key == target)
+            .collect(),
+        None => commands,
+    };
     let stages = crew::newest_turn_stages(&scoped);
-    let turns = diagnose_turns(&records, &stages);
+    let turns = diagnose_turns(&records, &commands, &stages);
 
     let rows: Vec<Value> = turns
         .iter()
@@ -2296,6 +2353,7 @@ pub async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buzz_core::coding_session_command::CODING_SESSION_COMMAND_SCHEMA;
     use buzz_core::coding_session_payload::{
         Capabilities, LifecycleReceipt, SessionStatus, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA,
     };
@@ -2461,7 +2519,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records, &HashMap::new());
+        let turns = diagnose_turns(&records, &[], &HashMap::new());
         assert_eq!(turns.len(), 1);
         let turn = &turns[0];
 
@@ -2506,7 +2564,7 @@ mod tests {
             json!({ "kind": "status", "status": "session_fresh" }),
         )];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records, &HashMap::new());
+        let turns = diagnose_turns(&records, &[], &HashMap::new());
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].turn_id, None);
         assert_eq!(turns[0].is_error, None);
@@ -2550,7 +2608,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records, &HashMap::new());
+        let turns = diagnose_turns(&records, &[], &HashMap::new());
         assert_eq!(turns.len(), 1);
         assert!(
             turns[0].findings.is_empty(),
@@ -2592,7 +2650,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records, &HashMap::new());
+        let turns = diagnose_turns(&records, &[], &HashMap::new());
         let findings = turns[0].findings.join(" | ");
         assert_eq!(turns[0].unterminated_tools.len(), 1);
         assert!(
@@ -2660,7 +2718,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records, &HashMap::new());
+        let turns = diagnose_turns(&records, &[], &HashMap::new());
         let turn = &turns[0];
         assert!(
             turn.wire
@@ -2699,6 +2757,39 @@ mod tests {
                 "status": status,
                 "session": target,
                 "error": { "code": code, "message": "this execution has no live process" },
+            })
+            .to_string(),
+        })
+    }
+
+    /// A 44220 `thread.turn.start`, the command `--readdress` re-sends.
+    ///
+    /// `doctor` reads these because a receipt never says what was asked, and
+    /// an interrupt is refused with the same status and code as a turn.
+    fn turn_start_event(
+        id: &str,
+        created_at: i64,
+        command_id: &str,
+        target: &CodingSessionTarget,
+        text: &str,
+    ) -> Value {
+        json!({
+            "id": id,
+            "pubkey": "a".repeat(64),
+            "kind": KIND_CODING_SESSION_COMMAND,
+            "created_at": created_at,
+            "sig": "0".repeat(128),
+            "tags": [
+                ["h", "channel"],
+                ["cs-v", "csc1-1"],
+                ["cs-target", coding_session_target_key(target)],
+            ],
+            "content": json!({
+                "schema": CODING_SESSION_COMMAND_SCHEMA,
+                "commandId": command_id,
+                "target": target,
+                "action": { "type": "thread.turn.start", "text": text,
+                            "deliver": "boundary" },
             })
             .to_string(),
         })
@@ -2763,19 +2854,40 @@ mod tests {
             ),
         ];
 
+        // Both refusals answer a `thread.turn.start`, which is what makes the
+        // re-address advice below honest.
+        let command_events = vec![
+            turn_start_event(
+                &format!("{:064}", 21),
+                base,
+                "cmd-started",
+                &session,
+                "merge it",
+            ),
+            turn_start_event(
+                &format!("{:064}", 22),
+                base + 1,
+                "cmd-never-ran",
+                &session,
+                "and again",
+            ),
+        ];
+
         let (records, _) = decode_transcripts(&transcripts);
+        let (commands, command_stats) = crew::decode_turn_commands(&command_events);
+        assert_eq!(command_stats.malformed, 0);
         let (receipts, stats) = decode_receipts(&receipt_events);
         assert_eq!(stats.malformed, 0);
         let stages = crew::newest_turn_stages(&receipts);
 
         // Without the receipts the turn has items, no `result`, and reads as
         // an unfinished turn — which is what the reader used to be told.
-        let blind = diagnose_turns(&records, &HashMap::new());
+        let blind = diagnose_turns(&records, &commands, &HashMap::new());
         assert_eq!(blind.len(), 1);
         assert_eq!(blind[0].is_error, None);
         assert_eq!(blind[0].answered_stage, None);
 
-        let turns = diagnose_turns(&records, &stages);
+        let turns = diagnose_turns(&records, &commands, &stages);
         assert_eq!(
             turns.len(),
             2,
@@ -2842,7 +2954,7 @@ mod tests {
                 None,
             )];
             let (receipts, _) = decode_receipts(&receipt_events);
-            let turns = diagnose_turns(&records, &crew::newest_turn_stages(&receipts));
+            let turns = diagnose_turns(&records, &[], &crew::newest_turn_stages(&receipts));
             assert_eq!(turns.len(), 1, "{status} invented a row");
             assert_eq!(
                 turns[0].answered_stage, None,
