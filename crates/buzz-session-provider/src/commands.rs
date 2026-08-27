@@ -680,9 +680,13 @@ pub const LEAD_ROLE: &str = "lead";
 ///    consults, so this never widens *who* may steer, only what a steer may
 ///    do.
 /// 2. Some execution **this provider owns**, under the same umbrella
-///    (`session_ref`), is seated on that same pubkey with `role == "lead"`.
-///    The role is a fact this provider witnessed on a create it accepted and
-///    persisted itself, not something the interrupting command asserts.
+///    (`session_ref`), is seated on that same pubkey with `role == "lead"`
+///    and is *still live*. The role is a fact this provider witnessed on a
+///    create it accepted and persisted itself, not something the interrupting
+///    command asserts — and [`crate::state::SessionStore::sessions`] yields
+///    every record ever minted, so the liveness filter is what makes stopping
+///    a lead seat actually withdraw its authority instead of leaving a
+///    retired pubkey able to cancel a live sibling's turn.
 ///
 /// The second fact is deliberately provider-local. A lead seated on *another*
 /// host is not recognized here, which is a real limit and the honest one: this
@@ -704,7 +708,8 @@ fn operator_may_interrupt(
         return false;
     };
     context.state.sessions().any(|sibling| {
-        sibling.session_ref.as_deref() == Some(session_ref)
+        !sibling.closed
+            && sibling.session_ref.as_deref() == Some(session_ref)
             && sibling.actor.as_deref() == Some(context.operator_pubkey)
             && sibling.role.as_deref() == Some(LEAD_ROLE)
     })
@@ -2111,6 +2116,64 @@ mod tests {
             ),
             "a lead seat in another umbrella must not interrupt this one"
         );
+    }
+
+    /// A lead seat that has been stopped keeps no authority over its siblings.
+    ///
+    /// `state.sessions()` is "every session record this provider has ever
+    /// minted and not pruned" (`crate::state::SessionStore::sessions`), so a
+    /// seat whose execution was durably ended is still in it, with its `actor`
+    /// and `role` intact. Reading that as standing means ending a lead seat
+    /// takes nothing away: the pubkey behind a process that no longer exists
+    /// can still cancel a live sibling's turn, and the only way to withdraw
+    /// the authority would be to revoke the grant — which is not what a
+    /// person who stops a seat believes they did.
+    #[test]
+    fn a_retired_lead_seat_no_longer_holds_interrupt_authority() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let lead = "ef".repeat(32);
+
+        let mut target = session("s1", dir.path());
+        target.genesis_ref = Some("12".repeat(32));
+        target.session_ref = Some(umbrella.to_owned());
+        target.granted_operators = [lead.clone()].into_iter().collect();
+        target.authority_seq = 1;
+        state.insert_session(target).expect("insert");
+
+        let mut seat = session("s-lead", dir.path());
+        seat.genesis_ref = Some("12".repeat(32));
+        seat.session_ref = Some(umbrella.to_owned());
+        seat.actor = Some(lead.clone());
+        seat.role = Some("lead".to_owned());
+        seat.closed = true;
+        state.insert_session(seat).expect("insert seat");
+
+        let projects = ProjectsFile::default();
+        let as_lead = ctx_as(&state, &projects, 1_000, &lead);
+        assert!(
+            matches!(
+                decide_turn(
+                    &as_lead,
+                    1_000,
+                    &turn_content_delivering("turn-retired-lead", "s1", 1, "interrupt")
+                ),
+                TurnDecision::Fail { .. }
+            ),
+            "a stopped lead seat must not keep interrupt-class authority"
+        );
+
+        // The grant itself is untouched: the retired seat may still steer, it
+        // simply may no longer cancel a sibling's running turn.
+        assert!(matches!(
+            decide_turn(
+                &as_lead,
+                1_000,
+                &turn_content_delivering("turn-retired-lead-boundary", "s1", 1, "boundary")
+            ),
+            TurnDecision::Start { .. }
+        ));
     }
 
     /// D6: a create that seats an agent this host holds no key for is refused
