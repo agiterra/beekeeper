@@ -253,6 +253,86 @@ void main() {
       expect(facts.counts.conflicts, greaterThan(0));
       expect(facts.authorityByTarget[target().key], isNull);
     });
+
+    // A commandId is a claim, not a credential, and a receipt naming one is
+    // no better. A disputed command must not reach past its own execution and
+    // strip a target that a different, undisputed, receipt-joined create
+    // already bound: that would let any channel member erase any session in
+    // the channel using only events they can sign themselves.
+    test('a forged disputed commandId cannot revoke a target bound by its own '
+        'undisputed create', () {
+      final events = [
+        // The victim's session, bound end to end by its own command.
+        createEvent(
+          commandId: 'cmd-victim',
+          sessionRef: sessionRefA,
+          genesisRef: genesisEventIdA,
+        ),
+        genesisEvent(eventId: genesisEventIdA, sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-victim', status: 'created'),
+        metadataEvent(
+          status: 'running',
+          sessionRef: sessionRefA,
+          createdAt: 2000,
+        ),
+        transcriptEvent(
+          eventSeq: 1,
+          item: {'kind': 'assistant_text', 'text': 'hi'},
+        ),
+        leaseEvent(commandId: 'cmd-victim', createdAt: 2000),
+        // An attacker disputes a commandId of their own, colliding with
+        // nothing, then points a receipt under it at the victim's target.
+        createEvent(
+          commandId: 'cmd-atk',
+          pubkey: otherFounderPubkey,
+          authority: otherProviderPubkey,
+        ),
+        createEvent(
+          commandId: 'cmd-atk',
+          pubkey: otherFounderPubkey,
+          authority: founderPubkey,
+        ),
+        receiptEvent(
+          commandId: 'cmd-atk',
+          status: 'created',
+          pubkey: otherProviderPubkey,
+        ),
+      ];
+      final facts = _gate(events);
+      final authority = facts.authorityByTarget[target().key];
+      expect(authority, isNotNull);
+      expect(authority!.pubkey, providerPubkey);
+      expect(authority.verified, isTrue);
+      expect(facts.metadata, hasLength(1));
+
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: events,
+      );
+      expect(view.sessions, hasLength(1));
+    });
+
+    // A `failed` receipt names no execution, so it is attributed by the
+    // command it answers. Refusing one is still a refusal, and the read
+    // counts are meant to be a complete account of what was refused.
+    test(
+      'a failed receipt from a signer the command did not name is counted',
+      () {
+        final facts = _gate([
+          createEvent(commandId: 'cmd-1'),
+          receiptEvent(
+            commandId: 'cmd-1',
+            status: 'failed',
+            pubkey: otherProviderPubkey,
+            error: {'code': 'NO_CAPACITY', 'message': 'busy'},
+          ),
+        ]);
+        expect(facts.receipts, isEmpty);
+        expect(facts.counts.malformed, 0);
+        expect(facts.counts.rejectedAuthor, 1);
+      },
+    );
   });
 
   group('duplicates and conflicts', () {
@@ -401,6 +481,26 @@ void main() {
         now: DateTime.fromMillisecondsSinceEpoch(9000 * 1000, isUtc: true),
       );
       expect(stale.kind, CodingSessionReachabilityKind.noProviderAnswering);
+    });
+
+    // D6: a same-second distinct-payload metadata collision is a conflict, so
+    // it has to reach the counter `isClean` is read from. Carrying it only on
+    // the execution let the disclosure line call the read clean while a live
+    // conflict was on screen.
+    test('a same-second metadata conflict reaches the read counts', () {
+      final view = readCodingSessionChannel(
+        channelId: channelId,
+        verifier: null,
+        events: [
+          createEvent(commandId: 'cmd-1'),
+          receiptEvent(commandId: 'cmd-1', status: 'created'),
+          metadataEvent(status: 'running', createdAt: 2000, title: 'one'),
+          metadataEvent(status: 'running', createdAt: 2000, title: 'two'),
+        ],
+      );
+      expect(view.sessions.single.executions.single.statusConflict, isTrue);
+      expect(view.counts.conflicts, 1);
+      expect(view.counts.isClean, isFalse);
     });
 
     test('an unread lease query never reads as nobody answering', () {

@@ -65,6 +65,21 @@ class CodingSessionReadCounts {
     this.duplicates = 0,
   });
 
+  /// This account plus [extra] conflicts found after the gate had run.
+  ///
+  /// The fold detects same-second metadata collisions per execution, which is
+  /// downstream of the gate; folding them in here keeps one number the reader
+  /// can trust rather than two partial ones.
+  CodingSessionReadCounts withExtraConflicts(int extra) => extra == 0
+      ? this
+      : CodingSessionReadCounts(
+          malformed: malformed,
+          rejectedAuthor: rejectedAuthor,
+          conflicts: conflicts + extra,
+          invalidSignature: invalidSignature,
+          duplicates: duplicates,
+        );
+
   /// True when nothing was dropped — the only case a UI may stay silent.
   bool get isClean =>
       malformed == 0 &&
@@ -263,7 +278,7 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   // readable create claims. Deterministic, so two devices reading the same
   // events agree on which signer that is.
   //
-  // A *disputed* target is excluded. D5 allows this fallback only when no
+  // A *contested* target is excluded. D5 allows this fallback only when no
   // create is readable; applying it to a target two receipt-joined creates
   // claim for different providers would hand the execution to whoever timed
   // their metadata earliest, which is a forgery anyone in the channel can
@@ -272,7 +287,8 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   final orderedMetadata = [...metadata]
     ..sort((left, right) => _byCreatedAtThenEventId(left.ref, right.ref));
   for (final record in orderedMetadata) {
-    if (joins.disputedTargets.contains(record.target.key)) continue;
+    if (joins.fallbackBlocked.contains(record.target.key)) continue;
+    if (joins.revoked.contains(record.target.key)) continue;
     authorityByTarget.putIfAbsent(
       record.target.key,
       () => CodingSessionAuthority(
@@ -298,7 +314,13 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   ];
   final acceptedReceipts = [
     for (final record in receipts)
-      if (_receiptAuthorized(record, joins, authorized)) record,
+      if (_receiptAuthorized(
+        record,
+        joins,
+        authorized,
+        () => rejectedAuthor += 1,
+      ))
+        record,
   ];
   final candidateTranscripts = [
     for (final record in transcripts)
@@ -356,19 +378,30 @@ class _CreateJoins {
     required this.authorityByTarget,
     required this.targetKeyByCommandId,
     required this.authorityByCommandId,
-    required this.disputedTargets,
+    required this.fallbackBlocked,
+    required this.revoked,
     required this.conflicts,
   });
 
   /// `cs-target` key -> the provider pubkey a create or resume named for it.
   final Map<String, String> authorityByTarget;
 
-  /// Targets two receipt-joined commands claimed for different providers.
+  /// Targets a contested command's receipts named, which may not fall back.
   ///
-  /// Carried out of the join because the D5 fallback must skip them: a
-  /// disputed target is a contradiction between readable creates, not the
-  /// "no create is readable" case the fallback exists for.
-  final Set<String> disputedTargets;
+  /// Carried out of the join because the D5 fallback must skip them: a target
+  /// some disputed command's receipt claims is a contradiction between
+  /// readable commands, not the "no create is readable" case the fallback
+  /// exists for. It is *only* that — a dispute over one commandId says nothing
+  /// about a binding some other, undisputed command made, so these targets
+  /// keep whatever verified authority they earned on their own.
+  final Set<String> fallbackBlocked;
+
+  /// Targets two undisputed commands bound to different providers.
+  ///
+  /// Here the contradiction is about the binding itself, so the binding is
+  /// withdrawn: removed from [authorityByTarget] and barred from the fallback
+  /// alike. Nobody may speak for the target until the read can settle who.
+  final Set<String> revoked;
 
   /// commandId -> the `cs-target` key its receipts settled on.
   final Map<String, String> targetKeyByCommandId;
@@ -430,16 +463,23 @@ _CreateJoins _joinCreates(
   final authorityByCommandId = <String, String>{};
   final targetKeyByCommandId = <String, String>{};
   final authorityByTarget = <String, String>{};
-  final disputedTargets = <String>{};
+  final fallbackBlocked = <String>{};
+  final revoked = <String>{};
 
   // Every execution some lifecycle receipt says [commandId] opened. When the
   // command itself is unreadable, each of these is a target whose provenance
   // the read cannot settle either way.
-  Set<String> executionsNamedBy(String commandId) {
+  //
+  // Only receipts signed by a provider the command's own records addressed
+  // count. A receipt is as forgeable as the commandId it names, so counting
+  // one from an unrelated signer would let a dispute the attacker manufactured
+  // reach targets the contested command never spoke about.
+  Set<String> executionsNamedBy(String commandId, Set<String> claimedBy) {
     final keys = <String>{};
     for (final receipt in receipts) {
       if (receipt.commandId != commandId) continue;
       if (receipt.isTurnStage) continue;
+      if (!claimedBy.contains(receipt.ref.signerPubkey)) continue;
       final target = receipt.session;
       if (target == null) continue;
       keys.add(target.key);
@@ -468,7 +508,17 @@ _CreateJoins _joinCreates(
       // the first-seen-metadata-signer fallback, and the forger's backdated
       // 44223 would own the victim's execution. D5 allows that fallback only
       // when no create is readable; a contested one is not an absence.
-      disputedTargets.addAll(executionsNamedBy(entry.key));
+      //
+      // It blocks the fallback and nothing more. Stripping the authority a
+      // *different*, undisputed, receipt-joined create already bound would let
+      // any channel member erase any session by aiming forged receipts under a
+      // commandId of their own at someone else's target.
+      fallbackBlocked.addAll(
+        executionsNamedBy(
+          entry.key,
+          records.map((record) => record.providerAuthorityPubkey).toSet(),
+        ),
+      );
       continue;
     }
     final claim = records.first;
@@ -493,7 +543,7 @@ _CreateJoins _joinCreates(
         // One command cannot have minted two executions. Which one it really
         // minted is unreadable, so neither may fall back to whoever timed
         // their metadata earliest.
-        disputedTargets.addAll(answers);
+        fallbackBlocked.addAll(answers);
       }
       continue;
     }
@@ -505,19 +555,23 @@ _CreateJoins _joinCreates(
       // wins: the target falls through to the unverified fallback rather than
       // letting the earlier one pick the winner silently.
       conflicts += 1;
-      disputedTargets.add(targetKey);
+      revoked.add(targetKey);
       continue;
     }
     authorityByTarget[targetKey] = claim.providerAuthorityPubkey;
   }
-  for (final targetKey in disputedTargets) {
+  // Only a revoked target loses a binding. A blocked fallback is a statement
+  // about an absence of authority, never a reason to withdraw one that a
+  // command nobody contested actually made.
+  for (final targetKey in revoked) {
     authorityByTarget.remove(targetKey);
   }
   return _CreateJoins(
     authorityByTarget: authorityByTarget,
     targetKeyByCommandId: targetKeyByCommandId,
     authorityByCommandId: authorityByCommandId,
-    disputedTargets: disputedTargets,
+    fallbackBlocked: fallbackBlocked,
+    revoked: revoked,
     conflicts: conflicts,
   );
 }
@@ -529,13 +583,19 @@ bool _receiptAuthorized(
   CodingSessionReceipt receipt,
   _CreateJoins joins,
   bool Function(String targetKey, String signerPubkey) authorized,
+  void Function() onRejected,
 ) {
   final target = receipt.session;
   if (target != null) {
     return authorized(target.key, receipt.ref.signerPubkey);
   }
-  return joins.authorityByCommandId[receipt.commandId] ==
-      receipt.ref.signerPubkey;
+  final accepted =
+      joins.authorityByCommandId[receipt.commandId] == receipt.ref.signerPubkey;
+  // Refusing a receipt attributed by command rather than by target is still a
+  // refusal: without this it was the one dropped fact the reader never heard
+  // about.
+  if (!accepted) onRejected();
+  return accepted;
 }
 
 class _ResolvedTranscripts {

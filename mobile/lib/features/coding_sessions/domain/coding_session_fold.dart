@@ -296,6 +296,12 @@ List<CodingSessionExecution> resolveCodingSessionGenerations({
     // The earliest create-bearing receipt names the command that minted the
     // generation; a later resume receipt for the same target would be a
     // different command for the same key only if the provider replayed it.
+    // This takes the first in relay-arrival order, not the earliest by
+    // `created_at`: unreachable today because no honest provider mints two
+    // generation-creating receipts for one target under different commandIds,
+    // but if one ever did, the D8 lease command gate (`acceptedCommandId`
+    // below) would accept or reject leases by read order, so two devices could
+    // disagree about whether a provider is answering.
     commandIdByTarget.putIfAbsent(target.key, () => receipt.commandId);
   }
 

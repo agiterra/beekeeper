@@ -44,16 +44,23 @@ class CodingSessionChannelView {
   /// True when a history page came back full, so older facts exist unread.
   final bool historyTruncated;
 
+  /// What the read had to throw away, over the whole read.
+  ///
+  /// This is [CodingSessionTrustedFacts.counts] plus the conflicts the fold
+  /// found afterwards — a same-second metadata collision is detected per
+  /// execution, downstream of the trust gate, and leaving it out let
+  /// [CodingSessionReadCounts.isClean] call a read clean while a live conflict
+  /// was on screen.
+  final CodingSessionReadCounts counts;
+
   const CodingSessionChannelView({
     required this.channelId,
     required this.sessions,
     required this.facts,
+    required this.counts,
     required this.leasesRead,
     required this.historyTruncated,
   });
-
-  /// What the read had to throw away.
-  CodingSessionReadCounts get counts => facts.counts;
 
   /// False when this device could not verify signatures at all.
   bool get signaturesVerified => facts.signaturesVerified;
@@ -173,10 +180,14 @@ CodingSessionChannelView readCodingSessionChannel({
     goals: facts.goals,
     closures: facts.closures,
   );
+  final statusConflicts = executions
+      .where((execution) => execution.statusConflict)
+      .length;
   return CodingSessionChannelView(
     channelId: channelId,
     sessions: sessions,
     facts: facts,
+    counts: facts.counts.withExtraConflicts(statusConflicts),
     leasesRead: leasesRead,
     historyTruncated: historyTruncated,
   );
