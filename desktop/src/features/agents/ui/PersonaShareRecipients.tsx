@@ -30,7 +30,37 @@ export function formatShareRecipientName(user: UserSearchResult) {
   );
 }
 
+/**
+ * Who may appear in the recipient picker.
+ *
+ * Agents are excluded unless the caller opts in: the persona-share surfaces
+ * this was built for have no use for one, while a coding session's People
+ * surface grants to seated agents by name. Everything else — yourself,
+ * already-selected or excluded pubkeys, archived identities — is filtered the
+ * same way regardless.
+ */
+export function filterShareRecipientCandidates(input: {
+  allowAgents: boolean;
+  currentPubkey: string | null;
+  excludedPubkeys: ReadonlySet<string>;
+  isArchived: (pubkey: string) => boolean;
+  selectedPubkeys: ReadonlySet<string>;
+  users: readonly UserSearchResult[];
+}): UserSearchResult[] {
+  return input.users.filter((user) => {
+    const pubkey = normalizePubkey(user.pubkey);
+    return (
+      (input.allowAgents || !user.isAgent) &&
+      pubkey !== input.currentPubkey &&
+      !input.excludedPubkeys.has(pubkey) &&
+      !input.selectedPubkeys.has(pubkey) &&
+      !input.isArchived(pubkey)
+    );
+  });
+}
+
 export function PersonaShareRecipients({
+  allowAgents = false,
   allowDirectPubkeyEntry = false,
   disabled,
   excludedPubkeys = [],
@@ -40,6 +70,16 @@ export function PersonaShareRecipients({
   selectedUsers,
   testIdPrefix = "persona-share",
 }: {
+  /**
+   * Include agent identities in the search results.
+   *
+   * Off everywhere by default: sharing a persona with an agent is not a thing
+   * a person means to do, and an agent row in that picker was noise. A coding
+   * session's People surface is the exception — an agent seated on a crew
+   * *is* a grantee there (design D7), so it must be selectable by name rather
+   * than only by pasting a raw pubkey.
+   */
+  allowAgents?: boolean;
   /** Offer a synthetic "by public key" result when the search text parses as
    * a hex pubkey or npub — for inviting someone with no kind:0 profile on the
    * relay yet (mirrors `ChannelMemberInviteCard`'s direct-invite behavior). */
@@ -78,15 +118,13 @@ export function PersonaShareRecipients({
     ? normalizePubkey(identityQuery.data.pubkey)
     : null;
   const searchResults = React.useMemo(() => {
-    const candidates = userSearchResults.filter((user) => {
-      const pubkey = normalizePubkey(user.pubkey);
-      return (
-        !user.isAgent &&
-        pubkey !== currentPubkey &&
-        !excludedPubkeySet.has(pubkey) &&
-        !selectedPubkeys.has(pubkey) &&
-        !isArchived(pubkey)
-      );
+    const candidates = filterShareRecipientCandidates({
+      allowAgents,
+      currentPubkey,
+      excludedPubkeys: excludedPubkeySet,
+      isArchived,
+      selectedPubkeys,
+      users: userSearchResults,
     });
 
     return rankUserCandidatesBySearch({
@@ -97,6 +135,7 @@ export function PersonaShareRecipients({
       query: deferredSearchQuery,
     });
   }, [
+    allowAgents,
     currentPubkey,
     deferredSearchQuery,
     excludedPubkeySet,

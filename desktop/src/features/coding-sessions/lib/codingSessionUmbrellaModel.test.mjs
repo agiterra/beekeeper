@@ -54,6 +54,8 @@ function record({
   runtime = "claude",
   model = "claude-opus-5",
   transcript = [],
+  agentRef = null,
+  role = null,
 } = {}) {
   return {
     generationId: `gen-${signerPubkey.slice(0, 4)}-${target.driver}-${target.sessionId}-${target.generation}`,
@@ -72,6 +74,8 @@ function record({
     provider: `${runtime}-primary`,
     runtime,
     model,
+    agentRef,
+    role,
     capabilities: null,
   };
 }
@@ -597,4 +601,73 @@ test("two same-signer executions get chips a person can tell apart", () => {
       `a signer that identifies nothing survived: ${label}`,
     );
   }
+});
+
+const AGENT_ADA = "1a".repeat(32);
+const AGENT_GRACE = "2b".repeat(32);
+
+test("participant labels: a seated execution reads agent · role, an unseated one does not", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({
+      sessionRef: SESSION_REF,
+      agentRef: AGENT_ADA,
+      role: "builder",
+    }),
+    record({
+      sessionRef: SESSION_REF,
+      target: CODEX_TARGET,
+      signerPubkey: CODEX_SIGNER,
+      runtime: "codex",
+      model: "gpt-5.6-sol",
+      lastEventAt: "2026-08-12T09:00:00.000Z",
+    }),
+  ]);
+  const names = new Map([[AGENT_ADA, "Ada"]]);
+  const participants = listCodingSessionUmbrellaParticipants(
+    umbrella,
+    (pubkey) => names.get(pubkey) ?? null,
+  );
+  const labels = participants
+    .filter((participant) => participant.kind === "execution")
+    .map((participant) => participant.label);
+  assert.ok(labels.includes("Ada · Builder"), labels.join(" | "));
+  // The unseated sibling keeps exactly the runtime · model label it had.
+  assert.ok(labels.includes("Codex · gpt-5.6-sol"), labels.join(" | "));
+});
+
+test("participant labels: two seats of the same runtime are told apart by role", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "builder" }),
+    record({
+      sessionRef: SESSION_REF,
+      target: {
+        ...CLAUDE_TARGET,
+        sessionId: "33333333-3333-3333-3333-333333333333",
+      },
+      agentRef: AGENT_GRACE,
+      role: "verifier",
+      lastEventAt: "2026-08-12T09:30:00.000Z",
+    }),
+  ]);
+  const names = new Map([
+    [AGENT_ADA, "Ada"],
+    [AGENT_GRACE, "Grace"],
+  ]);
+  const labels = listCodingSessionUmbrellaParticipants(
+    umbrella,
+    (pubkey) => names.get(pubkey) ?? null,
+  )
+    .filter((participant) => participant.kind === "execution")
+    .map((participant) => participant.label);
+  assert.deepEqual([...labels].sort(), ["Ada · Builder", "Grace · Verifier"]);
+});
+
+test("participant labels: an unresolved seat name never becomes a pubkey", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+  ]);
+  const labels = listCodingSessionUmbrellaParticipants(umbrella)
+    .filter((participant) => participant.kind === "execution")
+    .map((participant) => participant.label);
+  assert.deepEqual(labels, ["Lead"]);
 });

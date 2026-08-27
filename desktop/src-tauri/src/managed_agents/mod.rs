@@ -1,4 +1,5 @@
 pub(crate) mod access_policy;
+pub(crate) mod actor_seats;
 mod agent_env;
 pub(crate) mod agent_events;
 pub(crate) mod agent_snapshot;

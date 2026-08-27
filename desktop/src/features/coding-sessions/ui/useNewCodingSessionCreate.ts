@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
+import { toast } from "sonner";
 
 import { refreshGlobalAgentConfig } from "@/features/agents/useGlobalAgentConfig";
 import { buildCodingSessionTargetKey } from "@/features/coding-sessions/lib/codingSessionCommand";
@@ -13,6 +14,14 @@ import { recordPendingCodingSessionLifecycle } from "@/features/coding-sessions/
 import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import { useCodingSessionLifecycleResolution } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
 import { ensureProviderChannelMembership } from "@/features/coding-sessions/lib/providerChannelMembership";
+import { ensureActorChannelMembership } from "@/features/coding-sessions/lib/actorSeatChannelMembership";
+import { publishSeatedCodingSessionCreate } from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
+import type { CodingSessionActorSeat } from "@/features/coding-sessions/lib/codingSessionActorSeat";
+import { publishCodingSessionAuthorityTransition } from "@/features/coding-sessions/lib/codingSessionRoster";
+import {
+  clearCodingSessionActorSeat,
+  stageCodingSessionActorSeat,
+} from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
 import {
   clearCodingSessionCreateHint,
   recordCodingSessionWorkdirUse,
@@ -51,6 +60,11 @@ import type { NewCodingSessionHostPhase } from "../lib/newCodingSessionModel";
 /**
  * The create flow, in the one order that works.
  *
+ * 0. An agent seat, when one was chosen, joins the channel and has its key
+ *    material staged host-locally *before* anything is published — the relay
+ *    only takes a 44220 from a member, and the provider refuses a create
+ *    whose actor has no staged seat (`ACTOR_UNAVAILABLE`). Either failing
+ *    leaves the create un-published with a named reason; nothing is signed.
  * 1. The provider must exist and be running, or there is nobody to receive the
  *    command. Provisioning happens lazily here rather than at app start so a
  *    person who never opens a coding session never gets a keychain prompt.
@@ -323,12 +337,57 @@ export function useNewCodingSessionCreate({
     // must not survive to steer some later command that happens to reuse the
     // id.
     void clearCodingSessionCreateHint(scoped.input.commandId).catch(() => {});
+    // Authority is the existing chain (D7): a seat may steer a sibling only
+    // if its pubkey holds grant-operator on this umbrella. The receipt has
+    // landed, so the grant is published now — and a failure is said out
+    // loud, because a seat that silently cannot steer looks like an idle
+    // agent.
+    const seatActor = scoped.input.actor;
+    const seatGenesis = scoped.input.genesisRef;
+    if (seatActor) {
+      // The provider deletes its own copy of the staged seat at spawn, so
+      // this is only the cleanup for the paths where it did not.
+      void clearCodingSessionActorSeat(scoped.input.commandId).catch(() => {});
+      if (!seatGenesis) {
+        toast.error(
+          "The agent seat was created, but this session has no genesis to " +
+            "grant against — it cannot steer its siblings.",
+        );
+      } else {
+        void publishCodingSessionAuthorityTransition({
+          channelId: scoped.input.channelId,
+          genesisRef: seatGenesis,
+          type: "grant-operator",
+          granteePubkey: seatActor,
+        }).catch((error: unknown) => {
+          toast.error(
+            `The agent seat was created but could not be granted operator: ${
+              error instanceof Error ? error.message : String(error)
+            } It can work, but not steer its siblings until you grant it in People.`,
+          );
+        });
+      }
+    }
     clearDurableCodingSessionCreate(scopeId);
     onCreated({
       channelId: scoped.input.channelId,
       generationId: resolvedGenerationId,
     });
   }, [lifecycle, onCreated, resolvedGenerationId, scopeId, scoped]);
+
+  // Host deps for a seated create, stable so the submit callback is.
+  const seatDeps = React.useMemo(
+    () => ({
+      ensureMembership: (seatInput: {
+        channelId: string;
+        actorPubkey: string;
+        actorLabel: string | null;
+      }) => ensureActorChannelMembership(seatInput),
+      stageSeat: stageCodingSessionActorSeat,
+      clearSeat: clearCodingSessionActorSeat,
+    }),
+    [],
+  );
 
   const publishTransaction = React.useCallback(
     async (exact: DurableCodingSessionCreateTransaction) => {
@@ -370,6 +429,16 @@ export function useNewCodingSessionCreate({
       initialTurn: string | null;
       workdir: string | null;
       /**
+       * Seat a managed agent on this execution (design D1/D6): its pubkey and
+       * role are signed into the create, its key material is staged
+       * host-locally, and it is added to the channel before the publish and
+       * granted operator once the create's receipt lands. Omit for an
+       * ordinary human-created execution, whose bytes are unchanged.
+       */
+      seat?: CodingSessionActorSeat | null;
+      /** Display name for the seat, used only in failure copy. */
+      seatLabel?: string | null;
+      /**
        * The directory to *remember* for next time, when it differs from the
        * one the session runs in.
        *
@@ -407,6 +476,9 @@ export function useNewCodingSessionCreate({
       setPublishError(null);
       setDurabilityError(null);
       const commandId = createCodingSessionLifecycleCommandId();
+      // Set when the durable step refuses. It reports itself in its own
+      // field, so the catch below must not repeat it as a publish error.
+      let durabilityRefusal: string | null = null;
       try {
         const status = await ensureLocalProvider({
           isLocalProvider: (pubkey) =>
@@ -438,36 +510,57 @@ export function useNewCodingSessionCreate({
           providerPubkey: input.target.signerPubkey,
         });
 
-        setHostPhase("publishing");
-        // Genesis-publishing wrapper (founding publishes a genesis; joining
-        // carries the umbrella's). Glue's project coordinate rides the same
-        // input — the durable helper is never called directly here.
-        const prepared = await prepareNewCodingSessionCreate(scopeId, {
+        // The seat's membership and its host-local custody entry both come
+        // before the publish, and either failing means nothing is published
+        // (see `publishSeatedCodingSessionCreate`).
+        await publishSeatedCodingSessionCreate({
           channelId: input.target.channelId,
           commandId,
-          providerInstanceRef: input.target.provider.providerInstanceRef,
-          providerAuthorityPubkey: input.target.signerPubkey,
-          model: input.model,
-          title: input.title,
-          initialTurn: input.initialTurn,
-          projectRef: input.projectRef ?? null,
-          repoRef: input.repoRef ?? null,
-          ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
-          ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
+          seat: input.seat ?? null,
+          seatLabel: input.seatLabel ?? null,
+          deps: seatDeps,
+          publish: async () => {
+            setHostPhase("publishing");
+            // Genesis-publishing wrapper (founding publishes a genesis;
+            // joining carries the umbrella's). Glue's project coordinate
+            // rides the same input — the durable helper is never called
+            // directly here.
+            const prepared = await prepareNewCodingSessionCreate(scopeId, {
+              channelId: input.target.channelId,
+              commandId,
+              providerInstanceRef: input.target.provider.providerInstanceRef,
+              providerAuthorityPubkey: input.target.signerPubkey,
+              model: input.model,
+              title: input.title,
+              initialTurn: input.initialTurn,
+              projectRef: input.projectRef ?? null,
+              repoRef: input.repoRef ?? null,
+              ...(input.sessionRef ? { sessionRef: input.sessionRef } : {}),
+              ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
+              ...(input.seat
+                ? { actor: input.seat.actor, role: input.seat.role }
+                : {}),
+            });
+            if (!prepared.ok) {
+              durabilityRefusal = prepared.errorMessage;
+              setDurabilityError(prepared.errorMessage);
+              setHostPhase("idle");
+              // A create that was never signed is a create that never went
+              // out, so the staged seat must go with it.
+              throw new Error(prepared.errorMessage);
+            }
+            setTransaction(prepared.transaction);
+            await publishTransaction(prepared.transaction);
+          },
         });
-        if (!prepared.ok) {
-          setDurabilityError(prepared.errorMessage);
-          setHostPhase("idle");
-          return;
-        }
-        setTransaction(prepared.transaction);
-        await publishTransaction(prepared.transaction);
       } catch (error) {
-        setPublishError(
+        const message =
           error instanceof Error
             ? error.message
-            : "Unable to prepare the signed session request.",
-        );
+            : "Unable to prepare the signed session request.";
+        // A durability refusal already reported itself in its own field; do
+        // not say the same thing twice in two different tones.
+        if (message !== durabilityRefusal) setPublishError(message);
         setHostPhase("idle");
       } finally {
         setIsPublishing(false);
@@ -479,6 +572,7 @@ export function useNewCodingSessionCreate({
       providerStatus?.providerPubkey,
       publishTransaction,
       scopeId,
+      seatDeps,
       transaction,
     ],
   );
@@ -546,6 +640,9 @@ export function buildNewCodingSessionCreateInput(input: {
   repoRef?: string | null;
   sessionRef?: string;
   genesisRef?: string;
+  /** Agent seat, both halves or neither — the builder refuses a lone one. */
+  actor?: string;
+  role?: string;
 }): Parameters<typeof prepareDurableCodingSessionCreate>[1] {
   return {
     channelId: input.channelId,
@@ -554,6 +651,9 @@ export function buildNewCodingSessionCreateInput(input: {
     repoRef: input.repoRef ?? null,
     sessionRef: input.sessionRef ?? createCodingSessionSessionRef(),
     ...(input.genesisRef ? { genesisRef: input.genesisRef } : {}),
+    ...(input.actor !== undefined && input.role !== undefined
+      ? { actor: input.actor, role: input.role }
+      : {}),
     providerInstanceRef: input.providerInstanceRef,
     providerAuthorityPubkey: input.providerAuthorityPubkey,
     model: input.model,

@@ -55,6 +55,14 @@ export type CodingSessionCatalogRecord = {
   provider: string | null;
   runtime: string | null;
   model: string | null;
+  /**
+   * The agent seated on this execution — the `agent_ref` its provider signed
+   * into 44223 — or null when a person created it and no agent identity was
+   * injected.
+   */
+  agentRef: string | null;
+  /** The seat's role slug. Non-null exactly when `agentRef` is. */
+  role: string | null;
   capabilities: CodingSessionCapabilities | null;
 };
 

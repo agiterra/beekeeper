@@ -255,6 +255,9 @@ export function CodingSessionPeoplePopover({
           <div className="flex flex-col gap-3 border-t border-border/60 pt-4">
             <p className="text-sm font-medium">Invite</p>
             <PersonaShareRecipients
+              // A seated agent is a grantee here (D7), so agents are
+              // selectable by name in this one picker.
+              allowAgents
               allowDirectPubkeyEntry
               disabled={grantMutation.isPending}
               excludedPubkeys={memberPubkeys}

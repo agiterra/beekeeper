@@ -2,6 +2,7 @@
  * Strict decoders for the 44224 lifecycle receipt and 44223 metadata payloads,
  * plus the semantic keys their events carry.
  */
+import { isCodingSessionRoleSlug } from "./codingSessionActorSeat";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import { encodeStructuredKey } from "./codingSessionKeys";
 import type {
@@ -181,8 +182,15 @@ export function isCodingSessionTurnReceipt(
 
 /**
  * Per-generation metadata. `projectRef` is nullable — an explicit null is a
- * standalone session — and `agentRef`/`branch` are always null in v1: the
- * provider binds no managed agent and never re-binds a generation to a branch.
+ * standalone session — and `branch` is always null in v1: the provider never
+ * re-binds a generation to a branch.
+ *
+ * `agentRef` is the seat's actor: the public key of the managed agent whose
+ * identity the provider injected into this execution, or null for an
+ * execution created by a person. `role` is that seat's role slug and is an
+ * *optional* key that appears exactly when `agentRef` is non-null — a
+ * metadata without an actor keeps the historical shapes byte-for-byte, so an
+ * older provider's events decode unchanged.
  *
  * `sessionRef` is the umbrella session reference echoed from the create.
  * It is an *optional* key, never an explicit null: the provider emits it only
@@ -204,6 +212,7 @@ export type BuzzCodingSessionMetadataV1 = {
   repoRef: string | null;
   title: string | null;
   agentRef: string | null;
+  role?: string;
   provider: string | null;
   runtime: string | null;
   model: string | null;
@@ -473,7 +482,12 @@ export function parseBuzzCodingSessionMetadata(
     "relayReachable",
     "verifiedAt",
   ] as const;
-  const optional = [...optionalSummaries, "sessionRef", ...factFields] as const;
+  const optional = [
+    ...optionalSummaries,
+    "sessionRef",
+    "role",
+    ...factFields,
+  ] as const;
   if (
     !isPlainRecord(value) ||
     !hasRequiredAndOptionalKeys(value, required, optional) ||
@@ -504,6 +518,15 @@ export function parseBuzzCodingSessionMetadata(
     ) {
       return null;
     }
+  }
+  // A seat's role travels with its actor. A `role` without an `agentRef` is
+  // malformed, not a partial dialect: it would label an execution with a seat
+  // nobody holds.
+  if (
+    Object.hasOwn(value, "role") &&
+    (typeof value.agentRef !== "string" || !isCodingSessionRoleSlug(value.role))
+  ) {
+    return null;
   }
   // A present `sessionRef` must be exactly the canonical UUID shape the create
   // validated — the echo is a projection convenience, never a looser claim.
@@ -555,6 +578,7 @@ export function parseBuzzCodingSessionMetadata(
     ...(typeof value.sessionRef === "string"
       ? { sessionRef: value.sessionRef }
       : {}),
+    ...(typeof value.role === "string" ? { role: value.role } : {}),
     ...(hasFacts
       ? {
           observedCommit: value.observedCommit as string | null,

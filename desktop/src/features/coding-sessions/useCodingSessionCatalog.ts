@@ -337,6 +337,10 @@ export function mergeTrustedCodingSessionIngress(
       provider: metadata?.provider ?? null,
       runtime: metadata?.runtime ?? target.driver,
       model: metadata?.model ?? null,
+      agentRef: metadata?.agentRef ?? null,
+      // The role key only ever accompanies an actor (the decoder enforces
+      // it), so an execution with no agent can never carry one.
+      role: metadata?.agentRef ? (metadata.role ?? null) : null,
       capabilities: metadata?.capabilities ?? null,
     } satisfies CodingSessionCatalogRecord;
   });

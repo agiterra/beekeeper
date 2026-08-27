@@ -5,6 +5,7 @@ import { codingSessionTargetSupportsInterrupt } from "@/features/coding-sessions
 import { publishCodingSessionLaneMessage } from "@/features/coding-sessions/lib/codingSessionLanePublish";
 import {
   listCodingSessionUmbrellaParticipants,
+  type CodingSessionActorNameResolver,
   type CodingSessionUmbrellaParticipant,
 } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import {
@@ -41,6 +42,11 @@ export type CodingSessionUmbrellaComposerPrefill = {
 type CodingSessionUmbrellaComposerProps = {
   /** Live operator grants from the session roster; null while unknown. */
   acceptedOperators?: ReadonlySet<string> | null;
+  /**
+   * Names for the umbrella's seated actors, resolved by the workspace that
+   * owns a query client. Absent, a seat labels itself by its role alone.
+   */
+  actorNames?: CodingSessionActorNameResolver;
   channelId: string;
   isMember: boolean;
   umbrella: CodingSessionUmbrellaRecord;
@@ -74,6 +80,7 @@ type CodingSessionUmbrellaComposerProps = {
  */
 export function CodingSessionUmbrellaComposer({
   acceptedOperators = null,
+  actorNames,
   channelId,
   currentUserPubkey,
   isMember,
@@ -86,8 +93,8 @@ export function CodingSessionUmbrellaComposer({
   umbrella,
 }: CodingSessionUmbrellaComposerProps) {
   const participants = React.useMemo(
-    () => listCodingSessionUmbrellaParticipants(umbrella),
-    [umbrella],
+    () => listCodingSessionUmbrellaParticipants(umbrella, actorNames),
+    [actorNames, umbrella],
   );
   const authority = resolveCodingSessionUmbrellaComposerAuthority({
     umbrella,

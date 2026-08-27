@@ -2,10 +2,14 @@ import * as React from "react";
 import { Bot, Users } from "lucide-react";
 
 import {
+  formatCodingSessionExecutionLabel,
   formatCodingSessionModelSummary,
   formatCodingSessionRuntimeLabel,
 } from "@/features/coding-sessions/lib/codingSessionLabels";
-import { listCodingSessionUmbrellaParticipants } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  listCodingSessionUmbrellaParticipants,
+  type CodingSessionActorNameResolver,
+} from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
 import type {
   CodingSessionExecution,
   CodingSessionUmbrellaRecord,
@@ -21,30 +25,45 @@ type ExecutionRailTab = "overview" | `execution:${string}`;
  * tabs here navigate *within* the surface (overview vs one execution).
  */
 export function CodingSessionExecutionRail({
+  actorNames,
   umbrella,
 }: {
+  /**
+   * Names for the umbrella's seated actors, resolved by the surface that
+   * owns a query client. Absent, a seat labels itself by its role alone —
+   * never by a name it had to invent.
+   */
+  actorNames?: CodingSessionActorNameResolver;
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const participants = React.useMemo(
     () =>
-      listCodingSessionUmbrellaParticipants(umbrella).filter(
+      listCodingSessionUmbrellaParticipants(umbrella, actorNames).filter(
         (participant) => participant.kind === "execution",
       ),
-    [umbrella],
+    [actorNames, umbrella],
   );
   const [activeTab, setActiveTab] =
     React.useState<ExecutionRailTab>("overview");
   const panelId = React.useId();
   const tabRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
   const tabs = React.useMemo<
-    Array<{ id: ExecutionRailTab; label: string; key: string }>
+    Array<{
+      id: ExecutionRailTab;
+      label: string;
+      key: string;
+      hint: string | null;
+    }>
   >(
     () => [
-      { id: "overview", label: "All agents", key: "overview" },
+      { id: "overview", label: "All agents", key: "overview", hint: null },
       ...participants.map((participant, index) => ({
         id: `execution:${participant.executionKey}` as const,
         label: disambiguatedExecutionLabel(participants, index),
         key: participant.executionKey,
+        // A seat's tab reads "<agent> · <role>"; what it is running is the
+        // hover, so the tab strip stays about who rather than about what.
+        hint: executionRuntimeHint(participant.execution),
       })),
     ],
     [participants],
@@ -91,6 +110,7 @@ export function CodingSessionExecutionRail({
             <ExecutionTab
               active={activeTab === tab.id}
               controlsId={`${panelId}-${tab.key}`}
+              hint={tab.hint}
               key={tab.key}
               label={tab.label}
               onClick={() => setActiveTab(tab.id)}
@@ -105,11 +125,13 @@ export function CodingSessionExecutionRail({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
         {selectedExecution ? (
           <ExecutionDetail
+            actorNames={actorNames}
             execution={selectedExecution}
             panelId={`${panelId}-${selectedExecution.executionKey}`}
           />
         ) : (
           <Overview
+            actorNames={actorNames}
             executions={umbrella.executions}
             panelId={`${panelId}-overview`}
           />
@@ -124,12 +146,15 @@ export function CodingSessionExecutionRail({
 function ExecutionTab({
   active,
   controlsId,
+  hint = null,
   label,
   onClick,
   ref,
 }: {
   active: boolean;
   controlsId: string;
+  /** Secondary detail (runtime · model) shown on hover, when there is one. */
+  hint?: string | null;
   label: string;
   onClick: () => void;
   ref: React.Ref<HTMLButtonElement>;
@@ -146,6 +171,7 @@ function ExecutionTab({
       ref={ref}
       role="tab"
       tabIndex={active ? 0 : -1}
+      title={hint ?? undefined}
       type="button"
     >
       {label}
@@ -154,9 +180,11 @@ function ExecutionTab({
 }
 
 function Overview({
+  actorNames,
   executions,
   panelId,
 }: {
+  actorNames?: CodingSessionActorNameResolver;
   executions: CodingSessionExecution[];
   panelId: string;
 }) {
@@ -167,7 +195,11 @@ function Overview({
       </p>
       <div className="divide-y divide-border/60">
         {executions.map((execution) => (
-          <ExecutionCard execution={execution} key={execution.executionKey} />
+          <ExecutionCard
+            actorNames={actorNames}
+            execution={execution}
+            key={execution.executionKey}
+          />
         ))}
       </div>
     </section>
@@ -175,9 +207,11 @@ function Overview({
 }
 
 function ExecutionDetail({
+  actorNames,
   execution,
   panelId,
 }: {
+  actorNames?: CodingSessionActorNameResolver;
   execution: CodingSessionExecution;
   panelId: string;
 }) {
@@ -185,11 +219,11 @@ function ExecutionDetail({
   const latest = latestActivity(record.transcript);
   return (
     <section
-      aria-label={`${executionName(execution)} execution`}
+      aria-label={`${executionName(execution, actorNames)} execution`}
       id={panelId}
       role="tabpanel"
     >
-      <ExecutionCard execution={execution} />
+      <ExecutionCard actorNames={actorNames} execution={execution} />
       <div className="mt-4 border-t border-border/60 pt-4">
         <p className="text-3xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">
           Latest activity
@@ -220,7 +254,13 @@ function ExecutionDetail({
   );
 }
 
-function ExecutionCard({ execution }: { execution: CodingSessionExecution }) {
+function ExecutionCard({
+  actorNames,
+  execution,
+}: {
+  actorNames?: CodingSessionActorNameResolver;
+  execution: CodingSessionExecution;
+}) {
   const record = execution.activeGeneration;
   const status = executionStatus(record.status);
   return (
@@ -232,7 +272,7 @@ function ExecutionCard({ execution }: { execution: CodingSessionExecution }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="min-w-0 flex-1 truncate text-xs font-semibold">
-              {executionName(execution)}
+              {executionName(execution, actorNames)}
             </p>
             <span className={cn("shrink-0 text-2xs font-medium", status.tone)}>
               {status.label}
@@ -288,8 +328,27 @@ function ExecutionFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function executionName(execution: CodingSessionExecution): string {
+/**
+ * What this execution is called on its card.
+ *
+ * A seated execution is the agent and its role; an unseated one is its
+ * runtime, exactly as before. Either way the runtime and model stay visible
+ * on the line beneath — demoted, never dropped.
+ */
+function executionName(
+  execution: CodingSessionExecution,
+  actorNames?: CodingSessionActorNameResolver,
+): string {
   const record = execution.activeGeneration;
+  if (record.agentRef && record.role) {
+    return formatCodingSessionExecutionLabel({
+      agentRef: record.agentRef,
+      role: record.role,
+      agentDisplayName: actorNames?.(record.agentRef) ?? null,
+      runtime: null,
+      model: null,
+    }).primary;
+  }
   return formatCodingSessionRuntimeLabel(
     record.runtime ?? record.provider ?? "Execution",
   );
@@ -300,6 +359,19 @@ function runtimeLabel(execution: CodingSessionExecution): string {
   return formatCodingSessionRuntimeLabel(
     record.runtime ?? record.provider ?? "Unknown runtime",
   );
+}
+
+/** Runtime and model for a seated execution, or null when it leads with them. */
+function executionRuntimeHint(
+  execution: CodingSessionExecution,
+): string | null {
+  const record = execution.activeGeneration;
+  return formatCodingSessionExecutionLabel({
+    agentRef: record.agentRef,
+    role: record.role,
+    runtime: record.runtime ?? record.commandTarget?.driver ?? null,
+    model: record.model,
+  }).secondary;
 }
 
 function shortExecutionLabel(label: string): string {

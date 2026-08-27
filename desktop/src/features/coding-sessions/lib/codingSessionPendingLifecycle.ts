@@ -326,6 +326,10 @@ function synthesizePendingEntry(
     provider: null,
     runtime: null,
     model: null,
+    // A pending create has published no metadata yet, so nothing is known
+    // about its seat — including whether it has one.
+    agentRef: null,
+    role: null,
     capabilities: null,
   };
   return {
