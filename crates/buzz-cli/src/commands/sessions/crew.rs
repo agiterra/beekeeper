@@ -186,25 +186,15 @@ impl TurnBudget {
     }
 }
 
-/// Read the optional `turnBudget: { "used", "limit" }` key straight off a
-/// metadata record's raw content, rather than through [`SessionMetadata`]'s
-/// typed decode.
-///
-/// This is deliberate, not a shortcut: `SessionMetadata` has no `turnBudget`
-/// field yet in this build, and serde's default (no `deny_unknown_fields` on
-/// that struct) already ignores the key rather than rejecting the event, so a
-/// provider that has started publishing it does not break `decode_metadata`.
-/// Reading the raw JSON here is what lets this command surface the value
-/// without widening `buzz-core`'s typed shape — see `docs/nips/NIP-CSL.md`
-/// for the wire contract. A malformed `turnBudget` (missing key, negative or
-/// non-integer value) is treated as absent, matching this command's existing
-/// "drop, don't guess" rule for facts it cannot parse cleanly.
-pub fn turn_budget_of(record: &MetadataRecord) -> Option<TurnBudget> {
-    let content: Value = serde_json::from_str(&record.canonical).ok()?;
-    let budget = content.get("turnBudget")?;
-    let used = budget.get("used")?.as_u64()?;
-    let limit = budget.get("limit")?.as_u64()?;
-    Some(TurnBudget { used, limit })
+/// Adopt the wire shape `buzz-core` decoded, so this command reports exactly
+/// the numbers the provider signed.
+impl From<buzz_core::coding_session_payload::TurnBudget> for TurnBudget {
+    fn from(budget: buzz_core::coding_session_payload::TurnBudget) -> Self {
+        Self {
+            used: budget.used,
+            limit: budget.limit,
+        }
+    }
 }
 
 /// Decode every kind-24223 lease snapshot record into `(signer, targetKey)`.
@@ -281,7 +271,9 @@ pub fn build_executions(
                 last_signed_seq,
                 last_signed_at,
                 liveness,
-                turn_budget: newest.and_then(turn_budget_of),
+                turn_budget: newest
+                    .and_then(|record| record.metadata.turn_budget)
+                    .map(TurnBudget::from),
             }
         })
         .collect()
