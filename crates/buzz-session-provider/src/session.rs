@@ -319,8 +319,8 @@ impl std::fmt::Debug for SessionStartup {
 ///
 /// Every field is a fact this provider witnessed locally: the signer it
 /// verified, the seat that signer holds in *this* umbrella according to this
-/// provider's own durable records, and the delivery class the command asked
-/// for. Nothing here is copied from the command's content.
+/// provider's own durable records, and the delivery class the turn was
+/// actually given. Nothing here is copied from the command's content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnFraming {
     /// Channel the session lives in — half of the reply command.
@@ -333,7 +333,14 @@ pub struct TurnFraming {
     /// The `cs-target` key of the sender's own execution, when it has one.
     /// This is what a reply is addressed to.
     pub reply_target: Option<String>,
-    /// The delivery class the sender asked for.
+    /// The delivery class this turn was actually delivered in.
+    ///
+    /// Not the class the sender asked for: a `steer` no adapter here can take
+    /// is downgraded to `boundary` before the frame is rendered, because this
+    /// block is the only place the recipient learns the class and a frame that
+    /// said `steer` over a boundary delivery would be the silent downgrade the
+    /// classes exist to prevent. The sender learns of the downgrade from its
+    /// own `turn_degraded` receipt.
     pub delivery: CodingSessionDelivery,
 }
 
