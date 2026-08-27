@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "check:file-sizes": "node ./scripts/check-file-sizes.mjs",
     "check:pubkey-truncation": "node ./scripts/check-pubkey-truncation.mjs",
+    "test": "node --test 'src/**/*.test.mjs'",
     "lint": "biome lint .",
     "check": "biome check . && pnpm check:pubkey-truncation",
     "format": "biome format --write .",
