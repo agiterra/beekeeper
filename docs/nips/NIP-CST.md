@@ -99,11 +99,11 @@ command that opened its turn:
 }
 ```
 
-`operatorPubkey` and `commandId` are both additive and optional, following the
-rule that governs every item field here: present only when the provider
-actually witnessed the fact, omitted entirely rather than sent as `null` when
-it did not, so an item published before either field existed stays valid
-forever.
+`operatorPubkey`, `commandId` and `senderRole` are all additive and optional,
+following the rule that governs every item field here: present only when the
+provider actually witnessed the fact, omitted entirely rather than sent as
+`null` when it did not, so an item published before any of them existed stays
+valid forever.
 
 `commandId` is the `commandId` of the [NIP-CSC](NIP-CSC.md) signed command that
 started this turn — the same identifier the `turn_started`
@@ -131,6 +131,43 @@ The desktop's pending-turn row settles on this field when present; matching
 prompt text remains a fallback for echoes an older provider produced with no
 `commandId`, and a row that settled that way says so rather than presenting a
 text match as equally strong evidence.
+
+`senderRole` is the crew role of the identity that signed the command, when
+the provider knows one:
+
+```json
+{
+  "item": {
+    "kind": "user_prompt",
+    "content": "Add a test for the empty case.",
+    "steered": false,
+    "operatorPubkey": "64-lowercase-hex-signer",
+    "commandId": "the-thread.turn.start-commandId",
+    "senderRole": "lead"
+  }
+}
+```
+
+It is the [NIP-CSL](NIP-CSL.md#fork-amendment-actor-and-role-agent-seats)
+`role` slug of the sibling seat whose `actor` signed this turn — same bounds
+as there: 1–64 bytes, `[a-z0-9-]+`. It is present **only** when the signer is
+a seated actor the provider can resolve to a role inside this umbrella; a turn
+signed by the session founder, by a human collaborator, or by an agent with no
+seat in this umbrella carries no `senderRole` at all. It is never inferred
+from a display name, never carried for a signer the provider did not resolve,
+and never sent as `null`.
+
+`senderRole` describes the *signer*, not the delivery: a reader that wants to
+know how the turn was delivered reads the [NIP-CSC](NIP-CSC.md) command's
+`deliver` class and the `turn_degraded` receipt, not this field. And it is a
+record of what the provider resolved at delivery time, not an authorisation:
+authority is decided by the founder/grant chain in NIP-CSL, and a role slug on
+a transcript item confers nothing.
+
+The prompt text a runtime adapter receives for such a turn is prefixed with a
+`[Context]` block naming that sender and role, while `content` here stays the
+**original** text the sender signed — the framing is presentation for the
+model, never a rewrite of the signed record.
 
 ## Authority and immutable reconciliation
 
