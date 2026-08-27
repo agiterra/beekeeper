@@ -1868,10 +1868,20 @@ written and `bash -n` clean but **was not executed** — that harness needs
     expected). The fence is bounded now, too — a `VecDeque` capped at
     `DELIVERED_CANCEL_FENCE_CAPACITY = 256`
     (`crates/buzz-session-provider/src/lib.rs:171`), oldest evicted first,
-    because its only release sits behind that same fallible append. Residuals: native mid-turn steer is boundary-only in this build —
-    `NATIVE_STEER_DELIVERABLE` is `false` and `threadSteer` is therefore false
-    for every execution, so no degrade path in this build is reachable and all
-    steer evidence is hand-injected; two briefed acceptances were **not met**
+    because its only release sits behind that same fallible append. Residuals: native mid-turn steer is boundary-only in **this build's
+    desktop** — `NATIVE_STEER_DELIVERABLE` is `false`
+    (`crates/buzz-session-provider/src/session.rs:78`) and `threadSteer` is
+    therefore false for every execution, so the desktop never sends
+    `deliver: "steer"`. The degrade path is **not** unreachable, and an earlier
+    version of this item said it was: the relay accepts `deliver:"steer"` from
+    any signer (`crates/buzz-relay/src/handlers/ingest.rs:7474-7479`),
+    `inject_native_steer` then returns `false` unconditionally
+    (`crates/buzz-session-provider/src/lib.rs:2264-2276`), and the arm behind
+    the delivery publishes `turn_degraded`/`STEER_UNSUPPORTED` beside
+    `turn_queued` (`crates/buzz-session-provider/src/lib.rs:2116-2124`) — so a
+    `bee`- or CLI-published steer to a live execution produces that receipt
+    today and every consumer must decode it. What is missing is end-to-end
+    evidence, not reachability: all steer evidence is hand-injected; two briefed acceptances were **not met**
     (the kill-test now asserts both turns are *answered*, not that both *run*,
     and the queued row does not survive an app restart — it is module-level
     client state); a legacy ungoverned record still lets any channel member
