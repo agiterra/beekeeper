@@ -2122,6 +2122,8 @@ written and `bash -n` clean but **was not executed** — that harness needs
     Round 2 (2026-08-26): the four fix-now items landed (page re-read whole,
     six turn statuses, create/resume-only generations, per-bound metadata
     tests); `just web-test` gates 151 green tests in `check`, `ci`, and CI.
+    Round 3 (2026-08-26): the nine deferred coverage findings are pinned at
+    165 unit tests (+14) and 4 e2e specs, each shown red under a named mutation.
 
 71. **A push to the relay fails with HTTP 401 after long pre-push hooks.**
     Reproduced 2026-08-26 22:40 on `crew/web-observer`: every hook green

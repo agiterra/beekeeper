@@ -199,6 +199,30 @@ test("a turn result carries duration and cost structurally, not baked into text"
   assert.equal(items[0].text, "done");
 });
 
+test("a failed turn result is flagged as an error, by either signal", () => {
+  // Both spellings the adapters use. Without this the isError arm can be
+  // hard-wired to false and a failed turn renders as an ordinary result.
+  const flagged = projectCodingSessionTranscript([
+    envelope(1, { kind: "result", isError: true, result: "boom" }),
+  ]);
+  assert.equal(flagged[0].lifecycle.isError, true);
+  const subtyped = projectCodingSessionTranscript([
+    envelope(1, { kind: "result", subtype: "error", result: "boom" }),
+  ]);
+  assert.equal(subtyped[0].lifecycle.isError, true);
+});
+
+test("ordinary rows render open; only reasoning and tools fold", () => {
+  const items = projectCodingSessionTranscript([
+    envelope(1, { kind: "user_prompt", content: "go" }),
+    envelope(2, { kind: "assistant_text", text: "ok" }),
+    envelope(3, { kind: "status", status: "idle" }),
+  ]);
+  assert.equal(items[0].folded, false, "a prompt is not collapsed by default");
+  assert.equal(items[1].folded, false, "assistant text is not collapsed");
+  assert.equal(items[2].folded, false, "a status row is not collapsed");
+});
+
 test("a prompt carries its operator and command as metadata, truncated", () => {
   const operator = "b".repeat(64);
   const items = projectCodingSessionTranscript([

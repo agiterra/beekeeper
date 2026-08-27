@@ -126,6 +126,22 @@ test("history asks for exactly the D2 filters, in wire order", () => {
 test("the live subscription is limit 0, h-scoped, and replays a real page", () => {
   const { transport } = startEngine();
   const live = transport.live();
+  // Literal, not `deepEqual` against the function under test: comparing the
+  // subscription to its own producer pins nothing about WHICH streams stay
+  // live, and a session renamed (44229) or closed (44230) while the page is
+  // open would then stop updating with the suite green.
+  assert.deepEqual(
+    live.filters.map((filter) => filter.kinds),
+    [
+      [44223, 44224, 44225],
+      [44221],
+      [44226],
+      [44229],
+      [44227],
+      [44230],
+      [24223],
+    ],
+  );
   assert.deepEqual(live.filters, codingSessionLiveFilters(CHANNEL_ID));
   for (const filter of live.filters) {
     assert.equal(filter.limit, 0, "a live filter never re-pages history");

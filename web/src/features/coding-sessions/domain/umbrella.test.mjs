@@ -219,6 +219,34 @@ test("running outranks waiting, and waiting outranks quiet", () => {
   assert.equal(foldUmbrellaStatus([]), "unknown");
 });
 
+test("with no running or waiting execution, the most RECENT one decides", () => {
+  // D8's third arm. Without a recency case the comparator can be reversed and
+  // an umbrella whose newest execution just disconnected would still read the
+  // comfortable "Idle" of an execution nobody has touched in hours.
+  const gen = (status, latestEventMs) => ({
+    activeGeneration: { status },
+    latestEventMs,
+  });
+  assert.equal(
+    foldUmbrellaStatus([gen("idle", 100), gen("disconnected", 500)]),
+    "disconnected",
+  );
+  assert.equal(
+    foldUmbrellaStatus([gen("disconnected", 500), gen("idle", 100)]),
+    "disconnected",
+    "argument order must not decide what the umbrella claims",
+  );
+  assert.equal(
+    foldUmbrellaStatus([gen("disconnected", 100), gen("idle", 500)]),
+    "idle",
+  );
+  assert.equal(
+    foldUmbrellaStatus([gen("stopped", 900), gen("idle", 100)]),
+    "idle",
+    "a stopped execution never wins the recency arm, however recent",
+  );
+});
+
 test("a resume adds a generation to the same execution, not a second one", () => {
   const operator = newSigner();
   const provider = newSigner();

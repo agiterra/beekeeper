@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CodingSessionObserverStore } from "./catalog.ts";
+import {
+  CodingSessionObserverStore,
+  MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
+} from "./catalog.ts";
 import {
   CHANNEL_ID,
   closureEvent,
@@ -290,6 +293,47 @@ test("raw retention evicts the oldest past the cap", () => {
     provider.pubkey,
   );
   assert.equal(retained.length, 3);
+});
+
+test("the default cap is 2000 raw events per generation, not an injected one", () => {
+  // The eviction test above injects a cap of 3, so it pins the mechanism and
+  // says nothing about the number a real browser session runs with. This one
+  // exercises the shipped default: 2000 in, all 2000 kept; 2001 in, the
+  // oldest evicted. Slow (~2001 real signatures) on purpose — a cheaper test
+  // would be a test of the constant, not of what the observer holds.
+  assert.equal(MAX_RETAINED_RAW_EVENTS_PER_GENERATION, 2_000);
+  const provider = newSigner();
+  const targetKey =
+    "coding-session/v1|10:provider-a10:instance-19:session-11:1";
+  const events = [];
+  for (let seq = 1; seq <= MAX_RETAINED_RAW_EVENTS_PER_GENERATION; seq += 1) {
+    events.push(transcriptEvent(provider, { eventSeq: seq }));
+  }
+  const store = new CodingSessionObserverStore();
+  store.ingest(events, channels);
+  assert.equal(
+    store.retainedRawEvents(CHANNEL_ID, targetKey, provider.pubkey).length,
+    MAX_RETAINED_RAW_EVENTS_PER_GENERATION,
+    "nothing is evicted while the generation is still at the cap",
+  );
+  const overflow = transcriptEvent(provider, {
+    eventSeq: MAX_RETAINED_RAW_EVENTS_PER_GENERATION + 1,
+  });
+  store.ingest([overflow], channels);
+  const retained = store.retainedRawEvents(
+    CHANNEL_ID,
+    targetKey,
+    provider.pubkey,
+  );
+  assert.equal(retained.length, MAX_RETAINED_RAW_EVENTS_PER_GENERATION);
+  assert.ok(
+    retained.some((event) => event.id === overflow.id),
+    "the newest event is the one kept",
+  );
+  assert.ok(
+    !retained.some((event) => event.id === events[0].id),
+    "the oldest event is the one evicted",
+  );
 });
 
 test("an invalid signature is counted and never reaches a record", () => {

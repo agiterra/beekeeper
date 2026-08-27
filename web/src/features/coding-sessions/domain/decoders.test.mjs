@@ -379,6 +379,41 @@ test("a genesis names its session and its signer is the founder", () => {
   assert.equal(genesis.sessionRef, SESSION_REF);
 });
 
+test("a genesis is refused past 1024 bytes of content", () => {
+  // Padding is whitespace, so the payload stays exactly the two keys the
+  // decoder demands and only the D4 content bound can refuse it.
+  const founder = newSigner();
+  const padded = (bytes) =>
+    resign(founder, {
+      kind: 44226,
+      created_at: 1,
+      content: `${JSON.stringify({ sessionRef: SESSION_REF, v: 1 })}${" ".repeat(bytes)}`,
+      tags: [
+        ["h", CHANNEL_ID],
+        ["csg-v", "csg1-1"],
+        ["csg-session", SESSION_REF],
+      ],
+    });
+  assert.ok(parseCodingSessionGenesis(padded(0)));
+  assert.ok(parseCodingSessionGenesis(padded(900)));
+  assert.equal(parseCodingSessionGenesis(padded(1100)), null);
+});
+
+test("a closure is refused past 512 bytes of content", () => {
+  const founder = newSigner();
+  const genesisRef = "b".repeat(64);
+  const padded = (bytes) => {
+    const event = closureEvent(founder, { genesisRef });
+    return resign(founder, {
+      ...event,
+      content: `${event.content}${" ".repeat(bytes)}`,
+    });
+  };
+  assert.ok(parseCodingSessionClosure(padded(0)));
+  assert.ok(parseCodingSessionClosure(padded(300)));
+  assert.equal(parseCodingSessionClosure(padded(600)), null);
+});
+
 test("a session name must be one line within 256 bytes", () => {
   const founder = newSigner();
   assert.ok(parseCodingSessionName(nameEvent(founder, { name: "Fine" })));
