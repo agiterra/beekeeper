@@ -39,10 +39,19 @@ export const CODING_SESSION_BUILDER_ROLE = "builder";
  */
 export type CodingSessionModelVendor = string;
 
-/** The answer to "what family is this seat?", including the honest no-answer. */
+/**
+ * The answer to "what family is this seat?", including the two honest
+ * no-answers: nothing said it, or two things said different things.
+ */
 export type CodingSessionSeatVendorResolution =
   | { vendor: CodingSessionModelVendor; source: "declared" | "derived" }
-  | { vendor: null; source: "unknown" };
+  | { vendor: null; source: "unknown" }
+  | {
+      vendor: null;
+      source: "conflict";
+      declared: CodingSessionModelVendor;
+      derived: CodingSessionModelVendor;
+    };
 
 /** One seat as the team published it. */
 export type CodingSessionCrewSeat = {
@@ -94,18 +103,75 @@ export function deriveCodingSessionModelVendor(
 
 /**
  * Resolve a seat's model vendor: what it declared, else what its model id
- * unambiguously names, else nothing.
+ * unambiguously names, else nothing — and *nothing* again when the two
+ * disagree.
+ *
+ * A declaration does not outrank the table. `vendor: "local"` on a seat whose
+ * model is `claude-opus-5` is not a seat on some other family; it is a seat
+ * whose two statements about itself cannot both be true, and the family rule
+ * exists precisely to refuse the comfortable one. The conflict is carried in
+ * the result rather than collapsed, so both the refusal and the roster can
+ * name the pair.
  */
 export function resolveCodingSessionSeatVendor(seat: {
   model?: string | null;
   vendor?: string | null;
 }): CodingSessionSeatVendorResolution {
   const declared = (seat.vendor ?? "").trim().toLowerCase();
-  if (declared.length > 0) return { vendor: declared, source: "declared" };
   const derived = deriveCodingSessionModelVendor(seat.model);
+  if (declared.length > 0) {
+    return derived !== null && derived !== declared
+      ? { vendor: null, source: "conflict", declared, derived }
+      : { vendor: declared, source: "declared" };
+  }
   return derived === null
     ? { vendor: null, source: "unknown" }
     : { vendor: derived, source: "derived" };
+}
+
+/**
+ * How this build says where a crew seat is changed.
+ *
+ * Every refusal below has to end in an action, and "change the seat's model"
+ * is not one this build offers: crew mode never reaches the model picker, and
+ * `create_team` writes no crew block, so the crew is only editable where it is
+ * stored.
+ */
+export const CODING_SESSION_CREW_EDIT_HINT =
+  "This build has no crew editor: change the seat in this computer's " +
+  "teams.json (or on the device that published the team), then reopen this " +
+  "dialog.";
+
+/**
+ * The seat's vendor as a person should read it — including the two cases where
+ * there is no vendor to print.
+ *
+ * One function so the roster in the first turn and the roster on screen can
+ * never drift into telling two different stories about the same seat.
+ * `annotateSource` is the screen's extra: where a vendor was inferred rather
+ * than stated, the screen says so, while the roster the lead is handed stays
+ * one short line per seat.
+ */
+export function describeCodingSessionSeatVendor(
+  seat: {
+    model?: string | null;
+    vendor?: string | null;
+  },
+  options?: { annotateSource?: boolean },
+): string {
+  const resolution = resolveCodingSessionSeatVendor(seat);
+  switch (resolution.source) {
+    case "declared":
+      return resolution.vendor;
+    case "derived":
+      return options?.annotateSource
+        ? `${resolution.vendor} (from the model id)`
+        : resolution.vendor;
+    case "conflict":
+      return `declared ${resolution.declared}, but ${(seat.model ?? "").trim()} is ${resolution.derived}`;
+    default:
+      return options?.annotateSource ? "vendor not declared" : "unknown";
+  }
 }
 
 /** A seat with everything the launch needs to create it. */
@@ -152,22 +218,39 @@ export function checkCodingSessionCrewFamilies(
   );
   if (verifiers.length === 0 || builders.length === 0) return { ok: true };
 
+  const named = (seat: { role: string; actorLabel?: string }) =>
+    `${seat.role}${seat.actorLabel ? ` (${seat.actorLabel})` : ""}`;
+
+  const conflicted = [...verifiers, ...builders].filter(
+    (seat) => resolveCodingSessionSeatVendor(seat).source === "conflict",
+  );
+  if (conflicted.length > 0) {
+    const said = conflicted
+      .map(
+        (seat) => `${named(seat)} — ${describeCodingSessionSeatVendor(seat)}`,
+      )
+      .join("; ")
+      .replace(/declared /g, "declares ");
+    return {
+      ok: false,
+      reason:
+        `A seat's declared vendor contradicts its model id: ${said}. This ` +
+        "build will not guess which of the two is true, and the verifier " +
+        `rule is decided on the vendor. ${CODING_SESSION_CREW_EDIT_HINT}`,
+    };
+  }
+
   const undeclared = [...verifiers, ...builders].filter(
     (seat) => resolveCodingSessionSeatVendor(seat).vendor === null,
   );
   if (undeclared.length > 0) {
-    const named = undeclared
-      .map(
-        (seat) =>
-          `${seat.role}${seat.actorLabel ? ` (${seat.actorLabel})` : ""}`,
-      )
-      .join(", ");
     return {
       ok: false,
       reason:
-        `Declare the model vendor for ${named}. A verifier has to run on a ` +
-        "different vendor than the builders, and this build cannot tell " +
-        "which vendor these seats are on from their model ids.",
+        `Declare the model vendor for ${undeclared.map(named).join(", ")}. A ` +
+        "verifier has to run on a different vendor than the builders, and " +
+        "this build cannot tell which vendor these seats are on from their " +
+        `model ids. ${CODING_SESSION_CREW_EDIT_HINT}`,
     };
   }
 
@@ -183,7 +266,7 @@ export function checkCodingSessionCrewFamilies(
         reason:
           `The verifier and the builder are both on ${verifierVendor}. A ` +
           "verifier must be a different model vendor than every builder it " +
-          "reviews — change one seat's model or vendor and launch again.",
+          `reviews. ${CODING_SESSION_CREW_EDIT_HINT}`,
       };
     }
   }
@@ -202,8 +285,12 @@ export function codingSessionCrewRosterText(input: {
   primaryPersonaId: string;
 }): string {
   const lines = input.seats.map((seat) => {
-    const vendor = resolveCodingSessionSeatVendor(seat).vendor ?? "unknown";
-    const model = seat.model ? ` · ${seat.model}` : "";
+    const resolution = resolveCodingSessionSeatVendor(seat);
+    // A conflict already names the model inside its own phrase; repeating it
+    // would read as two seats' worth of model.
+    const vendor = describeCodingSessionSeatVendor(seat);
+    const model =
+      seat.model && resolution.source !== "conflict" ? ` · ${seat.model}` : "";
     const you = seat.personaId === input.primaryPersonaId ? " — you" : "";
     return `- ${seat.role}: ${seat.actorLabel} (${vendor}${model})${you}`;
   });

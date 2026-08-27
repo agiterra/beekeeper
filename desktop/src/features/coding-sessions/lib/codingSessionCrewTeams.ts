@@ -67,11 +67,19 @@ export type CodingSessionCrewSeatResolution =
  * A seat whose persona has no managed agent on this computer stops the whole
  * resolution: a crew launched with a hole in it is a crew whose lead addresses
  * a role nobody holds. The seat's own `model` wins over the agent's, because
- * the crew is the thing declaring what this seat is *for*.
+ * the crew is the thing declaring what this seat is *for*, and
+ * `fallbackModel` — the dialog's model — is last, for a seat that names none.
+ *
+ * **This is the only place a seat's model is decided.** The launch publishes
+ * `seat.model` verbatim, so the family check, the roster, and the create all
+ * read one value. A second fallback applied at publish time is how a crew
+ * passes a vendor check on one model and then runs on another.
  */
 export function resolveCodingSessionCrewSeats(input: {
   crew: CodingSessionCrew;
   agents: readonly CodingSessionCrewAgent[];
+  /** Model the create falls back to when neither seat nor agent names one. */
+  fallbackModel?: string | null;
 }): CodingSessionCrewSeatResolution {
   const seats: ResolvedCodingSessionCrewSeat[] = [];
   const taken = new Set<string>();
@@ -92,7 +100,7 @@ export function resolveCodingSessionCrewSeats(input: {
       role: seat.role,
       actor: agent.pubkey.toLowerCase(),
       actorLabel: agent.name,
-      model: seat.model ?? agent.model ?? null,
+      model: seat.model ?? agent.model ?? input.fallbackModel ?? null,
       vendor: seat.vendor ?? null,
     });
   }

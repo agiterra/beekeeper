@@ -9,6 +9,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import {
   checkCodingSessionCrewFamilies,
+  describeCodingSessionSeatVendor,
   resolveCodingSessionSeatVendor,
   type ResolvedCodingSessionCrewSeat,
 } from "../lib/codingSessionCrew";
@@ -80,8 +81,11 @@ export function NewCodingSessionCrewTab({
         personaId: agent.personaId,
         model: agent.model,
       })),
+      // The same fallback the create would otherwise apply on its own, moved
+      // here so the vendor rule is checked against the published model.
+      fallbackModel: model,
     });
-  }, [managedAgentsQuery.data, selectedTeam]);
+  }, [managedAgentsQuery.data, model, selectedTeam]);
 
   const seats = resolution?.seats ?? null;
   const family = seats ? checkCodingSessionCrewFamilies(seats) : null;
@@ -100,7 +104,6 @@ export function NewCodingSessionCrewTab({
     providerInstanceRef,
     providerAuthorityPubkey,
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
-    model,
     title: title.trim().length > 0 ? title.trim() : null,
   });
 
@@ -304,10 +307,10 @@ export function CodingSessionCrewRoster({
                   : "text-muted-foreground",
               )}
             >
-              {vendor.vendor === null
-                ? "vendor not declared"
-                : `${vendor.vendor}${vendor.source === "derived" ? " (from the model id)" : ""}`}
-              {seat.model ? ` · ${seat.model}` : ""}
+              {describeCodingSessionSeatVendor(seat, { annotateSource: true })}
+              {seat.model && vendor.source !== "conflict"
+                ? ` · ${seat.model}`
+                : ""}
             </span>
             {seat.personaId === primaryPersonaId ? (
               <span className="text-2xs text-muted-foreground">

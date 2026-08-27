@@ -31,11 +31,15 @@ test("an id that does not name a vendor derives nothing, never a guess", () => {
   assert.equal(deriveCodingSessionModelVendor("olmo-2"), null);
 });
 
-test("a declared vendor wins over the model id", () => {
+test("a declared vendor wins only where the model id names nothing", () => {
   assert.deepEqual(
-    resolveCodingSessionSeatVendor({ model: "claude-opus-5", vendor: "local" }),
+    resolveCodingSessionSeatVendor({ model: "qwen3-coder", vendor: "local" }),
     { vendor: "local", source: "declared" },
   );
+  assert.deepEqual(resolveCodingSessionSeatVendor({ vendor: "local" }), {
+    vendor: "local",
+    source: "declared",
+  });
   assert.deepEqual(resolveCodingSessionSeatVendor({ model: "claude-opus-5" }), {
     vendor: "anthropic",
     source: "derived",
@@ -44,6 +48,42 @@ test("a declared vendor wins over the model id", () => {
     vendor: null,
     source: "unknown",
   });
+});
+
+test("a declaration the model id contradicts is a conflict, never an answer", () => {
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ model: "claude-opus-5", vendor: "local" }),
+    {
+      vendor: null,
+      source: "conflict",
+      declared: "local",
+      derived: "anthropic",
+    },
+  );
+  // Agreeing with the table, in any casing, is not a conflict.
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({
+      model: "claude-opus-5",
+      vendor: "Anthropic",
+    }),
+    { vendor: "anthropic", source: "declared" },
+  );
+});
+
+test("a seat whose declaration its model contradicts cannot be launched", () => {
+  const verdict = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "gpt-5.6-sol" },
+    {
+      role: "verifier",
+      model: "claude-opus-5",
+      vendor: "openai",
+      actorLabel: "Quinn",
+    },
+  ]);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /Quinn/);
+  assert.match(verdict.reason, /openai/);
+  assert.match(verdict.reason, /anthropic/);
 });
 
 test("family is the model vendor, not the ACP runtime", () => {
@@ -179,4 +219,33 @@ test("a well-formed crew keeps seat order and drops unknown keys", () => {
       },
     ],
   });
+});
+
+test("a refusal names where a crew is edited, because this build has no editor", () => {
+  const clash = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "claude-opus-5" },
+    { role: "verifier", model: "claude-sonnet-5" },
+  ]);
+  assert.equal(clash.ok, false);
+  // "change one seat's model" instructed an action this build offers no path
+  // to: crew mode never reaches the model picker and `create_team` writes no
+  // crew block. Say where a crew actually lives instead.
+  assert.doesNotMatch(clash.reason, /launch again/);
+  assert.match(clash.reason, /teams\.json/);
+
+  const undeclared = checkCodingSessionCrewFamilies([
+    { role: "builder", model: "qwen3-coder" },
+    { role: "verifier", model: "mystery-2" },
+  ]);
+  assert.equal(undeclared.ok, false);
+  assert.match(undeclared.reason, /teams\.json/);
+});
+
+test("the roster never prints a declared vendor its own table contradicts", () => {
+  const roster = codingSessionCrewRosterText({
+    seats: [{ ...SEATS[0], vendor: "local" }],
+    primaryPersonaId: "p-lead",
+  });
+  assert.match(roster, /declared local, but claude-opus-5 is anthropic/);
+  assert.doesNotMatch(roster, /\(local ·/);
 });

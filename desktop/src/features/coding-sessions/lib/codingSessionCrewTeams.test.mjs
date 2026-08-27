@@ -121,3 +121,54 @@ test("two seats on one persona take two agents, never the same one twice", () =>
     ["a".repeat(64), "b".repeat(64)],
   );
 });
+
+test("a seat carries the model the launch will publish, fallback included", () => {
+  // The launch publishes the resolved seat's model verbatim, so this is the
+  // only place a fallback may be applied: a check that reads one model while
+  // the create carries another is a check that passed the wrong crew.
+  const resolved = resolveCodingSessionCrewSeats({
+    crew: {
+      primary: "p-lead",
+      seats: [
+        { personaId: "p-lead", role: "lead" },
+        { personaId: "p-build", role: "builder", model: "gpt-5.6-sol" },
+      ],
+    },
+    agents: [
+      {
+        pubkey: "a".repeat(64),
+        name: "Fable",
+        personaId: "p-lead",
+        model: null,
+      },
+      {
+        pubkey: "b".repeat(64),
+        name: "Codey",
+        personaId: "p-build",
+        model: "gpt-4",
+      },
+    ],
+    fallbackModel: "claude-opus-5",
+  });
+  assert.equal(resolved.error, null);
+  assert.deepEqual(
+    resolved.seats.map((seat) => seat.model),
+    ["claude-opus-5", "gpt-5.6-sol"],
+  );
+});
+
+test("with no model anywhere a seat carries none, rather than inventing one", () => {
+  const resolved = resolveCodingSessionCrewSeats({
+    crew: { primary: "p-lead", seats: [{ personaId: "p-lead", role: "lead" }] },
+    agents: [
+      {
+        pubkey: "a".repeat(64),
+        name: "Fable",
+        personaId: "p-lead",
+        model: null,
+      },
+    ],
+    fallbackModel: null,
+  });
+  assert.equal(resolved.seats[0].model, null);
+});
