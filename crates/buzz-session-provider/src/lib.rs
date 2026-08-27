@@ -1537,7 +1537,30 @@ impl Provider {
         // A turn that reaches the agent and then fails is a transcript
         // `result{error}`, not a lifecycle outcome — the session is fine and the
         // operator can simply try again.
+        // D9 / contract B, on the one turn path that never passes through
+        // `decide_turn`: a create's first turn is handed straight to the
+        // actor's mailbox, so without this check one signed create would run —
+        // and charge — a turn at an exhausted allowance, with no receipt
+        // saying so. Same predicate as a 44220 turn's, so the two paths can
+        // never disagree about who is exempt.
+        let budget_refusal = plan.initial_turn.as_ref().and_then(|_| {
+            commands::exhausted_umbrella_budget(
+                &self.state,
+                self.config.turn_budget,
+                plan.session_ref.as_deref(),
+                &plan.founder_pubkey,
+            )
+        });
         let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
+            _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit)| {
+                format!(
+                    "{}: this crew session has started {used} of its {limit} \
+                     allowed turns, so the first turn was not delivered; the session founder can \
+                     still send turns, and raising \"Turns per crew session\" takes effect the \
+                     next time the provider starts",
+                    payload::BUDGET_EXHAUSTED
+                )
+            }),
             (None, _) => None,
             (Some(_), None) => Some("session actor stopped before the first turn".to_owned()),
             (Some(text), Some(handle)) => handle
@@ -4789,6 +4812,35 @@ mod tests {
         signed_lifecycle_event(channel_id, content)
     }
 
+    /// A create claiming an umbrella *and* carrying a first turn, signed by
+    /// whichever key the caller names — the shape a delegated seat sends.
+    fn create_event_with_umbrella_and_turn(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        session_ref: &str,
+        turn: &str,
+        keys: &Keys,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "sessionRef": session_ref,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": turn,
+            },
+        })
+        .to_string();
+        signed_lifecycle_event_by(channel_id, content, keys)
+    }
+
     fn create_event_with_genesis_ref(
         provider: &Provider,
         channel_id: Uuid,
@@ -6705,6 +6757,96 @@ mod tests {
                 .any(|receipt| receipt["commandId"] == "turn-founder"
                     && receipt["error"]["code"] == BUDGET_EXHAUSTED),
             "a founder turn is never refused for a budget"
+        );
+    }
+
+    /// A create's `initialTurn` never passes through `decide_turn`: it is
+    /// handed straight to the actor's mailbox. So the budget has to be checked
+    /// on that path too, or one signed create runs — and charges — a turn at
+    /// an exhausted allowance with no receipt at all, and D9's promise (and
+    /// the Settings control that states it) is false while that door is open.
+    #[tokio::test]
+    async fn a_spent_umbrella_refuses_a_delegated_creates_first_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+        provider.config.turn_budget = 1;
+
+        // The umbrella belongs to the test operator, and its one turn is spent.
+        let record = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        let umbrella = record.session_ref.clone().expect("umbrella");
+        provider.state.insert_session(record).expect("insert");
+        provider
+            .state
+            .record_turn_spend(&umbrella)
+            .expect("spend the allowance");
+
+        let seat = Keys::generate();
+        let create = create_event_with_umbrella_and_turn(
+            &provider,
+            channel_id,
+            "create-delegated",
+            &umbrella,
+            "go",
+            &seat,
+        );
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "create-delegated")
+            .expect("create receipt");
+        assert_eq!(receipt["status"], "created_with_failed_initial_turn");
+        let message = receipt["error"]["message"]
+            .as_str()
+            .expect("message")
+            .to_owned();
+        assert!(
+            message.contains(BUDGET_EXHAUSTED) && message.contains("1 of its 1 allowed turns"),
+            "the refusal must name the code and the two numbers: {message}"
+        );
+
+        // The umbrella's founder is not refused: their create's first turn
+        // still runs, at the same exhausted allowance.
+        let founders = create_event_with_umbrella_and_turn(
+            &provider,
+            channel_id,
+            "create-founder",
+            &umbrella,
+            "go",
+            test_operator_keys(),
+        );
+        provider
+            .handle_command_event(channel_id, &founders)
+            .await
+            .expect("handle");
+        pump_until_turn_finished(&mut provider).await;
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        // The pump drains *both* sessions' events, so this is where a
+        // delivered over-budget first turn would finally show itself.
+        let prompts: Vec<serde_json::Value> = transcript_items_in_sequence(&sink)
+            .into_iter()
+            .filter(|item| item["item"]["kind"] == "user_prompt")
+            .collect();
+        assert_eq!(
+            prompts.len(),
+            1,
+            "exactly one first turn runs — the founder's: {prompts:?}"
+        );
+        assert_eq!(
+            provider.state().turns_used(&umbrella),
+            2,
+            "the refused turn charged nothing; only the founder's ran"
         );
     }
 
