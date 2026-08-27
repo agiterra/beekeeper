@@ -18,6 +18,11 @@
  * - A generation exists only when a *lifecycle* receipt names it. Turn
  *   receipts are decoded and then deliberately ignored for existence and
  *   status.
+ * - Two creates under one `commandId` that disagree about signer, session,
+ *   genesis or provider are a conflict: neither binds, and the generation
+ *   falls through to the disclosed fallback rather than vanishing.
+ * - Only creates a receipt from their own named provider answered are exported
+ *   as facts, so an unanswered claim can never resolve a founder.
  * - At most 2000 raw events are retained per generation, oldest evicted.
  */
 import {
@@ -101,7 +106,16 @@ type LifecycleReceiptRecord = {
 /** Everything the store learned, ready to be grouped into umbrellas. */
 export type CodingSessionObserverFacts = {
   generations: CodingSessionGenerationRecord[];
-  /** Accepted 44221 creates, for founder and operator resolution. */
+  /**
+   * 44221 creates that a lifecycle receipt from their OWN named provider
+   * answered — the only ones founder and operator resolution may consider.
+   *
+   * A create nobody's provider ever acted on mints no execution, so it is no
+   * evidence of having operated one. Requiring the join is what stops any
+   * channel member from backdating a create bearing someone else's
+   * `sessionRef` to become that session's founder — and, since a close is an
+   * owner-authority act, to close it (D7).
+   */
   creates: CodingSessionLifecycleCommand[];
   genesisByEventId: Map<string, CodingSessionGenesis>;
   names: CodingSessionName[];
@@ -179,16 +193,9 @@ export class CodingSessionObserverStore {
     const acceptedCommandIdByGenerationId = new Map<string, string>();
     let conflictCount = 0;
 
-    const createsByCommandId = new Map<string, CodingSessionLifecycleCommand>();
-    for (const create of this.creates.values()) {
-      const existing = createsByCommandId.get(create.commandId);
-      // Two different creates under one command id prove nothing about either.
-      if (existing && existing.eventId !== create.eventId) {
-        createsByCommandId.set(create.commandId, existing);
-        continue;
-      }
-      createsByCommandId.set(create.commandId, create);
-    }
+    const undisputed = this.undisputedCreatesByCommandId(allowed);
+    const createsByCommandId = undisputed.creates;
+    conflictCount += undisputed.conflictCount;
 
     // A generation exists iff a lifecycle receipt names it (D6) — and it is
     // scoped to the SIGNER of that receipt, never to the target alone. Two
@@ -317,9 +324,7 @@ export class CodingSessionObserverStore {
 
     return {
       generations,
-      creates: [...this.creates.values()].filter((create) =>
-        allowed.has(create.channelId),
-      ),
+      creates: this.receiptJoinedCreates(createsByCommandId, allowed),
       genesisByEventId: new Map(this.genesis),
       names: [...this.names.values()].filter((name) =>
         allowed.has(name.channelId),
@@ -336,6 +341,91 @@ export class CodingSessionObserverStore {
       invalidSignatureCount: this.invalidSignatureCount,
       conflictCount,
     };
+  }
+
+  /**
+   * Creates indexed by `(channel, commandId)`, with the disputed ones removed.
+   *
+   * A `commandId` is public in the channel, so copying one into a second
+   * create is trivial. Two creates under one id that disagree about who signed
+   * them, which session they claim, which genesis anchors it, or which
+   * provider may answer are irreconcilable, and picking a winner would let the
+   * copy decide — so neither is believed and the pair is counted as a
+   * conflict. The generation itself is NOT dropped: it falls through to D5's
+   * disclosed fallback and renders as "authority unverified". Two creates
+   * agreeing on all four are the same claim republished, not a dispute.
+   */
+  private undisputedCreatesByCommandId(allowed: ReadonlySet<string>): {
+    creates: Map<string, CodingSessionLifecycleCommand>;
+    conflictCount: number;
+  } {
+    const buckets = new Map<string, CodingSessionLifecycleCommand[]>();
+    for (const create of this.creates.values()) {
+      if (!allowed.has(create.channelId)) continue;
+      const key = factKey(create.channelId, create.commandId);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(create);
+      else buckets.set(key, [create]);
+    }
+    const creates = new Map<string, CodingSessionLifecycleCommand>();
+    let conflictCount = 0;
+    for (const [key, bucket] of buckets) {
+      const disputed =
+        new Set(bucket.map((create) => create.signerPubkey)).size > 1 ||
+        new Set(bucket.map((create) => create.sessionRef)).size > 1 ||
+        new Set(bucket.map((create) => create.genesisRef)).size > 1 ||
+        new Set(bucket.map((create) => create.providerAuthorityPubkey)).size >
+          1;
+      if (disputed) {
+        conflictCount += bucket.length - 1;
+        continue;
+      }
+      // Ingest order must never decide: the earliest signed claim wins, ties
+      // broken on event id.
+      creates.set(
+        key,
+        [...bucket].sort(
+          (left, right) =>
+            left.createdAt - right.createdAt ||
+            left.eventId.localeCompare(right.eventId),
+        )[0],
+      );
+    }
+    return { creates, conflictCount };
+  }
+
+  /**
+   * The subset of {@link undisputedCreatesByCommandId} that a lifecycle
+   * receipt signed by the create's OWN named provider answered.
+   *
+   * The fence travels with the signed create, so every member of the channel
+   * resolves the same operator and founder — not just the one whose machine
+   * happens to run that provider.
+   */
+  private receiptJoinedCreates(
+    createsByCommandId: ReadonlyMap<string, CodingSessionLifecycleCommand>,
+    allowed: ReadonlySet<string>,
+  ): CodingSessionLifecycleCommand[] {
+    const answered = new Set<string>();
+    for (const receipt of this.lifecycleReceipts) {
+      if (!allowed.has(receipt.channelId)) continue;
+      answered.add(
+        commandAnswerKey(
+          receipt.channelId,
+          receipt.commandId,
+          receipt.signerPubkey,
+        ),
+      );
+    }
+    return [...createsByCommandId.values()].filter((create) =>
+      answered.has(
+        commandAnswerKey(
+          create.channelId,
+          create.commandId,
+          create.providerAuthorityPubkey,
+        ),
+      ),
+    );
   }
 
   /**
@@ -359,7 +449,9 @@ export class CodingSessionObserverStore {
     const readableCreates = receipts
       .map((receipt) => ({
         receipt,
-        create: createsByCommandId.get(receipt.commandId) ?? null,
+        create:
+          createsByCommandId.get(factKey(scope.channelId, receipt.commandId)) ??
+          null,
       }))
       .filter(
         (
@@ -367,8 +459,7 @@ export class CodingSessionObserverStore {
         ): entry is {
           receipt: LifecycleReceiptRecord;
           create: CodingSessionLifecycleCommand;
-        } =>
-          entry.create !== null && entry.create.channelId === scope.channelId,
+        } => entry.create !== null,
       );
     const authorized = readableCreates
       .filter(
@@ -697,6 +788,20 @@ function factKey(channelId: string, semanticKey: string): string {
     "coding-session-ingress-index/v1",
     channelId,
     semanticKey,
+  );
+}
+
+/** The `(channel, command, provider)` key a receipt-joined create is proven by. */
+function commandAnswerKey(
+  channelId: string,
+  commandId: string,
+  providerPubkey: string,
+): string {
+  return encodeStructuredKey(
+    "coding-session-command-answer/v1",
+    channelId,
+    commandId,
+    providerPubkey,
   );
 }
 

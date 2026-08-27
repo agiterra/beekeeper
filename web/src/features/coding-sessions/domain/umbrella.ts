@@ -194,7 +194,7 @@ function collectExecutions(facts: CodingSessionObserverFacts): Execution[] {
         .reverse()
         .map((record) => record.sessionRef)
         .find((ref) => ref !== null) ?? null;
-    const create = resolveExecutionCreate(active, facts.creates);
+    const create = resolveExecutionCreate(active, facts);
     const latestEventMs = Math.max(
       0,
       ...generations.map((record) => record.lastEventAt),
@@ -222,16 +222,32 @@ function collectExecutions(facts: CodingSessionObserverFacts): Execution[] {
   });
 }
 
-/** The earliest readable create that minted this execution, or null. */
+/**
+ * The create that minted this execution, or null.
+ *
+ * `facts.creates` is already receipt-joined, so an unanswered claim can never
+ * name an operator. When the store also resolved *which* command the provider
+ * confirmed for this generation, that exact id decides and no heuristic runs;
+ * only a generation on the disclosed fallback (no readable create for its own
+ * stream) falls back to matching on provider and `sessionRef`.
+ */
 function resolveExecutionCreate(
   record: CodingSessionGenerationRecord,
-  creates: readonly CodingSessionLifecycleCommand[],
+  facts: CodingSessionObserverFacts,
 ): CodingSessionLifecycleCommand | null {
+  const creates = facts.creates.filter(
+    (create) =>
+      create.action === "create" && create.channelId === record.channelId,
+  );
+  const accepted = facts.acceptedCommandIdByGenerationId.get(
+    record.generationId,
+  );
+  if (accepted !== undefined) {
+    return creates.find((create) => create.commandId === accepted) ?? null;
+  }
   const matches = creates
     .filter(
       (create) =>
-        create.action === "create" &&
-        create.channelId === record.channelId &&
         create.providerAuthorityPubkey === record.providerAuthorityPubkey &&
         (create.sessionRef === null ||
           record.sessionRef === null ||
@@ -327,6 +343,11 @@ function buildUmbrella(
  * tell a genuinely ungoverned session apart from one whose creates simply have
  * not been observed. Guessing the former over the latter is how an ungoverned
  * execution gets treated as part of a governed session.
+ *
+ * Only receipt-joined creates are considered — `facts.creates` carries no
+ * others — so a create nobody's provider ever answered can neither name a
+ * founder nor, through the closure gate in {@link buildUmbrella}, close a
+ * session.
  */
 function resolveFounder(
   channelId: string,
@@ -385,8 +406,16 @@ function resolveFounder(
     // Resolved by that exact event id, never by the session tag: a 44226 that
     // merely claims the same sessionRef is not the anchor the create named.
     const genesis = facts.genesisByEventId.get(genesisRef);
+    // ...and the anchor must be this session's own. A create pointing at
+    // another session's genesis would otherwise hand this session's
+    // foundership — and the authority to close it — to a foreign signer, and
+    // label the result "governed" while doing so.
+    const anchored =
+      genesis !== undefined &&
+      genesis.channelId === channelId &&
+      genesis.sessionRef === sessionRef;
     return {
-      founderPubkey: genesis?.founderPubkey ?? null,
+      founderPubkey: anchored ? genesis.founderPubkey : null,
       genesisRef,
       founderResolution: "governed",
     };

@@ -16,6 +16,7 @@ import {
   metadataEvent,
   nameEvent,
   newSigner,
+  OTHER_SESSION_REF,
   receiptEvent,
   SESSION_REF,
   target,
@@ -333,4 +334,102 @@ test("the snapshot states that signatures were verified on this device", () => {
   const provider = newSigner();
   const snapshot = snapshotOf(execution(operator, provider));
   assert.equal(snapshot.signaturesVerified, true);
+});
+
+test("an unanswered create names no founder and closes nothing", () => {
+  const provider = newSigner();
+  const stranger = newSigner();
+  const snapshot = snapshotOf([
+    // A live session whose own create fell outside the history window.
+    receiptEvent(provider, { commandId: "unseen", status: "created" }),
+    metadataEvent(provider, { sessionRef: SESSION_REF }),
+    // Any channel member can sign a backdated create bearing this sessionRef.
+    // No provider ever answered it, so it is a claim, not a fact.
+    createEvent(stranger, {
+      commandId: "stranger-command",
+      providerAuthorityPubkey: provider.pubkey,
+      sessionRef: SESSION_REF,
+      created_at: 1_699_000_000,
+    }),
+    closureEvent(stranger, { sessionRef: SESSION_REF }),
+  ]);
+  const umbrella = snapshot.umbrellas[0];
+  assert.equal(umbrella.sessionRef, SESSION_REF);
+  assert.equal(
+    umbrella.founderPubkey,
+    null,
+    "a create nobody's provider acted on cannot make its signer the founder",
+  );
+  assert.equal(umbrella.founderResolution, "unresolved");
+  assert.equal(
+    umbrella.closed,
+    false,
+    "and so cannot hand that member the authority to close the session",
+  );
+});
+
+test("a genesis anchored to another session names no founder here", () => {
+  const operator = newSigner();
+  const stranger = newSigner();
+  const provider = newSigner();
+  const foreign = genesisEvent(stranger, { sessionRef: OTHER_SESSION_REF });
+  const snapshot = snapshotOf([
+    foreign,
+    ...execution(operator, provider, {
+      sessionRef: SESSION_REF,
+      genesisRef: foreign.id,
+    }),
+    closureEvent(stranger, { sessionRef: SESSION_REF, genesisRef: foreign.id }),
+  ]);
+  const umbrella = snapshot.umbrellas[0];
+  assert.equal(
+    umbrella.founderPubkey,
+    null,
+    "the anchor a create names must belong to the session it anchors",
+  );
+  assert.equal(umbrella.closed, false);
+});
+
+test("the operator is read from the command the provider actually confirmed", () => {
+  const founder = newSigner();
+  const guest = newSigner();
+  const provider = newSigner();
+  const genesis = genesisEvent(founder, { sessionRef: SESSION_REF });
+  const snapshot = snapshotOf([
+    genesis,
+    ...execution(founder, provider, {
+      commandId: "cmd-a",
+      sessionId: "session-a",
+      sessionRef: SESSION_REF,
+      genesisRef: genesis.id,
+    }),
+    // The guest's create is earlier and names the same provider, but the
+    // receipt that minted this execution answered `cmd-a`, not this one.
+    createEvent(guest, {
+      commandId: "cmd-guest",
+      providerAuthorityPubkey: provider.pubkey,
+      sessionRef: SESSION_REF,
+      genesisRef: genesis.id,
+      created_at: 1_690_000_000,
+    }),
+    receiptEvent(provider, {
+      commandId: "cmd-guest",
+      status: "created",
+      target: target({ sessionId: "session-guest" }),
+    }),
+    metadataEvent(provider, {
+      target: target({ sessionId: "session-guest" }),
+      sessionRef: SESSION_REF,
+    }),
+  ]);
+  const umbrella = snapshot.umbrellas[0];
+  const byOperator = Object.fromEntries(
+    umbrella.executions.map((item) => [
+      item.activeGeneration.target.sessionId,
+      item.operatorPubkey,
+    ]),
+  );
+  assert.equal(byOperator["session-a"], founder.pubkey);
+  assert.equal(byOperator["session-guest"], guest.pubkey);
+  assert.equal(umbrella.foreignAttachmentCount, 1);
 });

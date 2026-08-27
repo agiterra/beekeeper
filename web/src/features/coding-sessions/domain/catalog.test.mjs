@@ -3,10 +3,16 @@ import { test } from "node:test";
 import { CodingSessionObserverStore } from "./catalog.ts";
 import {
   CHANNEL_ID,
+  closureEvent,
+  corruptSignature,
   createEvent,
+  leaseEvent,
   metadataEvent,
+  nameEvent,
   newSigner,
+  OTHER_SESSION_REF,
   receiptEvent,
+  SESSION_REF,
   transcriptEvent,
   target,
 } from "./testFixtures.mjs";
@@ -267,4 +273,122 @@ test("an invalid signature is counted and never reaches a record", () => {
   ]);
   assert.equal(facts.invalidSignatureCount, 1);
   assert.equal(facts.generations[0].status, "unknown");
+});
+
+test("two creates under one commandId that disagree bind neither, and the session still renders", () => {
+  const operator = newSigner();
+  const impostor = newSigner();
+  const provider = newSigner();
+  const facts = storeWith([
+    createEvent(operator, {
+      commandId: "command-1",
+      providerAuthorityPubkey: provider.pubkey,
+      sessionRef: SESSION_REF,
+    }),
+    // The commandId is public in the channel, so copying it is trivial.
+    createEvent(impostor, {
+      commandId: "command-1",
+      providerAuthorityPubkey: provider.pubkey,
+      sessionRef: OTHER_SESSION_REF,
+    }),
+    receiptEvent(provider, { commandId: "command-1", status: "created" }),
+    metadataEvent(provider, { status: "running" }),
+  ]);
+  assert.equal(
+    facts.generations.length,
+    1,
+    "a copied commandId must never make a live session disappear",
+  );
+  assert.equal(
+    facts.generations[0].authoritySource,
+    "disclosed-fallback",
+    "with no create left to believe, the authority is disclosed as unverified",
+  );
+  assert.equal(
+    facts.conflictCount,
+    1,
+    "and the dispute is disclosed, not hidden",
+  );
+  assert.deepEqual(facts.creates, [], "neither create binds anything");
+});
+
+test("republishing the same create under one commandId is not a dispute", () => {
+  const operator = newSigner();
+  const provider = newSigner();
+  const facts = storeWith([
+    createEvent(operator, {
+      commandId: "command-1",
+      providerAuthorityPubkey: provider.pubkey,
+      created_at: 1_699_999_000,
+    }),
+    createEvent(operator, {
+      commandId: "command-1",
+      providerAuthorityPubkey: provider.pubkey,
+      created_at: 1_699_999_100,
+    }),
+    receiptEvent(provider, { commandId: "command-1", status: "created" }),
+    metadataEvent(provider),
+  ]);
+  assert.equal(facts.conflictCount, 0);
+  assert.equal(facts.generations[0].authoritySource, "create");
+  assert.equal(facts.creates.length, 1);
+  assert.equal(
+    facts.creates[0].createdAt,
+    1_699_999_000,
+    "the earliest signed claim wins, never whichever arrived first",
+  );
+});
+
+test("a create no provider answered is not exported as a fact", () => {
+  const operator = newSigner();
+  const provider = newSigner();
+  const stranger = newSigner();
+  const facts = storeWith([
+    createEvent(operator, {
+      commandId: "never-answered",
+      providerAuthorityPubkey: provider.pubkey,
+      sessionRef: SESSION_REF,
+    }),
+    // A receipt from anyone but the provider the create named joins nothing.
+    receiptEvent(stranger, {
+      commandId: "never-answered",
+      status: "created",
+    }),
+  ]);
+  assert.deepEqual(facts.creates, []);
+});
+
+test("a forged name, closure, create or lease is counted and never becomes a fact", () => {
+  const operator = newSigner();
+  const provider = newSigner();
+  const founder = newSigner();
+  const store = new CodingSessionObserverStore();
+  store.ingest(
+    [
+      ...establishedGeneration(operator, provider, {
+        sessionRef: SESSION_REF,
+      }),
+      corruptSignature(nameEvent(founder, { sessionRef: SESSION_REF })),
+      corruptSignature(closureEvent(founder, { sessionRef: SESSION_REF })),
+      corruptSignature(
+        createEvent(founder, {
+          commandId: "command-1",
+          providerAuthorityPubkey: provider.pubkey,
+        }),
+      ),
+      corruptSignature(leaseEvent(provider)),
+    ],
+    channels,
+  );
+  const facts = store.facts(channels);
+  assert.equal(facts.invalidSignatureCount, 4);
+  assert.deepEqual(facts.names, []);
+  assert.deepEqual(facts.closures, []);
+  assert.equal(facts.leasesByTarget.size, 0);
+  assert.equal(
+    facts.creates.length,
+    1,
+    "only the genuinely signed create survives",
+  );
+  assert.equal(facts.creates[0].signerPubkey, operator.pubkey);
 });
