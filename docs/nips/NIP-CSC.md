@@ -137,7 +137,7 @@ is the contract, not a description of what ships today. In this fork's provider
 `NATIVE_STEER_DELIVERABLE` is `false`
 (`crates/buzz-session-provider/src/session.rs:78`) and `metadata_for`
 AND-gates the per-execution witness with it
-(`crates/buzz-session-provider/src/lib.rs:2808-2811`), so
+(`crates/buzz-session-provider/src/lib.rs:2845-2852`), so
 `capabilities.threadSteer` is `false` for **every** execution and the desktop
 composer never sends `deliver: "steer"`
 (`desktop/src/features/coding-sessions/ui/CodingSessionComposer.tsx:295`
@@ -147,12 +147,13 @@ selects `steer` only when `canSteer`).
 it is wrong about what this relay will hand it.** What the paragraph above
 establishes is only that *this fork's desktop* never asks for a steer, so no
 `turn_degraded` originates from it. A `steer` from any other client is accepted
-on the wire — the envelope validates all four delivery classes
-(`crates/buzz-relay/src/handlers/ingest.rs:7474-7479`) — and the
+on the wire — the envelope validates every delivery class and the absent
+field (`crates/buzz-relay/src/handlers/ingest.rs:7474-7479`: `None`,
+`boundary`, `steer`, `interrupt`) — and the
 provider then degrades it out loud: `inject_native_steer` returns `false`
-unconditionally (`crates/buzz-session-provider/src/lib.rs:2227-2239`) and the
+unconditionally (`crates/buzz-session-provider/src/lib.rs:2264-2276`) and the
 arm behind the delivery publishes `turn_degraded` / `STEER_UNSUPPORTED` beside
-the `turn_queued` (`crates/buzz-session-provider/src/lib.rs:2094-2102`). That
+the `turn_queued` (`crates/buzz-session-provider/src/lib.rs:2116-2124`). That
 degrade path has unit coverage with a hand-injected capability and no
 end-to-end evidence, which is why native injection is called deferred; it is
 not why the receipt is called impossible, because it is not.
