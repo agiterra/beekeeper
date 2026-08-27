@@ -1873,11 +1873,8 @@ written and `bash -n` clean but **was not executed** — that harness needs
     Round-3 triage applied on `crew/lane-2F`: `mailbox-1` (the hold branch
     advanced the watermark past older held turns) and `evidence-3` (a failed
     held delivery dropped the untried remainder) are fixed, each pinned red
-    first. Round-2 triage, `contract-1`, fixed on `crew/s2-s6@734bd639` and
-    pinned red first by
-    `a_delivered_cancel_is_not_issued_twice_after_a_failed_ledger_append`
-    (`crates/buzz-session-provider/src/lib.rs:9813`, 0 passed / 1 failed before
-    the fix): the `evidence-3` hand-back itself created a silent-loss path for
+    first. Round-2 triage, `contract-1`, fixed on `crew/s2-s6@734bd639`: the
+    `evidence-3` hand-back itself created a silent-loss path for
     interrupts. `on_turn` records custody in `in_flight` only on its
     `Ok(()) if is_turn` arm and `is_turn` is false for `TurnAction::Interrupt`,
     so a cancel whose `SessionHandle::deliver` had already succeeded and whose
@@ -1885,9 +1882,30 @@ written and `bash -n` clean but **was not executed** — that harness needs
     anywhere — both ledgers roll their in-memory entry back on a failed append
     — and the next redelivery passed every `decide_turn` fence and cancelled an
     unrelated running turn with no receipt, no transcript item and no ledger
-    entry. A sibling process-local set, `delivered_cancels`, now covers the
-    window between delivery and the durable answer
-    (`crates/buzz-session-provider/src/commands.rs:518`). Residuals: native mid-turn steer is boundary-only in this build —
+    entry. A sibling process-local queue, `delivered_cancels`, now covers the
+    window between delivery and the durable answer, read by `decide_turn` as
+    `Ignored::AlreadyAccepted`
+    (`crates/buzz-session-provider/src/commands.rs:520`).
+    **Round-3 `contract-1` / `evidence-13`, fixed on `crew/lane-2G`:** that
+    fence is *silent*, and it was closing over cancels nothing had answered.
+    The interrupt arm wrote its ledger entry first and enqueued the operator's
+    receipt second, so a failed append returned in front of the receipt while
+    the cancel had already reached the actor and ended the running turn — no
+    receipt, no transcript item, no ledger entry — and the silent redelivery
+    then advanced the channel watermark past it, so not even a restart replayed
+    it: a direct contract D ("never silently lost") and contract E ("an
+    interrupt is answered by `interrupt_delivered` or `turn_refused`")
+    violation. The outbox is itself a durable, crash-safe publish queue, so the
+    answer now goes in front of the fence — `enqueue_receipt`
+    (`crates/buzz-session-provider/src/lib.rs:2177`), then the consumed/refused
+    append (`:2185-2189`). Pinned red first by
+    `a_delivered_cancel_is_answered_once_even_when_the_ledger_append_fails`
+    (`crates/buzz-session-provider/src/lib.rs:9866`), 0 passed / 1 failed
+    before the fix (`receipt_stages` was `[]` where `interrupt_delivered` was
+    expected). The fence is bounded now, too — a `VecDeque` capped at
+    `DELIVERED_CANCEL_FENCE_CAPACITY = 256`
+    (`crates/buzz-session-provider/src/lib.rs:171`), oldest evicted first,
+    because its only release sits behind that same fallible append. Residuals: native mid-turn steer is boundary-only in this build —
     `NATIVE_STEER_DELIVERABLE` is `false` and `threadSteer` is therefore false
     for every execution, so no degrade path in this build is reachable and all
     steer evidence is hand-injected; two briefed acceptances were **not met**
