@@ -70,3 +70,16 @@ test("the step list marks the failed step and leaves the untouched ones untouche
   assert.match(html, /data-state="pending"/);
   assert.match(html, /data-testid="crew-step-create:1"/);
 });
+
+test("the roster shows a declaration its model contradicts, not the declaration", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewRoster, {
+      primaryPersonaId: "p-lead",
+      seats: [{ ...SEATS[0], vendor: "local" }],
+    }),
+  );
+  assert.match(html, /declared local, but claude-opus-5 is anthropic/);
+  // The model is inside that phrase already; printing it twice reads as two
+  // seats' worth of model.
+  assert.doesNotMatch(html, /· claude-opus-5/);
+});

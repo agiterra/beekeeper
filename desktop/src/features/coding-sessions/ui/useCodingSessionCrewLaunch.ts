@@ -51,7 +51,6 @@ export function useCodingSessionCrewLaunch(input: {
   providerAuthorityPubkey: string | null;
   /** Working directory every seat runs in, host-local and never on the wire. */
   workdir: string | null;
-  model: string | null;
   title: string | null;
 }) {
   const [steps, setSteps] = React.useState<CodingSessionCrewLaunchStep[]>([]);
@@ -125,7 +124,11 @@ export function useCodingSessionCrewLaunch(input: {
                     role: seat.role,
                     providerInstanceRef,
                     providerAuthorityPubkey,
-                    model: seat.model ?? current.model,
+                    // Verbatim: the seat's model was decided once, in
+                    // `resolveCodingSessionCrewSeats`, and that is the model
+                    // the family check and the roster both read. A fallback
+                    // applied here would publish a model no check ever saw.
+                    model: seat.model,
                     title: index === 0 && current.title ? current.title : null,
                     // The goal reaches the primary as its own turn, after the
                     // grant — so it can carry the roster the grant makes true.
