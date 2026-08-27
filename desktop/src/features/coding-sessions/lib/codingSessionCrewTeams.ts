@@ -74,6 +74,13 @@ export type CodingSessionCrewSeatResolution =
  * `seat.model` verbatim, so the family check, the roster, and the create all
  * read one value. A second fallback applied at publish time is how a crew
  * passes a vendor check on one model and then runs on another.
+ *
+ * Deciding the model once is necessary but *not sufficient* for that: the
+ * launch also has to verify the selected provider runtime actually offers it
+ * (`checkCodingSessionCrewSeatModels`), because a model an adapter does not
+ * have is silently replaced by that adapter's default. One value, checked
+ * against the runtime that will run it — either half alone still lets a seat
+ * pass a vendor check on one model and run on another.
  */
 export function resolveCodingSessionCrewSeats(input: {
   crew: CodingSessionCrew;

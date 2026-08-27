@@ -17,6 +17,11 @@
  * the comfortable guess this rule exists to prevent.
  */
 
+import {
+  codingSessionModelChoices,
+  splitCodingSessionModelId,
+} from "./codingSessionModelChoice";
+
 /** Role slug a crew seat plays. Free-form on the wire; these are the packs. */
 export const CODING_SESSION_CREW_ROLES = [
   "lead",
@@ -271,6 +276,90 @@ export function checkCodingSessionCrewFamilies(
     }
   }
   return { ok: true };
+}
+
+/**
+ * Can the provider that will run this crew actually run each seat's model?
+ *
+ * **The family rule is only as good as this check.** Every seat's create is
+ * published against the one `providerInstanceRef` the dialog selected, and the
+ * provider's `apply_model` does not refuse a model its adapter has never heard
+ * of — it logs "agent does not offer model … — using its default" and creates
+ * the session anyway. So a verifier declared `openai` on a Claude-only runtime
+ * passes the vendor check on `gpt-5.6-sol` and then *runs on Anthropic*: the
+ * hard refusal never fires, and nothing re-checks once the 44223 metadata
+ * reports the effective model.
+ *
+ * Decided on base model ids, not on the published id byte for byte: an adapter
+ * packs a thinking level or a context window into brackets
+ * (`claude-opus-5[1m]`), and neither changes the vendor. What must be true is
+ * that the runtime offers a model of that name at all.
+ *
+ * An empty catalog is a refusal, not a pass. "This build could not check"
+ * and "this build checked and it was fine" are different answers, and only one
+ * of them may let a crew launch.
+ */
+export function checkCodingSessionCrewSeatModels(
+  seats: ReadonlyArray<{
+    role: string;
+    model?: string | null;
+    actorLabel?: string;
+  }>,
+  provider: {
+    allowedModels: readonly string[];
+    /** Runtime name, for a refusal a person can act on. */
+    label?: string | null;
+  },
+): CodingSessionCrewFamilyVerdict {
+  const decided = [...seats].filter(
+    (seat) =>
+      seat.role === CODING_SESSION_VERIFIER_ROLE ||
+      seat.role === CODING_SESSION_BUILDER_ROLE,
+  );
+  if (decided.length === 0) return { ok: true };
+
+  const runtime = (provider.label ?? "").trim();
+  const named = (seat: { role: string; actorLabel?: string }) =>
+    `${seat.role}${seat.actorLabel ? ` (${seat.actorLabel})` : ""}`;
+  const on = runtime.length > 0 ? `${runtime} ` : "";
+
+  if (provider.allowedModels.length === 0) {
+    return {
+      ok: false,
+      reason:
+        `This build cannot see which models the ${on}provider offers, so it ` +
+        "cannot tell whether each seat would run on the vendor its seat " +
+        "declares. The verifier rule is decided on the vendor, and a check " +
+        "this build could not make is not a check it passed. " +
+        CODING_SESSION_CREW_EDIT_HINT,
+    };
+  }
+
+  const offered = new Set(
+    codingSessionModelChoices([...provider.allowedModels]).models,
+  );
+  const unrunnable = decided.filter((seat) => {
+    const id = (seat.model ?? "").trim();
+    if (id.length === 0) return true;
+    return !offered.has(splitCodingSessionModelId(id).model);
+  });
+  if (unrunnable.length === 0) return { ok: true };
+
+  const said = unrunnable
+    .map((seat) => {
+      const id = (seat.model ?? "").trim();
+      return `${named(seat)} — ${id.length > 0 ? id : "no model"}`;
+    })
+    .join("; ");
+  return {
+    ok: false,
+    reason:
+      `The ${on}provider selected for this crew does not offer ${said}. ` +
+      "Every seat runs on that one provider, and a model it does not have " +
+      "is silently replaced by its default — so the seat would run on a " +
+      "vendor other than the one its seat declares, and the verifier rule " +
+      `would have checked a model nothing ran. ${CODING_SESSION_CREW_EDIT_HINT}`,
+  };
 }
 
 /**

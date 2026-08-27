@@ -10,7 +10,11 @@
  *
  * 1. **Nothing is published until the family check passes.** The verifier /
  *    builder vendor rule is a refusal, not a warning, and it runs before the
- *    genesis — a crew that fails it leaves no events behind at all.
+ *    genesis — a crew that fails it leaves no events behind at all. The rule
+ *    is decided on a (provider, model) pair this step has verified: the
+ *    selected runtime must actually offer each decided seat's model, because a
+ *    model it does not have is replaced by its default and the seat then runs
+ *    on a vendor nothing checked.
  * 2. **A failed step names itself and leaves the earlier seats alone.** Seat
  *    three failing does not un-create seats one and two; they are real, they
  *    are visible, and the report says exactly which step stopped. Rolling
@@ -22,6 +26,7 @@
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import {
   checkCodingSessionCrewFamilies,
+  checkCodingSessionCrewSeatModels,
   codingSessionCrewFirstTurnText,
   type ResolvedCodingSessionCrewSeat,
 } from "./codingSessionCrew";
@@ -116,6 +121,19 @@ export type CodingSessionCrewLaunchInput = {
   seats: ReadonlyArray<ResolvedCodingSessionCrewSeat>;
   /** Persona id of the seat that receives the first turn. */
   primaryPersonaId: string;
+  /**
+   * The one provider runtime every seat will be created against.
+   *
+   * Required, and required to be non-empty: the vendor rule is decided on a
+   * model, and a model the selected runtime cannot run is silently replaced by
+   * that runtime's default. Without this the check would be reading a string
+   * nothing verified.
+   */
+  provider: {
+    allowedModels: readonly string[];
+    /** Runtime name, so a refusal can say which provider it means. */
+    label?: string | null;
+  };
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
@@ -225,6 +243,20 @@ export async function launchCodingSessionCrew(
     return fail(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
       "This crew has no seat to address its first turn to.",
+      null,
+      null,
+    );
+  }
+  // Before the vendor rule, because the vendor rule reads the model: a model
+  // this provider cannot run is a model the seat will not run on.
+  const runnable = checkCodingSessionCrewSeatModels(
+    input.seats,
+    input.provider,
+  );
+  if (!runnable.ok) {
+    return fail(
+      CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
+      runnable.reason,
       null,
       null,
     );

@@ -74,12 +74,94 @@ function recordingDeps(overrides = {}) {
   return deps;
 }
 
+/** A runtime that really does offer all three seats' models. */
+const PROVIDER = {
+  label: "claude-agent-acp",
+  allowedModels: ["claude-opus-5[1m]", "gpt-5.6-sol", "grok-4"],
+};
+
 const INPUT = {
   channelId: "chan-1",
   goal: "Close ledger item 53.",
   seats: [LEAD, BUILDER, VERIFIER],
   primaryPersonaId: "p-lead",
+  provider: PROVIDER,
 };
+
+test("a seat whose model the selected provider cannot run is refused before anything is published", async () => {
+  // The bug this pins: every seat's create goes to the one selected
+  // providerInstanceRef, and the provider's apply_model does not refuse an
+  // unknown model — it logs "using its default" and creates the session. So a
+  // verifier declared openai on a Claude-only runtime passed the vendor check
+  // on gpt-5.6-sol and then ran on Anthropic, in the builder's own family.
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    {
+      ...INPUT,
+      seats: [LEAD, { ...BUILDER, model: "claude-opus-5" }, VERIFIER],
+      provider: { label: "claude-agent-acp", allowedModels: ["claude-opus-5"] },
+    },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
+  assert.match(result.failureReason, /grok-4/);
+  assert.match(result.failureReason, /claude-agent-acp/);
+  assert.deepEqual(deps.log, [], "nothing may be signed");
+  assert.equal(result.genesisRef, null);
+  assert.equal(result.sessionRef, null);
+});
+
+test("a seat with no model at all cannot be vendor-checked, so it is refused", async () => {
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, seats: [LEAD, { ...BUILDER, model: null }, VERIFIER] },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
+  assert.match(result.failureReason, /no model/);
+  assert.deepEqual(deps.log, []);
+});
+
+test("an empty provider catalog is a refusal, not a pass", async () => {
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, provider: { label: "goose", allowedModels: [] } },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
+  assert.match(result.failureReason, /cannot/);
+  assert.deepEqual(deps.log, []);
+});
+
+test("a bracketed catalog id still runs the base model it names", async () => {
+  // `claude-opus-5[1m]` in the catalog offers `claude-opus-5`: the bracket is
+  // a context window, not a different vendor.
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+});
+
+test("a lead's model is not the vendor rule's business", async () => {
+  // Only verifier and builder seats decide the family rule; a lead on a model
+  // this runtime does not publish is the model picker's problem, not a
+  // silently-wrong-vendor problem.
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    {
+      ...INPUT,
+      seats: [{ ...LEAD, model: "some-local-weight" }, BUILDER, VERIFIER],
+      provider: {
+        label: "claude-agent-acp",
+        allowedModels: ["gpt-5.6-sol", "grok-4"],
+      },
+    },
+    deps,
+  );
+  assert.equal(result.ok, true);
+});
 
 test("a launch is receipt-gated: no seat is published before the last one's receipt", async () => {
   const deps = recordingDeps();
@@ -137,6 +219,12 @@ test("an undeclared vendor is refused before anything is published", async () =>
     {
       ...INPUT,
       seats: [LEAD, BUILDER, { ...VERIFIER, model: "qwen3-coder" }],
+      // The runtime really does run it — so the refusal below is about the
+      // vendor being underivable, not about the provider not having it.
+      provider: {
+        ...PROVIDER,
+        allowedModels: [...PROVIDER.allowedModels, "qwen3-coder"],
+      },
     },
     deps,
   );

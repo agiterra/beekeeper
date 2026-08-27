@@ -513,6 +513,7 @@ export function NewCodingSessionForm({
             // one the person wanted to look at.
             onLaunched={() => onDone()}
             providerAuthorityPubkey={selectedTarget?.signerPubkey ?? null}
+            providerAllowedModels={selectedTarget?.provider.allowedModels ?? []}
             providerInstanceRef={
               selectedTarget?.provider.providerInstanceRef ?? null
             }
