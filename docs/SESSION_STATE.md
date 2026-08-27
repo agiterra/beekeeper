@@ -2097,7 +2097,14 @@ written and `bash -n` clean but **was not executed** — that harness needs
    yet in this base's producer contract (D3/D7's native-steer and
    interrupt-delivery paths land in later slices); they still decode as
    turn stages, which is the property this branch needs. Not yet run on a
-   device or simulator.
+   device or simulator. Refute round 2 (`604b1ee5`) = CONFIRMED, one
+   blocking: a disputed commandId's forged receipts revoked a target bound
+   by a *different* undisputed create, erasing any session any member aimed
+   at — fixed in `0b2b836a` (`coding_session_trust.dart`, pinned first by a
+   failing test at `coding_session_trust_test.dart:262`); the two counts
+   gaps (metadata conflicts missing from `isClean`, target-less receipt
+   refusals uncounted) fixed with it; `order-1` (arrival-order
+   `commandIdByTarget`) deferred as unreachable, named in the doc comment.
 
 ## 2a. Direction settled 2026-08-18
 
