@@ -113,7 +113,7 @@ android {
                 applicationIdSuffix = worktreeIdSuffix
             }
             if (worktreeLabel != null) {
-                resValue("string", "app_name", "Buzz ($worktreeLabel)")
+                resValue("string", "app_name", "Beekeeper ($worktreeLabel)")
             }
         }
         release {

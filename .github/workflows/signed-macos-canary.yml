@@ -73,7 +73,7 @@ jobs:
         run: echo "id=$(scripts/desktop-native-toolchain-id.sh macos)" >> "$GITHUB_OUTPUT"
 
       # Compute this after cargo update so the key describes the graph that is
-      # actually compiled. The helper normalizes only Buzz Desktop's release
+      # actually compiled. The helper normalizes only Beekeeper Desktop's release
       # version, allowing a canary to warm an otherwise identical tag build.
       - name: Compute exact release cache key
         id: rust_cache_key
@@ -208,9 +208,9 @@ jobs:
           EXTRACT_DIR="${RUNNER_TEMP}/signed-app-extract"
           rm -rf "$EXTRACT_DIR" && mkdir -p "$EXTRACT_DIR"
           ditto -x -k "$SIGNED_APP_ZIP" "$EXTRACT_DIR"
-          codesign --verify --deep --strict --verbose=2 "$EXTRACT_DIR/Buzz.app"
-          spctl --assess --type execute --verbose=4 "$EXTRACT_DIR/Buzz.app"
-          desktop/scripts/verify-macos-entitlements.sh "$EXTRACT_DIR/Buzz.app"
+          codesign --verify --deep --strict --verbose=2 "$EXTRACT_DIR/Beekeeper.app"
+          spctl --assess --type execute --verbose=4 "$EXTRACT_DIR/Beekeeper.app"
+          desktop/scripts/verify-macos-entitlements.sh "$EXTRACT_DIR/Beekeeper.app"
 
       - name: Stage signed DMG
         id: artifact
@@ -219,7 +219,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          NAME="Buzz_${VERSION}_aarch64-signed.dmg"
+          NAME="Beekeeper_${VERSION}_aarch64-signed.dmg"
           cp "$SIGNED_DMG" "$RUNNER_TEMP/$NAME"
           echo "path=$RUNNER_TEMP/$NAME" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
