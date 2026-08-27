@@ -404,6 +404,8 @@ mod tests {
                 notes: vec!["Complete empty fixture".into()],
             },
             history: Vec::new(),
+            roster: Vec::new(),
+            inbox: Vec::new(),
         }
     }
 

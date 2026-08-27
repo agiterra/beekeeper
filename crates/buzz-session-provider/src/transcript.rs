@@ -106,11 +106,20 @@ impl TranscriptTranslator {
     /// joins this echo to the turn's receipts by id. Without it the only join
     /// available is the prompt text, which cannot tell two identical prompts
     /// apart. `None` only when the caller had no command to name.
+    ///
+    /// `sender_role` is the crew role the signer held on its own seat when the
+    /// turn was delivered, or `None` for the founder and for any operator with
+    /// no seat in this umbrella.
+    ///
+    /// `prompt` is the **signed** text: the original words, never the
+    /// `[Context]`-framed rendering the adapter is given. The frame is
+    /// addressing metadata for the model; the record keeps what was sent.
     pub fn begin_turn(
         &mut self,
         prompt: &str,
         operator_pubkey: Option<&str>,
         command_id: Option<&str>,
+        sender_role: Option<&str>,
     ) -> Vec<Value> {
         self.text.clear();
         self.thoughts.clear();
@@ -120,6 +129,7 @@ impl TranscriptTranslator {
             false,
             operator_pubkey,
             command_id,
+            sender_role,
         )]
     }
 
@@ -740,7 +750,7 @@ mod tests {
     #[test]
     fn a_whole_turn_translates_to_the_expected_item_sequence() {
         let mut translator = TranscriptTranslator::new(true);
-        let mut items = translator.begin_turn("do the thing", None, None);
+        let mut items = translator.begin_turn("do the thing", None, None, None);
         items.extend(translator.on_update(&thought("let me look")));
         items.extend(translator.on_update(&chunk("I will ")));
         items.extend(translator.on_update(&chunk("read the file.")));
@@ -1101,7 +1111,7 @@ mod tests {
     fn a_new_turn_discards_anything_left_from_the_previous_one() {
         let mut translator = TranscriptTranslator::new(true);
         translator.on_update(&chunk("stale"));
-        let items = translator.begin_turn("fresh", None, None);
+        let items = translator.begin_turn("fresh", None, None, None);
         assert_eq!(kinds(&items), vec!["user_prompt"]);
         assert_eq!(kinds(&translator.end_turn(result())), vec!["result"]);
     }
@@ -1112,7 +1122,7 @@ mod tests {
     fn begin_turn_stamps_the_commanding_operator_on_the_prompt() {
         let operator = "b".repeat(64);
         let mut translator = TranscriptTranslator::new(false);
-        let items = translator.begin_turn("go", Some(&operator), Some("turn-1"));
+        let items = translator.begin_turn("go", Some(&operator), Some("turn-1"), None);
         assert_eq!(items[0]["kind"], "user_prompt");
         assert_eq!(items[0]["operatorPubkey"], operator);
     }
@@ -1122,7 +1132,7 @@ mod tests {
     #[test]
     fn begin_turn_omits_attribution_when_no_operator_is_known() {
         let mut translator = TranscriptTranslator::new(false);
-        let items = translator.begin_turn("go", None, None);
+        let items = translator.begin_turn("go", None, None, None);
         assert!(items[0].get("operatorPubkey").is_none());
         assert!(items[0].get("commandId").is_none());
     }

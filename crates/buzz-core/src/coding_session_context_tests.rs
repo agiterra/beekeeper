@@ -48,6 +48,8 @@ fn package() -> CodingSessionContextPackage {
             notes: vec!["Relay query reached EOSE without a local package truncation".into()],
         },
         history: vec![history(1, "user_prompt"), history(2, "assistant_text")],
+        roster: Vec::new(),
+        inbox: Vec::new(),
     }
 }
 
@@ -260,6 +262,7 @@ fn reconciled() -> CodingSessionContextPackage {
         goal_revision_events: 1,
         generation_bookkeeping_events: 3,
         transcript_events: 2,
+        inbox_events: 0,
     };
     let mut package = package();
     package.provenance.source_event_count = breakdown.total();
@@ -365,13 +368,22 @@ fn a_version_1_package_without_a_breakdown_still_validates() {
 }
 
 #[test]
-fn a_version_3_package_is_rejected_by_name() {
+fn a_future_package_version_is_rejected_by_name() {
     let mut package = reconciled();
-    package.v = CODING_SESSION_CONTEXT_PACKAGE_VERSION + 1;
+    let future = CODING_SESSION_CONTEXT_PACKAGE_VERSION + 1;
+    package.v = future;
     let error = package.validate().unwrap_err();
     assert!(error.contains("unsupported"), "unexpected error: {error}");
-    assert!(error.contains('3'), "unexpected error: {error}");
-    assert!(error.contains("1..=2"), "unexpected error: {error}");
+    assert!(
+        error.contains(&future.to_string()),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error.contains(&format!(
+            "{MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION}..={CODING_SESSION_CONTEXT_PACKAGE_VERSION}"
+        )),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -1025,4 +1037,174 @@ fn a_quoted_stock_interpreter_is_still_exempt() {
     ] {
         assert_eq!(sanitize_coding_session_context_text(text), text, "{text}");
     }
+}
+
+fn roster_entry() -> CodingSessionContextRosterEntry {
+    CodingSessionContextRosterEntry {
+        target: target(),
+        actor: Some("ab".repeat(32)),
+        role: Some("builder".into()),
+        status: CodingSessionContextSeatStatus::Active,
+        last_signed_seq: Some(2),
+        last_signed_at_ms: Some(2_000),
+    }
+}
+
+fn inbox_item(seq: u64) -> CodingSessionContextInboxItem {
+    CodingSessionContextInboxItem {
+        event_id: format!("{seq:064x}"),
+        created_at: 100 + seq,
+        command_id: format!("turn-{seq}"),
+        sender: "cd".repeat(32),
+        sender_role: Some("lead".into()),
+        target: target(),
+        delivery: "boundary".into(),
+        content: format!("do thing {seq}"),
+        stage: Some(ReceiptStatus::TurnQueued),
+        stage_at: Some(200 + seq),
+        stage_code: None,
+    }
+}
+
+fn crew_package() -> CodingSessionContextPackage {
+    let mut package = package();
+    package.roster = vec![roster_entry()];
+    package.inbox = vec![inbox_item(1), inbox_item(2)];
+    package
+}
+
+/// The crew fields are additive: a package written before they existed still
+/// validates, and a package that has nothing to say about a crew is
+/// byte-identical to one.
+#[test]
+fn a_package_without_crew_fields_still_validates_and_stays_off_the_wire() {
+    let mut legacy = package();
+    legacy.v = MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION;
+    legacy.validate().unwrap();
+    let encoded = serde_json::to_string(&legacy).unwrap();
+    assert!(!encoded.contains("roster"), "{encoded}");
+    assert!(!encoded.contains("inbox"), "{encoded}");
+
+    let decoded: CodingSessionContextPackage = serde_json::from_str(&encoded).unwrap();
+    assert!(decoded.roster.is_empty());
+    assert!(decoded.inbox.is_empty());
+    decoded.validate().unwrap();
+
+    // And the current version accepts the same absent-keys shape.
+    let mut raw = serde_json::to_value(package()).unwrap();
+    raw["v"] = Value::from(CODING_SESSION_CONTEXT_PACKAGE_VERSION);
+    let current: CodingSessionContextPackage = serde_json::from_value(raw).unwrap();
+    current.validate().unwrap();
+}
+
+/// A breakdown written before `inboxEvents` existed still sums exactly as it
+/// did, because the missing term defaults to zero.
+#[test]
+fn a_breakdown_without_the_inbox_term_still_reconciles() {
+    let mut raw = serde_json::to_value(reconciled()).unwrap();
+    let breakdown = raw["provenance"]["sourceEventBreakdown"]
+        .as_object_mut()
+        .unwrap();
+    assert!(breakdown.remove("inboxEvents").is_some());
+    let decoded: CodingSessionContextPackage = serde_json::from_value(raw).unwrap();
+    assert_eq!(
+        decoded
+            .provenance
+            .source_event_breakdown
+            .as_ref()
+            .unwrap()
+            .inbox_events,
+        0
+    );
+    decoded.validate().unwrap();
+}
+
+#[test]
+fn a_valid_crew_package_round_trips_and_names_its_seats() {
+    let package = crew_package();
+    package.validate().unwrap();
+    let encoded = serde_json::to_string(&package).unwrap();
+    let decoded: CodingSessionContextPackage = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, package);
+    decoded.validate().unwrap();
+    for key in ["roster", "inbox", "lastSignedSeq", "senderRole", "stage"] {
+        assert!(encoded.contains(key), "{key} must be on the wire");
+    }
+}
+
+/// Every roster invariant that would let a package lie about a seat.
+#[test]
+fn the_roster_rejects_a_seat_it_cannot_honestly_describe() {
+    let mut repeated = crew_package();
+    repeated.roster.push(roster_entry());
+    assert!(repeated.validate().is_err(), "a seat appears once");
+
+    let mut roleless = crew_package();
+    roleless.roster[0].actor = None;
+    assert!(
+        roleless.validate().is_err(),
+        "a role with no actor names a position nobody holds"
+    );
+
+    let mut half_aged = crew_package();
+    half_aged.roster[0].last_signed_at_ms = None;
+    assert!(
+        half_aged.validate().is_err(),
+        "a sequence with no timestamp cannot be aged"
+    );
+
+    let mut zero = crew_package();
+    zero.roster[0].last_signed_seq = Some(0);
+    assert!(zero.validate().is_err());
+
+    let mut shouting = crew_package();
+    shouting.roster[0].role = Some("Lead".into());
+    assert!(shouting.validate().is_err(), "role slugs are lowercase");
+}
+
+/// Every inbox invariant a reader's paging or honesty depends on.
+#[test]
+fn the_inbox_rejects_items_that_would_break_paging_or_lie_about_a_stage() {
+    let mut out_of_order = crew_package();
+    out_of_order.inbox.swap(0, 1);
+    assert!(
+        out_of_order.validate().is_err(),
+        "a page cursor over an unordered inbox skips commands"
+    );
+
+    let mut repeated = crew_package();
+    repeated.inbox[1].event_id = repeated.inbox[0].event_id.clone();
+    assert!(repeated.validate().is_err());
+
+    let mut unknown_class = crew_package();
+    unknown_class.inbox[0].delivery = "whenever".into();
+    assert!(unknown_class.validate().is_err());
+
+    let mut lifecycle_stage = crew_package();
+    lifecycle_stage.inbox[0].stage = Some(ReceiptStatus::Created);
+    assert!(
+        lifecycle_stage.validate().is_err(),
+        "a create outcome is not a turn stage"
+    );
+
+    let mut orphan_detail = crew_package();
+    orphan_detail.inbox[0].stage = None;
+    orphan_detail.inbox[0].stage_at = None;
+    assert!(
+        orphan_detail.validate().is_ok(),
+        "no stage and no detail is the honest unanswered case"
+    );
+    orphan_detail.inbox[0].stage_code = Some("NO_LIVE_EXECUTION".into());
+    assert!(
+        orphan_detail.validate().is_err(),
+        "a stage code with no stage claims an answer that was not seen"
+    );
+
+    let mut leaked = crew_package();
+    leaked.inbox[0].content = "read /Users/alice/private/repo".into();
+    assert!(leaked.validate().is_err());
+
+    let mut empty = crew_package();
+    empty.inbox[0].content = "   ".into();
+    assert!(empty.validate().is_err());
 }

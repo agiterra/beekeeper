@@ -15,20 +15,36 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::coding_session_command::{
-    coding_session_target_key, CodingSessionTarget, MAX_IDENTIFIER_BYTES, MAX_SAFE_GENERATION,
+    coding_session_target_key, CodingSessionDelivery, CodingSessionTarget, MAX_IDENTIFIER_BYTES,
+    MAX_SAFE_GENERATION, MAX_TURN_TEXT_BYTES,
 };
-use crate::coding_session_lifecycle_command::validate_session_ref;
+use crate::coding_session_lifecycle_command::{validate_role_slug, validate_session_ref};
+use crate::coding_session_payload::ReceiptStatus;
 
 /// Current private context-package schema version.
-pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 2;
+pub const CODING_SESSION_CONTEXT_PACKAGE_VERSION: u64 = 3;
 /// Oldest private context-package schema version a reader still accepts.
 ///
-/// Version 2 only adds the optional `sourceEventBreakdown` reconciliation, so
-/// a version-1 package still validates unchanged. The bump exists so that an
-/// *older* reader — whose provenance struct is `deny_unknown_fields` — fails
-/// with "unsupported … package version 2" instead of an opaque unknown-field
-/// error.
+/// Every bump so far has been additive, so an older package still validates
+/// unchanged: version 2 added the optional `sourceEventBreakdown`
+/// reconciliation, version 3 the crew `roster` and `inbox`. Each bump exists
+/// so that an *older* reader — whose structs are `deny_unknown_fields` —
+/// fails with "unsupported … package version N" instead of an opaque
+/// unknown-field error.
 pub const MIN_SUPPORTED_CONTEXT_PACKAGE_VERSION: u64 = 1;
+/// Maximum seats listed in one package roster.
+///
+/// One entry per verified execution generation of the umbrella. A crew is a
+/// handful of seats; this bound exists so a pathological resume chain cannot
+/// push the roster past what a reader can hold in one response.
+pub const MAX_CONTEXT_ROSTER_ENTRIES: usize = 256;
+/// Maximum addressed turn commands carried in one package inbox.
+pub const MAX_CONTEXT_INBOX_ITEMS: usize = 256;
+/// Maximum UTF-8 byte length of one inbox item's prompt text.
+///
+/// The signed 44220 ceiling itself, imported rather than restated: an accepted
+/// command's text always fits, so the inbox never has to clip one.
+pub const MAX_CONTEXT_INBOX_CONTENT_BYTES: usize = MAX_TURN_TEXT_BYTES;
 /// Maximum verified history items carried in one package.
 pub const MAX_CONTEXT_HISTORY_ITEMS: usize = 4_096;
 /// Maximum serialized size of one complete package.
@@ -74,6 +90,120 @@ pub struct CodingSessionContextPackage {
     pub provenance: CodingSessionContextProvenance,
     /// Ordered, signature-verified provider transcript facts.
     pub history: Vec<CodingSessionContextHistoryItem>,
+    /// Every verified execution generation of this umbrella, with the seat
+    /// sitting on it.
+    ///
+    /// Additive (version 3): absent on packages produced before crew seats
+    /// existed, and omitted from the wire when empty, so a v1/v2 package is
+    /// byte-identical to what it was. This is the read side of "a seat can see
+    /// its siblings" — it says who is seated where and how recently each seat
+    /// signed, and deliberately does *not* claim liveness: a lease is not a
+    /// signed transcript fact and never enters this package.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roster: Vec<CodingSessionContextRosterEntry>,
+    /// Verified kind-44220 turn commands addressed to this umbrella's
+    /// executions, oldest first, each with the newest receipt stage the
+    /// projector could verify for it.
+    ///
+    /// Additive (version 3), same wire discipline as `roster`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbox: Vec<CodingSessionContextInboxItem>,
+}
+
+/// What the signed record says about one seat, never what a lease says.
+///
+/// A lease (kind 24223) is ephemeral and unsigned-by-the-founder; it is the
+/// CLI's answer to "live or quiet", and it is deliberately absent here. This
+/// enum is derived only from facts that are in the package's proof graph, so a
+/// reader can re-derive it from `roster[].lastSignedAtMs` and the resume chain
+/// without trusting the projector's word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingSessionContextSeatStatus {
+    /// The newest generation of its execution, and its latest signed metadata
+    /// reported a non-terminal status.
+    Active,
+    /// A later generation of the same execution exists; commands addressed to
+    /// this one are answered `turn_refused` / stale generation.
+    Superseded,
+    /// Its latest signed metadata reported a terminal status — completed,
+    /// stopped, or failed.
+    Ended,
+    /// No signed metadata status could be read for this generation.
+    Unknown,
+}
+
+impl CodingSessionContextSeatStatus {
+    /// The exact wire string this status serializes as.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Superseded => "superseded",
+            Self::Ended => "ended",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// One seat of the umbrella crew: an execution generation and who sits on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionContextRosterEntry {
+    /// The exact execution generation this seat is.
+    pub target: CodingSessionTarget,
+    /// Agent seat pubkey from the generation's signed metadata (`agentRef`),
+    /// or `null` for a human-created execution.
+    pub actor: Option<String>,
+    /// Role slug from the generation's signed metadata, or `null`.
+    pub role: Option<String>,
+    /// Seat status derived from signed facts alone.
+    pub status: CodingSessionContextSeatStatus,
+    /// Highest transcript sequence this seat has signed, or `null` when it has
+    /// signed none.
+    pub last_signed_seq: Option<u64>,
+    /// Envelope timestamp (epoch milliseconds) of that highest sequence, or
+    /// `null`. A reader computes "quiet for how long" from this and the
+    /// package's `generatedAt`; the projector never rounds it into a word.
+    pub last_signed_at_ms: Option<i64>,
+}
+
+/// One verified kind-44220 turn command addressed to an execution of this
+/// umbrella, with the newest receipt stage answering it.
+///
+/// The point of carrying the *stage* beside the command is that a seat reading
+/// its inbox must be able to tell a command that ran from one that was dropped
+/// on the floor: `stage` is `null` only when no verifiable receipt for this
+/// command was in the fact set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodingSessionContextInboxItem {
+    /// Signed source event id of the command.
+    pub event_id: String,
+    /// Signed source event creation time in Unix seconds.
+    pub created_at: u64,
+    /// The command's own `commandId` — the join to its receipts and to the
+    /// `user_prompt` echo the turn produced.
+    pub command_id: String,
+    /// Pubkey that signed the command.
+    pub sender: String,
+    /// The sender's role slug, when the sender holds a seat in this umbrella.
+    pub sender_role: Option<String>,
+    /// The execution generation the command addressed.
+    pub target: CodingSessionTarget,
+    /// Requested delivery class, as its exact wire string.
+    pub delivery: String,
+    /// The command's prompt text, redacted by the same fail-closed sanitizer
+    /// every other package field passes through.
+    pub content: String,
+    /// Newest verified receipt stage for this command, or `null` when none was
+    /// in the fact set. Always a turn stage, never a lifecycle outcome.
+    pub stage: Option<ReceiptStatus>,
+    /// Unix seconds of the receipt that reported `stage`.
+    pub stage_at: Option<u64>,
+    /// That receipt's `error.code`, when it carried one. The code vocabulary
+    /// is deliberately open, so this is validated as a bounded identifier
+    /// rather than against a list.
+    pub stage_code: Option<String>,
 }
 
 /// Durable identity fields shared by every execution in the package.
@@ -133,7 +263,7 @@ pub struct CodingSessionContextProvenance {
 
 /// Per-category accounting of the signed proof events behind one package.
 ///
-/// The six terms sum to `CodingSessionContextProvenance::source_event_count`
+/// The seven terms sum to `CodingSessionContextProvenance::source_event_count`
 /// by construction; only `transcript_events` can become history items, which
 /// is why `sourceEventCount` exceeds `totalHistoryItems`. Without this
 /// breakdown the two numbers sit side by side in a response with no way for a
@@ -155,10 +285,20 @@ pub struct CodingSessionContextSourceBreakdown {
     /// Kind-44225 transcript facts — the only category that can become a
     /// history item.
     pub transcript_events: u64,
+    /// Kind-44220 commands retained in the `inbox`, plus the one receipt per
+    /// item that named its stage.
+    ///
+    /// Additive (package version 3) and defaulted to zero, so a v1/v2
+    /// breakdown still sums exactly as it did. Counted here rather than left
+    /// out because these are signed source facts the package *retains*:
+    /// omitting them would leave `sourceEventCount` describing only part of
+    /// what a reader can see.
+    #[serde(default)]
+    pub inbox_events: u64,
 }
 
 impl CodingSessionContextSourceBreakdown {
-    /// Sum of the six terms.
+    /// Sum of the seven terms.
     ///
     /// Saturates instead of wrapping. A saturated total can never be mistaken
     /// for a reconciliation: [`CodingSessionContextProvenance::validate`] sums
@@ -175,6 +315,7 @@ impl CodingSessionContextSourceBreakdown {
             self.goal_revision_events,
             self.generation_bookkeeping_events,
             self.transcript_events,
+            self.inbox_events,
         ]
         .into_iter()
         .try_fold(0u64, |total, term| total.checked_add(term))
@@ -315,7 +456,7 @@ pub fn coding_session_first_turn_brief(package: &CodingSessionContextPackage) ->
             "totalHistoryItems": package.provenance.total_history_items,
             // The brief is also injected standalone as the ACP bootstrap
             // prompt, where no other rendering of the provenance travels with
-            // it. Without this the brief would print the six breakdown terms
+            // it. Without this the brief would print the seven breakdown terms
             // and a rule saying they reconcile `sourceEventCount` against a
             // number the agent cannot see.
             "sourceEventCount": package.provenance.source_event_count,
@@ -665,12 +806,143 @@ impl CodingSessionContextPackage {
             }
         }
 
+        self.validate_roster()?;
+        self.validate_inbox()?;
+
         let encoded = serde_json::to_vec(self)
             .map_err(|error| format!("context package serialization failed: {error}"))?;
         if encoded.len() > MAX_CONTEXT_PACKAGE_BYTES {
             return Err(format!(
                 "context package exceeds {MAX_CONTEXT_PACKAGE_BYTES} serialized bytes"
             ));
+        }
+        Ok(())
+    }
+
+    /// Every seat is a distinct execution generation, honestly labelled.
+    fn validate_roster(&self) -> Result<(), String> {
+        if self.roster.len() > MAX_CONTEXT_ROSTER_ENTRIES {
+            return Err(format!(
+                "context roster exceeds {MAX_CONTEXT_ROSTER_ENTRIES} entries"
+            ));
+        }
+        let mut seats = HashSet::with_capacity(self.roster.len());
+        for entry in &self.roster {
+            entry.validate()?;
+            let target_key = coding_session_target_key(&entry.target);
+            if !seats.insert(target_key.clone()) {
+                return Err(format!("context roster repeats seat {target_key}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Inbox items are unique, ordered oldest first, and individually valid.
+    ///
+    /// Ordering is enforced, not merely produced: a reader pages this list by
+    /// `createdAt`, and a page cursor over an unordered list silently skips
+    /// commands — exactly the class of loss the durable mailbox exists to
+    /// prevent.
+    fn validate_inbox(&self) -> Result<(), String> {
+        if self.inbox.len() > MAX_CONTEXT_INBOX_ITEMS {
+            return Err(format!(
+                "context inbox exceeds {MAX_CONTEXT_INBOX_ITEMS} items"
+            ));
+        }
+        let mut event_ids = HashSet::with_capacity(self.inbox.len());
+        let mut previous_created_at = 0u64;
+        for item in &self.inbox {
+            item.validate()?;
+            if !event_ids.insert(item.event_id.as_str()) {
+                return Err(format!("context inbox repeats event id {}", item.event_id));
+            }
+            if item.created_at < previous_created_at {
+                return Err("context inbox is not ordered oldest first".into());
+            }
+            previous_created_at = item.created_at;
+        }
+        Ok(())
+    }
+}
+
+impl CodingSessionContextRosterEntry {
+    fn validate(&self) -> Result<(), String> {
+        validate_target(&self.target)?;
+        if let Some(actor) = &self.actor {
+            validate_lower_hex("context roster actor", actor, 64)?;
+        }
+        if let Some(role) = &self.role {
+            validate_role_slug(role).map_err(|error| format!("context roster role: {error}"))?;
+        }
+        // A role without a seat would name a crew position nobody holds.
+        if self.role.is_some() && self.actor.is_none() {
+            return Err("context roster role requires an actor".into());
+        }
+        if self.last_signed_at_ms.is_some_and(|value| value < 0) {
+            return Err("context roster lastSignedAtMs must be non-negative".into());
+        }
+        // The two halves of "when did this seat last speak" travel together:
+        // a sequence with no timestamp cannot be aged, and a timestamp with no
+        // sequence names no fact a reader could go and fetch.
+        if self.last_signed_seq.is_some() != self.last_signed_at_ms.is_some() {
+            return Err(
+                "context roster lastSignedSeq and lastSignedAtMs must be present together".into(),
+            );
+        }
+        if self.last_signed_seq.is_some_and(|seq| seq == 0) {
+            return Err("context roster lastSignedSeq must be positive".into());
+        }
+        Ok(())
+    }
+}
+
+impl CodingSessionContextInboxItem {
+    fn validate(&self) -> Result<(), String> {
+        validate_lower_hex("context inbox eventId", &self.event_id, 64)?;
+        validate_lower_hex("context inbox sender", &self.sender, 64)?;
+        validate_nonempty_bounded(
+            "context inbox commandId",
+            &self.command_id,
+            MAX_IDENTIFIER_BYTES,
+        )?;
+        validate_target(&self.target)?;
+        if CodingSessionDelivery::from_wire(&self.delivery).is_none() {
+            return Err(format!(
+                "context inbox delivery {:?} names no known delivery class",
+                self.delivery
+            ));
+        }
+        if let Some(role) = &self.sender_role {
+            validate_role_slug(role)
+                .map_err(|error| format!("context inbox senderRole: {error}"))?;
+        }
+        validate_nonempty_bounded(
+            "context inbox content",
+            &self.content,
+            MAX_CONTEXT_INBOX_CONTENT_BYTES,
+        )?;
+        if sanitize_coding_session_context_text(&self.content) != self.content {
+            return Err(
+                "context inbox content contains host-private or credential material".into(),
+            );
+        }
+        if let Some(stage) = self.stage {
+            if !stage.is_turn_stage() {
+                return Err(format!(
+                    "context inbox stage {} is a lifecycle outcome, not a turn stage",
+                    stage.as_str()
+                ));
+            }
+        } else if self.stage_at.is_some() || self.stage_code.is_some() {
+            return Err("context inbox stage detail without a stage".into());
+        }
+        if let Some(code) = &self.stage_code {
+            validate_nonempty_bounded("context inbox stageCode", code, MAX_IDENTIFIER_BYTES)?;
+            if sanitize_coding_session_context_text(code) != *code {
+                return Err(
+                    "context inbox stageCode contains host-private or credential material".into(),
+                );
+            }
         }
         Ok(())
     }

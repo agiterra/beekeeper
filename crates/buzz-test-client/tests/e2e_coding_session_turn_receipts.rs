@@ -143,7 +143,7 @@ async fn every_stage_of_one_turn_survives_the_relay_as_its_own_receipt() {
         1,
         0,
         Some(&turn_id),
-        user_prompt_item("do the thing", false, None, Some(&command_id)),
+        user_prompt_item("do the thing", false, None, Some(&command_id), None),
     );
     let item = build_coding_session_transcript_item(
         channel_id,

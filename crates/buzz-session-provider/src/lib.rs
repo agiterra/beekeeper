@@ -1551,6 +1551,9 @@ impl Provider {
                     // The create's verified signer *is* the operator driving
                     // this first turn — the same fact that made them founder.
                     operator_pubkey: Some(plan.founder_pubkey.clone()),
+                    // A create's initial turn is the founder's own brief, so
+                    // it is never framed as a message from somebody else.
+                    framing: None,
                 })
                 .err()
                 .map(|error| format!("could not deliver the first turn: {error:?}")),
@@ -1708,6 +1711,12 @@ impl Provider {
             session_ref: session_ref.to_owned(),
             genesis_ref: genesis_ref.to_owned(),
             relay_self_pubkey: self.relay_self.clone(),
+            // The first execution under a fresh genesis has no create chain to
+            // prove yet, and it is exactly the execution that most needs the
+            // crew tools. An empty verified package attaches the MCP with an
+            // honestly empty roster instead of leaving the seat toolless
+            // (plan S4/B).
+            allow_no_executions: true,
             generated_at: now_ms(),
             limits: ContextProjectionLimits::default(),
         };
@@ -1776,6 +1785,10 @@ impl Provider {
             package_dir,
             package_id: package_id.to_owned(),
             first_turn_brief,
+            // Prior *work*, not prior tooling: verified history, or a sibling
+            // execution already seated under this umbrella. Neither means this
+            // execution is Fresh, and the bootstrap says exactly that.
+            prior_context: !package.history.is_empty() || !package.roster.is_empty(),
         })
     }
 
@@ -2198,19 +2211,25 @@ impl Provider {
                 target,
                 text,
                 deliver,
-            } => (
-                command_id.clone(),
-                target,
-                deliver,
-                // `decide_turn` returns `Start` only after checking this exact
-                // signer against the session's founder/granted-operator set,
-                // so attributing the turn to them is a witnessed fact.
-                SessionCommand::Turn {
-                    command_id,
-                    text,
-                    operator_pubkey: Some(operator_pubkey.to_owned()),
-                },
-            ),
+            } => {
+                let framing =
+                    self.turn_framing(&target.session_id, operator_pubkey, deliver, channel_id);
+                (
+                    command_id.clone(),
+                    target,
+                    deliver,
+                    // `decide_turn` returns `Start` only after checking this
+                    // exact signer against the session's founder/granted-
+                    // operator set, so attributing the turn to them is a
+                    // witnessed fact.
+                    SessionCommand::Turn {
+                        command_id,
+                        text,
+                        operator_pubkey: Some(operator_pubkey.to_owned()),
+                        framing,
+                    },
+                )
+            }
             TurnDecision::Interrupt { command_id, target } => (
                 command_id.clone(),
                 target,
@@ -3266,6 +3285,10 @@ impl Provider {
                 session_ref,
                 genesis_ref,
                 relay_self_pubkey: relay_self,
+                // A refresh replaces a package that already exists. A
+                // momentarily unprovable create chain must fail the refresh,
+                // never overwrite a good generation with an empty one.
+                allow_no_executions: false,
                 generated_at: now_ms(),
                 limits: ContextProjectionLimits::default(),
             };
@@ -3858,6 +3881,62 @@ impl Provider {
     /// consumers match transcripts by the full target, driver included.
     fn target_for(&self, record: &SessionRecord) -> CodingSessionTarget {
         record.target(&self.config.instance_id)
+    }
+
+    /// Addressing metadata for a turn whose signer is not this session's
+    /// founder, or `None` when it is (or when the record cannot say).
+    ///
+    /// Resolved from this provider's own durable records, never from the
+    /// command: the sender's seat is the sibling execution in the same
+    /// umbrella whose `actor` is that pubkey. A signer with no such seat is a
+    /// plain operator, framed as one and given no reply target rather than a
+    /// guessed one.
+    ///
+    /// A record written before founders were persisted has
+    /// `founder_pubkey == None`. That is "this provider cannot tell", and it
+    /// yields no framing at all — a legacy session keeps delivering bare
+    /// prompts rather than labelling its founder a stranger.
+    fn turn_framing(
+        &self,
+        session_id: &str,
+        sender_pubkey: &str,
+        delivery: CodingSessionDelivery,
+        channel_id: Uuid,
+    ) -> Option<session::TurnFraming> {
+        let record = self.state.session(session_id)?;
+        let founder = record.founder_pubkey.as_deref()?;
+        if founder.eq_ignore_ascii_case(sender_pubkey) {
+            return None;
+        }
+        let umbrella = record.session_ref.clone();
+        let seat = umbrella.and_then(|umbrella| {
+            self.state
+                .sessions()
+                .find(|candidate| {
+                    candidate.session_ref.as_deref() == Some(umbrella.as_str())
+                        && candidate
+                            .actor
+                            .as_deref()
+                            .is_some_and(|actor| actor.eq_ignore_ascii_case(sender_pubkey))
+                })
+                .map(|candidate| {
+                    (
+                        candidate.role.clone(),
+                        coding_session_target_key(&self.target_for(candidate)),
+                    )
+                })
+        });
+        let (sender_role, reply_target) = match seat {
+            Some((role, target_key)) => (role, Some(target_key)),
+            None => (None, None),
+        };
+        Some(session::TurnFraming {
+            channel_id,
+            sender_pubkey: sender_pubkey.to_owned(),
+            sender_role,
+            reply_target,
+            delivery,
+        })
     }
 
     fn queue_lease(
@@ -4784,6 +4863,103 @@ mod tests {
         .expect("sign receipt")
     }
 
+    /// The framing decision is the whole "iff": a founder's own words are
+    /// delivered bare, and anyone else's are addressed — with the sender's
+    /// seat resolved from this provider's own records, never from the command.
+    #[test]
+    fn a_turn_is_framed_only_when_its_signer_is_not_the_founder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&state_dir, None);
+        let founder = test_operator_keys().public_key().to_hex();
+
+        let addressed = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        let addressed_id = addressed.session_id.clone();
+        let umbrella = addressed.session_ref.clone().expect("umbrella");
+        let sender_actor = "cd".repeat(32);
+        let mut sibling = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        sibling.actor = Some(sender_actor.clone());
+        sibling.role = Some("lead".into());
+        let sibling_target = sibling.target(&provider.config.instance_id);
+        provider
+            .state
+            .insert_session(addressed)
+            .expect("insert addressed");
+        provider.state.insert_session(sibling).expect("insert seat");
+
+        assert_eq!(
+            provider.turn_framing(
+                &addressed_id,
+                &founder,
+                CodingSessionDelivery::Boundary,
+                channel_id
+            ),
+            None,
+            "the founder's own turn is never framed as somebody else's message"
+        );
+
+        let framed = provider
+            .turn_framing(
+                &addressed_id,
+                &sender_actor,
+                CodingSessionDelivery::Steer,
+                channel_id,
+            )
+            .expect("a sibling seat's turn is framed");
+        assert_eq!(framed.sender_pubkey, sender_actor);
+        assert_eq!(framed.sender_role.as_deref(), Some("lead"));
+        assert_eq!(
+            framed.reply_target.as_deref(),
+            Some(coding_session_target_key(&sibling_target).as_str()),
+            "the reply address is the sender's own execution"
+        );
+        assert_eq!(framed.delivery, CodingSessionDelivery::Steer);
+        assert_eq!(framed.channel_id, channel_id);
+        assert_eq!(umbrella, "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10");
+
+        // A granted operator with no seat is framed as an operator and given
+        // no reply address rather than a guessed one.
+        let stranger = provider
+            .turn_framing(
+                &addressed_id,
+                &"ef".repeat(32),
+                CodingSessionDelivery::Boundary,
+                channel_id,
+            )
+            .expect("a non-founder turn is framed");
+        assert_eq!(stranger.sender_role, None);
+        assert_eq!(stranger.reply_target, None);
+    }
+
+    /// A record from before founders were persisted cannot say who the founder
+    /// is, so it frames nothing rather than labelling its founder a stranger.
+    #[test]
+    fn a_legacy_record_with_no_founder_frames_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&state_dir, None);
+        let mut legacy = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        legacy.founder_pubkey = None;
+        let session_id = legacy.session_id.clone();
+        provider.state.insert_session(legacy).expect("insert");
+
+        assert_eq!(
+            provider.turn_framing(
+                &session_id,
+                &"cd".repeat(32),
+                CodingSessionDelivery::Boundary,
+                channel_id
+            ),
+            None
+        );
+    }
+
     /// A governed session record inserted directly into provider state, for
     /// authority tests that need no live agent behind the record.
     fn governed_record(channel_id: Uuid, cwd: &Path, genesis_ref: &str) -> SessionRecord {
@@ -5353,6 +5529,8 @@ mod tests {
                 notes: vec!["Complete empty fixture".into()],
             },
             history: Vec::new(),
+            roster: Vec::new(),
+            inbox: Vec::new(),
         }
     }
 
@@ -10187,6 +10365,7 @@ mod tests {
                 command_id: format!("filler-{index}"),
                 text: "filler".to_owned(),
                 operator_pubkey: None,
+                framing: None,
             })
             .expect("fill the mailbox");
         }
