@@ -1828,7 +1828,7 @@ written and `bash -n` clean but **was not executed** — that harness needs
     turn reaching no live execution gets a terminal `turn_dropped` /
     `NO_LIVE_EXECUTION` because `session.resume` mints generation N+1
     (`resume_session`'s `record.generation.checked_add(1)`,
-    `crates/buzz-session-provider/src/lib.rs:1690-1693`) and the fence refuses
+    `crates/buzz-session-provider/src/lib.rs:1712-1716`) and the fence refuses
     the replayed generation-N command, so any receipt promising a replay would
     have been a lie.
     Re-addressing an owed turn to the resumed generation is the **sender's**
