@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   checkCodingSessionCrewFamilies,
+  checkCodingSessionCrewSeatModels,
   codingSessionCrewFirstTurnText,
   codingSessionCrewRosterText,
   deriveCodingSessionModelVendor,
@@ -248,4 +249,79 @@ test("the roster never prints a declared vendor its own table contradicts", () =
   });
   assert.match(roster, /declared local, but claude-opus-5 is anthropic/);
   assert.doesNotMatch(roster, /\(local ·/);
+});
+
+const BUILDER_SEAT = {
+  role: "builder",
+  actorLabel: "Codey",
+  model: "claude-opus-5",
+  vendor: "anthropic",
+};
+const VERIFIER_SEAT = {
+  role: "verifier",
+  actorLabel: "Grokker",
+  model: "gpt-5.6-sol",
+  vendor: "openai",
+};
+
+test("a seat's model must be one the selected provider actually offers", () => {
+  // The whole point: on a Claude-only runtime the openai verifier passes the
+  // vendor check and then runs on Anthropic, because the provider's
+  // apply_model swaps an unknown model for its default without failing.
+  const verdict = checkCodingSessionCrewSeatModels(
+    [BUILDER_SEAT, VERIFIER_SEAT],
+    { label: "claude-agent-acp", allowedModels: ["claude-opus-5[1m]"] },
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /gpt-5\.6-sol/);
+  assert.match(verdict.reason, /verifier \(Grokker\)/);
+  assert.match(verdict.reason, /claude-agent-acp/);
+});
+
+test("a bracketed catalog id offers the base model it names", () => {
+  assert.deepEqual(
+    checkCodingSessionCrewSeatModels([BUILDER_SEAT, VERIFIER_SEAT], {
+      label: "goose",
+      allowedModels: ["claude-opus-5[1m]", "gpt-5.6-sol[high]"],
+    }),
+    { ok: true },
+  );
+});
+
+test("a seat with no model cannot be vendor-checked against a runtime", () => {
+  const verdict = checkCodingSessionCrewSeatModels(
+    [{ ...BUILDER_SEAT, model: null }, VERIFIER_SEAT],
+    { label: "goose", allowedModels: ["claude-opus-5", "gpt-5.6-sol"] },
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /builder \(Codey\) — no model/);
+});
+
+test("an unknown catalog is refused, never treated as a passing check", () => {
+  const verdict = checkCodingSessionCrewSeatModels(
+    [BUILDER_SEAT, VERIFIER_SEAT],
+    { label: null, allowedModels: [] },
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /cannot see which models/);
+});
+
+test("only the seats the vendor rule decides are checked", () => {
+  // A crew with no verifier has no family separation to violate, so this
+  // check has no opinion about its models either.
+  assert.deepEqual(
+    checkCodingSessionCrewSeatModels(
+      [{ role: "lead", model: "some-local-weight" }],
+      { label: "goose", allowedModels: ["claude-opus-5"] },
+    ),
+    { ok: true },
+  );
+  // …but a builder in the same crew is checked, verifier or not.
+  assert.equal(
+    checkCodingSessionCrewSeatModels(
+      [{ role: "lead", model: "x" }, BUILDER_SEAT],
+      { label: "goose", allowedModels: ["gpt-5.6-sol"] },
+    ).ok,
+    false,
+  );
 });

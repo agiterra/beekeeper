@@ -9,6 +9,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { cn } from "@/shared/lib/cn";
 import {
   checkCodingSessionCrewFamilies,
+  checkCodingSessionCrewSeatModels,
   describeCodingSessionSeatVendor,
   resolveCodingSessionSeatVendor,
   type ResolvedCodingSessionCrewSeat,
@@ -27,12 +28,12 @@ export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 /**
  * Launch a crew into one session: pick the crew, the repo, and the goal.
  *
- * The three refusals this tab is built around are all *before* anything is
- * signed, and all say what to do: a crew whose seats nobody on this computer
- * fills, a verifier sharing a model vendor with a builder, and a seat whose
- * vendor cannot be established at all. The launch button stays disabled and
- * the reason is on screen — never a launch that half-happens and explains
- * itself afterwards.
+ * The refusals this tab is built around are all *before* anything is signed,
+ * and all say what to do: a crew whose seats nobody on this computer fills, a
+ * seat whose model the selected provider cannot actually run, a verifier
+ * sharing a model vendor with a builder, and a seat whose vendor cannot be
+ * established at all. The launch button stays disabled and the reason is on
+ * screen — never a launch that half-happens and explains itself afterwards.
  */
 export function NewCodingSessionCrewTab({
   channelId,
@@ -41,6 +42,7 @@ export function NewCodingSessionCrewTab({
   providerAuthorityPubkey,
   providerInstanceRef,
   providerLabel,
+  providerAllowedModels,
   model,
 }: {
   channelId: string | null;
@@ -50,6 +52,14 @@ export function NewCodingSessionCrewTab({
   providerInstanceRef: string | null;
   /** Name of the runtime every seat will run on, for the disclosure line. */
   providerLabel: string | null;
+  /**
+   * Models the selected provider runtime actually publishes.
+   *
+   * The vendor rule is decided on a model, and a model this runtime does not
+   * have is replaced by its default — so without this list the check reads a
+   * string nothing verified. An empty list is a refusal, not a pass.
+   */
+  providerAllowedModels: readonly string[];
   model: string | null;
 }) {
   const crewTeamsQuery = useQuery({
@@ -88,6 +98,15 @@ export function NewCodingSessionCrewTab({
   }, [managedAgentsQuery.data, model, selectedTeam]);
 
   const seats = resolution?.seats ?? null;
+  const provider = React.useMemo(
+    () => ({ allowedModels: providerAllowedModels, label: providerLabel }),
+    [providerAllowedModels, providerLabel],
+  );
+  // Same order as the launch: a model this provider cannot run is checked
+  // before the vendor rule that would otherwise read it.
+  const runnable = seats
+    ? checkCodingSessionCrewSeatModels(seats, provider)
+    : null;
   const family = seats ? checkCodingSessionCrewFamilies(seats) : null;
   // Only about the crew that is actually selected: with no crew to launch,
   // a missing provider is not yet anybody's problem to read.
@@ -98,6 +117,7 @@ export function NewCodingSessionCrewTab({
           ? "No coding-session provider is available on this computer, so there is nothing to run the crew on."
           : null) ??
         resolution?.error ??
+        (runnable && !runnable.ok ? runnable.reason : null) ??
         (family && !family.ok ? family.reason : null));
 
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
@@ -126,6 +146,7 @@ export function NewCodingSessionCrewTab({
           goal,
           seats,
           primaryPersonaId: selectedTeam.crew.primary,
+          provider,
         });
         if (result.ok) onLaunched({ channelId });
         else setLaunchError(result.failureReason);
@@ -137,7 +158,16 @@ export function NewCodingSessionCrewTab({
         );
       }
     })();
-  }, [canLaunch, channelId, goal, launch, onLaunched, seats, selectedTeam]);
+  }, [
+    canLaunch,
+    channelId,
+    goal,
+    launch,
+    onLaunched,
+    provider,
+    seats,
+    selectedTeam,
+  ]);
 
   return (
     <div className="flex flex-col gap-5" data-testid="new-coding-session-crew">
@@ -168,9 +198,10 @@ export function NewCodingSessionCrewTab({
         <p className="text-2xs text-muted-foreground">
           {crewTeams.length === 0
             ? "A crew is a team whose seats carry roles. None of this computer's teams do yet."
-            : `Every seat runs on ${providerLabel ?? "this computer's provider"}${
-                model ? ` · ${model}` : ""
-              }, in the directory below.`}
+            : `Every seat runs on ${providerLabel ?? "this computer's provider"}, ` +
+              `in the directory below${
+                model ? `, on ${model} unless its seat names its own` : ""
+              }. Each seat's model is in the roster.`}
         </p>
       </div>
 
