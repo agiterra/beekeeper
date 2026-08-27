@@ -295,6 +295,48 @@ a sibling execution, or any other reader of the signed record sees only
 `actor` (a pubkey) and `role` (a slug); it never sees, stores, or transmits
 the key material or the local record that resolved it.
 
+### Fork amendment: umbrella turn budget (`turnBudget`) and `BUDGET_EXHAUSTED`
+
+A crew's umbrella (plan D9) carries a turn budget: a ceiling on how many
+agent-originated turns it may run, set alongside the session ceiling and
+disclosed the same way. The provider counts consumed turns per `sessionRef`,
+durably (its own state, not derived from a fold at read time — a restart must
+not reset the count), and refuses every further `kind:44220`
+`thread.turn.start`/`thread.turn.interrupt` whose signer is not the founder
+once the count reaches the limit, with a lifecycle receipt `turn_refused` /
+`BUDGET_EXHAUSTED`. **Founder turns are never refused by this rule** — the
+budget bounds crew traffic, not the human who owns the umbrella. A generation
+with no `sessionRef` has no umbrella to count against and is never refused
+this way.
+
+`BUDGET_EXHAUSTED`'s `error.message` states the count that caused the refusal
+and the ceiling it hit (the same `used`/`limit` pair the metadata echo below
+carries), so a refused sender can read *why* without a second query. It joins
+the open code set the turn-stage table above documents — no closed list, 64
+UTF-8 bytes, the same rules as every other code in that table.
+
+The provider echoes the running count into `kind:44223` metadata as a
+**new optional key**, `turnBudget`, present only when the umbrella carries a
+configured budget:
+
+```json
+"turnBudget": { "used": 7, "limit": 20 }
+```
+
+Both `used` and `limit` are non-negative integers; `used` may equal or exceed
+`limit` (the exhausted state itself is a fact worth publishing, not a shape to
+avoid). The key is omitted entirely — never emitted as an explicit `null` —
+for an umbrella with no configured budget and for every pre-amendment
+generation, mirroring the `sessionRef` and `role` echoes' optionality above:
+a metadata event that never claims a budget keeps today's shape byte-for-byte,
+so this amendment adds one more optional shape to the exact-key set rather
+than changing an existing one. `used` and `limit` are never split across two
+keys, and neither travels without the other.
+
+`bee sessions status` prints this as a `turnBudget` line per execution
+(`used/limit`, or absent when the key has never been seen) — see
+`crates/buzz-cli/TESTING.md` § Coding Sessions for the exact shape.
+
 ### Tags
 
 Exactly these three two-field tags, in this order:
@@ -492,6 +534,7 @@ The codes in use today are documented, not enforced:
 | `turn_refused` | `NO_TURN_IN_FLIGHT` | a `thread.turn.interrupt` reached a live execution that had no turn running or awaiting start |
 | `turn_refused` | `NO_LIVE_EXECUTION` | a `thread.turn.interrupt` addressed a session with no live process, so there was nothing to cancel |
 | `turn_refused` | `QUEUE_FULL` | a `thread.turn.interrupt` could not be delivered because the execution's mailbox is full |
+| `turn_refused` | `BUDGET_EXHAUSTED` | the umbrella's turn budget (plan D9) is used up and the signer is not the founder |
 
 **Accepted contract delta, 2026-08-26.** Three of the codes above did not exist
 before this fork's delivery-class work and are recorded here as a ratified

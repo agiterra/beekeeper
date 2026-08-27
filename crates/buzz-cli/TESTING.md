@@ -677,12 +677,12 @@ validators rather than from taste:
 
 ```bash
 # ── status ────────────────────────────────────────────────────────────────
-# One row per execution: seat, liveness, open turn, queue depth.
+# One row per execution: seat, liveness, open turn, queue depth, turn budget.
 bee sessions status --channel "$CHANNEL_ID" | jq .
 # → {"channel":"...","executions":[{"target":"coding-session/v1|...",
 #      "actor":null,"role":null,"sessionRef":null,"seat":"claude·claude-opus",
 #      "live":"quiet 3m","liveness":"quiet","lastSignedSeq":41,
-#      "openTurn":null,"queuedTurns":0}, ...],
+#      "openTurn":null,"queuedTurns":0,"turnBudget":null}, ...],
 #    "leaseSnapshotRecords":0}
 bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
 
@@ -693,6 +693,19 @@ bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
 # (age since its newest signed 44225) or `unknown` (nothing signed yet), never
 # `live`. `released` is a positive claim: a `released` lease, or a durably
 # stopped execution.
+
+# `turnBudget` (plan D9 / NIP-CSL's `turnBudget` fork amendment): `null` until
+# a provider has echoed an umbrella turn budget onto this execution's kind
+# 44223 metadata — either this build predates the budget, or the umbrella has
+# none configured. Once a provider is publishing it:
+#   json:    "turnBudget": {"used": 7, "limit": 20, "exhausted": false}
+#   compact: "turnBudget": "7/20"
+# `exhausted` (json only) mirrors `used >= limit`, the same condition that
+# makes the provider answer the next non-founder turn `turn_refused` /
+# `BUDGET_EXHAUSTED` (NIP-CSL). This command reads the count straight off the
+# newest metadata's raw content — it is not a typed `SessionMetadata` field —
+# so an older `bee` build reads `turnBudget:null` from a provider that has
+# started publishing it rather than failing to decode the row.
 
 # ── inbox ─────────────────────────────────────────────────────────────────
 # Turns addressed to executions whose `agentRef` equals THIS identity's pubkey,

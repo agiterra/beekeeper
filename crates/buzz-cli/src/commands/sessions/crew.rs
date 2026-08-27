@@ -120,6 +120,11 @@ pub struct CrewExecution {
     pub last_signed_at: Option<i64>,
     /// Derived liveness — see [`Liveness`].
     pub liveness: Liveness,
+    /// The umbrella's turn budget as this execution's newest metadata last
+    /// echoed it (plan D9 / contract B), or `None` when no metadata ever
+    /// carried the key — either this build predates the budget, or the
+    /// umbrella has none configured.
+    pub turn_budget: Option<TurnBudget>,
 }
 
 impl CrewExecution {
@@ -160,6 +165,46 @@ pub fn short_pubkey(pubkey: &str) -> String {
 /// Statuses that mean this generation will never run another turn.
 fn is_terminal_status(status: &str) -> bool {
     matches!(status, "stopped" | "completed" | "failed")
+}
+
+/// An umbrella's turn budget as of one execution's newest metadata (plan D9 /
+/// contract B): how many agent-originated turns have been counted against it,
+/// and the ceiling that refuses the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnBudget {
+    /// Turns counted against the umbrella so far.
+    pub used: u64,
+    /// The ceiling; the next agent-originated turn past this is refused
+    /// `turn_refused` / `BUDGET_EXHAUSTED`.
+    pub limit: u64,
+}
+
+impl TurnBudget {
+    /// Whether the umbrella has no budget left for another agent turn.
+    pub fn exhausted(self) -> bool {
+        self.used >= self.limit
+    }
+}
+
+/// Read the optional `turnBudget: { "used", "limit" }` key straight off a
+/// metadata record's raw content, rather than through [`SessionMetadata`]'s
+/// typed decode.
+///
+/// This is deliberate, not a shortcut: `SessionMetadata` has no `turnBudget`
+/// field yet in this build, and serde's default (no `deny_unknown_fields` on
+/// that struct) already ignores the key rather than rejecting the event, so a
+/// provider that has started publishing it does not break `decode_metadata`.
+/// Reading the raw JSON here is what lets this command surface the value
+/// without widening `buzz-core`'s typed shape — see `docs/nips/NIP-CSL.md`
+/// for the wire contract. A malformed `turnBudget` (missing key, negative or
+/// non-integer value) is treated as absent, matching this command's existing
+/// "drop, don't guess" rule for facts it cannot parse cleanly.
+pub fn turn_budget_of(record: &MetadataRecord) -> Option<TurnBudget> {
+    let content: Value = serde_json::from_str(&record.canonical).ok()?;
+    let budget = content.get("turnBudget")?;
+    let used = budget.get("used")?.as_u64()?;
+    let limit = budget.get("limit")?.as_u64()?;
+    Some(TurnBudget { used, limit })
 }
 
 /// Decode every kind-24223 lease snapshot record into `(signer, targetKey)`.
@@ -236,6 +281,7 @@ pub fn build_executions(
                 last_signed_seq,
                 last_signed_at,
                 liveness,
+                turn_budget: newest.and_then(turn_budget_of),
             }
         })
         .collect()
