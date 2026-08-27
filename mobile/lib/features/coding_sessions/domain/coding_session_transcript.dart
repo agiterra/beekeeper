@@ -155,7 +155,7 @@ CodingSessionTranscriptItem _buildItem(
       type: CodingSessionItemType.message,
       role: CodingSessionItemRole.user,
       title: item['steered'] == true ? 'Steered prompt' : 'Prompt',
-      text: _boundedText(item['content']),
+      text: _userPromptText(item),
       steered: item['steered'] == true,
       operatorPubkey: _pubkeyOrNull(item['operatorPubkey']),
       commandId: _stringOrNull(item['commandId']),
@@ -440,6 +440,21 @@ String? _pubkeyOrNull(Object? value) {
   if (value is! String) return null;
   final normalized = value.trim().toLowerCase();
   return RegExp(r'^[0-9a-f]{64}$').hasMatch(normalized) ? normalized : null;
+}
+
+/// A prompt's text, with the attachment count the provider signed.
+///
+/// Mirrors the desktop's `buildUserPromptMessage`
+/// (`codingSessionTranscriptItems.ts`): a turn that carried three files must
+/// not read exactly like one that carried none. Only a positive integer count
+/// is shown, and it is stated as a count — the files themselves are not on
+/// this device and are never implied to be.
+String _userPromptText(Map<String, Object?> item) {
+  final text = _boundedText(item['content']);
+  final attachments = item['attachmentCount'];
+  if (attachments is! int || attachments <= 0) return text;
+  final noun = attachments == 1 ? 'attachment' : 'attachments';
+  return '$text\n\n($attachments $noun)';
 }
 
 String _boundedText(Object? value) =>

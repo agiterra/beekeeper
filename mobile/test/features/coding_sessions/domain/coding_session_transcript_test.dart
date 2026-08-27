@@ -174,6 +174,42 @@ void main() {
       expect(item.commandId, 'cmd-77');
     });
 
+    // A turn that carried files must not read exactly like one that carried
+    // none. The count is signed; the files are not on this device and the row
+    // never implies they are.
+    test('a prompt says how many attachments came with it', () {
+      final blocks = projectCodingSessionTranscript([
+        _envelope(
+          eventSeq: 1,
+          item: {
+            'kind': 'user_prompt',
+            'content': 'review these',
+            'attachmentCount': 3,
+          },
+        ),
+        _envelope(
+          eventSeq: 2,
+          item: {
+            'kind': 'user_prompt',
+            'content': 'and this',
+            'attachmentCount': 1,
+          },
+        ),
+        _envelope(
+          eventSeq: 3,
+          item: {
+            'kind': 'user_prompt',
+            'content': 'nothing attached',
+            'attachmentCount': 0,
+          },
+        ),
+      ]);
+      final items = blocks.single.items;
+      expect(items[0].text, 'review these\n\n(3 attachments)');
+      expect(items[1].text, 'and this\n\n(1 attachment)');
+      expect(items[2].text, 'nothing attached');
+    });
+
     test(
       'a result keeps duration and cost structured, not baked into text',
       () {
