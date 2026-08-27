@@ -2173,6 +2173,30 @@ written and `bash -n` clean but **was not executed** — that harness needs
     each frame exactly once into a bounded channel, so `recv_validated` is
     cancel-safe at every await. Test un-ignored; `--lib` 961/0/53, three runs.
 
+### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
+
+The display name is now one word everywhere (`d62bcb029` sweep,
+`ccb06cf6c` installer cleanup, `73c40e165` Buzz leftovers; full `just ci`
+green, bundle verified as `Beekeeper.app` with matching plist identity).
+Machine identifiers were already one-word `beekeeper` and did not move. Two
+consequences and three leftovers:
+
+- **No migration for the managed-node dir** (decided): the literal in
+  `desktop/src-tauri/src/managed_agents/managed_node_paths.rs` moved to
+  `Application Support/Beekeeper`, so the first launch of a renamed build
+  re-downloads the managed Node runtime and re-installs the ACP shims. The
+  old `Application Support/Bee Keeper/` dir is orphaned, not deleted.
+- `scripts/local-prod-build.sh` now quits and removes an installed
+  `/Applications/Bee Keeper.app` before installing `Beekeeper.app` — the
+  only intentional two-word strings left in the tree.
+- **Still branded Buzz, deferred as bitmap/design work, not string edits:**
+  `desktop/src-tauri/icons/dmg-background.png` (says "Buzz" in large baked-in
+  type), the ASCII `buzz term` banner in
+  `desktop/src/features/terminal/terminalBanner.ts` (needs new glyphs for
+  k/p/n), and `README.md` (never got any rebrand pass). Package-name
+  identifiers `desktop/package.json` `"buzz"` / `pubspec.yaml` `name: buzz`
+  and the `desktop/public/buzz.svg` favicon filename were also left as-is.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
