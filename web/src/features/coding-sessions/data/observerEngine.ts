@@ -261,6 +261,9 @@ export class CodingSessionObserverEngine {
           if (state === "open") this.setConnection("open");
           else if (state === "connecting") this.setConnection("connecting");
           else if (state === "error") this.setConnection("error");
+          // Without this the view would keep claiming "open" after the
+          // transport stopped retrying — a lie about the relay.
+          else if (state === "closed") this.setConnection("closed");
         },
         onClosed: (reason) => {
           this.lastError = reason;
@@ -368,7 +371,7 @@ export class CodingSessionObserverEngine {
   private setConnection(next: CodingSessionObserverConnection): void {
     if (this.connection === next) return;
     this.connection = next;
-    if (next !== "error") this.lastError = null;
+    if (next !== "error" && next !== "closed") this.lastError = null;
     this.rebuildNow();
   }
 

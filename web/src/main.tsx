@@ -2,6 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "@/app/App";
+// Side-effect import: binds the relay-backed reader to the coding-session
+// observer seam before the first render. Without it every session screen
+// renders "reader is not wired up" instead of the channel's sessions.
+import "@/features/coding-sessions/data/useChannelSessionObserver";
 import "@fontsource-variable/inter/wght.css";
 import "@/shared/styles/globals.css";
 import { ThemeProvider } from "@/shared/theme/ThemeProvider";

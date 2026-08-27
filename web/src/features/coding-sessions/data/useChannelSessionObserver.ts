@@ -7,8 +7,20 @@
  * owner across every component that asks for the same channel).
  */
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { relayWsUrl } from "@/shared/lib/relay-url";
+import {
+  type CodingSessionObserverConnection as ObserverViewConnection,
+  type CodingSessionObserverView,
+  codingSessionObserverViewFromSnapshot,
+} from "../ui/observer-contract.ts";
+import { bindCodingSessionObserverSource } from "../ui/useCodingSessionObserver.ts";
 import { CodingSessionObserverEngine } from "./observerEngine.ts";
 import {
   type ChannelSessionObserverSnapshot,
@@ -118,3 +130,75 @@ export function useChannelSessionObserver(
 }
 
 function noop(): void {}
+
+/**
+ * How the surfaces are allowed to describe the socket.
+ *
+ * The engine's `error` means the transport is still retrying with backoff, so
+ * the view says "reconnecting"; `closed` means nothing is retrying any more.
+ * A `connecting` that follows a completed history read is a reconnect, not a
+ * first load, and saying so keeps the skeleton from reappearing.
+ */
+function viewConnection(
+  connection: "idle" | "connecting" | "open" | "error" | "closed",
+  historyRead: boolean,
+): ObserverViewConnection {
+  switch (connection) {
+    case "open":
+      return "live";
+    case "error":
+      return "reconnecting";
+    case "closed":
+      return "closed";
+    case "connecting":
+      return historyRead ? "reconnecting" : "connecting";
+    default:
+      return "idle";
+  }
+}
+
+/**
+ * The relay-backed source behind the observer seam.
+ *
+ * It is the adapter and nothing else: the reads and the fold happen in the
+ * engine, the rendering rules live in `observer-contract.ts`, and this only
+ * restates one for the other.
+ */
+function useRelayCodingSessionObserver(
+  channelId: string | null,
+): CodingSessionObserverView {
+  const { snapshot, refresh } = useChannelSessionObserver(channelId);
+  const requestRefresh = useCallback(() => {
+    // The button is fire-and-forget; a failed re-read is already disclosed
+    // through `connection` and `lastError`.
+    void refresh();
+  }, [refresh]);
+
+  return useMemo(
+    () =>
+      codingSessionObserverViewFromSnapshot(
+        {
+          umbrellas: snapshot.sessions,
+          reachabilityByGenerationId: snapshot.reachabilityByGenerationId,
+          signaturesVerified: snapshot.signaturesVerified,
+          historyTruncated: snapshot.truncatedAt1000,
+          malformedCount: snapshot.counts.malformed,
+          invalidSignatureCount: snapshot.counts.invalidSignature,
+          conflictCount: snapshot.counts.conflicts,
+        },
+        {
+          channelId,
+          connection: viewConnection(snapshot.connection, snapshot.historyRead),
+          lastError: snapshot.lastError,
+          historyLoaded: snapshot.historyRead,
+          refresh: requestRefresh,
+        },
+      ),
+    [snapshot, channelId, requestRefresh],
+  );
+}
+
+// The seam is bound at module load: importing this module anywhere in the app
+// (see `main.tsx`) is what makes the screens read the relay instead of
+// rendering the honest "reader not wired up" state.
+bindCodingSessionObserverSource(useRelayCodingSessionObserver);

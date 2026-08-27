@@ -21,7 +21,13 @@ import {
 /** What the relay socket is doing, as a surface may state it. */
 export type CodingSessionObserverConnection =
   /** Nothing has been started yet. */
-  "idle" | "connecting" | "open" | "error";
+  | "idle"
+  | "connecting"
+  | "open"
+  /** The socket failed; the transport is still retrying with backoff. */
+  | "error"
+  /** The transport gave up or the relay refused; nothing is retrying. */
+  | "closed";
 
 /** Tallies a surface discloses rather than hides. */
 export type CodingSessionObserverCounts = {
