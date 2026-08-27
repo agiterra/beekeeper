@@ -61,12 +61,15 @@ export type CodingSessionCommandAction =
       type: "thread.turn.start";
       text: string;
       /**
-       * Always written explicitly by this client even though the wire
-       * contract defaults an absent key to `boundary`: a reader of a signed
-       * command should never have to know the default to know what was asked
-       * for.
+       * Written only when the sender asks for something other than the wire
+       * default. `boundary` is the default an absent key already means, and a
+       * relay that predates this field validates the payload with
+       * `deny_unknown_fields` — so spelling the default out turns every
+       * ordinary turn into a refusal against a relay that has not shipped the
+       * field yet. `steer` and `interrupt` are written, and they require a
+       * relay that knows the field.
        */
-      deliver: CodingSessionTurnDelivery;
+      deliver?: CodingSessionTurnDelivery;
     }
   | {
       type: "thread.turn.interrupt";
@@ -133,15 +136,29 @@ export function buildCodingSessionCommandEvent(input: {
   text: string;
   deliver: CodingSessionTurnDelivery;
 }): CodingSessionCommandEventInput {
+  // The caller always names a class; an unreadable one is refused here rather
+  // than defaulted, so a turn asked to interrupt is never quietly delivered at
+  // a boundary because of a typo.
+  if (!isCodingSessionTurnDelivery(input.deliver)) {
+    throw new Error(
+      `action.deliver must be one of ${CODING_SESSION_TURN_DELIVERIES.join(", ")}`,
+    );
+  }
   return buildCodingSessionActionEvent({
     channelId: input.channelId,
     commandId: input.commandId,
     target: input.target,
-    action: {
-      type: "thread.turn.start",
-      text: input.text,
-      deliver: input.deliver,
-    },
+    action:
+      // Omit the default class from the wire. See the field's doc comment: a
+      // relay built before `deliver` existed refuses any payload carrying it,
+      // and absent already means `boundary` in the contract.
+      input.deliver === "boundary"
+        ? { type: "thread.turn.start", text: input.text }
+        : {
+            type: "thread.turn.start",
+            text: input.text,
+            deliver: input.deliver,
+          },
   });
 }
 
@@ -225,10 +242,14 @@ export function validateCodingSessionCommandInput(input: {
       "action.text",
       MAX_CODING_SESSION_TEXT_BYTES,
     );
-    // An unrecognised class is refused here rather than sent and defaulted by
-    // the provider: a turn the sender asked to interrupt with must never be
+    // Absent is legal — it is how this client writes `boundary`. Anything
+    // present but unrecognised is refused here rather than sent and defaulted
+    // by the provider: a turn the sender asked to interrupt with must never be
     // quietly delivered at a boundary because a typo made it unreadable.
-    if (!isCodingSessionTurnDelivery(input.action.deliver)) {
+    if (
+      input.action.deliver !== undefined &&
+      !isCodingSessionTurnDelivery(input.action.deliver)
+    ) {
       throw new Error(
         `action.deliver must be one of ${CODING_SESSION_TURN_DELIVERIES.join(", ")}`,
       );
