@@ -2164,6 +2164,9 @@ written and `bash -n` clean but **was not executed** — that harness needs
     asks this subscriber's own dispatch (verified non-vacuous). `cargo test -p
     buzz-relay --lib` 957 passed / 0 failed / 54 ignored, three runs. (Numbered
     63 because 58, 60, 61 and 62 are taken by the crew branches in flight.)
+    **Fixed 2026-08-26 (`crew/relay-cancel-safety`):** `ReliableMeshStream` now
+    buffers the decoded frame before awaiting the fence, so a dropped receive
+    resumes at the fence check; test un-ignored, `--lib` 959/0/53 three runs.
 
 ## 2a. Direction settled 2026-08-18
 
