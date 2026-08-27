@@ -48,6 +48,42 @@ void main() {
     expect(projected.transcriptBlocksByExecution, isEmpty);
   });
 
+  // The projection is the only place these three cross the seam, and a page
+  // that renders a transcript, a refusal count or an error it was never given
+  // is a page inventing facts. Pinned here rather than implied by the pages'
+  // own fakes.
+  testWidgets('carries the transcript, the counts and the error across', (
+    tester,
+  ) async {
+    final projected = await _watch(
+      tester,
+      _read(
+        leasesRead: true,
+        lastError: 'relay unreachable',
+        extra: [
+          transcriptEvent(
+            eventSeq: 1,
+            item: {'kind': 'assistant_text', 'text': 'on it'},
+          ),
+          // Correctly shaped, signed by nobody this target's create named.
+          metadataEvent(
+            status: 'failed',
+            pubkey: otherProviderPubkey,
+            createdAt: 5000,
+          ),
+        ],
+      ),
+    );
+    final session = projected.sessions.single;
+
+    expect(projected.blocksFor(session).single.items.single.text, 'on it');
+    expect(projected.counts.rejectedAuthor, 1);
+    expect(projected.counts.rejectedAuthorByKind, {
+      EventKind.codingSessionMetadata: 1,
+    });
+    expect(projected.lastError, 'relay unreachable');
+  });
+
   testWidgets('carries this device\'s own losses to the pages', (tester) async {
     final projected = await _watch(
       tester,
@@ -100,6 +136,7 @@ state.CodingSessionObserverSnapshot _read({
   bool historyTruncated = false,
   List<NostrEvent> extra = const [],
   Map<String, int> evictedByGeneration = const {},
+  String? lastError,
 }) {
   final view = readCodingSessionChannel(
     channelId: channelId,
@@ -122,6 +159,7 @@ state.CodingSessionObserverSnapshot _read({
     view,
     connection: state.CodingSessionObserverConnection.open,
     evictedByGeneration: evictedByGeneration,
+    lastError: lastError,
   );
 }
 

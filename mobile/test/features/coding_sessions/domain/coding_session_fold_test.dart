@@ -469,6 +469,34 @@ void main() {
       expect(sessions.single.closed, isTrue);
     });
 
+    // The tie-break is the desktop's (codingSessionName.ts:129-135,
+    // codingSessionClosure.ts): same second, *higher* event id wins — the
+    // opposite of the metadata rule, and pinned in both directions so a
+    // reversed comparison cannot pass by accident.
+    test('names sharing a second break the tie to the higher event id', () {
+      final executions = resolveCodingSessionGenerations(
+        receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
+        metadata: [_metadata(sessionRef: sessionRefA)],
+      );
+      final lower = decodeCodingSessionName(
+        nameEvent(content: 'Lower id', createdAt: 2000, id: '0' * 63 + '1'),
+      ).value!;
+      final higher = decodeCodingSessionName(
+        nameEvent(content: 'Higher id', createdAt: 2000, id: 'f' * 64),
+      ).value!;
+
+      for (final order in [
+        [lower, higher],
+        [higher, lower],
+      ]) {
+        final sessions = groupCodingSessionUmbrellas(
+          executions: executions,
+          names: order,
+        );
+        expect(sessions.single.name, 'Higher id');
+      }
+    });
+
     test('display name falls back to the metadata title', () {
       final executions = resolveCodingSessionGenerations(
         receipts: [_receipt(commandId: 'cmd-1', status: 'created')],
