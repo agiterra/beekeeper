@@ -336,6 +336,7 @@ function ExecutionComposer({
       prefill={prefill}
       providerAuthorityPubkey={participant.execution.signerPubkey}
       recipientControl={recipientControl}
+      seatActorPubkey={record.agentRef}
       target={target}
       variant="floating"
     />

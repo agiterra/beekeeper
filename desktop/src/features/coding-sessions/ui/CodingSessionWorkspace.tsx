@@ -726,6 +726,7 @@ function ReadyCodingSessionWorkspace({
                     lifecycleStatus={session.status}
                     layout={isNarrow ? "stacked" : "inline"}
                     providerAuthorityPubkey={session.providerAuthorityPubkey}
+                    seatActorPubkey={session.agentRef}
                     sessionLabel={session.title}
                     target={session.commandTarget}
                     variant="floating"

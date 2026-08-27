@@ -366,3 +366,151 @@ test("signed context usage earns a meter; missing telemetry does not", () => {
   );
   assert.doesNotMatch(withoutUsage, /coding-session-context-window/);
 });
+
+/**
+ * A seated execution's reconnect has to carry its identity again.
+ *
+ * The provider consumes a seat's host-local custody entry when it spawns the
+ * adapter, and a resume spawns a *new* adapter under a fresh `commandId`. So a
+ * Reconnect that stages nothing is refused `ACTOR_UNAVAILABLE` — permanently,
+ * on the very host that holds the key — which would make every seated
+ * execution single-use.
+ */
+test("reconnecting a seated execution stages its key material first", async () => {
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost",
+  });
+  const tauriInternals = {
+    invoke: async () => {
+      throw new Error("no Tauri IPC in this unit test");
+    },
+    transformCallback: () => Math.random(),
+  };
+  Object.assign(globalThis, {
+    document: dom.window.document,
+    Element: dom.window.Element,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+    self: dom.window,
+    window: dom.window,
+    __TAURI_INTERNALS__: tauriInternals,
+  });
+  dom.window.__TAURI_INTERNALS__ = tauriInternals;
+
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const actor = "aa".repeat(32);
+  const calls = [];
+
+  try {
+    await act(async () => {
+      render(
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(CodingSessionComposer, {
+            canInterrupt: false,
+            channelId: "0c8016c8-9483-4426-a4b1-b45c8e21d0a1",
+            isMember: true,
+            immersive: true,
+            isWorking: false,
+            lifecycleStatus: "disconnected",
+            providerAuthorityPubkey: "bb".repeat(32),
+            seatActorPubkey: actor,
+            seatCustody: {
+              stageSeat: async (input) => {
+                calls.push(["stageSeat", input]);
+              },
+              clearSeat: async (commandId) => {
+                calls.push(["clearSeat", commandId]);
+              },
+            },
+            publishResume: async (input) => {
+              calls.push(["publishResume", input.commandId]);
+              return { eventId: "event-1", kind: 44221 };
+            },
+            target,
+          }),
+        ),
+      );
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("coding-session-composer-resume"));
+    });
+
+    assert.equal(calls.length, 2, JSON.stringify(calls));
+    assert.equal(calls[0][0], "stageSeat");
+    assert.equal(calls[0][1].agentPubkey, actor);
+    assert.equal(calls[1][0], "publishResume");
+    // One command, one custody entry: the seat is staged under the exact
+    // `commandId` the resume is published with, or the provider looks for it
+    // under a key nothing wrote.
+    assert.equal(calls[0][1].commandId, calls[1][1]);
+  } finally {
+    cleanup();
+    dom.window.close();
+  }
+});
+
+test("reconnecting an unseated execution stages nothing", async () => {
+  const { act, cleanup, fireEvent, render, screen } = await import(
+    "@testing-library/react"
+  );
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const calls = [];
+  try {
+    await act(async () => {
+      render(
+        React.createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          React.createElement(CodingSessionComposer, {
+            canInterrupt: false,
+            channelId: "0c8016c8-9483-4426-a4b1-b45c8e21d0a1",
+            isMember: true,
+            immersive: true,
+            isWorking: false,
+            lifecycleStatus: "disconnected",
+            providerAuthorityPubkey: "bb".repeat(32),
+            seatCustody: {
+              stageSeat: async (input) => {
+                calls.push(["stageSeat", input]);
+              },
+              clearSeat: async (commandId) => {
+                calls.push(["clearSeat", commandId]);
+              },
+            },
+            publishResume: async (input) => {
+              calls.push(["publishResume", input.commandId]);
+              return { eventId: "event-2", kind: 44221 };
+            },
+            target,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("coding-session-composer-resume"));
+    });
+    assert.deepEqual(
+      calls.map((call) => call[0]),
+      ["publishResume"],
+    );
+  } finally {
+    cleanup();
+  }
+});

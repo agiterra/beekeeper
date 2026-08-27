@@ -17,6 +17,14 @@ import {
   createCodingSessionLifecycleCommandId,
   publishCodingSessionResume,
 } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import {
+  clearCodingSessionActorSeat,
+  stageCodingSessionActorSeat,
+} from "@/features/coding-sessions/lib/codingSessionActorSeatCustody";
+import {
+  type CodingSessionSeatCustody,
+  publishSeatedCodingSessionResume,
+} from "@/features/coding-sessions/lib/codingSessionSeatedCreate";
 import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/useCodingSessionResumeSettle";
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
@@ -83,10 +91,35 @@ type CodingSessionComposerProps = {
   recipientControl?: React.ReactNode;
   /** Publish seam; production passes nothing. */
   publishCommand?: typeof publishCodingSessionCommand;
+  /** Resume publish seam; production passes nothing. */
+  publishResume?: typeof publishCodingSessionResume;
+  /**
+   * The agent seated on this execution (its 44223 `agentRef`), or null when a
+   * person created it.
+   *
+   * A reconnect spawns a *new* adapter process, and the provider consumed this
+   * seat's host-local custody entry when it spawned the last one — so the
+   * identity has to be staged again, under the resume's own `commandId`, or
+   * the provider refuses the reconnect with `ACTOR_UNAVAILABLE`.
+   */
+  seatActorPubkey?: string | null;
+  /** Host-local seat custody seam; production passes nothing. */
+  seatCustody?: CodingSessionSeatCustody;
   /** Display name for the stop-execution confirm; falls back to "this session". */
   sessionLabel?: string | null;
   target: CodingSessionCommandTarget;
   variant?: "panel" | "floating";
+};
+
+/**
+ * Production custody seam: the real host-local staging calls.
+ *
+ * Module-level so it is reference-stable — the resume callback depends on it,
+ * and a fresh object each render would rebuild that callback every time.
+ */
+const DEFAULT_SEAT_CUSTODY: CodingSessionSeatCustody = {
+  stageSeat: stageCodingSessionActorSeat,
+  clearSeat: clearCodingSessionActorSeat,
 };
 
 /** Composer for steering a selected governed coding-session generation. */
@@ -112,6 +145,9 @@ export function CodingSessionComposer({
   providerAuthorityPubkey = null,
   recipientControl,
   publishCommand = publishCodingSessionCommand,
+  publishResume = publishCodingSessionResume,
+  seatActorPubkey = null,
+  seatCustody = DEFAULT_SEAT_CUSTODY,
   sessionLabel = null,
   target,
   variant = "panel",
@@ -347,11 +383,20 @@ export function CodingSessionComposer({
     const commandId = createCodingSessionLifecycleCommandId();
     beginResume(commandId);
     try {
-      await publishCodingSessionResume({
-        channelId,
+      // A seated execution's identity is staged under this resume's own
+      // `commandId` before the 44221 goes out. Unseated executions take the
+      // publish path unchanged — no custody write at all.
+      await publishSeatedCodingSessionResume({
+        actorPubkey: seatActorPubkey,
         commandId,
-        target,
-        providerAuthorityPubkey,
+        deps: seatCustody,
+        publish: () =>
+          publishResume({
+            channelId,
+            commandId,
+            target,
+            providerAuthorityPubkey,
+          }),
       });
     } catch (publishError) {
       failResume(
@@ -369,6 +414,9 @@ export function CodingSessionComposer({
     isMember,
     isSending,
     providerAuthorityPubkey,
+    publishResume,
+    seatActorPubkey,
+    seatCustody,
     target,
   ]);
 
