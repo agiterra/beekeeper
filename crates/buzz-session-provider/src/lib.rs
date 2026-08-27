@@ -1225,6 +1225,12 @@ impl Provider {
                 // consumer's create pending, which its durable-create
                 // transaction already knows how to retry under a fresh id.
                 self.state.consume_command(&command_id, now_secs())?;
+                // This command is answered and consumed, so nothing will ever
+                // read its seat again. Gated on the entry this load already
+                // has, so an unseated command does no extra file work at all.
+                if actor_seats.seat(&command_id).is_some() {
+                    self.forget_actor_seat(&command_id);
+                }
                 let receipt = LifecycleReceipt::failed(&command_id, code, &message);
                 tracing::warn!(target: "csp", %command_id, code, "lifecycle command rejected: {message}");
                 self.enqueue_receipt(channel_id, &command_id, &receipt)
@@ -1248,6 +1254,11 @@ impl Provider {
                         Ok(founder) => plan.founder_pubkey = founder,
                         Err(message) => {
                             self.state.consume_command(&plan.command_id, now_secs())?;
+                            // Refused before dispatch: same one-shot rule as
+                            // `create_session`'s two exits.
+                            if plan.actor.is_some() {
+                                self.forget_actor_seat(&plan.command_id);
+                            }
                             let receipt = LifecycleReceipt::failed(
                                 &plan.command_id,
                                 GENESIS_NOT_FOUND,
@@ -7257,6 +7268,104 @@ mod tests {
         );
         assert_eq!(provider.state().sessions().count(), 0);
         assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// A create refused before it dispatches takes the seat's key with it.
+    ///
+    /// The custody entry is a one-shot secret written for one exact
+    /// `commandId`. Once that command has been consumed and answered `failed`,
+    /// nothing will ever reach it again — so an entry left behind is an `nsec`
+    /// at rest under a key nobody will read, for as long as the file lives.
+    /// `create_session` already deletes it on both of its exits; the two
+    /// refusals that never reach `create_session` did not.
+    #[tokio::test]
+    async fn a_create_refused_at_decision_time_leaves_no_key_at_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        // A projects file that resolves some *other* channel: the seat check
+        // passes, then the working directory cannot be resolved.
+        let projects = write_projects(dir.path(), Uuid::new_v4(), dir.path());
+        let seats = write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(
+            receipts[0]["error"]["code"],
+            payload::PROJECT_CWD_UNRESOLVED
+        );
+
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains(TEST_SEAT_NSEC),
+            "a refused create left the seat's key at rest: {body}"
+        );
+        assert!(!body.contains("create-1"), "{body}");
+    }
+
+    /// Same rule for the other refusal that never reaches `create_session`:
+    /// a genesis-bearing create whose founder cannot be resolved.
+    #[tokio::test]
+    async fn a_create_whose_genesis_cannot_be_resolved_leaves_no_key_at_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let seats = write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": "create-1",
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+                "genesisRef": "12".repeat(32),
+                "actor": actor,
+                "role": "lead",
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": null,
+            },
+        })
+        .to_string();
+        let create = signed_lifecycle_event(channel_id, content);
+        // No relay resolver, so the founder behind the genesis cannot be
+        // resolved and the create is refused GENESIS_NOT_FOUND.
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(receipts[0]["error"]["code"], payload::GENESIS_NOT_FOUND);
+
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains(TEST_SEAT_NSEC),
+            "a refused create left the seat's key at rest: {body}"
+        );
+        assert!(!body.contains("create-1"), "{body}");
     }
 
     /// A seated execution reconnects when its identity is staged again.
