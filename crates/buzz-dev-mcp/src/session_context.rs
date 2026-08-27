@@ -865,7 +865,7 @@ fn inbox_semantics() -> Value {
         "stage": "the newest turn receipt this package could verify for the command: turn_queued, turn_started, turn_degraded, turn_dropped, turn_refused or interrupt_delivered; null means no verifiable receipt was in the fact set, never that none exists",
         "stageCode": "the receipt's error code when it carried one; the code vocabulary is open",
         "content": "the command's text as signed, after the package's fail-closed redaction",
-        "ordering": "createdAt is the signed event time in Unix seconds; a page cursor is an eventId, stable across a package refresh",
+        "ordering": "createdAt is the signed event time in Unix seconds; a page cursor is an eventId. The package retains a bounded newest-first window, so a cursor can fall out of it between refreshes: a `since` that is no longer retained answers stoppedBy 'cursorMiss' with cursorResolution 'not_in_package' and returns no items, and the way forward is to page again from the start.",
     })
 }
 
@@ -1648,6 +1648,65 @@ mod tests {
         );
         assert_eq!(missed["stoppedBy"], "cursorMiss");
         assert_eq!(missed["returned"], 0);
+    }
+
+    /// The inbox cursor is not stable across a refresh, and the semantics
+    /// block must not tell an agent that it is.
+    ///
+    /// The projector trims the inbox oldest-first to its item and byte bounds,
+    /// and the fetch path drops older kind-44220 candidates when that
+    /// partition saturates. A busy hour therefore pushes a cursor a seat is
+    /// holding out of the retained window. The response already reports that
+    /// honestly — `stoppedBy: "cursorMiss"`, `cursorResolution:
+    /// "not_in_package"` and the true `availableInboxItems` — but the
+    /// semantics block promised the opposite, so an agent had no reason to
+    /// treat the miss as anything but a bug.
+    #[test]
+    fn the_inbox_cursor_contract_does_not_promise_a_cursor_that_survives_a_refresh() {
+        let (package, mine) = crew_package();
+        let self_target = coding_session_target_key(&mine);
+        let state = SessionContextState::from_package_serving(package.clone(), &self_target);
+        let first = inbox_page(
+            &state,
+            SessionInboxParams {
+                since: None,
+                limit: Some(1),
+            },
+        );
+        let cursor = first["nextCursor"].as_str().expect("cursor").to_owned();
+
+        // The same package one refresh later, with the oldest retained item
+        // trimmed exactly as the projector's bounds trim it.
+        let mut trimmed = package;
+        trimmed.inbox.retain(|item| item.event_id != cursor);
+        trimmed
+            .validate()
+            .expect("a trimmed inbox is still a package");
+        let refreshed = SessionContextState::from_package_serving(trimmed, &self_target);
+        let missed = inbox_page(
+            &refreshed,
+            SessionInboxParams {
+                since: Some(cursor),
+                limit: None,
+            },
+        );
+        assert_eq!(
+            missed["stoppedBy"], "cursorMiss",
+            "a cursor really can fall out of the retained window"
+        );
+
+        let ordering = inbox_semantics()["ordering"]
+            .as_str()
+            .expect("ordering semantics")
+            .to_owned();
+        assert!(
+            !ordering.contains("stable across a package refresh"),
+            "the semantics must not promise what the bounds cannot keep: {ordering}"
+        );
+        assert!(
+            ordering.contains("cursorMiss"),
+            "and must name the answer an agent will actually get: {ordering}"
+        );
     }
 
     /// Without a self target the server cannot tell this seat's mail from a
