@@ -368,7 +368,11 @@ impl TurnFraming {
                 self.channel_id
             ),
             None => {
-                "Reply: this sender holds no execution in this session; answer in your own transcript"
+                // What this provider can witness, and no more: the roster
+                // projected from the relay may well list a live seat for this
+                // sender on another provider instance. "Holds no execution in
+                // this session" would state that seat out of existence.
+                "Reply: no live seat for this sender is known to this provider; answer in your own transcript"
                     .to_owned()
             }
         };
@@ -3515,8 +3519,8 @@ done
         assert!(rendered.contains(&format!("From: {} (operator)", "b".repeat(64))));
         assert!(rendered.contains("Delivery: steer"));
         assert!(
-            rendered.contains("holds no execution in this session"),
-            "{rendered}"
+            rendered.contains("no live seat for this sender is known to this provider"),
+            "the fallback states what this provider witnessed, not an absolute: {rendered}"
         );
         assert!(!rendered.contains("bee sessions send"), "{rendered}");
         assert!(rendered.ends_with("\n\nlook at this"));

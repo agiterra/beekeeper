@@ -3892,6 +3892,13 @@ impl Provider {
     /// plain operator, framed as one and given no reply target rather than a
     /// guessed one.
     ///
+    /// Closed records are not candidates, and where several live seats share
+    /// one actor the newest wins. Nothing enforces one execution per actor per
+    /// umbrella — a disposable builder ends one seat and creates another under
+    /// the same key — so an unfiltered lookup let a retired seat supply a
+    /// reply address no turn can reach and a `sender_role` that is written
+    /// into the *signed* `user_prompt` item.
+    ///
     /// A record written before founders were persisted has
     /// `founder_pubkey == None`. That is "this provider cannot tell", and it
     /// yields no framing at all — a legacy session keeps delivering bare
@@ -3912,12 +3919,22 @@ impl Provider {
         let seat = umbrella.and_then(|umbrella| {
             self.state
                 .sessions()
-                .find(|candidate| {
-                    candidate.session_ref.as_deref() == Some(umbrella.as_str())
+                .filter(|candidate| {
+                    !candidate.closed
+                        && candidate.session_ref.as_deref() == Some(umbrella.as_str())
                         && candidate
                             .actor
                             .as_deref()
                             .is_some_and(|actor| actor.eq_ignore_ascii_case(sender_pubkey))
+                })
+                // Newest first by the facts the record itself carries, so the
+                // winner is a decision rather than a map-ordering accident.
+                .max_by_key(|candidate| {
+                    (
+                        candidate.created_at_ms,
+                        candidate.generation,
+                        candidate.session_id.clone(),
+                    )
                 })
                 .map(|candidate| {
                     (
@@ -4932,6 +4949,96 @@ mod tests {
             .expect("a non-founder turn is framed");
         assert_eq!(stranger.sender_role, None);
         assert_eq!(stranger.reply_target, None);
+    }
+
+    /// A closed seat is not who the sender is now.
+    ///
+    /// Nothing enforces one execution per actor per umbrella — the plan's own
+    /// disposable-builder pattern ends one seat and creates another for the
+    /// same managed-agent pubkey — and the seat lookup walked every record the
+    /// provider has ever minted, in session-id order. A retired seat could
+    /// therefore supply both the reply address (a generation no turn can
+    /// reach) and the `sender_role` that is written into the *signed*
+    /// `user_prompt` item: a durable transcript recording a role the sender
+    /// did not hold.
+    #[test]
+    fn a_closed_seat_supplies_neither_the_role_nor_the_reply_address() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&state_dir, None);
+        let sender_actor = "cd".repeat(32);
+
+        let addressed = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        let addressed_id = addressed.session_id.clone();
+        provider
+            .state
+            .insert_session(addressed)
+            .expect("insert addressed");
+
+        // Sorted before the live seat by session id, which is the order the
+        // record map walks in.
+        let mut retired = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        retired.session_id = "00000000-0000-4000-8000-000000000001".into();
+        retired.actor = Some(sender_actor.clone());
+        retired.role = Some("builder".into());
+        retired.created_at_ms = 1;
+        retired.closed = true;
+        provider
+            .state
+            .insert_session(retired)
+            .expect("insert stale");
+
+        let mut current = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        current.session_id = "ffffffff-0000-4000-8000-000000000002".into();
+        current.actor = Some(sender_actor.clone());
+        current.role = Some("lead".into());
+        current.created_at_ms = 2;
+        let current_target = current.target(&provider.config.instance_id);
+        provider
+            .state
+            .insert_session(current)
+            .expect("insert current");
+
+        let framed = provider
+            .turn_framing(
+                &addressed_id,
+                &sender_actor,
+                CodingSessionDelivery::Boundary,
+                channel_id,
+            )
+            .expect("a sibling seat's turn is framed");
+        assert_eq!(
+            framed.sender_role.as_deref(),
+            Some("lead"),
+            "the role the sender holds now, not the one it retired from"
+        );
+        assert_eq!(
+            framed.reply_target.as_deref(),
+            Some(coding_session_target_key(&current_target).as_str()),
+            "a reply must be addressed at a seat that can still take a turn"
+        );
+
+        // With only the retired seat left, there is no address to give and no
+        // role to claim.
+        provider
+            .state
+            .update_session("ffffffff-0000-4000-8000-000000000002", |record| {
+                record.closed = true
+            })
+            .expect("close current");
+        let unseated = provider
+            .turn_framing(
+                &addressed_id,
+                &sender_actor,
+                CodingSessionDelivery::Boundary,
+                channel_id,
+            )
+            .expect("still framed as a non-founder turn");
+        assert_eq!(unseated.sender_role, None);
+        assert_eq!(unseated.reply_target, None);
     }
 
     /// A record from before founders were persisted cannot say who the founder
