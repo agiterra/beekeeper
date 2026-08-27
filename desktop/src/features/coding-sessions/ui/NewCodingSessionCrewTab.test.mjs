@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
+  CodingSessionCrewSkillNotice,
 } from "./NewCodingSessionCrewTab.tsx";
 
 const SEATS = [
@@ -82,4 +83,20 @@ test("the roster shows a declaration its model contradicts, not the declaration"
   // The model is inside that phrase already; printing it twice reads as two
   // seats' worth of model.
   assert.doesNotMatch(html, /· claude-opus-5/);
+});
+
+test("seats with no role pack are named, and a full crew says nothing", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewSkillNotice, {
+      labels: ["Codey", "Quinn"],
+    }),
+  );
+  assert.match(html, /Codey, Quinn carry no role skills/);
+  assert.match(html, /.agents\/skills/);
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(CodingSessionCrewSkillNotice, { labels: [] }),
+    ),
+    "",
+  );
 });

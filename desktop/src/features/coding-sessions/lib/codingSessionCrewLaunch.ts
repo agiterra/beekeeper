@@ -47,6 +47,17 @@ export type CodingSessionCrewLaunchResult = {
   genesisRef: string | null;
   /** Seats whose create receipt landed, in creation order. */
   seats: LaunchedCodingSessionCrewSeat[];
+  /**
+   * Labels of the seats staged with no role pack on this computer, in seat
+   * order.
+   *
+   * These seats run on their persona prompt alone: nothing wrote
+   * `.agents/skills` into their working directory, so the craft their role
+   * refers to is not on disk for them. Reported rather than hidden — a screen
+   * that shows six seated roles and says nothing else implies six seats that
+   * hold their roles' craft.
+   */
+  seatsWithoutRolePack: string[];
   /** The step that stopped the launch, by id. Null on success. */
   failedStep: string | null;
   failureReason: string | null;
@@ -70,7 +81,14 @@ export type CodingSessionCrewLaunchDeps = {
     index: number;
     sessionRef: string;
     genesisRef: string;
-  }) => Promise<{ commandId: string }>;
+  }) => Promise<{
+    commandId: string;
+    /**
+     * Whether this seat's host-local custody entry carried a role pack.
+     * `undefined` from a caller that does not stage seats at all.
+     */
+    packStaged?: boolean;
+  }>;
   /**
    * Wait for the provider's 44224 receipt for that exact command. This is the
    * gate: the next seat is not published until this resolves.
@@ -176,6 +194,7 @@ export async function launchCodingSessionCrew(
     emit();
   };
   const seated: LaunchedCodingSessionCrewSeat[] = [];
+  const seatsWithoutRolePack: string[] = [];
   const fail = (
     id: string,
     reason: string,
@@ -188,6 +207,7 @@ export async function launchCodingSessionCrew(
       sessionRef,
       genesisRef,
       seats: seated,
+      seatsWithoutRolePack,
       failedStep: id,
       failureReason: reason,
       steps: steps.map((entry) => ({ ...entry })),
@@ -250,12 +270,13 @@ export async function launchCodingSessionCrew(
     const id = codingSessionCrewLaunchSeatStepId(index);
     mark(id, "running");
     try {
-      const { commandId } = await deps.publishSeatCreate({
+      const { commandId, packStaged } = await deps.publishSeatCreate({
         seat,
         index,
         sessionRef,
         genesisRef,
       });
+      if (packStaged === false) seatsWithoutRolePack.push(seat.actorLabel);
       // The gate. The next seat's create is not signed until this receipt
       // lands, so a provider that refuses seat two never sees seat three.
       const target = await deps.awaitSeatReceipt({ commandId, seat });
@@ -271,7 +292,13 @@ export async function launchCodingSessionCrew(
         genesisRef,
       );
     }
-    mark(id, "done");
+    mark(
+      id,
+      "done",
+      seatsWithoutRolePack.includes(seat.actorLabel)
+        ? "seated with no role skills — this computer has no role pack behind this persona"
+        : null,
+    );
   }
 
   mark(CODING_SESSION_CREW_LAUNCH_GRANT_STEP, "running");
@@ -329,6 +356,7 @@ export async function launchCodingSessionCrew(
     sessionRef,
     genesisRef,
     seats: seated,
+    seatsWithoutRolePack,
     failedStep: null,
     failureReason: null,
     steps: steps.map((entry) => ({ ...entry })),

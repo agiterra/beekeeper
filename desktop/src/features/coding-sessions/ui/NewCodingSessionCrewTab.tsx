@@ -100,7 +100,7 @@ export function NewCodingSessionCrewTab({
         resolution?.error ??
         (family && !family.ok ? family.reason : null));
 
-  const { isLaunching, launch, steps } = useCodingSessionCrewLaunch({
+  const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
     providerInstanceRef,
     providerAuthorityPubkey,
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
@@ -241,6 +241,10 @@ export function NewCodingSessionCrewTab({
 
       {steps.length > 0 ? <CodingSessionCrewLaunchSteps steps={steps} /> : null}
 
+      <CodingSessionCrewSkillNotice
+        labels={result?.seatsWithoutRolePack ?? []}
+      />
+
       {launchError ? (
         <p
           className="flex items-start gap-2 text-sm text-destructive"
@@ -321,6 +325,36 @@ export function CodingSessionCrewRoster({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * What the seats that got no role pack actually carry.
+ *
+ * A crew tab that lists six roles and then says nothing implies six seats
+ * holding their roles' craft. When this computer has no pack behind a seat's
+ * persona, nothing wrote `.agents/skills` into its working directory, and this
+ * line is the difference between a seat that lacks craft and a screen that
+ * lies about it.
+ */
+export function CodingSessionCrewSkillNotice({
+  labels,
+}: {
+  labels: readonly string[];
+}) {
+  if (labels.length === 0) return null;
+  return (
+    <p
+      className="text-2xs text-muted-foreground"
+      data-testid="new-coding-session-crew-no-skills"
+    >
+      {labels.join(", ")} {labels.length === 1 ? "carries" : "carry"} no role
+      skills: this computer has no role pack behind{" "}
+      {labels.length === 1 ? "that persona" : "those personas"}, so nothing was
+      written to <code>.agents/skills</code> in the working directory. The
+      {labels.length === 1 ? " seat runs" : " seats run"} on the persona prompt
+      alone.
+    </p>
   );
 }
 

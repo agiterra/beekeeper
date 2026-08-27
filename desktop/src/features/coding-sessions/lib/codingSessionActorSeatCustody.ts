@@ -12,6 +12,16 @@
  */
 import { invokeTauri } from "@/shared/api/tauri";
 
+/** What one staging call actually put on disk for the provider to consume. */
+export type StagedCodingSessionActorSeat = {
+  /**
+   * Whether the seat was staged with a role pack. `false` means the seat runs
+   * on its prompt alone — no `.agents/skills` will exist in its working
+   * directory — and the screen must say so rather than imply craft it lacks.
+   */
+  packStaged: boolean;
+};
+
 /**
  * Stage a managed agent's identity for one exact coding-session create.
  *
@@ -19,15 +29,23 @@ import { invokeTauri } from "@/shared/api/tauri";
  * naming an actor with no staged seat (`ACTOR_UNAVAILABLE`). Rejects when the
  * agent is unknown to this computer or its key is unavailable (a keyring
  * outage), so a create the provider could never honour is never signed.
+ *
+ * The seat's role pack is resolved on the Rust side from the agent's own
+ * provenance — this call names an agent and never a path, so nothing here can
+ * choose the directory the provider materializes skills from.
  */
 export async function stageCodingSessionActorSeat(input: {
   commandId: string;
   agentPubkey: string;
-}): Promise<void> {
-  await invokeTauri("stage_coding_session_actor_seat", {
-    commandId: input.commandId,
-    agentPubkey: input.agentPubkey,
-  });
+}): Promise<StagedCodingSessionActorSeat> {
+  const staged = await invokeTauri<StagedCodingSessionActorSeat | null>(
+    "stage_coding_session_actor_seat",
+    {
+      commandId: input.commandId,
+      agentPubkey: input.agentPubkey,
+    },
+  );
+  return { packStaged: staged?.packStaged === true };
 }
 
 /** Drop a staged seat. Succeeds when the provider already consumed it. */

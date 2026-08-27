@@ -20,11 +20,17 @@
 import type { CodingSessionActorSeat } from "./codingSessionActorSeat";
 
 export type CodingSessionSeatCustody = {
-  /** Write the host-local custody entry for this exact command. */
+  /**
+   * Write the host-local custody entry for this exact command.
+   *
+   * May report what it staged (a seat with a role pack, or one without); this
+   * step does not act on that, but a crew launch has to be able to say which
+   * of the two happened.
+   */
   stageSeat: (input: {
     commandId: string;
     agentPubkey: string;
-  }) => Promise<void>;
+  }) => Promise<{ packStaged: boolean } | undefined>;
   /** Drop the custody entry again. Best effort; never fails the publish. */
   clearSeat: (commandId: string) => Promise<void>;
 };
