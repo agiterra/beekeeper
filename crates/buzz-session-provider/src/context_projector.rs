@@ -1416,12 +1416,7 @@ fn project_inbox(
         .iter()
         .map(|seat| (coding_session_target_key(&seat.target), seat))
         .collect();
-    let mut roles: HashMap<&str, &str> = HashMap::new();
-    for seat in seats {
-        if let (Some(actor), Some(role)) = (seat.actor.as_deref(), seat.role.as_deref()) {
-            roles.insert(actor, role);
-        }
-    }
+    let roles = inbox_sender_roles(seats);
     let stages = index_turn_stages(input);
 
     let mut skipped = 0u64;
@@ -1546,6 +1541,72 @@ fn project_inbox(
         );
     }
     Ok(items)
+}
+
+/// How strongly one seat still speaks for its actor, or `None` when it no
+/// longer does.
+///
+/// `Ended` is the one status that is disqualifying: its own signed metadata
+/// reported a terminal status, so whatever role it held is a role its actor
+/// has retired from. `Superseded` is retired too, but only as a generation —
+/// its execution continues — so it stays as the weakest candidate rather than
+/// being thrown away. `Unknown` is "no status could be read", which is not
+/// evidence of retirement and must not be treated as any.
+fn seat_speaks_for_actor(status: CodingSessionContextSeatStatus) -> Option<u8> {
+    match status {
+        CodingSessionContextSeatStatus::Ended => None,
+        CodingSessionContextSeatStatus::Superseded => Some(1),
+        CodingSessionContextSeatStatus::Unknown => Some(2),
+        CodingSessionContextSeatStatus::Active => Some(3),
+    }
+}
+
+/// One role per actor, resolved from the seats that can still speak for it.
+///
+/// Nothing enforces one execution per actor per umbrella — the plan's own
+/// disposable-builder pattern ends one seat and creates another under the same
+/// managed-agent key — so this map has to *choose*, and letting `HashMap`
+/// insert order choose meant relay page order decided which role a seat's
+/// inbox reported. `Provider::turn_framing` had the same defect and closed it
+/// (commit 910a3096) by excluding closed records and taking the newest live
+/// one; this is its projection-side twin, so the two crew surfaces cannot
+/// contradict each other about who spoke.
+///
+/// Where two equally live seats disagree about the role, no role is reported.
+/// The projector cannot tell which one the sender was wearing, and a guess
+/// here is written into a seat's reading of its own mail — the same reason the
+/// stage attribution withholds a stage two items both claim.
+fn inbox_sender_roles(seats: &[SeatFacts]) -> HashMap<&str, &str> {
+    /// `(liveness rank, generation, role, ambiguous)`.
+    type Candidate<'a> = (u8, u64, Option<&'a str>, bool);
+
+    let mut best: HashMap<&str, Candidate<'_>> = HashMap::new();
+    for seat in seats {
+        let Some(actor) = seat.actor.as_deref() else {
+            continue;
+        };
+        let Some(rank) = seat_speaks_for_actor(seat.status) else {
+            continue;
+        };
+        let role = seat.role.as_deref();
+        let generation = seat.target.generation;
+        match best.get_mut(actor) {
+            None => {
+                best.insert(actor, (rank, generation, role, false));
+            }
+            Some(current) => {
+                if (rank, generation) > (current.0, current.1) {
+                    *current = (rank, generation, role, false);
+                } else if (rank, generation) == (current.0, current.1) && current.2 != role {
+                    current.3 = true;
+                }
+            }
+        }
+    }
+    best.into_iter()
+        .filter(|(_, (_, _, _, ambiguous))| !ambiguous)
+        .filter_map(|(actor, (_, _, role, _))| role.map(|role| (actor, role)))
+        .collect()
 }
 
 /// Whether `signer` could steer this umbrella when it published at
@@ -3021,6 +3082,102 @@ mod tests {
         assert!(
             too_late.is_empty(),
             "a grant accepted a second later cannot retroactively admit it"
+        );
+    }
+
+    /// A retired seat must not name the role a live sender holds now.
+    ///
+    /// This is the unfixed twin of the defect commit 910a3096 closed in
+    /// `Provider::turn_framing`: nothing enforces one execution per actor per
+    /// umbrella — the plan's own disposable-builder pattern ends one seat and
+    /// creates another under the same managed-agent key — so the actor→role
+    /// map has to choose, and it was letting `HashMap` insert order (that is,
+    /// relay page order) choose for it. The sharp end is `session_inbox`
+    /// reporting `senderRole: "builder"` for a message the lead sent, while
+    /// the *signed* `user_prompt` echo of the same message says `lead`.
+    #[test]
+    fn a_retired_seat_does_not_supply_the_sender_role_of_a_live_one() {
+        let sender = Keys::generate();
+        let actor = sender.public_key().to_hex();
+        let fixture = fixture_with_founder(1, None, sender.clone());
+        let authority = fixture.provider.public_key().to_hex();
+        let retired = CodingSessionTarget {
+            session_id: "the-disposable-builder".into(),
+            ..fixture.target.clone()
+        };
+        let seat = |target: &CodingSessionTarget,
+                    role: &str,
+                    status: CodingSessionContextSeatStatus| SeatFacts {
+            target: target.clone(),
+            provider_authority: authority.clone(),
+            actor: Some(actor.clone()),
+            role: Some(role.into()),
+            status,
+            last_signed_seq: None,
+            last_signed_at_ms: None,
+        };
+        let mut input = fixture.input;
+        input.turn_commands = vec![turn_command(
+            input.channel_id,
+            "turn-1",
+            &fixture.target,
+            "status?",
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        )];
+
+        // The ended seat is last, which is where relay page order puts the
+        // older create, and where an insert-order map would let it win.
+        let seats = vec![
+            seat(
+                &fixture.target,
+                "lead",
+                CodingSessionContextSeatStatus::Active,
+            ),
+            seat(&retired, "builder", CodingSessionContextSeatStatus::Ended),
+        ];
+        let mut notes = Vec::new();
+        let items = project_inbox(&input, &seats, &actor, &[], &mut notes).unwrap();
+        assert_eq!(
+            items[0].sender_role.as_deref(),
+            Some("lead"),
+            "the role the sender holds now, not the one it retired from"
+        );
+
+        // A superseded generation is still a seat, but a live one outranks it.
+        let seats = vec![
+            seat(
+                &retired,
+                "builder",
+                CodingSessionContextSeatStatus::Superseded,
+            ),
+            seat(
+                &fixture.target,
+                "lead",
+                CodingSessionContextSeatStatus::Active,
+            ),
+        ];
+        let mut notes = Vec::new();
+        let items = project_inbox(&input, &seats, &actor, &[], &mut notes).unwrap();
+        assert_eq!(items[0].sender_role.as_deref(), Some("lead"));
+
+        // Two equally live seats disagreeing about the role is a genuine tie,
+        // and the honest answer is silence — the same discipline the stage
+        // attribution follows for a duplicated commandId.
+        let seats = vec![
+            seat(&retired, "builder", CodingSessionContextSeatStatus::Active),
+            seat(
+                &fixture.target,
+                "lead",
+                CodingSessionContextSeatStatus::Active,
+            ),
+        ];
+        let mut notes = Vec::new();
+        let items = project_inbox(&input, &seats, &actor, &[], &mut notes).unwrap();
+        assert_eq!(
+            items[0].sender_role, None,
+            "two live seats that disagree name no role at all"
         );
     }
 
