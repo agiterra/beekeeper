@@ -234,9 +234,42 @@ test("the four code-coordinate facts travel all-or-none", () => {
   );
 });
 
+// One 33 KiB title trips the 2 KiB label bound long before the 32 KiB content
+// bound is reached, so a single oversized-title case passes for the wrong
+// reason and either bound could regress alone with the suite green. Each bound
+// gets a payload only it can refuse.
+test("an oversized title is refused by the label bound", () => {
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      metadataJson({ title: "x".repeat(3 * 1024) }),
+    ),
+    null,
+    "3 KiB is well under the content bound, so only the label bound can refuse it",
+  );
+});
+
+test("an oversized summary is refused by the summary bound", () => {
+  assert.equal(
+    parseBuzzCodingSessionMetadata(
+      metadataJson({ contextSummary: "x".repeat(17 * 1024) }),
+    ),
+    null,
+    "17 KiB is under the content bound, so only the summary bound can refuse it",
+  );
+});
+
 test("metadata over 32 KiB is refused rather than truncated", () => {
-  const huge = metadataJson({ title: "x".repeat(33 * 1024) });
-  assert.equal(parseBuzzCodingSessionMetadata(huge), null);
+  const huge = metadataJson({
+    contextSummary: "c".repeat(12 * 1024),
+    diffSummary: "d".repeat(12 * 1024),
+    planSummary: "p".repeat(12 * 1024),
+  });
+  assert.ok(huge.length > 32 * 1024, "the payload really is over the bound");
+  assert.equal(
+    parseBuzzCodingSessionMetadata(huge),
+    null,
+    "every field is within its own bound, so only the content bound refuses it",
+  );
 });
 
 test("a transcript envelope has exactly six keys and a positive eventSeq", () => {
