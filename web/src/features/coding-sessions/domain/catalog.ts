@@ -70,6 +70,20 @@ import type {
 /** Raw events retained per generation before the oldest is evicted (D10). */
 export const MAX_RETAINED_RAW_EVENTS_PER_GENERATION = 2_000;
 
+/**
+ * The four statuses that prove a generation exists (D6).
+ *
+ * Every other lifecycle status reports something about a generation that must
+ * already exist — `stopped` ends one, `failed` never had a target at all — so
+ * none of them may bring one into being.
+ */
+const GENERATION_EXISTENCE_STATUSES: ReadonlySet<string> = new Set([
+  "created",
+  "created_with_failed_initial_turn",
+  "resumed",
+  "resumed_without_context",
+]);
+
 type Stored<T> = {
   eventId: string;
   createdAt: number;
@@ -222,12 +236,23 @@ export class CodingSessionObserverStore {
           receipt.signerPubkey,
         ),
       );
-      byGeneration.set(key, {
-        channelId: receipt.channelId,
-        target: receipt.target,
-        targetKey: receipt.targetKey,
-        signerPubkey: receipt.signerPubkey,
-      });
+      // Only an existence status mints the stream. A `stopped` receipt names
+      // an end, and an end is not a proof the generation was ever created —
+      // when the create fell outside the history page and the stop did not,
+      // minting one here would invent a generation D6 says does not exist and
+      // bind its authority to the stop command, so no lease minted under the
+      // create could ever join it.
+      if (GENERATION_EXISTENCE_STATUSES.has(receipt.status)) {
+        byGeneration.set(key, {
+          channelId: receipt.channelId,
+          target: receipt.target,
+          targetKey: receipt.targetKey,
+          signerPubkey: receipt.signerPubkey,
+        });
+      }
+      // Every non-turn receipt still joins the stream: a stop contributes the
+      // stream's last activity and its own receipt join once the generation
+      // exists.
       const bucket = receiptsByStream.get(key);
       if (bucket) bucket.push(receipt);
       else receiptsByStream.set(key, [receipt]);

@@ -61,6 +61,39 @@ test("a turn receipt never creates a generation", () => {
   assert.deepEqual(facts.generations, []);
 });
 
+test("a lone stop receipt does not mint a generation that never existed", () => {
+  const provider = newSigner();
+  // The create and its confirming receipt fell outside the history page; only
+  // the stop survived. D6 says a generation exists iff created,
+  // created_with_failed_initial_turn, resumed, or resumed_without_context
+  // names it — a stop names an end, and an end is not an existence proof.
+  const facts = storeWith([
+    receiptEvent(provider, { commandId: "stop-command", status: "stopped" }),
+    metadataEvent(provider, { status: "stopped" }),
+  ]);
+  assert.deepEqual(facts.generations, []);
+});
+
+test("a stop still lands on a generation a create established", () => {
+  const operator = newSigner();
+  const provider = newSigner();
+  const facts = storeWith([
+    ...establishedGeneration(operator, provider),
+    receiptEvent(provider, {
+      commandId: "stop-command",
+      status: "stopped",
+      created_at: 1_700_000_500,
+    }),
+    metadataEvent(provider, { status: "stopped" }),
+  ]);
+  assert.equal(facts.generations.length, 1);
+  assert.equal(
+    facts.generations[0].lastEventAt,
+    1_700_000_500 * 1000,
+    "the stop still carries the stream's last activity",
+  );
+});
+
 test("a lifecycle receipt joined to its create does create one", () => {
   const operator = newSigner();
   const provider = newSigner();
