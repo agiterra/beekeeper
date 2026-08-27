@@ -361,3 +361,83 @@ test("the record carries the metadata's sessionRef, or null without one", () => 
   );
   assert.equal(transcriptOnly.sessionRef, null);
 });
+
+test("every seat of an umbrella reports the umbrella's furthest turn budget", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const sibling = {
+    ...TARGET,
+    sessionId: "99999999-8888-7777-6666-555555555555",
+  };
+  const records = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [
+      metadataEntry({ sessionRef, turnBudget: { used: 9, limit: 20 } }),
+      metadataEntry({
+        target: sibling,
+        sessionRef,
+        turnBudget: { used: 2, limit: 20 },
+      }),
+    ],
+    [],
+  );
+  assert.equal(records.length, 2);
+  for (const record of records) {
+    assert.deepEqual(
+      record.turnBudget,
+      { used: 9, limit: 20 },
+      `${record.generationId} reported a stale umbrella budget`,
+    );
+  }
+});
+
+test("a seat that never echoed a budget still reports its umbrella's", () => {
+  const sessionRef = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const sibling = {
+    ...TARGET,
+    sessionId: "99999999-8888-7777-6666-555555555555",
+  };
+  const records = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [
+      metadataEntry({ sessionRef, turnBudget: { used: 4, limit: 20 } }),
+      metadataEntry({ target: sibling, sessionRef }),
+    ],
+    [],
+  );
+  assert.equal(records.length, 2);
+  for (const record of records) {
+    assert.deepEqual(record.turnBudget, { used: 4, limit: 20 });
+  }
+});
+
+test("budgets never pool across umbrellas, nor onto an unclaimed session", () => {
+  const mine = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+  const theirs = "6c8f2d3b-a1e5-4c1f-b2a4-8d3e9f7a5b21";
+  const second = {
+    ...TARGET,
+    sessionId: "99999999-8888-7777-6666-555555555555",
+  };
+  const third = {
+    ...TARGET,
+    sessionId: "77777777-6666-5555-4444-333333333333",
+  };
+  const records = mergeTrustedCodingSessionIngress(
+    CHANNEL_ID,
+    [
+      metadataEntry({ sessionRef: mine, turnBudget: { used: 4, limit: 20 } }),
+      metadataEntry({
+        target: second,
+        sessionRef: theirs,
+        turnBudget: { used: 17, limit: 20 },
+      }),
+      metadataEntry({ target: third }),
+    ],
+    [],
+  );
+  const budgetOf = (sessionId) =>
+    records.find((record) => record.commandTarget.sessionId === sessionId)
+      ?.turnBudget ?? null;
+  assert.deepEqual(budgetOf(TARGET.sessionId), { used: 4, limit: 20 });
+  assert.deepEqual(budgetOf(second.sessionId), { used: 17, limit: 20 });
+  assert.equal(budgetOf(third.sessionId), null);
+});

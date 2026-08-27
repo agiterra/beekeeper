@@ -234,7 +234,7 @@ pub fn build_executions(
     leases: &HashMap<(String, String), CodingSessionLeaseState>,
     now: i64,
 ) -> Vec<CrewExecution> {
-    resolve_sessions(metadata, receipts, transcripts)
+    let mut rows: Vec<CrewExecution> = resolve_sessions(metadata, receipts, transcripts)
         .into_iter()
         .map(|row| {
             let own: Vec<&MetadataRecord> = metadata
@@ -276,7 +276,50 @@ pub fn build_executions(
                     .map(TurnBudget::from),
             }
         })
-        .collect()
+        .collect();
+    apply_umbrella_turn_budget(&mut rows);
+    rows
+}
+
+/// Raise every seat's reported budget to the umbrella's, so no row advertises
+/// room the crew session no longer has.
+///
+/// The provider publishes `turnBudget` on the metadata of whichever execution
+/// is *acting*, so a sibling that has been idle keeps echoing the count it
+/// last saw. The count itself is one number per umbrella, and the highest
+/// `used` any seat has published is the closest any reader can get to it —
+/// counts only ever rise, so the maximum is the newest fact, and lending it to
+/// the umbrella's other seats can only ever make them more accurate. An
+/// execution that claimed no `sessionRef` is not part of any umbrella and
+/// keeps exactly what its own metadata said.
+fn apply_umbrella_turn_budget(rows: &mut [CrewExecution]) {
+    let mut newest: HashMap<&str, TurnBudget> = HashMap::new();
+    for row in rows.iter() {
+        let (Some(session_ref), Some(budget)) = (row.session_ref.as_deref(), row.turn_budget)
+        else {
+            continue;
+        };
+        newest
+            .entry(session_ref)
+            .and_modify(|held| {
+                if (budget.used, budget.limit) > (held.used, held.limit) {
+                    *held = budget;
+                }
+            })
+            .or_insert(budget);
+    }
+    let newest: HashMap<String, TurnBudget> = newest
+        .into_iter()
+        .map(|(session_ref, budget)| (session_ref.to_owned(), budget))
+        .collect();
+    for row in rows.iter_mut() {
+        let Some(session_ref) = row.session_ref.as_deref() else {
+            continue;
+        };
+        if let Some(budget) = newest.get(session_ref) {
+            row.turn_budget = Some(*budget);
+        }
+    }
 }
 
 /// Decide liveness from the lease first, the durable status second, and the

@@ -342,11 +342,15 @@ export function mergeTrustedCodingSessionIngress(
       // it), so an execution with no agent can never carry one.
       role: metadata?.agentRef ? (metadata.role ?? null) : null,
       // Published only for a budgeted umbrella, so absence is "the provider
-      // disclosed no budget" — never a locally assumed unlimited.
+      // disclosed no budget" — never a locally assumed unlimited. Raised to
+      // the umbrella's furthest count below, because the provider only ever
+      // publishes it on the acting execution.
       turnBudget: metadata?.turnBudget ?? null,
       capabilities: metadata?.capabilities ?? null,
     } satisfies CodingSessionCatalogRecord;
   });
+
+  applyUmbrellaTurnBudget(sessions);
 
   sessions.sort(
     (left, right) =>
@@ -354,6 +358,41 @@ export function mergeTrustedCodingSessionIngress(
       left.generationId.localeCompare(right.generationId),
   );
   return sessions;
+}
+
+/**
+ * Raise every seat of an umbrella to that umbrella's furthest turn budget.
+ *
+ * The provider publishes `turnBudget` on the metadata of whichever execution
+ * is acting, so a sibling that has been idle keeps echoing whatever the count
+ * was when it last spoke. The budget is one number per umbrella, and counts
+ * only rise, so the highest `used` any seat has published is the newest fact
+ * about it — showing a seat's own stale copy would tell the operator there is
+ * room at the moment the next agent turn is refused. An execution that claimed
+ * no `sessionRef` belongs to no umbrella and keeps exactly what it published.
+ */
+function applyUmbrellaTurnBudget(sessions: CodingSessionCatalogRecord[]): void {
+  const furthest = new Map<
+    string,
+    NonNullable<CodingSessionCatalogRecord["turnBudget"]>
+  >();
+  for (const session of sessions) {
+    const { sessionRef, turnBudget } = session;
+    if (!sessionRef || !turnBudget) continue;
+    const held = furthest.get(sessionRef);
+    if (
+      !held ||
+      turnBudget.used > held.used ||
+      (turnBudget.used === held.used && turnBudget.limit > held.limit)
+    ) {
+      furthest.set(sessionRef, turnBudget);
+    }
+  }
+  for (const session of sessions) {
+    if (!session.sessionRef) continue;
+    const budget = furthest.get(session.sessionRef);
+    if (budget) session.turnBudget = budget;
+  }
 }
 
 function formatDriverLabel(driver: string): string {
