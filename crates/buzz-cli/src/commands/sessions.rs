@@ -1544,12 +1544,22 @@ pub fn diagnose_turns(
                 .and_then(|command_id| stages.get(command_id))
                 .filter(|stage| is_terminal_refusal(stage.status));
             if let Some(stage) = answered {
-                findings.push(format!(
-                    "answered {} ({}): this turn did not run and will not — re-address it with \
-                     `bee sessions send --readdress`",
+                let answer = format!(
+                    "answered {} ({}): this turn did not run and will not",
                     stage.status.as_str(),
                     stage.error_code.as_deref().unwrap_or("no code")
-                ));
+                );
+                // Only the answers `--readdress` accepts get told to use it.
+                // A `QUEUE_FULL` drop or the `NO_TURN_IN_FLIGHT` a cancel earns
+                // is final, and `crew::plan_readdress` refuses it — so naming
+                // the verb here would send the reader into that refusal.
+                findings.push(match command_id.as_deref() {
+                    Some(command_id) if crew::readdressable_reason(stage).is_some() => format!(
+                        "{answer} — re-address it with \
+                         `bee sessions send --readdress {command_id}`"
+                    ),
+                    _ => answer,
+                });
             }
 
             Some(TurnDiagnosis {
@@ -1604,12 +1614,23 @@ pub fn diagnose_turns(
             command_id: Some(command_id.clone()),
             answered_stage: Some(stage.status.as_str().to_owned()),
             answered_code: stage.error_code.clone(),
-            findings: vec![format!(
-                "answered {} ({}) with no turn: these words never ran and never will — \
-                 re-address them with `bee sessions send --readdress {command_id}`",
-                stage.status.as_str(),
-                stage.error_code.as_deref().unwrap_or("no code")
-            )],
+            findings: vec![{
+                let answer = format!(
+                    "answered {} ({}) with no turn: these words never ran and never will",
+                    stage.status.as_str(),
+                    stage.error_code.as_deref().unwrap_or("no code")
+                );
+                // Same rule as the turn rows above: the answer and its code are
+                // always reported, the recovery verb only when
+                // `crew::plan_readdress` would honour it.
+                match crew::readdressable_reason(stage) {
+                    Some(_) => format!(
+                        "{answer} — re-address them with \
+                         `bee sessions send --readdress {command_id}`"
+                    ),
+                    None => answer,
+                }
+            }],
         });
     }
     diagnosed

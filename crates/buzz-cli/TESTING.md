@@ -815,6 +815,13 @@ bee --format compact sessions doctor --channel "$CHANNEL_ID" --target "$TARGET"
 #          --readdress <commandId>`"
 bee sessions doctor --channel "$CHANNEL_ID" --target "$TARGET" \
   | jq '.turns[] | {turnId, commandId, answeredStage, answeredCode}'
+# The `--readdress` line appears only for the two answers `--readdress` accepts
+# (`turn_dropped`/NO_LIVE_EXECUTION, `turn_refused`/STALE_GENERATION). A final
+# answer — a `QUEUE_FULL` drop, or the `NO_TURN_IN_FLIGHT` a cancel with nothing
+# in flight earns — still gets its row, stage and code, but no recovery verb:
+#   "    - answered turn_dropped (QUEUE_FULL) with no turn: these words never
+#          ran and never will"
+# Advising a re-send there would point at a command `send --readdress` refuses.
 
 # ── create ────────────────────────────────────────────────────────────────
 # Publishes one 44221 `session.create`; the brief becomes `initialTurn`.

@@ -18,14 +18,14 @@ use buzz_core::coding_session_lease::{
 use buzz_core::coding_session_payload::{
     Capabilities, LifecycleReceipt, ReceiptError, ReceiptStatus, SessionMetadata, SessionStatus,
     TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA, NO_LIVE_EXECUTION,
-    STALE_GENERATION,
+    NO_TURN_IN_FLIGHT, QUEUE_FULL, STALE_GENERATION,
 };
 use buzz_core::kind::{
     KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
 };
 
 use super::crew::*;
-use super::{decode_metadata, decode_receipts, decode_transcripts};
+use super::{decode_metadata, decode_receipts, decode_transcripts, diagnose_turns};
 use crate::error::CliError;
 
 const CHANNEL: &str = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
@@ -1160,4 +1160,107 @@ fn re_addressing_an_unknown_command_id_is_not_found() {
     )
     .unwrap_err();
     assert!(matches!(error, CliError::NotFound(_)), "got {error:?}");
+}
+
+/// `doctor`'s recovery advice and `--readdress`'s own ruling are one rule.
+///
+/// [`readdressable_reason`] names the only two answers a re-send recovers — a
+/// `turn_dropped`/`NO_LIVE_EXECUTION` or a `turn_refused`/`STALE_GENERATION`.
+/// Every other terminal answer is final: `QUEUE_FULL` means the queue was full
+/// then and says nothing about now, and `NO_TURN_IN_FLIGHT` answers a cancel
+/// that had nothing to cancel. A `doctor` that prints "re-address it" over
+/// those sends the reader straight into `plan_readdress`'s refusal — the
+/// command telling them to run something it will not run. So the advice is
+/// asserted here against the verb that has to honour it, on one fixture.
+#[test]
+fn doctor_only_offers_readdress_for_the_answers_readdress_accepts() {
+    let addressed = target("s-1", 1);
+    for (status, code) in [
+        (ReceiptStatus::TurnDropped, QUEUE_FULL),
+        (ReceiptStatus::TurnRefused, NO_TURN_IN_FLIGHT),
+    ] {
+        let events = vec![
+            turn_event("e-1", ALICE, 1_000, "cmd-1", &addressed, "go"),
+            receipt_event(
+                "r-1",
+                1_005,
+                "cmd-1",
+                status,
+                &addressed,
+                Some((code, "answered")),
+                None,
+            ),
+        ];
+        let (commands, _) = decode_turn_commands(&events);
+        let (receipts, _) = decode_receipts(&events);
+        let stages = newest_turn_stages(&receipts);
+
+        // Both readings of the same refusal: the command that reached a turn
+        // (its prompt echo is on the transcript) and the one that never did.
+        let echoed = vec![transcript_event(
+            "t-1",
+            1_001,
+            &addressed,
+            1,
+            Some("turn-1"),
+            json!({ "kind": "user_prompt", "content": "go", "commandId": "cmd-1" }),
+        )];
+        let (with_turn, _) = decode_transcripts(&echoed);
+        for records in [with_turn, Vec::new()] {
+            let turns = diagnose_turns(&records, &stages);
+            assert_eq!(turns.len(), 1, "{code}: {turns:?}");
+            let turn = &turns[0];
+            // The answer and its code are still reported — silence would be
+            // its own lie.
+            assert_eq!(turn.answered_stage.as_deref(), Some(status.as_str()));
+            assert_eq!(turn.answered_code.as_deref(), Some(code));
+            assert!(
+                !turn
+                    .findings
+                    .iter()
+                    .any(|finding| finding.contains("readdress")),
+                "{code} was advertised as re-addressable: {:?}",
+                turn.findings
+            );
+        }
+
+        // …and the verb `doctor` would have named refuses this exact command.
+        let mut live = execution("s-1", 1, None, None, None);
+        live.liveness = Liveness::Live;
+        let message =
+            usage_message(plan_readdress(&commands, &stages, &[live], &[], "cmd-1").unwrap_err());
+        assert!(message.contains(code), "got {message}");
+    }
+}
+
+/// The pinned other side: the two codes that *are* recoverable keep the advice,
+/// naming the commandId `--readdress` takes.
+#[test]
+fn doctor_still_names_readdress_for_a_recoverable_refusal() {
+    let addressed = target("s-1", 1);
+    for (status, code) in [
+        (ReceiptStatus::TurnDropped, NO_LIVE_EXECUTION),
+        (ReceiptStatus::TurnRefused, STALE_GENERATION),
+    ] {
+        let events = vec![receipt_event(
+            "r-1",
+            1_005,
+            "cmd-1",
+            status,
+            &addressed,
+            Some((code, "did not run")),
+            None,
+        )];
+        let (receipts, _) = decode_receipts(&events);
+        let turns = diagnose_turns(&[], &newest_turn_stages(&receipts));
+        assert_eq!(turns.len(), 1, "{code}");
+        assert!(
+            turns[0]
+                .findings
+                .iter()
+                .any(|finding| finding.contains("--readdress cmd-1")),
+            "{code} lost the verb that recovers it: {:?}",
+            turns[0].findings
+        );
+    }
 }

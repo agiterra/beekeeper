@@ -741,7 +741,12 @@ pub struct ReaddressPlan {
 }
 
 /// Codes a turn can be answered with that leave the sender owed a re-send.
-fn readdressable_reason(stage: &TurnStage) -> Option<String> {
+///
+/// This is the single ruling on what `--readdress` recovers, and every surface
+/// that *offers* it must ask here first: `doctor` printing "re-address it" over
+/// an answer [`plan_readdress`] then refuses is a command telling its reader to
+/// run something it will not run.
+pub(super) fn readdressable_reason(stage: &TurnStage) -> Option<String> {
     let code = stage.error_code.as_deref()?;
     match (stage.status, code) {
         (ReceiptStatus::TurnDropped, NO_LIVE_EXECUTION)
