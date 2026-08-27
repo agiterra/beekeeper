@@ -47,9 +47,10 @@ bytes). `deliver` is an **optional** key on `thread.turn.start` — absent means
 `"boundary"` — whose value is one of exactly `"boundary"`, `"steer"`, or
 `"interrupt"`; any other value makes the command malformed, never a silent
 default. `thread.turn.interrupt` carries no `deliver` key: the action is the
-class. Producers on this fork write `deliver` explicitly even though it has a
-default, so a reader of a signed command never has to know the default to know
-what was asked for. `generation` is a positive JavaScript-safe integer
+class. Senders on this fork **omit** `deliver` when it would be
+`"boundary"` — the wire default — so a relay that predates the field still
+accepts the ordinary turn path; `"steer"` and `"interrupt"` are written
+explicitly and require a relay that validates the field. `generation` is a positive JavaScript-safe integer
 (≤ 9,007,199,254,740,991) — the bound is JSON's, not Rust's, because the
 consumer is JavaScript and a `u64` that survives a Rust round-trip but loses
 precision in the browser would silently address a different session.
@@ -219,12 +220,16 @@ inherit the channel ACL (including private-project access) on the read path.
 
 ## Deploying the `deliver` key
 
-**Relay before desktop.** The relay validates `kind:44220` content with
-`deny_unknown_fields` (`crates/buzz-relay/src/handlers/ingest.rs`,
-`crates/buzz-core/src/coding_session_command.rs`), and this fork's desktop
-builder always writes `deliver` explicitly. An upgraded desktop against a relay
-that predates the key therefore has **every** turn rejected — not degraded,
-rejected — and the kind-9 fallback that would have hidden it does not exist
-here by design (see the fork amendment above). Ship the relay first, then the
-desktop. The reverse order is a total outage of turn sending for everyone on
-that community.
+**Relay before desktop, for the escalated classes only.** The relay validates
+`kind:44220` content with `deny_unknown_fields`
+(`crates/buzz-relay/src/handlers/ingest.rs`,
+`crates/buzz-core/src/coding_session_command.rs`), so any payload carrying a
+key it does not know is rejected — not degraded, rejected — and the kind-9
+fallback that would have hidden it does not exist here by design (see the fork
+amendment above). Because the desktop builder omits `deliver` at its default,
+boundary turns keep working against a relay that predates the key; `"steer"`
+and `"interrupt"` do not, and their commands are refused until the relay
+carrying the field is deployed. Ship the relay first, then the desktop; sending
+an escalated class before that is a refusal, and writing the default out
+explicitly would have been a total outage of turn sending for everyone on that
+community.
