@@ -9,6 +9,8 @@ import { Route as reposRouteImport } from "./routes/repos";
 import { Route as indexRouteImport } from "./routes/index";
 import { Route as reposDotrepoIdRouteImport } from "./routes/repos.$repoId";
 import { Route as inviteDotcodeRouteImport } from "./routes/invite.$code";
+import { Route as reposDotrepoIdDotsessionsRouteImport } from "./routes/repos.$repoId.sessions";
+import { Route as reposDotrepoIdDotsessionsDotsessionRefRouteImport } from "./routes/repos.$repoId.sessions.$sessionRef";
 import { Route as reposDotrepoIdDotblobDotsplatRouteImport } from "./routes/repos.$repoId.blob.$";
 
 const reposRoute = reposRouteImport.update({
@@ -31,6 +33,18 @@ const inviteDotcodeRoute = inviteDotcodeRouteImport.update({
   path: "/invite/$code",
   getParentRoute: () => rootRouteImport,
 } as any);
+const reposDotrepoIdDotsessionsRoute =
+  reposDotrepoIdDotsessionsRouteImport.update({
+    id: "/repos/$repoId/sessions",
+    path: "/repos/$repoId/sessions",
+    getParentRoute: () => rootRouteImport,
+  } as any);
+const reposDotrepoIdDotsessionsDotsessionRefRoute =
+  reposDotrepoIdDotsessionsDotsessionRefRouteImport.update({
+    id: "/repos/$repoId/sessions/$sessionRef",
+    path: "/repos/$repoId/sessions/$sessionRef",
+    getParentRoute: () => rootRouteImport,
+  } as any);
 const reposDotrepoIdDotblobDotsplatRoute =
   reposDotrepoIdDotblobDotsplatRouteImport.update({
     id: "/repos/$repoId/blob/$",
@@ -43,14 +57,18 @@ export interface FileRoutesByFullPath {
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/$repoId/sessions": typeof reposDotrepoIdDotsessionsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
+  "/repos/$repoId/sessions/$sessionRef": typeof reposDotrepoIdDotsessionsDotsessionRefRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof indexRoute;
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/$repoId/sessions": typeof reposDotrepoIdDotsessionsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
+  "/repos/$repoId/sessions/$sessionRef": typeof reposDotrepoIdDotsessionsDotsessionRefRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
@@ -58,7 +76,9 @@ export interface FileRoutesById {
   "/repos": typeof reposRoute;
   "/invite/$code": typeof inviteDotcodeRoute;
   "/repos/$repoId": typeof reposDotrepoIdRoute;
+  "/repos/$repoId/sessions": typeof reposDotrepoIdDotsessionsRoute;
   "/repos/$repoId/blob/$": typeof reposDotrepoIdDotblobDotsplatRoute;
+  "/repos/$repoId/sessions/$sessionRef": typeof reposDotrepoIdDotsessionsDotsessionRefRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
@@ -67,21 +87,27 @@ export interface FileRouteTypes {
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
-    | "/repos/$repoId/blob/$";
+    | "/repos/$repoId/sessions"
+    | "/repos/$repoId/blob/$"
+    | "/repos/$repoId/sessions/$sessionRef";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
-    | "/repos/$repoId/blob/$";
+    | "/repos/$repoId/sessions"
+    | "/repos/$repoId/blob/$"
+    | "/repos/$repoId/sessions/$sessionRef";
   id:
     | "__root__"
     | "/"
     | "/repos"
     | "/invite/$code"
     | "/repos/$repoId"
-    | "/repos/$repoId/blob/$";
+    | "/repos/$repoId/sessions"
+    | "/repos/$repoId/blob/$"
+    | "/repos/$repoId/sessions/$sessionRef";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
@@ -89,7 +115,9 @@ export interface RootRouteChildren {
   reposRoute: typeof reposRoute;
   inviteDotcodeRoute: typeof inviteDotcodeRoute;
   reposDotrepoIdRoute: typeof reposDotrepoIdRoute;
+  reposDotrepoIdDotsessionsRoute: typeof reposDotrepoIdDotsessionsRoute;
   reposDotrepoIdDotblobDotsplatRoute: typeof reposDotrepoIdDotblobDotsplatRoute;
+  reposDotrepoIdDotsessionsDotsessionRefRoute: typeof reposDotrepoIdDotsessionsDotsessionRefRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -122,6 +150,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof inviteDotcodeRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/repos/$repoId/sessions": {
+      id: "/repos/$repoId/sessions";
+      path: "/repos/$repoId/sessions";
+      fullPath: "/repos/$repoId/sessions";
+      preLoaderRoute: typeof reposDotrepoIdDotsessionsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/repos/$repoId/sessions/$sessionRef": {
+      id: "/repos/$repoId/sessions/$sessionRef";
+      path: "/repos/$repoId/sessions/$sessionRef";
+      fullPath: "/repos/$repoId/sessions/$sessionRef";
+      preLoaderRoute: typeof reposDotrepoIdDotsessionsDotsessionRefRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/repos/$repoId/blob/$": {
       id: "/repos/$repoId/blob/$";
       path: "/repos/$repoId/blob/$";
@@ -137,7 +179,10 @@ const rootRouteChildren: RootRouteChildren = {
   reposRoute: reposRoute,
   inviteDotcodeRoute: inviteDotcodeRoute,
   reposDotrepoIdRoute: reposDotrepoIdRoute,
+  reposDotrepoIdDotsessionsRoute: reposDotrepoIdDotsessionsRoute,
   reposDotrepoIdDotblobDotsplatRoute: reposDotrepoIdDotblobDotsplatRoute,
+  reposDotrepoIdDotsessionsDotsessionRefRoute:
+    reposDotrepoIdDotsessionsDotsessionRefRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -30,6 +30,8 @@ import { RepoRefsSection } from "./RepoRefsSection";
 import { RepoTreeSection } from "./RepoTreeSection";
 import { RepoCommitsSection } from "./RepoCommitsSection";
 import { RepoReadmeSection } from "./RepoReadmeSection";
+import { CodingSessionsPanel } from "@/features/coding-sessions/ui/CodingSessionsPanel";
+import { useCodingSessionObserver } from "@/features/coding-sessions/ui/useCodingSessionObserver";
 
 function CopyableUrl({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
@@ -108,10 +110,29 @@ function BackToRepositories({
   );
 }
 
-type Tab = "code" | "commits";
+type Tab = "code" | "commits" | "sessions";
+
+/**
+ * The session list, bound to the repo's channel.
+ *
+ * A repo with no `buzz-channel` tag has nowhere for sessions to live; the
+ * panel says so rather than rendering an empty list, which would imply the
+ * relay was asked and had nothing.
+ */
+function RepoSessionsTab({
+  repoId,
+  channelId,
+}: {
+  repoId: string;
+  channelId: string | null;
+}) {
+  const view = useCodingSessionObserver(channelId);
+  return <CodingSessionsPanel repoId={repoId} view={view} />;
+}
 
 function RepoTabs({
   repoId,
+  channelId,
   treeEntries,
   treeLoading,
   commits,
@@ -121,6 +142,7 @@ function RepoTabs({
   preview,
 }: {
   repoId: string;
+  channelId: string | null;
   treeEntries: TreeEntry[] | undefined;
   treeLoading: boolean;
   commits: CommitInfo[] | undefined;
@@ -157,6 +179,18 @@ function RepoTabs({
         >
           Commits
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("sessions")}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            tab === "sessions"
+              ? "border-b-2 border-black text-black dark:border-white dark:text-white"
+              : "text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white"
+          }`}
+          data-testid="repo-tab-sessions"
+        >
+          Sessions
+        </button>
       </div>
 
       {/* Tab content */}
@@ -173,6 +207,9 @@ function RepoTabs({
       )}
       {tab === "commits" && (
         <RepoCommitsSection commits={commits} isLoading={commitsLoading} />
+      )}
+      {tab === "sessions" && (
+        <RepoSessionsTab repoId={repoId} channelId={channelId} />
       )}
     </div>
   );
@@ -315,6 +352,7 @@ export function RepoDetailPage() {
         {/* Tabs */}
         <RepoTabs
           repoId={repoId}
+          channelId={repo.channelId}
           treeEntries={treeEntries}
           treeLoading={treeLoading}
           commits={commits}
