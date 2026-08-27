@@ -518,7 +518,8 @@ pub fn spawn_agent_child(
 
     let mut command = std::process::Command::new(&resolved_acp_command);
     if let Some(home) = super::default_agent_workdir() {
-        // Pack skills, before the child exists. Reported, never fatal.
+        // Pack skills, before the child exists. Reported, never fatal — and
+        // refused while this workdir is shared rather than one seat's own.
         super::nest::materialize_persona_skills_logged(record, &home, &log_path);
         command.current_dir(home);
     }

@@ -697,18 +697,41 @@ pub(crate) fn materialize_persona_skills_logged(
     }
 }
 
+/// Is `workdir` a directory every agent on this computer shares?
+///
+/// The two that matter are the nest (`~/.beekeeper`) and the user's home
+/// directory, which is what [`super::default_agent_workdir`] falls back to
+/// when the nest is missing or is a symlink. Neither belongs to one seat.
+fn is_shared_agent_workdir(workdir: &Path) -> bool {
+    let target = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    [nest_dir(), dirs::home_dir()]
+        .into_iter()
+        .flatten()
+        .any(|shared| shared.canonicalize().unwrap_or(shared) == target)
+}
+
 /// Write the pack skills of the persona this agent was created from into
 /// `workdir` as `.agents/skills/<name>/SKILL.md`.
 ///
 /// A no-op for an agent with no pack behind it (a hand-built agent, or one
 /// whose team was not installed from a directory) — those have no skills to
-/// write and no pack to read.
+/// write and no pack to read. **In current builds that is every managed
+/// agent**: `AgentDefinition::into_agent_record` sets `persona_team_dir` and
+/// `persona_name_in_team` to `None`, no production code assigns them, and
+/// `detach` clears them, so this function returns an empty vec on the one call
+/// site that reaches it. Reviving the agent → pack link is its own change; the
+/// crew path (contract D8-A) stages its pack in the actor-seat entry instead
+/// and materializes in the provider.
 ///
-/// `workdir` is whatever directory this spawn path runs the child in. Note
-/// that for managed agents that is the shared nest
-/// (`managed_agents::default_agent_workdir`), so two personas that ship a
-/// skill of the same name write the same file; per-workdir isolation is real
-/// only where the workdir is per-seat, as it is for crew seats.
+/// Refuses a `workdir` that is shared rather than per-seat. The plan's rule is
+/// "into that seat's own workdir, never into a shared dir" (§4 lane 5A), and
+/// the live call site passes [`super::default_agent_workdir`] — the shared
+/// nest, or `$HOME` when the nest is absent or a symlink. Writing there would
+/// let one persona's `brief/SKILL.md` overwrite another's, and in the `$HOME`
+/// case would overwrite a person's own `~/.agents/skills/<name>/SKILL.md`
+/// without warning.
 pub(crate) fn materialize_persona_skills(
     record: &ManagedAgentRecord,
     workdir: &std::path::Path,
@@ -719,6 +742,14 @@ pub(crate) fn materialize_persona_skills(
     ) else {
         return Ok(Vec::new());
     };
+    if is_shared_agent_workdir(workdir) {
+        return Err(format!(
+            "refusing to write persona {persona_name:?} skills into {} — that directory is \
+             shared by every agent on this computer (and may be your own home directory). A \
+             pack's skills belong in one seat's own working directory.",
+            workdir.display()
+        ));
+    }
     let persona = buzz_persona_pkg::resolve::resolve_persona_by_name(pack_dir, persona_name)
         .map_err(|error| {
             format!(
@@ -838,6 +869,45 @@ mod skill_materialization_tests {
                 .is_empty()
         );
         assert!(!workdir.join(".agents").exists());
+    }
+
+    #[test]
+    fn a_record_built_the_way_production_builds_one_has_no_pack_link() {
+        // Not a style point: `into_agent_record` sets persona_team_dir and
+        // persona_name_in_team to None, no production code assigns them, and
+        // detach clears them — so this call site materializes nothing in
+        // current builds. A test that hand-sets both fields reads like a live
+        // feature; this one is the production shape.
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = tmp.path().join("seat");
+        fs::create_dir_all(&workdir).unwrap();
+        let produced = record(None, None);
+        assert!(produced.persona_team_dir.is_none());
+        assert!(produced.persona_name_in_team.is_none());
+        assert!(materialize_persona_skills(&produced, &workdir)
+            .expect("no pack, no work")
+            .is_empty());
+    }
+
+    #[test]
+    fn a_shared_workdir_is_refused_rather_than_written_into() {
+        // The one live caller passes `default_agent_workdir()`: the shared
+        // nest, or $HOME when the nest is missing or a symlink. Either way it
+        // is not a seat's own directory — and in the $HOME case the write
+        // would land on a person's own ~/.agents/skills/<name>/SKILL.md, which
+        // `materialize_skills` overwrites whenever the bytes differ.
+        let tmp = tempfile::tempdir().unwrap();
+        let pack = role_pack(tmp.path());
+        let shared = dirs::home_dir().expect("a home directory");
+
+        let error = materialize_persona_skills(&record(Some(pack), Some("builder")), &shared)
+            .expect_err("a shared workdir must be refused");
+
+        assert!(error.contains("shared"), "{error}");
+        assert!(
+            !shared.join(".agents/skills/brief/SKILL.md").exists(),
+            "nothing may be written into the shared directory"
+        );
     }
 
     #[test]
