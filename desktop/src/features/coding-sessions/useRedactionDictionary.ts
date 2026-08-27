@@ -25,11 +25,28 @@ import {
 const resolvedByKey = new Map<string, ResolvedRedaction>();
 
 /**
- * Scopes already asked about, so a miss is asked once rather than on every
- * render. Holds attempted scopes too — a machine that answered nothing answers
- * nothing again.
+ * Scopes that completed with nothing, so a miss is asked once rather than on
+ * every render — a machine that answered nothing answers nothing again.
+ *
+ * Only *settled-empty* scopes live here. An in-flight lookup is in
+ * `pendingLookups` instead: marking a scope "asked" the moment the request
+ * fired was the original sin — a subscriber arriving between fire and land
+ * (StrictMode's second effect run, a pop-out, a channel switch-and-back) found
+ * the scope already asked, attached to nothing, and rendered the unresolved
+ * pill forever while the answer sat in the cache below.
  */
-const askedScopes = new Set<string>();
+const emptyScopes = new Set<string>();
+
+/**
+ * One shared promise per scope currently on the wire. Every subscriber —
+ * however many mounts are looking at the same transcript — attaches to the
+ * same lookup, and the entry is dropped when it settles so a rejected lookup
+ * may be retried by a later mount.
+ */
+const pendingLookups = new Map<
+  string,
+  Promise<ReadonlyMap<string, ResolvedRedaction> | null>
+>();
 
 const EMPTY: ReadonlyMap<string, ResolvedRedaction> = new Map();
 
@@ -44,11 +61,96 @@ const EMPTY: ReadonlyMap<string, ResolvedRedaction> = new Map();
  */
 export function resetRedactionDictionary() {
   resolvedByKey.clear();
-  askedScopes.clear();
+  emptyScopes.clear();
+  pendingLookups.clear();
 }
 
 function cacheKey(signer: string, session: string, digest: string): string {
   return `${signer}:${session}:${digest}`;
+}
+
+function scopeCacheKey(scope: RedactionLookupScope): string {
+  return `${scope.signerPubkey}:${scope.sessionId}:${scope.digests.join(",")}`;
+}
+
+/** How a lookup is performed; injected in tests, IPC everywhere else. */
+export type RedactionResolver = (request: {
+  digests: string[];
+  providerPubkey: string;
+  sessionId: string;
+}) => Promise<Record<string, ResolvedRedaction>>;
+
+/**
+ * Answer `scope` from the vault, calling `onResolved` when something is known.
+ *
+ * Synchronously when the cache already holds it, later when a lookup (this
+ * subscriber's or an earlier one still in flight) lands with entries, never
+ * when the machine has nothing to say. The returned function cancels only this
+ * subscriber's callback — the lookup itself keeps going, because its answer is
+ * immutable and the next mount will want it from the cache.
+ *
+ * An empty result is never a claim about *why*. "Never recorded", "expired",
+ * and "not this machine" are indistinguishable, and all three render the same
+ * unresolved pill.
+ */
+export function subscribeRedactionResolution(
+  scope: RedactionLookupScope,
+  onResolved: (resolved: ReadonlyMap<string, ResolvedRedaction>) => void,
+  resolver: RedactionResolver = resolveCodingSessionRedactions,
+): () => void {
+  // A remount — pop-out, channel switch, community-scoped rebuild — answers
+  // from the module cache without a second IPC round trip.
+  const cached = readCached(scope);
+  if (cached) {
+    onResolved(cached);
+    return () => {};
+  }
+  const scopeKey = scopeCacheKey(scope);
+  if (emptyScopes.has(scopeKey)) return () => {};
+
+  let lookup = pendingLookups.get(scopeKey);
+  if (!lookup) {
+    lookup = resolver({
+      digests: scope.digests,
+      providerPubkey: scope.signerPubkey,
+      sessionId: scope.sessionId,
+    })
+      .then((answer) => {
+        const entries = Object.entries(answer);
+        if (entries.length === 0) {
+          emptyScopes.add(scopeKey);
+          return null;
+        }
+        for (const [digest, entry] of entries) {
+          resolvedByKey.set(
+            cacheKey(scope.signerPubkey, scope.sessionId, digest),
+            entry,
+          );
+        }
+        return new Map(entries);
+      })
+      .finally(() => {
+        pendingLookups.delete(scopeKey);
+      });
+    pendingLookups.set(scopeKey, lookup);
+  }
+
+  let cancelled = false;
+  lookup
+    .then((resolved) => {
+      if (!cancelled && resolved) onResolved(resolved);
+    })
+    .catch((error) => {
+      // A vault this machine cannot read is a machine that cannot answer,
+      // not a transient fault: the honest fallback is the pill. But it is
+      // logged, because a *rejected* lookup and an empty one render
+      // identically, and swallowing the difference is what hid the original
+      // session-id bug for a whole round of live testing.
+      if (!cancelled) console.warn("redaction lookup failed", error);
+    });
+  return () => {
+    cancelled = true;
+  };
 }
 
 /**
@@ -59,10 +161,6 @@ function cacheKey(signer: string, session: string, digest: string): string {
  * and signer. The query firing is not the authorization — the backend checks
  * the signer again against the identities this desktop provisioned. This only
  * avoids a pointless call for someone else's session.
- *
- * An empty result is never a claim about *why*. "Never recorded", "expired",
- * and "not this machine" are indistinguishable, and all three render the same
- * unresolved pill.
  */
 export function useRedactionDictionary(
   items: readonly TranscriptItem[],
@@ -71,18 +169,13 @@ export function useRedactionDictionary(
     () => collectRedactionLookupScope(items),
     [items],
   );
-  const scopeKey = scope
-    ? `${scope.signerPubkey}:${scope.sessionId}:${scope.digests.join(",")}`
-    : null;
+  const scopeKey = scope ? scopeCacheKey(scope) : null;
   const [resolved, setResolved] =
     React.useState<ReadonlyMap<string, ResolvedRedaction>>(EMPTY);
 
   // The effect keys on `scopeKey`, a string, and reads the scope itself
-  // through a ref. Depending on the `scope` *object* would re-run the effect
-  // — and fire its cleanup — on every render that rebuilt an equal scope,
-  // cancelling the in-flight lookup before it could ever land, while
-  // `askedScopes` prevented a retry. The value would then never resolve, which
-  // is exactly what happened the first time this was written.
+  // through a ref. Depending on the `scope` *object* would resubscribe on
+  // every render that rebuilt an equal scope.
   const scopeRef = React.useRef(scope);
   scopeRef.current = scope;
 
@@ -92,44 +185,7 @@ export function useRedactionDictionary(
       setResolved(EMPTY);
       return;
     }
-    // A remount — pop-out, channel switch, community-scoped rebuild — answers
-    // from the module cache without a second IPC round trip.
-    const cached = readCached(current);
-    if (cached) {
-      setResolved(cached);
-      return;
-    }
-    if (askedScopes.has(scopeKey)) return;
-    askedScopes.add(scopeKey);
-
-    let cancelled = false;
-    void resolveCodingSessionRedactions({
-      digests: current.digests,
-      providerPubkey: current.signerPubkey,
-      sessionId: current.sessionId,
-    })
-      .then((answer) => {
-        const entries = Object.entries(answer);
-        if (entries.length === 0) return;
-        for (const [digest, entry] of entries) {
-          resolvedByKey.set(
-            cacheKey(current.signerPubkey, current.sessionId, digest),
-            entry,
-          );
-        }
-        if (!cancelled) setResolved(new Map(entries));
-      })
-      .catch((error) => {
-        // A vault this machine cannot read is a machine that cannot answer,
-        // not a transient fault: the honest fallback is the pill. But it is
-        // logged, because a *rejected* lookup and an empty one render
-        // identically, and swallowing the difference is what hid the original
-        // session-id bug for a whole round of live testing.
-        console.warn("redaction lookup failed", error);
-      });
-    return () => {
-      cancelled = true;
-    };
+    return subscribeRedactionResolution(current, setResolved);
   }, [scopeKey]);
 
   return resolved;
