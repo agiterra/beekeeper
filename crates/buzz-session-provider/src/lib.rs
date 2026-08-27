@@ -4370,13 +4370,6 @@ mod tests {
         }
     }
 
-    /// Set a file's mode. Used to make a durable ledger unwritable, which is
-    /// the `io::Error` class a full or read-only state directory raises.
-    fn chmod(path: &Path, mode: u32) {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
-    }
-
     /// Drain and record session reports until one satisfies `done`.
     async fn pump_until(provider: &mut Provider, done: impl Fn(&SessionEvent) -> bool) {
         loop {
@@ -10137,16 +10130,26 @@ mod tests {
             .await
             .expect("hold");
 
-        // A read-only consumed ledger: the append that records the delivered
-        // cancel fails, which is the `io::Error` class a full or read-only
-        // state directory raises.
+        // A directory where the consumed ledger's file belongs, which is the
+        // same sabotage `a_failed_held_delivery_hands_the_rest_of_the_burst_back`
+        // uses: `append_ledger_record` re-opens the path on every append, so
+        // every one of them fails EISDIR — a structural failure, not a
+        // permission one. A mode bit would not do: the CI gate runs as root
+        // inside `buzz-ci` (`scripts/ci-image/Dockerfile` declares no `USER`
+        // and `.woodpecker/gate.yml` mounts `/root/...`), and root's
+        // `CAP_DAC_OVERRIDE` opens a 0444 file for write happily, which would
+        // turn this test's `expect_err` red on CI and green on every developer
+        // machine.
         let ledger = state_dir.join("commands.jsonl");
-        chmod(&ledger, 0o444);
+        if ledger.exists() {
+            std::fs::remove_file(&ledger).expect("clear the ledger file");
+        }
+        std::fs::create_dir(&ledger).expect("sabotage");
         provider
             .flush_replays_now()
             .await
             .expect_err("the consumed ledger append fails");
-        chmod(&ledger, 0o600);
+        std::fs::remove_dir(&ledger).expect("restore");
 
         // Custody is a fact, not a hypothesis: the cancel reached the actor and
         // ended the running turn before the ledger write failed.
