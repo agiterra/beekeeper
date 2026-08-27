@@ -1208,3 +1208,55 @@ fn the_inbox_rejects_items_that_would_break_paging_or_lie_about_a_stage() {
     empty.inbox[0].content = "   ".into();
     assert!(empty.validate().is_err());
 }
+
+/// A clip is only worth shipping if the package validator accepts it, so the
+/// clipped text has to be sanitizer-stable and inside the bound.
+#[test]
+fn clipping_redacted_text_yields_something_the_validator_accepts() {
+    let brief = (0..140)
+        .map(|index| format!("/Users/brian/Projects/beekeeper/crates/file{index}.rs"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let redacted = sanitize_coding_session_context_text(&brief);
+    assert!(
+        redacted.len() > MAX_CONTEXT_INBOX_CONTENT_BYTES,
+        "redaction grows this brief past the bound: {}",
+        redacted.len()
+    );
+
+    let clipped = clip_coding_session_context_text(&redacted, MAX_CONTEXT_INBOX_CONTENT_BYTES)
+        .expect("a brief of whole words can always be clipped");
+    assert!(clipped.len() <= MAX_CONTEXT_INBOX_CONTENT_BYTES);
+    assert!(clipped.ends_with(CODING_SESSION_CONTEXT_CLIP_MARKER));
+    assert_eq!(
+        sanitize_coding_session_context_text(&clipped),
+        clipped,
+        "a clip must never cut a redaction into something the sanitizer rewrites"
+    );
+
+    let mut package = crew_package();
+    package.inbox[0].content = clipped;
+    package.validate().expect("a clipped item still validates");
+}
+
+/// Text that already fits is returned byte-for-byte, and text with no word
+/// boundary to cut on is refused rather than butchered.
+#[test]
+fn clipping_leaves_fitting_text_alone_and_refuses_what_it_cannot_cut() {
+    assert_eq!(
+        clip_coding_session_context_text("short enough", MAX_CONTEXT_INBOX_CONTENT_BYTES)
+            .as_deref(),
+        Some("short enough")
+    );
+    let one_word = "x".repeat(MAX_CONTEXT_INBOX_CONTENT_BYTES + 1);
+    assert_eq!(
+        clip_coding_session_context_text(&one_word, MAX_CONTEXT_INBOX_CONTENT_BYTES),
+        None,
+        "one unbroken word longer than the bound has no honest clip"
+    );
+    assert_eq!(
+        clip_coding_session_context_text("a b c", 4),
+        None,
+        "a bound the marker cannot fit in yields no clip at all"
+    );
+}
