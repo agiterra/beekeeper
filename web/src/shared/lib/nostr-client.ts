@@ -292,8 +292,11 @@ export function subscribeEvents(
     // A filter that already asks for a page needs no gap-filling `since`:
     // re-sending it unchanged re-reads exactly what it was asking for, and
     // narrowing it to the recent past would drop the history it exists for.
+    // That applies to the seen point too — a page read that saw one event
+    // before the drop must still re-read everything older than it, or the
+    // count lands under the page size and a partial read reports as complete.
     const resumeFrom =
-      lastSeenAt[index] ?? (base.limit === 0 ? subscribedAt[index] : null);
+      base.limit === 0 ? (lastSeenAt[index] ?? subscribedAt[index]) : null;
     if (resumeFrom === null) return base;
     const replay: NostrFilter = {
       ...base,

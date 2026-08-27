@@ -299,6 +299,16 @@ test("a page read is re-sent whole after a drop, never narrowed to now", async (
   const first = sockets.instances[0];
   first.accept();
   await afterAuthGrace();
+  // A relay streams a page newest-first, so the read has almost always seen an
+  // event by the time the socket drops. That seen point must not narrow the
+  // re-read: everything older than it is precisely what the page exists to
+  // fetch, and losing it silently shrinks the count under the page size, so
+  // the truncation notice never fires and a partial read reads as complete.
+  first.deliver([
+    "EVENT",
+    first.frames("REQ")[0][1],
+    { id: "newest", created_at: 1_700_000_900 },
+  ]);
   first.close();
   await delay(20);
   const second = sockets.instances[1];
