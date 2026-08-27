@@ -135,6 +135,14 @@ if pgrep -f "/Applications/Beekeeper.app/Contents/MacOS/" >/dev/null; then
   echo "Beekeeper.app is running — quit it, then re-run the install" >&2
   exit 1
 fi
+# One-time sweep of the pre-rename bundle: quit anything still running out of
+# the old "Bee Keeper.app" path and remove it, so /Applications does not end
+# up carrying both spellings side by side.
+if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/" >/dev/null; then
+  echo "==> quitting the old Bee Keeper.app"
+  pkill -f "/Applications/Bee Keeper.app/Contents/MacOS/" || true
+fi
+rm -rf "/Applications/Bee Keeper.app"
 rm -rf "/Applications/Beekeeper.app"
 ditto "$APP" "/Applications/Beekeeper.app"
 echo "==> installed $REV -> /Applications/Beekeeper.app"
