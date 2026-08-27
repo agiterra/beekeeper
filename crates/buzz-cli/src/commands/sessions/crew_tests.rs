@@ -634,6 +634,150 @@ fn build_executions_takes_the_turn_budget_from_the_newest_metadata_row() {
     assert_eq!(rows[0].turn_budget, Some(TurnBudget { used: 9, limit: 10 }));
 }
 
+/// The budget belongs to the *umbrella*, not to whichever seat last echoed
+/// it: every row sharing a `sessionRef` reports the highest `used` any of
+/// them has published.
+///
+/// The provider publishes `turnBudget` on the acting execution's own metadata
+/// only, so an idle sibling's newest row is frozen at the count it saw when it
+/// last spoke. Printing that stale number under copy that calls it the crew
+/// session's budget would tell an operator there is room at the very moment
+/// the next agent turn is refused.
+#[test]
+fn build_executions_reports_the_umbrella_budget_on_every_seat_sharing_it() {
+    let busy = target("s-1", 1);
+    let idle = target("s-2", 1);
+    let events = vec![
+        with_turn_budget(
+            metadata_event(
+                "m-1",
+                1_000,
+                &busy,
+                SessionStatus::Idle,
+                None,
+                None,
+                Some("u-1"),
+            ),
+            json!({"used": 9, "limit": 20}),
+        ),
+        with_turn_budget(
+            metadata_event(
+                "m-2",
+                1_100,
+                &idle,
+                SessionStatus::Idle,
+                None,
+                None,
+                Some("u-1"),
+            ),
+            json!({"used": 2, "limit": 20}),
+        ),
+    ];
+    let (metadata, _) = decode_metadata(&events);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert_eq!(
+            row.turn_budget,
+            Some(TurnBudget { used: 9, limit: 20 }),
+            "row {} reported a stale umbrella budget",
+            row.target_key
+        );
+    }
+}
+
+/// A seat that has never echoed a budget still belongs to the umbrella, so it
+/// reports the umbrella's — silence about a ceiling that exists is the same
+/// lie as a stale count.
+#[test]
+fn build_executions_lends_the_umbrella_budget_to_a_seat_that_never_echoed_one() {
+    let busy = target("s-1", 1);
+    let quiet = target("s-2", 1);
+    let events = vec![
+        with_turn_budget(
+            metadata_event(
+                "m-1",
+                1_000,
+                &busy,
+                SessionStatus::Idle,
+                None,
+                None,
+                Some("u-1"),
+            ),
+            json!({"used": 4, "limit": 20}),
+        ),
+        metadata_event(
+            "m-2",
+            1_100,
+            &quiet,
+            SessionStatus::Idle,
+            None,
+            None,
+            Some("u-1"),
+        ),
+    ];
+    let (metadata, _) = decode_metadata(&events);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert_eq!(row.turn_budget, Some(TurnBudget { used: 4, limit: 20 }));
+    }
+}
+
+/// Two umbrellas never pool their counts, and an execution that claimed no
+/// umbrella keeps only what its own metadata said.
+#[test]
+fn build_executions_never_pools_budgets_across_umbrellas() {
+    let mine = target("s-1", 1);
+    let theirs = target("s-2", 1);
+    let loose = target("s-3", 1);
+    let events = vec![
+        with_turn_budget(
+            metadata_event(
+                "m-1",
+                1_000,
+                &mine,
+                SessionStatus::Idle,
+                None,
+                None,
+                Some("u-1"),
+            ),
+            json!({"used": 4, "limit": 20}),
+        ),
+        with_turn_budget(
+            metadata_event(
+                "m-2",
+                1_000,
+                &theirs,
+                SessionStatus::Idle,
+                None,
+                None,
+                Some("u-2"),
+            ),
+            json!({"used": 17, "limit": 20}),
+        ),
+        metadata_event("m-3", 1_000, &loose, SessionStatus::Idle, None, None, None),
+    ];
+    let (metadata, _) = decode_metadata(&events);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 3);
+    let budget_of = |session_id: &str| {
+        rows.iter()
+            .find(|row| row.target.session_id == session_id)
+            .expect("row")
+            .turn_budget
+    };
+    assert_eq!(budget_of("s-1"), Some(TurnBudget { used: 4, limit: 20 }));
+    assert_eq!(
+        budget_of("s-2"),
+        Some(TurnBudget {
+            used: 17,
+            limit: 20
+        })
+    );
+    assert_eq!(budget_of("s-3"), None);
+}
+
 #[test]
 fn turn_budget_exhausted_is_used_at_or_past_limit() {
     assert!(!TurnBudget { used: 9, limit: 10 }.exhausted());
