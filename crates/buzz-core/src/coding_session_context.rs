@@ -42,9 +42,21 @@ pub const MAX_CONTEXT_ROSTER_ENTRIES: usize = 256;
 pub const MAX_CONTEXT_INBOX_ITEMS: usize = 256;
 /// Maximum UTF-8 byte length of one inbox item's prompt text.
 ///
-/// The signed 44220 ceiling itself, imported rather than restated: an accepted
-/// command's text always fits, so the inbox never has to clip one.
+/// The signed 44220 ceiling itself, imported rather than restated. It bounds
+/// the text *after* redaction, and redaction grows text — every host-path word
+/// becomes a ~110-byte elision marker — so an accepted command can arrive here
+/// larger than it was signed. Such an item is clipped by
+/// [`clip_coding_session_context_text`] and says so in the text a seat reads;
+/// it is never dropped, because the message most likely to name host paths is
+/// the crew brief this inbox exists to carry.
 pub const MAX_CONTEXT_INBOX_CONTENT_BYTES: usize = MAX_TURN_TEXT_BYTES;
+/// Sentence appended to text that redaction grew past a package bound.
+///
+/// Public because the projector counts clipped items by it, and because a
+/// reader that wants to distinguish a clipped message from a short one needs
+/// the exact string rather than a guess at its wording.
+pub const CODING_SESSION_CONTEXT_CLIP_MARKER: &str =
+    "[clipped: the rest of this message did not fit the context bound]";
 /// Maximum verified history items carried in one package.
 pub const MAX_CONTEXT_HISTORY_ITEMS: usize = 4_096;
 /// Maximum serialized size of one complete package.
@@ -1256,6 +1268,39 @@ pub fn sanitize_coding_session_context_text(value: &str) -> String {
         sanitized.push_str(trailing);
     }
     redact_credential_assignments(&sanitized)
+}
+
+/// Clip already-sanitized text to `max` bytes and say that it was clipped.
+///
+/// Returns the text unchanged when it already fits. Otherwise it keeps whole
+/// whitespace-delimited words — the same units the sanitizer works in, so
+/// every retained word is exactly what the sanitizer produced and a redaction
+/// can never be cut in half into something that reads like a live credential —
+/// and appends [`CODING_SESSION_CONTEXT_CLIP_MARKER`].
+///
+/// `None` means no honest clip exists at that bound (the marker alone does not
+/// fit, the first word does not fit, or the result would not survive a second
+/// sanitizer pass). A caller that gets `None` must drop the text rather than
+/// ship something a validator will reject.
+pub fn clip_coding_session_context_text(sanitized: &str, max: usize) -> Option<String> {
+    if sanitized.len() <= max {
+        return Some(sanitized.to_owned());
+    }
+    let budget = max.checked_sub(CODING_SESSION_CONTEXT_CLIP_MARKER.len() + 1)?;
+    let mut kept = String::new();
+    for segment in sanitized.split_inclusive(char::is_whitespace) {
+        if kept.len() + segment.len() > budget {
+            break;
+        }
+        kept.push_str(segment);
+    }
+    let kept = kept.trim_end();
+    if kept.is_empty() {
+        return None;
+    }
+    let clipped = format!("{kept}\n{CODING_SESSION_CONTEXT_CLIP_MARKER}");
+    (clipped.len() <= max && sanitize_coding_session_context_text(&clipped) == clipped)
+        .then_some(clipped)
 }
 
 /// PEM-style blocks, redacted whole.

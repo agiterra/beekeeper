@@ -23,16 +23,18 @@ use buzz_acp::relay::RestClient;
 use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionTarget, CODING_SESSION_COMMAND_TAG_VERSION, MAX_IDENTIFIER_BYTES,
+    MAX_TURN_TEXT_BYTES,
 };
 use buzz_core::coding_session_context::{
-    coding_session_context_role_for_item_kind, sanitize_coding_session_context_content,
-    sanitize_coding_session_context_text, CodingSessionContextHistoryItem,
-    CodingSessionContextIdentity, CodingSessionContextInboxItem, CodingSessionContextPackage,
-    CodingSessionContextProvenance, CodingSessionContextRosterEntry,
+    clip_coding_session_context_text, coding_session_context_role_for_item_kind,
+    sanitize_coding_session_context_content, sanitize_coding_session_context_text,
+    CodingSessionContextHistoryItem, CodingSessionContextIdentity, CodingSessionContextInboxItem,
+    CodingSessionContextPackage, CodingSessionContextProvenance, CodingSessionContextRosterEntry,
     CodingSessionContextSeatStatus, CodingSessionContextSourceBreakdown,
-    CODING_SESSION_CONTEXT_PACKAGE_VERSION, MAX_CONTEXT_HISTORY_ITEMS,
-    MAX_CONTEXT_INBOX_CONTENT_BYTES, MAX_CONTEXT_INBOX_ITEMS, MAX_CONTEXT_PACKAGE_BYTES,
-    MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES, MAX_CONTEXT_ROSTER_ENTRIES,
+    CODING_SESSION_CONTEXT_CLIP_MARKER, CODING_SESSION_CONTEXT_PACKAGE_VERSION,
+    MAX_CONTEXT_HISTORY_ITEMS, MAX_CONTEXT_INBOX_CONTENT_BYTES, MAX_CONTEXT_INBOX_ITEMS,
+    MAX_CONTEXT_PACKAGE_BYTES, MAX_CONTEXT_PROVENANCE_NOTES, MAX_CONTEXT_PROVENANCE_NOTE_BYTES,
+    MAX_CONTEXT_ROSTER_ENTRIES,
 };
 use buzz_core::coding_session_genesis::{
     decode_coding_session_genesis, CODING_SESSION_GENESIS_TAG_VERSION,
@@ -78,9 +80,15 @@ use crate::authority::{verify_acceptance_receipt, verify_accepted_transition};
 pub const MAX_CONTEXT_INBOX_PROJECTION_BYTES: usize = 256 * 1024;
 /// Maximum signed content bytes accepted from one candidate kind-44220.
 ///
-/// The turn-text ceiling plus envelope overhead; a larger candidate is
-/// something other than a command this projector recognizes.
-const MAX_COMMAND_CONTENT_BYTES: usize = 16 * 1024;
+/// Sized so no *legal* command can ever exceed it: a command's text is capped
+/// at [`MAX_TURN_TEXT_BYTES`], and JSON escaping can expand a byte of it into
+/// six (`\u0000`), so worst-case signed content is six times the text plus the
+/// envelope. Sizing this at the text ceiling instead refused quote-dense
+/// commands the relay had accepted and the provider had already run, before
+/// they were even parsed. A candidate past this bound is not a command this
+/// projector recognizes, and its target cannot be read — so it is silent, not
+/// "skipped": see [`verify_inbox_command`].
+const MAX_COMMAND_CONTENT_BYTES: usize = 6 * MAX_TURN_TEXT_BYTES + 4 * 1024;
 /// Maximum signed source events one projection call will examine.
 ///
 /// Counted over the *proof chain* only. Turn traffic — kind 44220 and the turn
@@ -1475,6 +1483,18 @@ fn project_inbox(
             format!("Omitted {dropped} oldest addressed turn commands to satisfy the inbox bound"),
         );
     }
+    let clipped = items
+        .iter()
+        .filter(|item| item.content.ends_with(CODING_SESSION_CONTEXT_CLIP_MARKER))
+        .count();
+    if clipped > 0 {
+        record_note(
+            notes,
+            format!(
+                "Clipped {clipped} addressed turn commands that redaction grew past the inbox content bound; each says so where it was cut"
+            ),
+        );
+    }
     if ambiguous > 0 {
         record_note(
             notes,
@@ -1602,9 +1622,12 @@ fn verify_inbox_command(
         return Ok(None);
     }
     if event.content.len() > MAX_COMMAND_CONTENT_BYTES {
-        return Err(ContextProjectionError::Bound(
-            "turn command content exceeds the projection bound".into(),
-        ));
+        // Silent for the same reason undecodable content is: nothing this
+        // large can be a legal command, so its target cannot be read, so it
+        // cannot be shown to be addressed here. Counting it would print
+        // "unverifiable turn commands addressed to this session's executions"
+        // over another umbrella's oversize mail.
+        return Ok(None);
     }
     let Ok(payload) = serde_json::from_str::<CodingSessionCommandPayload>(&event.content) else {
         // Undecodable content cannot name a target, so it cannot be shown to
@@ -1634,11 +1657,21 @@ fn verify_inbox_command(
     };
     verify_signed(event, "turn command")?;
     let content = sanitize_coding_session_context_text(text);
-    if content.trim().is_empty() || content.len() > MAX_CONTEXT_INBOX_CONTENT_BYTES {
+    if content.trim().is_empty() {
         return Err(ContextProjectionError::Bound(
-            "turn command text does not fit the inbox after redaction".into(),
+            "turn command text is empty after redaction".into(),
         ));
     }
+    // Redaction *grows* text — a host-path word becomes a ~110-byte elision
+    // marker — so a brief listing the paths a seat owns arrives here larger
+    // than the relay accepted it. Clipped and marked, never dropped: that
+    // brief is the message this inbox exists to carry.
+    let Some(content) = clip_coding_session_context_text(&content, MAX_CONTEXT_INBOX_CONTENT_BYTES)
+    else {
+        return Err(ContextProjectionError::Bound(
+            "turn command text cannot be clipped to the inbox bound".into(),
+        ));
+    };
     Ok(Some(CodingSessionContextInboxItem {
         event_id: event.id.to_hex(),
         created_at: event.created_at.as_secs(),
@@ -2901,6 +2934,155 @@ mod tests {
                 .iter()
                 .any(|note| note.contains("Skipped 1 unverifiable turn commands")),
             "the skip must be disclosed: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    /// Redaction grows text, so a legal command can stop fitting the inbox
+    /// after it is sanitized — and being dropped for that is the worst
+    /// possible answer.
+    ///
+    /// The single most likely crew message this slice exists to carry is a
+    /// brief listing the paths a seat owns. Every host-path word becomes a
+    /// ~110-byte elision marker, so a 12 KiB brief comes out of the sanitizer
+    /// larger than the 12 KiB inbox ceiling. The relay accepted it, the
+    /// provider ran it, and the seat's own inbox used to answer "unverifiable".
+    #[test]
+    fn a_command_that_grows_past_the_inbox_bound_under_redaction_is_clipped_not_dropped() {
+        let sender = Keys::generate();
+        let mut fixture = fixture(1);
+        let channel_id = fixture.input.channel_id;
+        let brief = (0..140)
+            .map(|index| {
+                format!("/Users/brian/Projects/beekeeper/beekeeper/crates/buzz-session-provider/src/file{index}.rs")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            brief.len() <= buzz_core::coding_session_command::MAX_TURN_TEXT_BYTES,
+            "the fixture must be a command the relay would accept"
+        );
+        assert!(
+            sanitize_coding_session_context_text(&brief).len() > MAX_CONTEXT_INBOX_CONTENT_BYTES,
+            "and must not fit the inbox once redacted"
+        );
+        fixture.input.turn_commands = vec![turn_command(
+            channel_id,
+            "turn-1",
+            &fixture.target,
+            &brief,
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        )];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+
+        assert_eq!(
+            package.inbox.len(),
+            1,
+            "the command a seat must read is here"
+        );
+        let content = &package.inbox[0].content;
+        assert!(content.len() <= MAX_CONTEXT_INBOX_CONTENT_BYTES);
+        assert!(
+            content.contains("clipped"),
+            "the clip says so in the text a seat reads: {}",
+            &content[content.len().saturating_sub(120)..]
+        );
+        assert!(
+            !package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("unverifiable")),
+            "and it is not called unverifiable: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    /// JSON escaping expands signed content past the text it carries, and the
+    /// projector must not refuse a command for that.
+    ///
+    /// A quote-dense 12 KiB prompt — a diff, a JSON blob, a shell transcript —
+    /// doubles under escaping. Bounding signed content at the *text* ceiling
+    /// refused it before it was ever parsed, so a legal, already-executed
+    /// command went missing from the inbox and was labelled unverifiable.
+    #[test]
+    fn a_quote_dense_command_is_carried_rather_than_refused_on_its_escaped_size() {
+        let sender = Keys::generate();
+        let mut fixture = fixture(1);
+        let channel_id = fixture.input.channel_id;
+        let text = "\"".repeat(12_000);
+        let command = turn_command(
+            channel_id,
+            "turn-1",
+            &fixture.target,
+            &text,
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        );
+        assert!(
+            command.content.len() > 16 * 1024,
+            "the fixture must exceed the old 16 KiB content bound: {}",
+            command.content.len()
+        );
+        fixture.input.turn_commands = vec![command];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        assert_eq!(package.inbox.len(), 1);
+        assert_eq!(package.inbox[0].content, text);
+        assert!(
+            !package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("unverifiable")),
+            "{:?}",
+            package.provenance.notes
+        );
+    }
+
+    /// A command this umbrella was never addressed by is never "skipped".
+    ///
+    /// The size guard used to run before the target was read, so an oversize
+    /// 44220 aimed at a different umbrella in the same channel was counted as
+    /// an unverifiable command "addressed to this session's executions" — a
+    /// sentence the function's own contract says must never be printed.
+    #[test]
+    fn an_oversize_command_addressed_elsewhere_is_not_called_unverifiable() {
+        let sender = Keys::generate();
+        let mut fixture = fixture(1);
+        let channel_id = fixture.input.channel_id;
+        let foreign = CodingSessionTarget {
+            session_id: "someone-elses-session".into(),
+            ..fixture.target.clone()
+        };
+        let mut oversize = turn_command(
+            channel_id,
+            "turn-1",
+            &foreign,
+            "not your mail",
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        );
+        oversize.content = "x".repeat(200 * 1024);
+        fixture.input.turn_commands = vec![oversize];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        assert!(package.inbox.is_empty());
+        assert!(
+            !package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("Skipped")),
+            "another umbrella's mail is not this projection's business: {:?}",
             package.provenance.notes
         );
     }
