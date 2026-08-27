@@ -4,7 +4,7 @@ Two coexisting desktop instances built from `integrated`:
 
 | | Production | Dev |
 |---|---|---|
-| What | Installed `/Applications/Bee Keeper.app` | `just desktop-standalone` (tauri dev) |
+| What | Installed `/Applications/Beekeeper.app` | `just desktop-standalone` (tauri dev) |
 | Source | newest `build/*` tag, dedicated worktree `~/Code/lightyear/buzz-prod` | main checkout (parked on `integrated`; re-fetch after ceremonies) |
 | Identifier | `io.agiterra.beekeeper.app` | `io.agiterra.beekeeper.app.dev` (worktrees: `.dev.<slug>`) |
 | Icon | stock Buzz | "dev"-badged (worktrees: branch-labelled) |

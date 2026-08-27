@@ -170,14 +170,14 @@ mod tests {
         // lose `buzz`).
         let result = build_augmented_path(
             Some(PathBuf::from("/home/agent")),
-            Some(PathBuf::from("/Applications/Bee Keeper.app/Contents/MacOS")),
+            Some(PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS")),
             Some("/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin".to_string()),
             None,
         );
         let result = result.expect("path");
         assert!(result.starts_with("/home/agent/.local/bin:"), "{result}");
         assert!(
-            result.contains(":/Applications/Bee Keeper.app/Contents/MacOS:"),
+            result.contains(":/Applications/Beekeeper.app/Contents/MacOS:"),
             "{result}"
         );
         assert!(
@@ -203,7 +203,7 @@ mod tests {
     fn nvm_bin_inserted_after_local_bin_before_exe_parent() {
         let result = build_augmented_path(
             Some(PathBuf::from("/home/user")),
-            Some(PathBuf::from("/Applications/Bee Keeper.app/Contents/MacOS")),
+            Some(PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS")),
             Some("/usr/bin:/bin".to_string()),
             Some(PathBuf::from("/home/user/.nvm/versions/node/v20.0.0/bin")),
         );
@@ -213,7 +213,7 @@ mod tests {
             .find("/home/user/.nvm/versions/node/v20.0.0/bin")
             .unwrap();
         let exe = result
-            .find("/Applications/Bee Keeper.app/Contents/MacOS")
+            .find("/Applications/Beekeeper.app/Contents/MacOS")
             .unwrap();
         assert!(local < nvm && nvm < exe, "{result}");
         assert!(result.ends_with(":/usr/bin:/bin"), "{result}");

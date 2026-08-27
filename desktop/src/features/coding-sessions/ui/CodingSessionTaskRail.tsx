@@ -112,7 +112,7 @@ export function CodingSessionTaskRail({
           <TaskRailLoadingState />
         ) : loadState === "error" ? (
           <TaskRailEmptyState
-            description="Bee Keeper could not read the latest signed plan. The session transcript is still available."
+            description="Beekeeper could not read the latest signed plan. The session transcript is still available."
             icon="error"
             title="Plan unavailable"
           />
@@ -207,7 +207,7 @@ function CodingSessionTaskDock({
         <TaskRailLoadingState />
       ) : loadState === "error" ? (
         <TaskRailEmptyState
-          description="Bee Keeper could not read the latest signed plan."
+          description="Beekeeper could not read the latest signed plan."
           icon="error"
           title="Tasks unavailable"
         />

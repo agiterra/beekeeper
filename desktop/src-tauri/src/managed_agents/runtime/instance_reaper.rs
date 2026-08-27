@@ -1,13 +1,13 @@
 use super::*;
 
-/// Binary names for the Bee Keeper desktop/Tauri process. Used by
+/// Binary names for the Beekeeper desktop/Tauri process. Used by
 /// dead-instance detection to narrow the PID scan before the identifier check
 /// below, which is what actually decides ownership.
 ///
 /// These are all spellings of the **Cargo binary name**, not the product name:
 /// `CFBundleExecutable` is the *Cargo binary* name, not `productName`, so a
 /// Tauri `productName` rename never changes the process name — but renaming the
-/// crate does. The crate was `buzz-desktop` before the Bee Keeper rebrand, and
+/// crate does. The crate was `buzz-desktop` before the Beekeeper rebrand, and
 /// both names stay listed: an installed older build, or stock Buzz, still runs
 /// under the old one. Stock Buzz therefore shares names here — which is fine,
 /// and is precisely why
@@ -28,7 +28,7 @@ const DESKTOP_BINARY_NAMES: &[&str] = &[
     "buzz-desktop.bi",
 ];
 
-/// Check if a process name matches a known Bee Keeper desktop binary.
+/// Check if a process name matches a known Beekeeper desktop binary.
 pub(super) fn is_desktop_binary(name: &str) -> bool {
     DESKTOP_BINARY_NAMES.contains(&name)
 }

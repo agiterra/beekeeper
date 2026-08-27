@@ -8,7 +8,7 @@
 > an older document about *current state*, it wins. Findings go **into** it,
 > never into a new handoff document.
 
-> **This repo is Bee Keeper, agiterra's fork of
+> **This repo is Beekeeper, agiterra's fork of
 > [block/buzz](https://github.com/block/buzz).** It is a single-branch repo:
 > `main` is the product and topic branches are ordinary and short-lived. There
 > is no assembly ceremony and no split step; build on a topic branch, let the

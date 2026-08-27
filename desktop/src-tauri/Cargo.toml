@@ -8,7 +8,7 @@ members = ["crates/buzz-terminal"]
 [package]
 name = "beekeeper-desktop"
 version = "0.5.16"
-description = "Bee Keeper desktop app"
+description = "Beekeeper desktop app"
 authors = ["you"]
 edition = "2021"
 

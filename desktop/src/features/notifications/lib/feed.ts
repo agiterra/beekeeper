@@ -67,7 +67,7 @@ export function notificationBody(item: FeedItem) {
   const fallback =
     item.kind === 46010
       ? "A workflow is waiting for your approval."
-      : "Something in Bee Keeper needs your attention.";
+      : "Something in Beekeeper needs your attention.";
   return truncateNotificationBody(item.content, fallback);
 }
 

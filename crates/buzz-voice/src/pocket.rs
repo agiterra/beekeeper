@@ -1,4 +1,4 @@
-//! April 2026 Pocket TTS engine for Bee Keeper Desktop.
+//! April 2026 Pocket TTS engine for Beekeeper Desktop.
 //!
 //! The `english_2026-04` bundle uses SentencePiece tokenization, a learned
 //! voice BOS embedding, recurrent FlowLM state, and stateful Mimi decoding.
@@ -79,7 +79,7 @@ pub struct PocketTts {
     inner: Mutex<AprilPocketTts>,
 }
 
-/// Load Bee Keeper Desktop's pinned April INT8 model.
+/// Load Beekeeper Desktop's pinned April INT8 model.
 pub fn load_text_to_speech(model_dir: &str) -> Result<PocketTts, String> {
     let dir = PathBuf::from(model_dir);
     for artifact in april_model_info().artifacts {

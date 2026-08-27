@@ -59,7 +59,7 @@ export class TerminalConnection {
     onFrame: (delivery: TerminalDelivery) => void,
   ): Promise<TerminalConnection> {
     if (!isTauri())
-      throw new Error("terminal sessions require Bee Keeper Desktop");
+      throw new Error("terminal sessions require Beekeeper Desktop");
 
     let connection: TerminalConnection | null = null;
     const pending: TerminalMessage[] = [];

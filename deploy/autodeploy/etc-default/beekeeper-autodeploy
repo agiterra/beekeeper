@@ -1,4 +1,4 @@
-# /etc/default/beekeeper-autodeploy — Bee Keeper, hive.agiterra.org
+# /etc/default/beekeeper-autodeploy — Beekeeper, hive.agiterra.org
 #
 # Read by beekeeper-autodeploy.service via EnvironmentFile=. systemd parses
 # this itself, not a shell: no `export`, no command substitution, no variable

@@ -113,7 +113,7 @@ class App extends HookConsumerWidget {
     });
 
     return MaterialApp(
-      title: 'Bee Keeper',
+      title: 'Beekeeper',
       theme: AppTheme.light(
         colorScheme: lightScheme,
         topSectionGradient: buzzLightGradient,

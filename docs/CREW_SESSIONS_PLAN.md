@@ -6,13 +6,13 @@ that changes routinely; findings still go into `docs/SESSION_STATE.md`._
 
 ## 0. What we are building, in one paragraph
 
-A coding session in Bee Keeper is already a shared, signed, observable room
+A coding session in Beekeeper is already a shared, signed, observable room
 where several provider executions work while humans watch and steer. This plan
 turns those executions into **a crew**: each seat is a specific agent identity
 with a role, seats can address each other durably, a lead seat can bring in a
 disposable builder or a different-family architect, and the human founder keeps
 founder authority over all of it. It is the reincarnation of the amas crew
-model on Bee Keeper's substrate — one bus (the relay), one record (signed
+model on Beekeeper's substrate — one bus (the relay), one record (signed
 kinds 44220–44230), one CLI (`bee`) — and it deliberately leaves amas's memory
 apparatus out until a crew has finished work nobody routed by hand.
 

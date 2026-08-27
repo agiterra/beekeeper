@@ -1746,7 +1746,7 @@ impl SessionActor {
                     turn_id,
                     vec![crate::payload::status_item(&format!(
                         "answer_stall_recovered: {adapter} answered but never resolved this \
-                         prompt; Bee Keeper closed the turn after {quiet:?}. The answer above \
+                         prompt; Beekeeper closed the turn after {quiet:?}. The answer above \
                          is complete."
                     ))],
                 )
@@ -1756,7 +1756,7 @@ impl SessionActor {
             Err(error) => {
                 let note = format!(
                     "{adapter} answered but never resolved this prompt, and did not respond to \
-                     being cancelled ({error}). Bee Keeper closed the turn after {quiet:?}; the \
+                     being cancelled ({error}). Beekeeper closed the turn after {quiet:?}; the \
                      answer above is complete."
                 );
                 (
@@ -2848,7 +2848,7 @@ done
             .any(|status| status.contains("answer_stall_recovered"));
         assert!(
             disclosed,
-            "a turn Bee Keeper had to close must say so, or the defect is \
+            "a turn Beekeeper had to close must say so, or the defect is \
              invisible to the person who could report it; got {items:#?}"
         );
 
@@ -3007,7 +3007,7 @@ done
         let quiet = Duration::from_secs(120);
         let disclosure = format!(
             "answer_stall_recovered: {adapter} answered but never resolved this prompt; \
-             Bee Keeper closed the turn after {quiet:?}. The answer above is complete."
+             Beekeeper closed the turn after {quiet:?}. The answer above is complete."
         );
         assert!(
             disclosure.len() <= 200,

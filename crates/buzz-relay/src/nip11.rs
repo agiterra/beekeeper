@@ -156,8 +156,8 @@ impl RelayInfo {
         }
 
         Self {
-            name: "Bee Keeper Relay".to_string(),
-            description: "Bee Keeper — private team communication relay".to_string(),
+            name: "Beekeeper Relay".to_string(),
+            description: "Beekeeper — private team communication relay".to_string(),
             icon: icon.filter(|s| !s.is_empty()).map(|s| s.to_string()),
             pubkey: None,
             contact: None,

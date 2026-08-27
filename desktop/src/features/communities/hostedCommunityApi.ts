@@ -67,18 +67,18 @@ export function hostedCommunityErrorMessage(
 ) {
   const messages: Record<string, string> = {
     missing_mapping:
-      "Connect your Bee Keeper identity before creating a community.",
+      "Connect your Beekeeper identity before creating a community.",
     invalid_name: "Use lowercase letters, numbers, and hyphens.",
     taken: "That Buzz address is already taken.",
     limit_reached: `You've reached the limit of ${HOSTED_COMMUNITY_LIMIT} hosted communities.`,
     relay_unavailable: "Community provisioning is temporarily unavailable.",
     identity_already_bound:
-      "This Builderlab account is connected to another Bee Keeper identity.",
+      "This Builderlab account is connected to another Beekeeper identity.",
     pubkey_already_bound:
-      "This Bee Keeper identity is connected to another Builderlab account.",
+      "This Beekeeper identity is connected to another Builderlab account.",
     not_owner: "Only the community owner can do that.",
     transferee_not_registered:
-      "That person needs a connected Bee Keeper identity before you can transfer ownership to them.",
+      "That person needs a connected Beekeeper identity before you can transfer ownership to them.",
   };
   const message = messages[error?.code ?? ""] ?? error?.message ?? fallback;
   return correlationId
@@ -121,7 +121,7 @@ export async function loadHostedCommunityAccount(): Promise<HostedCommunityAccou
       hostedCommunityErrorMessage(
         identityResponse.error,
         identityResponse.correlation_id,
-        "Could not load the connected Bee Keeper identity.",
+        "Could not load the connected Beekeeper identity.",
       ),
     );
   }

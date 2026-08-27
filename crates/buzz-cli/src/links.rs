@@ -1,6 +1,6 @@
 //! Canonical `beekeeper://` deep links for Buzz-hosted git entities.
 //!
-//! Bee Keeper Desktop renders these links as rich preview cards in chat and
+//! Beekeeper Desktop renders these links as rich preview cards in chat and
 //! navigates in-app when they are clicked. The desktop parser lives in
 //! `desktop/src/shared/lib/entityLink.ts` — the two implementations must
 //! stay format-compatible (see `golden_format_matches_desktop` below and

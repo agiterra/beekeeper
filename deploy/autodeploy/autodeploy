@@ -30,7 +30,7 @@
 #
 # REPO_ID is not optional. Woodpecker serves both repos and both use branch
 # `main`. A query filtered on branch alone returns whichever repo pushed most
-# recently, so an unpinned deployer will happily build Bee Keeper and deploy it
+# recently, so an unpinned deployer will happily build Beekeeper and deploy it
 # onto the vanilla relay — and it comes up *healthy*, because a relay is a
 # relay. Wrong product against the wrong schema, silently. Found live on
 # 2026-08-22, about five minutes before it fired.

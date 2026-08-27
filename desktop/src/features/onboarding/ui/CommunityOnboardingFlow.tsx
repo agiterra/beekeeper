@@ -804,7 +804,7 @@ export function CommunityOnboardingFlow({
                     {isPending || transaction.stage === "entering" ? (
                       <LoadingDots label="Preparing Welcome" />
                     ) : (
-                      "Take me to Bee Keeper"
+                      "Take me to Beekeeper"
                     )}
                   </Button>
                   {starterChannelFailureCount >= 2 ? (

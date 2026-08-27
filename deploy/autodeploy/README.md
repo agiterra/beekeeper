@@ -26,11 +26,11 @@ the copy nobody could see.
 
 **`REPO_ID` is not optional.** Woodpecker serves both repos and both use branch
 `main`. A query filtered on branch alone returns whichever repo pushed most
-recently. An unpinned deployer will build Bee Keeper and deploy it onto the
+recently. An unpinned deployer will build Beekeeper and deploy it onto the
 vanilla relay — and the relay comes up **healthy**, because a relay is a relay.
 Wrong product, wrong schema, no alarm. Caught live on 2026-08-22 with about
 five minutes to spare: run side by side, the pinned query returned the vanilla
-commit while the unpinned one returned a Bee Keeper commit mid-build.
+commit while the unpinned one returned a Beekeeper commit mid-build.
 
 **Deleting a branch disarms nothing.** The `pipelines` table keeps history, so
 a deployer pointed at a long-dead branch keeps selecting that branch's last

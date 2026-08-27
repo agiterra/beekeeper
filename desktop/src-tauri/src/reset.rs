@@ -123,9 +123,9 @@ pub(crate) fn run_boot_reset(app_data_dir: &Path) -> ResetOutcome {
 
     let store = crate::secret_store::SecretStore::keyring(crate::app_state::keyring_service());
     let home_dir = dirs::home_dir();
-    // No predecessor directory to trash. Bee Keeper forked from Buzz rather
+    // No predecessor directory to trash. Beekeeper forked from Buzz rather
     // than replacing it, so a mapping here would point at a *live* app's data
-    // and a Bee Keeper reset would wipe stock Buzz. The field stays so the
+    // and a Beekeeper reset would wipe stock Buzz. The field stays so the
     // reset machinery keeps handling the case if a real predecessor ever
     // appears.
     let legacy_dir = None;

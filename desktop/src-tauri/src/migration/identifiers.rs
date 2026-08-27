@@ -1,6 +1,6 @@
 //! Tauri app-data directory identifiers.
 //!
-//! There is deliberately no mapping back to a predecessor. Bee Keeper is a
+//! There is deliberately no mapping back to a predecessor. Beekeeper is a
 //! fork of Buzz, not a rename of it: both apps stay installed and keep
 //! running, so copying `xyz.block.buzz.app` forward would fork a live app's
 //! state — see the note in [`super::run_boot_migrations`].
@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn no_identifier_here_belongs_to_another_installed_app() {
-        // Bee Keeper forked from Buzz rather than replacing it: both stay
+        // Beekeeper forked from Buzz rather than replacing it: both stay
         // installed and both keep running. Anything that mapped one of our
         // identifiers onto `xyz.block.buzz.app` would make a migration fork a
         // live app's state, and would make a reset wipe it.

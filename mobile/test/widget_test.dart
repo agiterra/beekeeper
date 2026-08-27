@@ -22,7 +22,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Welcome to Bee Keeper'), findsOneWidget);
+    expect(find.text('Welcome to Beekeeper'), findsOneWidget);
   });
 }
 

@@ -11,7 +11,7 @@ import {
  * What this session's agent is allowed to do — stated, not chosen.
  *
  * t3code puts a permission control here (Supervised / Auto-accept edits /
- * Auto / Full access). Bee Keeper has no such control, and this is deliberately
+ * Auto / Full access). Beekeeper has no such control, and this is deliberately
  * **not** one: `session/request_permission` is answered `allow_once` inside the
  * ACP read loop (`crates/buzz-acp/src/acp.rs:2194`), before any surface could
  * show it. Every tool call a coding session makes is approved automatically —
@@ -44,7 +44,7 @@ export function CodingSessionAccessNotice({
         </TooltipTrigger>
         <TooltipContent className="max-w-72" side="top">
           Every tool call this agent makes — shell commands, file writes — is
-          approved automatically. Bee Keeper has no approval control yet, so
+          approved automatically. Beekeeper has no approval control yet, so
           there is nothing to choose here: this states what the session runs
           with.
         </TooltipContent>

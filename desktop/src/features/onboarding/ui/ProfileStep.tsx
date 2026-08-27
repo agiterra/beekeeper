@@ -224,7 +224,7 @@ export function ProfileStep({
           What should we call you?
         </h1>
         <p className="mt-5 text-sm leading-6 text-muted-foreground">
-          Pick the name people and agents will see in Bee Keeper. You can change
+          Pick the name people and agents will see in Beekeeper. You can change
           it anytime.
         </p>
       </div>

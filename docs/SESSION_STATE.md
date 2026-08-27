@@ -38,7 +38,7 @@ disagrees with an older document about *current state*, this one wins.
 > `docs/INTEGRATION.md` now describes only what is still live (CI, caching,
 > autodeploy). The near-pristine upstream mirror plus the single
 > ci.agiterra.org patch moved to `agiterra/buzz`, which will serve a **vanilla**
-> relay at `lightyear.agiterra.org`; Bee Keeper gets a new relay at
+> relay at `lightyear.agiterra.org`; Beekeeper gets a new relay at
 > `hive.agiterra.org`. **All data on the current relay is being abandoned**, so
 > every deployment fact below this banner describes a relay that is going away.
 >
@@ -71,7 +71,7 @@ through 57; restored the same day from `b2298102`._
 
 _Previously: 2026-08-22 — Phase 4 is complete. The rebrand landed on `main`
 (`d90c24d14`), beekeeper has a real gate (Woodpecker repo 2, first pipeline
-green at `62bcaa223`), hive serves Bee Keeper, and **lightyear has been rebuilt
+green at `62bcaa223`), hive serves Beekeeper, and **lightyear has been rebuilt
 as a vanilla relay** with a wiped database and a rotated keypair. What remains
 is automation: neither relay has a deployer._
 
@@ -88,7 +88,7 @@ partial because several session channels were inaccessible._
 
 | | |
 | --- | --- |
-| Deployed (Bee Keeper) | `beekeeper-relay:7d224a8b6` on **hive.agiterra.org**, observed running there 2026-08-23 (deploy time not recorded), with `a961fb277` pushed to `main` the same morning and awaiting the deployer's next tick. (Was `0be70d424`, shipped 2026-08-22 12:24 UTC by its own deployer (`deploy/autodeploy/`, installed as `beekeeper-autodeploy.timer`) — the first automated Bee Keeper deploy. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; owner `6cbdf445…92b68df2`, key imported into the desktop keychain and the server copy deleted. Relay identity (NIP-11 `self`) is **`1fb029d0…c09ab336`** — recorded here as the baseline, because `BUZZ_RELAY_PRIVATE_KEY` auto-generates when unset, and a relay that silently rotates its key on every restart evicts every client cache. Both it and `BUZZ_GIT_HOOK_HMAC_SECRET` are persisted at 64 chars; check `self` against this value after any deploy.) |
+| Deployed (Beekeeper) | `beekeeper-relay:7d224a8b6` on **hive.agiterra.org**, observed running there 2026-08-23 (deploy time not recorded), with `a961fb277` pushed to `main` the same morning and awaiting the deployer's next tick. (Was `0be70d424`, shipped 2026-08-22 12:24 UTC by its own deployer (`deploy/autodeploy/`, installed as `beekeeper-autodeploy.timer`) — the first automated Beekeeper deploy. Its community row was created by `ensure_configured_community` on first boot from `RELAY_URL`; owner `6cbdf445…92b68df2`, key imported into the desktop keychain and the server copy deleted. Relay identity (NIP-11 `self`) is **`1fb029d0…c09ab336`** — recorded here as the baseline, because `BUZZ_RELAY_PRIVATE_KEY` auto-generates when unset, and a relay that silently rotates its key on every restart evicts every client cache. Both it and `BUZZ_GIT_HOOK_HMAC_SECRET` are persisted at 64 chars; check `self` against this value after any deploy.) |
 | Deployed (vanilla) | `buzz-relay:12201c49b` on **lightyear.agiterra.org**, rebuilt from scratch 2026-08-22. Database dropped and recreated — **32 migrations applied, max version 32**, which is vanilla's schema and not the fork's 40, so the tree is provably upstream. Relay keypair rotated: NIP-11 `self` moved `2ba5c5e7…d13dda7` → `f85e9e21…7b08455c`, matching the key generated in-container. Fresh owner `180d54c0…d32805c8`, bootstrapped by the relay itself. NIP-11 reads `Buzz Relay` / `github.com/block/buzz`. Owner key backed up and `/opt/buzz/.owner-key` deleted. Autodeploy tracks it, pinned to `repo_id = 1`. |
 | Superseded by the above | `build/2026-08-21.1` (`04a087e4a`) on lightyear — Woodpecker #109 passed all jobs; a live cold digest then observed a current kind-24223 lease and classified a session last durably observed 9,119 seconds earlier as provider-reachable, proving the new relay rather than the pre-lease build answered. |
 | Assembly | Agent Progress candidate on top of `build/2026-08-21.1`: one shared coordination fold now supplies Pulse and the global `/agent-progress` preview surface; item 36 records the exact product and gate claims. It is not shipped until its new build tag and Woodpecker result exist. |
@@ -1346,7 +1346,7 @@ same morning and one left as a product question.
     in that state.
 
 54. **OPEN: Claude background shell completed, but the following ACP prompt
-    never resolved until Bee Keeper cancelled it.** Andy's shared session is
+    never resolved until Beekeeper cancelled it.** Andy's shared session is
     channel `7df9fd91-0066-461c-bc6b-5f49c6bb9a16`, session
     `ecde2480-c334-491d-ad6f-c8685e22ee02`, generation 1, signed projection
     `4b6fd011e70b1323…c150f4312b9` (`claude-agent-acp`, title "Rebuild Bee
@@ -1355,7 +1355,7 @@ same morning and one left as a product question.
     - Turn 1 launched `scripts/local-prod-build.sh HEAD` as a Claude Terminal
       background command. Its tool result explicitly said "You will be
       notified when it completes" (event seq 20), but the ACP turn then ended
-      successfully after 41,422 ms (seq 27). That promise is not a Bee Keeper
+      successfully after 41,422 ms (seq 27). That promise is not a Beekeeper
       capability: a detached shell can outlive the prompt, and neither ACP nor
       the adapter creates a new person-visible turn when it exits. The current
       adapter's background-subagent hold deliberately excludes background
@@ -1366,7 +1366,7 @@ same morning and one left as a product question.
       later, Claude immediately emitted two Terminal calls and two successful
       results (seq 29-32); the captured build output says `Finished release`,
       bundle OK, installed, exit code 0. Then the adapter emitted **nothing for
-      934,726 ms**. At Bee Keeper's configured 900s silence boundary the
+      934,726 ms**. At Beekeeper's configured 900s silence boundary the
       provider sent `session/cancel`; only during that cancellation drain did
       Claude flush the complete "Yes — done" answer (seq 33), followed 19 ms
       later by the honest terminal result `Idle timeout — no agent activity
@@ -1382,7 +1382,7 @@ same morning and one left as a product question.
       carry Andy's installed adapter/SDK versions or provider stderr, so it is
       an inference, not yet the proven local root cause.
     - **Do not "fix" this by only raising the silence budget.** That merely
-      moves an unresolved ACP request farther away; Bee Keeper's timeout and
+      moves an unresolved ACP request farther away; Beekeeper's timeout and
       cancellation did the useful thing here and preserved both the late answer
       and the fact that its turn failed. Next evidence: on Andy's machine record
       `claude-agent-acp` and Claude Code versions plus raw ACP/provider stderr,
@@ -1480,7 +1480,7 @@ same morning and one left as a product question.
       empty folded turns no longer manufacture a generic `Signed execution
       activity` row.
     - T3's moving-highlight treatment is adapted for `Thinking`, but its truth
-      boundary is Bee Keeper's: it appears only after a signed running turn
+      boundary is Beekeeper's: it appears only after a signed running turn
       exists and before any signed plan, tool, answer, or error becomes visible.
       The optimistic unsent row remains silent. Breathing and text-sweep
       animation both become static under reduced motion.
@@ -1537,7 +1537,7 @@ same morning and one left as a product question.
     thread to run again". Confirmed against the live transcript — see the
     measurement bullet below, which also **rules out the subagent cause this
     entry originally named**. What follows about `claude-agent-acp` 0.70.0
-    (`~/Library/Application Support/Bee Keeper/node-tools/lib/node_modules/
+    (`~/Library/Application Support/Beekeeper/node-tools/lib/node_modules/
     @agentclientprotocol/claude-agent-acp/dist/acp-agent.js`) is a real latent
     bug found while reading for this, but it is **not** what happened here:
     `settleOrDefer` (`:1559-1575`) holds the `session/prompt` open
@@ -1608,7 +1608,7 @@ same morning and one left as a product question.
       `ThreadBackgroundLiveness.ts` is an advisory sidebar pill. ACP has to
       answer "which result settles which prompt", and chose to wait.
     - **Also amend the claim that the adapter "flushed its answer only during
-      cancellation".** That timestamp is Bee Keeper's own flush. The translator
+      cancellation".** That timestamp is Beekeeper's own flush. The translator
       buffers agent text to a size, tool, or turn-end boundary
       (`transcript.rs:13-19`, `:122-127`) and `close_turn()` runs after the
       cancel drain.
@@ -1620,7 +1620,7 @@ same morning and one left as a product question.
       as it is because it still has to cover genuinely long tools. On expiry
       the provider **nudges** with the adapter's own escape hatch rather than
       killing: the turn usually returns a real stop reason and is published
-      **Completed with the answer intact**, plus a status row saying Bee Keeper
+      **Completed with the answer intact**, plus a status row saying Beekeeper
       had to close it. Reporting it as clean would hide the defect from the
       only person able to report it upstream.
     - **A second, independent silence, now closed.** The adapter strips a
@@ -2587,7 +2587,7 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
   2 = `agiterra/beekeeper`), and beekeeper's branch is `main`. Today that is
   safe only because the watched branch names differ. The moment a deployer
   watches `main` — which hive's must — it will match the vanilla repo's `main`
-  pipelines too and can deploy **stock upstream Buzz onto a Bee Keeper relay**,
+  pipelines too and can deploy **stock upstream Buzz onto a Beekeeper relay**,
   or the reverse. Pin `repo_id` in both deployers before wiring hive up.
 - **A freshly-added Woodpecker repo has every Trusted flag off**, including
   Volumes. The gate mounts host caches from `/srv/ci-cache`, so without it the
@@ -2621,8 +2621,8 @@ checkpoints (kind 44231) and encrypted native-snapshot sync (44232).
 - **The pin was proven necessary the same minute it was applied.** Run
   side by side, the pinned query returned repo 1 / `12201c49b` (vanilla, equal
   to the deployed image → no-op) while the unpinned one returned repo **2** /
-  `a0860552c` — a Bee Keeper commit, mid-build. Had it gone green first, an
-  unpinned deployer would have put Bee Keeper on the vanilla relay, and it
+  `a0860552c` — a Beekeeper commit, mid-build. Had it gone green first, an
+  unpinned deployer would have put Beekeeper on the vanilla relay, and it
   would have come up *healthy* while serving the wrong product.
 - **Retired secrets accumulate in `/opt/buzz/compose/`.** Every autodeploy run
   leaves a `.env.bak-pre-<sha>`, each a full copy of the relay private key.

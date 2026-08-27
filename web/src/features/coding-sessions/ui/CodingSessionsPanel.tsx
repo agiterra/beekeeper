@@ -109,7 +109,7 @@ export function CodingSessionsNoChannel() {
         No session channel
       </p>
       <p className="mt-1 text-xs text-black/50 dark:text-white/50">
-        This repository is not linked to a Bee Keeper channel, so there is no
+        This repository is not linked to a Beekeeper channel, so there is no
         place for coding sessions to be published or observed.
       </p>
     </div>
@@ -196,7 +196,7 @@ export function CodingSessionsPanel({
             No coding sessions in this channel
           </p>
           <p className="mt-1 text-xs text-black/50 dark:text-white/50">
-            Sessions started from a Bee Keeper client appear here in real time.
+            Sessions started from a Beekeeper client appear here in real time.
           </p>
         </div>
       ) : (

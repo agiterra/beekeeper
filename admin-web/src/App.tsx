@@ -94,7 +94,7 @@ function Reports() {
     <Page
       eyebrow="Moderation"
       title="Open reports"
-      description="Review reports across every Bee Keeper community."
+      description="Review reports across every Beekeeper community."
     >
       <StateView resource={resource}>
         {(reports) =>

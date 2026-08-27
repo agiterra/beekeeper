@@ -640,7 +640,7 @@ function StatusLine({
     return (
       <p className="text-sm text-muted-foreground">
         This machine is currently using another member's shared compute. Turn on
-        sharing to switch to the selected local model; Bee Keeper may briefly
+        sharing to switch to the selected local model; Beekeeper may briefly
         restart.
       </p>
     );

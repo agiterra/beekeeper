@@ -132,7 +132,7 @@ function notifyStorageFull(): void {
     .then(({ toast }) => {
       toast.error("Local storage is full", {
         description:
-          "Bee Keeper could not save some local data — read positions may not persist across restarts.",
+          "Beekeeper could not save some local data — read positions may not persist across restarts.",
       });
     })
     .catch(() => {});

@@ -22,12 +22,12 @@ pub struct LegacyOnboardingCompletion {
     value: String,
 }
 
-/// Bee Keeper has no predecessor to read workspace storage from, so this is
+/// Beekeeper has no predecessor to read workspace storage from, so this is
 /// always `None`.
 ///
 /// This used to map the running identifier back to the Sprout-era one, which
 /// made sense while the lineage was Sprout -> Buzz: each rename retired the
-/// app before it. Bee Keeper is a *fork* — stock Buzz stays installed and
+/// app before it. Beekeeper is a *fork* — stock Buzz stays installed and
 /// keeps running — so after the rename this was pointing our identifier at a
 /// lineage that was never ours. The command stays wired up and simply reports
 /// nothing to import.

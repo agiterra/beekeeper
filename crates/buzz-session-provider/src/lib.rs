@@ -10678,7 +10678,7 @@ done
             .expect("strictly decodable degraded receipt");
     }
 
-    /// A cancel Bee Keeper issued on its own behalf is not an operator's
+    /// A cancel Beekeeper issued on its own behalf is not an operator's
     /// interrupt, and must not be receipted as one.
     ///
     /// `nudge_stalled_turn` recovers a turn the adapter answered but never
@@ -10758,7 +10758,7 @@ done
             statuses
                 .iter()
                 .any(|status| status.starts_with("answer_stall_recovered:")),
-            "the operator was never told Bee Keeper closed the turn: {statuses:?}"
+            "the operator was never told Beekeeper closed the turn: {statuses:?}"
         );
     }
 

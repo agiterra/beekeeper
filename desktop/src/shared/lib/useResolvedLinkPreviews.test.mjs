@@ -292,7 +292,7 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
       pubkey: owner,
       tags: [
         ["d", "buzz"],
-        ["name", "Bee Keeper Desktop"],
+        ["name", "Beekeeper Desktop"],
         ["default-branch", "main"],
       ],
     }),
@@ -360,7 +360,7 @@ test("Buzz PR metadata includes repository identity and trusted root context", a
     `beekeeper://pr?id=${id}&owner=${owner}&d=buzz`,
     fetchEvents,
   );
-  assert.equal(result?.siteName, "Bee Keeper Desktop");
+  assert.equal(result?.siteName, "Beekeeper Desktop");
   assert.equal(result?.title, "Restore entity cards");
   assert.equal(result?.description, "Open · fix/cards → release · 1234567");
   assert.equal(result?.faviconDataUrl, null);
@@ -378,7 +378,7 @@ test("Buzz entity roots reject ambiguous repository tags", async () => {
     pubkey: owner,
     tags: [
       ["d", "buzz"],
-      ["name", "Bee Keeper Desktop"],
+      ["name", "Beekeeper Desktop"],
       ["default-branch", "main"],
     ],
   });

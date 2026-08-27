@@ -169,7 +169,7 @@ Everything is environment variables. No flags, no config files. (We are a subpro
 
 ## Reply Guard
 
-Off by default, except on Buzz shared-compute (mesh) agents, where Bee Keeper Desktop
+Off by default, except on Buzz shared-compute (mesh) agents, where Beekeeper Desktop
 sets `BUZZ_AGENT_REQUIRE_REPLY=1` automatically. With it enabled, a turn that is
 about to end without any recognized attempt to post to Buzz gets a reminder that
 its assistant text is invisible to humans, and is rerolled.

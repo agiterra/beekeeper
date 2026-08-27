@@ -506,7 +506,7 @@ test("the two actionable failure codes get actionable copy", () => {
     },
   });
   assert.match(staleOffer.message, /codex-primary/);
-  assert.match(staleOffer.message, /restart Bee Keeper/i);
+  assert.match(staleOffer.message, /restart Beekeeper/i);
 
   // Other PROVIDER_UNAVAILABLE failures (adapter would not start) keep the
   // provider's own words — a restart hint there would be a guess.

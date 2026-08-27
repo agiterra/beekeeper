@@ -1,6 +1,6 @@
 # Contributing to Buzz
 
-> **agiterra fork note** — this is Bee Keeper, agiterra's fork of block/buzz.
+> **agiterra fork note** — this is Beekeeper, agiterra's fork of block/buzz.
 > The guide below is upstream's and still describes the code accurately. For how
 > *this* repo works — single `main` branch, ordinary topic branches, upstream
 > merged in occasionally, CI on ci.agiterra.org — see

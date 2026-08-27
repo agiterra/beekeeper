@@ -65,9 +65,9 @@ where
 #[derive(Parser)]
 #[command(
     name = "bee",
-    about = "Bee Keeper CLI — interact with a Bee Keeper relay",
+    about = "Beekeeper CLI — interact with a Beekeeper relay",
     long_about = "\
-Bee Keeper CLI — interact with a Bee Keeper relay
+Beekeeper CLI — interact with a Beekeeper relay
 
 Configuration (flags override env vars):
   BUZZ_RELAY_URL     Relay base URL        [default: http://localhost:3000]
@@ -299,7 +299,7 @@ impl RespondToArg {
 
 #[derive(Subcommand)]
 pub enum AgentsCmd {
-    /// Open a prefilled create-agent form in the owner's Bee Keeper Desktop
+    /// Open a prefilled create-agent form in the owner's Beekeeper Desktop
     DraftCreate {
         /// Current channel UUID; the new agent is added here after save
         #[arg(long)]
@@ -311,7 +311,7 @@ pub enum AgentsCmd {
         #[arg(long)]
         system_prompt: String,
     },
-    /// Open a prefilled edit-agent form in the owner's Bee Keeper Desktop
+    /// Open a prefilled edit-agent form in the owner's Beekeeper Desktop
     DraftUpdate {
         /// Current channel UUID
         #[arg(long)]

@@ -35,7 +35,7 @@ void main() {
     expect(result, DeviceAuthResult.success);
     verify(
       () => authentication.authenticate(
-        localizedReason: 'Confirm sending your Bee Keeper identity to desktop',
+        localizedReason: 'Confirm sending your Beekeeper identity to desktop',
         authMessages: any(named: 'authMessages'),
         biometricOnly: false,
         sensitiveTransaction: true,

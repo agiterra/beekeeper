@@ -1,6 +1,6 @@
 # Working in agiterra/beekeeper
 
-This repo is **Bee Keeper**, agiterra's fork of
+This repo is **Beekeeper**, agiterra's fork of
 [block/buzz](https://github.com/block/buzz). It is a single-branch repo: `main`
 is the product, and upstream is merged in occasionally.
 
@@ -8,7 +8,7 @@ is the product, and upstream is merged in occasionally.
 
 | Remote | Repo | What it is |
 |---|---|---|
-| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Bee Keeper serving its own source. **`main` tracks `origin/main`**, and this is where you push. Needs Nostr credentials; run `just install-git-credentials`. |
+| `origin` | `hive.agiterra.org/git/<owner>/agiterra-beekeeper` | The relay's **own** git hosting — Beekeeper serving its own source. **`main` tracks `origin/main`**, and this is where you push. Needs Nostr credentials; run `just install-git-credentials`. |
 | `upstream` | [agiterra/beekeeper](https://github.com/agiterra/beekeeper) | GitHub. Still what **Woodpecker watches**, so it is what CI and the relay deploy from — kept in step automatically by the forge's mirror bridge (see § The relay is canonical). Fetch-only from clones; never push here. |
 | `vanilla` | [agiterra/buzz](https://github.com/agiterra/buzz) | The block/buzz mirror, plus the one CI patch that runs it on ci.agiterra.org. Upstream work is merged or cherry-picked from here. |
 
@@ -144,7 +144,7 @@ reports success. The bech32 `npub1…` form is rejected outright; the hex form i
 not decidable locally, which is the reason `bee git check` exists.
 
 Inside the desktop app the same setup is offered after an import or link wires
-up a Bee Keeper remote. It is an offer, never automatic: accepting writes the
+up a Beekeeper remote. It is an offer, never automatic: accepting writes the
 identity key to disk, and the prompt names the file first.
 
 ## Branches
@@ -438,6 +438,6 @@ accompanied by a GitHub push until a relay→mirror bridge exists.
 `build/*` tags remain the pins for reproducing or manually rolling to a known
 build. Desktop dev runs `just desktop-standalone`.
 
-Running a daily-driver Bee Keeper.app and a dev instance side by side on macOS
+Running a daily-driver Beekeeper.app and a dev instance side by side on macOS
 (distinct icons, no repeated keychain prompts):
 [local-desktop-instances.md](local-desktop-instances.md).

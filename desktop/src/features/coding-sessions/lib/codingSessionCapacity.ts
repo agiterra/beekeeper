@@ -1,7 +1,7 @@
 /**
  * The session-capacity setting, as a model rather than a form.
  *
- * Bee Keeper's provider holds at most a few live agent processes at once, and
+ * Beekeeper's provider holds at most a few live agent processes at once, and
  * hitting that ceiling reads as somebody else's limit: "there can only be 4
  * concurrent Claude sessions?" (reported 2026-08-24). It is this computer's
  * cap, it is now the person's to set, and this module owns the rules the panel

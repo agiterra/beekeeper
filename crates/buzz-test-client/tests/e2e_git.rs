@@ -577,7 +577,7 @@ async fn create_test_project(owner: &Keys, visibility: &str, members: &[(&Keys, 
 }
 
 /// A repository announced into a project with **no** `buzz-channel` tag — the
-/// shape Bee Keeper Desktop now produces — is reachable through the project's
+/// shape Beekeeper Desktop now produces — is reachable through the project's
 /// roster alone.
 ///
 /// This is the whole point of making membership the access signal, proved over

@@ -4,7 +4,7 @@
 
 ## Abstract
 
-This document specifies the protocol by which Bee Keeper Desktop delegates the
+This document specifies the protocol by which Beekeeper Desktop delegates the
 execution of a managed agent to a **remote substrate** — any compute
 environment other than the local machine — through a **backend provider
 binary**, and specifies the lifecycle contract every provider and every
@@ -70,7 +70,7 @@ deliberately does **not** specify:
 
 Five principals:
 
-- **Desktop** `D` — the Bee Keeper Desktop app. Holds the agent's identity (nsec in
+- **Desktop** `D` — the Beekeeper Desktop app. Holds the agent's identity (nsec in
   the OS keyring), its configuration record, and the only UI. Trusted.
 - **Provider** `P` — an executable `buzz-backend-<id>` on `D`'s machine.
   Invoked one process per operation: JSON request on stdin, JSON response on

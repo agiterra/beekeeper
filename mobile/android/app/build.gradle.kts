@@ -91,7 +91,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        resValue("string", "app_name", "Bee Keeper")
+        resValue("string", "app_name", "Beekeeper")
     }
 
     signingConfigs {

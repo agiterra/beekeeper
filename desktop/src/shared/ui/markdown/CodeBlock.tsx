@@ -85,7 +85,7 @@ export function MarkdownCodeBlock({
 }) {
   const [isCopying, setIsCopying] = React.useState(false);
   // Default off: a wide block scrolls (t3code's default too). The toggle is
-  // per block and deliberately not persisted — Bee Keeper has no settings surface
+  // per block and deliberately not persisted — Beekeeper has no settings surface
   // for a global word-wrap preference yet.
   const [isWrapped, setIsWrapped] = React.useState(false);
   const codeBlockRef = React.useRef<HTMLPreElement | null>(null);

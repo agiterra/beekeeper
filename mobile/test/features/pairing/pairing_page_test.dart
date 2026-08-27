@@ -24,7 +24,7 @@ void main() {
       );
 
       expect(find.byType(TappableFlappingBee), findsOneWidget);
-      expect(find.text('Welcome to Bee Keeper'), findsOneWidget);
+      expect(find.text('Welcome to Beekeeper'), findsOneWidget);
       expect(find.text('Scan a QR code'), findsOneWidget);
       expect(find.text('Use pairing code'), findsOneWidget);
       expect(find.text('Connect'), findsNothing);
@@ -340,7 +340,7 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('full Bee Keeper identity'), findsOneWidget);
+      expect(find.textContaining('full Beekeeper identity'), findsOneWidget);
       expect(find.textContaining('permanent access'), findsOneWidget);
       expect(find.text('Codes Match'), findsOneWidget);
     });

@@ -632,7 +632,7 @@ export function newCodingSessionFailureMessage(
     // sessions?" — when it is this computer's own provider holding at most N
     // live agent processes. The provider's sentence carries the number and
     // the remediation; this adds who is imposing it.
-    return `${error.message}. This is Bee Keeper's own cap on this computer, not a limit from the model provider — every other session in this community is unaffected.`;
+    return `${error.message}. This is Beekeeper's own cap on this computer, not a limit from the model provider — every other session in this community is unaffected.`;
   }
   if (
     error.code === "PROVIDER_UNAVAILABLE" &&
@@ -642,7 +642,7 @@ export function newCodingSessionFailureMessage(
     // runtime installed afterwards shows as ready in the picker but is not in
     // that offer until the provider restarts. Without this line the raw
     // receipt reads like a dead end, when a restart is the whole fix.
-    return `${error.message}. This usually means the runtime was installed after the provider started — restart Bee Keeper to refresh its available runtimes, then try again.`;
+    return `${error.message}. This usually means the runtime was installed after the provider started — restart Beekeeper to refresh its available runtimes, then try again.`;
   }
   return error.message;
 }

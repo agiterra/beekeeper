@@ -38,7 +38,7 @@ import { Input } from "@/shared/ui/input";
  *
  * The cap existed before this panel did, as a compiled-in 4 that surfaced only
  * as a refusal — read, reasonably, as a limit from the model vendor ("there
- * can only be 4 concurrent Claude sessions?", 2026-08-24). It is Bee Keeper's
+ * can only be 4 concurrent Claude sessions?", 2026-08-24). It is Beekeeper's
  * own, it is about this machine's capacity, and it is now the person's to set.
  *
  * Everything here is stated rather than implied: what is running now, what the

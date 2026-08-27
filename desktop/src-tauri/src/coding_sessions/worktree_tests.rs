@@ -97,7 +97,7 @@ fn scratch_repo(dir: &Path) -> Result<(), String> {
     run_git(
         &[
             "-c",
-            "user.name=Bee Keeper Test",
+            "user.name=Beekeeper Test",
             "-c",
             "user.email=test@example.invalid",
             "commit",
@@ -188,7 +188,7 @@ fn scratch_commit(dir: &Path, message: &str) -> Result<(), String> {
     run_git(
         &[
             "-c",
-            "user.name=Bee Keeper Test",
+            "user.name=Beekeeper Test",
             "-c",
             "user.email=test@example.invalid",
             "commit",

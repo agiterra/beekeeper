@@ -6,7 +6,7 @@
 #
 # REPO_ID is the load-bearing line. Woodpecker serves both repos and both use
 # branch `main`, so a query that is not pinned to a repo returns whichever
-# pushed most recently — which would deploy Bee Keeper onto this vanilla relay,
+# pushed most recently — which would deploy Beekeeper onto this vanilla relay,
 # and it would come up healthy. Cross-check against the other config in this
 # directory: the two REPO_IDs must differ.
 AUTODEPLOY_NAME=buzz

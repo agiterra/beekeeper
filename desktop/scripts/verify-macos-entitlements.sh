@@ -4,7 +4,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 <path-to-Bee Keeper.app>" >&2
+  echo "Usage: $0 <path-to-Beekeeper.app>" >&2
   exit 2
 fi
 

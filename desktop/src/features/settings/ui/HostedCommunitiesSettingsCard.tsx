@@ -95,7 +95,7 @@ export function HostedCommunitiesSettingsCard() {
         errorMessage(
           identityResponse.error,
           identityResponse.correlation_id,
-          "Could not load the connected Bee Keeper identity.",
+          "Could not load the connected Beekeeper identity.",
         ),
       );
     }
@@ -165,7 +165,7 @@ export function HostedCommunitiesSettingsCard() {
     });
 
   const connectIdentity = () =>
-    run("Connecting Bee Keeper identity…", async () => {
+    run("Connecting Beekeeper identity…", async () => {
       const response = await invoke<IdentityResponse>(
         "bind_builderlab_nostr_identity",
       );
@@ -174,7 +174,7 @@ export function HostedCommunitiesSettingsCard() {
           errorMessage(
             response.error,
             response.correlation_id,
-            "Could not connect the Bee Keeper identity.",
+            "Could not connect the Beekeeper identity.",
           ),
         );
       }
@@ -192,7 +192,7 @@ export function HostedCommunitiesSettingsCard() {
           errorMessage(
             response.error,
             response.correlation_id,
-            "Could not unpair the Bee Keeper identity.",
+            "Could not unpair the Beekeeper identity.",
           ),
         );
       }
@@ -230,7 +230,7 @@ export function HostedCommunitiesSettingsCard() {
           errorMessage(
             released.error,
             released.correlation_id,
-            "Could not release the previously connected Bee Keeper identity.",
+            "Could not release the previously connected Beekeeper identity.",
           ),
         );
       }
@@ -243,11 +243,11 @@ export function HostedCommunitiesSettingsCard() {
         await loadAccount();
         throw new Error(
           bound.error.code === "pubkey_already_bound"
-            ? "This device's Bee Keeper identity is already reserved by another Builderlab account, so it can't be connected here. Sign in with that account, or transfer the identity there first."
+            ? "This device's Beekeeper identity is already reserved by another Builderlab account, so it can't be connected here. Sign in with that account, or transfer the identity there first."
             : errorMessage(
                 bound.error,
                 bound.correlation_id,
-                "Could not connect this device's Bee Keeper identity.",
+                "Could not connect this device's Beekeeper identity.",
               ),
         );
       }
@@ -479,13 +479,13 @@ export function HostedCommunitiesSettingsCard() {
           {!identity ? (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5">
               <h3 className="font-medium">
-                Link this account to your Bee Keeper identity
+                Link this account to your Beekeeper identity
               </h3>
               <p
                 className="mt-2 text-sm text-muted-foreground/70"
                 data-settings-subcopy
               >
-                This Builderlab account isn&apos;t linked to a Bee Keeper
+                This Builderlab account isn&apos;t linked to a Beekeeper
                 identity yet. Connect this device&apos;s key to create and own
                 communities under it — Buzz signs a one-time challenge locally,
                 so your private key never leaves Desktop.
@@ -498,7 +498,7 @@ export function HostedCommunitiesSettingsCard() {
                 {action ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" />
                 ) : null}
-                {action ?? "Connect Bee Keeper identity"}
+                {action ?? "Connect Beekeeper identity"}
               </Button>
             </div>
           ) : identityMismatch ? (
@@ -507,7 +507,7 @@ export function HostedCommunitiesSettingsCard() {
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                 <div>
                   <h3 className="font-medium">
-                    This account is connected to a different Bee Keeper identity
+                    This account is connected to a different Beekeeper identity
                   </h3>
                   <p
                     className="mt-2 text-sm text-muted-foreground/70"
@@ -718,7 +718,7 @@ function UnpairIdentityButton({
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Unpair this Bee Keeper identity?</AlertDialogTitle>
+          <AlertDialogTitle>Unpair this Beekeeper identity?</AlertDialogTitle>
           <AlertDialogDescription>
             Your Builderlab account will no longer be connected to this Buzz
             key. You can reconnect any key later, but community actions stay
@@ -916,7 +916,7 @@ function TransferOwnershipDialog({
           <DialogTitle>Transfer ownership</DialogTitle>
           <DialogDescription>
             Transfer {communityName} to another person. You become a regular
-            member. The recipient needs a connected Bee Keeper identity first,
+            member. The recipient needs a connected Beekeeper identity first,
             and this can&apos;t be undone.
           </DialogDescription>
         </DialogHeader>

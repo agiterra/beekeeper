@@ -82,18 +82,18 @@ export function IdentityKeyHelpDialog() {
           >
             <div>
               <p>
-                Bee Keeper uses an identity key instead of a traditional
-                account. It’s created on your device and represents you whenever
-                you use Buzz.
+                Beekeeper uses an identity key instead of a traditional account.
+                It’s created on your device and represents you whenever you use
+                Buzz.
               </p>
               <p>
                 Your identity belongs to you, not Buzz. There’s no password to
-                reset, and Bee Keeper can’t recover your key if you lose it.
-                Keep a backup somewhere safe and never share it. Anyone with
-                your key can act as you.
+                reset, and Beekeeper can’t recover your key if you lose it. Keep
+                a backup somewhere safe and never share it. Anyone with your key
+                can act as you.
               </p>
               <p>
-                If you’re new to Bee Keeper, create a new identity key. If you
+                If you’re new to Beekeeper, create a new identity key. If you
                 already have a Nostr identity, use your existing key.
               </p>
             </div>

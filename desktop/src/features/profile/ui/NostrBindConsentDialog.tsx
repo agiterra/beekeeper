@@ -19,10 +19,10 @@ import { StartupWindowDragRegion } from "@/shared/ui/StartupWindowDragRegion";
 import { writeTextToClipboard } from "@/shared/lib/clipboard";
 
 const COPY_SUCCESS_MESSAGE =
-  "Signed response copied. Paste it into the Bee Keeper admin console.";
+  "Signed response copied. Paste it into the Beekeeper admin console.";
 const PREVIEW_COPY_SUCCESS_MESSAGE = "Preview response copied.";
 const COPY_FAILURE_MESSAGE =
-  "Bee Keeper couldn't access the clipboard. Try again.";
+  "Beekeeper couldn't access the clipboard. Try again.";
 const EXPIRED_LINK_MESSAGE =
   "This binding link has expired. Request a new one from the requesting app.";
 const VERIFICATION_CODE_LENGTH = 6;
@@ -299,7 +299,7 @@ export function NostrBindConsentDialog() {
         .catch((error) => {
           console.warn("get_identity for nostr bind failed:", error);
           setIdentity(null);
-          setError("Could not load the current Bee Keeper identity.");
+          setError("Could not load the current Beekeeper identity.");
         });
     });
 
@@ -669,15 +669,15 @@ export function NostrBindConsentDialog() {
                   <DialogPrimitive.Title className="mt-6 text-3xl font-semibold tracking-tight">
                     {payload.returnMode === "browser_fragment_v1"
                       ? "Continue in your browser"
-                      : "Finish on the Bee Keeper website"}
+                      : "Finish on the Beekeeper website"}
                   </DialogPrimitive.Title>
                   <DialogPrimitive.Description
                     className="mt-3 max-w-[440px] text-sm leading-6 text-muted-foreground"
                     id="nostr-bind-description"
                   >
                     {payload.returnMode === "browser_fragment_v1"
-                      ? "Bee Keeper opened your browser to finish verification."
-                      : "Copy the response below, then paste it into the Bee Keeper website to finish verification."}
+                      ? "Beekeeper opened your browser to finish verification."
+                      : "Copy the response below, then paste it into the Beekeeper website to finish verification."}
                   </DialogPrimitive.Description>
 
                   {error ? (

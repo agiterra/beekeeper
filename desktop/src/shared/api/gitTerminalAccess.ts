@@ -4,7 +4,7 @@ import { invokeTauri } from "@/shared/api/tauri";
  * Whether `git push` works from a terminal against the relay's git hosting.
  *
  * The app's own git runs with an ephemeral, env-only credential config, so a
- * repository it imported carries a Bee Keeper remote that a terminal cannot
+ * repository it imported carries a Beekeeper remote that a terminal cannot
  * authenticate to. These fields describe the *persistent* configuration, which
  * is the only thing a terminal can see.
  */

@@ -24,7 +24,7 @@ export function OrgSidebar({ repos }: { repos: Repo[] }) {
 
   return (
     <div className="space-y-6">
-      {/* Open in Bee Keeper */}
+      {/* Open in Beekeeper */}
       <ConnectButton className="w-full" />
 
       {/* People section */}

@@ -19,7 +19,7 @@ tree — off `PATH`, and deleted by a hermit clean.
 
 ## Setup
 
-From a Bee Keeper checkout, one command does everything below:
+From a Beekeeper checkout, one command does everything below:
 
 ```bash
 just install-git-credentials     # or: bee git setup

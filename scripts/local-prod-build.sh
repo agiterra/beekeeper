@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# local-prod-build.sh — build the local production Bee Keeper.app from any
+# local-prod-build.sh — build the local production Beekeeper.app from any
 # commit-ish and install it to /Applications.
 #
-# The bundle is the release Bee Keeper identity (productName "Bee Keeper",
+# The bundle is the release Beekeeper identity (productName "Beekeeper",
 # identifier io.agiterra.beekeeper.app, release-profile keyring service
 # "beekeeper-desktop"), so it coexists both with `just desktop-standalone` dev
 # instances (identifier io.agiterra.beekeeper.app.dev*) and with a stock
@@ -14,7 +14,7 @@
 # main worktree named `<clone>-prod` (override with BUZZ_PROD_WORKTREE) — so
 # they never contend with the working checkout or a running dev instance. It is
 # derived from the main worktree rather than the invoking directory, so every
-# worktree of a clone shares one prod tree; "/Applications/Bee Keeper.app" is a
+# worktree of a clone shares one prod tree; "/Applications/Beekeeper.app" is a
 # single destination, so a second one would only fight over it. The bundle
 # additionally carries buzz-session-provider as a sidecar, via the tracked
 # delta config desktop/src-tauri/tauri.local-prod.conf.json.
@@ -61,7 +61,7 @@ if [[ -z "$REV" ]]; then
 fi
 SHA="$(git -C "$SRC_ROOT" rev-parse -q --verify "${REV}^{commit}" 2>/dev/null || true)"
 [[ -n "$SHA" ]] || { echo "not a commit: $REV" >&2; exit 1; }
-echo "==> building Bee Keeper.app from $REV ($(git -C "$SRC_ROOT" rev-parse --short "$SHA"))"
+echo "==> building Beekeeper.app from $REV ($(git -C "$SRC_ROOT" rev-parse --short "$SHA"))"
 
 # ── worktree, detached at the requested commit ───────────────────────────────
 # Objects live in *this* clone. A prod tree belonging to a different clone
@@ -100,7 +100,7 @@ pnpm install
 (cd desktop && pnpm tauri build --target "$TARGET" --features mesh-llm --bundles app \
   --config "$PROD_ROOT/desktop/src-tauri/tauri.local-prod.conf.json")
 
-APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Bee Keeper.app"
+APP="$PROD_ROOT/desktop/src-tauri/target/$TARGET/release/bundle/macos/Beekeeper.app"
 
 # ── seal + verify ────────────────────────────────────────────────────────────
 [[ -d "$APP" ]] || { echo "bundle missing: $APP" >&2; exit 1; }
@@ -131,11 +131,11 @@ fi
 # right after `buzz-desktop` became `beekeeper-desktop` the guard stopped
 # recognising every app it was meant to catch, and the install would `rm -rf` a
 # running bundle. The directory is what is actually invariant here.
-if pgrep -f "/Applications/Bee Keeper.app/Contents/MacOS/" >/dev/null; then
-  echo "Bee Keeper.app is running — quit it, then re-run the install" >&2
+if pgrep -f "/Applications/Beekeeper.app/Contents/MacOS/" >/dev/null; then
+  echo "Beekeeper.app is running — quit it, then re-run the install" >&2
   exit 1
 fi
-rm -rf "/Applications/Bee Keeper.app"
-ditto "$APP" "/Applications/Bee Keeper.app"
-echo "==> installed $REV -> /Applications/Bee Keeper.app"
+rm -rf "/Applications/Beekeeper.app"
+ditto "$APP" "/Applications/Beekeeper.app"
+echo "==> installed $REV -> /Applications/Beekeeper.app"
 echo "    First launch will ask for the login keychain once — expected after every update."

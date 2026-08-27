@@ -126,7 +126,7 @@ function PairingSteps({ step }: { step: PairingStep }) {
             className="mt-1 text-sm text-muted-foreground/70"
             data-settings-subcopy
           >
-            Open Bee Keeper on your mobile device and scan the code shown here.
+            Open Beekeeper on your mobile device and scan the code shown here.
           </p>
         </div>
       </li>
@@ -397,7 +397,7 @@ export function MobilePairingCard({
         title="Mobile"
         description={
           <>
-            Connect the Bee Keeper mobile app to this relay by scanning a QR
+            Connect the Beekeeper mobile app to this relay by scanning a QR
             code. The connection is secured with end-to-end encryption and a
             verification code.
           </>

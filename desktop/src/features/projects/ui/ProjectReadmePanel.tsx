@@ -163,13 +163,13 @@ export function ReadmePanel({
     const unavailableContent = {
       authentication: {
         description:
-          "Bee Keeper could not authenticate with this repository. Check your access and try again.",
+          "Beekeeper could not authenticate with this repository. Check your access and try again.",
         icon: LockKeyhole,
         title: "Repository access failed",
       },
       missing: {
         description:
-          "The project announcement exists, but its git repository was not found on the Bee Keeper relay.",
+          "The project announcement exists, but its git repository was not found on the Beekeeper relay.",
         icon: CircleAlert,
         title: "Repository not initialized",
       },
@@ -199,7 +199,7 @@ export function ReadmePanel({
       },
       unknown: {
         description:
-          "Bee Keeper could not load this repository. Try again or contact the project owner.",
+          "Beekeeper could not load this repository. Try again or contact the project owner.",
         icon: CircleAlert,
         title: "Repository unavailable",
       },
@@ -233,7 +233,7 @@ export function ReadmePanel({
           </h3>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {externalHost ? (
-              "Clone this repository locally to explore its files, commits, and contributors in Bee Keeper."
+              "Clone this repository locally to explore its files, commits, and contributors in Beekeeper."
             ) : reason === "access" && accessChannelId ? (
               <AccessRestrictedDescription accessChannelId={accessChannelId} />
             ) : (

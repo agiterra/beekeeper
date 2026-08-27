@@ -23,11 +23,11 @@ export type WordmarkProps = {
  * The viewBox and the `userSpaceOnUse` filter region are sized for the longest
  * string this is expected to carry, with margin for the blur and displacement
  * to bleed into. A longer `text` will clip at the right edge rather than
- * scale — which is exactly what happened when "Buzz" became "Bee Keeper".
+ * scale — which is exactly what happened when "Buzz" became "Beekeeper".
  */
 export default function Wordmark({
   className,
-  text = "Bee Keeper",
+  text = "Beekeeper",
 }: WordmarkProps) {
   const filterId = useId();
   return (

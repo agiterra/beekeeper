@@ -47,7 +47,7 @@ export function useOpenProjectTerminal(reposDir?: string | null) {
           ? {
               title: "Couldn’t open terminal",
               description:
-                "Bee Keeper could not open this checkout in your configured terminal.",
+                "Beekeeper could not open this checkout in your configured terminal.",
             }
           : projectCloneErrorPresentation(error, project.cloneUrls[0]);
         toast.error(presentation.title, {

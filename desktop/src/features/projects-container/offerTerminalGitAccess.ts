@@ -7,7 +7,7 @@ import {
 } from "@/shared/api/gitTerminalAccess";
 
 /**
- * Offer terminal git access after an import has wired up a Bee Keeper remote.
+ * Offer terminal git access after an import has wired up a Beekeeper remote.
  *
  * The import writes a remote into `.git/config` that only the app can
  * authenticate to — its git credentials are ephemeral and env-only, so they do
@@ -32,7 +32,7 @@ export async function offerTerminalGitAccess(): Promise<void> {
   const keyfile = status.keyfile ?? "your home directory";
   toast("Terminal git access isn't set up", {
     description:
-      `Bee Keeper can push to this repo, but \`git push\` from a terminal ` +
+      `Beekeeper can push to this repo, but \`git push\` from a terminal ` +
       `can't authenticate yet. Enabling writes your identity key to ` +
       `${keyfile}, readable only by you.`,
     duration: 20_000,

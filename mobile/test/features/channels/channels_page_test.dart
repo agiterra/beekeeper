@@ -326,46 +326,45 @@ void main() {
     );
   });
 
-  testWidgets(
-    'keeps the Bee Keeper background fixed behind the channels list',
-    (tester) async {
-      await tester.pumpWidget(
-        buildTestable(
-          topSectionGradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.yellow, Colors.blue],
-          ),
-          overrides: [
-            channelsProvider.overrideWith(() => _FakeNotifier(testChannels)),
-          ],
+  testWidgets('keeps the Beekeeper background fixed behind the channels list', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestable(
+        topSectionGradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.yellow, Colors.blue],
         ),
-      );
-      await tester.pumpAndSettle();
+        overrides: [
+          channelsProvider.overrideWith(() => _FakeNotifier(testChannels)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('frosted-scaffold-pinned-gradient')),
-        findsOneWidget,
-      );
-      expect(find.byType(DecoratedSliver), findsNothing);
-      final gradientBackground = tester.widget<DecoratedBox>(
-        find.byKey(const ValueKey('frosted-scaffold-pinned-gradient')),
-      );
-      final gradient =
-          (gradientBackground.decoration as BoxDecoration).gradient
-              as LinearGradient;
-      expect(gradient.end, Alignment.bottomCenter);
+    expect(
+      find.byKey(const ValueKey('frosted-scaffold-pinned-gradient')),
+      findsOneWidget,
+    );
+    expect(find.byType(DecoratedSliver), findsNothing);
+    final gradientBackground = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('frosted-scaffold-pinned-gradient')),
+    );
+    final gradient =
+        (gradientBackground.decoration as BoxDecoration).gradient
+            as LinearGradient;
+    expect(gradient.end, Alignment.bottomCenter);
 
-      final appBar = tester.widget<FrostedAppBar>(
-        find.byType(FrostedAppBar).last,
-      );
-      expect(appBar.frosted, isFalse);
-      expect(appBar.frostedSurfaceOpacity, 0);
-      expect(appBar.frostedBlurSigma, 0);
-      expect(appBar.showBottomDivider, isFalse);
-      expect(appBar.bottomHeight, Grid.xxs);
-    },
-  );
+    final appBar = tester.widget<FrostedAppBar>(
+      find.byType(FrostedAppBar).last,
+    );
+    expect(appBar.frosted, isFalse);
+    expect(appBar.frostedSurfaceOpacity, 0);
+    expect(appBar.frostedBlurSigma, 0);
+    expect(appBar.showBottomDivider, isFalse);
+    expect(appBar.bottomHeight, Grid.xxs);
+  });
 
   testWidgets('builds Home header frost progressively while scrolling', (
     tester,

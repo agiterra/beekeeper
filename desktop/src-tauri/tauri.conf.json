@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bee Keeper",
+  "productName": "Beekeeper",
   "version": "0.5.16",
   "identifier": "io.agiterra.beekeeper.app",
   "build": {

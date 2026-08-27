@@ -38,7 +38,7 @@ agent_email="${RELEASE_AUTOMATION_EMAIL:-${AGENT_EMAIL:-release-automation@users
 msg="$(mktemp)"
 trap 'rm -f "$msg"' EXIT
 cat >"$msg" <<EOF
-chore(release): release Bee Keeper Desktop version $version
+chore(release): release Beekeeper Desktop version $version
 
 Co-authored-by: $agent_name <$agent_email>
 EOF
@@ -64,7 +64,7 @@ fi
 body="$(mktemp)"
 trap 'rm -f "$msg" "$body"' EXIT
 cat >"$body" <<EOF
-## Bee Keeper Desktop release v$version
+## Beekeeper Desktop release v$version
 
 - **Frozen main:** \`$base_sha\`
 - **Reviewed candidate:** \`$candidate_sha\`
@@ -76,8 +76,8 @@ This PR may be **squash merged** after the Desktop Release Candidate check and a
 The checked-in changelog accounts for every non-merge commit in the release range. The Desktop tag points to the reviewed candidate commit, not the later squash commit. Publication remains bound to that immutable candidate tag.
 EOF
 if existing="$(gh pr list --repo block/buzz --head "$branch" --state open --json number --jq '.[0].number')" && [[ -n "$existing" ]]; then
-  gh pr edit --repo block/buzz "$existing" --title "chore(release): release Bee Keeper Desktop version $version" --body-file "$body"
+  gh pr edit --repo block/buzz "$existing" --title "chore(release): release Beekeeper Desktop version $version" --body-file "$body"
 else
   gh pr create --repo block/buzz --base main --head "$branch" \
-    --title "chore(release): release Bee Keeper Desktop version $version" --body-file "$body"
+    --title "chore(release): release Beekeeper Desktop version $version" --body-file "$body"
 fi

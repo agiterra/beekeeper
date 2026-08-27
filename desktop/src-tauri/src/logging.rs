@@ -95,11 +95,11 @@ pub fn install() {
         return;
     }
     let Some(dir) = log_dir() else {
-        eprintln!("bee-keeper: no home directory; logging to file is disabled");
+        eprintln!("beekeeper: no home directory; logging to file is disabled");
         return;
     };
     if let Err(error) = std::fs::create_dir_all(&dir) {
-        eprintln!("bee-keeper: cannot create {}: {error}", dir.display());
+        eprintln!("beekeeper: cannot create {}: {error}", dir.display());
         return;
     }
 
@@ -107,7 +107,7 @@ pub fn install() {
         Ok(appender) => appender,
         Err(error) => {
             eprintln!(
-                "bee-keeper: cannot open a log file in {}: {error}",
+                "beekeeper: cannot open a log file in {}: {error}",
                 dir.display()
             );
             return;

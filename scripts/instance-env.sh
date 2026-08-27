@@ -25,7 +25,7 @@ if [[ "${BUZZ_RESET_WEBVIEW_STATE:-0}" == "1" ]]; then
     DEV_URL="${DEV_URL}?resetDevState=1"
 fi
 
-BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Bee Keeper Dev\"}"
+BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\"}"
 unset VITE_DEV_BRANCH
 
 # Generate a badged variant of the app icon labelled $1 into
@@ -43,7 +43,7 @@ generate_badged_icon() {
 # In worktrees, extract a label from the branch name and derive a unique app
 # identity and icon so multiple local desktop instances can run side by side.
 # The main checkout keeps the plain dev identity but still gets a "dev"-badged
-# icon so it is distinguishable from an installed production Bee Keeper.app.
+# icon so it is distinguishable from an installed production Beekeeper.app.
 #
 # Worktree detection: compare --git-dir to --git-common-dir. In the main
 # working tree these are identical; in any worktree (whether under .worktrees/,
@@ -108,10 +108,10 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
         if generate_badged_icon "$BUZZ_WORKTREE_LABEL"; then
             echo "🌳 Worktree: ${BUZZ_WORKTREE_LABEL}"
             export VITE_DEV_BRANCH="$BUZZ_WORKTREE_LABEL"
-            BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Bee Keeper (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+            BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev.${BUZZ_INSTANCE_SLUG}\",\"productName\":\"Beekeeper (${BUZZ_WORKTREE_LABEL})\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
         fi
     elif generate_badged_icon "dev"; then
-        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Bee Keeper Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
+        BUZZ_TAURI_CONFIG="{\"build\":{\"devUrl\":\"${DEV_URL}\",\"beforeDevCommand\":\"exec ./node_modules/.bin/vite --port ${BUZZ_VITE_PORT} --strictPort\"},\"identifier\":\"io.agiterra.beekeeper.app.dev\",\"productName\":\"Beekeeper Dev\",\"bundle\":{\"icon\":[\"$DEV_ICON\"]}}"
     fi
 fi
 

@@ -131,7 +131,7 @@ export function HostedCommunityCreateFlow({
           hostedCommunityErrorMessage(
             response.error,
             response.correlation_id,
-            "Could not connect the Bee Keeper identity.",
+            "Could not connect the Beekeeper identity.",
           ),
         );
       }
@@ -164,7 +164,7 @@ export function HostedCommunityCreateFlow({
           hostedCommunityErrorMessage(
             released.error,
             released.correlation_id,
-            "Could not disconnect the account's previous Bee Keeper identity.",
+            "Could not disconnect the account's previous Beekeeper identity.",
           ),
         );
       }
@@ -173,11 +173,11 @@ export function HostedCommunityCreateFlow({
         await loadAccount();
         throw new Error(
           bound.error.code === "pubkey_already_bound"
-            ? "This device's Bee Keeper identity belongs to a different Builderlab account. Sign in with the account that already owns this identity."
+            ? "This device's Beekeeper identity belongs to a different Builderlab account. Sign in with the account that already owns this identity."
             : hostedCommunityErrorMessage(
                 bound.error,
                 bound.correlation_id,
-                "Could not connect this device's Bee Keeper identity.",
+                "Could not connect this device's Beekeeper identity.",
               ),
         );
       }
@@ -288,8 +288,8 @@ export function HostedCommunityCreateFlow({
     return (
       <div className="space-y-5">
         <p className="text-sm leading-6 text-muted-foreground">
-          Sign in with Builderlab to create and host a community. Bee Keeper
-          will open your browser, then bring you back here.
+          Sign in with Builderlab to create and host a community. Beekeeper will
+          open your browser, then bring you back here.
         </p>
         {errorBox}
         <div className="flex justify-end pt-1">
@@ -309,7 +309,7 @@ export function HostedCommunityCreateFlow({
     return (
       <div className="space-y-5">
         <p className="text-sm leading-6 text-muted-foreground">
-          Connect this device’s Bee Keeper identity to your Builderlab account.
+          Connect this device’s Beekeeper identity to your Builderlab account.
           Your private key stays on this device.
         </p>
         {errorBox}
@@ -339,8 +339,8 @@ export function HostedCommunityCreateFlow({
     return (
       <div className="space-y-5">
         <p className="text-sm leading-6 text-muted-foreground">
-          This Builderlab account uses a different Bee Keeper identity. Switch
-          it to this device, or sign in with another account.
+          This Builderlab account uses a different Beekeeper identity. Switch it
+          to this device, or sign in with another account.
         </p>
         <div className="rounded-xl bg-muted/40 px-4 py-3 font-mono text-xs text-muted-foreground">
           <p className="break-all">Account: {identity.npub ?? boundPubkey}</p>

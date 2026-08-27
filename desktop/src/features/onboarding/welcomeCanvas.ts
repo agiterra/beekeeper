@@ -1,6 +1,6 @@
 import { getCanvas, setCanvas } from "@/shared/api/tauri";
 
-export const WELCOME_CANVAS_CONTENT = `# Welcome to Bee Keeper
+export const WELCOME_CANVAS_CONTENT = `# Welcome to Beekeeper
 
 This private channel is your home base for getting oriented. Fizz, Honey, and Pollen can help you learn the app, troubleshoot setup, and work through something you are building.
 

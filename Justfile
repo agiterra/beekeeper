@@ -345,7 +345,7 @@ desktop-release-build target="aarch64-apple-darwin":
     pnpm install
     cd {{desktop_dir}} && pnpm tauri build --features mesh-llm --target {{target}}
 
-# Build the local production Bee Keeper.app from any commit-ish (default: newest
+# Build the local production Beekeeper.app from any commit-ish (default: newest
 # build/* tag, else the tracked upstream, else HEAD) and install it to
 # /Applications. See docs/local-desktop-instances.md.
 prod-desktop rev="":
@@ -977,7 +977,7 @@ _release-pr lane version:
             CHANGELOG="CHANGELOG.md"
             ADD_FILES=(desktop/package.json desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock pnpm-lock.yaml CHANGELOG.md)
             LOG_PATHS=(desktop/ crates/buzz-core/ crates/buzz-persona/ crates/buzz-sdk/ crates/buzz-agent/)
-            ARTIFACT="Bee Keeper Desktop" ;;
+            ARTIFACT="Beekeeper Desktop" ;;
         relay)
             BRANCH_PREFIX="relay-release"
             TAG_FETCH='relay-v*'

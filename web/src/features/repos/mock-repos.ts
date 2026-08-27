@@ -115,7 +115,7 @@ export const mockRepoCommits: CommitInfo[] = [
 export const mockRepoReadme: ReadmeResult = {
   filename: "README.md",
   content:
-    "# Bee Keeper Desktop\n\nA focused community for people and agents to collaborate.\n\n## Getting started\n\nInstall dependencies, then start the development app.",
+    "# Beekeeper Desktop\n\nA focused community for people and agents to collaborate.\n\n## Getting started\n\nInstall dependencies, then start the development app.",
 };
 
 export function getMockBlob(

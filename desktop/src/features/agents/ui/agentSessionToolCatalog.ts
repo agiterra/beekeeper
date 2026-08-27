@@ -148,8 +148,8 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
     return {
       icon: Workflow,
       label: isRead
-        ? "Reads workflow state from Bee Keeper."
-        : "Updates workflow state in Bee Keeper.",
+        ? "Reads workflow state from Beekeeper."
+        : "Updates workflow state in Beekeeper.",
       tone: isWrite ? "write" : "read",
     };
   }
@@ -161,8 +161,8 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
     return {
       icon: Hash,
       label: isRead
-        ? "Reads channel context from the Bee Keeper relay."
-        : "Changes channel state in the Bee Keeper relay.",
+        ? "Reads channel context from the Beekeeper relay."
+        : "Changes channel state in the Beekeeper relay.",
       tone: isWrite ? "write" : "read",
     };
   }
@@ -174,8 +174,8 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
     return {
       icon: Users,
       label: isRead
-        ? "Reads Bee Keeper identity or presence data."
-        : "Updates Bee Keeper identity or membership data.",
+        ? "Reads Beekeeper identity or presence data."
+        : "Updates Beekeeper identity or membership data.",
       tone: isWrite ? "write" : "admin",
     };
   }
@@ -200,7 +200,7 @@ export function getBuzzToolInfo(title: string): BuzzToolInfo | null {
 
   return {
     icon: MessageSquare,
-    label: isRead ? "Reads from Bee Keeper." : "Writes to Bee Keeper.",
+    label: isRead ? "Reads from Beekeeper." : "Writes to Beekeeper.",
     tone: isWrite ? "write" : "read",
   };
 }

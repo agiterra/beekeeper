@@ -7,7 +7,7 @@
 //! passed in the child environment. Nothing is written to disk, which is the
 //! right default — the identity key never lands anywhere it could be read.
 //!
-//! The cost is that importing a repository persists a Bee Keeper remote into
+//! The cost is that importing a repository persists a Beekeeper remote into
 //! `.git/config` while the credentials that made the app's own first push work
 //! evaporate when the child exits. The user is then left with a remote they
 //! cannot push to from a terminal, and git's failure — a username prompt
