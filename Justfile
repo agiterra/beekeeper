@@ -145,7 +145,7 @@ build-release:
     cargo build --workspace --release
 
 # Run repo lint, formatting, and repository policy checks
-check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check mobile-check file-size-check autodeploy-test
+check: fmt-check clippy desktop-check desktop-tauri-fmt-check desktop-tauri-clippy web-check web-test mobile-check file-size-check autodeploy-test
 
 # Test the relay deployers (deploy/autodeploy). They stub incus, flock and
 # sleep on PATH, so they need no host, no containers and no Woodpecker — and
@@ -376,7 +376,7 @@ desktop-e2e-pre-push: _ensure-migrations
     cd {{desktop_dir}} && pnpm build:e2e && pnpm exec playwright test --only-changed=origin/main
 
 # Run all checks suitable for CI / pre-push (no infra needed)
-ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri-test web-build mobile-test
+ci: check test-unit desktop-test desktop-build desktop-tauri-check desktop-tauri-test web-test web-build mobile-test
 
 # ─── Test ─────────────────────────────────────────────────────────────────────
 
@@ -791,6 +791,10 @@ web-fix:
 # Run web TypeScript checks
 web-typecheck:
     cd {{web_dir}} && pnpm typecheck
+
+# Run the web unit tests
+web-test:
+    cd {{web_dir}} && pnpm test
 
 # Build web frontend assets
 web-build:
