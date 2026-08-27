@@ -1931,6 +1931,12 @@ written and `bash -n` clean but **was not executed** — that harness needs
     resubscribe in `buzz-acp` reopens a channel with no reorder window; and an
     `interrupt_delivered` receipt is decoded and stored but no surface watches
     it.
+    **Update 2026-08-26: gated clean on `crew/s2-s6@1a3ee24d`.** CHECKPOINT
+    cherry-picked all 15 lane-2G commits onto `c-int` clean, ending at
+    `5bb4dff7` as expected, and ran lib tests across six crates (475+412+128+
+    957+302+283 passed, 0 failed), clippy, desktop typecheck + vitest
+    (6241/72/0), Tauri tests (2681+0+7+3+0 passed), `pnpm check:px-text`, and
+    a full `just test` (12/12 groups, 0 failed, 75s) — all clean.
 
 ## 2a. Direction settled 2026-08-18
 
