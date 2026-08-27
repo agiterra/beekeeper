@@ -35,6 +35,7 @@ CodingSessionReceipt _receipt({
   String pubkey = providerPubkey,
   Map<String, Object?>? error,
   String? turnId,
+  String? id,
 }) => decodeCodingSessionReceipt(
   receiptEvent(
     commandId: commandId,
@@ -44,6 +45,7 @@ CodingSessionReceipt _receipt({
     pubkey: pubkey,
     error: error,
     turnId: turnId,
+    id: id,
   ),
 ).value!;
 
@@ -207,6 +209,64 @@ void main() {
         metadata: [_metadata(status: 'running', createdAt: 2000)],
       );
       expect(executions.single.status, CodingSessionStatus.stopped);
+    });
+
+    // The command a generation is filed under decides which 24223 leases
+    // answer for it (D8), so it must be a function of the signed facts alone.
+    // Relay-arrival order is not: history pages and live deliveries land in
+    // whatever order the relay sends them, and two devices holding the same
+    // events would otherwise disagree about whether a provider is answering.
+    test(
+      'the earliest generation receipt names the command, in any read order',
+      () {
+        final earlier = _receipt(
+          commandId: 'cmd-earlier',
+          status: 'created',
+          createdAt: 900,
+        );
+        final later = _receipt(
+          commandId: 'cmd-later',
+          status: 'resumed',
+          createdAt: 1500,
+        );
+
+        for (final order in [
+          [earlier, later],
+          [later, earlier],
+        ]) {
+          final executions = resolveCodingSessionGenerations(
+            receipts: order,
+            metadata: [_metadata(status: 'running', createdAt: 2000)],
+          );
+          expect(executions.single.commandId, 'cmd-earlier');
+        }
+      },
+    );
+
+    test('generation receipts sharing a second break the tie by event id', () {
+      final lowerId = _receipt(
+        commandId: 'cmd-lower-id',
+        status: 'created',
+        createdAt: 900,
+        id: '0' * 63 + '1',
+      );
+      final higherId = _receipt(
+        commandId: 'cmd-higher-id',
+        status: 'resumed',
+        createdAt: 900,
+        id: 'f' * 64,
+      );
+
+      for (final order in [
+        [lowerId, higherId],
+        [higherId, lowerId],
+      ]) {
+        final executions = resolveCodingSessionGenerations(
+          receipts: order,
+          metadata: [_metadata(status: 'running', createdAt: 2000)],
+        );
+        expect(executions.single.commandId, 'cmd-lower-id');
+      }
     });
 
     // D6: a conflict is counted over the whole payload, not over the handful

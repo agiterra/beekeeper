@@ -286,6 +286,7 @@ List<CodingSessionExecution> resolveCodingSessionGenerations({
 
   final targets = <String, CodingSessionTarget>{};
   final commandIdByTarget = <String, String>{};
+  final commandRefByTarget = <String, CodingSessionEventRef>{};
   final channelByTarget = <String, String>{};
   for (final receipt in receiptList) {
     if (receipt.isTurnStage || !receipt.status.createsGeneration) continue;
@@ -296,13 +297,19 @@ List<CodingSessionExecution> resolveCodingSessionGenerations({
     // The earliest create-bearing receipt names the command that minted the
     // generation; a later resume receipt for the same target would be a
     // different command for the same key only if the provider replayed it.
-    // This takes the first in relay-arrival order, not the earliest by
-    // `created_at`: unreachable today because no honest provider mints two
-    // generation-creating receipts for one target under different commandIds,
-    // but if one ever did, the D8 lease command gate (`acceptedCommandId`
-    // below) would accept or reject leases by read order, so two devices could
-    // disagree about whether a provider is answering.
-    commandIdByTarget.putIfAbsent(target.key, () => receipt.commandId);
+    // "Earliest" is by the receipt's own signed order — `created_at`, ties
+    // broken by the lower event id, the tie-break used everywhere else here —
+    // never by relay-arrival order. Arrival order differs between devices
+    // (history pages and live deliveries land in whatever order the relay
+    // sends them), and the D8 lease command gate (`acceptedCommandId` below)
+    // accepts or rejects leases by this command id, so reading it off arrival
+    // order would let two devices holding the same events disagree about
+    // whether a provider is answering.
+    final incumbent = commandRefByTarget[target.key];
+    if (incumbent == null || _isEarlier(receipt.ref, incumbent)) {
+      commandRefByTarget[target.key] = receipt.ref;
+      commandIdByTarget[target.key] = receipt.commandId;
+    }
   }
 
   final currentGeneration = <String, int>{};
@@ -769,6 +776,18 @@ CodingSessionClosure? _newestAuthorizedClosure(
     authorized.add(closure);
   }
   return _newestByRef(authorized, (record) => record.ref);
+}
+
+/// True when [candidate] comes before [incumbent] in signed order: lower
+/// `created_at`, ties broken by the lower event id.
+bool _isEarlier(
+  CodingSessionEventRef candidate,
+  CodingSessionEventRef incumbent,
+) {
+  final byTime = candidate.createdAt.compareTo(incumbent.createdAt);
+  return byTime != 0
+      ? byTime < 0
+      : candidate.eventId.compareTo(incumbent.eventId) < 0;
 }
 
 CodingSessionMetadata? _newestMetadata(List<CodingSessionMetadata> records) {

@@ -182,6 +182,35 @@ void main() {
       expect(verdict.kind, CodingSessionReachabilityKind.reachable);
     });
 
+    // The lease gate keys off the command the generation was filed under, so
+    // two devices that read the same events in different orders must file it
+    // under the same command or they disagree about "provider reachable".
+    test('read order never changes whether a provider is answering', () {
+      final events = <NostrEvent>[
+        createEvent(commandId: 'cmd-1', sessionRef: sessionRefA),
+        receiptEvent(commandId: 'cmd-1', status: 'created', createdAt: 900),
+        // A second generation-creating receipt for the same target under a
+        // different command: dishonest today, but the read must not depend on
+        // which of the two the relay happened to send first.
+        receiptEvent(commandId: 'cmd-2', status: 'resumed', createdAt: 1500),
+        metadataEvent(status: 'running', sessionRef: sessionRefA),
+        leaseEvent(commandId: 'cmd-1', createdAt: 1990),
+      ];
+      for (final order in [events, events.reversed.toList()]) {
+        final view = readCodingSessionChannel(
+          channelId: channelId,
+          verifier: null,
+          events: order,
+        );
+        final session = view.sessions.single;
+        expect(session.executions.single.commandId, 'cmd-1');
+        expect(
+          view.reachabilityFor(session, now: now).kind,
+          CodingSessionReachabilityKind.reachable,
+        );
+      }
+    });
+
     // When every current generation says the same thing, that is the answer.
     test('every execution silent reads as nobody answering', () {
       final events = <NostrEvent>[
