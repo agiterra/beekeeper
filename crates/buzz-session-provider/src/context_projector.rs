@@ -82,7 +82,27 @@ pub const MAX_CONTEXT_INBOX_PROJECTION_BYTES: usize = 256 * 1024;
 /// something other than a command this projector recognizes.
 const MAX_COMMAND_CONTENT_BYTES: usize = 16 * 1024;
 /// Maximum signed source events one projection call will examine.
+///
+/// Counted over the *proof chain* only. Turn traffic — kind 44220 and the turn
+/// stages of kind 44224 — grows with the work a channel does and is not a link
+/// in any proof, so it is bounded separately by
+/// [`MAX_CONTEXT_TURN_COMMAND_CANDIDATES`] and
+/// [`MAX_CONTEXT_TURN_RECEIPT_CANDIDATES`]. Counting it here instead would
+/// mean a channel that has run a few thousand turns projects nothing at all,
+/// taking the context MCP away from every create and resume in it.
 pub const MAX_CONTEXT_SOURCE_EVENTS: usize = 16_384;
+/// Maximum kind-44220 candidates one projection keeps, newest first.
+///
+/// Four times the inbox's own item bound, so the trim can throw away commands
+/// addressed at other umbrellas and still fill the inbox. Older candidates are
+/// dropped with a provenance note, never silently.
+pub const MAX_CONTEXT_TURN_COMMAND_CANDIDATES: usize = 4 * MAX_CONTEXT_INBOX_ITEMS;
+/// Maximum turn-stage kind-44224 receipts one projection keeps, newest first.
+///
+/// A turn publishes several stages, so this is four per retained command.
+pub const MAX_CONTEXT_TURN_RECEIPT_CANDIDATES: usize = 4 * MAX_CONTEXT_TURN_COMMAND_CANDIDATES;
+/// Maximum signed content bytes retained per turn-traffic class.
+pub const MAX_CONTEXT_TURN_TRAFFIC_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum total signed-content bytes one projection call will examine.
 pub const MAX_CONTEXT_SOURCE_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 /// Current relay-side maximum rows returned for one standard Nostr filter.
@@ -456,7 +476,7 @@ struct KindPartition {
     saturated: bool,
 }
 
-/// Every event a partition returns is retained.
+/// Every event a partition returns is retained here.
 ///
 /// Kind 44224 carries two vocabularies, and this used to keep only one of
 /// them: the lifecycle outcomes prove the create chain, and the turn stages
@@ -464,13 +484,14 @@ struct KindPartition {
 /// each addressed 44220 reached, which it cannot do from receipts it never
 /// saw, so both are kept.
 ///
-/// Partition *saturation* is measured in relay pages, not in retained rows, so
-/// keeping this traffic cannot crowd a lifecycle receipt out of the fact set —
-/// which is the regression
-/// `a_receipt_partition_of_turn_traffic_still_yields_the_lifecycle_receipt`
-/// pins. What it costs is memory, bounded by the same
-/// [`MAX_CONTEXT_SOURCE_EVENTS`]/[`MAX_CONTEXT_SOURCE_CONTENT_BYTES`] ceilings
-/// every other kind pays.
+/// Retaining them is not free, and the ceilings are where that is paid:
+/// [`group_and_project_session_context_events`] trims turn traffic to
+/// [`MAX_CONTEXT_TURN_COMMAND_CANDIDATES`]/[`MAX_CONTEXT_TURN_RECEIPT_CANDIDATES`]
+/// newest-first *before* any bound is applied, and the proof-chain ceiling
+/// [`MAX_CONTEXT_SOURCE_EVENTS`] is measured over the proof chain alone. A
+/// busy channel therefore gets a shorter inbox and a provenance note, never a
+/// refused package — the outcome
+/// `ordinary_turn_volume_does_not_deny_the_package_to_every_seat` pins.
 /// Walk one kind partition newest-first until it is exhausted or bounded.
 ///
 /// `fetch_page` receives the exclusive-in-effect `until` cursor (a second-
@@ -579,16 +600,103 @@ async fn query_kind_partition_page(
         .collect()
 }
 
+/// Does this kind-44224 event carry a turn stage rather than a lifecycle
+/// outcome? Content only — the full envelope is checked where the stage is
+/// used, and a candidate that fails that check simply names no stage.
+fn is_turn_stage_receipt(event: &Event) -> bool {
+    serde_json::from_str::<LifecycleReceipt>(&event.content)
+        .map(|receipt| receipt.status.is_turn_stage())
+        .unwrap_or(false)
+}
+
+/// Keep the newest turn traffic that fits both bounds; report what was dropped.
+///
+/// Newest-first because an inbox is about what a seat may still owe an answer
+/// for. Ordering is `(created_at, id)` so two events sharing a second are
+/// ordered deterministically rather than by relay page arrival. The returned
+/// events are oldest first, matching what the rest of the projection expects.
+fn retain_newest_turn_traffic(
+    mut candidates: Vec<&Event>,
+    max_events: usize,
+    max_content_bytes: usize,
+) -> (Vec<Event>, u64) {
+    candidates.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    let total = candidates.len();
+    let mut bytes = 0usize;
+    let mut kept: Vec<Event> = Vec::new();
+    for candidate in candidates {
+        if kept.len() >= max_events {
+            break;
+        }
+        let next = bytes.saturating_add(candidate.content.len());
+        if next > max_content_bytes {
+            break;
+        }
+        bytes = next;
+        kept.push(candidate.clone());
+    }
+    let dropped = (total - kept.len()) as u64;
+    kept.reverse();
+    (kept, dropped)
+}
+
 fn group_and_project_session_context_events(
     request: &ContextProjectionRequest,
     events: &[Event],
     mut coverage: ContextSourceCoverage,
 ) -> Result<CodingSessionContextPackage, ContextProjectionError> {
-    if events.len() > MAX_CONTEXT_SOURCE_EVENTS {
+    // Turn traffic is separated from the proof chain before any ceiling is
+    // applied. It is unbounded in a working channel — several events per turn,
+    // forever — and it proves nothing, so counting it against the proof-chain
+    // ceiling would turn ordinary volume into a refused package for every seat
+    // in the channel.
+    let mut proof_chain_events = 0usize;
+    let mut command_candidates: Vec<&Event> = Vec::new();
+    let mut receipt_candidates: Vec<&Event> = Vec::new();
+    for event in events {
+        match event_kind_u32(event) {
+            KIND_CODING_SESSION_COMMAND => command_candidates.push(event),
+            KIND_CODING_SESSION_LIFECYCLE_RECEIPT if is_turn_stage_receipt(event) => {
+                receipt_candidates.push(event)
+            }
+            _ => proof_chain_events += 1,
+        }
+    }
+    if proof_chain_events > MAX_CONTEXT_SOURCE_EVENTS {
         return Err(ContextProjectionError::Bound(format!(
-            "relay fact set has {} events, max {MAX_CONTEXT_SOURCE_EVENTS}",
-            events.len()
+            "relay fact set has {proof_chain_events} proof-chain events, max {MAX_CONTEXT_SOURCE_EVENTS}"
         )));
+    }
+    let (turn_commands, dropped_commands) = retain_newest_turn_traffic(
+        command_candidates,
+        MAX_CONTEXT_TURN_COMMAND_CANDIDATES,
+        MAX_CONTEXT_TURN_TRAFFIC_CONTENT_BYTES,
+    );
+    let (turn_receipts, dropped_receipts) = retain_newest_turn_traffic(
+        receipt_candidates,
+        MAX_CONTEXT_TURN_RECEIPT_CANDIDATES,
+        MAX_CONTEXT_TURN_TRAFFIC_CONTENT_BYTES,
+    );
+    if dropped_commands > 0 {
+        record_note(
+            &mut coverage.notes,
+            format!(
+                "Dropped {dropped_commands} older turn commands before verification to satisfy the projection's turn-traffic bound"
+            ),
+        );
+    }
+    if dropped_receipts > 0 {
+        record_note(
+            &mut coverage.notes,
+            format!(
+                "Dropped {dropped_receipts} older turn receipts before verification; an inbox item whose stage receipt was dropped reports no stage"
+            ),
+        );
     }
     let genesis = unique_event(
         events.iter().filter(|event| {
@@ -605,21 +713,6 @@ fn group_and_project_session_context_events(
             "no successful create chain links this session and genesis".into(),
         ));
     }
-    let turn_commands = events
-        .iter()
-        .filter(|event| event_kind_u32(event) == KIND_CODING_SESSION_COMMAND)
-        .cloned()
-        .collect();
-    let turn_receipts = events
-        .iter()
-        .filter(|event| {
-            event_kind_u32(event) == KIND_CODING_SESSION_LIFECYCLE_RECEIPT
-                && serde_json::from_str::<LifecycleReceipt>(&event.content)
-                    .map(|receipt| receipt.status.is_turn_stage())
-                    .unwrap_or(false)
-        })
-        .cloned()
-        .collect();
     let name_revisions = events
         .iter()
         .filter(|event| {
@@ -1610,17 +1703,35 @@ fn source_delta_note(
 }
 
 fn validate_source_bound(input: &ContextProjectionInput) -> Result<(), ContextProjectionError> {
-    // Inbox candidates are counted here but not in the provenance breakdown:
-    // the bound is about what this call has to *examine*, while the breakdown
-    // reports what the package *retained*. Conflating them would either let
-    // unbounded candidates through the guard or make `sourceEventCount`
-    // describe events the package does not carry.
-    let count = source_event_count(input)
-        .saturating_add(input.turn_commands.len())
-        .saturating_add(input.turn_receipts.len());
+    // Inbox candidates are bounded here but not counted in the provenance
+    // breakdown: the bound is about what this call has to *examine*, while the
+    // breakdown reports what the package *retained*. Conflating them would
+    // either let unbounded candidates through the guard or make
+    // `sourceEventCount` describe events the package does not carry.
+    //
+    // Each turn-traffic class is bounded against its own ceiling rather than
+    // added to the proof-chain count. A channel's turn volume grows with the
+    // work done in it and proves nothing, so one shared ceiling would let
+    // ordinary traffic refuse a projection whose proof chain is small — the
+    // outcome `ordinary_turn_volume_does_not_deny_the_package_to_every_seat`
+    // pins. The fetch path trims to these same bounds before this runs; a
+    // caller that assembled the input by hand is answered here.
+    let count = source_event_count(input);
     if count > MAX_CONTEXT_SOURCE_EVENTS {
         return Err(ContextProjectionError::Bound(format!(
-            "source has {count} events, max {MAX_CONTEXT_SOURCE_EVENTS}"
+            "source has {count} proof-chain events, max {MAX_CONTEXT_SOURCE_EVENTS}"
+        )));
+    }
+    if input.turn_commands.len() > MAX_CONTEXT_TURN_COMMAND_CANDIDATES {
+        return Err(ContextProjectionError::Bound(format!(
+            "source has {} turn commands, max {MAX_CONTEXT_TURN_COMMAND_CANDIDATES}",
+            input.turn_commands.len()
+        )));
+    }
+    if input.turn_receipts.len() > MAX_CONTEXT_TURN_RECEIPT_CANDIDATES {
+        return Err(ContextProjectionError::Bound(format!(
+            "source has {} turn receipts, max {MAX_CONTEXT_TURN_RECEIPT_CANDIDATES}",
+            input.turn_receipts.len()
         )));
     }
     let mut bytes = input.genesis.content.len();
@@ -1634,9 +1745,21 @@ fn validate_source_bound(input: &ContextProjectionInput) -> Result<(), ContextPr
             "source has {bytes} content bytes, max {MAX_CONTEXT_SOURCE_CONTENT_BYTES}"
         )));
     }
+    let mut turn_bytes = 0usize;
+    for event in input.turn_commands.iter().chain(input.turn_receipts.iter()) {
+        turn_bytes = turn_bytes.saturating_add(event.content.len());
+    }
+    if turn_bytes > 2 * MAX_CONTEXT_TURN_TRAFFIC_CONTENT_BYTES {
+        return Err(ContextProjectionError::Bound(format!(
+            "source has {turn_bytes} turn-traffic content bytes, max {}",
+            2 * MAX_CONTEXT_TURN_TRAFFIC_CONTENT_BYTES
+        )));
+    }
     Ok(())
 }
 
+/// Every proof-chain event of one input. Turn traffic is deliberately absent:
+/// it carries its own count and byte budgets in [`validate_source_bound`].
 fn all_events(input: &ContextProjectionInput) -> impl Iterator<Item = &Event> {
     std::iter::once(&input.genesis)
         .chain(
@@ -1647,8 +1770,6 @@ fn all_events(input: &ContextProjectionInput) -> impl Iterator<Item = &Event> {
         )
         .chain(input.name_revisions.iter())
         .chain(input.goal_revisions.iter())
-        .chain(input.turn_commands.iter())
-        .chain(input.turn_receipts.iter())
         .chain(input.executions.iter().flat_map(|execution| {
             execution.generations.iter().flat_map(|generation| {
                 [
@@ -3274,6 +3395,129 @@ mod tests {
             .source_event_breakdown
             .expect("the structured reconciliation is the disclosure, and never fails soft");
         assert_eq!(breakdown.total(), package.provenance.source_event_count);
+    }
+
+    /// Cheap stand-ins for a busy channel's turn traffic.
+    ///
+    /// Each clone is addressed at another umbrella, so the projector answers
+    /// it on the target before it would ever look at a signature — which is
+    /// exactly the path 44220s from every other execution in the channel take.
+    /// Signing seventeen thousand real events would measure secp256k1, not
+    /// this projector's bounds.
+    fn foreign_turn_traffic(template: &Event, count: usize) -> Vec<Event> {
+        (0..count)
+            .map(|index| {
+                let mut clone = template.clone();
+                let mut raw = [0u8; 32];
+                raw[..8].copy_from_slice(&(index as u64 + 1).to_be_bytes());
+                clone.id = nostr::EventId::from_slice(&raw).unwrap();
+                clone.created_at = Timestamp::from_secs(index as u64 + 1);
+                clone
+            })
+            .collect()
+    }
+
+    /// Turn traffic is not a link in the proof chain, so ordinary volume of it
+    /// must never take the whole package away from every seat.
+    ///
+    /// Kind 44220 and the turn stages of kind 44224 both grow with the work a
+    /// channel does — several events per turn, forever. Counting them against
+    /// the source-event ceiling means a channel that has run a few thousand
+    /// turns projects nothing at all: `prepare_rehydration_context` reports
+    /// unavailable and every create and resume in that channel silently loses
+    /// the buzz-session-context MCP. The bound belongs on the turn traffic
+    /// itself, newest-first and disclosed.
+    #[test]
+    fn ordinary_turn_volume_does_not_deny_the_package_to_every_seat() {
+        let actor = "ab".repeat(32);
+        let sender = Keys::generate();
+        let fixture = fixture_seated(2, Some((&actor, "builder")));
+        let channel_id = fixture.input.channel_id;
+        let generation = &fixture.input.executions[0].generations[0];
+        let mut events = vec![
+            fixture.input.genesis.clone(),
+            generation.lifecycle_command.clone(),
+            generation.receipt.clone(),
+            generation.metadata.clone(),
+        ];
+        events.extend(generation.transcript.iter().cloned());
+        events.push(turn_command(
+            channel_id,
+            "turn-live",
+            &fixture.target,
+            "read me",
+            CodingSessionDelivery::Boundary,
+            20_000,
+            &sender,
+        ));
+        events.push(turn_stage(
+            channel_id,
+            LifecycleReceipt::turn_started("turn-live", &fixture.target, "t-1"),
+            20_001,
+            &fixture.provider,
+        ));
+        let foreign = CodingSessionTarget {
+            session_id: "someone-elses-session".into(),
+            ..fixture.target.clone()
+        };
+        let template = turn_command(
+            channel_id,
+            "filler",
+            &foreign,
+            "not your mail",
+            CodingSessionDelivery::Boundary,
+            1,
+            &sender,
+        );
+        events.extend(foreign_turn_traffic(&template, 17_000));
+        assert!(
+            events.len() > MAX_CONTEXT_SOURCE_EVENTS,
+            "the fixture must exceed the source ceiling on turn traffic alone"
+        );
+
+        let request = ContextProjectionRequest {
+            allow_no_executions: false,
+            channel_id,
+            session_ref: fixture.input.session_ref.clone(),
+            genesis_ref: fixture.input.genesis_ref.clone(),
+            relay_self_pubkey: fixture.input.relay_self_pubkey.clone(),
+            generated_at: fixture.input.generated_at,
+            limits: ContextProjectionLimits::default(),
+        };
+        let package = project_session_context_events(&request, &events)
+            .expect("turn volume must not refuse a verified create chain");
+        package.validate().unwrap();
+
+        assert_eq!(package.history.len(), 2, "the create chain still projects");
+        assert_eq!(package.roster.len(), 1);
+        assert_eq!(
+            package.inbox.len(),
+            1,
+            "the newest addressed command survives the trim"
+        );
+        assert_eq!(package.inbox[0].command_id, "turn-live");
+        assert_eq!(package.inbox[0].stage, Some(ReceiptStatus::TurnStarted));
+        assert!(
+            package
+                .provenance
+                .notes
+                .iter()
+                .any(|note| note.contains("older turn commands")),
+            "the dropped candidates are disclosed: {:?}",
+            package.provenance.notes
+        );
+    }
+
+    /// The same ceiling, from the other side: proof-chain facts still refuse a
+    /// projection when *they* exceed it, so trimming turn traffic did not turn
+    /// the guard off.
+    #[test]
+    fn a_proof_chain_larger_than_the_source_ceiling_is_still_refused() {
+        let mut fixture = fixture(1);
+        let filler = fixture.input.genesis.clone();
+        fixture.input.name_revisions = vec![filler; MAX_CONTEXT_SOURCE_EVENTS + 1];
+        let error = project_session_context(&fixture.input).unwrap_err();
+        assert!(matches!(error, ContextProjectionError::Bound(_)), "{error}");
     }
 
     #[test]
