@@ -697,19 +697,34 @@ pub(crate) fn materialize_persona_skills_logged(
     }
 }
 
-/// Is `workdir` a directory every agent on this computer shares?
+/// The directories on this computer no single seat owns.
 ///
 /// The two that matter are the nest (`~/.beekeeper`) and the user's home
 /// directory, which is what [`super::default_agent_workdir`] falls back to
 /// when the nest is missing or is a symlink. Neither belongs to one seat.
-fn is_shared_agent_workdir(workdir: &Path) -> bool {
-    let target = workdir
-        .canonicalize()
-        .unwrap_or_else(|_| workdir.to_path_buf());
+fn shared_agent_workdir_roots() -> Vec<PathBuf> {
     [nest_dir(), dirs::home_dir()]
         .into_iter()
         .flatten()
-        .any(|shared| shared.canonicalize().unwrap_or(shared) == target)
+        .collect()
+}
+
+/// Is `workdir` one of `shared_roots`?
+///
+/// The roots are a parameter rather than a call to
+/// [`shared_agent_workdir_roots`] so the refusal can be *proved* against
+/// directories a test owns. A test that passed the operator's real home here
+/// would assert on whatever that home happens to contain — which is how this
+/// module's own guard test went red on a machine where an earlier build had
+/// already written `~/.agents/skills/brief/SKILL.md`. Nothing under test may
+/// read or write a person's home.
+fn is_shared_agent_workdir(workdir: &Path, shared_roots: &[PathBuf]) -> bool {
+    let target = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    shared_roots
+        .iter()
+        .any(|shared| shared.canonicalize().unwrap_or_else(|_| shared.clone()) == target)
 }
 
 /// Write the pack skills of the persona this agent was created from into
@@ -736,13 +751,26 @@ pub(crate) fn materialize_persona_skills(
     record: &ManagedAgentRecord,
     workdir: &std::path::Path,
 ) -> Result<Vec<buzz_persona_pkg::skills::MaterializedSkill>, String> {
+    materialize_persona_skills_outside(record, workdir, &shared_agent_workdir_roots())
+}
+
+/// [`materialize_persona_skills`], with the shared directories named.
+///
+/// The seam exists for the guard's test: the refusal is a property of "this
+/// workdir is one of the shared roots", and a test proves that against roots
+/// it created in a temp directory instead of against the operator's home.
+fn materialize_persona_skills_outside(
+    record: &ManagedAgentRecord,
+    workdir: &std::path::Path,
+    shared_roots: &[PathBuf],
+) -> Result<Vec<buzz_persona_pkg::skills::MaterializedSkill>, String> {
     let (Some(pack_dir), Some(persona_name)) = (
         record.persona_team_dir.as_deref(),
         record.persona_name_in_team.as_deref(),
     ) else {
         return Ok(Vec::new());
     };
-    if is_shared_agent_workdir(workdir) {
+    if is_shared_agent_workdir(workdir, shared_roots) {
         return Err(format!(
             "refusing to write persona {persona_name:?} skills into {} — that directory is \
              shared by every agent on this computer (and may be your own home directory). A \
@@ -896,17 +924,74 @@ mod skill_materialization_tests {
         // is not a seat's own directory — and in the $HOME case the write
         // would land on a person's own ~/.agents/skills/<name>/SKILL.md, which
         // `materialize_skills` overwrites whenever the bytes differ.
+        //
+        // The shared roots are stand-ins this test owns. Passing the real home
+        // here would assert on whatever that home already contains: an earlier
+        // build of this feature wrote `~/.agents/skills/brief/SKILL.md` on the
+        // operator's machine, and this very assertion then failed forever on
+        // that machine while the guard underneath it was working.
         let tmp = tempfile::tempdir().unwrap();
         let pack = role_pack(tmp.path());
-        let shared = dirs::home_dir().expect("a home directory");
+        let home = tmp.path().join("home");
+        let nest = home.join(".beekeeper");
+        fs::create_dir_all(&nest).unwrap();
+        let roots = vec![nest.clone(), home.clone()];
 
-        let error = materialize_persona_skills(&record(Some(pack), Some("builder")), &shared)
+        for shared in [&nest, &home] {
+            let error = materialize_persona_skills_outside(
+                &record(Some(pack.clone()), Some("builder")),
+                shared,
+                &roots,
+            )
             .expect_err("a shared workdir must be refused");
 
-        assert!(error.contains("shared"), "{error}");
+            assert!(error.contains("shared"), "{error}");
+            assert!(
+                !shared.join(".agents/skills/brief/SKILL.md").exists(),
+                "nothing may be written into the shared directory"
+            );
+        }
         assert!(
-            !shared.join(".agents/skills/brief/SKILL.md").exists(),
-            "nothing may be written into the shared directory"
+            !home.join(".agents").exists(),
+            "no .agents tree was created"
+        );
+    }
+
+    #[test]
+    fn a_seat_directory_beside_the_shared_roots_is_still_written() {
+        // The guard is "is this one of the shared directories", not "is this
+        // anywhere near them" — a seat whose checkout sits inside the home
+        // directory is an ordinary seat.
+        let tmp = tempfile::tempdir().unwrap();
+        let pack = role_pack(tmp.path());
+        let home = tmp.path().join("home");
+        let seat = home.join("Projects/checkout");
+        fs::create_dir_all(&seat).unwrap();
+        let roots = vec![home.join(".beekeeper"), home];
+
+        let written =
+            materialize_persona_skills_outside(&record(Some(pack), Some("builder")), &seat, &roots)
+                .expect("a seat's own directory is not shared");
+
+        assert_eq!(written.len(), 1);
+        assert!(seat.join(".agents/skills/brief/SKILL.md").exists());
+    }
+
+    #[test]
+    fn the_live_shared_roots_are_the_nest_and_the_home_directory() {
+        // The seam above is only honest if the production call still names the
+        // real shared directories. Path values only — nothing here touches the
+        // filesystem under a person's home.
+        let roots = shared_agent_workdir_roots();
+        assert!(
+            roots.iter().any(|root| Some(root) == nest_dir().as_ref()),
+            "the nest is a shared root: {roots:?}"
+        );
+        assert!(
+            roots
+                .iter()
+                .any(|root| Some(root) == dirs::home_dir().as_ref()),
+            "the home directory is a shared root: {roots:?}"
         );
     }
 
