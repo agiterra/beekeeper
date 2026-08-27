@@ -155,7 +155,11 @@ async fn reject_legacy_nip_rs_cardinality_ambiguity(conn: &mut PgConnection) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
+    use std::{
+        collections::BTreeSet,
+        fs,
+        path::{Path, PathBuf},
+    };
 
     const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
 
@@ -625,7 +629,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 41);
+        assert_eq!(migrations.len(), 42);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1122,6 +1126,95 @@ mod tests {
         assert!(!backfill_sql.contains(".name"));
         assert!(include_str!("../../../schema/schema.sql")
             .contains("'stream', 'forum', 'dm', 'workflow', 'transport'"));
+
+        // The single-row heartbeat table is updated continuously. Prevent
+        // autovacuum from truncating its heap so standby queries are not
+        // cancelled by the ACCESS EXCLUSIVE truncation lock replay.
+        // Located by content, not index: upstream 0034 is renumbered to 0042
+        // on integration here.
+        let heartbeat_vacuum = migrations
+            .iter()
+            .find(|migration| {
+                migration
+                    .sql
+                    .as_str()
+                    .contains("ALTER TABLE replica_heartbeat")
+            })
+            .expect("replica heartbeat vacuum migration")
+            .sql
+            .as_str();
+        assert!(heartbeat_vacuum.contains("vacuum_truncate = false"));
+        assert!(desired_schema.contains("vacuum_truncate = false"));
+
+        // pgschema intentionally reconciles DDL, not seed DML or table storage
+        // parameters. Its post-apply reconciliation must restore and verify
+        // both parts of the live heartbeat contract for fresh bootstraps.
+        let pgschema_reconciliation =
+            include_str!("../../../scripts/reconcile-schema-after-pgschema.sql");
+        assert!(pgschema_reconciliation
+            .contains("ALTER TABLE replica_heartbeat SET (vacuum_truncate = false)"));
+        assert!(pgschema_reconciliation.contains("INSERT INTO replica_heartbeat (id) VALUES (1)"));
+        assert!(pgschema_reconciliation.contains("ON CONFLICT (id) DO NOTHING"));
+        assert!(pgschema_reconciliation.contains("pg_class"));
+        assert!(pgschema_reconciliation.contains("reloptions"));
+    }
+
+    #[test]
+    fn every_pgschema_apply_runs_post_apply_reconciliation() {
+        fn files_under(root: &Path) -> Vec<PathBuf> {
+            let mut pending = vec![root.to_owned()];
+            let mut files = Vec::new();
+
+            while let Some(path) = pending.pop() {
+                for entry in fs::read_dir(&path)
+                    .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+                {
+                    let path = entry.expect("directory entry").path();
+                    if path.is_dir() {
+                        pending.push(path);
+                    } else {
+                        files.push(path);
+                    }
+                }
+            }
+
+            files
+        }
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let roots = [
+            repo_root.join("scripts"),
+            repo_root.join(".github/workflows"),
+        ];
+        let mut apply_count = 0;
+
+        for path in roots.iter().flat_map(|root| files_under(root)) {
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let lines: Vec<_> = contents.lines().collect();
+
+            for (index, line) in lines.iter().enumerate() {
+                if !line.contains("./bin/pgschema apply") {
+                    continue;
+                }
+
+                apply_count += 1;
+                let following_lines = &lines[index + 1..(index + 7).min(lines.len())];
+                assert!(
+                    following_lines.iter().any(|line| line.contains(
+                        "scripts/reconcile-schema-after-pgschema.sql"
+                    )),
+                    "{} must run scripts/reconcile-schema-after-pgschema.sql immediately after pgschema apply",
+                    path.display()
+                );
+            }
+        }
+
+        assert!(
+            apply_count > 0,
+            "expected at least one pgschema apply caller"
+        );
     }
 
     #[test]
