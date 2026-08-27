@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearAbandonedCodingSessionCreate,
   loadCodingSessionProviderRuntimes,
   loadOrProvisionCodingSessionProvider,
 } from "./useNewCodingSessionCreate.ts";
@@ -349,4 +350,56 @@ test("joining reuses authority without publishing a second genesis", async () =>
   assert.equal(genesisPublishes, 0);
   assert.equal(preparedInput.sessionRef, sessionRef);
   assert.equal(preparedInput.genesisRef, genesisRef);
+});
+
+/**
+ * "Start fresh" abandons a wedged create. It already drops the working-directory
+ * hint the provider would have read; the seat's key material is the same kind of
+ * host-local fact under the same `commandId`, and leaving it behind is an `nsec`
+ * at rest that nothing will ever consume.
+ */
+test("abandoning a seated create drops its key material with its workdir hint", async () => {
+  const calls = [];
+  await clearAbandonedCodingSessionCreate({
+    commandId: "csl-9",
+    actor: "aa".repeat(32),
+    clearHint: async (commandId) => {
+      calls.push(["clearHint", commandId]);
+    },
+    clearSeat: async (commandId) => {
+      calls.push(["clearSeat", commandId]);
+    },
+  });
+  assert.deepEqual(calls, [
+    ["clearHint", "csl-9"],
+    ["clearSeat", "csl-9"],
+  ]);
+});
+
+test("abandoning an unseated create touches no custody at all", async () => {
+  const calls = [];
+  await clearAbandonedCodingSessionCreate({
+    commandId: "csl-10",
+    actor: null,
+    clearHint: async (commandId) => {
+      calls.push(["clearHint", commandId]);
+    },
+    clearSeat: async (commandId) => {
+      calls.push(["clearSeat", commandId]);
+    },
+  });
+  assert.deepEqual(calls, [["clearHint", "csl-10"]]);
+});
+
+test("a custody clear that fails does not stop the screen from resetting", async () => {
+  await clearAbandonedCodingSessionCreate({
+    commandId: "csl-11",
+    actor: "aa".repeat(32),
+    clearHint: async () => {
+      throw new Error("hint file is read-only");
+    },
+    clearSeat: async () => {
+      throw new Error("seat file is read-only");
+    },
+  });
 });

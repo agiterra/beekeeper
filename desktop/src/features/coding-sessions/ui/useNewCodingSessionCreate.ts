@@ -583,7 +583,12 @@ export function useNewCodingSessionCreate({
 
   const startFresh = React.useCallback(() => {
     if (scoped) {
-      void clearCodingSessionCreateHint(scoped.input.commandId).catch(() => {});
+      void clearAbandonedCodingSessionCreate({
+        commandId: scoped.input.commandId,
+        actor: scoped.input.actor ?? null,
+        clearHint: clearCodingSessionCreateHint,
+        clearSeat: clearCodingSessionActorSeat,
+      });
     }
     const cleared = clearDurableCodingSessionCreate(scopeId);
     if (!cleared.ok) {
@@ -719,6 +724,29 @@ export async function prepareNewCodingSessionCreate(
  * Model lookups run per runtime and each failure is swallowed independently:
  * one broken adapter must not cost the others their model lists.
  */
+/**
+ * Drop every host-local trace of a create that will never be answered.
+ *
+ * Two files on this computer are keyed by a create's exact `commandId`: the
+ * working-directory hint the provider resolves the session's `cwd` from, and —
+ * for a seated create — the custody entry holding the agent's `nsec`. They are
+ * written together and they have to be abandoned together. Clearing only the
+ * hint leaves a secret at rest under a command nothing will ever consume,
+ * which is the same defect as leaking it, just quieter.
+ *
+ * Best effort by contract: the create is already being abandoned, and a
+ * cleanup write that cannot land must not keep the person on a dead screen.
+ */
+export async function clearAbandonedCodingSessionCreate(input: {
+  commandId: string;
+  actor: string | null;
+  clearHint: (commandId: string) => Promise<unknown>;
+  clearSeat: (commandId: string) => Promise<unknown>;
+}): Promise<void> {
+  await input.clearHint(input.commandId).catch(() => {});
+  if (input.actor) await input.clearSeat(input.commandId).catch(() => {});
+}
+
 export async function loadCodingSessionProviderRuntimes({
   getRuntimes = getCodingSessionProviderRuntimes,
   getModels = getCodingSessionProviderModels,
