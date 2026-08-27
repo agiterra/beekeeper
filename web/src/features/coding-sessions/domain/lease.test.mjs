@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  CodingSessionObserverStore,
+  codingSessionTargetFactKey,
+} from "./catalog.ts";
+import {
   CODING_SESSION_LEASE_TTL_SECONDS,
   parseCodingSessionLease,
   resolveCodingSessionReachability,
 } from "./lease.ts";
 import {
+  CHANNEL_ID,
   corruptSignature,
+  createEvent,
   leaseEvent,
+  metadataEvent,
   newSigner,
+  receiptEvent,
   resign,
   target,
 } from "./testFixtures.mjs";
@@ -74,12 +82,15 @@ test("a lease whose commandId is not the accepted create's proves nothing", () =
   );
 });
 
-test("with no accepted create resolved, a lease cannot prove reachability", () => {
+test("with no accepted create resolved, the join is unread, not answered", () => {
   const report = reachability({
     leases: [lease({ created_at: NOW_S })],
     acceptedCommandId: null,
   });
-  assert.equal(report.reachability, "no_provider_answering");
+  // The create is routinely outside the 1000-event history window for a
+  // perfectly live session. Calling that "nobody answering" prints a
+  // demonstrably alive provider as dead (D8).
+  assert.equal(report.reachability, "unknown");
 });
 
 test("a lease signed by a different key than the provider authority is ignored", () => {
@@ -145,9 +156,42 @@ test("a lease whose cs-target tag disagrees with its payload is refused", () => 
   assert.equal(parseCodingSessionLease(swapped), null);
 });
 
-test("a lease with a broken signature is not decoded by the caller's gate", () => {
-  // `parseCodingSessionLease` is pure; the store verifies first. This pins the
-  // contract that a corrupted lease never reaches a reachability claim.
-  const broken = corruptSignature(leaseEvent(PROVIDER));
-  assert.equal(broken.sig === leaseEvent(PROVIDER).sig, false);
+test("a corrupted lease never reaches a reachability claim", () => {
+  // `parseCodingSessionLease` is pure; the store is the gate. This exercises
+  // that gate rather than the fixture that breaks the signature.
+  const operator = newSigner();
+  const store = new CodingSessionObserverStore();
+  store.ingest(
+    [
+      createEvent(operator, {
+        commandId: "command-1",
+        providerAuthorityPubkey: PROVIDER.pubkey,
+      }),
+      receiptEvent(PROVIDER, { commandId: "command-1", status: "created" }),
+      metadataEvent(PROVIDER, { status: "running" }),
+      corruptSignature(leaseEvent(PROVIDER, { created_at: NOW_S })),
+    ],
+    [CHANNEL_ID],
+  );
+  const facts = store.facts([CHANNEL_ID]);
+  assert.equal(facts.invalidSignatureCount, 1);
+  assert.equal(facts.leasesByTarget.size, 0, "the forged lease is not a fact");
+
+  const generation = facts.generations[0];
+  const report = resolveCodingSessionReachability({
+    leases:
+      facts.leasesByTarget.get(
+        codingSessionTargetFactKey(generation.channelId, generation.target),
+      ) ?? [],
+    acceptedCommandId:
+      facts.acceptedCommandIdByGenerationId.get(generation.generationId) ??
+      null,
+    providerAuthorityPubkey: generation.providerAuthorityPubkey,
+    isCurrentGeneration: true,
+    leasesRead: true,
+    lastReportedStatus: generation.status,
+    lastReportedAt: generation.statusAt,
+    nowMs: NOW_S * 1000,
+  });
+  assert.equal(report.reachability, "no_provider_answering");
 });

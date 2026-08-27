@@ -116,7 +116,8 @@ export type ReachabilityInput = {
   /**
    * `commandId` of the create the provider actually confirmed for this
    * generation, or null when it has not been resolved. A lease that names a
-   * different command proves liveness for a different session.
+   * different command proves liveness for a different session; null means the
+   * join is unread, which is `unknown` rather than "nobody answering".
    */
   acceptedCommandId: string | null;
   /** The provider authority whose leases count. */
@@ -139,8 +140,9 @@ export type ReachabilityInput = {
  * {@link CODING_SESSION_LEASE_TTL_SECONDS}, proves `provider_reachable`. Two
  * distinct leases at that sequence prove nothing — the provider's own sequence
  * is supposed to break the tie, so a tie is evidence the snapshot cannot be
- * trusted. An unread lease query stays `unknown`; it must never render as
- * "nobody answering".
+ * trusted. An unread lease query — and an unresolved accepted command, which
+ * is the same gap one join further out — stays `unknown`; neither may ever
+ * render as "nobody answering".
  */
 export function resolveCodingSessionReachability(
   input: ReachabilityInput,
@@ -156,12 +158,17 @@ export function resolveCodingSessionReachability(
   if (!input.leasesRead) {
     return { reachability: "unknown", ...report };
   }
+  // A lease must name the create the provider confirmed for this generation,
+  // and until that command is resolved the join is simply unread — not
+  // answered in the negative. It is routinely unresolved for a perfectly live
+  // session whose 44221 fell outside the history window, and D8 forbids an
+  // unknown read from rendering as nobody answering.
+  if (input.acceptedCommandId === null) {
+    return { reachability: "unknown", ...report };
+  }
   const relevant = input.leases.filter(
     (lease) =>
       lease.signerPubkey === input.providerAuthorityPubkey &&
-      // A lease must name the create the provider confirmed for this
-      // generation. Until that is resolved nothing is proven either way.
-      input.acceptedCommandId !== null &&
       lease.commandId === input.acceptedCommandId,
   );
   if (relevant.length === 0 || !input.isCurrentGeneration) {
