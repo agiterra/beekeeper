@@ -1985,6 +1985,15 @@ written and `bash -n` clean but **was not executed** — that harness needs
     symlinked `SKILL.md` inside an in-pack directory is read and copied into a
     seat as instructions. No crew can be authored from the desktop UI at all
     yet, and nothing here has run against a relay.
+    **Re-gated `crew/s2-s6`@`d7eca684`: gate green** (lib 3679/0 across 8
+    crates, clippy clean, desktop `pnpm test` 6345/0, Tauri 2710/0, `just
+    test` 12/12). The stray `~/.agents/skills/brief/SKILL.md` from the
+    earlier fix lane was removed by the lead. A single same-family advisory
+    refuter pass CONFIRMED two blocking findings still unfixed — the
+    `"default"` adapter alias still passes the crew's model-family check
+    (`codingSessionCrew.ts:344`), and `buzz-persona/src/skills.rs:170`'s
+    skill-write path still has no canonicalize/symlink guard on the target —
+    so Slice 5 stays **not clean**.
 
 ## 2a. Direction settled 2026-08-18
 
