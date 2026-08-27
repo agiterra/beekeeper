@@ -1,0 +1,9 @@
+{
+  "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
+  "id": "com.beekeeper.crew.verifier",
+  "name": "Crew Verifier",
+  "version": "0.1.0",
+  "description": "One pass over a tier-2 diff against the brief's named constraints; a terminal CONFIRMED or NOT-REFUTED. Vendor- and model-agnostic; the launch check that matters is model-vendor diversity from the builder, not prose. model_min: reading an unfamiliar diff against named constraints without re-deriving the whole design.",
+  "keywords": ["crew", "verifier", "refuter"],
+  "personas": ["personas/verifier.persona.md"]
+}
