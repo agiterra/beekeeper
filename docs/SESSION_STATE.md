@@ -2173,6 +2173,42 @@ written and `bash -n` clean but **was not executed** — that harness needs
     each frame exactly once into a bounded channel, so `recv_validated` is
     cancel-safe at every await. Test un-ignored; `--lib` 961/0/53, three runs.
 
+73. **The pending create screen blamed the provider for a request the relay
+    never took.** Found 2026-08-27 18:4x by Brian, first live crew launch
+    after `e7d0e48b` deployed: "roletest" (seat `ede63017…`, role `lead`)
+    showed *"The session provider has not accepted this request after 30
+    seconds. It may be offline or not a member of this channel."* The wire
+    said otherwise: zero 44221 from his key in that channel, ever. The dev
+    app's durable create record (localStorage
+    `buzz.coding-session-create.v1:project:…:bee-keeper`) held the signed
+    event with `publishState: "ambiguous"`, `createdAt` 2026-08-26 23:47:16 —
+    the night before, when hive still ran the pre-crew relay whose
+    `deny_unknown_fields` rejected `actor`/`role`. Reopening the dialog the
+    next day rehydrated that record, the lifecycle resolution read "pending"
+    (no 44223/44224 for the commandId — correctly, nobody had seen it), the
+    stall clock fired off the day-old `createdAt`, and the copy accused the
+    provider. Worse, the stall *disabled* "Retry this exact request" on the
+    theory that "the relay already holds these bytes" — false for exactly
+    this state, and retry was the one action that would have worked (the
+    provider's command horizon is 24 h). Both halves of the seated path were
+    proven live the same evening: hive accepted a seated 44221 at 18:54:30
+    and the dev provider `1958c6c4…` answered in the same second with the
+    designed `ACTOR_UNAVAILABLE` refusal (no seat staged for that commandId).
+    **Fixed (`fix/pending-create-honesty`):** `newCodingSessionStatusMessage`,
+    `canRetryNewCodingSessionCreate` and `pendingCodingSessionWorkspaceStatus`
+    take the record's `publishState`; `ambiguous`/`prepared` now reads *"The
+    relay never confirmed this signed request, so no session provider has
+    seen it. Retry this exact request to send it again, or start fresh."*,
+    keeps retry enabled through a stall, and shows *Status unknown* instead
+    of *Working*/*Idle*. Red-before-green in `newCodingSessionModel.test.mjs`
+    and `PendingCodingSessionScreen.test.mjs`. Not changed: the stall clock
+    itself, and the relay/provider (both behaved). Workaround on the old
+    build: *Start fresh*. Side note from the same investigation: `bee
+    sessions status` shows executions but not their founder, so a probe I
+    sent to "a 3-day-quiet session" landed in Andy's (`7464daa5…` is his
+    machine); his host answered `turn_dropped / NO_LIVE_EXECUTION` as
+    designed. Founder should be a column.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,

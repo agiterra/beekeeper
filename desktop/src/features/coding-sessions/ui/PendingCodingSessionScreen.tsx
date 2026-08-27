@@ -80,11 +80,13 @@ export function PendingCodingSessionScreen({
     lifecycle,
     authRuntime: failedRuntime,
     stalled,
+    publishState: transaction.publishState,
   });
   const headerStatus = pendingCodingSessionWorkspaceStatus({
     lifecycleState: lifecycle?.state ?? null,
     publishError,
     hasInitialTurn: initialTurn !== null,
+    publishState: transaction.publishState,
   });
 
   return (
@@ -179,6 +181,7 @@ export function PendingCodingSessionScreen({
                   lifecycleErrorMessage,
                   lifecycleState: lifecycle?.state ?? null,
                   stalled,
+                  publishState: transaction.publishState,
                 })
               }
               onClick={retryExact}

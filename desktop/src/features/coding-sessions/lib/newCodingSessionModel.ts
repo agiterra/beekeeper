@@ -10,6 +10,23 @@ import type {
   TrustedCodingSessionProviderCatalog,
 } from "./codingSessionProviderCatalog";
 import type { CodingSessionWorkspaceStatus } from "./codingSessionTypes";
+import type { DurableCodingSessionCreateTransaction } from "./durableCodingSessionCreate";
+
+/** The durable record's own account of whether the relay ever took the bytes. */
+export type DurableCodingSessionPublishState =
+  DurableCodingSessionCreateTransaction["publishState"];
+
+/**
+ * True when the relay never confirmed the signed create: the publish threw or
+ * timed out (`ambiguous`), or the record was signed and the app went away
+ * before sending it (`prepared`). No provider can have seen such a request,
+ * so nothing downstream may describe it as "waiting on the provider".
+ */
+export function isUnconfirmedCodingSessionPublish(
+  publishState: DurableCodingSessionPublishState | null | undefined,
+): boolean {
+  return publishState === "ambiguous" || publishState === "prepared";
+}
 
 export {
   formatCodingSessionProviderLabel,
@@ -387,9 +404,12 @@ export function pendingCodingSessionWorkspaceStatus(input: {
   lifecycleState: string | null | undefined;
   publishError: string | null;
   hasInitialTurn: boolean;
+  /** Omitted only by callers with no durable record in hand. */
+  publishState?: DurableCodingSessionPublishState | null;
 }): CodingSessionWorkspaceStatus {
   if (
     input.publishError !== null ||
+    isUnconfirmedCodingSessionPublish(input.publishState) ||
     input.lifecycleState === "failed" ||
     input.lifecycleState === "conflict"
   ) {
@@ -404,7 +424,10 @@ export function pendingCodingSessionWorkspaceStatus(input: {
  * Whether "Retry this exact request" is actionable. Extracted so the pending
  * session screen and the create form's edit view can never drift: retry is
  * pointless while a publish or lifecycle read is in flight, once the session
- * resolved, or after a stall (the relay already holds these exact bytes).
+ * resolved, or after a stall on a *confirmed* publish (the relay already holds
+ * these exact bytes). An unconfirmed publish is the one case where the relay
+ * does not hold them, so there the stall clock must not take retry away — it
+ * is exactly the remedy.
  */
 export function canRetryNewCodingSessionCreate(input: {
   isPublishing: boolean;
@@ -412,6 +435,7 @@ export function canRetryNewCodingSessionCreate(input: {
   lifecycleErrorMessage: string | null;
   lifecycleState: string | null | undefined;
   stalled: boolean;
+  publishState?: DurableCodingSessionPublishState | null;
 }): boolean {
   return !(
     input.isPublishing ||
@@ -420,7 +444,7 @@ export function canRetryNewCodingSessionCreate(input: {
     input.lifecycleState === "created" ||
     input.lifecycleState === "created-with-failed-initial-turn" ||
     input.lifecycleState === "resumed-without-context" ||
-    input.stalled
+    (input.stalled && !isUnconfirmedCodingSessionPublish(input.publishState))
   );
 }
 
@@ -470,6 +494,13 @@ export function newCodingSessionStatusMessage(input: {
   hostPhase?: NewCodingSessionHostPhase;
   isPublishing: boolean;
   publishError: string | null;
+  /**
+   * The durable record's publish state. An unconfirmed publish outranks the
+   * stall clock: a request the relay never took cannot be "not yet accepted
+   * by the provider" — blaming the provider there was a lie the first live
+   * crew launch told (SESSION_STATE item 73).
+   */
+  publishState?: DurableCodingSessionPublishState | null;
   lifecycle:
     | { state: "pending" }
     | { state: "failed"; error: { code?: string; message: string } }
@@ -520,6 +551,15 @@ export function newCodingSessionStatusMessage(input: {
   }
   switch (input.lifecycle?.state) {
     case "pending":
+      if (isUnconfirmedCodingSessionPublish(input.publishState)) {
+        return {
+          tone: "destructive",
+          message:
+            "The relay never confirmed this signed request, so no session " +
+            "provider has seen it. Retry this exact request to send it " +
+            "again, or start fresh.",
+        };
+      }
       if (input.stalled) {
         return {
           tone: "destructive",

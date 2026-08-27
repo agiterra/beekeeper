@@ -913,3 +913,77 @@ test("retry is actionable only while the exact bytes could still help", async ()
     assert.equal(canRetryNewCodingSessionCreate(blocked), false);
   }
 });
+
+test("an unconfirmed publish is reported as undelivered, never as a silent provider", async () => {
+  const { newCodingSessionStatusMessage } = await import(
+    "./newCodingSessionModel.ts"
+  );
+  const base = { hostPhase: "idle", isPublishing: false, publishError: null };
+  // A durable transaction whose relay OK never arrived ("ambiguous"), or that
+  // was signed but never sent ("prepared"), has not reached any provider. The
+  // stall clock must not convert that into "the provider has not accepted".
+  for (const publishState of ["ambiguous", "prepared"]) {
+    for (const stalled of [false, true]) {
+      const status = newCodingSessionStatusMessage({
+        ...base,
+        lifecycle: { state: "pending" },
+        publishState,
+        stalled,
+      });
+      assert.equal(
+        status.tone,
+        "destructive",
+        `${publishState} stalled=${stalled}`,
+      );
+      assert.match(status.message, /relay never confirmed/);
+      assert.doesNotMatch(status.message, /provider has not accepted/);
+    }
+  }
+  // A confirmed publish keeps the provider-facing copy.
+  const confirmed = newCodingSessionStatusMessage({
+    ...base,
+    lifecycle: { state: "pending" },
+    publishState: "published",
+    stalled: true,
+  });
+  assert.match(
+    confirmed.message,
+    /has not accepted this request after 30 seconds/,
+  );
+});
+
+test("an unconfirmed publish reads Status unknown and keeps retry actionable after a stall", async () => {
+  const {
+    pendingCodingSessionWorkspaceStatus,
+    canRetryNewCodingSessionCreate,
+  } = await import("./newCodingSessionModel.ts");
+  assert.deepEqual(
+    pendingCodingSessionWorkspaceStatus({
+      lifecycleState: "pending",
+      publishError: null,
+      hasInitialTurn: true,
+      publishState: "ambiguous",
+    }),
+    { kind: "unknown", label: "Status unknown" },
+  );
+  const ready = {
+    isPublishing: false,
+    lifecycleIsLoading: false,
+    lifecycleErrorMessage: null,
+    lifecycleState: "pending",
+    stalled: true,
+  };
+  // The relay does not hold these bytes, so retrying is exactly the remedy.
+  assert.equal(
+    canRetryNewCodingSessionCreate({ ...ready, publishState: "ambiguous" }),
+    true,
+  );
+  assert.equal(
+    canRetryNewCodingSessionCreate({ ...ready, publishState: "prepared" }),
+    true,
+  );
+  assert.equal(
+    canRetryNewCodingSessionCreate({ ...ready, publishState: "published" }),
+    false,
+  );
+});

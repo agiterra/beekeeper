@@ -128,3 +128,19 @@ test("conflicting receipts show the conflict copy", () => {
   assert.match(markup, /Conflicting signed lifecycle receipts/);
   assert.match(markup, /Session status: Status unknown/);
 });
+
+test("an unconfirmed publish says so, keeps retry enabled, and shows Status unknown", () => {
+  const markup = render({
+    transaction: { ...makeTransaction(), publishState: "ambiguous" },
+    stalled: true,
+  });
+  assert.match(markup, /relay never confirmed/);
+  assert.doesNotMatch(markup, /provider has not accepted/);
+  assert.match(markup, /Session status: Status unknown/);
+  const retry = markup.match(
+    /<button[^>]*data-testid="pending-coding-session-retry"[^>]*>/,
+  );
+  assert.ok(retry, "retry button renders");
+  // The `disabled` *attribute*, not Tailwind's `disabled:` variant classes.
+  assert.doesNotMatch(retry[0], /\sdisabled=""/);
+});

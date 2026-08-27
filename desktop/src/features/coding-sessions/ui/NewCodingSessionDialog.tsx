@@ -328,6 +328,7 @@ export function NewCodingSessionForm({
     lifecycle,
     authRuntime: failedRuntime,
     stalled,
+    publishState: transaction?.publishState ?? null,
   });
   const draftBytes = new TextEncoder().encode(draftText).byteLength;
   const draftOverCap =
@@ -746,6 +747,7 @@ export function NewCodingSessionForm({
                   lifecycleErrorMessage,
                   lifecycleState: lifecycle?.state ?? null,
                   stalled,
+                  publishState: transaction?.publishState ?? null,
                 })
               }
               onClick={retryExact}
