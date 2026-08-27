@@ -10,6 +10,7 @@ import {
   CODING_SESSION_TURN_REFUSAL_DEADLINE_MS,
   forgetCodingSessionTurn,
   formatCodingSessionTurnRefusal,
+  isCodingSessionReaddressableRefusal,
   type WatchedCodingSessionTurn,
   watchCodingSessionTurn,
 } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
@@ -38,8 +39,47 @@ export type CodingSessionTurnRefusalOptions = {
    * rows of its own needs.
    */
   targetKey?: string;
+  /**
+   * The generation `targetKey` names.
+   *
+   * Only the re-armed watches need it: a turn sent through `watch` carries the
+   * generation it was addressed to, while a row adopted on mount was recorded
+   * under this exact target key and therefore belongs to this generation by
+   * construction. Omitted, a re-armed turn's refusal is never offered a
+   * resend rather than being offered one against a guessed number.
+   */
+  targetGeneration?: number;
+  /**
+   * `buildCodingSessionExecutionKey` of the execution this surface addresses.
+   *
+   * Stamped onto every watch so a refusal can be told apart from the seat the
+   * composer is pointed at *now* — one composer instance serves whichever
+   * participant the umbrella has selected.
+   */
+  executionKey?: string;
   /** Ingress transport seam; production passes nothing. */
   client?: CodingSessionIngressClient;
+};
+
+/**
+ * A refusal that named no live generation, kept so the surface can offer to
+ * re-address the words rather than leaving the sender to notice on their own.
+ *
+ * Ruling R1: the provider cannot re-address an owed turn — only the sender can
+ * decide their words still apply to the session that came back — so this is
+ * the whole of what the desktop needs to make that decision offerable.
+ */
+export type CodingSessionReaddressableTurn = {
+  commandId: string;
+  /** The generation the refused command named, when this client knows it. */
+  generation?: number;
+  /**
+   * The execution the refused command was sent to, so a surface that has since
+   * been re-pointed at a sibling seat can tell that this offer is not for it.
+   */
+  executionKey?: string;
+  /** The provider's own code, shown beside the offer rather than translated. */
+  code: string;
 };
 
 export type CodingSessionTurnRefusalState = {
@@ -47,6 +87,14 @@ export type CodingSessionTurnRefusalState = {
   watch: (turn: WatchedCodingSessionTurn) => void;
   /** Refusal copy for the composer's existing error line. */
   error: string | null;
+  /**
+   * The last refusal that means "these words never ran, and a live generation
+   * could still run them" — `null` for every other outcome, including the ones
+   * a resend would not change.
+   */
+  readdress: CodingSessionReaddressableTurn | null;
+  /** Retire the offer above: the words were re-sent, or the person moved on. */
+  clearReaddress: () => void;
   /**
    * Render this next to the composer. It is `null` while no sent turn is being
    * watched, so the relay subscriptions behind it exist only for the seconds a
@@ -75,20 +123,27 @@ export type CodingSessionTurnRefusalState = {
 export function useCodingSessionTurnRefusal({
   channelId,
   client,
+  executionKey,
   providerAuthorityPubkey,
   restoreDraft,
+  targetGeneration,
   targetKey,
 }: CodingSessionTurnRefusalOptions): CodingSessionTurnRefusalState {
   const [watched, setWatched] = React.useState<
     readonly WatchedCodingSessionTurn[]
   >([]);
   const [error, setError] = React.useState<string | null>(null);
+  const [readdress, setReaddress] =
+    React.useState<CodingSessionReaddressableTurn | null>(null);
 
   const watch = React.useCallback((turn: WatchedCodingSessionTurn) => {
     // A new turn is the person's answer to the last refusal; clear it.
     setError(null);
+    setReaddress(null);
     setWatched((current) => watchCodingSessionTurn(current, turn));
   }, []);
+
+  const clearReaddress = React.useCallback(() => setReaddress(null), []);
 
   // Adopt what the provider is still holding for this execution.
   //
@@ -116,6 +171,13 @@ export function useCodingSessionTurnRefusal({
         (watching, turn) =>
           watchCodingSessionTurn(watching, {
             commandId: turn.commandId,
+            // This row was recorded under the target key this scope names, so
+            // its generation is that target's — read from the caller rather
+            // than parsed back out of the key.
+            ...(targetGeneration === undefined
+              ? {}
+              : { generation: targetGeneration }),
+            ...(executionKey === undefined ? {} : { executionKey }),
             // The wire text is the fallback: a row recorded before this field
             // existed still gives the person something back.
             draft: turn.draft ?? turn.text,
@@ -123,12 +185,29 @@ export function useCodingSessionTurnRefusal({
         [...current],
       ),
     );
-  }, [channelId, targetKey]);
+  }, [channelId, executionKey, targetGeneration, targetKey]);
 
   const handleRefused = React.useCallback(
     (turn: WatchedCodingSessionTurn, refusal: CodingSessionCommandRefusal) => {
       setWatched((current) => forgetCodingSessionTurn(current, turn.commandId));
       setError(formatCodingSessionTurnRefusal(refusal));
+      // A turn the provider dropped for want of a live generation is the one
+      // outcome the sender can still act on, so it is kept rather than being
+      // reduced to an error line.
+      setReaddress(
+        isCodingSessionReaddressableRefusal(refusal)
+          ? {
+              commandId: turn.commandId,
+              code: refusal.code.trim(),
+              ...(turn.generation === undefined
+                ? {}
+                : { generation: turn.generation }),
+              ...(turn.executionKey === undefined
+                ? {}
+                : { executionKey: turn.executionKey }),
+            }
+          : null,
+      );
       restoreDraft(turn.draft, turn.commandId);
     },
     [restoreDraft],
@@ -139,7 +218,9 @@ export function useCodingSessionTurnRefusal({
   }, []);
 
   return {
+    clearReaddress,
     error,
+    readdress,
     watch,
     watcher:
       providerAuthorityPubkey && watched.length > 0
