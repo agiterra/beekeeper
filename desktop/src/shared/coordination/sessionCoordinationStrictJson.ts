@@ -238,11 +238,18 @@ export function hasStrictLeaseValues(
   );
 }
 
-/** Strict metadata shape/value check matching buzz-core's four accepted forms. */
-export function hasStrictMetadataJson(
-  source: string,
-  content: unknown,
-): content is Record<string, unknown> {
+/**
+ * Every field set `buzz-core`'s `decode_coding_session_metadata` accepts.
+ *
+ * Four independent additive amendments have landed on the metadata payload —
+ * the `sessionRef` echo, the agent seat's `role`, D9's `turnBudget`, and B1's
+ * four coordinate facts (which travel all-four-or-none) — and each is present
+ * or absent on its own, so the base key set has **sixteen** valid shapes, not
+ * four. Enumerating fewer silently drops every event carrying an amendment
+ * this list forgot, which is a whole-surface outage rather than a strictness
+ * nuance: the reader sees no sessions at all.
+ */
+function metadataFieldForms(): string[][] {
   const base = [
     "schema",
     "session",
@@ -257,16 +264,70 @@ export function hasStrictMetadataJson(
     "branch",
     "capabilities",
   ];
-  const facts = ["observedCommit", "dirty", "relayReachable", "verifiedAt"];
+  const amendments = [
+    ["sessionRef"],
+    ["role"],
+    ["turnBudget"],
+    METADATA_FACT_FIELDS,
+  ];
+  const forms: string[][] = [];
+  for (let mask = 0; mask < 1 << amendments.length; mask += 1) {
+    const form = [...base];
+    for (const [index, keys] of amendments.entries()) {
+      if (mask & (1 << index)) form.push(...keys);
+    }
+    forms.push(form);
+  }
+  return forms;
+}
+
+const METADATA_FACT_FIELDS = [
+  "observedCommit",
+  "dirty",
+  "relayReachable",
+  "verifiedAt",
+];
+const METADATA_FIELD_FORMS = metadataFieldForms();
+const MAX_ROLE_SLUG_BYTES = 64;
+
+/** A seat's role slug: `[a-z0-9-]`, 1..=64 bytes, exactly as Rust reads it. */
+function isRoleSlug(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    encoder.encode(value).length <= MAX_ROLE_SLUG_BYTES &&
+    /^[a-z0-9-]+$/.test(value)
+  );
+}
+
+/**
+ * A `turnBudget` object: exactly `{used, limit}`, and only beside an umbrella.
+ *
+ * A budget is a fact about an umbrella, so it cannot describe an execution
+ * that claimed none, and a `limit` of zero would read as "no turn may ever
+ * pass" rather than "unbudgeted" — the producer omits the key instead. Both
+ * are the rejections `validate_session_metadata` makes.
+ */
+function isTurnBudget(value: unknown, sessionRef: unknown): boolean {
+  return (
+    typeof sessionRef === "string" &&
+    hasExactFields(value, [["used", "limit"]]) &&
+    Number.isSafeInteger(value.used) &&
+    (value.used as number) >= 0 &&
+    Number.isSafeInteger(value.limit) &&
+    (value.limit as number) > 0
+  );
+}
+
+/** Strict metadata shape/value check matching buzz-core's sixteen forms. */
+export function hasStrictMetadataJson(
+  source: string,
+  content: unknown,
+): content is Record<string, unknown> {
   if (
     encoder.encode(source).length > 32 * 1024 ||
     hasDuplicateJsonKeys(source) ||
-    !hasExactFields(content, [
-      base,
-      [...base, "sessionRef"],
-      [...base, ...facts],
-      [...base, "sessionRef", ...facts],
-    ]) ||
+    !hasExactFields(content, METADATA_FIELD_FORMS) ||
     content.schema !== "buzz-coding-session-metadata/v1" ||
     !hasStrictSessionTargetValues(content.session) ||
     !boundedNullable(content.projectRef, MAX_REFERENCE_BYTES) ||
@@ -284,6 +345,24 @@ export function hasStrictMetadataJson(
   if (
     Object.hasOwn(content, "sessionRef") &&
     !isCanonicalSessionRef(content.sessionRef)
+  ) {
+    return false;
+  }
+  // An explicit `null` is how serde's `Option` reads an absent value, and the
+  // Rust decoder validates neither key when it holds one — so neither does
+  // this. A non-null `role` labels a seat, so it needs the actor that holds
+  // it; a non-null `turnBudget` needs the umbrella it bounds.
+  if (
+    Object.hasOwn(content, "role") &&
+    content.role !== null &&
+    (typeof content.agentRef !== "string" || !isRoleSlug(content.role))
+  ) {
+    return false;
+  }
+  if (
+    Object.hasOwn(content, "turnBudget") &&
+    content.turnBudget !== null &&
+    !isTurnBudget(content.turnBudget, content.sessionRef)
   ) {
     return false;
   }
