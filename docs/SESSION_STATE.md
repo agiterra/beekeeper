@@ -2140,7 +2140,15 @@ the pre-push branch-skew guard reports the branch behind `origin/main` on 24
 files it also touches, and hermit `just` was missing from the hook subshell so
 six other hook steps exited 127 before it. What is owed before any of this
 lands: a reconciliation with the moved `origin/main`, a full repository gate,
-and one crew launch watched in the app.
+and one crew launch watched in the app. Rebased onto main@fecf0d33 (Andy's
+stall/redaction work) 2026-08-27 and re-gated there: lib 8 crates green
+(buzz-relay alone 959/0 excluding the pre-existing demo_join failure fixed on
+crew/relay-cancel-safety; the 12 failures seen under a parallel nine-step gate
+were Sqlx PoolTimedOut contention and vanished alone), clippy clean, desktop
+6401/0, Tauri 2718/0, just check, mobile 1465, px, just test 12/12; pushed to
+`origin/crew/s2-s6` — tip **run integration tests alone, not inside a
+parallel gate, when a count looks off; Sqlx PoolTimedOut contention under
+concurrency reads as real failures but vanishes solo.**
 
 **The active track as of 2026-08-25 night is live confirmation of the
 full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
