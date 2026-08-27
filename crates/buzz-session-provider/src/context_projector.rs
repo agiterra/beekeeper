@@ -1898,6 +1898,15 @@ fn source_event_count(input: &ContextProjectionInput) -> usize {
 /// or `None` when the two already agree and there is nothing to explain.
 ///
 /// Stated in real numbers only, per category — no prose about the session.
+/// Every non-transcript term the breakdown declares is enumerated here, so the
+/// parenthesised numbers always sum to the figure the sentence states; a
+/// breakdown that grows a term and a note that does not is a sentence that
+/// does not add up, which is a falsehood and not a wording nit.
+///
+/// The inbox term is named separately rather than folded in with the rest.
+/// Retained turn traffic is *not* proof — the whole file says so, from
+/// `MAX_CONTEXT_SOURCE_EVENTS`' doc to the kind partition's — and calling it
+/// proof here would contradict the doctrine the package rests on.
 fn source_delta_note(
     breakdown: &CodingSessionContextSourceBreakdown,
     included: u64,
@@ -1910,13 +1919,14 @@ fn source_delta_note(
         .total()
         .saturating_sub(breakdown.transcript_events);
     Some(format!(
-        "sourceEventCount {} includes {non_content} non-content proof events ({} genesis, {} authority, {} name, {} goal, {} per-generation bookkeeping) in addition to {} transcript events; {included} became history items.",
+        "sourceEventCount {} includes {non_content} events that are not transcript items ({} genesis, {} authority, {} name, {} goal, {} per-generation bookkeeping — all proof-chain — plus {} retained inbox turn-traffic events, which prove nothing) in addition to {} transcript events; {included} became history items.",
         breakdown.total(),
         breakdown.genesis_events,
         breakdown.authority_link_events,
         breakdown.name_revision_events,
         breakdown.goal_revision_events,
         breakdown.generation_bookkeeping_events,
+        breakdown.inbox_events,
         breakdown.transcript_events,
     ))
 }
@@ -4020,6 +4030,68 @@ mod tests {
         );
     }
 
+    /// The delta note has to add up, and it has to name the seventh term.
+    ///
+    /// `checked_total` gained `inbox_events` when the package gained an inbox;
+    /// the note that reconciles `sourceEventCount` against the history counts
+    /// did not, so any package with retained mail rendered a sentence whose
+    /// parenthesised numbers were short of the figure it stated — and called
+    /// the retained turn traffic "proof events", which is the one thing the
+    /// rest of this file insists it is not.
+    #[test]
+    fn the_delta_note_enumerates_every_term_it_counts_including_the_inbox() {
+        let mut fixture = fixture(4);
+        let sender = fixture.founder.clone();
+        let channel_id = fixture.input.channel_id;
+        fixture.input.turn_commands = vec![turn_command(
+            channel_id,
+            "turn-1",
+            &fixture.target,
+            "look at the failing test",
+            CodingSessionDelivery::Boundary,
+            100,
+            &sender,
+        )];
+        fixture.input.turn_receipts = vec![turn_stage(
+            channel_id,
+            LifecycleReceipt::turn_started("turn-1", &fixture.target, "t-1"),
+            110,
+            &fixture.provider,
+        )];
+
+        let package = project_session_context(&fixture.input).unwrap();
+        package.validate().unwrap();
+        let breakdown = package
+            .provenance
+            .source_event_breakdown
+            .clone()
+            .expect("a v3 package carries its breakdown");
+        assert_eq!(breakdown.inbox_events, 2, "one command and its one receipt");
+
+        let note = delta_note_of(&package);
+        let numbers: Vec<u64> = note
+            .split(|character: char| !character.is_ascii_digit())
+            .filter(|piece| !piece.is_empty())
+            .filter_map(|piece| piece.parse().ok())
+            .collect();
+        // total, non-content, then one number per enumerated category, then
+        // the transcript count and the history count.
+        let (total, stated_non_content) = (numbers[0], numbers[1]);
+        let enumerated: u64 = numbers[2..numbers.len() - 2].iter().sum();
+        assert_eq!(
+            total, package.provenance.source_event_count,
+            "the note states the same total the breakdown sums to: {note}"
+        );
+        assert_eq!(
+            enumerated, stated_non_content,
+            "the enumerated categories must add up to the figure the sentence states: {note}"
+        );
+        assert!(
+            note.contains("2 retained inbox"),
+            "and the inbox term is named rather than folded into the proof chain: {note}"
+        );
+    }
+
     #[test]
     fn the_delta_note_states_the_real_numbers_and_is_emitted_only_on_a_delta() {
         let fixture = fixture(4);
@@ -4033,7 +4105,7 @@ mod tests {
         assert_eq!(breakdown.total(), package.provenance.source_event_count);
         assert_eq!(
             delta_note_of(&package),
-            "sourceEventCount 8 includes 4 non-content proof events (1 genesis, 0 authority, 0 name, 0 goal, 3 per-generation bookkeeping) in addition to 4 transcript events; 4 became history items."
+            "sourceEventCount 8 includes 4 events that are not transcript items (1 genesis, 0 authority, 0 name, 0 goal, 3 per-generation bookkeeping — all proof-chain — plus 0 retained inbox turn-traffic events, which prove nothing) in addition to 4 transcript events; 4 became history items."
         );
 
         // A source whose count already equals the history counts has nothing to
