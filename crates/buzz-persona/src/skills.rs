@@ -22,6 +22,11 @@
 //!   following a symlink out of the pack without checking is how it becomes a
 //!   read one: the bytes of whatever it points at would land in a seat's
 //!   working directory as instructions.
+//! - It refuses the same escape on the *destination*. "Per workdir" is a claim
+//!   about where the bytes land, so the target is canonicalized the way the
+//!   source is: a `.agents` symlink in the checkout, a symlinked skill
+//!   directory, or a symlinked destination `SKILL.md` that resolves outside
+//!   `<workdir>/.agents/skills` is refused rather than written through.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -46,6 +51,11 @@ pub enum SkillError {
     #[error("skill \"{name}\" resolves outside the pack skills directory: {path}")]
     SourceEscape { name: String, path: PathBuf },
 
+    /// The destination skill directory, or its `SKILL.md`, resolves outside
+    /// the workdir's `.agents/skills` root.
+    #[error("skill \"{name}\" would be written outside the workdir skills directory: {path}")]
+    TargetEscape { name: String, path: PathBuf },
+
     /// The skill directory has no `SKILL.md`.
     #[error("skill \"{name}\" has no SKILL.md at {path}")]
     MissingSkillMd { name: String, path: PathBuf },
@@ -66,7 +76,8 @@ pub enum SkillError {
 pub struct MaterializedSkill {
     /// Bare skill name (the directory name in the pack and in the workdir).
     pub name: String,
-    /// Absolute path to the written `SKILL.md`.
+    /// Absolute, symlink-resolved path to the written `SKILL.md` — where the
+    /// bytes actually landed, which is what the destination guard checked.
     pub path: PathBuf,
     /// Whether this call changed the file. `false` means the workdir already
     /// held the pack's current bytes — the idempotent case.
@@ -81,8 +92,8 @@ pub struct MaterializedSkill {
 /// # Errors
 ///
 /// Refuses (writing nothing further) on an unsafe skill name, a source that
-/// escapes the pack, a skill directory with no `SKILL.md`, or any filesystem
-/// failure. Callers on a spawn path should treat a refusal as a failed spawn:
+/// escapes the pack, a destination that escapes `<workdir>/.agents/skills`, a
+/// skill directory with no `SKILL.md`, or any filesystem failure. Callers on a spawn path should treat a refusal as a failed spawn:
 /// a seat whose prompt names craft it does not hold is a seat that lies.
 pub fn materialize_skills(
     persona: &ResolvedPersona,
@@ -167,13 +178,39 @@ fn materialize_one(
         source,
     })?;
 
-    let target_dir = workdir.join(SEAT_SKILLS_DIR).join(component);
-    std::fs::create_dir_all(&target_dir).map_err(|source| SkillError::Io {
-        operation: "create",
-        path: target_dir.clone(),
-        source,
-    })?;
+    // The pack is not the only untrusted half of this write. The *workdir* is
+    // a checkout a person controls, and a `.agents` symlink in it — the
+    // ordinary way people share one skills directory between checkouts — makes
+    // `create_dir_all` + `write` land the pack's bytes outside the workdir,
+    // over the human's own `~/.agents/skills/<name>/SKILL.md`. So the
+    // destination is resolved exactly like the source: component by component,
+    // following a symlink only while it stays under the workdir.
+    let skills_root = resolved_skills_root(name, workdir)?;
+    let target_dir = resolve_child(
+        name,
+        &skills_root,
+        &skills_root,
+        std::ffi::OsStr::new(component),
+    )?;
     let target_md = target_dir.join("SKILL.md");
+    // A symlinked destination file is the same escape one level down: writing
+    // through it replaces whatever it points at, dangling links included.
+    if let Ok(meta) = target_md.symlink_metadata() {
+        if meta.file_type().is_symlink() {
+            let resolved = target_md
+                .canonicalize()
+                .map_err(|_| SkillError::TargetEscape {
+                    name: name.to_owned(),
+                    path: target_md.clone(),
+                })?;
+            if !resolved.starts_with(&skills_root) {
+                return Err(SkillError::TargetEscape {
+                    name: name.to_owned(),
+                    path: resolved,
+                });
+            }
+        }
+    }
 
     // Idempotence is a read, not a flag: if the bytes already match, the file
     // is left completely alone, mtime included, so a restarting session does
@@ -196,6 +233,84 @@ fn materialize_one(
         path: target_md,
         written: true,
     })
+}
+
+/// Resolve (creating it) `<workdir>/.agents/skills`, refusing a resolution
+/// that leaves the workdir.
+///
+/// The workdir itself is created when absent, because callers on a spawn path
+/// hand over a directory they are about to run in; only what lies *under* it
+/// is treated as untrusted.
+fn resolved_skills_root(name: &str, workdir: &Path) -> Result<PathBuf, SkillError> {
+    std::fs::create_dir_all(workdir).map_err(|source| SkillError::Io {
+        operation: "create",
+        path: workdir.to_path_buf(),
+        source,
+    })?;
+    let root = workdir.canonicalize().map_err(|source| SkillError::Io {
+        operation: "read workdir",
+        path: workdir.to_path_buf(),
+        source,
+    })?;
+    let mut current = root.clone();
+    for part in Path::new(SEAT_SKILLS_DIR).components() {
+        // `SEAT_SKILLS_DIR` is this module's own constant of ordinary
+        // components; anything else would be a bug here, not input.
+        let Component::Normal(part) = part else {
+            return Err(SkillError::TargetEscape {
+                name: name.to_owned(),
+                path: current.join(SEAT_SKILLS_DIR),
+            });
+        };
+        current = resolve_child(name, &root, &current, part)?;
+    }
+    Ok(current)
+}
+
+/// Resolve one directory component under `parent`, creating it when absent,
+/// and refuse anything that does not resolve to a directory under `root`.
+fn resolve_child(
+    name: &str,
+    root: &Path,
+    parent: &Path,
+    child: &std::ffi::OsStr,
+) -> Result<PathBuf, SkillError> {
+    let path = parent.join(child);
+    let escaped = |path: PathBuf| SkillError::TargetEscape {
+        name: name.to_owned(),
+        path,
+    };
+    match path.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let resolved = path.canonicalize().map_err(|_| escaped(path.clone()))?;
+            if !resolved.starts_with(root) || !resolved.is_dir() {
+                return Err(escaped(resolved));
+            }
+            Ok(resolved)
+        }
+        Ok(meta) if meta.is_dir() => Ok(path),
+        Ok(_) => Err(SkillError::Io {
+            operation: "create",
+            path: path.clone(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "exists and is not a directory",
+            ),
+        }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&path).map_err(|source| SkillError::Io {
+                operation: "create",
+                path: path.clone(),
+                source,
+            })?;
+            Ok(path)
+        }
+        Err(source) => Err(SkillError::Io {
+            operation: "read",
+            path,
+            source,
+        }),
+    }
 }
 
 /// Accept a skill name only when it is one ordinary path component.
@@ -275,7 +390,7 @@ mod tests {
         assert!(written.iter().all(|s| s.written));
         let brief = workdir.path().join(".agents/skills/brief/SKILL.md");
         assert_eq!(fs::read_to_string(&brief).unwrap(), "# Brief");
-        assert_eq!(written[0].path, brief);
+        assert_eq!(written[0].path, brief.canonicalize().unwrap());
         assert_eq!(
             fs::read_to_string(workdir.path().join(".agents/skills/report/SKILL.md")).unwrap(),
             "# Rep"
@@ -440,6 +555,121 @@ mod tests {
         .expect("a symlink inside the pack is ordinary");
 
         assert_eq!(fs::read_to_string(&written[0].path).unwrap(), "# Brief");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_agents_dir_pointing_out_of_the_workdir_is_refused() {
+        // The workdir is the *other* untrusted half of this write. A `.agents`
+        // symlink is the ordinary way people share one skills directory
+        // between checkouts, and it turns this function into an overwrite of
+        // whatever it points at — including the human's own
+        // `~/.agents/skills/<name>/SKILL.md`.
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let outside = TempDir::new().unwrap();
+        fs::create_dir_all(outside.path().join("skills/brief")).unwrap();
+        fs::write(outside.path().join("skills/brief/SKILL.md"), "# Mine").unwrap();
+        let workdir = TempDir::new().unwrap();
+        std::os::unix::fs::symlink(outside.path(), workdir.path().join(".agents")).unwrap();
+
+        let error = materialize_skills(
+            &persona("builder", &["brief"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect_err("a .agents that leaves the workdir is refused");
+
+        assert!(
+            matches!(error, SkillError::TargetEscape { .. }),
+            "unexpected error {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("skills/brief/SKILL.md")).unwrap(),
+            "# Mine",
+            "the file outside the workdir must not be overwritten"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_destination_skill_dir_pointing_out_of_the_workdir_is_refused() {
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("SKILL.md"), "# Mine").unwrap();
+        let workdir = TempDir::new().unwrap();
+        fs::create_dir_all(workdir.path().join(".agents/skills")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), workdir.path().join(".agents/skills/brief"))
+            .unwrap();
+
+        let error = materialize_skills(
+            &persona("builder", &["brief"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect_err("a skill directory that leaves the workdir is refused");
+
+        assert!(
+            matches!(error, SkillError::TargetEscape { .. }),
+            "unexpected error {error}"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("SKILL.md")).unwrap(),
+            "# Mine"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_destination_skill_md_is_refused() {
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let outside = TempDir::new().unwrap();
+        let mine = outside.path().join("SKILL.md");
+        fs::write(&mine, "# Mine").unwrap();
+        let workdir = TempDir::new().unwrap();
+        let target_dir = workdir.path().join(".agents/skills/brief");
+        fs::create_dir_all(&target_dir).unwrap();
+        std::os::unix::fs::symlink(&mine, target_dir.join("SKILL.md")).unwrap();
+
+        let error = materialize_skills(
+            &persona("builder", &["brief"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect_err("a destination SKILL.md that leaves the workdir is refused");
+
+        assert!(
+            matches!(error, SkillError::TargetEscape { .. }),
+            "unexpected error {error}"
+        );
+        assert_eq!(fs::read_to_string(&mine).unwrap(), "# Mine");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_agents_dir_inside_the_workdir_is_still_written() {
+        // Symmetry, same as the read side: the rule is "under the workdir",
+        // not "never a symlink".
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let workdir = TempDir::new().unwrap();
+        fs::create_dir_all(workdir.path().join("dot-agents")).unwrap();
+        std::os::unix::fs::symlink(
+            workdir.path().join("dot-agents"),
+            workdir.path().join(".agents"),
+        )
+        .unwrap();
+
+        let written = materialize_skills(
+            &persona("builder", &["brief"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect("a symlink that stays under the workdir is ordinary");
+
+        assert_eq!(fs::read_to_string(&written[0].path).unwrap(), "# Brief");
+        assert_eq!(
+            fs::read_to_string(workdir.path().join("dot-agents/skills/brief/SKILL.md")).unwrap(),
+            "# Brief"
+        );
     }
 
     #[test]
