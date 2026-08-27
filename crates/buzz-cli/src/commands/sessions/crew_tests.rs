@@ -69,6 +69,7 @@ fn execution(
         last_signed_seq: Some(4),
         last_signed_at: Some(1_000),
         liveness: Liveness::Quiet { age_secs: 60 },
+        turn_budget: None,
     }
 }
 
@@ -114,6 +115,21 @@ fn metadata_event(
                  ["cs-target", coding_session_target_key(target)]],
         "content": serde_json::to_string(&payload).expect("serialize"),
     })
+}
+
+/// Inject a `turnBudget` key into a metadata event's content, exactly as a
+/// provider that has started publishing contract-B budgets would.
+///
+/// `SessionMetadata` has no `turnBudget` field yet in this build (see
+/// [`super::crew::turn_budget_of`]), so the key can only be added by editing
+/// the already-serialized content JSON rather than through the typed
+/// `metadata_event` builder above.
+fn with_turn_budget(mut event: Value, budget: Value) -> Value {
+    let content = event["content"].as_str().expect("content is a string");
+    let mut decoded: Value = serde_json::from_str(content).expect("valid JSON content");
+    decoded["turnBudget"] = budget;
+    event["content"] = json!(serde_json::to_string(&decoded).expect("serialize"));
+    event
 }
 
 fn command_event(
@@ -499,6 +515,87 @@ fn build_executions_carries_the_seat_the_umbrella_and_the_lease() {
     assert_eq!(rows[0].session_ref, Some("u-1".to_owned()));
     assert_eq!(rows[0].last_signed_seq, Some(7));
     assert_eq!(rows[0].liveness, Liveness::Live);
+}
+
+// ── turn budget (plan D9 / contract B) ──────────────────────────────────────
+
+/// `bee sessions status` reads the budget straight from the newest
+/// metadata's raw content — see [`turn_budget_of`]'s doc for why that is not
+/// a typed `SessionMetadata` field in this build.
+#[test]
+fn build_executions_reads_the_turn_budget_off_the_newest_metadata() {
+    let target = target("s-1", 1);
+    let event = with_turn_budget(
+        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        json!({"used": 3, "limit": 10}),
+    );
+    let (metadata, _) = decode_metadata(&[event]);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].turn_budget, Some(TurnBudget { used: 3, limit: 10 }));
+}
+
+/// No `turnBudget` key at all — either this provider predates the budget, or
+/// the umbrella has none configured — reads as `None`, never a guessed zero.
+#[test]
+fn build_executions_reads_no_budget_when_the_key_is_absent() {
+    let target = target("s-1", 1);
+    let event = metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None);
+    let (metadata, _) = decode_metadata(&[event]);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].turn_budget, None);
+}
+
+/// A `turnBudget` missing a required half (here, `limit`) is dropped, not
+/// guessed — the same "malformed reads as absent" rule the rest of this
+/// command applies to every other fact it cannot parse cleanly.
+#[test]
+fn build_executions_drops_a_turn_budget_missing_a_key() {
+    let target = target("s-1", 1);
+    let event = with_turn_budget(
+        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        json!({"used": 3}),
+    );
+    let (metadata, _) = decode_metadata(&[event]);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 2_000);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].turn_budget, None);
+}
+
+/// The newest metadata wins, exactly as it does for every other fact this
+/// command folds — an older row's budget must never resurface over a newer
+/// one that has since advanced (or cleared) it.
+#[test]
+fn build_executions_takes_the_turn_budget_from_the_newest_metadata_row() {
+    let target = target("s-1", 1);
+    let older = with_turn_budget(
+        metadata_event("m-1", 1_000, &target, SessionStatus::Idle, None, None, None),
+        json!({"used": 1, "limit": 10}),
+    );
+    let newer = with_turn_budget(
+        metadata_event("m-2", 2_000, &target, SessionStatus::Idle, None, None, None),
+        json!({"used": 9, "limit": 10}),
+    );
+    let (metadata, _) = decode_metadata(&[older, newer]);
+    let rows = build_executions(&metadata, &[], &[], &HashMap::new(), 3_000);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].turn_budget, Some(TurnBudget { used: 9, limit: 10 }));
+}
+
+#[test]
+fn turn_budget_exhausted_is_used_at_or_past_limit() {
+    assert!(!TurnBudget { used: 9, limit: 10 }.exhausted());
+    assert!(TurnBudget {
+        used: 10,
+        limit: 10
+    }
+    .exhausted());
+    assert!(TurnBudget {
+        used: 11,
+        limit: 10
+    }
+    .exhausted());
 }
 
 // ── receipt stages ───────────────────────────────────────────────────────────

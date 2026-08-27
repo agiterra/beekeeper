@@ -517,6 +517,13 @@ pub async fn cmd_status(
                     }),
                 })
             });
+            // D9 / contract B: `None` means no budget key has ever been seen
+            // on this execution's metadata — either this provider predates
+            // the umbrella turn budget, or the umbrella has none configured.
+            // Never rendered as `0/0` or any other guessed number.
+            let turn_budget_line = execution
+                .turn_budget
+                .map(|budget| format!("{}/{}", budget.used, budget.limit));
             match format {
                 crate::OutputFormat::Compact => json!({
                     "target": execution.target_key,
@@ -524,6 +531,7 @@ pub async fn cmd_status(
                     "live": execution.liveness.render(),
                     "openTurn": load.open_command_id,
                     "queued": load.queued,
+                    "turnBudget": turn_budget_line,
                 }),
                 crate::OutputFormat::Json => json!({
                     "target": execution.target_key,
@@ -543,6 +551,11 @@ pub async fn cmd_status(
                     "lastSignedAt": execution.last_signed_at.map(rfc3339),
                     "openTurn": open_turn,
                     "queuedTurns": load.queued,
+                    "turnBudget": execution.turn_budget.map(|budget| json!({
+                        "used": budget.used,
+                        "limit": budget.limit,
+                        "exhausted": budget.exhausted(),
+                    })),
                 }),
             }
         })

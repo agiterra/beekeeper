@@ -285,7 +285,7 @@ workdir; no pack prompt exceeds the role's stated size.
 Tier 2 (budget refusal), then a live proof. Two lanes plus the lead.
 
 - **Lane 6A (provider + settings).** Owns the umbrella turn budget: a setting beside the session ceiling (`desktop/src/features/settings/**` Sessions panel; `crates/buzz-session-provider/src/config.rs`), disclosed the same way; the provider refuses agent-originated turns past it with `turn_refused / BUDGET_EXHAUSTED` and lets founder turns through. `bee sessions status` gains the budget line.
-- **Lane 6B (poker + runner packs, live).** The runner pack owns `just ci`/e2e as a background child whose completion re-invokes the seat (the item-54 failure class, solved by the seat model rather than the adapter: the runner's *turn* is the wait); the poker pack drives the built app through the E2E bridge.
+- **Lane 6B (poker + runner packs, live).** The runner pack owns `just ci`/e2e, run **in the foreground of its own turn**, broken into sub-10-minute steps (the same shape as the crew's own gate runner) — never as a detached background child whose completion "re-invokes" the seat. The ACP has no such capability (ledger item 54); a design or pack that assumes it is the item-54 failure class, and the seat model, not the adapter, is what closes it: the runner's *turn* is the wait, foreground, start to finish. The poker pack drives the built app through the E2E bridge.
 - **Lead (by hand, once).** Pick one open tier-0/1 item from `SESSION_STATE.md`; launch the crew; do not route by hand; record in SESSION_STATE exactly what the crew did and what the lead did.
 
 Acceptance — the plan's acceptance: a crew closes one ledger item with the
