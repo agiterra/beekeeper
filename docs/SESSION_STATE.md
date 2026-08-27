@@ -1900,6 +1900,12 @@ written and `bash -n` clean but **was not executed** — that harness needs
     957+302+283 passed, 0 failed), clippy, desktop typecheck + vitest
     (6241/72/0), Tauri tests (2681+0+7+3+0 passed), `pnpm check:px-text`, and
     a full `just test` (12/12 groups, 0 failed, 75s) — all clean.
+    **Proven live 2026-08-26 22:03** on the dev instance against hive (Claude·sonnet,
+    gen 4, channel `b4cf9739…`): `ping` sent while a 32 s turn ran was
+    `turn_queued` at 22:03:41 and `turn_started` at 22:04:11 — the same second
+    the running turn's result landed. The `deliver`-omission hotfix was
+    accepted by the deployed (pre-S2) relay on the same wire. Not yet live:
+    queued-row escalation, interrupt receipts, dropped/refused paths.
 
 ## 2a. Direction settled 2026-08-18
 
