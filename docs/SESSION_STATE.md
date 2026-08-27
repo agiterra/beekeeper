@@ -1767,6 +1767,29 @@ written and `bash -n` clean but **was not executed** — that harness needs
 
 ### Found 2026-08-25 — the responsiveness pass, and the UI critique behind it
 
+63. **A `select!` in the mesh demo echo loop drops frames — and the same
+    cancel-safety hazard sits in `tunnel/reliable.rs`.** Found 2026-08-26 while
+    making two `buzz-relay` lib tests hermetic (branch
+    `crew/relay-test-flakes@470e8562`). `mesh_boot::run_demo_echo` awaits
+    `ReliableMeshStream::recv_validated` — which reads the whole frame off the
+    QUIC stream and only then awaits the Redis fence check — inside a
+    `tokio::select!` against a 100 ms drain tick. When the receive loses the
+    race after the read, the future is dropped and the frame is gone; the join
+    leg times out at 10 s and answers 504. Measured: 7/8 standalone failures;
+    the same body with no tick, or with the first tick delayed, passes 8/8.
+    The demo route is gated on `BUZZ_MESH_DEMO_ECHO`, so no shipped flow is
+    affected today, but any later tick landing during a fence check loses a
+    frame, and session consumers will use the same stream. **Fix owed in
+    product code** (`mesh_boot.rs`: pin the receive future outside the loop, or
+    `tunnel/reliable.rs`: buffer the frame before awaiting the fence), then
+    un-ignore `demo_join_forwarded_arm_round_trips_echo`. Second finding, fixed:
+    `telemetry::trace_context_lookup_does_not_enable_callsites` asserted with
+    `tracing::enabled!`, whose cached callsite interest folds over every live
+    dispatcher in the process, so any other test's subscriber flipped it; it now
+    asks this subscriber's own dispatch (verified non-vacuous). `cargo test -p
+    buzz-relay --lib` 957 passed / 0 failed / 54 ignored, three runs. (Numbered
+    63 because 58, 60, 61 and 62 are taken by the crew branches in flight.)
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
