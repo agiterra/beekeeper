@@ -1,3 +1,4 @@
+import type { CodingSessionTurnBudget } from "./codingSessionIngressPayloads";
 import type { CodingSessionProjectedTranscriptItem } from "./codingSessionTranscriptItems";
 import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import type { CodingSessionLifecycleResolution } from "./codingSessionTrustedIngress";
@@ -63,6 +64,13 @@ export type CodingSessionCatalogRecord = {
   agentRef: string | null;
   /** The seat's role slug. Non-null exactly when `agentRef` is. */
   role: string | null;
+  /**
+   * The crew turn allowance this execution's umbrella is running under (D9),
+   * or null when the provider published none — no umbrella claimed, or a host
+   * that set no budget. Never invented locally: absent means "not disclosed",
+   * not "unlimited".
+   */
+  turnBudget: CodingSessionTurnBudget | null;
   capabilities: CodingSessionCapabilities | null;
 };
 

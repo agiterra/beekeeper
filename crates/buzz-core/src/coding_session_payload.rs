@@ -106,6 +106,23 @@ pub const STEER_UNSUPPORTED: &str = "STEER_UNSUPPORTED";
 /// An interrupt addressed a live execution that had no turn in flight, so
 /// there was nothing to cancel.
 pub const NO_TURN_IN_FLIGHT: &str = "NO_TURN_IN_FLIGHT";
+/// A turn was refused because its umbrella has spent its turn budget (D9).
+///
+/// **Terminal for this command, and about the umbrella rather than the
+/// sender's authority.** The signer may steer the execution — that was checked
+/// first — but the umbrella named by the create's `sessionRef` has already
+/// started as many turns as the host allowed it, so the provider refuses
+/// rather than letting a crew run without a floor under it. The receipt
+/// message carries the two numbers (`used` of `limit`) so nobody has to guess
+/// how far past the line they are, and the same pair is republished in every
+/// 44223 as [`TurnBudget`].
+///
+/// The founder is exempt by construction: a budget is a bound on delegated
+/// work, and a human who wants one more turn on their own session is the
+/// person the budget was protecting. Nothing here bounds *interrupts* — a
+/// cancel spends nothing and refusing one would leave a runaway turn running
+/// with no way to stop it short of stopping the execution.
+pub const BUDGET_EXHAUSTED: &str = "BUDGET_EXHAUSTED";
 
 /// Ceiling on a receipt error code, in UTF-8 bytes.
 ///
@@ -859,19 +876,45 @@ pub struct SessionMetadata {
     /// fields stay `null` together.
     #[serde(default)]
     pub verified_at: Option<i64>,
+    /// The umbrella turn budget in force for this execution, when one is (D9).
+    ///
+    /// The fourth independent additive key, and emitted under exactly two
+    /// conditions: the execution claimed an umbrella (`sessionRef`), and the
+    /// host set a finite budget. An unbudgeted or unclaimed execution omits
+    /// the key entirely rather than publishing a null, so consumers written
+    /// before this amendment keep accepting every shape they already knew.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_budget: Option<TurnBudget>,
+}
+
+/// How much of an umbrella's turn budget has been spent (D9).
+///
+/// Both numbers are facts the publishing provider witnessed itself: `used`
+/// counts turns it actually *started* under this `sessionRef` (durably, so it
+/// survives a restart), and `limit` is the ceiling its host configured. `used`
+/// can exceed `limit` — the founder is never refused — and that is reported as
+/// it happened rather than clamped, because a clamped count would hide who
+/// spent what.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnBudget {
+    /// Turns started under this umbrella by the provider publishing this.
+    pub used: u64,
+    /// The ceiling non-founder turns are refused at.
+    pub limit: u64,
 }
 
 /// Expected JSON key sets for [`SessionMetadata`], oldest first.
 ///
-/// Three independent additive amendments have landed on this struct at
+/// Four independent additive amendments have landed on this struct at
 /// different times — the `sessionRef` echo, B1's four coordinate-fact keys,
-/// then the agent seat's `role` — and each one is present or absent on its
-/// own, so the base key set has **eight** valid shapes, not four: base, and
-/// base plus any combination of `sessionRef`, `role`, and the four fact keys
-/// taken together. Mirrors the exact-fields discipline in
-/// `coding_session_lifecycle_command.rs`
+/// the agent seat's `role`, then D9's `turnBudget` — and each one is present
+/// or absent on its own, so the base key set has **sixteen** valid shapes,
+/// not four: base, and base plus any combination of `sessionRef`, `role`,
+/// `turnBudget`, and the four fact keys taken together. Mirrors the
+/// exact-fields discipline in `coding_session_lifecycle_command.rs`
 /// (`rejects_action_shapes_between_and_beyond_the_two_forms`): every shape
-/// in between or beyond those eight — a partial subset of the four fact
+/// in between or beyond those sixteen — a partial subset of the four fact
 /// keys, or any field this struct does not know — is rejected, not
 /// tolerated.
 const METADATA_BASE_FIELDS: &[&str] = &[
@@ -893,10 +936,13 @@ const METADATA_SESSION_REF_FIELD: &str = "sessionRef";
 /// amendments, so it doubles the accepted shape count from four to eight.
 const METADATA_ROLE_FIELD: &str = "role";
 const METADATA_FACT_FIELDS: &[&str] = &["observedCommit", "dirty", "relayReachable", "verifiedAt"];
+/// The budget amendment's one additive key (D9). Independent of the other
+/// three, so it doubles the accepted shape count from eight to sixteen.
+const METADATA_TURN_BUDGET_FIELD: &str = "turnBudget";
 
 /// Strictly decode and validate signed metadata content (kind 44223).
 ///
-/// Accepts exactly the eight field-set shapes documented above
+/// Accepts exactly the sixteen field-set shapes documented above
 /// `METADATA_BASE_FIELDS`; anything else — an unknown key, or a B1 fact
 /// key present without its three siblings — is a hard rejection. A second
 /// pass through `serde_json` (after the shape check) picks up serde's own
@@ -916,6 +962,7 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
 
     let has_session_ref = object.contains_key(METADATA_SESSION_REF_FIELD);
     let has_role = object.contains_key(METADATA_ROLE_FIELD);
+    let has_turn_budget = object.contains_key(METADATA_TURN_BUDGET_FIELD);
     let has_all_facts = METADATA_FACT_FIELDS
         .iter()
         .all(|key| object.contains_key(*key));
@@ -935,6 +982,9 @@ pub fn decode_coding_session_metadata(content: &str) -> Result<SessionMetadata, 
     }
     if has_all_facts {
         expected.extend_from_slice(METADATA_FACT_FIELDS);
+    }
+    if has_turn_budget {
+        expected.push(METADATA_TURN_BUDGET_FIELD);
     }
     let recognized = object.keys().all(|key| expected.contains(&key.as_str()));
     let complete = expected.iter().all(|key| object.contains_key(*key));
@@ -993,6 +1043,23 @@ fn validate_session_metadata(metadata: &SessionMetadata) -> Result<(), String> {
             return Err(format!(
                 "{ACTOR_ROLE_PAIR}: metadata role describes a seat, so it requires a non-null agentRef"
             ));
+        }
+    }
+    if let Some(budget) = &metadata.turn_budget {
+        // A budget is a fact about an umbrella, so it cannot describe an
+        // execution that never claimed one — and a limit of zero would be a
+        // ceiling nothing could ever pass, which is not what "unbudgeted"
+        // means. Unbudgeted omits the key.
+        if metadata.session_ref.is_none() {
+            return Err(
+                "metadata turnBudget describes an umbrella, so it requires a sessionRef".to_owned(),
+            );
+        }
+        if budget.limit == 0 {
+            return Err(
+                "metadata turnBudget limit must be positive; omit the key when unbudgeted"
+                    .to_owned(),
+            );
         }
     }
     if metadata.relay_reachable.is_none() != metadata.verified_at.is_none() {
@@ -1469,6 +1536,7 @@ mod tests {
             dirty: None,
             relay_reachable: None,
             verified_at: None,
+            turn_budget: None,
         };
         let value = serde_json::to_value(&metadata).expect("serialize");
         assert_eq!(
@@ -1537,6 +1605,7 @@ mod tests {
             dirty: None,
             relay_reachable: None,
             verified_at: None,
+            turn_budget: None,
         };
         let unclaimed = serde_json::to_value(&metadata).expect("serialize");
         assert!(
@@ -1645,6 +1714,84 @@ mod tests {
             decoded.session_ref.as_deref(),
             Some("5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10")
         );
+    }
+
+    /// D9's `turnBudget` is the fourth independent additive key: present only
+    /// for a budgeted umbrella, absent (never null, never a zero limit) for
+    /// everything else, and refused when it describes an execution that
+    /// claimed no umbrella to bound.
+    #[test]
+    fn decode_metadata_accepts_a_turn_budget_only_beside_an_umbrella() {
+        let base = serde_json::json!({
+            "schema": METADATA_SCHEMA,
+            "session": target(),
+            "projectRef": null,
+            "repoRef": null,
+            "title": null,
+            "agentRef": null,
+            "provider": "claude-primary",
+            "runtime": "claude",
+            "model": null,
+            "status": "running",
+            "branch": null,
+            "capabilities": Capabilities::v1_claude(),
+            "sessionRef": "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+            "turnBudget": { "used": 12, "limit": 200 },
+        });
+        let decoded = decode_coding_session_metadata(&base.to_string()).expect("14-key form");
+        assert_eq!(
+            decoded.turn_budget,
+            Some(TurnBudget {
+                used: 12,
+                limit: 200
+            })
+        );
+
+        // Used past limit is reported as it happened: the founder is never
+        // refused, so a crew can legitimately end up over its allowance.
+        let mut overspent = base.clone();
+        overspent["turnBudget"] = serde_json::json!({ "used": 201, "limit": 200 });
+        assert_eq!(
+            decode_coding_session_metadata(&overspent.to_string())
+                .expect("overspent decodes")
+                .turn_budget,
+            Some(TurnBudget {
+                used: 201,
+                limit: 200
+            })
+        );
+
+        // A budget without an umbrella describes nothing, and a limit of zero
+        // would read as "no turns allowed" rather than "unbudgeted".
+        let mut orphaned = base.clone();
+        orphaned
+            .as_object_mut()
+            .expect("object")
+            .remove("sessionRef");
+        assert!(decode_coding_session_metadata(&orphaned.to_string()).is_err());
+        let mut zero = base.clone();
+        zero["turnBudget"] = serde_json::json!({ "used": 0, "limit": 0 });
+        assert!(decode_coding_session_metadata(&zero.to_string()).is_err());
+
+        // An unbudgeted session omits the key entirely, and still decodes.
+        let mut unbudgeted = base.clone();
+        unbudgeted
+            .as_object_mut()
+            .expect("object")
+            .remove("turnBudget");
+        assert!(decode_coding_session_metadata(&unbudgeted.to_string())
+            .expect("13-key form")
+            .turn_budget
+            .is_none());
+
+        // Serialization is the mirror image: absent, not null.
+        let mut metadata = decode_coding_session_metadata(&base.to_string()).expect("14-key form");
+        metadata.turn_budget = None;
+        assert!(!serde_json::to_value(&metadata)
+            .expect("serialize")
+            .as_object()
+            .expect("object")
+            .contains_key("turnBudget"));
     }
 
     /// Canonical smuggle-rejection test, mirroring
@@ -1793,6 +1940,7 @@ mod tests {
             dirty: None,
             relay_reachable: None,
             verified_at: None,
+            turn_budget: None,
         };
         let content = serde_json::to_string(&metadata).expect("serialize");
         assert!(

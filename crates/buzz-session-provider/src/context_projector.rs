@@ -2661,6 +2661,7 @@ mod tests {
             dirty: None,
             relay_reachable: None,
             verified_at: None,
+            turn_budget: None,
         };
         let metadata_content = serde_json::to_string(&metadata).unwrap();
         let metadata_event = build_coding_session_metadata(channel_id, &target, &metadata_content)

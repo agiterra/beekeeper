@@ -96,11 +96,15 @@ const mockCodingSessionCapacity: {
   runningMaxSessions: number | null;
   turnIdleTimeoutSecs: number | null;
   runningTurnIdleTimeoutSecs: number | null;
+  turnBudget: number | null;
+  runningTurnBudget: number | null;
 } = {
   maxSessions: null,
   runningMaxSessions: null,
   turnIdleTimeoutSecs: null,
   runningTurnIdleTimeoutSecs: null,
+  turnBudget: null,
+  runningTurnBudget: null,
 };
 
 /** The settings payload both the read and the writes answer with. */
@@ -113,6 +117,9 @@ function codingSessionCapacitySnapshot() {
     defaultTurnIdleTimeoutSecs: 900,
     runningTurnIdleTimeoutSecs:
       mockCodingSessionCapacity.runningTurnIdleTimeoutSecs,
+    turnBudget: mockCodingSessionCapacity.turnBudget,
+    defaultTurnBudget: 200,
+    runningTurnBudget: mockCodingSessionCapacity.runningTurnBudget,
   };
 }
 
@@ -12653,6 +12660,15 @@ export function maybeInstallE2eTauriMocks() {
         const next = (payload as { turnIdleTimeoutSecs?: number | null } | null)
           ?.turnIdleTimeoutSecs;
         mockCodingSessionCapacity.turnIdleTimeoutSecs = next ?? null;
+        return codingSessionCapacitySnapshot();
+      }
+      case "set_coding_session_turn_budget": {
+        const next = (payload as { turnBudget?: number | null } | null)
+          ?.turnBudget;
+        mockCodingSessionCapacity.turnBudget = next ?? null;
+        // Same deliberate omission as the ceiling above: the running child's
+        // budget is not updated, because the real provider reads it once at
+        // startup and the panel exists to disclose that gap.
         return codingSessionCapacitySnapshot();
       }
       case "coding_session_provider_runtimes": {

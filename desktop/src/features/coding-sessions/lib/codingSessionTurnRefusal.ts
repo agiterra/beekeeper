@@ -106,7 +106,8 @@ export type WatchedCodingSessionTurn = {
  * The provider's own `code` is shown alongside its sentence rather than
  * translated away. The known codes are specific — `UNAUTHORIZED_OPERATOR`,
  * `UNKNOWN_TARGET`, `STALE_GENERATION`, `SESSION_CLOSED`, `QUEUE_FULL`,
- * `NO_LIVE_EXECUTION` — but the set is open, and an unfamiliar one is shown
+ * `NO_LIVE_EXECUTION`, `BUDGET_EXHAUSTED` — but the set is open, and an
+ * unfamiliar one is shown
  * verbatim rather than swallowed: a person comparing what they see to what
  * `bee sessions transcript` prints, or quoting it to whoever runs the
  * provider, needs the same word both places.
@@ -177,8 +178,10 @@ export function restoreCodingSessionDraft(
  * can decide that these words still apply to the session that came back.
  *
  * Every other code is a decision about the sender (`UNAUTHORIZED_OPERATOR`),
- * the target (`UNKNOWN_TARGET`, `SESSION_CLOSED`), or the provider's own
- * mailbox (`QUEUE_FULL`). Re-sending the same words to a newer generation
+ * the target (`UNKNOWN_TARGET`, `SESSION_CLOSED`), the provider's own mailbox
+ * (`QUEUE_FULL`), or the umbrella's spent turn allowance
+ * (`BUDGET_EXHAUSTED` — a newer generation of the same crew session shares
+ * the same exhausted budget). Re-sending the same words to a newer generation
  * would not change any of those answers, so offering it would be a lie about
  * what happened.
  */

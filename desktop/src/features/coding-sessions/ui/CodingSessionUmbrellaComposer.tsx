@@ -323,6 +323,7 @@ function ExecutionComposer({
         providerLabel,
         runtimeLabel,
         status,
+        turnBudget: record.turnBudget,
       }}
       currentUserPubkey={currentUserPubkey}
       immersive

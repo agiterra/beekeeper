@@ -98,19 +98,30 @@ pub struct CodingSessionProviderState {
     next_id: AtomicU64,
 }
 
+/// The person's session settings as one value.
+///
+/// Read once per supervisor, not per respawn, and carried together because
+/// they share a single rule: the child reads every one of them from its
+/// environment at startup, so what a supervisor started with is what is *in
+/// force* until the provider next restarts — which is not necessarily what is
+/// stored. `None` in any field means "the provider's own default".
+#[derive(Debug, Clone, Copy, Default)]
+struct ProviderRunSettings {
+    /// Ceiling on concurrently live agent processes.
+    max_sessions: Option<usize>,
+    /// Per-turn silence budget, in seconds.
+    turn_idle_timeout_secs: Option<u64>,
+    /// Turns one crew session (umbrella) may start.
+    turn_budget: Option<u64>,
+}
+
 struct SupervisorHandle {
     id: u64,
     provider_pubkey: String,
     stop: Arc<AtomicBool>,
     child_pid: Arc<AtomicU32>,
-    /// The ceiling this supervisor's children were started with. Kept so a
-    /// settings surface can say what is *in force*, which is not necessarily
-    /// what is stored: the child reads its ceiling from the environment once,
-    /// at startup.
-    max_sessions: Option<usize>,
-    /// The silence budget this supervisor's children were started with, for
-    /// the same reason as `max_sessions`: stored is not in force.
-    turn_idle_timeout_secs: Option<u64>,
+    /// What this supervisor's children were started with.
+    settings: ProviderRunSettings,
 }
 
 impl CodingSessionProviderState {
@@ -119,19 +130,28 @@ impl CodingSessionProviderState {
     /// `None` when nothing is supervised, or when the child was started with
     /// no explicit ceiling and is therefore on the provider's own default.
     pub(crate) fn running_max_sessions(&self) -> Option<usize> {
+        self.running_settings()
+            .and_then(|settings| settings.max_sessions)
+    }
+
+    /// The settings the running provider was started with, if one is running.
+    fn running_settings(&self) -> Option<ProviderRunSettings> {
         self.inner
             .lock()
             .ok()
-            .and_then(|handle| handle.as_ref().and_then(|handle| handle.max_sessions))
+            .and_then(|handle| handle.as_ref().map(|handle| handle.settings))
     }
 
     /// The per-turn silence budget the running provider was started with.
     pub(crate) fn running_turn_idle_timeout_secs(&self) -> Option<u64> {
-        self.inner.lock().ok().and_then(|handle| {
-            handle
-                .as_ref()
-                .and_then(|handle| handle.turn_idle_timeout_secs)
-        })
+        self.running_settings()
+            .and_then(|settings| settings.turn_idle_timeout_secs)
+    }
+
+    /// The crew turn budget the running provider was started with.
+    pub(crate) fn running_turn_budget(&self) -> Option<u64> {
+        self.running_settings()
+            .and_then(|settings| settings.turn_budget)
     }
 
     /// Pubkey of the provider currently being supervised.
@@ -264,12 +284,15 @@ fn start_supervisor(
     // with the ceiling its supervisor started under, so the number a person
     // sees as "in force" stays true until they restart the provider.
     let stored_settings = load_provider_store(app).ok();
-    let max_sessions = stored_settings
-        .as_ref()
-        .and_then(|store| store.max_sessions);
-    let turn_idle_timeout_secs = stored_settings
-        .as_ref()
-        .and_then(|store| store.turn_idle_timeout_secs);
+    let settings = ProviderRunSettings {
+        max_sessions: stored_settings
+            .as_ref()
+            .and_then(|store| store.max_sessions),
+        turn_idle_timeout_secs: stored_settings
+            .as_ref()
+            .and_then(|store| store.turn_idle_timeout_secs),
+        turn_budget: stored_settings.as_ref().and_then(|store| store.turn_budget),
+    };
     let binary = resolve_command(PROVIDER_BINARY).ok_or_else(|| {
         format!(
             "{PROVIDER_BINARY} was not found — build it with \
@@ -291,13 +314,7 @@ fn start_supervisor(
     take_over_stale_provider(&state_dir, &log_path);
 
     let mut child = spawn_provider_child(
-        &binary,
-        &record,
-        &relay_url,
-        &state_dir,
-        &log_path,
-        max_sessions,
-        turn_idle_timeout_secs,
+        &binary, &record, &relay_url, &state_dir, &log_path, settings,
     )?;
     child_pid.store(child.id(), Ordering::Release);
 
@@ -306,8 +323,7 @@ fn start_supervisor(
         provider_pubkey: record.provider_pubkey.clone(),
         stop: Arc::clone(&stop),
         child_pid: Arc::clone(&child_pid),
-        max_sessions,
-        turn_idle_timeout_secs,
+        settings,
     });
 
     let app = app.clone();
@@ -348,13 +364,7 @@ fn start_supervisor(
                 break;
             }
             match spawn_provider_child(
-                &binary,
-                &record,
-                &relay_url,
-                &state_dir,
-                &log_path,
-                max_sessions,
-                turn_idle_timeout_secs,
+                &binary, &record, &relay_url, &state_dir, &log_path, settings,
             ) {
                 Ok(next) => {
                     child_pid.store(next.id(), Ordering::Release);
@@ -607,8 +617,7 @@ fn spawn_provider_child(
     relay_url: &str,
     state_dir: &Path,
     log_path: &Path,
-    max_sessions: Option<usize>,
-    turn_idle_timeout_secs: Option<u64>,
+    settings: ProviderRunSettings,
 ) -> Result<std::process::Child, String> {
     let _ = append_log_marker(
         log_path,
@@ -643,8 +652,9 @@ fn spawn_provider_child(
         // Read once per spawn from the person's stored preference: the child
         // reads its ceiling from the environment at startup, so a change takes
         // effect the next time the provider starts and never mid-flight.
-        max_sessions,
-        turn_idle_timeout_secs,
+        max_sessions: settings.max_sessions,
+        turn_idle_timeout_secs: settings.turn_idle_timeout_secs,
+        turn_budget: settings.turn_budget,
         // Computed per spawn: installing an adapter takes effect on the next
         // provider (re)start, matching the rest of the discovery surface.
         runtimes: crate::session_provider::runtimes::build_runtime_descriptors(),

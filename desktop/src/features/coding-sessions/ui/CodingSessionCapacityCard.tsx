@@ -7,14 +7,19 @@ import {
   CODING_SESSION_CAPACITY_UNLIMITED,
   CODING_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
   CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+  CODING_SESSION_TURN_BUDGET_MAX,
+  CODING_SESSION_TURN_BUDGET_UNLIMITED,
   codingSessionCapacityChoice,
   codingSessionCapacityLabel,
   codingSessionCapacityPending,
   codingSessionIdleTimeoutLabel,
   codingSessionIdleTimeoutMinutes,
   codingSessionIdleTimeoutPending,
+  codingSessionTurnBudgetLabel,
+  codingSessionTurnBudgetPending,
   parseCodingSessionCapacityInput,
   parseCodingSessionIdleTimeoutInput,
+  parseCodingSessionTurnBudgetInput,
 } from "@/features/coding-sessions/lib/codingSessionCapacity";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import { isSessionTransportChannel } from "@/shared/api/channelTypes";
@@ -22,6 +27,7 @@ import {
   getCodingSessionCapacity,
   getCodingSessionProviderStatus,
   setCodingSessionCapacity,
+  setCodingSessionTurnBudget,
   setCodingSessionTurnIdleTimeout,
 } from "@/shared/api/tauriSessionProvider";
 import { Button } from "@/shared/ui/button";
@@ -95,6 +101,38 @@ export function CodingSessionCapacityCard() {
       setIdleDirty(false);
     },
   });
+  const [budgetDraft, setBudgetDraft] = React.useState<number>(200);
+  const [budgetDirty, setBudgetDirty] = React.useState(false);
+  const storedTurnBudget =
+    settings === null
+      ? null
+      : (settings.turnBudget ?? settings.defaultTurnBudget);
+  React.useEffect(() => {
+    if (budgetDirty || storedTurnBudget === null) return;
+    if (storedTurnBudget !== CODING_SESSION_TURN_BUDGET_UNLIMITED) {
+      setBudgetDraft(storedTurnBudget);
+    }
+  }, [budgetDirty, storedTurnBudget]);
+  const saveBudget = useMutation({
+    mutationFn: (turnBudget: number | null) =>
+      setCodingSessionTurnBudget(turnBudget),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["coding-session-capacity"], next);
+      setBudgetDirty(false);
+    },
+  });
+  const budgetUnlimited =
+    storedTurnBudget === CODING_SESSION_TURN_BUDGET_UNLIMITED;
+  const budgetPending =
+    settings === null
+      ? null
+      : codingSessionTurnBudgetPending({
+          turnBudget: settings.turnBudget,
+          defaultTurnBudget: settings.defaultTurnBudget,
+          runningTurnBudget: settings.runningTurnBudget,
+          providerRunning: statusQuery.data?.running === true,
+        });
+
   const idlePending =
     settings === null
       ? null
@@ -279,6 +317,94 @@ export function CodingSessionCapacityCard() {
             {saveIdle.error instanceof Error
               ? saveIdle.error.message
               : "Could not save the turn timeout."}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-border/60 pt-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="coding-session-turn-budget"
+            >
+              Turns per crew session
+            </label>
+            <Input
+              className="h-9 w-24"
+              data-testid="coding-session-turn-budget-input"
+              disabled={budgetUnlimited || settingsQuery.isPending}
+              id="coding-session-turn-budget"
+              inputMode="numeric"
+              max={CODING_SESSION_TURN_BUDGET_MAX}
+              min={1}
+              onChange={(event) => {
+                setBudgetDirty(true);
+                setBudgetDraft((previous) =>
+                  parseCodingSessionTurnBudgetInput(
+                    event.target.value,
+                    previous,
+                  ),
+                );
+              }}
+              type="number"
+              value={budgetUnlimited ? "" : budgetDraft}
+            />
+          </div>
+          <Button
+            data-testid="coding-session-turn-budget-save"
+            disabled={budgetUnlimited || saveBudget.isPending}
+            onClick={() => saveBudget.mutate(budgetDraft)}
+            size="sm"
+            type="button"
+          >
+            {saveBudget.isPending ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            data-testid="coding-session-turn-budget-unlimited"
+            disabled={saveBudget.isPending}
+            onClick={() =>
+              saveBudget.mutate(
+                budgetUnlimited
+                  ? budgetDraft
+                  : CODING_SESSION_TURN_BUDGET_UNLIMITED,
+              )
+            }
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {budgetUnlimited ? "Set a budget" : "No limit"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {settings === null
+            ? "Reading this computer's crew budget…"
+            : `Now: ${codingSessionTurnBudgetLabel(
+                settings.turnBudget,
+                settings.defaultTurnBudget,
+              ).toLowerCase()} per crew session.`}{" "}
+          A crew session is one launch and every execution under it, counted
+          together. Once they have taken this many turns the provider refuses
+          further turns from the agents with a signed receipt — <em>you</em> can
+          always send more, and each session shows what it has spent.
+        </p>
+        {budgetPending === null ? null : (
+          <p
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
+            data-testid="coding-session-turn-budget-pending"
+          >
+            {budgetPending}
+          </p>
+        )}
+        {saveBudget.isError ? (
+          <p
+            className="text-xs text-destructive"
+            data-testid="coding-session-turn-budget-error"
+          >
+            {saveBudget.error instanceof Error
+              ? saveBudget.error.message
+              : "Could not save the crew turn budget."}
           </p>
         ) : null}
       </div>

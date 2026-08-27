@@ -97,6 +97,15 @@ pub(crate) struct CodingSessionProviderStore {
     /// build was killed as "no agent activity" (reported 2026-08-24).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_idle_timeout_secs: Option<u64>,
+    /// How many turns one crew session (an umbrella `sessionRef`) may start
+    /// before the provider refuses further turns from anyone but its founder.
+    ///
+    /// `None` leaves the provider's own default (200). `Some(0)` removes the
+    /// budget entirely. Machine-wide for the same reason as `max_sessions`:
+    /// it bounds what this computer's agent processes will do unattended, and
+    /// a person running two communities has one machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_budget: Option<u64>,
 }
 
 impl Default for CodingSessionProviderStore {
@@ -106,6 +115,7 @@ impl Default for CodingSessionProviderStore {
             providers: BTreeMap::new(),
             max_sessions: None,
             turn_idle_timeout_secs: None,
+            turn_budget: None,
         }
     }
 }

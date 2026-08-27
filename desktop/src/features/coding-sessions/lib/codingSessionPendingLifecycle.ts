@@ -330,6 +330,7 @@ function synthesizePendingEntry(
     // about its seat — including whether it has one.
     agentRef: null,
     role: null,
+    turnBudget: null,
     capabilities: null,
   };
   return {

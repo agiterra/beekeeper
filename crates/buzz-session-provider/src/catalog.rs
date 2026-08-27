@@ -239,6 +239,7 @@ mod tests {
             instance_id: "instance-1".into(),
             runtimes,
             max_sessions: 4,
+            turn_budget: crate::config::UNLIMITED_TURN_BUDGET,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
             max_turn_duration: Duration::from_secs(7200),

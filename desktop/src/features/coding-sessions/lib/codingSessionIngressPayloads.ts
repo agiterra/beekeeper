@@ -204,6 +204,13 @@ export function isCodingSessionTurnReceipt(
  * a pre-amendment provider serializes none — a partial subset is malformed,
  * never a dialect. `verifiedAt` is non-null exactly when `relayReachable` is
  * non-null: both come from the same verification probe.
+ *
+ * `turnBudget` is D9's crew allowance: how many turns this umbrella has
+ * started (`used`) against the ceiling the provider's host set (`limit`).
+ * Another optional key, never an explicit null — the provider emits it only
+ * for an execution that claimed a `sessionRef` on a host that set a finite
+ * budget. `used` may exceed `limit`, because the session founder is never
+ * refused; that is reported as it happened rather than clamped.
  */
 export type BuzzCodingSessionMetadataV1 = {
   schema: typeof BUZZ_CODING_SESSION_METADATA_SCHEMA;
@@ -227,6 +234,15 @@ export type BuzzCodingSessionMetadataV1 = {
   dirty?: boolean | null;
   relayReachable?: boolean | null;
   verifiedAt?: number | null;
+  turnBudget?: CodingSessionTurnBudget;
+};
+
+/** How much of one crew session's turn allowance has been spent (D9). */
+export type CodingSessionTurnBudget = {
+  /** Turns started under this umbrella, as the provider durably counted them. */
+  used: number;
+  /** The ceiling turns from anyone but the founder are refused at. */
+  limit: number;
 };
 
 /** Collision-free immutable receipt key shared with the provider. */
@@ -502,6 +518,7 @@ export function parseBuzzCodingSessionMetadata(
     ...optionalSummaries,
     "sessionRef",
     "role",
+    "turnBudget",
     ...factFields,
   ] as const;
   if (
@@ -556,6 +573,16 @@ export function parseBuzzCodingSessionMetadata(
   ) {
     return null;
   }
+  // A crew allowance describes an umbrella, so it cannot travel without a
+  // `sessionRef`, and a `limit` of zero would read as "no turns allowed"
+  // rather than "unbudgeted" — the producer omits the key instead. Both are
+  // rejections rather than tolerated dialects, matching the Rust decoder.
+  if (
+    Object.hasOwn(value, "turnBudget") &&
+    !isCodingSessionTurnBudget(value.turnBudget, value.sessionRef)
+  ) {
+    return null;
+  }
   // The B1 code-coordinate facts travel all-four-or-none (the Rust producer's
   // METADATA_FACT_FIELDS discipline); a partial subset is corruption.
   if (!hasAllOrNoneKeys(value, factFields)) return null;
@@ -599,6 +626,9 @@ export function parseBuzzCodingSessionMetadata(
       ? { sessionRef: value.sessionRef }
       : {}),
     ...(typeof value.role === "string" ? { role: value.role } : {}),
+    ...(isCodingSessionTurnBudget(value.turnBudget, value.sessionRef)
+      ? { turnBudget: value.turnBudget }
+      : {}),
     ...(hasFacts
       ? {
           observedCommit: value.observedCommit as string | null,
@@ -608,6 +638,31 @@ export function parseBuzzCodingSessionMetadata(
         }
       : {}),
   });
+}
+
+/**
+ * A well-formed crew allowance beside the umbrella it describes.
+ *
+ * Both numbers are non-negative safe integers and `limit` is positive: zero is
+ * how the producer spells "no budget", and it spells it by omitting the key.
+ * `used` is deliberately *not* bounded by `limit` — a founder's turns are
+ * counted and never refused, so an over-spent umbrella is a real state.
+ */
+function isCodingSessionTurnBudget(
+  value: unknown,
+  sessionRef: unknown,
+): value is CodingSessionTurnBudget {
+  if (typeof sessionRef !== "string") return false;
+  if (!isPlainRecord(value)) return false;
+  if (!hasRequiredAndOptionalKeys(value, ["used", "limit"] as const, [])) {
+    return false;
+  }
+  return (
+    Number.isSafeInteger(value.used) &&
+    (value.used as number) >= 0 &&
+    Number.isSafeInteger(value.limit) &&
+    (value.limit as number) > 0
+  );
 }
 
 function decodeCapabilities(value: unknown): CodingSessionCapabilities | null {

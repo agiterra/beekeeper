@@ -41,6 +41,9 @@ test("the new refusal codes each reach the composer verbatim", () => {
     "UNKNOWN_TARGET",
     "STALE_GENERATION",
     "SESSION_CLOSED",
+    // D9: the crew allowance refusal is a code like any other — read from the
+    // receipt, never translated into a guess about permissions.
+    "BUDGET_EXHAUSTED",
   ]) {
     assert.equal(
       formatCodingSessionTurnRefusal({
@@ -51,6 +54,18 @@ test("the new refusal codes each reach the composer verbatim", () => {
       `Turn refused (${code}): the provider said why`,
     );
   }
+});
+
+test("a spent crew allowance reaches the pending row with its two numbers", () => {
+  assert.equal(
+    formatCodingSessionTurnRefusal({
+      code: "BUDGET_EXHAUSTED",
+      message:
+        'this crew session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per crew session" takes effect the next time the provider starts',
+      outcome: "refused",
+    }),
+    'Turn refused (BUDGET_EXHAUSTED): this crew session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per crew session" takes effect the next time the provider starts',
+  );
 });
 
 test("a dropped turn is not called a refusal", () => {
@@ -181,6 +196,9 @@ test("only the two owed-turn codes offer to be re-addressed", () => {
     "SESSION_CLOSED",
     "QUEUE_FULL",
     "QUEUE_FULL_TURN_KEPT",
+    // A newer generation of the same crew session shares the same spent
+    // allowance, so a resend would be refused again for the same reason.
+    "BUDGET_EXHAUSTED",
     "",
   ]) {
     assert.equal(

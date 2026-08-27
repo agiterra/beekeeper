@@ -1,6 +1,8 @@
 import { ArrowUp, Bot, Ellipsis, ShieldCheck, Square } from "lucide-react";
 
+import { codingSessionTurnBudgetUsage } from "@/features/coding-sessions/lib/codingSessionCapacity";
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
+import type { CodingSessionTurnBudget } from "@/features/coding-sessions/lib/codingSessionIngressPayloads";
 import {
   codingSessionModelDisplayName,
   codingSessionTraitsSummary,
@@ -23,6 +25,14 @@ export type CodingSessionComposerControlContext = {
   providerLabel: string | null;
   runtimeLabel: string | null;
   status: CodingSessionWorkspaceStatus;
+  /**
+   * The crew turn allowance this execution's umbrella runs under, as the
+   * provider published it (D9), or null when it published none.
+   *
+   * Null is "not disclosed", never "unlimited": the popover omits the row
+   * rather than claiming a session has no ceiling when nobody said so.
+   */
+  turnBudget?: CodingSessionTurnBudget | null;
 };
 
 type CodingSessionComposerDeckProps = {
@@ -137,11 +147,25 @@ export function CodingSessionComposerDeck({
                       : "Not declared"
                   }
                 />
+                {context?.turnBudget ? (
+                  <ComposerDefinition
+                    label="Crew turns"
+                    testId="coding-session-control-turn-budget"
+                    value={codingSessionTurnBudgetUsage(context.turnBudget)}
+                  />
+                ) : null}
               </dl>
               <p className="mt-3 text-xs text-muted-foreground">
                 This identifies the signed execution. Its model and traits are
                 fixed for this execution.
               </p>
+              {context?.turnBudget ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  The turn count is the whole crew session's, shared by every
+                  execution under it. At the limit the provider refuses further
+                  turns from the agents; you can still send your own.
+                </p>
+              ) : null}
             </PopoverContent>
           </Popover>
         )}
@@ -314,13 +338,15 @@ function ComposerDeckSeparator() {
 
 function ComposerDefinition({
   label,
+  testId,
   value,
 }: {
   label: string;
+  testId?: string;
   value: string;
 }) {
   return (
-    <div>
+    <div data-testid={testId}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 wrap-break-word">{value}</dd>
     </div>

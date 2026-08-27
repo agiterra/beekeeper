@@ -341,6 +341,9 @@ export function mergeTrustedCodingSessionIngress(
       // The role key only ever accompanies an actor (the decoder enforces
       // it), so an execution with no agent can never carry one.
       role: metadata?.agentRef ? (metadata.role ?? null) : null,
+      // Published only for a budgeted umbrella, so absence is "the provider
+      // disclosed no budget" — never a locally assumed unlimited.
+      turnBudget: metadata?.turnBudget ?? null,
       capabilities: metadata?.capabilities ?? null,
     } satisfies CodingSessionCatalogRecord;
   });

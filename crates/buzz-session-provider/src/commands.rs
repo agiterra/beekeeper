@@ -24,8 +24,8 @@ use buzz_core::coding_session_lifecycle_command::{
 use buzz_core::coding_session_runtime::RuntimeDescriptor;
 
 use crate::payload::{
-    ACTOR_UNAVAILABLE, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE, SESSION_CLOSED, SESSION_LIMIT,
-    STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
+    ACTOR_UNAVAILABLE, BUDGET_EXHAUSTED, PROJECT_CWD_UNRESOLVED, PROVIDER_UNAVAILABLE,
+    SESSION_CLOSED, SESSION_LIMIT, STALE_GENERATION, UNAUTHORIZED_OPERATOR, UNKNOWN_TARGET,
 };
 use crate::state::StateStore;
 
@@ -224,13 +224,20 @@ pub struct StopPlan {
 pub enum TurnDecision {
     /// Do nothing.
     Ignore(Ignored),
-    /// Refuse visibly because the signer lacks session authority.
+    /// Refuse visibly: the signer lacks session authority, or the umbrella
+    /// has spent its turn budget.
     Fail {
         /// The command being answered.
         command_id: String,
         /// The target the command addressed, so the refusal names the
         /// execution the operator tried to steer.
         target: CodingSessionTarget,
+        /// Stable receipt error code. Carried rather than assumed by the
+        /// publisher: two different refusals reach this variant now, and a
+        /// hard-coded `UNAUTHORIZED_OPERATOR` at the publish site would label
+        /// a spent budget as an authority failure — a false statement about
+        /// the sender.
+        code: &'static str,
         /// Operator-facing detail.
         message: String,
     },
@@ -272,6 +279,9 @@ pub struct CommandContext<'a> {
     pub horizon_secs: u64,
     /// Ceiling on concurrently live sessions.
     pub max_sessions: usize,
+    /// Ceiling on turns started under one umbrella, or
+    /// [`crate::config::UNLIMITED_TURN_BUDGET`] for no ceiling (D9).
+    pub turn_budget: u64,
     /// Number of adapter actors currently attached in this process.
     pub active_session_count: usize,
     /// Durable state: dedupe ledger and session records.
@@ -589,6 +599,7 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         return TurnDecision::Fail {
             command_id: command.command_id,
             target: command.target,
+            code: UNAUTHORIZED_OPERATOR,
             message: "only the session founder or a granted operator may steer this execution"
                 .into(),
         };
@@ -598,6 +609,24 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
             command_id: command.command_id,
             target: command.target,
         });
+    }
+    // D9: the umbrella's allowance, checked only for a turn that would *start*
+    // work. An interrupt is deliberately outside the gate — cancelling spends
+    // nothing, and a crew that could not stop its own runaway turn once the
+    // budget ran out would be strictly worse off for having a budget.
+    if matches!(command.action, TurnAction::Start { .. }) {
+        if let Some((used, limit)) = exhausted_turn_budget(context, record) {
+            return TurnDecision::Fail {
+                command_id: command.command_id,
+                target: command.target,
+                code: BUDGET_EXHAUSTED,
+                message: format!(
+                    "this crew session has started {used} of its {limit} allowed turns; the \
+                     session founder can still send turns, and raising \"Turns per crew \
+                     session\" takes effect the next time the provider starts"
+                ),
+            };
+        }
     }
 
     match command.action {
@@ -622,6 +651,7 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
         } if !operator_may_interrupt(context, record) => TurnDecision::Fail {
             command_id: command.command_id,
             target: command.target,
+            code: UNAUTHORIZED_OPERATOR,
             message: "only the session founder, or an operator holding the umbrella's lead seat, \
                       may send an interrupt-class turn; send it as boundary or steer, or send a \
                       separate thread.turn.interrupt to cancel the running turn first"
@@ -663,6 +693,34 @@ fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &st
         return true;
     }
     record.genesis_ref.is_some() && record.granted_operators.contains(operator_pubkey)
+}
+
+/// The umbrella allowance this turn would exceed, as `(used, limit)`, or
+/// `None` when the turn is within budget or outside the budget's reach.
+///
+/// Four ways a turn is outside its reach, and each is a fact rather than a
+/// tolerance: the host set no budget (`UNLIMITED_TURN_BUDGET`); the execution
+/// claimed no umbrella, so there is no crew to bound; the signer owns the
+/// session, because a budget bounds *delegated* work and the founder is who it
+/// was protecting; or the umbrella has simply not spent its allowance yet.
+///
+/// Ownership is [`operator_owns_session`] — the same predicate stop and resume
+/// use — so the budget can never be stricter about who counts as the founder
+/// than the rest of this module already is.
+fn exhausted_turn_budget(
+    context: &CommandContext<'_>,
+    record: &crate::state::SessionRecord,
+) -> Option<(u64, u64)> {
+    let limit = context.turn_budget;
+    if limit == crate::config::UNLIMITED_TURN_BUDGET {
+        return None;
+    }
+    let session_ref = record.session_ref.as_deref()?;
+    if operator_owns_session(record, context.operator_pubkey) {
+        return None;
+    }
+    let used = context.state.turns_used(session_ref);
+    (used >= limit).then_some((used, limit))
 }
 
 /// The role slug that carries interrupt authority within an umbrella (D7).
@@ -926,6 +984,9 @@ mod tests {
             now_secs,
             horizon_secs: 86_400,
             max_sessions: 4,
+            // Unbudgeted by default: every decision test that predates D9
+            // describes a provider with no crew budget configured.
+            turn_budget: crate::config::UNLIMITED_TURN_BUDGET,
             active_session_count: state.live_session_count(),
             state,
             projects,
@@ -2004,6 +2065,170 @@ mod tests {
             );
         }
     }
+
+    /// A budgeted context: everything `ctx_as` builds, plus a finite D9
+    /// ceiling on turns started under one umbrella.
+    fn ctx_budgeted<'a>(
+        state: &'a StateStore,
+        projects: &'a ProjectsFile,
+        operator_pubkey: &'a str,
+        turn_budget: u64,
+    ) -> CommandContext<'a> {
+        CommandContext {
+            turn_budget,
+            ..ctx_as(state, projects, 1_000, operator_pubkey)
+        }
+    }
+
+    /// One governed execution under `umbrella`, with `grantee` holding
+    /// operator standing on it. The founder is [`AUTHORITY`].
+    fn seated_umbrella_session(state: &mut StateStore, dir: &Path, umbrella: &str, grantee: &str) {
+        let mut record = session("s1", dir);
+        record.genesis_ref = Some("12".repeat(32));
+        record.session_ref = Some(umbrella.to_owned());
+        record.granted_operators = [grantee.to_owned()].into_iter().collect();
+        record.authority_seq = 1;
+        state.insert_session(record).expect("insert");
+    }
+
+    /// D9's whole point in one test: the allowance binds delegated work and
+    /// nothing else. A granted seat is refused with the code the receipt
+    /// carries and the two numbers in words; the founder, whom the budget
+    /// exists to protect, is not refused at all.
+    #[test]
+    fn a_spent_umbrella_budget_refuses_a_seat_and_never_the_founder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let seat = "ef".repeat(32);
+        seated_umbrella_session(&mut state, dir.path(), umbrella, &seat);
+        for _ in 0..3 {
+            state.record_turn_spend(umbrella).expect("spend");
+        }
+        let projects = ProjectsFile::default();
+
+        match decide_turn(
+            &ctx_budgeted(&state, &projects, &seat, 3),
+            1_000,
+            &turn_content("turn-over-budget", "s1", 1),
+        ) {
+            TurnDecision::Fail {
+                command_id,
+                code,
+                message,
+                ..
+            } => {
+                assert_eq!(command_id, "turn-over-budget");
+                assert_eq!(code, BUDGET_EXHAUSTED);
+                assert!(
+                    message.contains("3 of its 3 allowed turns"),
+                    "the refusal must name used and limit, got {message:?}"
+                );
+            }
+            other => panic!("expected a budget refusal, got {other:?}"),
+        }
+
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&state, &projects, AUTHORITY, 3),
+                    1_000,
+                    &turn_content("turn-founder-at-limit", "s1", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "the founder is never refused for a budget"
+        );
+    }
+
+    /// The three ways a turn sits outside the allowance's reach, each a fact
+    /// rather than a tolerance: room left, no umbrella to bound, and a host
+    /// that set no budget at all.
+    #[test]
+    fn the_turn_budget_binds_only_a_budgeted_umbrella_with_no_room_left() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let seat = "ef".repeat(32);
+        seated_umbrella_session(&mut state, dir.path(), umbrella, &seat);
+        state.record_turn_spend(umbrella).expect("spend");
+        let projects = ProjectsFile::default();
+
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&state, &projects, &seat, 3),
+                    1_000,
+                    &turn_content("turn-in-budget", "s1", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "one of three turns spent leaves room"
+        );
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(
+                        &state,
+                        &projects,
+                        &seat,
+                        crate::config::UNLIMITED_TURN_BUDGET
+                    ),
+                    1_000,
+                    &turn_content("turn-unbudgeted-host", "s1", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "zero is unlimited, so nothing is ever refused for a budget"
+        );
+
+        // A session that never claimed an umbrella has no crew to bound, so
+        // the same spent counter cannot reach it.
+        let mut unclaimed = store(dir.path());
+        let mut record = session("s2", dir.path());
+        record.genesis_ref = Some("12".repeat(32));
+        record.granted_operators = [seat.clone()].into_iter().collect();
+        record.authority_seq = 1;
+        unclaimed.insert_session(record).expect("insert");
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&unclaimed, &projects, &seat, 1),
+                    1_000,
+                    &turn_content("turn-no-umbrella", "s2", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "an execution with no sessionRef is outside the budget's reach"
+        );
+    }
+
+    /// A cancel spends nothing, so a spent budget must not be able to refuse
+    /// one: a crew that could not stop its own runaway turn once the
+    /// allowance ran out would be worse off for having an allowance.
+    #[test]
+    fn a_spent_budget_still_lets_a_seat_cancel_the_running_turn() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let seat = "ef".repeat(32);
+        seated_umbrella_session(&mut state, dir.path(), umbrella, &seat);
+        state.record_turn_spend(umbrella).expect("spend");
+        let projects = ProjectsFile::default();
+
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&state, &projects, &seat, 1),
+                    1_000,
+                    &interrupt_content("cancel-over-budget", "s1", 1),
+                ),
+                TurnDecision::Interrupt { .. }
+            ),
+            "an interrupt is not a turn and never spends the allowance"
+        );
+    }
+
     /// D7: interrupt-class authority extends to a granted operator who holds
     /// this umbrella's `lead` seat, and to nobody else.
     ///

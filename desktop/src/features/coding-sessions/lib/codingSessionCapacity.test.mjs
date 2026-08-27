@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   CODING_SESSION_CAPACITY_MAX,
+  CODING_SESSION_TURN_BUDGET_MAX,
   codingSessionCapacityChoice,
   codingSessionCapacityLabel,
   codingSessionCapacityPending,
@@ -10,8 +11,12 @@ import {
   codingSessionIdleTimeoutLabel,
   codingSessionIdleTimeoutMinutes,
   codingSessionIdleTimeoutPending,
+  codingSessionTurnBudgetLabel,
+  codingSessionTurnBudgetPending,
+  codingSessionTurnBudgetUsage,
   parseCodingSessionCapacityInput,
   parseCodingSessionIdleTimeoutInput,
+  parseCodingSessionTurnBudgetInput,
 } from "./codingSessionCapacity.ts";
 
 test("the three states round-trip", () => {
@@ -135,5 +140,72 @@ test("a saved budget that is not in force says so, and an equal one stays quiet"
     }),
     null,
     "nothing is running, so nothing is enforcing an older number",
+  );
+});
+
+// D9: the crew turn budget is the third setting in this panel and obeys the
+// same three rules — clearing the field never means "no limit", the label
+// names the default's number, and a saved change admits it is not in force.
+test("the crew turn budget reads and parses like its siblings", () => {
+  assert.equal(parseCodingSessionTurnBudgetInput("", 200), 200);
+  assert.equal(parseCodingSessionTurnBudgetInput("0", 200), 200);
+  assert.equal(parseCodingSessionTurnBudgetInput("-1", 200), 200);
+  assert.equal(parseCodingSessionTurnBudgetInput("nonsense", 200), 200);
+  assert.equal(parseCodingSessionTurnBudgetInput("40", 200), 40);
+  assert.equal(
+    parseCodingSessionTurnBudgetInput("99999999", 200),
+    CODING_SESSION_TURN_BUDGET_MAX,
+  );
+
+  assert.equal(codingSessionTurnBudgetLabel(null, 200), "200 turns");
+  assert.equal(codingSessionTurnBudgetLabel(1, 200), "1 turn");
+  assert.equal(codingSessionTurnBudgetLabel(0, 200), "No limit");
+});
+
+test("a crew budget that is not yet in force says so", () => {
+  assert.equal(
+    codingSessionTurnBudgetPending({
+      turnBudget: 50,
+      defaultTurnBudget: 200,
+      runningTurnBudget: null,
+      providerRunning: true,
+    }),
+    "The provider running now allows 200 turns per crew session. Your change applies the next time it starts.",
+  );
+  assert.equal(
+    codingSessionTurnBudgetPending({
+      turnBudget: 50,
+      defaultTurnBudget: 200,
+      runningTurnBudget: 50,
+      providerRunning: true,
+    }),
+    null,
+  );
+  assert.equal(
+    codingSessionTurnBudgetPending({
+      turnBudget: 50,
+      defaultTurnBudget: 200,
+      runningTurnBudget: null,
+      providerRunning: false,
+    }),
+    null,
+  );
+});
+
+// The founder is never refused, so a crew really can end up past its
+// allowance. Showing a negative remainder, or clamping it away, would both be
+// lies about what was spent.
+test("crew spend reads honestly at, under, and past the limit", () => {
+  assert.equal(
+    codingSessionTurnBudgetUsage({ used: 12, limit: 200 }),
+    "12 of 200 turns used (188 left)",
+  );
+  assert.equal(
+    codingSessionTurnBudgetUsage({ used: 200, limit: 200 }),
+    "200 of 200 turns used (none left)",
+  );
+  assert.equal(
+    codingSessionTurnBudgetUsage({ used: 203, limit: 200 }),
+    "203 of 200 turns used (3 over)",
   );
 });
