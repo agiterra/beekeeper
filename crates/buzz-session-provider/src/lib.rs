@@ -6367,7 +6367,14 @@ mod tests {
             .next()
             .expect("session")
             .target("instance-1");
-        let needle = cwd.to_string_lossy().to_string();
+        // A path *inside* the workspace is made repo-relative rather than
+        // redacted, so the vault never sees it. The recoverable case is a host
+        // path outside the checkout — a sibling of the workspace root here.
+        let needle = dir
+            .path()
+            .join("elsewhere-on-this-host")
+            .to_string_lossy()
+            .to_string();
         provider
             .enqueue_transcript(
                 channel_id,
