@@ -759,7 +759,64 @@ impl SessionManager {
 /// "control that lies about what it enforces" class of bug this project treats
 /// as severe. The code is [`PROVIDER_UNAVAILABLE`] because that is what it is:
 /// this host could not stand the execution up as asked.
+///
+/// Refuses a `cwd` that is shared rather than per-seat — the operator's home
+/// or the nest. `materialize_skills` overwrites a file whenever the bytes
+/// differ, so a session whose workdir is `$HOME` would silently replace the
+/// human's own `~/.agents/skills/<name>/SKILL.md` with a pack's. The desktop's
+/// managed-agent path refuses exactly this write; one contract with two call
+/// sites must not have two behaviours.
 fn materialize_seat_skills(skills: &SeatSkills, cwd: &Path) -> Result<(), CreateFailure> {
+    materialize_seat_skills_outside(skills, cwd, &shared_workdir_roots())
+}
+
+/// The directories on this computer that no single seat owns.
+///
+/// The operator's home and the nest beside it. Read from the environment
+/// rather than a home-directory crate so this stays one small function with no
+/// new dependency; a host with neither variable set simply has no shared roots
+/// to refuse, which is the same answer the desktop gives when it cannot
+/// resolve a home.
+fn shared_workdir_roots() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|home| !home.as_os_str().is_empty())
+    else {
+        return Vec::new();
+    };
+    vec![home.join(".beekeeper"), home]
+}
+
+/// Is `cwd` one of `shared_roots`?
+///
+/// Roots are a parameter so the refusal can be proved against directories a
+/// test owns. Nothing here may read or write a person's real home.
+fn is_shared_workdir(cwd: &Path, shared_roots: &[PathBuf]) -> bool {
+    let target = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    shared_roots
+        .iter()
+        .any(|shared| shared.canonicalize().unwrap_or_else(|_| shared.clone()) == target)
+}
+
+/// [`materialize_seat_skills`], with the shared directories named.
+fn materialize_seat_skills_outside(
+    skills: &SeatSkills,
+    cwd: &Path,
+    shared_roots: &[PathBuf],
+) -> Result<(), CreateFailure> {
+    if is_shared_workdir(cwd, shared_roots) {
+        return Err(CreateFailure {
+            code: PROVIDER_UNAVAILABLE,
+            message: format!(
+                "refusing to write the role skills for persona \"{}\" into {} — that directory \
+                 is shared by every agent on this computer (and may be your own home directory). \
+                 A pack's skills belong in one seat's own working directory.",
+                skills.persona_id,
+                cwd.display()
+            ),
+        });
+    }
     let persona =
         buzz_persona::resolve::resolve_persona_by_name(&skills.pack_dir, &skills.persona_id)
             .map_err(|error| CreateFailure {
@@ -3610,5 +3667,109 @@ done
             "`_meta.steering.supported` at initialize is what this fact is made of"
         );
         manager.shutdown("s1");
+    }
+}
+
+#[cfg(test)]
+mod seat_skill_materialization_tests {
+    use super::*;
+
+    /// A pack directory holding one persona that claims one skill.
+    fn role_pack(root: &Path) -> PathBuf {
+        let pack = root.join("pack");
+        std::fs::create_dir_all(pack.join(".plugin")).expect("plugin dir");
+        std::fs::create_dir_all(pack.join("personas")).expect("personas dir");
+        std::fs::create_dir_all(pack.join("skills/write-report")).expect("skill dir");
+        std::fs::write(
+            pack.join(".plugin/plugin.json"),
+            r#"{"id":"com.test.roles","name":"Roles","version":"0.1.0","personas":["personas/builder.persona.md"]}"#,
+        )
+        .expect("plugin.json");
+        std::fs::write(
+            pack.join("personas/builder.persona.md"),
+            "---\nname: builder\ndisplay_name: Builder\ndescription: Builds.\nrole: builder\nskills:\n  - write-report\n---\nYou build.\n",
+        )
+        .expect("persona");
+        std::fs::write(pack.join("skills/write-report/SKILL.md"), "# Pack report").expect("skill");
+        pack
+    }
+
+    fn seat(pack: PathBuf) -> SeatSkills {
+        SeatSkills {
+            pack_dir: pack,
+            persona_id: "builder".into(),
+        }
+    }
+
+    #[test]
+    fn a_shared_workdir_is_refused_rather_than_written_into() {
+        // A seated session whose workdir is the operator's home would have
+        // `materialize_skills` overwrite the human's own
+        // ~/.agents/skills/write-report/SKILL.md, which it rewrites whenever
+        // the bytes differ. The desktop's managed-agent path refuses this
+        // write; the provider must too. The shared roots are stand-ins this
+        // test owns — asserting against a real home is how the desktop's own
+        // guard test went red on a file it never created.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let pack = role_pack(tmp.path());
+        let home = tmp.path().join("home");
+        let nest = home.join(".beekeeper");
+        std::fs::create_dir_all(&nest).expect("nest");
+        let roots = vec![nest.clone(), home.clone()];
+        // The human's own skill file, in the shape a seat's pack would clobber.
+        let mine = home.join(".agents/skills/write-report");
+        std::fs::create_dir_all(&mine).expect("my skills dir");
+        std::fs::write(mine.join("SKILL.md"), "# Mine").expect("my skill");
+
+        for shared in [&home, &nest] {
+            let failure = materialize_seat_skills_outside(&seat(pack.clone()), shared, &roots)
+                .expect_err("a shared workdir must be refused");
+            assert_eq!(failure.code, PROVIDER_UNAVAILABLE);
+            assert!(failure.message.contains("shared"), "{}", failure.message);
+        }
+        assert_eq!(
+            std::fs::read_to_string(mine.join("SKILL.md")).expect("still there"),
+            "# Mine",
+            "the human's own skill file must not be replaced"
+        );
+        assert!(
+            !nest.join(".agents").exists(),
+            "nothing may be written into the nest either"
+        );
+    }
+
+    #[test]
+    fn a_seats_own_workdir_still_gets_its_skills() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let pack = role_pack(tmp.path());
+        let home = tmp.path().join("home");
+        let cwd = home.join("Projects/checkout");
+        std::fs::create_dir_all(&cwd).expect("seat dir");
+        let roots = vec![home.join(".beekeeper"), home];
+
+        materialize_seat_skills_outside(&seat(pack), &cwd, &roots)
+            .expect("a seat's own directory is not shared");
+
+        assert_eq!(
+            std::fs::read_to_string(cwd.join(".agents/skills/write-report/SKILL.md"))
+                .expect("materialized"),
+            "# Pack report"
+        );
+    }
+
+    #[test]
+    fn the_live_shared_roots_are_the_home_directory_and_the_nest() {
+        // The seam above is only honest if the production call still names the
+        // real shared directories. Path values only — nothing here touches the
+        // filesystem under a person's home.
+        let Some(home) = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+        let roots = shared_workdir_roots();
+        assert!(roots.contains(&home), "{roots:?}");
+        assert!(roots.contains(&home.join(".beekeeper")), "{roots:?}");
     }
 }
