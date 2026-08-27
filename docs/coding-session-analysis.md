@@ -89,7 +89,19 @@ bee sessions export     --channel <uuid> --out <dir>
 bee sessions grant      --channel <uuid> --genesis <event-id> --pubkey <hex|npub> --role collaborator|viewer
 bee sessions revoke     --channel <uuid> --genesis <event-id> --pubkey <hex|npub>
 bee sessions roster     --channel <uuid> --genesis <event-id>
+bee sessions send       --channel <uuid> --to <cs-target|sessionId|role> [--session-ref <uuid>]
+                         [--deliver boundary|steer|interrupt] --content <text|->
+bee sessions send       --channel <uuid> --readdress <commandId>
+bee sessions create     --channel <uuid> --provider-instance <ref> --provider-authority <hex>
+                         [--session-ref <uuid>] [--genesis <event-id>] [--model <id>]
+                         [--title <t>] [--project <coord>] [--repo <coord>] [--brief <text|->]
+bee sessions inbox      --channel <uuid> [--since <event-id>]
+bee sessions status     --channel <uuid>
 ```
+
+The first seven verbs read; the last four are the crew surface of
+[the crew sessions plan](CREW_SESSIONS_PLAN.md)'s D5 — one verb set for every
+runtime, so a seat talks to a sibling the same way a human does.
 
 - **`list`** — one row per generation: target key, title, status, model, and
   created-at. `--format` is the global flag (`bee --format compact sessions
@@ -124,6 +136,50 @@ bee sessions roster     --channel <uuid> --genesis <event-id>
   [NIP-CSL's actor/role amendment](nips/NIP-CSL.md#fork-amendment-actor-and-role-agent-seats)) —
   a fact read back from the channel's own record, never inferred from the
   pubkey's shape.
+
+- **`send`** — publish one kind-44220 `thread.turn.start` to a seat. `--to` is
+  tried as an exact `cs-target` key, then a provider session id, then a role
+  slug; several *generations* of one execution collapse to the newest, several
+  distinct *executions* are an error listing every candidate. A role is only
+  unique inside one umbrella, so a role lookup needs one — `--session-ref`, or
+  the umbrella the caller's own seat sits in — and is refused rather than
+  widened when neither is available. `--deliver` defaults to `boundary`, which
+  is **omitted from the payload**: the payload is `deny_unknown_fields`, so a
+  relay predating the field refuses any command carrying it, and an absent key
+  already meant `boundary`. `--reply-to` is refused, because kind 44220 has no
+  reply reference to carry one in.
+- **`send --readdress <commandId>`** — re-send the text of a turn that was
+  answered `turn_dropped`/`NO_LIVE_EXECUTION` or
+  `turn_refused`/`STALE_GENERATION` against the *current* generation of the
+  same execution, per the plan's ruling R1: those two answers are terminal, and
+  re-addressing is the sender's job. It resolves to the highest generation of
+  the same `(driver, instanceId, sessionId)`, reports `resumedBy` (the signer
+  of the newest 44221 `session.resume`), and refuses rather than guesses in the
+  two cases where a re-send would only earn the same answer again — a durably
+  stopped execution, and an unchanged generation with no live lease behind it.
+- **`create`** — publish one kind-44221 `session.create`; `--brief` becomes its
+  `initialTurn`. `--actor`, `--role`, and `--driver` are refused here, each
+  naming its mechanism: an actor seat's key material is host-local custody the
+  CLI does not hold (`ACTOR_UNAVAILABLE`), a role is half of the actor/role
+  pair (`ACTOR_ROLE_PAIR`), and the driver slug is minted by the provider into
+  the target it returns. Seated executions are created from the desktop, which
+  holds the seat's key.
+- **`inbox`** — kind-44220 commands addressed to executions whose `agentRef` is
+  this identity's pubkey, oldest first, each carrying the newest receipt stage
+  its `commandId` was answered with. It is a mailbox, not a channel feed: a
+  sibling's traffic never appears, even though the relay would serve it.
+  `--since <event-id>` is an exclusive cursor and must name a row of your own.
+- **`status`** — one row per execution: the seat (`actor·role`, else
+  `runtime·model`), liveness, the open turn, and the queue depth. Liveness is
+  `live` only when a kind-24223 lease answers for that exact generation.
+  That kind is **ephemeral** — the relay serves it from a Redis snapshot, never
+  from stored events — so `live` is as fresh as the call and has no history;
+  `quiet <age>` means no lease answered and reports how long since the
+  execution last signed a 44225; `released` is a positive claim (a `released`
+  lease, or a durably stopped execution); `unknown` means it has never signed
+  anything. `leaseSnapshotRecords` in the JSON form says how many leases the
+  snapshot held, so an all-`quiet` channel is distinguishable from a lease
+  read that returned nothing.
 
 There is no CLI surface yet for genesis (44226), goal (44227), name (44229),
 closure (44230), or Pulse (44240, which is besides still unsplit from `wip/*`) —
