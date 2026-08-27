@@ -1987,6 +1987,42 @@ written and `bash -n` clean but **was not executed** — that harness needs
     item is 65 on this branch; the web branch also uses 65 — renumber at
     landing.)
 
+66. **Agents talk (Slice 4), built and gated green on
+    `crew/s2-s6`@`cbbdf7e2`.** `bee sessions send/create/inbox/status` exist,
+    every seat gets a roster and an inbox in its context package, and a
+    refused turn can be re-addressed to the execution that resumed. Gate
+    green: per-crate `cargo test --lib` over 8 crates
+    (846/523/426/133/127/958/303/327, 0 failed), clippy 0 warnings, desktop
+    6294/0, Tauri 2691/0/18, px clean, `just test` 12/12 — but **no full `just
+    ci`** and **no live provider**, so `status`'s `live`/`quiet
+    <age>`/`released`, `openTurn`, `queuedTurns` and inbox `stage` are
+    unit-only and the slice's own acceptance (`bee sessions status` reads
+    `quiet 3m`) is not met. Four contract flags — `--reply-to`,
+    `--readdress`'s wire field, `--role`, `--driver` — are **refused with an
+    explanation rather than implemented**, because each needs a `buzz-core`
+    payload plus relay-validator change. The seated briefing
+    (`agent_fence.rs:136`) still names none of the new verbs. Same-family
+    refuter, CONFIRMED, five findings all applied. Pushed to the relay.
+
+67. **Role packs and crew launch (Slice 5), built and RED on
+    `crew/s2-s6`@`6168f63e`, not pushed.** Six vendor-agnostic role packs,
+    seat skill materialization into the seat's workdir, and a desktop Crew tab
+    that launches N seats and refuses a verifier of the builder's family. The
+    Tauri suite fails `a_shared_workdir_is_refused_rather_than_written_into`
+    (`nest.rs:907`) because the test asserts against the operator's real
+    `$HOME`, which holds a stray `~/.agents/skills/brief/SKILL.md` **this
+    program wrote before the guard existed** — delete it, and give the guard
+    an injectable roots seam. The same test failed the pre-push chain, so
+    nothing was pushed. Everything else was green (lib 3674/0, desktop 6335/0,
+    `just test` 0 failed). Five same-family CONFIRMED findings are recorded
+    and **none applied**: the family check is decided on a model string
+    nothing verifies the provider can run while the UI claims otherwise;
+    `resolve_seat_pack` stages a pack that need not contain the persona,
+    turning a create that used to work into `PROVIDER_UNAVAILABLE`; and a
+    symlinked `SKILL.md` inside an in-pack directory is read and copied into a
+    seat as instructions. No crew can be authored from the desktop UI at all
+    yet, and nothing here has run against a relay.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -2038,28 +2074,31 @@ main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
 `--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
 later that day with one docs conflict (this item is now 58) and re-gated:
-**Slices 2–6 were built by a Claude-only crew on crew/s2-s6; as of 2026-08-26
-S2 and S3 are reached and S3 is not clean.** S2 (the relay is the mailbox) is
-gated and proven live at `1a3ee24d` — `cargo test --lib` across
-buzz-core/buzz-session-provider/buzz-sdk/buzz-relay/buzz-cli/buzz-dev-mcp
-475+412+128+957+302+283 passed / 0 failed, clippy clean, desktop vitest
-6241/0, Tauri 2681+0+7+3+0, `just test` 12/12 groups — and a queued turn was
-watched cross the boundary on the dev instance at 22:03. S3 (agent seats) was
-then built on top, through `dbf54a38`, and **has no gate at all**: no `just
-ci`, no `just test`, and no explicit `cargo test -p <crate> --lib` run at any
-S3 head — only the pre-push hook chain, which reports no counts and (per
-`justfile:427`) does not run the buzz-session-provider, buzz-sdk or
-buzz-relay lib tests this slice moves most. Its single refuter came back
-CONFIRMED with 4 blocking findings, same-family and therefore advisory rather
-than the cross-family tier-2 pass §1 requires; all six fix-now findings were
-applied on the branch (`635a8a19..dbf54a38`), two deferred, and none of it has
-run against a real relay, a real desktop, or a real seat nsec. The first
-checkpoint push was blocked by the branch-skew guard; the finalizer rebased
-the 84 commits onto `main`@`932ddf89` with zero conflicts, the pre-push chain
-passed in 193 s, and the branch is now on the relay (forced update).
-S4–S6 were not started. What is owed before this lands: a real
-repository gate on this base plus the explicit per-crate `--lib` runs, and one
-seated create opened in the app.
+**Slices 2–6 were built by a Claude-only crew on crew/s2-s6; as of 2026-08-27
+S2–S5 are reached, S3 has since been gated green, and S5 is red.** S2 (the
+relay is the mailbox) is gated and proven live at `1a3ee24d`. S3 (agent
+seats), which had no gate at all when it was first recorded, was gated green
+by the lead on `298a69f6` (lib 3439 passed / 0 failed, clippy clean, desktop
+6285/0, Tauri 2701/0, px clean, `just test` 2150 passed / 0 failed). S4
+(agents talk) is built through `cbbdf7e2` and **gated green**: per-crate
+`cargo test -p <crate> --lib` over 8 crates (846/523/426/133/127/958/303/327
+passed, 0 failed — the run `just ci` does not make), clippy 0 warnings,
+desktop 6294/0 over 72 suites, Tauri 2691/0/18, px-text clean, `just test`
+12/12 suites; it is on the relay (`88397e93..cbbdf7e2`). S5 (role packs and
+crew launch) is built through `6168f63e` and **red**: lib 3674/0, clippy
+clean, desktop 6335/0, `just test` 0 failed, but the Tauri suite fails
+`a_shared_workdir_is_refused_rather_than_written_into` (`nest.rs:907`) because
+the test asserts against the operator's real `$HOME`, which contains a stray
+`~/.agents/skills/brief/SKILL.md` this program itself wrote before the guard
+landed — so the same test failed the pre-push chain and **S5 was never
+pushed**. Neither S4 nor S5 ran a full `just ci`, and neither was exercised
+against a live relay or a real provider. Both refuters were same-family
+(advisory, not the cross-family tier-2 pass §1 requires) and both returned
+CONFIRMED; S4's five findings were all applied, S5's five are recorded and
+**none are applied**. S6 is not started, blocked by S5. What is owed before
+any of this lands: S5's five fix-now findings, a green Tauri suite that does
+not depend on `$HOME`, a full repository gate, and one crew launch watched in
+the app.
 
 **The active track as of 2026-08-25 night is live confirmation of the
 full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
