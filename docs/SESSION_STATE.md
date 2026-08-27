@@ -2121,6 +2121,9 @@ written and `bash -n` clean but **was not executed** — that harness needs
     `just file-size-check` pass. Refuters returned same-family
     CONFIRMED/NOT-REFUTED findings, advisory only. Net: not clean, and not
     yet opened against a live relay.
+    Round 2 (2026-08-26): the four fix-now items landed (page re-read whole,
+    six turn statuses, create/resume-only generations, per-bound metadata
+    tests); `just web-test` gates 151 green tests in `check`, `ci`, and CI.
 
 ## 2a. Direction settled 2026-08-18
 
