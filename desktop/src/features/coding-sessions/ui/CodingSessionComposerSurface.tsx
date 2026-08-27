@@ -22,6 +22,12 @@ type ComposerSurfaceProps = {
   editorDisabled: boolean;
   editorRef: React.RefObject<HTMLTextAreaElement | null>;
   error: string | null;
+  /**
+   * Rendered directly under the error line. The composer puts the owed-turn
+   * resend here: the offer belongs beside the sentence that explains why the
+   * turn never ran, not in a menu the person would have to go looking for.
+   */
+  errorAction?: React.ReactNode;
   immersive: boolean;
   isDisconnected: boolean;
   isEnded: boolean;
@@ -63,6 +69,7 @@ export function CodingSessionComposerSurface({
   editorDisabled,
   editorRef,
   error,
+  errorAction = null,
   immersive,
   isDisconnected,
   isEnded,
@@ -108,6 +115,7 @@ export function CodingSessionComposerSurface({
           canControl={canControl}
           canSessionStop={canSessionStop}
           error={error}
+          errorAction={errorAction}
           isDisconnected={isDisconnected}
           isEnded={isEnded}
           isMember={isMember}
@@ -125,6 +133,7 @@ export function CodingSessionComposerSurface({
           authorityReason={authorityReason}
           canControl={canControl}
           error={error}
+          errorAction={errorAction}
           isUngovernedSession={isUngovernedSession}
           showAuthorityFailure={showAuthorityFailure}
         />
@@ -289,6 +298,7 @@ function ComposerLifecycleNotice({
   canControl,
   canSessionStop,
   error,
+  errorAction,
   isDisconnected,
   isEnded,
   isMember,
@@ -304,6 +314,7 @@ function ComposerLifecycleNotice({
   canControl: boolean;
   canSessionStop: boolean;
   error: string | null;
+  errorAction: React.ReactNode;
   isDisconnected: boolean;
   isEnded: boolean;
   isMember: boolean;
@@ -316,7 +327,7 @@ function ComposerLifecycleNotice({
   unreachable: boolean;
   unreachableDetail: string | null;
 }) {
-  if (!error && !unreachable && !isDisconnected && !isEnded) {
+  if (!error && !errorAction && !unreachable && !isDisconnected && !isEnded) {
     return null;
   }
   return (
@@ -329,6 +340,7 @@ function ComposerLifecycleNotice({
           {error}
         </p>
       ) : null}
+      {errorAction}
       {unreachable ? (
         <LifecycleNoticeRow
           action={
@@ -427,12 +439,14 @@ function CompactComposerNotices({
   authorityReason,
   canControl,
   error,
+  errorAction,
   isUngovernedSession,
   showAuthorityFailure,
 }: {
   authorityReason: string | null;
   canControl: boolean;
   error: string | null;
+  errorAction: React.ReactNode;
   isUngovernedSession: boolean;
   showAuthorityFailure: boolean;
 }) {
@@ -472,6 +486,7 @@ function CompactComposerNotices({
           {error}
         </p>
       ) : null}
+      {errorAction ? <div className="mb-2">{errorAction}</div> : null}
     </>
   );
 }

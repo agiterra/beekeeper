@@ -71,6 +71,27 @@ export const CODING_SESSION_TURN_DROPPED_MESSAGE =
 export type WatchedCodingSessionTurn = {
   commandId: string;
   /**
+   * The generation this turn was addressed to.
+   *
+   * Kept so a refusal can be answered honestly: a `NO_LIVE_EXECUTION` or
+   * `STALE_GENERATION` receipt only offers a resend when the execution has
+   * since resumed into a *newer* generation, and that comparison needs the
+   * number the command actually named. Optional because a watch re-armed from
+   * a row recorded before this field existed has no such number, and guessing
+   * one would put a fabricated generation on the wire.
+   */
+  generation?: number;
+  /**
+   * `buildCodingSessionExecutionKey` of the execution this turn was sent to —
+   * the identity that survives a generation bump.
+   *
+   * The composer instance is reused when the umbrella switches which
+   * participant it is addressing, so a refusal from one execution can still be
+   * in hand while the editor points at another. Re-addressing must never cross
+   * that line: these words were written for the seat they were sent to.
+   */
+  executionKey?: string;
+  /**
    * The words the person actually typed, kept verbatim so a refusal can put
    * them back. The published text may differ (the umbrella composer strips a
    * routing `@handle`), and it is the draft — not the wire text — that belongs
@@ -141,4 +162,111 @@ export function restoreCodingSessionDraft(
   // A replayed refusal is the same fact, not a second copy of the message.
   if (current.includes(refused)) return current;
   return `${refused}\n\n${current}`;
+}
+
+/**
+ * The two receipt codes that mean the words were never run and could still
+ * run somewhere else.
+ *
+ * Generation fencing is why they exist. A turn is addressed to an exact
+ * `(driver, instance, session, generation)`; when the provider comes back, the
+ * session it resumed is generation N+1 and the replayed command addresses N,
+ * which nothing owns any more. The provider answers durably — `turn_dropped`
+ * with `NO_LIVE_EXECUTION`, or `turn_refused` with `STALE_GENERATION` — and
+ * stops there. It cannot re-address the turn itself: nothing but the sender
+ * can decide that these words still apply to the session that came back.
+ *
+ * Every other code is a decision about the sender (`UNAUTHORIZED_OPERATOR`),
+ * the target (`UNKNOWN_TARGET`, `SESSION_CLOSED`), or the provider's own
+ * mailbox (`QUEUE_FULL`). Re-sending the same words to a newer generation
+ * would not change any of those answers, so offering it would be a lie about
+ * what happened.
+ */
+export const CODING_SESSION_READDRESSABLE_REFUSAL_CODES = [
+  "NO_LIVE_EXECUTION",
+  "STALE_GENERATION",
+] as const;
+
+/** True for a refusal whose only remedy is a fresh command to a live generation. */
+export function isCodingSessionReaddressableRefusal(
+  refusal: CodingSessionCommandRefusal,
+): boolean {
+  const code = refusal.code.trim().toUpperCase();
+  return (
+    CODING_SESSION_READDRESSABLE_REFUSAL_CODES as readonly string[]
+  ).includes(code);
+}
+
+/** The exact words on the re-addressing control (crew plan ruling R1). */
+export const CODING_SESSION_READDRESS_LABEL = "Resend to the resumed execution";
+
+/**
+ * Whether an owed turn can be re-addressed right now, and to what.
+ *
+ * `offer` names the generation the fresh command will be addressed to. It is
+ * always the execution's *current* generation — the one this composer is
+ * already pointed at — never the one that refused, and never a number this
+ * module invents.
+ */
+export type CodingSessionReaddressOffer =
+  | { kind: "offer"; generation: number; label: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * Decide what to offer after a `NO_LIVE_EXECUTION` / `STALE_GENERATION`
+ * receipt, answering the three questions ruling R1 named.
+ *
+ * *Which generation it resolves to:* the current one, and only when it is
+ * strictly newer than the generation that refused. A resend into the same
+ * generation would be answered by the same refusal, so the offer is withheld
+ * and the reason says a resume is what is missing.
+ *
+ * *Who resumed it:* deliberately not claimed. This client sees a generation
+ * number move; it does not see who moved it, and a sentence naming a person
+ * would be a guess. The words back in the editor plus the new number are the
+ * whole of what is known.
+ *
+ * *What happens when the session is closed:* nothing is offered. A stopped
+ * execution has no live generation and cannot gain one, so the honest answer
+ * is that these words need a different execution, not another attempt at this
+ * one.
+ */
+export function resolveCodingSessionReaddress({
+  currentGeneration,
+  isEnded,
+  refusedGeneration,
+}: {
+  /** The generation this composer is addressing now. */
+  currentGeneration: number;
+  /** The execution has stopped for good (`lifecycleStatus === "stopped"`). */
+  isEnded: boolean;
+  /** The generation the refused command named, when this client still knows it. */
+  refusedGeneration: number | undefined;
+}): CodingSessionReaddressOffer {
+  if (isEnded) {
+    return {
+      kind: "unavailable",
+      reason:
+        "This execution has ended, so there is no generation to resend into. Your words are back in the editor — send them to another execution.",
+    };
+  }
+  if (refusedGeneration === undefined) {
+    return {
+      kind: "unavailable",
+      reason:
+        "This client no longer knows which generation refused this turn, so it will not guess one. Your words are back in the editor.",
+    };
+  }
+  if (currentGeneration <= refusedGeneration) {
+    return {
+      kind: "unavailable",
+      reason:
+        "Nothing has resumed this execution yet, so there is no newer generation to send to. Reconnect it, then send these words again.",
+    };
+  }
+  return {
+    kind: "offer",
+    generation: currentGeneration,
+    label: CODING_SESSION_READDRESS_LABEL,
+  };
 }

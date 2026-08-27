@@ -28,7 +28,13 @@ import {
 import { useCodingSessionResumeSettle } from "@/features/coding-sessions/hooks/useCodingSessionResumeSettle";
 import { useCodingSessionTurnRefusal } from "@/features/coding-sessions/hooks/useCodingSessionTurnRefusal";
 import { useEndCodingSessionDialog } from "@/features/coding-sessions/hooks/useEndCodingSessionDialog";
-import { restoreCodingSessionDraft } from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
+import {
+  resolveCodingSessionReaddress,
+  restoreCodingSessionDraft,
+} from "@/features/coding-sessions/lib/codingSessionTurnRefusal";
+import { buildCodingSessionExecutionKey } from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import type { CodingSessionIngressClient } from "@/features/coding-sessions/lib/useTrustedCodingSessionIngress";
+import { Button } from "@/shared/ui/button";
 import type { CodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
 import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import type { CodingSessionStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
@@ -91,6 +97,8 @@ type CodingSessionComposerProps = {
   recipientControl?: React.ReactNode;
   /** Publish seam; production passes nothing. */
   publishCommand?: typeof publishCodingSessionCommand;
+  /** Refusal-ingress transport seam; production passes nothing. */
+  refusalClient?: CodingSessionIngressClient;
   /** Resume publish seam; production passes nothing. */
   publishResume?: typeof publishCodingSessionResume;
   /**
@@ -146,6 +154,7 @@ export function CodingSessionComposer({
   recipientControl,
   publishCommand = publishCodingSessionCommand,
   publishResume = publishCodingSessionResume,
+  refusalClient,
   seatActorPubkey = null,
   seatCustody = DEFAULT_SEAT_CUSTODY,
   sessionLabel = null,
@@ -194,14 +203,26 @@ export function CodingSessionComposer({
   // A sent turn the provider refuses (an operator it has not granted) answers
   // with a receipt and nothing else; without this watch the message the person
   // typed disappears with no explanation at all.
+  // The execution behind the current target, generation excluded: the identity
+  // that a resume preserves and a participant switch does not.
+  const executionKey = buildCodingSessionExecutionKey(
+    providerAuthorityPubkey,
+    target,
+  );
   const {
+    clearReaddress,
     error: turnRefusalError,
+    readdress,
     watch: watchTurn,
     watcher: turnRefusalWatcher,
   } = useCodingSessionTurnRefusal({
     channelId,
+    client: refusalClient,
+    executionKey,
     providerAuthorityPubkey,
     restoreDraft: restoreRefusedDraft,
+    // The generation a re-armed watch belongs to; see the option's doc.
+    targetGeneration: target.generation,
     // Turns this execution's provider is still holding are adopted on mount:
     // a queued turn outlives this component, and its terminal receipt has to
     // land on something.
@@ -295,7 +316,12 @@ export function CodingSessionComposer({
         markPendingCodingSessionTurnPublished(channelId, published.commandId);
         // Acceptance by the relay is not consent from the provider. The receipt
         // that refuses this turn is keyed to this command id and nothing else.
-        watchTurn({ commandId: published.commandId, draft });
+        watchTurn({
+          commandId: published.commandId,
+          draft,
+          executionKey,
+          generation: target.generation,
+        });
       } catch (submitError) {
         forgetPendingCodingSessionTurn(channelId, commandId);
         // The words never left this machine, so they belong back in the editor —
@@ -314,6 +340,7 @@ export function CodingSessionComposer({
     [
       channelId,
       currentUserPubkey,
+      executionKey,
       isSending,
       publishCommand,
       restoreRefusedDraft,
@@ -343,6 +370,69 @@ export function CodingSessionComposer({
     publishPreparedText,
     text,
   ]);
+
+  // A turn the provider answered with `NO_LIVE_EXECUTION` or
+  // `STALE_GENERATION` never ran, and nothing but the sender can decide it
+  // still applies to the session that came back (ruling R1). The words are
+  // already back in the editor; this says whether there is anywhere to send
+  // them and, when there is, sends them there.
+  const readdressOffer =
+    readdress && readdress.executionKey === executionKey
+      ? resolveCodingSessionReaddress({
+          currentGeneration: target.generation,
+          isEnded,
+          refusedGeneration: readdress.generation,
+        })
+      : null;
+
+  const resendToCurrentGeneration = React.useCallback(async () => {
+    if (!canSubmitText || isSending) return;
+    // Deliberately the editor's text, not a copy of the refused wire text:
+    // the refusal put those words back where the person could change them,
+    // and re-sending anything else would publish a message they can see on
+    // screen and did not agree to.
+    const draft = text;
+    setText("");
+    clearReaddress();
+    // Never `steer`: the execution that answered has just been resumed, so
+    // there is no running turn of its to steer into.
+    await publishPreparedText({ deliver: "boundary", draft, preparedText });
+  }, [
+    canSubmitText,
+    clearReaddress,
+    isSending,
+    preparedText,
+    publishPreparedText,
+    text,
+  ]);
+
+  const readdressAction =
+    readdressOffer === null ? null : readdressOffer.kind === "offer" ? (
+      <div className="flex items-center gap-2">
+        <Button
+          data-testid="coding-session-composer-readdress"
+          disabled={!canSubmitText || isSending}
+          onClick={() => void resendToCurrentGeneration()}
+          size="sm"
+          type="button"
+        >
+          {readdressOffer.label}
+        </Button>
+        <span
+          className="text-2xs text-muted-foreground"
+          data-testid="coding-session-composer-readdress-generation"
+        >
+          {`generation ${readdressOffer.generation}`}
+        </span>
+      </div>
+    ) : (
+      <p
+        className="text-sm text-muted-foreground"
+        data-testid="coding-session-composer-readdress-unavailable"
+      >
+        {readdressOffer.reason}
+      </p>
+    );
 
   const handleStop = React.useCallback(async () => {
     if (!canControl || !isMember || !canInterrupt || isSending) return;
@@ -457,6 +547,7 @@ export function CodingSessionComposer({
         editorDisabled={editorDisabled}
         editorRef={editorRef}
         error={visibleError}
+        errorAction={readdressAction}
         immersive={immersive}
         isDisconnected={isDisconnected}
         isEnded={isEnded}

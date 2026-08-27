@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODING_SESSION_READDRESS_LABEL,
   CODING_SESSION_TURN_DROPPED_MESSAGE,
   CODING_SESSION_TURN_REFUSED_MESSAGE,
   forgetCodingSessionTurn,
   formatCodingSessionTurnRefusal,
+  isCodingSessionReaddressableRefusal,
   MAX_WATCHED_CODING_SESSION_TURNS,
+  resolveCodingSessionReaddress,
   restoreCodingSessionDraft,
   watchCodingSessionTurn,
 } from "./codingSessionTurnRefusal.ts";
@@ -156,4 +159,91 @@ test("every pending row a person can hold has a watch to retire it", () => {
     watched.some((turn) => turn.commandId === "csc-0"),
     "the first turn a person sent is still watched when the last one lands",
   );
+});
+
+test("only the two owed-turn codes offer to be re-addressed", () => {
+  for (const code of ["NO_LIVE_EXECUTION", "STALE_GENERATION"]) {
+    assert.equal(
+      isCodingSessionReaddressableRefusal({
+        code,
+        message: "the generation this turn addressed is gone",
+      }),
+      true,
+      `${code} is the receipt that says the words never ran`,
+    );
+  }
+  // Everything else is a decision about the sender or the provider's own
+  // queue: resending the same words to a newer generation would not change
+  // the answer, and offering it would be a lie about what happened.
+  for (const code of [
+    "UNAUTHORIZED_OPERATOR",
+    "UNKNOWN_TARGET",
+    "SESSION_CLOSED",
+    "QUEUE_FULL",
+    "QUEUE_FULL_TURN_KEPT",
+    "",
+  ]) {
+    assert.equal(
+      isCodingSessionReaddressableRefusal({ code, message: "no" }),
+      false,
+      `${code} must not offer a resend`,
+    );
+  }
+});
+
+test("a resend is offered only when a later generation exists to resend into", () => {
+  // Ruling R1: the sender re-addresses an owed turn, and the generation it
+  // resolves to is the execution's *current* one — never the one that refused.
+  assert.deepEqual(
+    resolveCodingSessionReaddress({
+      refusedGeneration: 1,
+      currentGeneration: 2,
+      isEnded: false,
+    }),
+    {
+      kind: "offer",
+      generation: 2,
+      label: CODING_SESSION_READDRESS_LABEL,
+    },
+  );
+});
+
+test("nothing resumed means no offer, and the row says why", () => {
+  const same = resolveCodingSessionReaddress({
+    refusedGeneration: 3,
+    currentGeneration: 3,
+    isEnded: false,
+  });
+  assert.equal(same.kind, "unavailable");
+  assert.match(same.reason, /resumed/i);
+  // A generation cannot go backwards, but a stale prop must not be read as a
+  // resume either.
+  assert.equal(
+    resolveCodingSessionReaddress({
+      refusedGeneration: 4,
+      currentGeneration: 3,
+      isEnded: false,
+    }).kind,
+    "unavailable",
+  );
+});
+
+test("an ended execution is never offered a resend", () => {
+  const ended = resolveCodingSessionReaddress({
+    refusedGeneration: 1,
+    currentGeneration: 2,
+    isEnded: true,
+  });
+  assert.equal(ended.kind, "unavailable");
+  assert.match(ended.reason, /ended/i);
+});
+
+test("a turn whose generation this client forgot is not guessed at", () => {
+  const unknown = resolveCodingSessionReaddress({
+    refusedGeneration: undefined,
+    currentGeneration: 9,
+    isEnded: false,
+  });
+  assert.equal(unknown.kind, "unavailable");
+  assert.match(unknown.reason, /which generation/i);
 });
