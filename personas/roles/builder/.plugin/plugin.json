@@ -1,0 +1,9 @@
+{
+  "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
+  "id": "com.beekeeper.crew.builder",
+  "name": "Crew Builder",
+  "version": "0.1.0",
+  "description": "Implements one locked brief inside one lane's exclusive files; self-verifies; reports raw facts. Vendor- and model-agnostic; model_min: multi-file edits, running its own tests, and citing evidence rather than asserting it.",
+  "keywords": ["crew", "builder", "implementation"],
+  "personas": ["personas/builder.persona.md"]
+}
