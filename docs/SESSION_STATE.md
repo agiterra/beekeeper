@@ -1704,6 +1704,43 @@ same morning and one left as a product question.
       transcript here reproduces it. File it as a code reading, not as an
       incident report.
 
+60. **The local redaction reveal never resolved on the dev build, and the
+    vault was innocent.** Andy, live on `context-redaction-improvement`: "I
+    was still locally seeing the redacted message instead of the unredacted
+    content, which was often my own input." Forensics on the dev instance's
+    own disk cleared the provider side completely — every `sha256:` digest in
+    the session-provider outbox had a matching plaintext line in
+    `session-provider/<pubkey>/redactions/<session>.jsonl` (checked
+    2026-08-27, session `bec3a33e…`, four of four). The failure was the
+    desktop's read chain: `useRedactionDictionary` marked a scope "asked" the
+    moment its IPC lookup *fired*, and the answer's `setResolved` was guarded
+    by that effect instance's cancellation flag. Any unmount between fire and
+    land left the next mount early-returning on the asked-guard while the
+    answer arrived to nobody — and `React.StrictMode` (`main.tsx:80`)
+    manufactures exactly that mount → cleanup → mount sequence for **every**
+    transcript on **every** dev-mode render, so on the dev build the reveal
+    could essentially never work on first view. Prod is exposed too, just
+    less often: a pop-out or channel switch mid-lookup pinned the pill the
+    same way.
+    - **Fixed** by making the lookup a shared per-scope promise that any
+      number of subscribers attach to (`subscribeRedactionResolution`): only
+      a scope that *settled* empty is remembered as asked, a rejection is
+      retryable on the next mount, and a landed answer serves later mounts
+      synchronously from the module cache. The mount-cancel-remount sequence
+      is pinned by `useRedactionDictionary.test.mjs` without a renderer.
+    - **Rebase note, same area:** main had independently grown a second
+      renderer for the same `[elided private context: …]` marker
+      (`remarkPrivateContextMarkers` + `MarkdownPrivateContext`, from the
+      multi-agent flow work). After rebasing, whichever plugin ran first in
+      the remark chain won and only one of them knew about the vault. The
+      pill is the superset, so the chip was deleted. The merged redactor now
+      threads **both** main's workspace-relativization and the branch's
+      recording log through one worker: a path inside the checkout publishes
+      as a readable repo-relative path (never vaulted, nothing to reveal), a
+      host path outside it publishes as a pill and is recoverable locally,
+      and a credential publishes as main's fixed-width mask and is never
+      recorded anywhere.
+
 
 ### Built 2026-08-24 — project membership is the repository access signal
 
