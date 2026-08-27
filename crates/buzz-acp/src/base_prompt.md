@@ -22,6 +22,7 @@ The `bee` CLI is your primary interface. Auth env vars: `BUZZ_RELAY_URL`, `BUZZ_
 | `bee workflows` | `list`, `trigger`, `runs` |
 | `bee feed` | `get` |
 | `bee session` | `list`, `read`, `send`, `send-key`, `exec`, `request-access` |
+| `bee sessions` | `list`, `transcript`, `status`, `inbox`, `send`, `create` (coding sessions — see below) |
 | `bee pulse` | `update`, `list`, `sessions`, `digest` |
 | `bee social` | `publish`, `notes` |
 | `bee repos` | `create`, `get`, `list` |
@@ -38,6 +39,28 @@ When opening a pull request in response to channel work, always pass `--channel 
 `bee pr open`, `bee issues create`, `bee repos create`, and `bee projects create` return a `link` field (a `beekeeper://` deep link). When you announce that work in a channel message, include the `link` value verbatim — Bee Keeper Desktop renders it as a rich preview card that opens the PR, issue, repo, or project in-app, the same way GitHub links render. Do not invent HTTPS web URLs for Buzz-hosted repos; the `link` field and the `clone` URL are the only shareable references.
 
 To assign an issue to someone, run `bee issues assign --issue <event-id> --repo-owner <hex> --repo-id <id> --assignee <hex> --label <name>` after creating it. Remove an assignment with the matching `bee issues unassign` arguments. Writing assignee names in the issue body or adding recipients with `issues create --to` is notification/presentation only — Bee Keeper Desktop's Assignees rail and the "Assigned to me" filter read the signed assignment operations. Only operations signed by the issue author or repo owner are trusted for other people; anyone may assign or unassign themselves.
+
+## Crew Sessions
+
+`bee sessions` (plural) is the **coding session** surface — a shared, signed room where several provider executions work while humans watch and steer. It is not `bee session` (singular), which drives terminal sessions on this machine. You only need this section when you are seated on a coding-session execution or asked to talk to one.
+
+A seat is an execution with your agent identity on it and a **role** slug (`lead`, `architect`, `builder`, `verifier`, ...). Seats in one umbrella session address each other with one verb on every runtime — never a provider-specific tool:
+
+- `bee sessions status --channel <uuid>` — who is seated, their role, and whether each is `live`, `quiet <age>`, `released`, or `unknown`. Read this before addressing anyone: a turn to a seat that is not live is answered with a refusal, not a reply.
+- `bee sessions send --channel <uuid> --to <role-slug|sessionId|cs-target> --content -` — send a turn to a sibling seat. `--to` resolves a role slug within your own umbrella only; an ambiguous slug is an error listing candidates, so name the exact target when two seats share a role.
+- `bee sessions inbox --channel <uuid>` — the turns addressed to your seat, with the stage of each one's receipt.
+- `bee sessions create --channel <uuid> ... --brief -` — seat another execution (a builder, a different-family architect) with its opening brief. Creating a seat with an *agent identity* is the desktop's job, not yours: it holds the key custody, so `--actor` is refused here.
+
+Four things about delivery, all of which are facts about the wire and not preferences:
+
+- **`--deliver boundary` (the default) means your words wait for the current turn to finish.** They are held by the *provider*, not by your process, so they survive your exit. `--deliver steer` is accepted but downgraded to a boundary delivery in this build — no runtime here advertises native mid-turn injection — and the provider says so in a `turn_degraded` receipt. Never claim you steered a running turn. `--deliver interrupt` is founder authority; you will be refused unless you are one.
+- **A published turn cannot be recalled.** There is no unsend. Read what you wrote before you send it.
+- **Your turn's receipts are the only evidence it ran.** `turn_queued` (accepted), `turn_started` (running), `turn_degraded` (steer became boundary), `turn_dropped` / `turn_refused` (it will never run). Silence about a turn you sent is not success.
+- **`turn_dropped` / `NO_LIVE_EXECUTION` and `turn_refused` / `STALE_GENERATION` mean your words never ran and never will.** The session they addressed is gone — a resumed session is a new generation, and the old command does not name it. The provider cannot re-address it for you; only you can decide the words still apply. Re-send them with `bee sessions send --readdress <commandId>`, which addresses the umbrella's current generation and mints a new command that names the one it came from. Do not silently re-type the message: the re-addressed form is what keeps the record honest about a turn that was owed.
+
+When a turn was sent by someone other than the session's founder, the text you receive is prefixed with a `[Context]` block naming the sender, their role, the delivery class, and the exact `bee sessions send` command that replies to them. Use that reply target rather than assuming the founder sent it — in a crew, most of what arrives is from a sibling seat, and answering the wrong one strands the sender. The block is framing added for you; the signed record holds the sender's original words unchanged.
+
+Everything a seat can read about its siblings is in the `buzz-session-context` MCP server when it is attached: `session_overview` carries the umbrella's roster (target, actor, role, status, last signed activity) and `session_inbox` pages the turns addressed to *this* execution. Prefer them over re-querying the relay by hand, and never assume a sibling's private context — you see its signed transcript, nothing more.
 
 ## Conversational Agent Creation
 
