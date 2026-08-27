@@ -1904,8 +1904,24 @@ written and `bash -n` clean but **was not executed** — that harness needs
     gen 4, channel `b4cf9739…`): `ping` sent while a 32 s turn ran was
     `turn_queued` at 22:03:41 and `turn_started` at 22:04:11 — the same second
     the running turn's result landed. The `deliver`-omission hotfix was
-    accepted by the deployed (pre-S2) relay on the same wire. Not yet live:
-    queued-row escalation, interrupt receipts, dropped/refused paths.
+    accepted by the deployed (pre-S2) relay on the same wire. **22:08, same
+    execution:** Interrupt during a running `cargo test` turn → `interrupt_delivered`
+    for the interrupt command, the turn's `result` = cancelled, and the turn
+    queued behind it (`pong`) `turn_started` in the same second. Not yet live:
+    queued-row escalation past 3 min, dropped/refused paths.
+
+64. **A tool row keeps reading `Running` after its turn is cancelled.** Seen
+    2026-08-26 22:08 on the dev instance (S2 tree, Claude·sonnet gen 4): an
+    Interrupt during a `cargo test` turn closed the turn honestly — the
+    boundary reads *Worked for 12s · cancelled* and the wire carries
+    `interrupt_delivered` + a `result` with subtype `cancelled` — but the
+    `Run Terminal` tool row above it still shows the spinner and `Running`,
+    because no `tool_result` ever arrives for a call the cancel aborted and
+    the projection keeps a tool's last state. A cancelled turn should close its
+    open tool calls as *aborted with the turn* (renderClass status, no
+    payload), derived from the turn's `result.subtype == "cancelled"` /
+    `interrupted` item, not from a receipt. Desktop-only (projection); the
+    mobile and web observers copy the same projection and inherit the gap.
 
 ## 2a. Direction settled 2026-08-18
 
