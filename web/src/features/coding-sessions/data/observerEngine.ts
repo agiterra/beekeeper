@@ -265,8 +265,15 @@ export class CodingSessionObserverEngine {
           // transport stopped retrying — a lie about the relay.
           else if (state === "closed") this.setConnection("closed");
         },
-        onClosed: (reason) => {
+        onClosed: (reason, index) => {
           this.lastError = reason;
+          // A refused filter takes part of the live stream away. The transport
+          // retries it, but until it comes back the subscription is degraded,
+          // and reporting a frozen transcript as "live" is exactly the lie
+          // this surface exists to avoid.
+          if (index !== null && this.connection === "open") {
+            this.connection = "error";
+          }
           this.rebuildNow();
         },
       },

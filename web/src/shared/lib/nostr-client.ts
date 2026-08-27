@@ -183,6 +183,11 @@ export interface SubscribeEventsOptions {
   /**
    * The relay refused a subscription (`CLOSED`), or the socket failed.
    * `filterIndex` is null for socket-level failures.
+   *
+   * A non-null index does not mean the filter is gone for good: unless the
+   * reason is a standing refusal, the subscription reconnects and re-sends it.
+   * It does mean the read is incomplete right now, which a surface must not
+   * describe as healthy.
    */
   onClosed?: (reason: string, filterIndex: number | null) => void;
   /** Every transition of the underlying socket. */
@@ -209,6 +214,26 @@ const REPLAY_OVERLAP_SECONDS = 5;
 const AUTH_GRACE_MS = 100;
 
 /**
+ * `CLOSED` machine-readable prefixes that describe a *standing* refusal.
+ *
+ * Re-sending the identical filter would fail identically, so these are the
+ * only reasons a filter is retired for the life of the subscription. Every
+ * other reason — `auth-required:` (which the 100 ms unauthenticated-REQ grace
+ * can itself provoke), `error:`, `rate-limited:` — describes this attempt, not
+ * this filter, and retiring one on that basis silently kills a live stream
+ * while the socket goes on reporting itself healthy.
+ */
+const STANDING_REFUSAL_PREFIXES = new Set(["restricted", "blocked", "invalid"]);
+
+function isStandingRefusal(reason: string): boolean {
+  const colon = reason.indexOf(":");
+  if (colon < 0) return false;
+  return STANDING_REFUSAL_PREFIXES.has(
+    reason.slice(0, colon).trim().toLowerCase(),
+  );
+}
+
+/**
  * Open a long-lived REQ per filter and keep it open past EOSE.
  *
  * Unlike {@link queryEvents} this does not resolve at EOSE: the socket stays
@@ -229,7 +254,23 @@ export function subscribeEvents(
   options: SubscribeEventsOptions = {},
 ): () => void {
   const lastSeenAt: (number | null)[] = filters.map(() => null);
-  const refused = filters.map(() => false);
+  /**
+   * Wall clock (seconds) when each filter's REQ first went out.
+   *
+   * A live filter carries `limit: 0` — "nothing stored, only what is new" — so
+   * until its first event `lastSeenAt` is null and a replay would carry no
+   * `since` and no page size at all, silently losing everything published
+   * while the socket was down, permanently, since nothing else re-reads
+   * history. This is the floor a replay falls back to. It is NOT written into
+   * `lastSeenAt`: a relay may legitimately deliver events older than the
+   * moment we asked, and a floor that swallowed them would move the resume
+   * point forward past events we had not seen.
+   */
+  const subscribedAt: (number | null)[] = filters.map(() => null);
+  /** Retired for the life of the subscription; see {@link isStandingRefusal}. */
+  const retired = filters.map(() => false);
+  /** Extra backoff steps earned by refusals, so a retry is never a hot loop. */
+  let refusalBackoffSteps = 0;
   const subPrefix = `s${Date.now().toString(36)}${Math.floor(
     Math.random() * 1e6,
   ).toString(36)}`;
@@ -248,11 +289,15 @@ export function subscribeEvents(
 
   const wireFilter = (index: number): NostrFilter => {
     const base = filters[index];
-    const seen = lastSeenAt[index];
-    if (seen === null) return base;
+    // A filter that already asks for a page needs no gap-filling `since`:
+    // re-sending it unchanged re-reads exactly what it was asking for, and
+    // narrowing it to the recent past would drop the history it exists for.
+    const resumeFrom =
+      lastSeenAt[index] ?? (base.limit === 0 ? subscribedAt[index] : null);
+    if (resumeFrom === null) return base;
     const replay: NostrFilter = {
       ...base,
-      since: seen - REPLAY_OVERLAP_SECONDS,
+      since: resumeFrom - REPLAY_OVERLAP_SECONDS,
     };
     if (base.limit === 0 && options.replayLimit !== undefined) {
       replay.limit = options.replayLimit;
@@ -262,14 +307,14 @@ export function subscribeEvents(
 
   const scheduleReconnect = () => {
     if (stopped || reconnectTimer !== null) return;
-    if (refused.every((value) => value)) {
+    if (retired.every((value) => value)) {
       options.onStateChange?.("closed");
       return;
     }
     const base = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
     const delay = Math.min(
       MAX_RECONNECT_DELAY_MS,
-      base * 2 ** Math.min(consecutiveFailures, 5),
+      base * 2 ** Math.min(consecutiveFailures + refusalBackoffSteps, 5),
     );
     consecutiveFailures += 1;
     reconnectTimer = setTimeout(() => {
@@ -299,6 +344,8 @@ export function subscribeEvents(
     let reqSent = false;
     let authEventId: string | null = null;
     let eoseSeen = filters.map(() => false);
+    /** Refused by the relay on *this* connection, whatever the reason. */
+    const refusedHere = filters.map(() => false);
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const sendReqs = () => {
@@ -306,9 +353,12 @@ export function subscribeEvents(
       reqSent = true;
       eoseSeen = filters.map(() => false);
       consecutiveFailures = 0;
+      const sentAt = Math.floor(Date.now() / 1000);
       for (let index = 0; index < filters.length; index += 1) {
-        if (refused[index]) continue;
+        if (retired[index]) continue;
         ws.send(JSON.stringify(["REQ", subIdFor(index), wireFilter(index)]));
+        // The first send is what a replay falls back to; see `subscribedAt`.
+        subscribedAt[index] ??= sentAt;
       }
       options.onStateChange?.("open");
     };
@@ -398,7 +448,7 @@ export function subscribeEvents(
         options.onEose?.(index);
         if (
           options.closeOnEose &&
-          eoseSeen.every((value, at) => value || refused[at])
+          eoseSeen.every((value, at) => value || refusedHere[at] || retired[at])
         ) {
           stopped = true;
           closeSocket("closed");
@@ -409,18 +459,35 @@ export function subscribeEvents(
       if (type === "CLOSED" && typeof data[1] === "string") {
         const index = indexOfSub(data[1]);
         if (index < 0 || index >= filters.length) return;
-        // The relay refused this subscription. Re-sending it on every
-        // reconnect would be a hot loop against a standing refusal.
-        refused[index] = true;
-        options.onClosed?.(
+        const reason =
           typeof data[2] === "string"
             ? data[2]
-            : "subscription closed by relay",
-          index,
+            : "subscription closed by relay";
+        refusedHere[index] = true;
+        // Only a standing refusal retires a filter; anything else is retried,
+        // because the sole way to re-send a REQ is on a new connection.
+        if (isStandingRefusal(reason)) retired[index] = true;
+        else refusalBackoffSteps = Math.min(refusalBackoffSteps + 1, 5);
+        options.onClosed?.(reason, index);
+        const allDeadHere = refusedHere.every(
+          (value, at) => value || retired[at],
         );
-        if (refused.every((value) => value)) {
+        if (
+          retired.every((value) => value) ||
+          (allDeadHere && options.closeOnEose)
+        ) {
+          // Nothing left to read, and a one-shot page read never retries a
+          // refusal — its caller has already been told.
           stopped = true;
           closeSocket("closed");
+          return;
+        }
+        if (!options.closeOnEose) {
+          // A live filter must not stay dead over a socket that keeps calling
+          // itself healthy: tear the connection down so the backoff re-sends
+          // every filter it is still allowed to ask for.
+          closeSocket("error");
+          scheduleReconnect();
         }
       }
     });
@@ -456,7 +523,7 @@ export function subscribeEvents(
     try {
       if (ws.readyState === 1) {
         for (let index = 0; index < filters.length; index += 1) {
-          if (refused[index]) continue;
+          if (retired[index]) continue;
           ws.send(JSON.stringify(["CLOSE", subIdFor(index)]));
         }
       }

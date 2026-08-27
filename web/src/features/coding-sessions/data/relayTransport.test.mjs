@@ -185,7 +185,7 @@ test("a reconnect replays from lastSeen - 5s with a real page size", async () =>
   stop();
 });
 
-test("a relay-refused subscription is reported and never re-sent", async () => {
+test("a standing refusal is reported and never re-sent", async () => {
   const sockets = installMockSocket();
   const closed = [];
   const stop = subscribeEvents(
@@ -200,14 +200,115 @@ test("a relay-refused subscription is reported and never re-sent", async () => {
   const socket = sockets.instances[0];
   socket.accept();
   await afterAuthGrace();
-  socket.deliver(["CLOSED", socket.frames("REQ")[0][1], "auth-required"]);
+  socket.deliver([
+    "CLOSED",
+    socket.frames("REQ")[0][1],
+    "restricted: not a member of this group",
+  ]);
 
-  assert.deepEqual(closed, [["auth-required", 0]]);
+  assert.deepEqual(closed, [["restricted: not a member of this group", 0]]);
   await delay(30);
   assert.equal(
     sockets.instances.length,
     1,
-    "a refusal is not retried in a loop",
+    "a standing refusal is not retried in a loop",
+  );
+  stop();
+});
+
+test("a transient refusal is retried on the next connection", async () => {
+  const sockets = installMockSocket();
+  const states = [];
+  const base = { kinds: [44225], "#h": [CHANNEL_ID], limit: 0 };
+  const stop = subscribeEvents(RELAY_URL, [base], () => {}, {
+    reconnectDelayMs: 1,
+    replayLimit: 1000,
+    onStateChange: (state) => states.push(state),
+  });
+  const first = sockets.instances[0];
+  first.accept();
+  await afterAuthGrace();
+  assert.equal(states.at(-1), "open");
+  // Both of these are real relay replies, and the 100ms unauthenticated-REQ
+  // grace can provoke the second one on its own.
+  first.deliver([
+    "CLOSED",
+    first.frames("REQ")[0][1],
+    "auth-required: authentication required",
+  ]);
+
+  assert.notEqual(
+    states.at(-1),
+    "open",
+    "a refused live filter must not leave the subscription calling itself open",
+  );
+  await delay(30);
+  const second = sockets.instances[1];
+  assert.ok(second, "the subscription reconnects rather than dying silently");
+  second.accept();
+  await afterAuthGrace();
+  assert.equal(
+    second.frames("REQ").length,
+    1,
+    "and re-sends the filter it was refused",
+  );
+  stop();
+});
+
+test("a live filter reconnects with a since even before its first event", async () => {
+  const sockets = installMockSocket();
+  const base = { kinds: [44225], "#h": [CHANNEL_ID], limit: 0 };
+  const openedAt = Math.floor(Date.now() / 1000);
+  const stop = subscribeEvents(RELAY_URL, [base], () => {}, {
+    replayLimit: 1000,
+    reconnectDelayMs: 1,
+  });
+  const first = sockets.instances[0];
+  first.accept();
+  await afterAuthGrace();
+  assert.deepEqual(
+    first.frames("REQ")[0][2],
+    base,
+    "the first REQ is verbatim",
+  );
+
+  // Nothing arrived before the socket dropped: without a floor there is no
+  // `since` to replay from and everything published in the gap is lost.
+  first.close();
+  await delay(20);
+  const second = sockets.instances[1];
+  second.accept();
+  await afterAuthGrace();
+
+  const replayed = second.frames("REQ")[0][2];
+  assert.equal(replayed.limit, 1000, "and it borrows a real page size");
+  assert.ok(
+    replayed.since >= openedAt - 6 && replayed.since <= openedAt + 2,
+    `since ${replayed.since} must be about the time the REQ went out`,
+  );
+  stop();
+});
+
+test("a page read is re-sent whole after a drop, never narrowed to now", async () => {
+  const sockets = installMockSocket();
+  const base = { kinds: [44223], "#h": [CHANNEL_ID], limit: 1000 };
+  const stop = subscribeEvents(RELAY_URL, [base], () => {}, {
+    closeOnEose: true,
+    reconnectDelayMs: 1,
+  });
+  const first = sockets.instances[0];
+  first.accept();
+  await afterAuthGrace();
+  first.close();
+  await delay(20);
+  const second = sockets.instances[1];
+  second.accept();
+  await afterAuthGrace();
+
+  assert.deepEqual(
+    second.frames("REQ")[0][2],
+    base,
+    "a filter that already asks for a page needs no gap-filling since",
   );
   stop();
 });

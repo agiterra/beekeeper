@@ -369,3 +369,19 @@ test("a socket-level failure during history rejects the waiting caller", async (
   assert.equal(engine.getSnapshot().connection, "error");
   assert.equal(transport.history().stopped, true);
 });
+
+test("a refused live filter stops the view calling the subscription live", () => {
+  const { engine, transport } = startEngine();
+  transport.live().options.onStateChange("open");
+  assert.equal(engine.getSnapshot().connection, "open");
+
+  transport.live().options.onClosed("auth-required: not authenticated", 0);
+
+  const snapshot = engine.getSnapshot();
+  assert.notEqual(
+    snapshot.connection,
+    "open",
+    "part of the stream is gone; a frozen transcript must not read as live",
+  );
+  assert.equal(snapshot.lastError, "auth-required: not authenticated");
+});
