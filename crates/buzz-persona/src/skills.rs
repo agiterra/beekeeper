@@ -16,9 +16,12 @@
 //!   nothing, which is what makes it safe on the spawn path of a session that
 //!   restarts.
 //! - It refuses a skill name that is not a single path component, and a source
-//!   directory that resolves outside the pack's `skills/` directory. A pack is
-//!   ordinary data — treating one of its strings as a path without checking is
-//!   how a pack becomes a write primitive.
+//!   directory *or `SKILL.md`* that resolves outside the pack's `skills/`
+//!   directory. A pack is ordinary data — treating one of its strings as a
+//!   path without checking is how a pack becomes a write primitive, and
+//!   following a symlink out of the pack without checking is how it becomes a
+//!   read one: the bytes of whatever it points at would land in a seat's
+//!   working directory as instructions.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -38,7 +41,8 @@ pub enum SkillError {
     #[error("skill name is not a single path component: {0:?}")]
     UnsafeName(String),
 
-    /// The skill directory resolves outside the pack's `skills/` directory.
+    /// The skill directory, or its `SKILL.md`, resolves outside the pack's
+    /// `skills/` directory.
     #[error("skill \"{name}\" resolves outside the pack skills directory: {path}")]
     SourceEscape { name: String, path: PathBuf },
 
@@ -129,9 +133,14 @@ fn materialize_one(
         });
     }
 
+    // The directory check above says nothing about the file inside it: a real
+    // directory in the pack may hold a `SKILL.md` that is a symlink to
+    // anything on this computer. Resolve the *file* too, check the resolved
+    // path, and read that resolved path — so the bytes that are read are the
+    // bytes that were checked, not whatever the name points at a moment later.
     let source_md = resolved.join("SKILL.md");
-    let body = match std::fs::read(&source_md) {
-        Ok(body) => body,
+    let resolved_md = match source_md.canonicalize() {
+        Ok(path) => path,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
             return Err(SkillError::MissingSkillMd {
                 name: name.to_owned(),
@@ -146,6 +155,17 @@ fn materialize_one(
             })
         }
     };
+    if !resolved_md.starts_with(&root) {
+        return Err(SkillError::SourceEscape {
+            name: name.to_owned(),
+            path: resolved_md,
+        });
+    }
+    let body = std::fs::read(&resolved_md).map_err(|source| SkillError::Io {
+        operation: "read",
+        path: resolved_md.clone(),
+        source,
+    })?;
 
     let target_dir = workdir.join(SEAT_SKILLS_DIR).join(component);
     std::fs::create_dir_all(&target_dir).map_err(|source| SkillError::Io {
@@ -365,6 +385,61 @@ mod tests {
             matches!(error, SkillError::SourceEscape { .. }),
             "unexpected error {error}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_skill_md_pointing_out_of_the_pack_is_refused() {
+        // The directory-level check says nothing about the file inside it. A
+        // real directory in the pack whose SKILL.md is a symlink to a secret
+        // is the same escape one level down, and it turns a pack into an
+        // arbitrary-file *read* that deposits the bytes in a seat's workdir.
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let outside = TempDir::new().unwrap();
+        let secret = outside.path().join("key");
+        fs::write(&secret, "nsec-not-yours").unwrap();
+        let evil = skills_dir.join("evil");
+        fs::create_dir_all(&evil).unwrap();
+        std::os::unix::fs::symlink(&secret, evil.join("SKILL.md")).unwrap();
+        let workdir = TempDir::new().unwrap();
+
+        let error = materialize_skills(
+            &persona("builder", &["evil"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect_err("a SKILL.md pointing out of the pack is refused");
+
+        assert!(
+            matches!(error, SkillError::SourceEscape { .. }),
+            "unexpected error {error}"
+        );
+        assert!(
+            !workdir.path().join(".agents/skills/evil/SKILL.md").exists(),
+            "the outside file's bytes must not reach the workdir"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_skill_md_inside_the_pack_is_still_read() {
+        // Symmetry: the rule is "under the pack", not "never a symlink" — a
+        // pack that shares one SKILL.md between two skills is ordinary.
+        let pack = TempDir::new().unwrap();
+        let skills_dir = pack_with_skills(pack.path(), &[("brief", "# Brief")]);
+        let alias = skills_dir.join("alias");
+        fs::create_dir_all(&alias).unwrap();
+        std::os::unix::fs::symlink(skills_dir.join("brief/SKILL.md"), alias.join("SKILL.md"))
+            .unwrap();
+        let workdir = TempDir::new().unwrap();
+
+        let written = materialize_skills(
+            &persona("builder", &["alias"], Some(skills_dir)),
+            workdir.path(),
+        )
+        .expect("a symlink inside the pack is ordinary");
+
+        assert_eq!(fs::read_to_string(&written[0].path).unwrap(), "# Brief");
     }
 
     #[test]
