@@ -49,7 +49,7 @@ test("coding-session command content and tags are deterministic", () => {
   assert.equal(event.kind, 44220);
   assert.equal(
     event.content,
-    '{"schema":"buzz-coding-session-command/v1","commandId":"cmd-1","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":2},"action":{"type":"thread.turn.start","text":"Steer this turn","deliver":"boundary"}}',
+    '{"schema":"buzz-coding-session-command/v1","commandId":"cmd-1","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":2},"action":{"type":"thread.turn.start","text":"Steer this turn"}}',
   );
   assert.deepEqual(event.tags, [
     ["h", "channel-1"],
@@ -306,12 +306,32 @@ test("native-only publish never re-signs under any relay rejection", async () =>
   }
 });
 
-test("the delivery class is on the wire, explicit, and closed", () => {
+test("the default delivery class is omitted from the wire", () => {
+  const event = buildCodingSessionCommandEvent({
+    channelId: "channel-1",
+    commandId: "cmd-deliver",
+    target,
+    text: "do the thing",
+    deliver: "boundary",
+  });
+  // Pinned as the exact bytes a relay that predates `deliver` must accept:
+  // that relay decodes the payload with deny_unknown_fields, so a spelled-out
+  // default would be refused where absent already means boundary.
+  assert.equal(
+    event.content,
+    '{"schema":"buzz-coding-session-command/v1","commandId":"cmd-deliver","target":{"driver":"provider-a","instanceId":"instance-1","sessionId":"session-1","generation":2},"action":{"type":"thread.turn.start","text":"do the thing"}}',
+  );
+  const action = JSON.parse(event.content).action;
+  assert.deepEqual(Object.keys(action), ["type", "text"]);
+  assert.equal("deliver" in action, false);
+});
+
+test("an escalated delivery class is on the wire, explicit, and closed", () => {
   assert.deepEqual(
     [...CODING_SESSION_TURN_DELIVERIES],
     ["boundary", "steer", "interrupt"],
   );
-  for (const deliver of CODING_SESSION_TURN_DELIVERIES) {
+  for (const deliver of ["steer", "interrupt"]) {
     const event = buildCodingSessionCommandEvent({
       channelId: "channel-1",
       commandId: "cmd-deliver",
