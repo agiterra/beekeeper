@@ -1498,6 +1498,14 @@ impl Provider {
             closed: false,
         };
         self.state.insert_session(record)?;
+        // First create under an umbrella records who opened it. The D9 budget
+        // exempts that pubkey and no other — an execution-scoped exemption
+        // would let a delegated seat create its own session and buy itself an
+        // unbounded allowance out of the crew's.
+        if let Some(session_ref) = plan.session_ref.as_deref() {
+            self.state
+                .claim_umbrella_founder(session_ref, &plan.founder_pubkey)?;
+        }
 
         if let Some(package_id) = context_package_id {
             self.context_refresh.insert(
