@@ -1771,12 +1771,23 @@ impl Provider {
         relay: Option<&HarnessRelay>,
     ) -> anyhow::Result<()> {
         let outbox_before = self.outbox.pending_keys();
+        // Every refusal below consumes the command, so the seat the desktop
+        // staged for it will never be read: it goes with the refusal, the same
+        // one-shot rule the create path follows. Reads the record rather than
+        // the custody file, so an unseated resume does no extra work.
+        let seated = self
+            .state
+            .session(&plan.target.session_id)
+            .is_some_and(|record| record.actor.is_some());
         if self
             .sessions
             .handle(&plan.target.session_id)
             .is_some_and(session::SessionHandle::is_live)
         {
             self.state.consume_command(&plan.command_id, now_secs())?;
+            if seated {
+                self.forget_actor_seat(&plan.command_id);
+            }
             let receipt = LifecycleReceipt::failed(
                 &plan.command_id,
                 SESSION_ALREADY_ATTACHED,
@@ -1790,6 +1801,9 @@ impl Provider {
         };
         let Some(descriptor) = self.config.runtime(&record.provider_instance_ref).cloned() else {
             self.state.consume_command(&plan.command_id, now_secs())?;
+            if seated {
+                self.forget_actor_seat(&plan.command_id);
+            }
             let receipt = LifecycleReceipt::failed(
                 &plan.command_id,
                 PROVIDER_UNAVAILABLE,
@@ -1803,6 +1817,9 @@ impl Provider {
             .filter(|value| *value <= buzz_core::coding_session_command::MAX_SAFE_GENERATION)
         else {
             self.state.consume_command(&plan.command_id, now_secs())?;
+            if seated {
+                self.forget_actor_seat(&plan.command_id);
+            }
             let receipt = LifecycleReceipt::failed(
                 &plan.command_id,
                 PROVIDER_UNAVAILABLE,
@@ -7268,6 +7285,63 @@ mod tests {
         );
         assert_eq!(provider.state().sessions().count(), 0);
         assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// The resume path has the same one-shot rule: a reconnect the provider
+    /// refuses before it spawns anything takes its staged key with it.
+    ///
+    /// `SESSION_ALREADY_ATTACHED` is the reachable case — a second Reconnect
+    /// press against an execution that is already live — and it is answered
+    /// before the seat is ever read, so nothing downstream would delete it.
+    #[tokio::test]
+    async fn a_resume_refused_before_it_spawns_leaves_no_key_at_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let actor = "cd".repeat(32);
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        let create = seated_create_event(&provider, channel_id, "create-1", &actor, "lead");
+        provider
+            .handle_command_event(channel_id, &create)
+            .await
+            .expect("create");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target(&provider.config.instance_id);
+        // Deliberately still attached: the reconnect is refused.
+        assert!(provider.sessions.handle(&target.session_id).is_some());
+
+        let seats = write_actor_seats(dir.path(), "resume-1", &actor);
+        let resume =
+            lifecycle_target_event(&provider, channel_id, "resume-1", "session.resume", &target);
+        provider
+            .handle_command_event(channel_id, &resume)
+            .await
+            .expect("resume");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let refusal = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "resume-1")
+            .expect("the resume was answered");
+        assert_eq!(refusal["status"], "failed");
+        assert_eq!(refusal["error"]["code"], SESSION_ALREADY_ATTACHED);
+
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains(TEST_SEAT_NSEC),
+            "a refused reconnect left the seat's key at rest: {body}"
+        );
+        assert!(!body.contains("resume-1"), "{body}");
     }
 
     /// A create refused before it dispatches takes the seat's key with it.
