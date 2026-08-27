@@ -7,10 +7,13 @@ format itself. This document explains what the six roles are for and how they
 relate to each other; it does not restate the plan (`docs/CREW_SESSIONS_PLAN.md`
 §1, §3, §4 S5) which remains the source of truth for the crew model.
 
-Any model may fill any role. A pack never names a vendor or a model — the
-seat does, at launch time. Each pack's `plugin.json` `description` carries
-only a `model_min` capability note (the kind of model the role needs, not a
-specific one); nothing in a pack's schema encodes a vendor or a model id.
+Any model may fill any role. None of these six packs names a vendor or a
+model — the seat does, at launch time. Each pack's `plugin.json` `description`
+carries only a `model_min` capability note (the kind of model the role needs,
+not a specific one). The *schema* does allow one: `PersonaConfig.model` is a
+`provider:model-id` string (`crates/buzz-persona/src/persona.rs`) split into
+`llm_provider` + `model` at resolve time. A crew seat's model comes from the
+seat regardless, which is why these packs leave the field unset.
 Verify a pack with `bee pack validate personas/roles/<role>` before relying
 on it — all six pass clean today (`Valid.`, exit 0).
 
@@ -85,11 +88,26 @@ rather than paid for on every turn:
 
 ## Materialization
 
-At spawn, a seated persona's resolved skills are written to that seat's own
-workdir (`<workdir>/.agents/skills/<name>/SKILL.md`), never to a shared
-directory — see contract D8-A and `crates/buzz-persona/src/pack.rs`'s
-`resolve_skills` for the packs' half of that contract (which skill goes to
-which persona).
+A seated persona's resolved skills are written to that seat's own workdir
+(`<workdir>/.agents/skills/<name>/SKILL.md`), never to a shared directory —
+see contract D8-A and `crates/buzz-persona/src/pack.rs`'s `resolve_skills` for
+the packs' half of that contract (which skill goes to which persona).
+
+Where that happens today, precisely:
+
+- **Crew seats.** The desktop stages the seat's pack coordinates in its
+  host-local actor-seat entry (`packDir` / `personaId`, never on the wire) and
+  the provider materializes them into the execution's working directory before
+  the adapter is spawned (`crates/buzz-session-provider/src/session.rs`). A
+  seat whose persona has no pack on this computer is staged without one, and
+  the Crew tab says that seat carries no role skills.
+- **Managed agents** (the channel-agent spawn path, not a crew seat) currently
+  materialize nothing: the record's `persona_team_dir` /
+  `persona_name_in_team` link is `None` on every record built today, and that
+  spawn path runs its child in the *shared* nest, where
+  `materialize_persona_skills` now refuses to write rather than putting one
+  persona's skills where every agent — or the user's own home directory —
+  would receive them.
 
 ## A note on the `role` slug
 
