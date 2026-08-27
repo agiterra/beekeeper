@@ -57,12 +57,30 @@ class CodingSessionReadCounts {
   /// Repeats of an event id already seen; collapsed, never counted as facts.
   final int duplicates;
 
+  /// [malformed], split by the event kind it was refused for.
+  ///
+  /// The totals say how much this read threw away; these say what. A hundred
+  /// refused 44225 transcript envelopes and a hundred refused 44229 names are
+  /// very different losses — the first is a hole in what is on screen, the
+  /// second is a session that may be showing the wrong name — and a reader
+  /// deciding whether to trust the page needs to know which happened.
+  final Map<int, int> malformedByKind;
+
+  /// [rejectedAuthor], split by the event kind it was refused for.
+  final Map<int, int> rejectedAuthorByKind;
+
+  /// [invalidSignature], split by the event kind it was refused for.
+  final Map<int, int> invalidSignatureByKind;
+
   const CodingSessionReadCounts({
     this.malformed = 0,
     this.rejectedAuthor = 0,
     this.conflicts = 0,
     this.invalidSignature = 0,
     this.duplicates = 0,
+    this.malformedByKind = const {},
+    this.rejectedAuthorByKind = const {},
+    this.invalidSignatureByKind = const {},
   });
 
   /// This account plus [extra] conflicts found after the gate had run.
@@ -78,6 +96,9 @@ class CodingSessionReadCounts {
           conflicts: conflicts + extra,
           invalidSignature: invalidSignature,
           duplicates: duplicates,
+          malformedByKind: malformedByKind,
+          rejectedAuthorByKind: rejectedAuthorByKind,
+          invalidSignatureByKind: invalidSignatureByKind,
         );
 
   /// True when nothing was dropped — the only case a UI may stay silent.
@@ -175,6 +196,15 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   var malformed = 0;
   var invalidSignature = 0;
   var conflicts = 0;
+  // The same refusals, per kind. Kept alongside the totals rather than
+  // derived from them: which kind a fact was refused for is the difference
+  // between a hole in the transcript and a session wearing the wrong name.
+  final malformedByKind = <int, int>{};
+  final invalidSignatureByKind = <int, int>{};
+  final rejectedAuthorByKind = <int, int>{};
+
+  void tally(Map<int, int> byKind, int kind) =>
+      byKind.update(kind, (count) => count + 1, ifAbsent: () => 1);
 
   final metadata = <CodingSessionMetadata>[];
   final receipts = <CodingSessionReceipt>[];
@@ -187,12 +217,14 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   final closures = <CodingSessionClosure>[];
   final leases = <CodingSessionLease>[];
 
-  void count(CodingSessionDecodeOutcome outcome) {
+  void count(CodingSessionDecodeOutcome outcome, int kind) {
     switch (outcome) {
       case CodingSessionDecodeOutcome.malformed:
         malformed += 1;
+        tally(malformedByKind, kind);
       case CodingSessionDecodeOutcome.invalidSignature:
         invalidSignature += 1;
+        tally(invalidSignatureByKind, kind);
       case CodingSessionDecodeOutcome.accepted:
       case CodingSessionDecodeOutcome.irrelevant:
         break;
@@ -208,18 +240,18 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
     switch (event.kind) {
       case EventKind.codingSessionMetadata:
         final decoded = decodeCodingSessionMetadata(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) metadata.add(decoded.value!);
       case EventKind.codingSessionLifecycleReceipt:
         final decoded = decodeCodingSessionReceipt(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) receipts.add(decoded.value!);
       case EventKind.codingSessionTranscript:
         final decoded = decodeCodingSessionTranscript(
           event,
           verifier: verifier,
         );
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) transcripts.add(decoded.value!);
       case EventKind.codingSessionLifecycleCommand:
         // One kind, two commands this reader cares about. A create binds the
@@ -228,38 +260,38 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
         // neither and is counted as irrelevant, not as corruption.
         final decoded = decodeCodingSessionCreate(event, verifier: verifier);
         if (decoded.value != null) {
-          count(_outcomeOf(decoded.reason));
+          count(_outcomeOf(decoded.reason), event.kind);
           creates.add(decoded.value!);
           break;
         }
         if (decoded.reason != CodingSessionDecodeReason.wrongKind) {
-          count(_outcomeOf(decoded.reason));
+          count(_outcomeOf(decoded.reason), event.kind);
           break;
         }
         final resume = decodeCodingSessionResume(event, verifier: verifier);
-        count(_outcomeOf(resume.reason));
+        count(_outcomeOf(resume.reason), event.kind);
         if (resume.value != null) resumes.add(resume.value!);
       case EventKind.codingSessionGenesis:
         final decoded = decodeCodingSessionGenesis(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) {
           geneses[decoded.value!.ref.eventId] = decoded.value!;
         }
       case EventKind.codingSessionName:
         final decoded = decodeCodingSessionName(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) names.add(decoded.value!);
       case EventKind.codingSessionGoal:
         final decoded = decodeCodingSessionGoal(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) goals.add(decoded.value!);
       case EventKind.codingSessionClosure:
         final decoded = decodeCodingSessionClosure(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) closures.add(decoded.value!);
       case EventKind.codingSessionLease:
         final decoded = decodeCodingSessionLease(event, verifier: verifier);
-        count(_outcomeOf(decoded.reason));
+        count(_outcomeOf(decoded.reason), event.kind);
         if (decoded.value != null) leases.add(decoded.value!);
     }
   }
@@ -299,10 +331,15 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
   }
 
   var rejectedAuthor = 0;
-  bool authorized(String targetKey, String signerPubkey) {
+  void rejectAuthor(int kind) {
+    rejectedAuthor += 1;
+    tally(rejectedAuthorByKind, kind);
+  }
+
+  bool authorized(String targetKey, String signerPubkey, int kind) {
     final authority = authorityByTarget[targetKey];
     if (authority == null || authority.pubkey != signerPubkey) {
-      rejectedAuthor += 1;
+      rejectAuthor(kind);
       return false;
     }
     return true;
@@ -310,21 +347,35 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
 
   final acceptedMetadata = [
     for (final record in metadata)
-      if (authorized(record.target.key, record.ref.signerPubkey)) record,
+      if (authorized(
+        record.target.key,
+        record.ref.signerPubkey,
+        EventKind.codingSessionMetadata,
+      ))
+        record,
   ];
   final acceptedReceipts = [
     for (final record in receipts)
       if (_receiptAuthorized(
         record,
         joins,
-        authorized,
-        () => rejectedAuthor += 1,
+        (targetKey, signerPubkey) => authorized(
+          targetKey,
+          signerPubkey,
+          EventKind.codingSessionLifecycleReceipt,
+        ),
+        () => rejectAuthor(EventKind.codingSessionLifecycleReceipt),
       ))
         record,
   ];
   final candidateTranscripts = [
     for (final record in transcripts)
-      if (authorized(record.target.key, record.ref.signerPubkey)) record,
+      if (authorized(
+        record.target.key,
+        record.ref.signerPubkey,
+        EventKind.codingSessionTranscript,
+      ))
+        record,
   ];
   final resolved = _resolveTranscriptConflicts(candidateTranscripts);
   conflicts += resolved.conflicts;
@@ -348,6 +399,9 @@ CodingSessionTrustedFacts applyCodingSessionTrustGate({
       conflicts: conflicts,
       invalidSignature: invalidSignature,
       duplicates: duplicates,
+      malformedByKind: Map.unmodifiable(malformedByKind),
+      rejectedAuthorByKind: Map.unmodifiable(rejectedAuthorByKind),
+      invalidSignatureByKind: Map.unmodifiable(invalidSignatureByKind),
     ),
     signaturesVerified: verifier?.available ?? false,
   );

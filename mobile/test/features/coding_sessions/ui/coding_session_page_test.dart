@@ -1,6 +1,7 @@
 import 'package:buzz/features/coding_sessions/domain/coding_sessions_domain.dart';
 import 'package:buzz/features/coding_sessions/ui/coding_session_page.dart';
 import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -433,6 +434,33 @@ void main() {
     await _pump(tester, binding);
 
     expect(find.byKey(const ValueKey('coding-session-evicted')), findsNothing);
+  });
+
+  testWidgets('names the kinds this read refused, and why', (tester) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        envelopes: _conversation(),
+        counts: const CodingSessionReadCounts(
+          malformed: 2,
+          rejectedAuthor: 1,
+          malformedByKind: {EventKind.codingSessionTranscript: 2},
+          rejectedAuthorByKind: {EventKind.codingSessionMetadata: 1},
+        ),
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-session-counts-by-kind')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'By kind: status 1 wrong signer; transcript 2 malformed',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('discloses a failed read behind a transcript it still shows', (

@@ -1,3 +1,4 @@
+import '../../../shared/relay/nostr_models.dart';
 import '../domain/coding_sessions_domain.dart';
 
 /// The line shown when this device could not verify signatures (D5).
@@ -118,6 +119,53 @@ String? codingSessionCountsLabel(CodingSessionReadCounts counts) {
   ];
   if (parts.isEmpty) return null;
   return 'Dropped from this read: ${parts.join(', ')}';
+}
+
+/// One coding-session kind in the reader's words.
+///
+/// Never a bare integer where a word exists: "3 transcript rows refused" is
+/// something a reader can act on, "3 kind 44225 refused" is not.
+String codingSessionKindLabel(int kind) => switch (kind) {
+  EventKind.codingSessionMetadata => 'status',
+  EventKind.codingSessionLifecycleReceipt => 'receipt',
+  EventKind.codingSessionTranscript => 'transcript',
+  EventKind.codingSessionLifecycleCommand => 'command',
+  EventKind.codingSessionGenesis => 'genesis',
+  EventKind.codingSessionName => 'name',
+  EventKind.codingSessionGoal => 'goal',
+  EventKind.codingSessionClosure => 'closure',
+  EventKind.codingSessionLease => 'lease',
+  _ => 'kind $kind',
+};
+
+/// The same losses as [codingSessionCountsLabel], named per kind and reason.
+///
+/// Returns `null` when nothing was refused. The summary line says how much a
+/// read cost; this says what it cost and why — a refused transcript envelope
+/// is a hole in what is on screen, a refused name is a session that may be
+/// wearing the wrong one, and "invalid signature" and "unauthorized signer"
+/// are different accusations against different parties.
+String? codingSessionRefusedByKindLabel(CodingSessionReadCounts counts) {
+  final kinds = <int>{
+    ...counts.malformedByKind.keys,
+    ...counts.rejectedAuthorByKind.keys,
+    ...counts.invalidSignatureByKind.keys,
+  }.toList()..sort();
+  final parts = <String>[];
+  for (final kind in kinds) {
+    final malformed = counts.malformedByKind[kind] ?? 0;
+    final rejected = counts.rejectedAuthorByKind[kind] ?? 0;
+    final invalid = counts.invalidSignatureByKind[kind] ?? 0;
+    final reasons = <String>[
+      if (malformed > 0) '$malformed malformed',
+      if (rejected > 0) '$rejected wrong signer',
+      if (invalid > 0) '$invalid bad signature',
+    ];
+    if (reasons.isEmpty) continue;
+    parts.add('${codingSessionKindLabel(kind)} ${reasons.join(', ')}');
+  }
+  if (parts.isEmpty) return null;
+  return 'By kind: ${parts.join('; ')}';
 }
 
 /// `2 executions · claude-code · sonnet`, built only from signed fields.

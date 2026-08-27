@@ -94,6 +94,7 @@ class _CodingSessionBody extends StatelessWidget {
 
     final blocks = snapshot.blocksFor(resolved);
     final counts = codingSessionCountsLabel(snapshot.counts);
+    final refusedByKind = codingSessionRefusedByKindLabel(snapshot.counts);
     final children = <Widget>[
       if (snapshot.connection == CodingSessionObserverConnection.error)
         _SessionNotice(
@@ -132,6 +133,15 @@ class _CodingSessionBody extends StatelessWidget {
           key: const ValueKey('coding-session-counts'),
           icon: LucideIcons.info,
           text: counts,
+        ),
+      // The same losses named per kind and per reason: an unauthorized signer
+      // and an invalid signature are different accusations, and a transcript
+      // refused is a different loss from a name refused.
+      if (refusedByKind != null)
+        _SessionNotice(
+          key: const ValueKey('coding-session-counts-by-kind'),
+          icon: LucideIcons.listTree,
+          text: refusedByKind,
         ),
       if (blocks.isEmpty)
         const _SessionNotice(

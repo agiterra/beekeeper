@@ -335,6 +335,122 @@ void main() {
     );
   });
 
+  // The disclosure is only as useful as it is specific: a hundred refused
+  // 44225 transcript envelopes and a hundred refused 44229 names cost the same
+  // total and mean entirely different things, and "invalid signature" and
+  // "unauthorized signer" are accusations against different parties.
+  group('read counts per kind', () {
+    NostrEvent brokenOfKind(int kind, List<List<String>> tags) => NostrEvent(
+      id: nextEventId(),
+      pubkey: providerPubkey,
+      createdAt: 1000,
+      kind: kind,
+      tags: [
+        ['h', channelId],
+        ...tags,
+      ],
+      content: '{}',
+      sig: '0' * 128,
+    );
+
+    test('names the kind behind every malformed fact', () {
+      final facts = _gate([
+        brokenOfKind(EventKind.codingSessionMetadata, [
+          ['csm-v', 'csm1-1'],
+        ]),
+        brokenOfKind(EventKind.codingSessionTranscript, [
+          ['cst-v', 'cst1-1'],
+          ['cs-target', target().key],
+          ['cst-seq', '1'],
+          ['cst-key', target().transcriptSemanticKey(1)],
+        ]),
+        brokenOfKind(EventKind.codingSessionTranscript, [
+          ['cst-v', 'cst1-1'],
+          ['cs-target', target().key],
+          ['cst-seq', '2'],
+          ['cst-key', target().transcriptSemanticKey(2)],
+        ]),
+      ]);
+
+      expect(facts.counts.malformed, 3);
+      expect(facts.counts.malformedByKind, {
+        EventKind.codingSessionMetadata: 1,
+        EventKind.codingSessionTranscript: 2,
+      });
+      expect(facts.counts.rejectedAuthorByKind, isEmpty);
+      expect(facts.counts.invalidSignatureByKind, isEmpty);
+    });
+
+    test('names the kind behind every unauthorized signer', () {
+      final facts = _gate([
+        createEvent(commandId: 'cmd-1'),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running'),
+        // A stranger's facts for the same execution: correctly shaped, signed
+        // by nobody the create vouched for.
+        metadataEvent(
+          status: 'failed',
+          pubkey: otherProviderPubkey,
+          createdAt: 5000,
+        ),
+        transcriptEvent(
+          eventSeq: 1,
+          item: {'kind': 'assistant_text', 'text': 'not theirs to say'},
+          pubkey: otherProviderPubkey,
+        ),
+        receiptEvent(
+          commandId: 'cmd-1',
+          status: 'failed',
+          pubkey: otherProviderPubkey,
+          error: {'code': 'NO_CAPACITY', 'message': 'busy'},
+        ),
+      ]);
+
+      expect(facts.counts.rejectedAuthor, 3);
+      expect(facts.counts.rejectedAuthorByKind, {
+        EventKind.codingSessionMetadata: 1,
+        EventKind.codingSessionLifecycleReceipt: 1,
+        EventKind.codingSessionTranscript: 1,
+      });
+      expect(facts.counts.malformedByKind, isEmpty);
+    });
+
+    test('names the kind behind every invalid signature', () {
+      // The fixtures carry a placeholder signature, so a real verifier refuses
+      // all of them — which is exactly the "signed by nobody" case.
+      final facts = applyCodingSessionTrustGate(
+        channelId: channelId,
+        verifier: const NostrPackageSignatureVerifier(),
+        events: [
+          metadataEvent(status: 'running'),
+          nameEvent(content: 'Ship it'),
+          leaseEvent(),
+        ],
+      );
+
+      expect(facts.counts.invalidSignature, 3);
+      expect(facts.counts.invalidSignatureByKind, {
+        EventKind.codingSessionMetadata: 1,
+        EventKind.codingSessionName: 1,
+        EventKind.codingSessionLease: 1,
+      });
+      expect(facts.counts.malformedByKind, isEmpty);
+    });
+
+    test('a clean read names no kind at all', () {
+      final facts = _gate([
+        createEvent(commandId: 'cmd-1'),
+        receiptEvent(commandId: 'cmd-1', status: 'created'),
+        metadataEvent(status: 'running'),
+      ]);
+
+      expect(facts.counts.isClean, isTrue);
+      expect(facts.counts.malformedByKind, isEmpty);
+      expect(facts.counts.rejectedAuthorByKind, isEmpty);
+      expect(facts.counts.invalidSignatureByKind, isEmpty);
+    });
+  });
+
   group('duplicates and conflicts', () {
     test('a byte-identical duplicate collapses by event id', () {
       final metadata = metadataEvent(status: 'running');

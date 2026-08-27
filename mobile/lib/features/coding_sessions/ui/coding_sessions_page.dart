@@ -164,6 +164,7 @@ class _CodingSessionsBody extends StatelessWidget {
   /// reader most needs them.
   List<Widget> _disclosures(CodingSessionObserverSnapshot snapshot) {
     final counts = codingSessionCountsLabel(snapshot.counts);
+    final byKind = codingSessionRefusedByKindLabel(snapshot.counts);
     return [
       if (snapshot.truncatedAt1000)
         const _CodingSessionsNotice(
@@ -179,6 +180,14 @@ class _CodingSessionsBody extends StatelessWidget {
         _CodingSessionsNotice(
           key: const ValueKey('coding-sessions-counts'),
           text: counts,
+        ),
+      // Which kinds, and on what grounds. A read that refused a hundred
+      // transcript rows for a bad signature and one that refused a hundred
+      // names as malformed cost the same total and mean different things.
+      if (byKind != null)
+        _CodingSessionsNotice(
+          key: const ValueKey('coding-sessions-counts-by-kind'),
+          text: byKind,
         ),
     ];
   }

@@ -3,6 +3,7 @@ import 'package:buzz/features/coding_sessions/ui/coding_session_page.dart';
 import 'package:buzz/features/coding_sessions/ui/coding_session_status_chip.dart';
 import 'package:buzz/features/coding_sessions/ui/coding_sessions_page.dart';
 import 'package:buzz/features/coding_sessions/ui/observer_contract.dart';
+import 'package:buzz/shared/relay/nostr_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -143,6 +144,47 @@ void main() {
     expect(
       find.text('Dropped from this read: 3 malformed, 2 wrong signer'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('names the kinds and the grounds it refused them on', (
+    tester,
+  ) async {
+    final binding = FakeObserverBinding(
+      testSnapshot(
+        counts: const CodingSessionReadCounts(
+          malformed: 1,
+          rejectedAuthor: 2,
+          invalidSignature: 1,
+          malformedByKind: {EventKind.codingSessionName: 1},
+          rejectedAuthorByKind: {EventKind.codingSessionTranscript: 2},
+          invalidSignatureByKind: {EventKind.codingSessionTranscript: 1},
+        ),
+      ),
+    );
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-sessions-counts-by-kind')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'By kind: transcript 2 wrong signer, 1 bad signature; name 1 malformed',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a clean read names no kind at all', (tester) async {
+    final binding = FakeObserverBinding(testSnapshot());
+
+    await _pump(tester, binding);
+
+    expect(
+      find.byKey(const ValueKey('coding-sessions-counts-by-kind')),
+      findsNothing,
     );
   });
 
