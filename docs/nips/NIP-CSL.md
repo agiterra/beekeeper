@@ -301,10 +301,13 @@ A crew's umbrella (plan D9) carries a turn budget: a ceiling on how many
 agent-originated turns it may run, set alongside the session ceiling and
 disclosed the same way. The provider counts consumed turns per `sessionRef`,
 durably (its own state, not derived from a fold at read time — a restart must
-not reset the count), and refuses every further `kind:44220`
-`thread.turn.start`/`thread.turn.interrupt` whose signer is not the founder
-once the count reaches the limit, with a lifecycle receipt `turn_refused` /
-`BUDGET_EXHAUSTED`. **Founder turns are never refused by this rule** — the
+not reset the count), and refuses every further turn-starting `kind:44220`
+(`thread.turn.start`) whose signer is not the founder once the count reaches
+the limit, with a lifecycle receipt `turn_refused` / `BUDGET_EXHAUSTED`.
+`thread.turn.interrupt` is **never** refused by this rule: it starts no work,
+spends nothing, and is the only way to stop a turn already running — refusing
+it would leave a runaway turn with no brake at exactly the moment the budget
+says the crew has gone too far. **Founder turns are never refused by this rule** — the
 budget bounds crew traffic, not the human who owns the umbrella. A generation
 with no `sessionRef` has no umbrella to count against and is never refused
 this way.

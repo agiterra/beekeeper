@@ -163,7 +163,7 @@ export function CodingSessionComposerDeck({
                 <p className="mt-2 text-xs text-muted-foreground">
                   The turn count is the whole crew session's, shared by every
                   execution under it. At the limit the provider refuses further
-                  turns from the agents; you can still send your own.
+                  turns from the agents; only the execution's founder is exempt.
                 </p>
               ) : null}
             </PopoverContent>
