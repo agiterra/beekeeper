@@ -5754,8 +5754,47 @@ mod tests {
                 model: None,
                 title: Some("Advance Buzz live sessions".into()),
                 initial_turn: None,
+                actor: None,
+                role: None,
             },
         }
+    }
+
+    /// The seat pair is enforced at the builder, not only at the relay: a
+    /// producer cannot sign half a seat.
+    #[test]
+    fn a_lifecycle_command_builder_refuses_half_an_agent_seat() {
+        use buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction;
+        let channel = Uuid::new_v4();
+
+        let mut payload = cs_lifecycle_payload(None);
+        let CodingSessionLifecycleAction::SessionCreate { actor, .. } = &mut payload.action else {
+            panic!("expected create action")
+        };
+        *actor = Some("cd".repeat(32));
+        let error = build_coding_session_lifecycle_command(channel, &payload)
+            .expect_err("an actor with no role must not build");
+        assert!(
+            format!("{error}").contains(buzz_core::coding_session_payload::ACTOR_ROLE_PAIR),
+            "got {error}"
+        );
+
+        let CodingSessionLifecycleAction::SessionCreate { role, .. } = &mut payload.action else {
+            panic!("expected create action")
+        };
+        *role = Some("lead".into());
+        let builder = build_coding_session_lifecycle_command(channel, &payload)
+            .expect("a complete seat builds");
+        let event = builder
+            .sign_with_keys(&Keys::generate())
+            .expect("sign the seated create");
+        assert!(event.content.contains(r#""actor":"#));
+        assert!(event.content.contains(r#""role":"lead""#));
+        assert!(
+            !event.content.contains("nsec"),
+            "a seat's key material must never reach signed content: {}",
+            event.content
+        );
     }
 
     /// The founder record: three ordered tags, and a `csg-session` tag that is

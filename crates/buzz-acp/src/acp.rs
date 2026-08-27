@@ -579,8 +579,54 @@ impl AcpClient {
         has_generated_codex_config: bool,
         fence: &EnvFence,
     ) -> Result<Self, AcpError> {
-        let mut cmd =
-            Self::build_agent_command(command, args, extra_env, has_generated_codex_config, fence)?;
+        Self::spawn_with_env_fence_and_overrides(
+            command,
+            args,
+            extra_env,
+            has_generated_codex_config,
+            fence,
+            &[],
+        )
+        .await
+    }
+
+    /// Like [`spawn_with_env_fence`](Self::spawn_with_env_fence), but with
+    /// `post_fence_env` applied **after** the fence has run.
+    ///
+    /// The fence is deliberately last in the ordinary path: skipping injection
+    /// is not enough on its own, because inheritance is the leak. That makes
+    /// the fence unconditional, which is right for every variable a
+    /// *supervised* agent must not hold — and wrong for the one case where the
+    /// host is deliberately handing the child a different identity than its
+    /// own. A coding-session seat is that case: the sidecar's `BUZZ_*` must
+    /// still be stripped, and then the seat's own credentials must be put back,
+    /// which no fence configuration can express.
+    ///
+    /// So it is a separate argument rather than an [`EnvFence::exempt`] entry:
+    /// exempting `BUZZ_PRIVATE_KEY` would let the *parent's* value be inherited
+    /// (the injection loop yields to an already-set parent variable), which is
+    /// exactly the forgery the fence exists to prevent. Overrides are set
+    /// explicitly, so the child gets the value the caller named or nothing.
+    ///
+    /// `post_fence_env` bypasses every rule above it — the fence, the
+    /// operator-precedence check, and the per-runtime defaults. Callers own
+    /// that: pass only values the child is *meant* to hold.
+    pub async fn spawn_with_env_fence_and_overrides(
+        command: &str,
+        args: &[String],
+        extra_env: &[(String, String)],
+        has_generated_codex_config: bool,
+        fence: &EnvFence,
+        post_fence_env: &[(String, String)],
+    ) -> Result<Self, AcpError> {
+        let mut cmd = Self::build_agent_command(
+            command,
+            args,
+            extra_env,
+            has_generated_codex_config,
+            fence,
+            post_fence_env,
+        )?;
 
         let standard_adapter =
             match crate::config::normalize_agent_command_identity(command).as_str() {
@@ -638,6 +684,7 @@ impl AcpClient {
         extra_env: &[(String, String)],
         has_generated_codex_config: bool,
         fence: &EnvFence,
+        post_fence_env: &[(String, String)],
     ) -> Result<tokio::process::Command, AcpError> {
         use std::process::Stdio;
 
@@ -724,6 +771,13 @@ impl AcpClient {
         // alone, and inheritance is the whole leak. `env_remove` is what
         // reaches those.
         fence.apply(&mut cmd);
+
+        // After the fence, and only what the caller named. An empty slice —
+        // every existing call site — leaves the command byte-for-byte what it
+        // was before this parameter existed.
+        for (key, value) in post_fence_env {
+            cmd.env(key, value);
+        }
 
         Ok(cmd)
     }
@@ -2776,7 +2830,7 @@ mod tests {
     #[test]
     fn the_default_spawn_removes_nothing_from_the_inherited_environment() {
         let extra = vec![("GOOSE_PROVIDER".to_string(), "anthropic".to_string())];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN)
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &EnvFence::OPEN, &[])
             .expect("build command");
         let plan = env_plan(&cmd);
 
@@ -2801,7 +2855,7 @@ mod tests {
             "CLAUDE_CODE_EXECUTABLE".to_string(),
             "/opt/claude".to_string(),
         )];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[])
             .expect("build command");
         let plan = env_plan(&cmd);
 
@@ -2837,7 +2891,7 @@ mod tests {
                 "kept".to_string(),
             ),
         ];
-        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE)
+        let cmd = AcpClient::build_agent_command("true", &[], &extra, false, &TEST_FENCE, &[])
             .expect("build command");
         let plan = env_plan(&cmd);
 

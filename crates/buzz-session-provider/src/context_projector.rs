@@ -1832,6 +1832,8 @@ mod tests {
                 model: Some("default".into()),
                 title: Some("Rehydrate me".into()),
                 initial_turn: None,
+                actor: None,
+                role: None,
             },
         };
         let create_event = build_coding_session_lifecycle_command(channel_id, &create)
@@ -1861,6 +1863,7 @@ mod tests {
             repo_ref: None,
             title: Some("Rehydrate me".into()),
             agent_ref: None,
+            role: None,
             provider: Some("codex-primary".into()),
             runtime: Some("codex".into()),
             model: Some("default".into()),

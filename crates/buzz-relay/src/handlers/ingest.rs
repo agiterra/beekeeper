@@ -7658,6 +7658,78 @@ mod tests {
         assert!(validate_coding_session_lifecycle_command_envelope(&reordered).is_err());
     }
 
+    /// The agent-seat amendment at the ingest gate: a create that names an
+    /// `actor` and a `role` is stored, and half a seat never is.
+    ///
+    /// The relay does not resolve the seat — custody is host-local by design —
+    /// so all it can do is refuse a payload that describes nothing coherent,
+    /// which it does by the name the code carries.
+    #[test]
+    fn coding_session_lifecycle_command_accepts_a_seated_create_and_refuses_half_a_seat() {
+        let channel = Uuid::new_v4().to_string();
+        let seated = |actor: serde_json::Value, role: serde_json::Value| {
+            let mut content = serde_json::json!({
+                "schema": "buzz-coding-session-lifecycle-command/v1",
+                "commandId": "create-1",
+                "action": {
+                    "type": "session.create",
+                    "projectRef": null,
+                    "repoRef": null,
+                    "providerInstanceRef": "claude-primary",
+                    "providerAuthorityPubkey": "ab".repeat(32),
+                    "model": null,
+                    "title": "Advance Buzz live sessions",
+                    "initialTurn": null,
+                },
+            });
+            let action = content["action"].as_object_mut().expect("action object");
+            if !actor.is_null() {
+                action.insert("actor".to_owned(), actor);
+            }
+            if !role.is_null() {
+                action.insert("role".to_owned(), role);
+            }
+            lifecycle_event(&content.to_string(), &channel)
+        };
+
+        let complete = seated(
+            serde_json::Value::String("cd".repeat(32)),
+            serde_json::Value::String("lead".to_owned()),
+        );
+        assert!(validate_coding_session_lifecycle_command_envelope(&complete).is_ok());
+
+        for (actor, role) in [
+            (
+                serde_json::Value::String("cd".repeat(32)),
+                serde_json::Value::Null,
+            ),
+            (
+                serde_json::Value::Null,
+                serde_json::Value::String("lead".to_owned()),
+            ),
+        ] {
+            let error = validate_coding_session_lifecycle_command_envelope(&seated(actor, role))
+                .expect_err("half a seat must be refused at ingest");
+            assert!(
+                error.contains(buzz_core::coding_session_payload::ACTOR_ROLE_PAIR),
+                "the ingest refusal must name the code: {error}"
+            );
+        }
+
+        // A malformed seat is refused too — the relay never stores a create it
+        // cannot describe.
+        assert!(validate_coding_session_lifecycle_command_envelope(&seated(
+            serde_json::Value::String("cd".repeat(32).to_uppercase()),
+            serde_json::Value::String("lead".to_owned()),
+        ))
+        .is_err());
+        assert!(validate_coding_session_lifecycle_command_envelope(&seated(
+            serde_json::Value::String("cd".repeat(32)),
+            serde_json::Value::String("Lead Builder".to_owned()),
+        ))
+        .is_err());
+    }
+
     /// Fork amendment: a standalone session (no project) is a first-class,
     /// accepted shape — the relay must not require a project binding.
     #[test]

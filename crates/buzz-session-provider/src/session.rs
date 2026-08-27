@@ -121,6 +121,22 @@ pub struct RehydrationMcpDescriptor {
     pub first_turn_brief: String,
 }
 
+/// The public half of an agent seat: what the briefing may say out loud.
+///
+/// Every field here is already on the wire — the pubkey and role are published
+/// in this generation's 44223, and the relay URL is the community the session
+/// already lives in. The seat's secret never joins this struct, which is why
+/// it can derive `Debug` while [`crate::actor_seats::ActorSeat`] cannot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatIdentity {
+    /// The seat's public key, lowercase 64-hex.
+    pub actor_pubkey: String,
+    /// The role slug the seat holds in its umbrella.
+    pub role: String,
+    /// The relay the seat authenticates against.
+    pub relay_url: String,
+}
+
 /// Everything needed to bring one session up.
 #[derive(Clone)]
 pub struct CreateRequest {
@@ -146,6 +162,23 @@ pub struct CreateRequest {
     pub agent_args: Vec<String>,
     /// Extra environment for the adapter spawn (e.g. `CLAUDE_CODE_EXECUTABLE`).
     pub agent_env: Vec<(String, String)>,
+    /// The agent seat this execution is opened as, or `None` for an ordinary
+    /// supervised execution.
+    ///
+    /// Public facts only — pubkey, role, relay — so the briefing can name
+    /// them. The seat's key travels in
+    /// [`post_fence_env`](Self::post_fence_env), not here.
+    pub seat: Option<SeatIdentity>,
+    /// Environment applied to the child **after** the credential fence.
+    ///
+    /// Empty for every execution that is not an agent seat, which is what
+    /// keeps an unseated spawn byte-for-byte what it was. For a seat it is
+    /// exactly [`crate::actor_seats::ActorSeat::post_fence_env`] — the four
+    /// variables that give the seat its own identity and nothing else.
+    ///
+    /// Never logged: [`CreateRequest`]'s hand-written `Debug` reports only
+    /// whether it is empty.
+    pub post_fence_env: Vec<(String, String)>,
     /// Per-turn silence budget.
     pub idle_timeout: Duration,
     /// Per-turn wall-clock ceiling.
@@ -168,6 +201,8 @@ impl std::fmt::Debug for CreateRequest {
             .field("model", &self.model)
             .field("has_resume_cursor", &self.resume_cursor.is_some())
             .field("has_rehydration_mcp", &self.rehydration_mcp.is_some())
+            .field("seat", &self.seat)
+            .field("has_post_fence_env", &!self.post_fence_env.is_empty())
             .field("idle_timeout", &self.idle_timeout)
             .field("max_turn_duration", &self.max_turn_duration)
             .field("idle_shutdown", &self.idle_shutdown)
@@ -625,12 +660,17 @@ async fn start_agent(
     //
     // Minus the fence: the provider's signing key and the secrets it inherited
     // from the launching shell are removed first. See `crate::agent_fence`.
-    let mut client = AcpClient::spawn_with_env_fence(
+    // The fence is unchanged and unconditional. `post_fence_env` is empty for
+    // every execution that is not an agent seat; for a seat it is the four
+    // variables that give it *its own* identity, applied after the fence has
+    // removed the provider's.
+    let mut client = AcpClient::spawn_with_env_fence_and_overrides(
         &request.agent_command,
         &request.agent_args,
         &request.agent_env,
         false,
         &crate::agent_fence::FENCE,
+        &request.post_fence_env,
     )
     .await
     .map_err(|error| classify_startup_error(&error, "spawn the agent"))?;
@@ -767,15 +807,16 @@ fn rehydrated_bootstrap(first_turn_brief: &str, access_note: &str) -> String {
 /// every execution has to be told what its shell cannot do
 /// ([`crate::agent_fence::FENCED_SESSION_BRIEFING`]). The rehydration bootstrap
 /// is appended after it only when there is prior context to declare.
-fn session_briefing(bootstrap: Option<&str>) -> String {
-    match bootstrap {
-        Some(bootstrap) => {
-            format!(
-                "{}\n\n{bootstrap}",
-                crate::agent_fence::FENCED_SESSION_BRIEFING
-            )
+fn session_briefing(bootstrap: Option<&str>, seat: Option<&SeatIdentity>) -> String {
+    let fence_briefing = match seat {
+        Some(seat) => {
+            crate::agent_fence::actor_seat_briefing(&seat.actor_pubkey, &seat.role, &seat.relay_url)
         }
         None => crate::agent_fence::FENCED_SESSION_BRIEFING.to_owned(),
+    };
+    match bootstrap {
+        Some(bootstrap) => format!("{fence_briefing}\n\n{bootstrap}"),
+        None => fence_briefing,
     }
 }
 
@@ -801,7 +842,7 @@ async fn open_agent_session(
     // one must additionally be told what it is, before either answers anyone.
     // The system prompt is the required transport when the adapter has one; the
     // first-turn preamble exists only for adapters that do not.
-    let briefing = session_briefing(bootstrap.as_deref());
+    let briefing = session_briefing(bootstrap.as_deref(), request.seat.as_ref());
     let system_prompt = session_new_briefing_transport(client, &briefing);
     let bootstrap_transport = rehydrated.then(|| {
         if system_prompt.is_some() {
@@ -1649,6 +1690,8 @@ done
     /// placeholder that no test ever spawns.
     fn request_command(command: String, cwd: &std::path::Path) -> CreateRequest {
         CreateRequest {
+            seat: None,
+            post_fence_env: Vec::new(),
             target: CodingSessionTarget {
                 driver: "claude-agent-acp".into(),
                 instance_id: "instance-1".into(),
@@ -1810,6 +1853,176 @@ done
             "the fence emptied the agent's environment:\n{dumped}"
         );
         manager.shutdown("s1");
+    }
+
+    /// D6/C: an agent seat's adapter holds *its own* identity and nothing else
+    /// from the `BUZZ_*` namespace.
+    ///
+    /// Same mechanism as the fence test above — a real subprocess that dumps
+    /// its own environment — because the property is about what the child
+    /// actually got, not about what the spawn code appears to do. The
+    /// provider's own credentials are delivered as canaries through
+    /// `agent_env`, and the seat's through `post_fence_env`; the child must
+    /// end up with the second set and none of the first.
+    #[tokio::test]
+    async fn an_agent_seat_receives_exactly_its_own_four_variables() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dump = dir.path().join("child-env");
+        let agent = fake_agent(
+            dir.path(),
+            "env-dumping-agent",
+            &env_dumping_agent(&dump.to_string_lossy()),
+        );
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+
+        let mut create = request(agent, dir.path());
+        create.agent_env = vec![
+            ("BUZZ_PRIVATE_KEY".into(), "nsec1provider".into()),
+            ("BUZZ_AUTH_TAG".into(), "[\"provider\"]".into()),
+            ("BUZZ_RELAY_URL".into(), "wss://provider.example".into()),
+            ("BUZZ_CSP_STATE_DIR".into(), "/provider/state".into()),
+            ("NOSTR_PRIVATE_KEY".into(), "nsec1provider".into()),
+            ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
+        ];
+        create.seat = Some(SeatIdentity {
+            actor_pubkey: "cd".repeat(32),
+            role: "lead".into(),
+            relay_url: "wss://seat.example".into(),
+        });
+        create.post_fence_env = vec![
+            ("BUZZ_PRIVATE_KEY".into(), "nsec1seat".into()),
+            ("NOSTR_PRIVATE_KEY".into(), "nsec1seat".into()),
+            ("BUZZ_RELAY_URL".into(), "wss://seat.example".into()),
+            ("BUZZ_AUTH_TAG".into(), "[\"seat\"]".into()),
+        ];
+        manager.create(create).await.expect("create");
+
+        let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
+
+        // The seat's own identity arrived, past the fence.
+        for expected in [
+            "BUZZ_PRIVATE_KEY=nsec1seat",
+            "NOSTR_PRIVATE_KEY=nsec1seat",
+            "BUZZ_RELAY_URL=wss://seat.example",
+            "BUZZ_AUTH_TAG=[\"seat\"]",
+        ] {
+            assert!(
+                dumped.contains(expected),
+                "the seat did not receive {expected}:\n{dumped}"
+            );
+        }
+
+        // The provider's identity did not, in any of its forms.
+        assert!(
+            !dumped.contains("nsec1provider"),
+            "the provider's key reached a seat:\n{dumped}"
+        );
+        assert!(!dumped.contains("wss://provider.example"), "{dumped}");
+        assert!(!dumped.contains("[\"provider\"]"), "{dumped}");
+
+        // And nothing else in the fenced namespace came back with it: exactly
+        // three `BUZZ_*` variables, the seat's own.
+        let buzz_keys: Vec<&str> = dumped
+            .lines()
+            .filter(|line| line.starts_with("BUZZ_"))
+            .map(|line| line.split('=').next().unwrap_or_default())
+            .collect();
+        let mut sorted = buzz_keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            vec!["BUZZ_AUTH_TAG", "BUZZ_PRIVATE_KEY", "BUZZ_RELAY_URL"],
+            "a seat received more than its own identity: {buzz_keys:?}"
+        );
+
+        // The developer toolchain is untouched by seating.
+        assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
+        assert!(dumped.contains("PATH="), "{dumped}");
+        manager.shutdown("s1");
+    }
+
+    /// The other half of the same guarantee: an execution with no seat spawns
+    /// with exactly today's environment. `post_fence_env` is empty, so the
+    /// fence is the last word, as it was before seats existed.
+    #[tokio::test]
+    async fn an_unseated_execution_still_receives_no_buzz_variable_at_all() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dump = dir.path().join("child-env");
+        let agent = fake_agent(
+            dir.path(),
+            "env-dumping-agent",
+            &env_dumping_agent(&dump.to_string_lossy()),
+        );
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+
+        let mut create = request(agent, dir.path());
+        create.agent_env = vec![
+            ("BUZZ_PRIVATE_KEY".into(), "nsec1provider".into()),
+            ("BUZZ_RELAY_URL".into(), "wss://provider.example".into()),
+            ("NOSTR_PRIVATE_KEY".into(), "nsec1provider".into()),
+            ("CLAUDE_CODE_EXECUTABLE".into(), "/opt/claude".into()),
+        ];
+        assert!(create.seat.is_none());
+        assert!(create.post_fence_env.is_empty());
+        manager.create(create).await.expect("create");
+
+        let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
+        assert!(
+            !dumped.lines().any(|line| line.starts_with("BUZZ_")),
+            "an unseated execution received a BUZZ_ variable:\n{dumped}"
+        );
+        assert!(!dumped.contains("nsec1provider"), "{dumped}");
+        assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
+        manager.shutdown("s1");
+    }
+
+    /// A `CreateRequest` travels through the create path and is `Debug`; the
+    /// seat's key must not be reachable from either.
+    #[test]
+    fn a_create_requests_debug_rendering_never_contains_a_seats_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut request = request("/nonexistent/agent".to_owned(), dir.path());
+        request.seat = Some(SeatIdentity {
+            actor_pubkey: "cd".repeat(32),
+            role: "lead".into(),
+            relay_url: "wss://seat.example".into(),
+        });
+        request.post_fence_env = vec![("BUZZ_PRIVATE_KEY".into(), "nsec1secret".into())];
+
+        let rendered = format!("{request:?}");
+        assert!(!rendered.contains("nsec1secret"), "{rendered}");
+        assert!(
+            rendered.contains("has_post_fence_env: true"),
+            "the rendering must still say a seat is configured: {rendered}"
+        );
+        assert!(rendered.contains("lead"), "{rendered}");
+    }
+
+    /// The briefing an execution is opened with must describe the process it is
+    /// actually in — a seat is told it holds credentials, an unseated
+    /// execution is told it does not.
+    #[test]
+    fn the_session_briefing_follows_the_seat() {
+        let unseated = session_briefing(None, None);
+        assert!(unseated.contains("cannot authenticate"));
+
+        let seat = SeatIdentity {
+            actor_pubkey: "cd".repeat(32),
+            role: "architect".into(),
+            relay_url: "wss://seat.example".into(),
+        };
+        let seated = session_briefing(None, Some(&seat));
+        assert!(seated.contains(&seat.actor_pubkey));
+        assert!(seated.contains("wss://seat.example"));
+        assert!(seated.contains("architect"));
+        assert!(!seated.contains("cannot authenticate"));
+
+        // A rehydration bootstrap still rides behind whichever variant applies.
+        let with_bootstrap = session_briefing(Some("BOOTSTRAP"), Some(&seat));
+        assert!(with_bootstrap.ends_with("BOOTSTRAP"));
+        assert!(with_bootstrap.contains(&seat.actor_pubkey));
     }
 
     #[tokio::test]

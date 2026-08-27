@@ -45,6 +45,9 @@ pub const UNLIMITED_MAX_SESSIONS: usize = 0;
 /// cost a reconnect. Four hours matches how long a coding session actually
 /// rests between turns; the cap on concurrently live sessions still bounds
 /// how many adapters can be held. Override with
+/// Default file name of the agent-seat custody file, beside the projects file.
+pub const ACTOR_SEATS_FILE_NAME: &str = "actor-seats.json";
+
 /// `BUZZ_CSP_SESSION_IDLE_SHUTDOWN_SECS`.
 pub const DEFAULT_SESSION_IDLE_SHUTDOWN_SECS: u64 = 14_400;
 /// Default per-turn silence budget, mirroring the buzz-acp harness.
@@ -85,6 +88,16 @@ pub struct Config {
     pub state_dir: PathBuf,
     /// Host-local working-directory map, re-read on every lifecycle command.
     pub projects_file: Option<PathBuf>,
+    /// Host-local agent-seat custody file, re-read on every lifecycle command.
+    ///
+    /// `BUZZ_CSP_ACTOR_SEATS` when set; otherwise `actor-seats.json` beside
+    /// [`Config::projects_file`], because the two files carry the same kind of
+    /// fact for the same creates and a host that configured one has already
+    /// told us where the other lives. `None` — no projects file either — means
+    /// this host seats no agents, and every create naming an `actor` is
+    /// refused with
+    /// [`buzz_core::coding_session_payload::ACTOR_UNAVAILABLE`].
+    pub actor_seats_file: Option<PathBuf>,
     /// Optional read-only MCP binary used to expose verified relay context to
     /// every ACP session-open path. Absent keeps legacy behavior.
     pub context_mcp_command: Option<PathBuf>,
@@ -132,6 +145,16 @@ impl Config {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
+        let actor_seats_file = lookup("BUZZ_CSP_ACTOR_SEATS")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                projects_file
+                    .as_ref()
+                    .and_then(|path| path.parent())
+                    .map(|parent| parent.join(ACTOR_SEATS_FILE_NAME))
+            });
         let context_mcp_command = lookup("BUZZ_CSP_CONTEXT_MCP_COMMAND")
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
@@ -174,6 +197,7 @@ impl Config {
             auth_tag,
             state_dir,
             projects_file,
+            actor_seats_file,
             context_mcp_command,
             instance_id,
             runtimes,

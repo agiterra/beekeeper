@@ -239,6 +239,8 @@ async fn genesis_adoption_validates_referenced_history_live() {
             model: None,
             title: None,
             initial_turn: None,
+            actor: None,
+            role: None,
         },
     };
     let create_event = build_coding_session_lifecycle_command(channel_id, &create_payload)
@@ -479,6 +481,8 @@ async fn genesis_is_linked_from_session_create_live() {
             model: None,
             title: Some("Genesis link E2E".to_string()),
             initial_turn: None,
+            actor: None,
+            role: None,
         },
     };
     let create = build_coding_session_lifecycle_command(channel_id, &create_payload)
