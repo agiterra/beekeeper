@@ -698,28 +698,51 @@ fn operator_may_steer(record: &crate::state::SessionRecord, operator_pubkey: &st
 /// The umbrella allowance this turn would exceed, as `(used, limit)`, or
 /// `None` when the turn is within budget or outside the budget's reach.
 ///
-/// Four ways a turn is outside its reach, and each is a fact rather than a
-/// tolerance: the host set no budget (`UNLIMITED_TURN_BUDGET`); the execution
-/// claimed no umbrella, so there is no crew to bound; the signer owns the
-/// session, because a budget bounds *delegated* work and the founder is who it
-/// was protecting; or the umbrella has simply not spent its allowance yet.
-///
-/// Ownership is [`operator_owns_session`] — the same predicate stop and resume
-/// use — so the budget can never be stricter about who counts as the founder
-/// than the rest of this module already is.
+/// A thin wrapper over [`exhausted_umbrella_budget`] so the decision path and
+/// the create path answer the same question from the same facts.
 fn exhausted_turn_budget(
     context: &CommandContext<'_>,
     record: &crate::state::SessionRecord,
 ) -> Option<(u64, u64)> {
-    let limit = context.turn_budget;
+    exhausted_umbrella_budget(
+        context.state,
+        context.turn_budget,
+        record.session_ref.as_deref(),
+        context.operator_pubkey,
+    )
+}
+
+/// The umbrella allowance a turn by `operator_pubkey` would exceed, as
+/// `(used, limit)`, or `None` when it is within budget or outside the
+/// budget's reach.
+///
+/// Four ways a turn is outside its reach, and each is a fact rather than a
+/// tolerance: the host set no budget (`UNLIMITED_TURN_BUDGET`); the execution
+/// claimed no umbrella, so there is no crew to bound; the signer founded the
+/// *umbrella*, because a budget bounds delegated work and the founder is who
+/// it was protecting; or the umbrella has simply not spent its allowance yet.
+///
+/// The exemption is deliberately the umbrella's founder
+/// ([`crate::state::StateStore::umbrella_founder`]) and not each execution's
+/// own. A delegated seat may create a session, which makes it that session's
+/// founder; exempting an execution's own founder would let one signed create
+/// buy an unbounded allowance while still charging the umbrella. Nor is it
+/// keyed to a genesis: the desktop mints a `sessionRef` for every 1:1 coding
+/// session with no genesis at all, and those founders must stay exempt.
+pub fn exhausted_umbrella_budget(
+    state: &StateStore,
+    limit: u64,
+    session_ref: Option<&str>,
+    operator_pubkey: &str,
+) -> Option<(u64, u64)> {
     if limit == crate::config::UNLIMITED_TURN_BUDGET {
         return None;
     }
-    let session_ref = record.session_ref.as_deref()?;
-    if operator_owns_session(record, context.operator_pubkey) {
+    let session_ref = session_ref?;
+    if state.umbrella_founder(session_ref).as_deref() == Some(operator_pubkey) {
         return None;
     }
-    let used = context.state.turns_used(session_ref);
+    let used = state.turns_used(session_ref);
     (used >= limit).then_some((used, limit))
 }
 
@@ -2138,6 +2161,87 @@ mod tests {
                 TurnDecision::Start { .. }
             ),
             "the founder is never refused for a budget"
+        );
+    }
+
+    /// The exemption is the *umbrella's* founder, not each execution's own.
+    ///
+    /// A delegated seat may create a session; that makes it the founder of
+    /// that session. If the budget exempted an execution's own founder, one
+    /// signed create would buy the seat an unbounded allowance while still
+    /// charging the umbrella — which is exactly the delegated work D9 exists
+    /// to bound.
+    #[test]
+    fn a_seat_that_founds_its_own_execution_is_still_bound_by_the_umbrella() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let seat = "ef".repeat(32);
+        // The umbrella was opened by AUTHORITY, on an execution created first.
+        seated_umbrella_session(&mut state, dir.path(), umbrella, &seat);
+        // The seat then creates its own execution under the same umbrella and
+        // is, on that record alone, the founder.
+        let mut own = session("s2", dir.path());
+        own.session_ref = Some(umbrella.to_owned());
+        own.genesis_ref = Some("12".repeat(32));
+        own.founder_pubkey = Some(seat.clone());
+        own.granted_operators = [AUTHORITY.to_owned()].into_iter().collect();
+        own.authority_seq = 1;
+        own.created_at_ms = 1_000;
+        state.insert_session(own).expect("insert");
+        for _ in 0..3 {
+            state.record_turn_spend(umbrella).expect("spend");
+        }
+        let projects = ProjectsFile::default();
+
+        match decide_turn(
+            &ctx_budgeted(&state, &projects, &seat, 3),
+            1_000,
+            &turn_content("turn-self-founded", "s2", 1),
+        ) {
+            TurnDecision::Fail { code, .. } => assert_eq!(code, BUDGET_EXHAUSTED),
+            other => panic!("a self-founded execution must not escape the budget, got {other:?}"),
+        }
+
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&state, &projects, AUTHORITY, 3),
+                    1_000,
+                    &turn_content("turn-umbrella-founder", "s2", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "the umbrella's founder stays exempt on every execution under it"
+        );
+    }
+
+    /// The desktop mints a `sessionRef` for every 1:1 coding session, with no
+    /// genesis and no crew. Its founder must stay exempt: resolving the
+    /// umbrella's founder may never depend on a genesis those sessions have
+    /// never carried.
+    #[test]
+    fn a_genesisless_solo_umbrella_still_exempts_its_founder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut state = store(dir.path());
+        let umbrella = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+        let mut record = session("s1", dir.path());
+        record.session_ref = Some(umbrella.to_owned());
+        record.genesis_ref = None;
+        state.insert_session(record).expect("insert");
+        state.record_turn_spend(umbrella).expect("spend");
+        let projects = ProjectsFile::default();
+
+        assert!(
+            matches!(
+                decide_turn(
+                    &ctx_budgeted(&state, &projects, AUTHORITY, 1),
+                    1_000,
+                    &turn_content("turn-solo-founder", "s1", 1),
+                ),
+                TurnDecision::Start { .. }
+            ),
+            "a solo session's founder is never refused for a budget"
         );
     }
 

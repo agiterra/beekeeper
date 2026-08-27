@@ -308,6 +308,18 @@ struct Snapshot {
     /// a turn, which reads as zero.
     #[serde(default)]
     turn_budget_used: BTreeMap<String, u64>,
+    /// The founder of each umbrella (`sessionRef`) this provider has minted an
+    /// execution under, recorded at the first such create and never moved.
+    ///
+    /// The D9 budget exempts the founder, and "founder" has to mean the
+    /// *umbrella's* founder rather than each execution's own: a delegated seat
+    /// that creates a session is the founder of that session, so an
+    /// execution-scoped exemption would let one signed create buy an unbounded
+    /// allowance while still charging the umbrella. Absent for umbrellas
+    /// recorded before this field existed, which resolve from the earliest
+    /// session record instead.
+    #[serde(default)]
+    umbrella_founders: BTreeMap<String, String>,
 }
 
 impl Default for Snapshot {
@@ -318,6 +330,7 @@ impl Default for Snapshot {
             sessions: BTreeMap::new(),
             catalog: CatalogState::default(),
             turn_budget_used: BTreeMap::new(),
+            umbrella_founders: BTreeMap::new(),
         }
     }
 }
@@ -471,6 +484,55 @@ impl StateStore {
             .get(session_ref)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Who founded an umbrella, as this provider witnessed it.
+    ///
+    /// The recorded claim first; failing that, the founder of the earliest
+    /// session record claiming the same `sessionRef`, which is what an
+    /// umbrella minted before the claim was persisted resolves to. `None` when
+    /// this provider has never minted an execution under that umbrella, or
+    /// when the only records for it predate `founderPubkey`.
+    pub fn umbrella_founder(&self, session_ref: &str) -> Option<String> {
+        if let Some(founder) = self.snapshot.umbrella_founders.get(session_ref) {
+            return Some(founder.clone());
+        }
+        self.snapshot
+            .sessions
+            .values()
+            .filter(|record| record.session_ref.as_deref() == Some(session_ref))
+            .filter(|record| record.founder_pubkey.is_some())
+            .min_by(|left, right| {
+                (left.created_at_ms, &left.session_id)
+                    .cmp(&(right.created_at_ms, &right.session_id))
+            })
+            .and_then(|record| record.founder_pubkey.clone())
+    }
+
+    /// Record `founder` as an umbrella's founder if none is known yet, and
+    /// return whoever holds the claim afterwards.
+    ///
+    /// First claim wins and is never overwritten: the umbrella belongs to
+    /// whoever opened it, and a later create — including one signed by a seat
+    /// the founder delegated to — must not be able to take it over and exempt
+    /// itself from the budget that delegation is bounded by.
+    pub fn claim_umbrella_founder(
+        &mut self,
+        session_ref: &str,
+        founder: &str,
+    ) -> io::Result<String> {
+        let resolved = self
+            .umbrella_founder(session_ref)
+            .unwrap_or_else(|| founder.to_owned());
+        if self.snapshot.umbrella_founders.get(session_ref) == Some(&resolved) {
+            return Ok(resolved);
+        }
+        let previous = self.snapshot.clone();
+        self.snapshot
+            .umbrella_founders
+            .insert(session_ref.to_owned(), resolved.clone());
+        self.persist_or_restore(previous)?;
+        Ok(resolved)
     }
 
     /// Charge one started turn to an umbrella and persist before returning.
@@ -973,6 +1035,62 @@ mod tests {
         store.insert_session(closed).expect("insert");
         assert_eq!(store.live_session_count(), 1);
         assert_eq!(store.sessions().count(), 2);
+    }
+
+    /// The umbrella's founder is durable, first-claim-wins, and resolvable
+    /// from records written before the claim existed.
+    #[test]
+    fn an_umbrellas_founder_is_claimed_once_and_survives_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let founder = "aa".repeat(32);
+        let seat = "ef".repeat(32);
+        {
+            let mut store = StateStore::open(dir.path(), 3600).expect("open");
+            assert_eq!(store.umbrella_founder("umbrella-1"), None);
+            assert_eq!(
+                store
+                    .claim_umbrella_founder("umbrella-1", &founder)
+                    .expect("claim"),
+                founder
+            );
+            assert_eq!(
+                store
+                    .claim_umbrella_founder("umbrella-1", &seat)
+                    .expect("second claim"),
+                founder,
+                "a later create never takes an umbrella over"
+            );
+        }
+        let mut reopened = StateStore::open(dir.path(), 3600).expect("reopen");
+        assert_eq!(
+            reopened.umbrella_founder("umbrella-1").as_deref(),
+            Some(founder.as_str())
+        );
+
+        // An umbrella minted before the claim existed resolves from the
+        // earliest session record that named it.
+        let mut older = record("s1");
+        older.session_ref = Some("umbrella-2".into());
+        older.founder_pubkey = Some(founder.clone());
+        older.created_at_ms = 10;
+        let mut newer = record("s2");
+        newer.session_ref = Some("umbrella-2".into());
+        newer.founder_pubkey = Some(seat.clone());
+        newer.created_at_ms = 20;
+        reopened.insert_session(newer).expect("insert");
+        reopened.insert_session(older).expect("insert");
+        assert_eq!(
+            reopened.umbrella_founder("umbrella-2").as_deref(),
+            Some(founder.as_str()),
+            "the earliest execution under an umbrella names its founder"
+        );
+        assert_eq!(
+            reopened
+                .claim_umbrella_founder("umbrella-2", &seat)
+                .expect("claim"),
+            founder,
+            "claiming an already-resolvable umbrella records what it resolved to"
+        );
     }
 
     /// D9's counter is durable state, not a process-lifetime tally: a crew
