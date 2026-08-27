@@ -1847,8 +1847,13 @@ written and `bash -n` clean but **was not executed** — that harness needs
     clean.** On `crew/s2-s6`, code at `734bd639`, not landed, not gated. (The
     SHA this item used to name, `ecb16a52`, is on no branch — `git branch -a
     --contains ecb16a52` is empty — so nothing cited against it resolved.)
-    On the wire, kind 44220 gains a closed `deliver` class (`start` / `queue` / `steer` /
-    `interrupt` / `ignore`, rejected at decode rather than in `validate()`),
+    On the wire, kind 44220 gains a closed `deliver` class: the field is
+    optional, absent means `boundary`, and the whole set is
+    `boundary` | `steer` | `interrupt` — a closed serde enum, so anything else
+    is rejected at decode rather than in `validate()`
+    (`crates/buzz-core/src/coding_session_command.rs:57-66`, `from_wire` at
+    `:83-90`; the relay envelope pins both halves at
+    `crates/buzz-relay/src/handlers/ingest.rs:7474-7484`),
     the provider consumes a boundary turn at *start* and replays unconsumed
     turns from a persisted per-channel watermark in `(created_at, id)` order
     behind a 1.5 s reorder window, and three receipt codes join the now-open
