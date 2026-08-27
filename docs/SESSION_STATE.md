@@ -1960,6 +1960,29 @@ written and `bash -n` clean but **was not executed** — that harness needs
     `interrupted` item, not from a receipt. Desktop-only (projection); the
     mobile and web observers copy the same projection and inherit the gap.
 
+65. **Agent seats (Slice 3), built and ungated on `crew/s2-s6`@`dbf54a38`.**
+    An execution can now be created with an `actor`/`role` pair: the desktop
+    stages the seat's nsec in a host-local 0600 custody file, the provider
+    consumes it once and applies exactly the seat's four `BUZZ_` variables
+    after the env fence, and the 44223 metadata carries `agentRef`/`role`.
+    **There is no gate**: no `just ci`, no `just test`, and no explicit
+    `cargo test -p <crate> --lib` run at any S3 head — only the pre-push hook
+    chain, which prints no counts and does not run the buzz-session-provider,
+    buzz-sdk or buzz-relay lib tests. Nothing has run against a real relay, a
+    real desktop, or a real seat nsec (every test nsec is a non-parsing
+    placeholder, so `Keys::parse` has never executed on this path) and the
+    plan's relay-backed e2e was not written. The single refuter was
+    same-family (advisory, not the cross-family tier-2 pass §1 requires) and
+    returned CONFIRMED with 4 blocking findings, all applied on the branch;
+    the sharpest was a control that lied — every seated create classified as
+    malformed, so `resolveCodingSessionUmbrellaComposerAuthority` returned
+    `canPromptExecutions: true` for every viewer. The first checkpoint push
+    was blocked by the branch-skew guard; the finalizer rebased 84 commits
+    onto `main`@`932ddf89` with zero conflicts, the pre-push chain passed in
+    193 s, and the branch is on the relay. Owed: a real gate on this base with
+    per-crate `--lib` counts, and one seated create watched on the dev
+    instance.
+
 ## 2a. Direction settled 2026-08-18
 
 Three independent answers to "what should a new execution get on its first
@@ -2011,26 +2034,28 @@ main@af3b9b66 and re-gated there on 2026-08-26 (`just ci` exit 0, desktop
 6178/0, mobile 1465; `just test` exit 0, 2132 passed, 0 failed), pushed with
 `--force-with-lease`. Rebased again onto main@b2298102 (the UX pass)
 later that day with one docs conflict (this item is now 58) and re-gated:
-**Slices 2–6 were built by a Claude-only crew on crew/s2-s6 on
-2026-08-26**: only S2 (the relay is the mailbox) was reached, and it is **not
-clean** — its `just ci`/`just test` gate never finished at any head (the head
-this paragraph used to name, `ecb16a52`, is on no branch), so the slice has no
-gate counts of its own; the green counts that exist are per-crate
-at the round-2 head (`cargo test -p buzz-session-provider` 277 lib + 2
-integration passed / 0 failed, desktop `coding-sessions` 857 passed / 0 failed,
-`tsc --noEmit`, `cargo clippy -p buzz-session-provider --all-targets` and
-`pnpm check:px-text` all exit 0, plus a relay-backed
-`e2e_coding_session_delivery_classes` run, 1 passed / 0 failed), and the last
-full green gate was at `3c8f2a15` (101 Rust `test result: ok` lines, desktop
-6236/0, mobile all-green) which predates every later fix. Both refuters came
-back CONFIRMED — contract & runtime correctness (2 blocking) and test honesty
-and evidence (2 blocking) — same-family, so advisory rather than the
-cross-family pass §1 requires. Five findings triaged fix-now are **not present
-at the checkpoint head** (chief among them `mailbox-1`: the replay hold branch
-still advances the watermark past older undelivered turns,
-`crates/buzz-session-provider/src/lib.rs:1058-1069`); deferred: 5 items
-recorded in the plan §7. S3–S6 were not started (blocked by S2). It builds on
-Slice 1 and lands with it as one fast-forward after Brian's live look.
+**Slices 2–6 were built by a Claude-only crew on crew/s2-s6; as of 2026-08-26
+S2 and S3 are reached and S3 is not clean.** S2 (the relay is the mailbox) is
+gated and proven live at `1a3ee24d` — `cargo test --lib` across
+buzz-core/buzz-session-provider/buzz-sdk/buzz-relay/buzz-cli/buzz-dev-mcp
+475+412+128+957+302+283 passed / 0 failed, clippy clean, desktop vitest
+6241/0, Tauri 2681+0+7+3+0, `just test` 12/12 groups — and a queued turn was
+watched cross the boundary on the dev instance at 22:03. S3 (agent seats) was
+then built on top, through `dbf54a38`, and **has no gate at all**: no `just
+ci`, no `just test`, and no explicit `cargo test -p <crate> --lib` run at any
+S3 head — only the pre-push hook chain, which reports no counts and (per
+`justfile:427`) does not run the buzz-session-provider, buzz-sdk or
+buzz-relay lib tests this slice moves most. Its single refuter came back
+CONFIRMED with 4 blocking findings, same-family and therefore advisory rather
+than the cross-family tier-2 pass §1 requires; all six fix-now findings were
+applied on the branch (`635a8a19..dbf54a38`), two deferred, and none of it has
+run against a real relay, a real desktop, or a real seat nsec. The first
+checkpoint push was blocked by the branch-skew guard; the finalizer rebased
+the 84 commits onto `main`@`932ddf89` with zero conflicts, the pre-push chain
+passed in 193 s, and the branch is now on the relay (forced update).
+S4–S6 were not started. What is owed before this lands: a real
+repository gate on this base plus the explicit per-crate `--lib` runs, and one
+seated create opened in the app.
 
 **The active track as of 2026-08-25 night is live confirmation of the
 full-screen UI/UX pass — §2 items 52–53 and 55–57.** The implementation,
