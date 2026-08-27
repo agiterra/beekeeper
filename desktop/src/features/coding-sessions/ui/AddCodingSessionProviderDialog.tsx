@@ -206,6 +206,7 @@ function AddCodingSessionProviderForm({
     publishError: publishError ?? durabilityError,
     lifecycle,
     authRuntime: failedRuntime,
+    publishState: transaction?.publishState ?? null,
   });
   const turnOverCap =
     new TextEncoder().encode(initialTurn).byteLength >
