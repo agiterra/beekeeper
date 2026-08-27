@@ -801,6 +801,21 @@ bee sessions send --channel "$CHANNEL_ID" --readdress "$STARTED_COMMAND_ID" 2>&1
 #          turn_dropped/NO_LIVE_EXECUTION or turn_refused/STALE_GENERATION"
 # exit: 1
 
+# ── doctor, on the same owed turn ─────────────────────────────────────────
+# `doctor` reads 44224 receipts alongside 44225 transcripts, because every
+# `turn_dropped`/`turn_refused` site in the provider publishes a receipt and no
+# transcript item. So a refused command is a row of its own with verdict
+# `answered` and the commandId `--readdress` takes — it is not silently absent,
+# and a turn whose items exist but whose command was later refused is not
+# reported `unfinished`.
+bee --format compact sessions doctor --channel "$CHANNEL_ID" --target "$TARGET"
+# → "<commandId>  answered  0.0s  0 items"
+#   "    - answered turn_dropped (NO_LIVE_EXECUTION) with no turn: these words
+#          never ran and never will — re-address them with `bee sessions send
+#          --readdress <commandId>`"
+bee sessions doctor --channel "$CHANNEL_ID" --target "$TARGET" \
+  | jq '.turns[] | {turnId, commandId, answeredStage, answeredCode}'
+
 # ── create ────────────────────────────────────────────────────────────────
 # Publishes one 44221 `session.create`; the brief becomes `initialTurn`.
 echo 'stand up the fixture harness' | bee sessions create \

@@ -1353,8 +1353,36 @@ pub struct TurnDiagnosis {
     pub output_tokens: Option<u64>,
     /// The `turn_wire:` row, when the producer published one.
     pub wire: Option<String>,
+    /// The 44220 that started this turn, when the record says which.
+    ///
+    /// Read from the `user_prompt` echo's `commandId` (NIP-CST, plan D4), or
+    /// from the `turnId` a `turn_started` receipt carries when the prompt echo
+    /// predates the stamp.
+    pub command_id: Option<String>,
+    /// The newest *terminal* turn stage that answered [`Self::command_id`],
+    /// as its wire name (`turn_dropped`, `turn_refused`), and the code it
+    /// carried.
+    ///
+    /// Present only for a stage that says the turn did not run and will not:
+    /// a command answered this way is *answered*, and calling it unfinished
+    /// reports an owed turn where the record holds none.
+    pub answered_stage: Option<String>,
+    pub answered_code: Option<String>,
     /// Everything this turn tripped, in the words a reader needs.
     pub findings: Vec<String>,
+}
+
+/// Whether a turn stage says the command was answered and never ran.
+///
+/// `turn_dropped` and `turn_refused` are the two terminal refusals in the
+/// contract (`buzz-core`'s `ReceiptStatus`); every other stage is either
+/// progress (`turn_queued`, `turn_started`, `turn_degraded`) or belongs to a
+/// cancel (`interrupt_delivered`).
+fn is_terminal_refusal(status: ReceiptStatus) -> bool {
+    matches!(
+        status,
+        ReceiptStatus::TurnDropped | ReceiptStatus::TurnRefused
+    )
 }
 
 /// Whether a failed turn's own result proves the agent never answered it.
@@ -1369,7 +1397,19 @@ fn result_has_no_usage(input: Option<u64>, output: Option<u64>) -> bool {
 }
 
 /// Group a generation's items by turn and report on each.
-pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
+///
+/// `stages` is the newest turn stage per 44220 command id
+/// ([`crew::newest_turn_stages`]); pass an empty map to read the transcript
+/// alone. It answers a question the transcript cannot: a command that was
+/// terminally refused produces *no* transcript item anywhere — every
+/// `turn_dropped`/`turn_refused` site in the provider publishes a receipt and
+/// nothing else — so without the receipts this command is silent about turns
+/// that were owed an answer and got one, and reports an in-flight turn its
+/// sender has already been told will never run as merely unfinished.
+pub fn diagnose_turns(
+    records: &[TranscriptRecord],
+    stages: &HashMap<String, crew::TurnStage>,
+) -> Vec<TurnDiagnosis> {
     let mut order: Vec<Option<String>> = Vec::new();
     let mut by_turn: HashMap<Option<String>, Vec<&TranscriptRecord>> = HashMap::new();
     for record in records {
@@ -1380,7 +1420,7 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
         by_turn.entry(key).or_default().push(record);
     }
 
-    order
+    let mut diagnosed: Vec<TurnDiagnosis> = order
         .into_iter()
         .filter_map(|key| {
             let mut items = by_turn.remove(&key)?;
@@ -1390,6 +1430,7 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
             let start_ms = first.envelope.timestamp;
             let span_secs = (last.envelope.timestamp - start_ms) as f64 / 1000.0;
 
+            let mut command_id: Option<String> = None;
             let mut called: Vec<(String, String)> = Vec::new();
             let mut resulted: HashSet<String> = HashSet::new();
             let mut last_tool_ms: Option<i64> = None;
@@ -1422,6 +1463,12 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
                                 wire = Some(status.to_owned());
                             }
                         }
+                    }
+                    // The first echo wins: one turn has one prompt, and a
+                    // later item that happens to carry the key must not
+                    // re-point this turn at another command.
+                    Some("user_prompt") if command_id.is_none() => {
+                        command_id = item_text(item, "commandId");
                     }
                     Some("result") => {
                         is_error = item.get("isError").and_then(Value::as_bool);
@@ -1481,6 +1528,30 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
                 }
             }
 
+            // The turn's own command, however the record names it: the
+            // `user_prompt` stamp when the producer wrote one, otherwise the
+            // `turn_started` receipt that carries this `turnId`.
+            let command_id = command_id.or_else(|| {
+                key.as_ref().and_then(|turn_id| {
+                    stages
+                        .iter()
+                        .find(|(_, stage)| stage.turn_id.as_deref() == Some(turn_id.as_str()))
+                        .map(|(command_id, _)| command_id.clone())
+                })
+            });
+            let answered = command_id
+                .as_ref()
+                .and_then(|command_id| stages.get(command_id))
+                .filter(|stage| is_terminal_refusal(stage.status));
+            if let Some(stage) = answered {
+                findings.push(format!(
+                    "answered {} ({}): this turn did not run and will not — re-address it with \
+                     `bee sessions send --readdress`",
+                    stage.status.as_str(),
+                    stage.error_code.as_deref().unwrap_or("no code")
+                ));
+            }
+
             Some(TurnDiagnosis {
                 turn_id: key,
                 span_secs,
@@ -1493,10 +1564,55 @@ pub fn diagnose_turns(records: &[TranscriptRecord]) -> Vec<TurnDiagnosis> {
                 input_tokens,
                 output_tokens,
                 wire,
+                command_id,
+                answered_stage: answered.map(|stage| stage.status.as_str().to_owned()),
+                answered_code: answered.and_then(|stage| stage.error_code.clone()),
                 findings,
             })
         })
-        .collect()
+        .collect();
+
+    // A command answered `turn_dropped`/`turn_refused` never reached a turn,
+    // so it has no items to group and would otherwise be reported by nothing
+    // at all — the reader is left believing every turn they sent is one of the
+    // rows above. Each gets a row of its own, ordered by the receipt's own
+    // clock, saying what it was answered and that it did not run.
+    let mut orphans: Vec<(i64, &String, &crew::TurnStage)> = stages
+        .iter()
+        .filter(|(command_id, stage)| {
+            is_terminal_refusal(stage.status)
+                && !diagnosed
+                    .iter()
+                    .any(|turn| turn.command_id.as_ref() == Some(*command_id))
+        })
+        .map(|(command_id, stage)| (stage.at, command_id, stage))
+        .collect();
+    orphans.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
+    for (at, command_id, stage) in orphans {
+        diagnosed.push(TurnDiagnosis {
+            turn_id: None,
+            span_secs: 0.0,
+            started_at: at,
+            items: 0,
+            unterminated_tools: Vec::new(),
+            last_tool_offset_secs: None,
+            is_error: None,
+            result: stage.error_message.clone(),
+            input_tokens: None,
+            output_tokens: None,
+            wire: None,
+            command_id: Some(command_id.clone()),
+            answered_stage: Some(stage.status.as_str().to_owned()),
+            answered_code: stage.error_code.clone(),
+            findings: vec![format!(
+                "answered {} ({}) with no turn: these words never ran and never will — \
+                 re-address them with `bee sessions send --readdress {command_id}`",
+                stage.status.as_str(),
+                stage.error_code.as_deref().unwrap_or("no code")
+            )],
+        });
+    }
+    diagnosed
 }
 
 async fn cmd_doctor(
@@ -1506,21 +1622,45 @@ async fn cmd_doctor(
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
-    let events =
-        fetch_channel_events(client, channel_id, &[KIND_CODING_SESSION_TRANSCRIPT]).await?;
+    // Receipts as well as transcripts: a terminally refused turn publishes a
+    // receipt and no transcript item, so reading transcripts alone makes this
+    // command silent about exactly the turns a reader is looking for.
+    let events = fetch_channel_events(
+        client,
+        channel_id,
+        &[
+            KIND_CODING_SESSION_TRANSCRIPT,
+            KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        ],
+    )
+    .await?;
     let (all, stats) = decode_transcripts(&events);
     let mut records = match target {
         Some(target) => filter_transcripts_by_target(&all, target),
         None => all,
     };
     sort_transcripts(&mut records);
-    let turns = diagnose_turns(&records);
+    let (receipts, _) = decode_receipts(&events);
+    let scoped: Vec<ReceiptRecord> = match target {
+        // Same scoping rule as the transcripts above, so `--target` narrows
+        // both halves of the report or neither.
+        Some(target) => receipts
+            .into_iter()
+            .filter(|receipt| receipt.target_key.as_deref() == Some(target))
+            .collect(),
+        None => receipts,
+    };
+    let stages = crew::newest_turn_stages(&scoped);
+    let turns = diagnose_turns(&records, &stages);
 
     let rows: Vec<Value> = turns
         .iter()
         .map(|turn| {
             json!({
                 "turnId": turn.turn_id,
+                "commandId": turn.command_id,
+                "answeredStage": turn.answered_stage,
+                "answeredCode": turn.answered_code,
                 "startedAt": rfc3339(turn.started_at),
                 "spanSecs": turn.span_secs,
                 "items": turn.items,
@@ -1543,15 +1683,26 @@ async fn cmd_doctor(
                 // `session_fresh` status, say. Calling that group "unfinished"
                 // reports a turn that never existed as one that failed to end,
                 // which is the same class of lie this command exists to catch.
-                let id = turn
-                    .turn_id
-                    .as_deref()
-                    .unwrap_or("(session-level, outside any turn)");
-                let verdict = match (turn.turn_id.is_some(), turn.is_error) {
-                    (false, _) => "-",
-                    (true, Some(true)) => "FAILED",
-                    (true, Some(false)) => "ok",
-                    (true, None) => "unfinished",
+                let id = turn.turn_id.as_deref().unwrap_or_else(|| {
+                    turn.command_id
+                        .as_deref()
+                        .unwrap_or("(session-level, outside any turn)")
+                });
+                // A command the provider answered terminally is answered, not
+                // owed. Saying "unfinished" over a signed `turn_dropped` sends
+                // a reader looking for a turn that was never going to arrive,
+                // which is the same class of lie as the session-level row that
+                // used to read "unfinished 0.0s".
+                let verdict = match (
+                    turn.answered_stage.is_some(),
+                    turn.turn_id.is_some(),
+                    turn.is_error,
+                ) {
+                    (true, _, _) => "answered",
+                    (false, false, _) => "-",
+                    (false, true, Some(true)) => "FAILED",
+                    (false, true, Some(false)) => "ok",
+                    (false, true, None) => "unfinished",
                 };
                 println!(
                     "{id}  {verdict}  {:.1}s  {} items{}",
@@ -2289,7 +2440,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records);
+        let turns = diagnose_turns(&records, &HashMap::new());
         assert_eq!(turns.len(), 1);
         let turn = &turns[0];
 
@@ -2334,7 +2485,7 @@ mod tests {
             json!({ "kind": "status", "status": "session_fresh" }),
         )];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records);
+        let turns = diagnose_turns(&records, &HashMap::new());
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].turn_id, None);
         assert_eq!(turns[0].is_error, None);
@@ -2378,7 +2529,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records);
+        let turns = diagnose_turns(&records, &HashMap::new());
         assert_eq!(turns.len(), 1);
         assert!(
             turns[0].findings.is_empty(),
@@ -2420,7 +2571,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records);
+        let turns = diagnose_turns(&records, &HashMap::new());
         let findings = turns[0].findings.join(" | ");
         assert_eq!(turns[0].unterminated_tools.len(), 1);
         assert!(
@@ -2488,7 +2639,7 @@ mod tests {
             ),
         ];
         let (records, _) = decode_transcripts(&events);
-        let turns = diagnose_turns(&records);
+        let turns = diagnose_turns(&records, &HashMap::new());
         let turn = &turns[0];
         assert!(
             turn.wire
@@ -2502,6 +2653,181 @@ mod tests {
             "with a measurement present the inference caveat is wrong: {:?}",
             turn.findings
         );
+    }
+
+    /// A 44224 turn receipt carrying an error code, which
+    /// [`turn_receipt_event`] deliberately does not.
+    fn refused_receipt_event(
+        id: &str,
+        created_at: i64,
+        command_id: &str,
+        status: &str,
+        code: &str,
+        target: &CodingSessionTarget,
+    ) -> Value {
+        json!({
+            "id": id,
+            "pubkey": "a".repeat(64),
+            "kind": KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            "created_at": created_at,
+            "sig": "0".repeat(128),
+            "tags": [["h", "channel"], ["cslr-v", "cslr1-1"]],
+            "content": json!({
+                "schema": LIFECYCLE_RECEIPT_SCHEMA,
+                "commandId": command_id,
+                "status": status,
+                "session": target,
+                "error": { "code": code, "message": "this execution has no live process" },
+            })
+            .to_string(),
+        })
+    }
+
+    /// Plan D4/R1 against `doctor`: a command the provider terminally refused
+    /// is *answered*, and the transcript alone cannot say so.
+    ///
+    /// Every `turn_dropped`/`turn_refused` site in the provider publishes a
+    /// receipt and no transcript item, so before the receipts were consulted
+    /// this command had two ways of misreporting an owed turn: a turn whose
+    /// items exist but whose command was later refused read `unfinished`, and
+    /// a refused command that never reached a turn was reported by nothing at
+    /// all. Both halves are asserted here against the same fixture, and the
+    /// receipt-free reading is asserted too — the point is the difference the
+    /// receipts make, not the presence of a string.
+    #[test]
+    fn a_terminally_refused_command_is_reported_answered_not_unfinished() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let signer = "a".repeat(64);
+        let transcripts = vec![
+            transcript_event(
+                &format!("{:064}", 1),
+                &signer,
+                base,
+                &session,
+                1,
+                Some("t-1"),
+                json!({
+                    "kind": "user_prompt",
+                    "content": "merge it",
+                    "commandId": "cmd-started",
+                }),
+            ),
+            transcript_event(
+                &format!("{:064}", 2),
+                &signer,
+                base + 5,
+                &session,
+                2,
+                Some("t-1"),
+                tool_call("Terminal", "toolu_1"),
+            ),
+        ];
+        let receipt_events = vec![
+            refused_receipt_event(
+                &format!("{:064}", 11),
+                base + 60,
+                "cmd-started",
+                "turn_dropped",
+                "NO_LIVE_EXECUTION",
+                &session,
+            ),
+            refused_receipt_event(
+                &format!("{:064}", 12),
+                base + 61,
+                "cmd-never-ran",
+                "turn_refused",
+                "STALE_GENERATION",
+                &session,
+            ),
+        ];
+
+        let (records, _) = decode_transcripts(&transcripts);
+        let (receipts, stats) = decode_receipts(&receipt_events);
+        assert_eq!(stats.malformed, 0);
+        let stages = crew::newest_turn_stages(&receipts);
+
+        // Without the receipts the turn has items, no `result`, and reads as
+        // an unfinished turn — which is what the reader used to be told.
+        let blind = diagnose_turns(&records, &HashMap::new());
+        assert_eq!(blind.len(), 1);
+        assert_eq!(blind[0].is_error, None);
+        assert_eq!(blind[0].answered_stage, None);
+
+        let turns = diagnose_turns(&records, &stages);
+        assert_eq!(
+            turns.len(),
+            2,
+            "the refused command with no turn needs a row of its own: {turns:?}"
+        );
+
+        let started = &turns[0];
+        assert_eq!(started.turn_id.as_deref(), Some("t-1"));
+        assert_eq!(started.command_id.as_deref(), Some("cmd-started"));
+        assert_eq!(started.answered_stage.as_deref(), Some("turn_dropped"));
+        assert_eq!(started.answered_code.as_deref(), Some("NO_LIVE_EXECUTION"));
+        assert!(
+            started
+                .findings
+                .iter()
+                .any(|finding| finding.contains("did not run and will not")),
+            "{:?}",
+            started.findings
+        );
+
+        let orphan = &turns[1];
+        assert_eq!(orphan.turn_id, None);
+        assert_eq!(orphan.command_id.as_deref(), Some("cmd-never-ran"));
+        assert_eq!(orphan.answered_stage.as_deref(), Some("turn_refused"));
+        assert_eq!(orphan.answered_code.as_deref(), Some("STALE_GENERATION"));
+        assert_eq!(orphan.items, 0);
+        assert!(
+            orphan
+                .findings
+                .iter()
+                .any(|finding| finding.contains("--readdress cmd-never-ran")),
+            "the row must name the verb that recovers it: {:?}",
+            orphan.findings
+        );
+    }
+
+    /// The other half of the same rule: a stage that is *not* terminal must
+    /// never be read as an answer. A running turn is unfinished, and calling
+    /// it answered would hide exactly the stall this command exists to find.
+    #[test]
+    fn a_queued_or_started_stage_never_reports_a_turn_as_answered() {
+        let session = target("s-1", 1);
+        let base = 1_700_000_000;
+        let signer = "a".repeat(64);
+        let transcripts = vec![transcript_event(
+            &format!("{:064}", 1),
+            &signer,
+            base,
+            &session,
+            1,
+            Some("t-1"),
+            json!({ "kind": "user_prompt", "content": "go", "commandId": "cmd-1" }),
+        )];
+        let (records, _) = decode_transcripts(&transcripts);
+
+        for status in ["turn_queued", "turn_started", "turn_degraded"] {
+            let receipt_events = vec![turn_receipt_event(
+                &format!("{:064}", 21),
+                &signer,
+                base + 1,
+                "cmd-1",
+                status,
+                Some(&session),
+                None,
+            )];
+            let (receipts, _) = decode_receipts(&receipt_events);
+            let turns = diagnose_turns(&records, &crew::newest_turn_stages(&receipts));
+            assert_eq!(turns.len(), 1, "{status} invented a row");
+            assert_eq!(
+                turns[0].answered_stage, None,
+                "{status} was read as a terminal answer"
+            );
+        }
     }
 
     /// The one ordering bug this command exists to not have: `cst-seq` is a

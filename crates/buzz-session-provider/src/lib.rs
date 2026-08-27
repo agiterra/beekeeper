@@ -10678,6 +10678,90 @@ done
             .expect("strictly decodable degraded receipt");
     }
 
+    /// A cancel Bee Keeper issued on its own behalf is not an operator's
+    /// interrupt, and must not be receipted as one.
+    ///
+    /// `nudge_stalled_turn` recovers a turn the adapter answered but never
+    /// resolved by sending `session/cancel` — the adapter's own documented way
+    /// out of that hold. The only *other* thing in this provider that cancels
+    /// is a 44220 `thread.turn.interrupt`, and that one mints
+    /// `interrupt_delivered` against the command that asked for it. Nobody
+    /// asked here: minting that receipt would tell the operator their
+    /// interrupt landed when they never sent one, and would settle a pending
+    /// row that belongs to a different command. The two paths are separate by
+    /// construction — the nudge goes straight to the ACP client and never
+    /// through `SessionCommand::Interrupt` — and this pins that they stay so.
+    #[tokio::test]
+    async fn an_answer_stall_nudge_never_mints_an_interrupt_receipt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let agent = fake_agent(
+            dir.path(),
+            "unresolved-agent",
+            crate::session::testing::ANSWERED_BUT_UNRESOLVED_AGENT,
+        );
+        let mut config = config_of(
+            Keys::generate(),
+            &dir.path().join("state"),
+            Some(&projects),
+            agent,
+        );
+        config.answer_stall_timeout = Some(Duration::from_millis(200));
+        // Far above the stall budget, so a failure here names the stall watch
+        // rather than the idle timer that would otherwise end this turn.
+        config.idle_timeout = Duration::from_secs(20);
+        let mut provider = Provider::new(config).expect("provider");
+
+        provider
+            .handle_command_event(channel_id, &create_event(&provider, channel_id, "create-1"))
+            .await
+            .expect("handle");
+        let target = provider
+            .state()
+            .sessions()
+            .next()
+            .expect("session")
+            .target("instance-1");
+        provider
+            .handle_command_event(channel_id, &turn_event(channel_id, "turn-1", &target))
+            .await
+            .expect("handle");
+        pump_until_turn_started(&mut provider).await;
+        pump_until_turn_finished(&mut provider).await;
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        // The turn is answered by its own stages and nothing else.
+        assert_eq!(
+            receipt_stages(&sink, "turn-1"),
+            vec!["turn_queued".to_owned(), "turn_started".to_owned()],
+        );
+        assert!(
+            turn_receipts_in_order(&sink)
+                .iter()
+                .all(|(_, status)| status != "interrupt_delivered"),
+            "the stall nudge was receipted as an operator interrupt: {:?}",
+            turn_receipts_in_order(&sink)
+        );
+        // And the recovery is still disclosed where it belongs — an item in
+        // the turn, so the reader is not told the turn ended cleanly.
+        let statuses: Vec<String> = sink
+            .contents_of(KIND_CODING_SESSION_TRANSCRIPT)
+            .into_iter()
+            .filter_map(|envelope| envelope["item"]["status"].as_str().map(str::to_owned))
+            .collect();
+        assert!(
+            statuses
+                .iter()
+                .any(|status| status.starts_with("answer_stall_recovered:")),
+            "the operator was never told Bee Keeper closed the turn: {statuses:?}"
+        );
+    }
+
     /// An interrupt says whether it reached a live turn.
     #[tokio::test]
     async fn an_interrupt_reports_whether_it_reached_a_live_turn() {

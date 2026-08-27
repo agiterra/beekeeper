@@ -128,6 +128,10 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 ///   provider signs the transcript and metadata a human reads as fact; a seat
 ///   that believed it could sign those would be forging its own record.
 /// - The role it holds, so a crew's conventions have something to attach to.
+/// - The same do-not-detach rule the unseated briefing carries: nothing
+///   reads the adapter's output between turns whether or not the execution
+///   is seated, so background work an agent promises to report back on is a
+///   promise the provider cannot keep.
 ///
 /// It deliberately does **not** hand out a task list of `bee` commands. What a
 /// seat may usefully do with its identity is a slice-4 question (`bee sessions
@@ -135,7 +139,7 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 /// reproduce the 2026-08-21 failure in the opposite direction.
 pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. The `bee` CLI works here and speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session."
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. The `bee` CLI works here and speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - nothing reads this process between turns, so nothing will wake you to do so, and whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     )
 }
 
@@ -264,6 +268,22 @@ mod tests {
             briefing.contains("not the provider's"),
             "the seated briefing must separate the seat from the provider"
         );
+
+        // The one rule that is identical for both variants, asserted on both
+        // in the same test for the same reason as the pair above: nothing
+        // reads the adapter's output between turns, seated or not, so an
+        // agent must never be left believing it can detach work and be woken
+        // to report on it. A seat is the *more* dangerous case — a sibling or
+        // a lead may be blocked waiting on the report that never comes.
+        for (label, text) in [
+            ("fenced", FENCED_SESSION_BRIEFING.to_owned()),
+            ("seated", briefing.clone()),
+        ] {
+            assert!(
+                text.contains("foreground"),
+                "the {label} briefing lost the do-not-detach rule"
+            );
+        }
     }
 
     /// The fence itself is unchanged by seating: `EXEMPT` stays empty, so a

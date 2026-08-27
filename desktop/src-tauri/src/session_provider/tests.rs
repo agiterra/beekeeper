@@ -708,6 +708,7 @@ fn env_exports_the_raw_frame_switch_only_when_it_is_asked_for() {
         turn_idle_timeout_secs: None,
         rust_log: None,
         emit_raw_sdk_frames,
+        turn_budget: None,
     };
 
     assert!(!build_provider_env(&base(false)).contains_key("BUZZ_CSP_EMIT_RAW_SDK_FRAMES"));
@@ -738,6 +739,7 @@ fn a_chosen_log_filter_beats_the_default() {
         turn_idle_timeout_secs: None,
         rust_log,
         emit_raw_sdk_frames: false,
+        turn_budget: None,
     };
 
     assert_eq!(
@@ -838,6 +840,8 @@ fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
         augmented_path: None,
         max_sessions: None,
         turn_idle_timeout_secs: None,
+        rust_log: None,
+        emit_raw_sdk_frames: false,
         turn_budget,
     };
 

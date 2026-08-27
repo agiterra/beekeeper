@@ -2805,6 +2805,7 @@ done
                 command_id: "turn-1".into(),
                 text: "go".into(),
                 operator_pubkey: None,
+                framing: None,
             })
             .expect("deliver");
 
@@ -2899,6 +2900,7 @@ done
                 command_id: "turn-1".into(),
                 text: "go".into(),
                 operator_pubkey: None,
+                framing: None,
             })
             .expect("deliver");
 
@@ -2944,6 +2946,7 @@ done
                 command_id: "turn-1".into(),
                 text: "go".into(),
                 operator_pubkey: None,
+                framing: None,
             })
             .expect("deliver");
 
