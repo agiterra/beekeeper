@@ -92,9 +92,8 @@ use commands::{
 use config::Config;
 use context_projector::{ContextProjectionLimits, ContextProjectionRequest};
 use payload::{
-    Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope,
+    Capabilities, LifecycleReceipt, SessionMetadata, SessionStatus, TranscriptEnvelope, TurnBudget,
     GENESIS_NOT_FOUND, METADATA_SCHEMA, PROVIDER_UNAVAILABLE, SESSION_ALREADY_ATTACHED,
-    UNAUTHORIZED_OPERATOR,
 };
 use publish::{EventSink, Outbox, Priority};
 use session::{
@@ -2208,21 +2207,18 @@ impl Provider {
             TurnDecision::Fail {
                 command_id,
                 target,
+                code,
                 message,
             } => {
                 // Refused, not consumed. Consuming would claim this command
                 // ran; it did not, and never will.
                 self.state.record_refusal(&command_id, now_secs())?;
-                let receipt = LifecycleReceipt::turn_refused(
-                    &command_id,
-                    &target,
-                    UNAUTHORIZED_OPERATOR,
-                    &message,
-                );
+                let receipt = LifecycleReceipt::turn_refused(&command_id, &target, code, &message);
                 tracing::warn!(
                     target: "csp",
                     %command_id,
                     %operator_pubkey,
+                    code,
                     "turn command rejected: {message}"
                 );
                 return self.enqueue_receipt(channel_id, &command_id, &receipt);
@@ -3024,6 +3020,7 @@ impl Provider {
             now_secs: now_secs(),
             horizon_secs: self.config.command_horizon.as_secs(),
             max_sessions: self.config.max_sessions,
+            turn_budget: self.config.turn_budget,
             active_session_count: self.sessions.live_count(),
             state: &self.state,
             projects,
@@ -3129,6 +3126,17 @@ impl Provider {
                 .git_reachability
                 .get(&target.session_id)
                 .map(|fact| fact.verified_at),
+            // D9: published only when both halves of the fact exist — the
+            // execution claimed an umbrella and this host set a finite budget.
+            // Anything else omits the key rather than publishing a zero, which
+            // would read as "no turns allowed" instead of "no budget".
+            turn_budget: record
+                .and_then(|record| record.session_ref.as_deref())
+                .filter(|_| self.config.turn_budget != config::UNLIMITED_TURN_BUDGET)
+                .map(|session_ref| TurnBudget {
+                    used: self.state.turns_used(session_ref),
+                    limit: self.config.turn_budget,
+                }),
         }
     }
 
@@ -3682,6 +3690,19 @@ impl Provider {
                 // durable write happens before the receipt so a crash between
                 // the two costs a receipt, never a duplicate turn.
                 self.state.consume_command(&command_id, now_secs())?;
+                // D9: the umbrella is charged where the turn is consumed, and
+                // for the same reason — this is the moment work actually
+                // began. Charging at accept would bill a crew for turns a
+                // crash threw away. Charged for every signer, founder
+                // included: `used` is what the umbrella spent, not what it was
+                // refused for, and only the *refusal* exempts the founder.
+                if let Some(session_ref) = self
+                    .state
+                    .session(&session_id)
+                    .and_then(|record| record.session_ref.clone())
+                {
+                    self.state.record_turn_spend(&session_ref)?;
+                }
                 self.in_flight.remove(&command_id);
                 // The stage that lets a consumer stop guessing: it names the
                 // command that asked and the turn that answers it, so a
@@ -4438,6 +4459,7 @@ fn log_ignored(what: &str, reason: &Ignored) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::payload::{BUDGET_EXHAUSTED, UNAUTHORIZED_OPERATOR};
     use std::path::Path;
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -4699,6 +4721,10 @@ mod tests {
             instance_id: "instance-1".into(),
             runtimes,
             max_sessions: 2,
+            // Unbudgeted unless a test says otherwise: D9's ceiling is a host
+            // setting, and every test that predates it describes a host that
+            // never set one.
+            turn_budget: config::UNLIMITED_TURN_BUDGET,
             session_idle_shutdown: Duration::from_secs(1800),
             idle_timeout: Duration::from_secs(900),
             answer_stall_timeout: Some(Duration::from_secs(120)),
@@ -6693,6 +6719,113 @@ mod tests {
             relay.shutdown().await;
             server.abort();
         }
+    }
+
+    /// D9 end to end inside one process: a started turn charges its umbrella
+    /// durably, the charge is republished in 44223, and the turn that would
+    /// take the crew past its allowance is answered `turn_refused /
+    /// BUDGET_EXHAUSTED` while the founder's is not.
+    ///
+    /// The spend is driven through `TurnStarted` rather than through a live
+    /// adapter deliberately: that arm is the *only* place a turn is charged,
+    /// and charging anywhere earlier would bill a crew for turns a crash threw
+    /// away.
+    #[tokio::test]
+    async fn a_spent_umbrella_budget_refuses_a_seat_and_is_published_in_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let mut provider = provider(&dir.path().join("state"), None);
+        provider.config.turn_budget = 2;
+
+        let seat = Keys::generate();
+        let mut record = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        record.granted_operators.insert(seat.public_key().to_hex());
+        record.authority_seq = 1;
+        let umbrella = record.session_ref.clone().expect("umbrella");
+        let session_id = record.session_id.clone();
+        let target = record.target(&provider.config.instance_id);
+        provider.state.insert_session(record).expect("insert");
+
+        // Nothing spent yet: the seat's turn is accepted, and the published
+        // metadata says so in the two numbers rather than by omission.
+        assert!(matches!(
+            provider
+                .metadata_for(&target, SessionStatus::Idle)
+                .turn_budget,
+            Some(TurnBudget { used: 0, limit: 2 })
+        ));
+
+        for (n, command_id) in ["turn-a", "turn-b"].into_iter().enumerate() {
+            provider
+                .handle_session_event(SessionEvent::TurnStarted {
+                    session_id: session_id.clone(),
+                    turn_id: format!("turn-id-{n}"),
+                    command_id: command_id.to_owned(),
+                    text: "work".into(),
+                })
+                .expect("turn started");
+        }
+        assert_eq!(
+            provider.state().turns_used(&umbrella),
+            2,
+            "each started turn charges the umbrella exactly once"
+        );
+        assert!(matches!(
+            provider
+                .metadata_for(&target, SessionStatus::Running)
+                .turn_budget,
+            Some(TurnBudget { used: 2, limit: 2 })
+        ));
+
+        let refused = command_event_by(
+            channel_id,
+            "turn-over-budget",
+            &target,
+            serde_json::json!({ "type": "thread.turn.start", "text": "one more" }),
+            &seat,
+        );
+        provider
+            .handle_command_event(channel_id, &refused)
+            .await
+            .expect("refuse");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        let receipt = sink
+            .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+            .into_iter()
+            .find(|receipt| receipt["commandId"] == "turn-over-budget")
+            .expect("budget receipt");
+        assert_eq!(receipt["status"], "turn_refused");
+        assert_eq!(receipt["error"]["code"], BUDGET_EXHAUSTED);
+        assert!(
+            receipt["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("2 of its 2 allowed turns"),
+            "the refusal names used and limit: {receipt}"
+        );
+        // Refused, never consumed: it did not run and never will.
+        assert!(provider.state().is_command_refused("turn-over-budget"));
+        assert!(!provider.state().is_command_consumed("turn-over-budget"));
+
+        // The founder, whom the budget exists to protect, is not refused.
+        let founder_turn = turn_event(channel_id, "turn-founder", &target);
+        provider
+            .handle_command_event(channel_id, &founder_turn)
+            .await
+            .expect("founder turn");
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+        assert!(
+            !sink
+                .contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT)
+                .into_iter()
+                .any(|receipt| receipt["commandId"] == "turn-founder"
+                    && receipt["error"]["code"] == BUDGET_EXHAUSTED),
+            "a founder turn is never refused for a budget"
+        );
     }
 
     #[tokio::test]

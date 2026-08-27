@@ -220,6 +220,67 @@ test("an explicit null role decodes as an unseated execution, as Rust reads it",
   assert.equal(Object.hasOwn(seated, "role"), false);
 });
 
+const UMBRELLA = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+
+// D9. The producer emits `turnBudget` only beside a `sessionRef` and only with
+// a positive `limit`; a decoder that accepted either violation would render a
+// crew allowance for a session that has no crew, or print "0 turns allowed"
+// where the host meant "no budget".
+test("a crew turn budget decodes only beside the umbrella it describes", () => {
+  const parsed = parseBuzzCodingSessionMetadata(
+    metadataContent({
+      sessionRef: UMBRELLA,
+      turnBudget: { used: 12, limit: 200 },
+    }),
+  );
+  assert.deepEqual(parsed?.turnBudget, { used: 12, limit: 200 });
+
+  // Over-spent is a real state — the founder is never refused — and is
+  // reported rather than clamped.
+  assert.deepEqual(
+    parseBuzzCodingSessionMetadata(
+      metadataContent({
+        sessionRef: UMBRELLA,
+        turnBudget: { used: 201, limit: 200 },
+      }),
+    )?.turnBudget,
+    { used: 201, limit: 200 },
+  );
+
+  for (const [label, extra] of [
+    ["no umbrella to bound", { turnBudget: { used: 1, limit: 200 } }],
+    [
+      "a zero limit",
+      { sessionRef: UMBRELLA, turnBudget: { used: 0, limit: 0 } },
+    ],
+    [
+      "a negative count",
+      { sessionRef: UMBRELLA, turnBudget: { used: -1, limit: 200 } },
+    ],
+    [
+      "an unknown key",
+      {
+        sessionRef: UMBRELLA,
+        turnBudget: { used: 1, limit: 200, remaining: 199 },
+      },
+    ],
+    ["a missing half", { sessionRef: UMBRELLA, turnBudget: { used: 1 } }],
+  ]) {
+    assert.equal(
+      parseBuzzCodingSessionMetadata(metadataContent(extra)),
+      null,
+      `accepted a turnBudget with ${label}`,
+    );
+  }
+
+  // An unbudgeted umbrella omits the key, and still decodes.
+  const unbudgeted = parseBuzzCodingSessionMetadata(
+    metadataContent({ sessionRef: UMBRELLA }),
+  );
+  assert.notEqual(unbudgeted, null);
+  assert.equal(Object.hasOwn(unbudgeted, "turnBudget"), false);
+});
+
 test("an agentRef that is not a 64-hex pubkey is refused, as Rust refuses it", () => {
   // `validate_actor_pubkey` bounds this to lowercase 64-hex; a decoder that
   // only bounds the length hands a display name to `useUsersBatchQuery` and

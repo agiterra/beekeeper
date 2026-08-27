@@ -82,6 +82,12 @@ pub struct CodingSessionCapacitySettings {
     pub default_turn_idle_timeout_secs: u64,
     /// The budget the **running** provider started with, when one is running.
     pub running_turn_idle_timeout_secs: Option<u64>,
+    /// The person's stored crew turn budget, or `None` for the default.
+    pub turn_budget: Option<u64>,
+    /// The provider's own default crew turn budget.
+    pub default_turn_budget: u64,
+    /// The budget the **running** provider started with, when one is running.
+    pub running_turn_budget: Option<u64>,
 }
 
 /// Read the stored ceiling alongside what is actually in force.
@@ -99,6 +105,9 @@ pub async fn coding_session_capacity_settings(
         default_turn_idle_timeout_secs:
             buzz_session_provider_pkg::config::DEFAULT_IDLE_TIMEOUT_SECS,
         running_turn_idle_timeout_secs: provider.running_turn_idle_timeout_secs(),
+        turn_budget: store.turn_budget,
+        default_turn_budget: buzz_session_provider_pkg::config::DEFAULT_TURN_BUDGET,
+        running_turn_budget: provider.running_turn_budget(),
     })
 }
 
@@ -135,6 +144,26 @@ pub async fn set_coding_session_turn_idle_timeout(
     }
     let mut store = crate::session_provider::store::load_provider_store(&app)?;
     store.turn_idle_timeout_secs = turn_idle_timeout_secs;
+    crate::session_provider::store::save_provider_store(&app, &store)?;
+    coding_session_capacity_settings(app, provider).await
+}
+
+/// Store a new crew turn budget. `None` restores the provider default;
+/// `Some(0)` removes the budget.
+///
+/// The budget bounds one *umbrella* — every execution a crew session launched,
+/// counted together — and it bounds only turns the session's founder did not
+/// sign. It is the floor under an unattended crew: a seat that has taken its
+/// allowance is refused with a signed receipt naming the two numbers, rather
+/// than looping unobserved.
+#[tauri::command]
+pub async fn set_coding_session_turn_budget(
+    app: AppHandle,
+    provider: State<'_, CodingSessionProviderState>,
+    turn_budget: Option<u64>,
+) -> Result<CodingSessionCapacitySettings, String> {
+    let mut store = crate::session_provider::store::load_provider_store(&app)?;
+    store.turn_budget = turn_budget;
     crate::session_provider::store::save_provider_store(&app, &store)?;
     coding_session_capacity_settings(app, provider).await
 }

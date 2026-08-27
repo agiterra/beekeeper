@@ -88,6 +88,12 @@ export type CodingSessionCapacitySettings = {
   defaultTurnIdleTimeoutSecs: number;
   /** The budget the running provider started with, when one is running. */
   runningTurnIdleTimeoutSecs: number | null;
+  /** Stored crew turn budget; `null` for the default, `0` for unlimited. */
+  turnBudget: number | null;
+  /** The provider's own default crew turn budget. */
+  defaultTurnBudget: number;
+  /** The crew budget the running provider started with, when one is running. */
+  runningTurnBudget: number | null;
 };
 
 /** Read the stored session ceiling alongside the one being enforced. */
@@ -126,6 +132,23 @@ export async function setCodingSessionTurnIdleTimeout(
   return invokeTauri<CodingSessionCapacitySettings>(
     "set_coding_session_turn_idle_timeout",
     { turnIdleTimeoutSecs },
+  );
+}
+
+/**
+ * Store the crew turn budget. `null` restores the provider default, `0`
+ * removes the budget.
+ *
+ * Bounds one umbrella — every execution a crew session launched — and only
+ * turns its founder did not sign. Same startup-read caveat as the ceiling and
+ * the silence budget above: it reaches the provider at its next start.
+ */
+export async function setCodingSessionTurnBudget(
+  turnBudget: number | null,
+): Promise<CodingSessionCapacitySettings> {
+  return invokeTauri<CodingSessionCapacitySettings>(
+    "set_coding_session_turn_budget",
+    { turnBudget },
   );
 }
 

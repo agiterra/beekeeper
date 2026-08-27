@@ -2162,6 +2162,7 @@ mod tests {
             dirty: None,
             relay_reachable: None,
             verified_at: None,
+            turn_budget: None,
         }
     }
 

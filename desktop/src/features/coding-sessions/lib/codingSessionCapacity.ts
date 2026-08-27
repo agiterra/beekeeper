@@ -26,7 +26,18 @@ export type CodingSessionCapacitySettings = {
   defaultTurnIdleTimeoutSecs: number;
   /** The budget the running provider started with, when one is running. */
   runningTurnIdleTimeoutSecs: number | null;
+  /** Stored crew turn budget: null for the provider default, 0 for unlimited. */
+  turnBudget: number | null;
+  /** The provider's own default crew turn budget. */
+  defaultTurnBudget: number;
+  /** The crew budget the running provider started with, when one is running. */
+  runningTurnBudget: number | null;
 };
+
+/** The stored value that means "no crew turn budget". */
+export const CODING_SESSION_TURN_BUDGET_UNLIMITED = 0;
+/** Above this, a crew budget is not a budget any more. */
+export const CODING_SESSION_TURN_BUDGET_MAX = 10_000;
 
 /** Shortest silence budget worth offering: below this, ordinary thinking trips it. */
 export const CODING_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1;
@@ -166,4 +177,75 @@ export function codingSessionIdleTimeoutPending(settings: {
     running,
     settings.defaultTurnIdleTimeoutSecs,
   )} of silence. Your change applies the next time it starts.`;
+}
+
+/**
+ * Coerce typed input into a storable crew turn budget.
+ *
+ * Same rule as the ceiling: unusable input keeps the previous value, so 0
+ * ("no budget") is only ever reached by choosing it, never by clearing the
+ * field.
+ */
+export function parseCodingSessionTurnBudgetInput(
+  raw: string,
+  previous: number,
+): number {
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return previous;
+  return Math.min(parsed, CODING_SESSION_TURN_BUDGET_MAX);
+}
+
+/** How the current crew turn budget reads in a sentence. */
+export function codingSessionTurnBudgetLabel(
+  turnBudget: number | null,
+  defaultTurnBudget: number,
+): string {
+  const value = turnBudget ?? defaultTurnBudget;
+  if (value === CODING_SESSION_TURN_BUDGET_UNLIMITED) return "No limit";
+  return `${value} turn${value === 1 ? "" : "s"}`;
+}
+
+/**
+ * What the panel must disclose about a crew budget not yet in force.
+ *
+ * Same reason as {@link codingSessionCapacityPending}: the child reads it from
+ * the environment once, at startup, so a saved change is a promise about the
+ * next start rather than a claim about the crew running now.
+ */
+export function codingSessionTurnBudgetPending(settings: {
+  turnBudget: number | null;
+  defaultTurnBudget: number;
+  runningTurnBudget: number | null;
+  providerRunning: boolean;
+}): string | null {
+  if (!settings.providerRunning) return null;
+  const stored = settings.turnBudget ?? settings.defaultTurnBudget;
+  const running = settings.runningTurnBudget ?? settings.defaultTurnBudget;
+  if (stored === running) return null;
+  return `The provider running now allows ${codingSessionTurnBudgetLabel(
+    running,
+    settings.defaultTurnBudget,
+  ).toLowerCase()} per crew session. Your change applies the next time it starts.`;
+}
+
+/**
+ * How a crew's spend reads beside its allowance, for the session Info popover.
+ *
+ * Says what was spent and what is left in the same breath, and names the
+ * over-spent case rather than showing a negative remainder: the founder is
+ * never refused, so a crew genuinely can end up past its allowance and a
+ * surface that clamped it would be lying about who spent what.
+ */
+export function codingSessionTurnBudgetUsage(budget: {
+  used: number;
+  limit: number;
+}): string {
+  const remaining = budget.limit - budget.used;
+  if (remaining > 0) {
+    return `${budget.used} of ${budget.limit} turns used (${remaining} left)`;
+  }
+  if (remaining === 0) {
+    return `${budget.used} of ${budget.limit} turns used (none left)`;
+  }
+  return `${budget.used} of ${budget.limit} turns used (${-remaining} over)`;
 }

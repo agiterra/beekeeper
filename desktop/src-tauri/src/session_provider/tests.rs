@@ -161,6 +161,39 @@ fn relay_keys_are_normalized() {
     assert!(store.get("wss://relay.example").is_some());
 }
 
+/// The three session settings round-trip through the record file, and an
+/// unset one stays absent rather than being written as a null.
+///
+/// Absence is load-bearing: `None` means "the provider's own default", and a
+/// stored `0` means "no limit". A serializer that wrote `null` for the first
+/// would make the two indistinguishable to anything reading the file by hand,
+/// and a change to the provider's default would silently not apply.
+#[test]
+fn store_round_trips_the_session_settings_and_omits_unset_ones() {
+    let mut store = CodingSessionProviderStore::default();
+    store.upsert(RELAY, sample_record());
+    let json = serde_json::to_string(&store).expect("serialize");
+    for key in ["maxSessions", "turnIdleTimeoutSecs", "turnBudget"] {
+        assert!(!json.contains(key), "unset {key} must be absent: {json}");
+    }
+
+    store.max_sessions = Some(9);
+    store.turn_idle_timeout_secs = Some(3_600);
+    store.turn_budget = Some(50);
+    let json = serde_json::to_string_pretty(&store).expect("serialize");
+    assert!(json.contains("\"turnBudget\""), "{json}");
+    let parsed: CodingSessionProviderStore = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(parsed, store);
+    assert_eq!(parsed.turn_budget, Some(50));
+
+    // Zero is "no budget", a choice, and survives as one.
+    store.turn_budget = Some(0);
+    let parsed: CodingSessionProviderStore =
+        serde_json::from_str(&serde_json::to_string(&store).expect("serialize"))
+            .expect("deserialize");
+    assert_eq!(parsed.turn_budget, Some(0));
+}
+
 /// A config file written before this feature existed must still load, and must
 /// not resurrect as a different provider.
 #[test]
@@ -180,6 +213,11 @@ fn legacy_store_without_optional_fields_loads() {
     assert_eq!(record.auth_tag, None);
     assert!(record.private_key_nsec.is_empty());
     assert!(record.relay_url.is_empty());
+    // Including the settings added since: absent means "the provider's own
+    // default", never a locally invented number.
+    assert_eq!(store.max_sessions, None);
+    assert_eq!(store.turn_idle_timeout_secs, None);
+    assert_eq!(store.turn_budget, None);
 }
 
 // ── env assembly ─────────────────────────────────────────────────────────────
@@ -231,6 +269,7 @@ fn env_for(record: &CodingSessionProviderRecord) -> BTreeMap<String, String> {
         turn_idle_timeout_secs: None,
         rust_log: None,
         emit_raw_sdk_frames: false,
+        turn_budget: None,
     })
 }
 
@@ -316,6 +355,7 @@ fn env_omits_an_empty_runtime_list() {
         turn_idle_timeout_secs: None,
         rust_log: None,
         emit_raw_sdk_frames: false,
+        turn_budget: None,
     });
     assert!(!env.contains_key("BUZZ_CSP_RUNTIMES"));
     // Without an augmented PATH the child inherits the process PATH unchanged.
@@ -732,6 +772,7 @@ fn env_exports_the_session_ceiling_only_when_one_is_chosen() {
         turn_idle_timeout_secs: None,
         rust_log: None,
         emit_raw_sdk_frames: false,
+        turn_budget: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_MAX_SESSIONS"));
@@ -769,6 +810,7 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
         turn_idle_timeout_secs,
         rust_log: None,
         emit_raw_sdk_frames: false,
+        turn_budget: None,
     };
 
     assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_IDLE_TIMEOUT"));
@@ -777,5 +819,39 @@ fn env_exports_the_turn_idle_timeout_only_when_one_is_chosen() {
             .get("BUZZ_CSP_IDLE_TIMEOUT")
             .map(String::as_str),
         Some("3600")
+    );
+}
+
+/// And the same contract again for the crew turn budget (D9). Zero is the
+/// spelling of "no budget" and is a choice, so it is exported; unset is not.
+#[test]
+fn env_exports_the_crew_turn_budget_only_when_one_is_chosen() {
+    let record = sample_record();
+    let base = |turn_budget| ProviderEnvInputs {
+        record: &record,
+        relay_url: RELAY,
+        state_dir: Path::new("/tmp/session-provider/aaaa"),
+        agent_command: None,
+        context_mcp_command: None,
+        claude_code_executable: None,
+        runtimes: Vec::new(),
+        augmented_path: None,
+        max_sessions: None,
+        turn_idle_timeout_secs: None,
+        turn_budget,
+    };
+
+    assert!(!build_provider_env(&base(None)).contains_key("BUZZ_CSP_TURN_BUDGET"));
+    assert_eq!(
+        build_provider_env(&base(Some(50)))
+            .get("BUZZ_CSP_TURN_BUDGET")
+            .map(String::as_str),
+        Some("50")
+    );
+    assert_eq!(
+        build_provider_env(&base(Some(0)))
+            .get("BUZZ_CSP_TURN_BUDGET")
+            .map(String::as_str),
+        Some("0")
     );
 }

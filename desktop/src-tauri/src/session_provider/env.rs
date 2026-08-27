@@ -75,6 +75,9 @@ pub(crate) struct ProviderEnvInputs<'a> {
     /// Whether to ask the adapter for raw SDK frames. See
     /// [`EMIT_RAW_SDK_FRAMES_VAR`].
     pub emit_raw_sdk_frames: bool,
+    /// Turns one crew session may start; `None` keeps the provider default
+    /// (200), `Some(0)` removes the budget.
+    pub turn_budget: Option<u64>,
     /// Augmented `PATH` for the provider and every adapter it spawns. A
     /// Finder-launched desktop inherits the bare GUI `PATH` (no `node`), and
     /// the ACP adapters are npm shims with `#!/usr/bin/env node` shebangs —
@@ -120,6 +123,12 @@ pub(crate) fn build_provider_env(inputs: &ProviderEnvInputs<'_>) -> BTreeMap<Str
             "BUZZ_CSP_IDLE_TIMEOUT".to_string(),
             idle_timeout.to_string(),
         );
+    }
+    if let Some(turn_budget) = inputs.turn_budget {
+        // Same rule as the ceiling above: exported only when a person chose a
+        // number, because "unset" and "happens to equal the default" are
+        // different facts and the settings panel discloses which one is live.
+        env.insert("BUZZ_CSP_TURN_BUDGET".to_string(), turn_budget.to_string());
     }
     env.insert(
         "BUZZ_CSP_PROJECTS_FILE".to_string(),

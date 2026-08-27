@@ -715,6 +715,7 @@ function ReadyCodingSessionWorkspace({
                       providerLabel,
                       runtimeLabel,
                       status,
+                      turnBudget: session.turnBudget,
                     }}
                     contextWindow={contextWindow}
                     currentUserPubkey={currentUserPubkey}

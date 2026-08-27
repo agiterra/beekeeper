@@ -300,6 +300,14 @@ struct Snapshot {
     sessions: BTreeMap<String, SessionRecord>,
     #[serde(default)]
     catalog: CatalogState,
+    /// Turns started per umbrella (`sessionRef`), the durable half of the D9
+    /// budget. Keyed by umbrella rather than by session because the budget is
+    /// a bound on the *crew*: five seats sharing one `sessionRef` spend one
+    /// allowance between them, and a seat that is stopped and recreated does
+    /// not get a fresh one. Absent for every umbrella that has never started
+    /// a turn, which reads as zero.
+    #[serde(default)]
+    turn_budget_used: BTreeMap<String, u64>,
 }
 
 impl Default for Snapshot {
@@ -309,6 +317,7 @@ impl Default for Snapshot {
             watermarks: BTreeMap::new(),
             sessions: BTreeMap::new(),
             catalog: CatalogState::default(),
+            turn_budget_used: BTreeMap::new(),
         }
     }
 }
@@ -448,6 +457,40 @@ impl StateStore {
     /// Every session record this provider has ever minted and not pruned.
     pub fn sessions(&self) -> impl Iterator<Item = &SessionRecord> {
         self.snapshot.sessions.values()
+    }
+
+    /// Turns this provider has started under one umbrella, ever.
+    ///
+    /// Zero for an umbrella it has never run a turn for. This is deliberately
+    /// a count of turns that *began*, not of commands accepted: a turn that
+    /// was queued and lost to a crash cost the crew nothing and must not
+    /// spend its budget.
+    pub fn turns_used(&self, session_ref: &str) -> u64 {
+        self.snapshot
+            .turn_budget_used
+            .get(session_ref)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Charge one started turn to an umbrella and persist before returning.
+    ///
+    /// Returns the new total. Persisted first for the same reason the sequence
+    /// counters are: a crash may burn a count it never published, which is
+    /// harmless, while a count that is published and then forgotten would hand
+    /// a restarted crew a budget it had already spent. Saturating because a
+    /// wrapped counter would silently refill the allowance.
+    pub fn record_turn_spend(&mut self, session_ref: &str) -> io::Result<u64> {
+        let previous = self.snapshot.clone();
+        let entry = self
+            .snapshot
+            .turn_budget_used
+            .entry(session_ref.to_owned())
+            .or_insert(0);
+        *entry = entry.saturating_add(1);
+        let used = *entry;
+        self.persist_or_restore(previous)?;
+        Ok(used)
     }
 
     /// Number of sessions still accepting turns.
@@ -930,6 +973,35 @@ mod tests {
         store.insert_session(closed).expect("insert");
         assert_eq!(store.live_session_count(), 1);
         assert_eq!(store.sessions().count(), 2);
+    }
+
+    /// D9's counter is durable state, not a process-lifetime tally: a crew
+    /// that spent its allowance and then watched the provider restart must not
+    /// come back with a full one. Reopening the same directory is the only
+    /// honest test of that — a getter on the in-memory snapshot would pass
+    /// even if nothing were ever written.
+    #[test]
+    fn umbrella_turn_spend_survives_reopening_the_state_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let mut store = StateStore::open(dir.path(), 3600).expect("open");
+            assert_eq!(store.turns_used("umbrella-1"), 0);
+            assert_eq!(store.record_turn_spend("umbrella-1").expect("spend"), 1);
+            assert_eq!(store.record_turn_spend("umbrella-1").expect("spend"), 2);
+            assert_eq!(store.record_turn_spend("umbrella-2").expect("spend"), 1);
+        }
+        let reopened = StateStore::open(dir.path(), 3600).expect("reopen");
+        assert_eq!(reopened.turns_used("umbrella-1"), 2);
+        assert_eq!(
+            reopened.turns_used("umbrella-2"),
+            1,
+            "each umbrella spends its own allowance"
+        );
+        assert_eq!(
+            reopened.turns_used("umbrella-never-run"),
+            0,
+            "an umbrella with no recorded turns reads as zero, not as missing"
+        );
     }
 
     #[test]

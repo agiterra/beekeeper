@@ -70,6 +70,18 @@ pub const DEFAULT_MAX_TURN_DURATION_SECS: u64 = 7200;
 /// `0` disables the watch, leaving the idle timer as the only backstop.
 /// Override with `BUZZ_CSP_ANSWER_STALL_TIMEOUT`.
 pub const DEFAULT_ANSWER_STALL_TIMEOUT_SECS: u64 = 120;
+/// Default ceiling on turns started under one umbrella (crew plan D9).
+///
+/// Two hundred is a floor under an unattended crew, not a target: a seat that
+/// has taken two hundred turns on one umbrella is either finishing something
+/// large or looping, and the founder is the one who should say which. Founder
+/// turns are never counted against the sender, so the number only ever bounds
+/// delegated work. Override with `BUZZ_CSP_TURN_BUDGET`.
+pub const DEFAULT_TURN_BUDGET: u64 = 200;
+/// `BUZZ_CSP_TURN_BUDGET` value meaning "no budget", spelled like
+/// [`UNLIMITED_MAX_SESSIONS`]: zero is how a person says unlimited here too,
+/// and it suppresses both the refusal and the published `turnBudget` key.
+pub const UNLIMITED_TURN_BUDGET: u64 = 0;
 /// Default age past which an unseen command is treated as history, not intent.
 pub const DEFAULT_COMMAND_HORIZON_SECS: u64 = 86_400;
 /// Number of hex characters of the provider pubkey used as the default instance id.
@@ -134,6 +146,10 @@ pub struct Config {
     pub answer_stall_timeout: Option<Duration>,
     /// Per-turn wall-clock ceiling passed to `session/prompt`.
     pub max_turn_duration: Duration,
+    /// Ceiling on turns started under one umbrella (`sessionRef`), or
+    /// [`UNLIMITED_TURN_BUDGET`] for no ceiling. Enforced only against turns
+    /// signed by someone other than the session's founder (D9).
+    pub turn_budget: u64,
     /// Whether `agent_thought_chunk` updates become `reasoning` transcript items.
     pub include_thoughts: bool,
     /// Ask the adapter to forward raw SDK messages to the local log.
@@ -246,6 +262,8 @@ impl Config {
             "BUZZ_CSP_COMMAND_HORIZON_SECS",
             DEFAULT_COMMAND_HORIZON_SECS,
         )?;
+        // 0 is unlimited here for the same reason as `BUZZ_CSP_MAX_SESSIONS`.
+        let turn_budget = parse_u64(&lookup, "BUZZ_CSP_TURN_BUDGET", DEFAULT_TURN_BUDGET)?;
         let include_thoughts = parse_bool(&lookup, "BUZZ_CSP_INCLUDE_THOUGHTS", true)?;
         let emit_raw_sdk_frames = parse_bool(&lookup, "BUZZ_CSP_EMIT_RAW_SDK_FRAMES", false)?;
         let redaction_retention = crate::redaction_vault::RetentionPolicy::from_setting(
@@ -267,6 +285,7 @@ impl Config {
             idle_timeout,
             max_turn_duration,
             answer_stall_timeout,
+            turn_budget,
             include_thoughts,
             emit_raw_sdk_frames,
             redaction_retention,
@@ -393,6 +412,20 @@ fn parse_usize(
     name: &'static str,
     default: usize,
 ) -> Result<usize, ConfigError> {
+    match non_empty(lookup, name) {
+        None => Ok(default),
+        Some(value) => value.parse().map_err(|_| ConfigError::Invalid {
+            name,
+            reason: format!("expected a non-negative integer, got {value:?}"),
+        }),
+    }
+}
+
+fn parse_u64(
+    lookup: &impl Fn(&'static str) -> Option<String>,
+    name: &'static str,
+    default: u64,
+) -> Result<u64, ConfigError> {
     match non_empty(lookup, name) {
         None => Ok(default),
         Some(value) => value.parse().map_err(|_| ConfigError::Invalid {
@@ -773,5 +806,37 @@ mod tests {
         let mut vars = minimal();
         vars.insert("BUZZ_CSP_MAX_SESSIONS", "lots".into());
         assert!(matches!(load(&vars), Err(ConfigError::Invalid { .. })));
+    }
+
+    /// The umbrella turn budget reads like its siblings: a default nobody has
+    /// to set, zero for unlimited, and a hard error for anything unreadable —
+    /// a host that mistyped its crew ceiling must not silently run unbounded.
+    #[test]
+    fn the_umbrella_turn_budget_defaults_and_accepts_zero_as_unlimited() {
+        assert_eq!(
+            load(&minimal()).expect("default").turn_budget,
+            DEFAULT_TURN_BUDGET
+        );
+
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_TURN_BUDGET", "0".into());
+        assert_eq!(
+            load(&vars).expect("zero is a valid budget").turn_budget,
+            UNLIMITED_TURN_BUDGET
+        );
+
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_TURN_BUDGET", "25".into());
+        assert_eq!(load(&vars).expect("explicit budget").turn_budget, 25);
+
+        let mut vars = minimal();
+        vars.insert("BUZZ_CSP_TURN_BUDGET", "plenty".into());
+        assert!(matches!(
+            load(&vars),
+            Err(ConfigError::Invalid {
+                name: "BUZZ_CSP_TURN_BUDGET",
+                ..
+            })
+        ));
     }
 }
