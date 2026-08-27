@@ -66,6 +66,9 @@ pre-push:
     rust-tests:
       glob: ["crates/**", "migrations/**", "schema/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml", "scripts/run-tests.sh", "justfile"]
       run: just test-unit
+    web-test:
+      glob: ["web/**", "pnpm-lock.yaml"]
+      run: just web-test
     desktop-check:
       glob: ["desktop/**", "pnpm-lock.yaml"]
       exclude: ["desktop/src-tauri/**"]

@@ -1983,9 +1983,7 @@ written and `bash -n` clean but **was not executed** — that harness needs
     per-crate `--lib` counts, and one seated create watched on the dev
     instance.
     **Lead gate 2026-08-26 23:05 on 298a69f6 green:** lib 3439 passed, 0 failed; clippy
-    clean; desktop 6285/0; Tauri 2701 passed, 0 failed; px clean; `just test` 2150 passed, 0 failed. (This
-    item is 65 on this branch; the web branch also uses 65 — renumber at
-    landing.)
+    clean; desktop 6285/0; Tauri 2701 passed, 0 failed; px clean; `just test` 2150 passed, 0 failed.
 
 66. **Agents talk (Slice 4), built and gated green on
     `crew/s2-s6`@`cbbdf7e2`.** `bee sessions send/create/inbox/status` exist,
@@ -2124,6 +2122,23 @@ written and `bash -n` clean but **was not executed** — that harness needs
     Round 2 (2026-08-26): the four fix-now items landed (page re-read whole,
     six turn statuses, create/resume-only generations, per-bound metadata
     tests); `just web-test` gates 151 green tests in `check`, `ci`, and CI.
+
+71. **A push to the relay fails with HTTP 401 after long pre-push hooks.**
+    Reproduced 2026-08-26 22:40 on `crew/web-observer`: every hook green
+    (rust-tests 381 s, desktop-tauri-checks 857 s), then `RPC failed; HTTP
+    401` on the upload; `git ls-remote origin` succeeded immediately after.
+    Git mints the NIP-98 credential (`git-credential-nostr`) during ref
+    discovery, *before* the pre-push hooks run, so a hook window longer than
+    the relay's NIP-98 timestamp tolerance leaves an expired `Authorization`
+    on the send-pack POST. The same signature killed the 21:45 pause push
+    (≈10 min of hooks, then 401). Any branch whose diff pulls in the Rust or
+    Tauri globs will hit it. Fix options: have the credential helper mint per
+    request (git asks again on a 401 only if the helper is configured with
+    `useHttpPath` and the previous credential is rejected — verify), widen
+    the relay's NIP-98 window for `/git` pushes, or run the gate before
+    `git push` and push with hooks already satisfied. Until then a 401 after
+    green hooks is retried once with `--no-verify` on the identical SHA —
+    never on a SHA the hooks did not see.
 
 ## 2a. Direction settled 2026-08-18
 
