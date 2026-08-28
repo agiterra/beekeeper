@@ -21,7 +21,11 @@ import { useCodingSessionOperatorProfiles } from "@/features/coding-sessions/hoo
 import { useCodingSessionRoster } from "@/features/coding-sessions/lib/codingSessionRoster";
 import { deriveCodingSessionTaskModel } from "@/features/coding-sessions/lib/codingSessionTaskModel";
 import { deriveCodingSessionContextWindow } from "@/features/coding-sessions/lib/codingSessionContextWindow";
-import { formatCodingSessionRuntimeLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import {
+  formatCodingSessionExecutionLabel,
+  formatCodingSessionRuntimeLabel,
+} from "@/features/coding-sessions/lib/codingSessionLabels";
+import { useCodingSessionActorNameResolver } from "@/features/coding-sessions/lib/useCodingSessionActorNames";
 import { useCodingSessionCatalog } from "@/features/coding-sessions/useCodingSessionCatalog";
 import {
   codingSessionGoalKey,
@@ -395,6 +399,7 @@ function ReadyCodingSessionWorkspace({
   umbrella: CodingSessionUmbrellaRecord;
 }) {
   const gutter = useCodingSessionColumnGutter();
+  const resolveActorName = useCodingSessionActorNameResolver(umbrella);
   const workspaceRef = React.useRef<HTMLElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -411,6 +416,19 @@ function ReadyCodingSessionWorkspace({
         : null,
     [session.provider],
   );
+  // A seated execution wears its seat in the header. Half a seat is not a
+  // seat: `formatCodingSessionExecutionLabel` refuses an actor with no role,
+  // and an unresolved name falls back to the role rather than a truncated key.
+  const seatLabel = React.useMemo(() => {
+    if (!session.agentRef || !session.role) return null;
+    return formatCodingSessionExecutionLabel({
+      agentRef: session.agentRef,
+      role: session.role,
+      agentDisplayName: resolveActorName(session.agentRef),
+      runtime: null,
+      model: null,
+    }).primary;
+  }, [resolveActorName, session.agentRef, session.role]);
   const composerAuthority = resolveCodingSessionUmbrellaComposerAuthority({
     umbrella: { founderPubkey, genesisRef },
     currentUserPubkey,
@@ -553,6 +571,7 @@ function ReadyCodingSessionWorkspace({
           channelName={channelName}
           compact={isNarrow}
           generationLabel={session.label}
+          seat={seatLabel ? { label: seatLabel } : null}
           isExporting={isExporting}
           model={session.model}
           onAddProvider={onAddProvider}

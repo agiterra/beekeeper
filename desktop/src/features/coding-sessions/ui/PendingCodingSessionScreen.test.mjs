@@ -144,3 +144,58 @@ test("an unconfirmed publish says so, keeps retry enabled, and shows Status unkn
   // The `disabled` *attribute*, not Tailwind's `disabled:` variant classes.
   assert.doesNotMatch(retry[0], /\sdisabled=""/);
 });
+
+/**
+ * A seated create must never read like a human one. The pending screen is the
+ * first place a person sees the seat that was actually signed — including,
+ * when custody could not stage a role pack, that the agent will run on its
+ * persona prompt alone.
+ */
+test("the pending screen names the seat the create actually carries", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: { actorLabel: "Ada", role: "builder", packStaged: true },
+  });
+  assert.match(markup, /data-testid="pending-coding-session-seat"/);
+  assert.match(markup, /Seated: Ada · Builder/);
+  assert.doesNotMatch(markup, /no role skills/);
+  // The same label rides the header, so a seated execution reads the same way
+  // in the pending screen as it does in the workspace it becomes.
+  assert.match(markup, /data-testid="coding-session-header-seat"/);
+});
+
+test("a seat staged without its pack says so, on the screen it was created from", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: { actorLabel: "Ada", role: "builder", packStaged: false },
+  });
+  assert.match(
+    markup,
+    /Seated: Ada · Builder — seated with no role skills: this computer has no role pack behind this persona\./,
+  );
+});
+
+test("a staging outcome nobody observed is not reported as a missing pack", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: { actorLabel: "Ada", role: "builder", packStaged: null },
+  });
+  assert.match(markup, /Seated: Ada · Builder/);
+  assert.doesNotMatch(markup, /no role skills/);
+});
+
+test("an unresolved agent name falls back to the role rather than inventing one", () => {
+  const markup = render({
+    transaction: makeTransaction({ actor: "d".repeat(64), role: "builder" }),
+    seat: { actorLabel: null, role: "builder", packStaged: null },
+  });
+  assert.match(markup, /Seated: Builder/);
+  assert.doesNotMatch(markup, /dddddddd/);
+});
+
+test("an unseated create renders exactly as it did before", () => {
+  const markup = render();
+  assert.doesNotMatch(markup, /data-testid="pending-coding-session-seat"/);
+  assert.doesNotMatch(markup, /data-testid="coding-session-header-seat"/);
+  assert.doesNotMatch(markup, /Seated:/);
+});

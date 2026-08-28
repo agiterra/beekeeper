@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Bot,
   Download,
   ExternalLink,
   GitCompare,
@@ -79,6 +80,14 @@ type CodingSessionHeaderProps = {
   providerAuthorityPubkey?: string | null;
   repoName?: string | null;
   runtimeLabel?: string | null;
+  /**
+   * The agent seat this execution runs as, or null for a human-created one.
+   *
+   * Labelled by `formatCodingSessionExecutionLabel` so a seated execution
+   * reads the same way here, on the pending screen, and on its execution card
+   * — an agent's work must never present itself as a person's.
+   */
+  seat?: { label: string } | null;
   sessionTitle?: string | null;
   sessionClosed?: boolean;
   status: CodingSessionWorkspaceStatus;
@@ -116,6 +125,7 @@ export function CodingSessionHeader({
   providerAuthorityPubkey = null,
   repoName = null,
   runtimeLabel = null,
+  seat = null,
   sessionTitle = null,
   sessionClosed = false,
   status,
@@ -167,6 +177,17 @@ export function CodingSessionHeader({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1">
           <h1 className="truncate text-sm font-semibold">{title}</h1>
+          {seat ? (
+            <Badge
+              className="shrink-0 gap-1.5"
+              data-testid="coding-session-header-seat"
+              title={`Seated: ${seat.label}`}
+              variant="outline"
+            >
+              <Bot aria-hidden className="size-3" />
+              {seat.label}
+            </Badge>
+          ) : null}
           {onRename ? (
             <Button
               aria-label="Rename session"

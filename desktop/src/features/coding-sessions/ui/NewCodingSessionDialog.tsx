@@ -205,6 +205,8 @@ export function NewCodingSessionForm({
     providerModelsByInstanceRef,
     publishError,
     retryExact,
+    seat: signedSeat,
+    seatPackStaged,
     stalled,
     startFresh,
     submit,
@@ -463,6 +465,20 @@ export function NewCodingSessionForm({
           onEditRequest={() => setEditRequested(true)}
           projectName={projectContext?.projectName ?? null}
           publishError={publishError ?? durabilityError}
+          // Named from the *signed* create, not the form: a transaction
+          // rehydrated after a restart has no form state left to read.
+          seat={
+            signedSeat
+              ? {
+                  actorLabel:
+                    managedAgents.find(
+                      (agent) => agent.pubkey === signedSeat.actor,
+                    )?.name ?? null,
+                  role: signedSeat.role,
+                  packStaged: seatPackStaged,
+                }
+              : null
+          }
           retryExact={retryExact}
           stalled={stalled}
           startFresh={handleStartFresh}

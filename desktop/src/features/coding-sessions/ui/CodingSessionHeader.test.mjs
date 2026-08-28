@@ -291,3 +291,32 @@ test("header separates reasoning effort from the adapter's raw model id", () => 
   assert.match(markup, /gpt-5\.6-terra · Low/);
   assert.doesNotMatch(markup, /gpt-5\.6-terra\[low\]/);
 });
+
+test("a seated session wears its seat beside the title, and an unseated one does not", () => {
+  const baseProps = {
+    channelName: "Hive Sessions",
+    generationLabel: "generation 2",
+    onBack() {},
+    sessionTitle: "Keystone Session",
+    status: { kind: "idle", label: "Idle" },
+  };
+
+  const seated = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, {
+      ...baseProps,
+      seat: { label: "Ada · Builder" },
+    }),
+  );
+  assert.match(seated, /data-testid="coding-session-header-seat"/);
+  assert.match(seated, /Ada · Builder/);
+
+  const unseated = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, baseProps),
+  );
+  assert.doesNotMatch(unseated, /data-testid="coding-session-header-seat"/);
+
+  const explicitlyUnseated = renderToStaticMarkup(
+    React.createElement(CodingSessionHeader, { ...baseProps, seat: null }),
+  );
+  assert.equal(explicitlyUnseated, unseated);
+});

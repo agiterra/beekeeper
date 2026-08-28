@@ -3,6 +3,7 @@ import { CircleAlert, FolderCog, LoaderCircle } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
 
+import { formatCodingSessionExecutionLabel } from "../lib/codingSessionLabels";
 import type { DurableCodingSessionCreateTransaction } from "../lib/durableCodingSessionCreate";
 import {
   canRetryNewCodingSessionCreate,
@@ -44,6 +45,7 @@ export function PendingCodingSessionScreen({
   failedRuntime,
   channelName,
   projectName = null,
+  seat = null,
   onBack,
   retryExact,
   startFresh,
@@ -62,6 +64,19 @@ export function PendingCodingSessionScreen({
   failedRuntime: { runtime: string; label?: string } | null;
   channelName: string | null;
   projectName?: string | null;
+  /**
+   * The agent seat this create carries, or null when a person runs it.
+   *
+   * `packStaged` is three-valued on purpose: `false` is the disclosure that
+   * this computer staged the seat with no role pack behind it, and `null`
+   * means nothing observed the staging (a create rehydrated after a restart).
+   * Unknown is never reported as "no".
+   */
+  seat?: {
+    actorLabel: string | null;
+    role: string;
+    packStaged: boolean | null;
+  } | null;
   onBack: () => void;
   retryExact: () => void;
   startFresh: () => void;
@@ -82,6 +97,15 @@ export function PendingCodingSessionScreen({
     stalled,
     publishState: transaction.publishState,
   });
+  const seatLabel = seat
+    ? formatCodingSessionExecutionLabel({
+        agentRef: transaction.input.actor ?? seat.actorLabel ?? seat.role,
+        role: seat.role,
+        agentDisplayName: seat.actorLabel,
+        runtime: null,
+        model: null,
+      }).primary
+    : null;
   const headerStatus = pendingCodingSessionWorkspaceStatus({
     lifecycleState: lifecycle?.state ?? null,
     publishError,
@@ -99,6 +123,7 @@ export function PendingCodingSessionScreen({
         generationLabel="pending"
         onBack={onBack}
         projectName={projectName}
+        seat={seatLabel ? { label: seatLabel } : null}
         sessionTitle={transaction.input.title}
         status={headerStatus}
       />
@@ -147,6 +172,18 @@ export function PendingCodingSessionScreen({
                 <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none" />
               )}
               {status.message}
+            </p>
+          ) : null}
+
+          {seat && seatLabel ? (
+            <p
+              className="text-sm text-muted-foreground"
+              data-testid="pending-coding-session-seat"
+            >
+              {seat.packStaged === false
+                ? `Seated: ${seatLabel} — seated with no role skills: this ` +
+                  `computer has no role pack behind this persona.`
+                : `Seated: ${seatLabel}`}
             </p>
           ) : null}
 
