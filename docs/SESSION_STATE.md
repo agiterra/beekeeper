@@ -2173,6 +2173,55 @@ written and `bash -n` clean but **was not executed** — that harness needs
     each frame exactly once into a bounded channel, so `recv_validated` is
     cancel-safe at every await. Test un-ignored; `--lib` 961/0/53, three runs.
 
+74. **Every observer refused a seated create as malformed.** Found 2026-08-27
+    20:0x by Brian: on the first seated session (`comssv2`, actor `ede63017…`,
+    role `lead`) "Add a provider to this session" stayed gated with *"This
+    session's founding record hasn't been resolved yet … wait a moment"* —
+    forever. The genesis (44226), the seated 44221 and its `created` 44224
+    were all on the wire; the desktop's founder/genesis observer
+    (`codingSessionCreateObservations.ts`) enforced the pre-S3 exact key set
+    on the create action, so any create carrying `actor`/`role` classified
+    *malformed*, produced no observation, and the umbrella read
+    `genesisResolution: "unresolved"`. The same key set lived in three more
+    parsers: the desktop coordination strict-json fold (pulse/progress), the
+    web observer's `lifecycleCommand.ts`, and mobile's
+    `coding_session_session_decoders.dart` — so seated sessions were also
+    invisible to the pulse and to both observers. **Fixed
+    (`fix/seated-session-followups@cbfe2bde`):** all four accept the seat
+    pair under buzz-core's rule (both or neither; actor lowercase 64-hex;
+    role `[a-z0-9-]{1,64}`) and still refuse half a seat or a bad slug;
+    red-before-green on each (desktop 26/26, web 25/25, mobile 35/35).
+    Hot-applied to the live dev checkout as `48610354`. Lesson: S3 added a
+    wire field to the *builder* and the relay; the ledger should have
+    listed every exact-key reader of 44221 as a lane.
+
+75. **A seated execution was briefed with its role's name and nothing else.**
+    Same evening, same sessions: `roletest` and `comssv2` both answered
+    "what is your role?" with "seated as lead" and a generic Claude Code
+    self-description. Two causes. (a) Fizz is a builtin persona; the desktop
+    builds every managed-agent record with `persona_team_dir: None` and every
+    team with `crew: None` (S5 ledger, still true), so `resolve_seat_pack`
+    found no pack and the seat ran nameless; linking the record by hand to
+    `personas/roles/lead` (persona `lead`) made the pack materialize
+    (`comssv2/.agents/skills/{write-brief,triage-report}` on disk). (b) Even
+    with a pack, `session_briefing` (`session.rs`) appended only
+    `actor_seat_briefing` (pubkey/role/relay); the persona body was resolved
+    solely for `materialize_seat_skills` and never sent. **Fixed for (b)
+    (`fix/seated-session-followups`):** `materialize_seat_skills` returns a
+    `SeatRoleBriefing` (display name, persona body, skill names) and the
+    briefing carries it — pack named, body verbatim, skills listed under
+    `.agents/skills/`; a seat without a pack still gets only its role's name.
+    Pinned by `a_seated_session_is_briefed_with_its_role_pack_prompt_and_skills`
+    (reads the recorded `session/new` systemPrompt) and
+    `a_seat_without_a_pack_gets_no_role_paragraph`; provider lib green.
+    **Open for (a):** no UI path installs a role-pack agent or a crew block;
+    the one-session seat field accepts an agent with no pack silently (the
+    Crew tab says "seated with no role skills", the one-session path says
+    nothing) — next item. Also open: the **Add-provider dialog has no
+    agent-seat field**, so an agent cannot be brought into an existing
+    session from the UI; today seats only exist at founding or via a crew
+    launch. That is the crew conversation's front door and should be next.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
