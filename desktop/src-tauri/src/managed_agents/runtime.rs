@@ -14,6 +14,13 @@ use crate::{
     util::now_iso,
 };
 
+mod workspace_pair;
+pub(crate) use workspace_pair::workspace_pair_key;
+// The pure core is referenced only from the unit tests; re-exporting it
+// unconditionally would be an unused import in a release build.
+#[cfg(test)]
+pub(crate) use workspace_pair::resolve_workspace_pair_key;
+
 mod path;
 pub(in crate::managed_agents) use path::build_augmented_path;
 pub(crate) use path::{compose_path_entries, should_skip_claude_executable, should_use_inherited};
@@ -95,37 +102,6 @@ fn persona_drift_state(
         .as_deref()
         .is_some_and(|pinned| pinned != current);
     (out_of_date, false)
-}
-
-/// Resolve the runtime-pair key this record maps to for the active
-/// workspace: always the active workspace relay (the legacy per-record relay
-/// pin is ignored — see `effective_agent_relay_url`). Returns `None` for
-/// records that cannot form a valid pair key yet (e.g. key-less agents that
-/// mint keys on first start).
-pub(crate) fn workspace_pair_key(
-    app: &AppHandle,
-    record: &ManagedAgentRecord,
-) -> Option<ManagedAgentRuntimeKey> {
-    use tauri::Manager;
-    let state = app.state::<crate::app_state::AppState>();
-    resolve_workspace_pair_key(
-        &record.pubkey,
-        &record.relay_url,
-        &crate::relay::relay_ws_url_with_override(&state),
-    )
-}
-
-/// Pure core of [`workspace_pair_key`]: workspace-relay resolution (legacy
-/// record pins ignored) plus canonical key construction, kept `AppHandle`-free
-/// so summary/stop scoping semantics are unit-testable.
-pub(crate) fn resolve_workspace_pair_key(
-    pubkey: &str,
-    record_relay_url: &str,
-    workspace_relay_url: &str,
-) -> Option<ManagedAgentRuntimeKey> {
-    let effective_relay =
-        crate::relay::effective_agent_relay_url(record_relay_url, workspace_relay_url);
-    ManagedAgentRuntimeKey::new(pubkey.to_string(), &effective_relay).ok()
 }
 
 pub fn build_managed_agent_summary(

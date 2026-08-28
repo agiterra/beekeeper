@@ -48,52 +48,6 @@ pub(super) fn summarize_from_disk(
     )
 }
 
-/// Mint one agent identity: a fresh keypair, its bech32 secret, and the NIP-OA
-/// auth tag binding it to this workspace's owner.
-///
-/// The single key-minting path for a managed agent. `create_managed_agent` and
-/// the crew-role installer both call it, so an agent can never appear with a
-/// key the owner never attested — the divergence that produces an actor the
-/// provider cannot impersonate.
-///
-/// # Errors
-///
-/// Fails closed: a bad owner key, an un-encodable secret, or an auth tag that
-/// cannot be computed aborts before anything is written.
-pub(super) fn mint_agent_identity(
-    owner_keys: &nostr::Keys,
-) -> Result<
-    (
-        nostr::Keys,
-        crate::managed_agents::crew_roles::MintedCrewIdentity,
-    ),
-    String,
-> {
-    use nostr::ToBech32;
-
-    let agent_keys = nostr::Keys::generate();
-    let pubkey = agent_keys.public_key().to_hex();
-    let private_key_nsec = agent_keys
-        .secret_key()
-        .to_bech32()
-        .map_err(|error| format!("failed to encode private key: {error}"))?;
-    // Bridge nostr 0.37 → 0.36 (buzz-sdk) via hex round-trip.
-    let compat_owner = nostr::Keys::parse(&owner_keys.secret_key().to_secret_hex())
-        .map_err(|e| format!("failed to bridge owner keys: {e}"))?;
-    let compat_agent = nostr::PublicKey::from_hex(&pubkey)
-        .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
-    let auth_tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
-        .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?;
-    Ok((
-        agent_keys,
-        crate::managed_agents::crew_roles::MintedCrewIdentity {
-            pubkey,
-            private_key_nsec,
-            auth_tag: Some(auth_tag),
-        },
-    ))
-}
-
 /// Retain a freshly authored managed-agent event in the local store, flagged
 /// for relay sync. MUST be called inside the `managed_agents_store_lock`-held
 /// body after `save_managed_agents`, NEVER across an `.await`: it acquires
@@ -1305,6 +1259,7 @@ pub async fn delete_managed_agent(
 // No backend Tauri command needed. Presence IS the status.
 #[path = "agents_deploy.rs"]
 mod deploy;
+mod mint;
 pub(super) mod provider_access;
 mod provider_deploy;
 pub(super) use deploy::build_deploy_payload;
@@ -1312,6 +1267,7 @@ pub(super) use deploy::build_deploy_payload;
 use deploy::{deploy_payload_json, DeployProjections};
 #[cfg(test)]
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
+pub(super) use mint::mint_agent_identity;
 
 #[path = "agents_profile.rs"]
 mod profile;
