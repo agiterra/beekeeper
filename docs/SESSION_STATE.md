@@ -3063,6 +3063,368 @@ written and `bash -n` clean but **was not executed** — that harness needs
     on the card not reaching the agent record are untouched — neither was in
     this brief.
 
+80. **Keystone's first mission from inside Beekeeper (2026-08-28 11:4x, session `AgentTeams`, channel c60447f0…) — what it found by doing.** Seated by hand via Add provider: Architect (codex), Builder (claude), Runner (codex) under Keystone (claude). Keystone briefed all four over the relay, measured, and reported with a Pulse ledger. Findings, its and mine:
+    (a) **Hired seats ran inside Brian's live checkout.** Add provider's working directory defaulted to `/Users/brian/Projects/beekeeper/beekeeper`; three seats (architect, builder, runner) got that cwd while the lead got a worktree. A seat must never run in the operator's hot checkout: Add provider seats default to a per-seat worktree (the one-session path already has the worktree field), and the provider refuses a seat whose cwd is the shared checkout the app runs from. I stopped the three seats (session.stop as founder) as soon as I saw it.
+    (b) **Packs materialized as a union** — consequence of (a): all seats sharing one cwd got every role's skills in one `.agents/skills`; per-seat cwd fixes it, and the materializer should refuse a cwd another seat already owns.
+    (c) **`bee sessions send --deliver steer` says accepted:true when the provider degrades steer to boundary** (Claude has no native steer): the sender is misinformed; the CLI must wait for and print the turn_degraded/turn_queued receipt (S2 exposes it).
+    (d) **Pulse went to a project Keystone minted for itself** (30621:ede63017…:beekeeper, private): the seat had no project coordinate, so `bee pulse update` had no target. The provider must pass the umbrella's projectRef as BUZZ_PULSE_PROJECT to seats; Brian cannot see those six entries. Where Pulse shows: Projects → Bee Keeper → Pulse.
+    (e) **The header says "Fizz · Lead" for Keystone**: the seat name comes from the identity's relay profile (kind 0 displayName) which still says Fizz; renaming an agent must republish its profile.
+    (f) **Context: a codex seat spends ~25% of its window at boot; the mandatory ledger read would take it to ~48%.** The lead pack tells seats to read SESSION_STATE.md whole; ship a digest (the beekeeper-project skill should carry the rules, not point at a 2,700-line file).
+    (g) Unseated roles (designer, poker, verifier) rejected client-side with no event — correct. Interrupt and readdress untested by Keystone, reasons on record.
+
+    **Fixed f6a8c78f, 3781e058, 8c83bec2:** three lanes on
+    `crew/front-door`, each lane's own report of what it delivered, where it
+    deviated, and what it did not do:
+
+    *Lane W — a hired seat gets its own tree, and the provider refuses
+    somebody else's (f6a8c78f)*
+
+    Delivered:
+
+    - Desktop join dialog: seating an agent now reveals the founding path's
+      worktree field (NewCodingSessionWorktreeField, reused unchanged),
+      checked by default, prefilled `<session-slug>-<role>` via new pure
+      `addCodingSessionProviderSeatWorktreeName` (composed through the
+      host's own codingSessionWorktreeSlug, so it is idempotent and the
+      field shows what the host would compute).
+
+    - Desktop: the worktree is created before the command is signed
+      (createCodingSessionWorktree), its path becomes the create's workdir,
+      and the checkout — not the worktree — is what the recent-folders list
+      learns; buildAddCodingSessionProviderSubmit gained `rememberWorkdir`
+      in and out. A failed worktree create renders at data-testid
+      add-coding-session-provider-worktree-error and publishes nothing.
+
+    - Desktop: the dialog says which directory the seat will run in — new
+      pure `addCodingSessionProviderSeatWorkdirNote` at data-testid
+      add-coding-session-provider-workdir-note: worktree on -> "Ada runs in
+      a new worktree made from <path> — its own directory and branch. It
+      does not share that checkout's index, HEAD, or role skills."; worktree
+      off -> "Ada runs directly in <path>, sharing its branch, uncommitted
+      changes, and role skills with anything else running there."
+
+    - Desktop: the plain (unseated) join is unchanged — no worktree UI, no
+      note, same submit bytes; asserted by test.
+
+    - Provider: new `session::seated_workdir_refusal(cwd, live,
+      shared_roots)` + `LiveWorkdirClaim` + code `SEAT_CWD_SHARED`. Refuses
+      a seated create whose cwd is a shared root (home/nest — now enforced
+      for every seated create, not only one carrying a pack) or is the cwd
+      of another live (not-closed) execution of the same umbrella; the
+      sentence names the other seat ("the lead seat of this same session is
+      already running there") and an unseated occupant reads "the person who
+      opened this session" — the lead's own tree counts.
+
+    - Provider: wired into Provider::create_session before any provisioning
+      (crates/buzz-session-provider/src/lib.rs, ahead of rehydration and the
+      custody read); the refusal calls forget_actor_seat, so the staged seat
+      key does not survive it, and emits a failed 44224 receipt.
+
+    - Red before green, all four: desktop model tests failed on missing
+      exports; dialog tests failed 'Unable to find
+      [data-testid="coding-session-worktree-toggle"]'; provider unit tests
+      failed to compile on `seated_workdir_refusal`; lib test
+      a_seated_create_sharing_a_live_executions_tree_is_refused_by_name
+      failed `left: "created", right: "failed"` — the provider hired the
+      seat straight into the lead's checkout.
+
+    Deviations:
+
+    - SEAT_CWD_SHARED is defined in
+      crates/buzz-session-provider/src/session.rs, not beside the other
+      lifecycle codes in crates/buzz-core/src/coding_session_payload.rs —
+      that file is outside this lane's ownership. Consumers render the
+      message (no code-specific UI mapping exists for it today); moving the
+      const to buzz-core is a one-line follow-up if the CLI/desktop want to
+      branch on it.
+
+    - The create-path shared-root refusal reports SEAT_CWD_SHARED rather
+      than the older PROVIDER_UNAVAILABLE. The deeper materialize-time
+      refusal (materialize_seat_skills_outside) is untouched and still
+      returns PROVIDER_UNAVAILABLE as a backstop, so its existing test is
+      unchanged.
+
+    - "Live" is read as `!record.closed` — the crate's own definition in
+      SessionState::live_session_count — not "has a live actor handle in
+      SessionManager". A crashed-but-not-closed execution therefore still
+      holds its tree; that is the conservative direction.
+
+    - The worktree defaults ON only for a seated join. An unseated join
+      shows no worktree control at all (brief: keep today's behaviour),
+      rather than showing it unchecked.
+
+    Residuals:
+
+    - Not driven end-to-end: the provider refusal is proven at the create
+      path with seeded session records plus pure-function unit tests, and
+      the dialog is proven in jsdom. No two-real-seats live run, and no
+      relay-backed E2E.
+
+    - The join's createCodingSessionWorktree call is not exercised by a test
+      that goes through the Tauri bridge — outside Tauri the worktree
+      plan/branches effects no-op, so the jsdom tests cover the field, the
+      name, and the copy, not the actual worktree creation.
+      desktop/tests/e2e is outside this lane's ownership, so no e2e spec was
+      added.
+
+    - If a seated join is submitted with an empty working-directory field,
+      no worktree is made and the create carries `workdir: null`; the
+      provider then resolves its own cwd and the new SEAT_CWD_SHARED guard
+      is the only backstop. Worth a dialog-level block in a later pass.
+
+    - The provider guard sees only executions this provider knows about. Two
+      seats hired on two different provider hosts into one tree on a shared
+      filesystem are not covered.
+
+    - Item 80 (c)-(g) untouched: steer receipt honesty, BUZZ_PULSE_PROJECT,
+      the Fizz/Keystone profile name, and the ledger-digest context problem
+      are other lanes.
+
+    *Lane P — three honesty fixes (seat pulse project, real turn delivery,
+    agent profile republish) (3781e058)*
+
+    Delivered:
+
+    - (d) Seats get the umbrella's project: new
+      ActorSeat::post_fence_env_in_project (actor_seats.rs) appends
+      BUZZ_PULSE_PROJECT (new PULSE_PROJECT_ENV const) after the fence when
+      the execution names a projectRef; blank/whitespace coordinates are
+      treated as no project. Wired at both seat sites in lib.rs — create
+      uses plan.project_ref, resume uses record.project_ref. Test
+      a_seated_execution_targets_the_umbrellas_project asserts the variable
+      appears with a coordinate, is absent for None/""/"   ", and that the
+      pre-existing key/git list is unchanged and still first.
+
+    - (c) bee sessions send prints the provider's answer, not only the
+      relay's. Pure fold_delivery(requested, stage, waited) + DeliveryReport
+      in crew.rs maps
+      turn_queued/turn_degraded/turn_started/interrupt_delivered/turn_dropped/turn_refused
+      into delivered (true/false/null), deliveryStatus (the receipt's own
+      word or "unconfirmed") and delivery (one sentence). A degraded steer
+      reads exactly "steer requested, provider degraded to boundary".
+      crew_cmds.rs: publish_with split into submit_with + print; new
+      await_delivery polls kind 44224 for this commandId (since = publish
+      second − 1) every 500ms for DELIVERY_WAIT_SECONDS = 10, retrying read
+      errors rather than failing a write that landed. accepted keeps its old
+      meaning. New global --no-wait flag (lib.rs Send args, dispatched
+      through sessions.rs) skips the read and says so — "nobody answered"
+      and "nobody was asked" get different sentences. 4 tests, including the
+      degraded-steer red and
+      no_wait_says_it_did_not_look_rather_than_that_nobody_answered.
+
+    - (e) The team-roles installer republishes each installed identity's
+      kind:0 profile. New pure role_profile_publishes(previous_agents,
+      &CrewRoleInstall) -> Vec<CrewRoleProfilePublish> in
+      managed_agents/crew_roles.rs (carries pubkey, display_name,
+      previous_name; no key material, so it can never log one).
+      commands/crew_roles.rs plans the publishes inside the store lock
+      (avatar falls back to the effective harness default exactly as a
+      dialog rename does) and signs them outside it via the existing
+      sync_managed_agent_profile path. Failures are reported in a new
+      InstallCrewRolePacksResponse.profile_sync_error naming the identities
+      the relay still knows by their old name, never swallowed and never
+      fatal (the stores are already written). Test
+      renaming_the_lead_owes_a_profile_publish_with_the_new_name covers
+      Fizz→Keystone plus the unrenamed builder.
+
+    - Runbook updated: crates/buzz-cli/TESTING.md now shows the steer
+      example's four output fields and the --no-wait sentence.
+
+    Deviations:
+
+    - Touched crates/buzz-cli/src/commands/sessions.rs (2 lines) — not in
+      the owned list, but adding no_wait to the SessionsCmd::Send variant
+      makes the exhaustive destructure at :2295 a compile error otherwise.
+      Pure mechanical pass-through.
+
+    - Touched desktop/src-tauri/src/commands/crew_roles.rs (the installer
+      command) and desktop/src-tauri/src/managed_agents/crew_roles_tests.rs
+      (the test home for crew_roles.rs). The brief named commands/agents.rs
+      plus 'the profile-publishing module you find'; the publish belongs in
+      the installer command, and its test belongs beside the installer's
+      other tests.
+
+    - Did NOT touch desktop/src-tauri/src/commands/agents.rs. Renaming an
+      agent from the dialog ALREADY republishes its kind:0 —
+      desktop/src-tauri/src/commands/agent_models_update.rs:227-250 builds
+      the sync params on name_changed and :290-330 syncs, rolling the rename
+      back if the publish fails. The only gap for finding (e) was the
+      team-roles installer, so that is where the fix went.
+
+    - Touched crates/buzz-cli/TESTING.md to document the new send output; a
+      runbook that no longer describes what the command prints is its own
+      small untruth.
+
+    - The receipt wait applies to every --deliver class, not only
+      steer|interrupt (the brief's title scoped it to those two). A boundary
+      send now also reports turn_queued/turn_started rather than only
+      accepted:true; --no-wait restores the old behaviour. Typical added
+      latency is one 500ms poll.
+
+    - Added post_fence_env_in_project as a second method instead of changing
+      post_fence_env's signature, because
+      crates/buzz-session-provider/src/session.rs:2818 calls it and lane W
+      owns that file. post_fence_env is unchanged and still the
+      identity-only list.
+
+    Residuals:
+
+    - (d) does not yet reach a TEAM-launched seat.
+      desktop/src/features/coding-sessions/ui/useCodingSessionCrewLaunch.ts:143
+      publishes every seat's create with projectRef: null, so
+      plan.project_ref is None and no coordinate is exported. The
+      Add-provider/one-session seated path DOES carry it
+      (useNewCodingSessionCreate.ts:546), which is the path Keystone was
+      seated through, so the fix lands there. Threading
+      projectContext.projectRef into the team launch is a one-line TS change
+      in a file this lane does not own.
+
+    - The install dialog does not render the new profileSyncError — the
+      field is on the response and serialized as profileSyncError, but the
+      TS surface (desktop/src) is not owned by this lane, so a failed
+      republish is currently visible only to a caller that reads the
+      response.
+
+    - Ledger 80 (a) hired seats running in Brian's live checkout, (b) pack
+      union from the shared cwd, and (f) the lead pack's whole-ledger read
+      are untouched — not in this lane's brief.
+
+    - await_delivery re-reads the channel's receipts since the publish
+      second on each poll (up to 20 queries over 10s). Bounded by `since`,
+      but a channel with heavy receipt traffic in that window pays for it; a
+      per-commandId filter would need relay-side support.
+
+    *Lane D — role packs stop sending seats at the whole ledger; "Crew" →
+    "Team" in pack display names (8c83bec2)*
+
+    Delivered:
+
+    - beekeeper-project SKILL.md: the mandatory whole-ledger read is gone.
+      Old line 9 said docs/SESSION_STATE.md 'wins — read it first, every
+      session'; the new '## The ledger — read §3, and only the items your
+      brief cites' section names §3 Next plus the numbered §2 items the
+      brief cites, cites ledger item 80f for why (codex seat ~25% at boot,
+      whole file would take it to ~48%), and ships the commands to jump
+      straight there.
+
+    - The skill now carries the operator's rules itself, and every
+      restatement of AGENTS.md is a pointer instead: git basics → the
+      AGENTS.md header block, quality gates → § Quality Gates and § Text
+      sizing & zoom, working agreements → § Working agreements, event kinds
+      and h-tag scoping → § Key Patterns. What stays in full is exactly what
+      AGENTS.md does not say: push to origin only (bridge race), the item-71
+      HTTP-401-after-green-hooks retry rule, the hot main checkout (item
+      80a), wire kinds 44220–44230 and per-stage receipts, D11–D16, 'crew'
+      is 'team', 'approving on a report alone', 'absence is not a claim'.
+
+    - write-brief: new 'Ledger: §3 Next, plus items <numbers>' field in the
+      locked template, plus a rule section — a lead names the items a lane
+      needs; if it cannot, the brief is not ready to write, not a licence to
+      hand over the whole file.
+
+    - triage-report and lead.persona.md: the same scoping, so a lead reads
+      the ledger the way it makes its lanes read it, and every published
+      disposition cites the item number it settles.
+
+    - Display names renamed "Crew <Role>" → "Team <Role>" on architect,
+      builder, designer, poker, runner, verifier (lead was already "Team
+      Lead"), with keywords "crew" → "team". Plugin ids
+      (com.beekeeper.crew.*) unchanged. No description contained "crew".
+      Original inline-array JSON formatting preserved — each file is a
+      2-line diff.
+
+    - Line counts before → after: lead/skills/beekeeper-project 114 → 122;
+      lead/skills/write-brief 40 → 56; lead/skills/triage-report 56 → 58;
+      lead/personas/lead.persona 71 → 73; lead/skills/choose-model 53 → 53
+      (untouched); verifier persona 33 → 33; all six plugin.json 9 → 9.
+      Every other pack file unchanged. Max is 122, under the 150 ceiling.
+
+    - Net context economics: the whole lead pack is 18,723 bytes. §3 Next is
+      14,065 bytes; the full ledger is 262,337. The pack grew ~1.0 KB and
+      removed up to ~248 KB from a lead's mandatory read.
+
+    Deviations:
+
+    - The brief says "§3 Next (top of the ledger)". It is not at the top —
+      §3 starts at line 3102 of 3716 (grep -n '^## ' docs/SESSION_STATE.md).
+      I wrote the instruction accurately and gave the seat the commands to
+      jump there rather than scroll: grep -n '^## ' for section lines, sed
+      -n '/^## 3\. Next/,/^## 3a\./p' for the track (~195 lines), grep -n
+      '^79\. ' then a sed window for one item.
+
+    - Added a warning I found by testing my own instruction: ranging an item
+      to the next number (awk '/^79\. /,/^80\. /') returns 753 lines because
+      item 80 does not exist yet and the range runs to EOF — i.e. the naive
+      extraction hands back most of the file. The shipped commands use grep
+      -n + a bounded sed window instead.
+
+    - De-crewed prose beyond plugin.json: verifier.persona.md said "You are
+      the crew's refuter" and "A crew is only as honest as its cross-checks"
+      — both are read by a person/seat, so the operator's own rule applies.
+      Now "the team's refuter" / "A team is only as honest". The only
+      remaining "crew" in personas/roles/** is the rule stating the rule
+      (beekeeper-project:114) and the unchanged plugin ids.
+
+    - The brief scoped the ledger-read fix to "personas/roles/lead ... and
+      every other role pack that says so". No other pack says so — grep for
+      SESSION_STATE/docs/ across personas/roles found the instruction only
+      in lead/skills/beekeeper-project:9. So the lead pack was the whole
+      surface, and I added the scoping discipline to the three other lead
+      files the brief named.
+
+    - The tauri test needed sidecar stubs to compile (build.rs panics on
+      missing binaries/buzz-acp-aarch64-apple-darwin). Ran the repo's own
+      `just _ensure-sidecar-stubs`, which creates untracked, gitignored stub
+      files inside my worktree only. git status is clean apart from my owned
+      files.
+
+    Residuals:
+
+    - No automated test asserts the pack display names, so "Team Architect"
+      is unguarded: `pack validate` does not check it, and the crew_roles
+      scan keys off persona frontmatter `role:`, not plugin.json `name`. A
+      guard would live in
+      desktop/src-tauri/src/managed_agents/crew_roles*.rs, which I do not
+      own.
+
+    - I could not find any consumer of plugin.json `name` in the product:
+      grep for 'Crew Architect|Crew Builder|Crew Runner|Crew Verifier|Crew
+      Designer|Crew Poker' across .rs/.ts/.tsx/.json/.md returned only
+      docs/SESSION_STATE.md:2720 (the record of the earlier lead rename) and
+      card.rs:355 (an example string). So these display names may be inert
+      metadata today — the rename is correct either way, but nobody has
+      shown it rendering.
+
+    - The absolute numbers in the skill (~3,700 lines, §3 at ~3102) will
+      drift as the ledger grows. Mitigated by telling the seat to run `grep
+      -n '^## '` rather than trust the number, but the prose figure will
+      age.
+
+    - Not verified: whether an actual codex seat's boot+read percentage
+      improves, since that measurement (item 80f) came from a live Keystone
+      run I cannot reproduce here. The claim in the pack is attributed to
+      item 80f rather than asserted as my own measurement.
+
+    - Item 80 is still only in
+      /Users/brian/Projects/beekeeper/review-2026-08-28/ledger-80-draft.md,
+      not in docs/SESSION_STATE.md. The pack cites "ledger item 80f", which
+      is a forward reference until that draft lands.
+
+    Gate, run on the integration branch before landing (all green): (1)
+    `cargo test -p buzz-cli -p buzz-session-provider -p buzz-persona -p
+    buzz-core -p buzz-acp --lib` — 865+577+442+157+394 = 2,435 passed, 0
+    failed across 5 binaries; (2) `cargo clippy --workspace --all-targets --
+    -D warnings` clean, exit 0; (3) `cargo fmt --all -- --check` clean, exit
+    0; (4) desktop `pnpm typecheck && pnpm test` — tsc clean, 6,532 passed /
+    0 failed; (5) `cargo test --manifest-path desktop/src-tauri/Cargo.toml`
+    — 2,748 passed, 0 failed, 18 ignored (doc-tests, csp and rodio suites
+    also 0 failed); (6) `pnpm check:px-text` clean, exit 0; (7) `just
+    file-size-check` — 9/9 node subtests plus desktop/web/mobile size
+    scripts clean, exit 0; (8) `pack validate` x7 (lead, architect, builder,
+    runner, verifier, poker, designer) — all "Valid.", exit 0 each; (9)
+    desktop `pnpm build:e2e` + `playwright crew-front-door.spec.ts
+    --project=smoke` — build succeeded, 8 passed (18.0s), exit 0.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -3100,6 +3462,12 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Read §2 item 80 first (2026-08-28 afternoon).** Keystone's first mission
+from inside Beekeeper found seven things by doing; three lanes on
+`crew/front-door` fixed (a), (c), (d), (e) and (f), and item 80 names
+exactly what is still open — (b) the pack union, (g)'s untested
+interrupt/readdress, and the residuals each lane recorded.
 
 **Andy, read this first (2026-08-28 morning):** the crew front door (item 76)
 landed on `main` last night, together with the ledger entries for items 76 and
