@@ -2,19 +2,23 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  crewRoleNameFields,
+  crewRoleNamesMap,
+  crewRoleResultLine,
   crewRoleResultRows,
-  crewRolesLeadName,
   crewRolesDroppedNotes,
   crewRolesFailureMessage,
   crewRolesFoundNothing,
   crewRolesInstalledToast,
   crewRolesSeatedNote,
   crewRolesUnreadableFolder,
-  INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
-  INSTALL_CREW_ROLES_LEAD_NAME_HINT,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
   INSTALL_CREW_ROLES_REFRESH_NOTE,
+  INSTALL_CREW_ROLES_RENAMED_NOTE,
+  INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
+  INSTALL_CREW_ROLES_TEAM_NAMES_HINT,
+  INSTALL_CREW_ROLES_TEAM_NAMES_LABEL,
   INSTALL_CREW_ROLES_UNSEATED_NOTE,
 } from "./installCrewRolesCopy.ts";
 
@@ -26,6 +30,7 @@ const row = (role, overrides = {}) => ({
   agentName: role.charAt(0).toUpperCase() + role.slice(1),
   packDir: `/packs/${role}`,
   refreshed: false,
+  renamed: false,
   seated: !["poker", "designer"].includes(role),
   ...overrides,
 });
@@ -345,26 +350,231 @@ describe("install team roles — success toast", () => {
   });
 });
 
-// ── Naming the lead (plan D11) ───────────────────────────────────────────────
+// ── Naming your team (plan D11, ledger 84) ───────────────────────────────────
 //
-// A lead is an identity a person names once ("Keystone"), not a role label.
-// The installer named every identity after its role, so every lead on every
-// computer was "Lead".
+// The installer asked for one name — the lead's — so the designer identity a
+// person addresses as "Banksy" was `designer` on this computer and `designer`
+// on the relay. The dialog now asks a name per role pack the scan found.
 
-describe("install team roles — naming the lead", () => {
-  it("defaults to the lead pack's own name and trims what is typed", () => {
-    assert.equal(crewRolesLeadName(""), INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT);
-    assert.equal(
-      crewRolesLeadName("   "),
-      INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
+const choice = (role, overrides = {}) => ({
+  role,
+  personaName: role,
+  packDir: `/packs/${role}`,
+  defaultName: role,
+  installed: false,
+  ...overrides,
+});
+
+describe("install team roles — naming your team", () => {
+  it("renders one field per pack the scan found, in the scan's order", () => {
+    const fields = crewRoleNameFields([
+      choice("lead"),
+      choice("builder"),
+      choice("designer"),
+    ]);
+    assert.deepEqual(
+      fields.map((field) => field.role),
+      ["lead", "builder", "designer"],
     );
-    assert.equal(crewRolesLeadName("  Keystone "), "Keystone");
-    assert.equal(INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT, "Lead");
+    assert.deepEqual(
+      fields.map((field) => field.label),
+      ["Lead", "Builder", "Designer"],
+    );
   });
 
-  it("says the field is only about the lead", () => {
-    assert.match(INSTALL_CREW_ROLES_LEAD_NAME_HINT, /lead/i);
-    // The other roles are renamed where every other agent is renamed.
-    assert.match(INSTALL_CREW_ROLES_LEAD_NAME_HINT, /rename/i);
+  it("a field defaults to the name that identity already carries here", () => {
+    const fields = crewRoleNameFields([
+      choice("lead", { defaultName: "Keystone", installed: true }),
+      choice("designer"),
+    ]);
+    assert.equal(fields[0].defaultName, "Keystone");
+    assert.equal(fields[0].installed, true);
+    assert.equal(fields[1].defaultName, "designer");
+    assert.equal(fields[1].installed, false);
+  });
+
+  it("an empty scan renders no fields at all, rather than a lead field", () => {
+    assert.deepEqual(crewRoleNameFields([]), []);
+  });
+
+  it("submits a role→name map covering every field", () => {
+    const packs = [
+      choice("lead", { defaultName: "Keystone", installed: true }),
+      choice("designer"),
+      choice("builder"),
+    ];
+    assert.deepEqual(crewRoleNamesMap(packs, { designer: "Banksy" }), {
+      lead: "Keystone",
+      designer: "Banksy",
+      builder: "builder",
+    });
+  });
+
+  it("a blank or whitespace field falls back to the default, never to nothing", () => {
+    const packs = [choice("lead", { defaultName: "Keystone" })];
+    assert.deepEqual(crewRoleNamesMap(packs, { lead: "   " }), {
+      lead: "Keystone",
+    });
+    assert.deepEqual(crewRoleNamesMap(packs, { lead: "" }), {
+      lead: "Keystone",
+    });
+    assert.deepEqual(crewRoleNamesMap(packs, { lead: "  Banksy " }), {
+      lead: "Banksy",
+    });
+  });
+
+  it("the label and hint are about the team, not only the lead", () => {
+    assert.equal(INSTALL_CREW_ROLES_TEAM_NAMES_LABEL, "Name your team");
+    assert.match(INSTALL_CREW_ROLES_TEAM_NAMES_HINT, /rename/i);
+    // The rename is on the wire, not only on this computer — the sentence has
+    // to say so, because that is the fix ledger 80 (e) is about.
+    assert.match(INSTALL_CREW_ROLES_TEAM_NAMES_HINT, /profile|relay/i);
+    assert.doesNotMatch(INSTALL_CREW_ROLES_TEAM_NAMES_HINT, /\bcrew\b/i);
+  });
+});
+
+// ── What a rename is allowed to claim ────────────────────────────────────────
+
+describe("install team roles — a renamed identity says so", () => {
+  it("reads 'Designer — Banksy (renamed; profile republished)'", () => {
+    const rows = crewRoleResultRows({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: ["lead"],
+      dropped: [],
+      installed: [
+        row("designer", {
+          agentName: "Banksy",
+          refreshed: true,
+          renamed: true,
+          seated: true,
+        }),
+      ],
+      skipped: [],
+    });
+    assert.equal(
+      crewRoleResultLine(rows[0]),
+      "Designer — Banksy (renamed; profile republished)",
+    );
+    assert.equal(
+      INSTALL_CREW_ROLES_RENAMED_NOTE,
+      "renamed; profile republished",
+    );
+  });
+
+  it("a rename replaces the refresh note rather than stacking on it", () => {
+    const rows = crewRoleResultRows({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: ["lead"],
+      dropped: [],
+      installed: [
+        row("lead", { agentName: "Keystone", refreshed: true, renamed: true }),
+      ],
+      skipped: [],
+    });
+    assert.equal(rows[0].note, INSTALL_CREW_ROLES_RENAMED_NOTE);
+    assert.doesNotMatch(rows[0].note, /already installed/);
+  });
+
+  it("a renamed unseated role still says it holds no seat", () => {
+    const rows = crewRoleResultRows({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: ["lead"],
+      dropped: [],
+      installed: [
+        row("designer", {
+          agentName: "Banksy",
+          refreshed: true,
+          renamed: true,
+        }),
+      ],
+      skipped: [],
+    });
+    assert.equal(
+      rows[0].note,
+      `${INSTALL_CREW_ROLES_RENAMED_NOTE}; ${INSTALL_CREW_ROLES_UNSEATED_NOTE}`,
+    );
+  });
+
+  it("an identity nobody renamed never claims a republish", () => {
+    const rows = crewRoleResultRows({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: ["lead"],
+      dropped: [],
+      installed: [row("lead"), row("builder", { refreshed: true })],
+      skipped: [],
+    });
+    assert.equal(crewRoleResultLine(rows[0]), "Lead — Lead");
+    assert.equal(
+      crewRoleResultLine(rows[1]),
+      `Builder — Builder (${INSTALL_CREW_ROLES_REFRESH_NOTE})`,
+    );
+  });
+
+  it("a skipped row is rendered verbatim, with no note bracket", () => {
+    const rows = crewRoleResultRows({
+      teamId: "t",
+      teamName: "Team roles",
+      seated: [],
+      dropped: [],
+      installed: [],
+      skipped: [{ path: "/packs/notes", reason: "no persona…" }],
+    });
+    assert.equal(crewRoleResultLine(rows[0]), "/packs/notes: no persona…");
+  });
+});
+
+// ── A publish that did not land ──────────────────────────────────────────────
+//
+// The install writes the stores first and republishes the identities' kind:0
+// profiles after. When a publish fails the stores are still correct and the
+// relay is not — so a row claiming "profile republished" would be the exact
+// untruth ledger 80 (e) is about.
+
+describe("install team roles — a rename whose publish failed", () => {
+  const failed = (installed) => ({
+    teamId: "t",
+    teamName: "Team roles",
+    seated: ["lead"],
+    dropped: [],
+    installed,
+    skipped: [],
+    profileSyncError:
+      "these identities were installed but the relay still knows them by " +
+      "their previous name — Banksy: relay unreachable",
+  });
+
+  it("a renamed row hedges instead of claiming a republish", () => {
+    const rows = crewRoleResultRows(
+      failed([
+        row("designer", {
+          agentName: "Banksy",
+          refreshed: true,
+          renamed: true,
+          seated: true,
+        }),
+      ]),
+    );
+    assert.equal(rows[0].note, INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE);
+    assert.doesNotMatch(rows[0].note, /republished/);
+    assert.equal(
+      crewRoleResultLine(rows[0]),
+      "Designer — Banksy (renamed here; the relay may still know it by the old name)",
+    );
+  });
+
+  it("a row nobody renamed is unaffected by the publish failure", () => {
+    const rows = crewRoleResultRows(failed([row("lead", { refreshed: true })]));
+    assert.equal(rows[0].note, INSTALL_CREW_ROLES_REFRESH_NOTE);
+  });
+
+  it("the two rename notes are different sentences", () => {
+    assert.notEqual(
+      INSTALL_CREW_ROLES_RENAMED_NOTE,
+      INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE,
+    );
   });
 });

@@ -1,6 +1,7 @@
 import type {
   CrewRoleInstallFailure,
   CrewRoleInstallFailureStage,
+  CrewRoleNameChoice,
   InstallCrewRolePacksResponse,
 } from "@/shared/api/tauriTeams";
 
@@ -19,33 +20,77 @@ export const INSTALL_CREW_ROLES_BODY =
 
 export const INSTALL_CREW_ROLES_CHOOSE_FOLDER = "Choose folder…";
 
-/** Label of the field that names the lead identity (plan D11). */
-export const INSTALL_CREW_ROLES_LEAD_NAME_LABEL = "Name the lead";
+/** Heading of the per-identity name fields (plan D11, ledger 84). */
+export const INSTALL_CREW_ROLES_TEAM_NAMES_LABEL = "Name your team";
 
 /**
- * What the lead is called when the operator names nothing.
+ * What the name fields do, said plainly.
  *
- * The lead pack's own display name, so leaving the field alone installs
- * exactly what it installed before.
+ * Every one of these is an identity a person addresses by name and that is
+ * minted once — so typing a new name over one that is already installed
+ * renames *it*, here and on the relay, instead of minting a second identity
+ * beside it. Ledger 80 (e) is the reason the relay half is spelled out: a
+ * session header kept reading the old name because nothing republished the
+ * identity's profile.
  */
-export const INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT = "Lead";
+export const INSTALL_CREW_ROLES_TEAM_NAMES_HINT =
+  "These are the names you will address, so it is worth giving them one. " +
+  "A role already installed here is renamed in place — its agent, its card " +
+  "and its relay profile — never installed twice. Leave a field alone and " +
+  "that identity keeps the name it has.";
+
+/** One name field, derived from the scan the folder picker returned. */
+export type CrewRoleNameField = {
+  /** The role, and the key this field's name is submitted under. */
+  role: string;
+  /** Title-cased role, shown beside the field. */
+  label: string;
+  /** The name the field starts on. */
+  defaultName: string;
+  /** `true` when an identity is already installed from this pack. */
+  installed: boolean;
+  packDir: string;
+  personaName: string;
+};
 
 /**
- * Why only the lead gets a name here.
+ * The name fields to render, in the scan's own order — the lead first, then
+ * the rest of the roster, then the roles that install unseated.
  *
- * A lead is an identity a person addresses over and over ("Keystone, have
- * Levain do N") and is minted once; the other roles are hired per task and are
- * renamed from the agent dialog like any other agent.
+ * Derived from the scan rather than from a constant roster: a folder holding
+ * three packs gets three fields, and a field can never name a role this
+ * install will not touch.
  */
-export const INSTALL_CREW_ROLES_LEAD_NAME_HINT =
-  "The lead is the identity you address, so it is worth a name of its own. " +
-  "Every other role installs under its role name — rename any of them later " +
-  "from the agent's own dialog.";
+export function crewRoleNameFields(
+  packs: CrewRoleNameChoice[],
+): CrewRoleNameField[] {
+  return packs.map((pack) => ({
+    role: pack.role,
+    label: crewRoleLabel(pack.role),
+    defaultName: pack.defaultName,
+    installed: pack.installed,
+    packDir: pack.packDir,
+    personaName: pack.personaName,
+  }));
+}
 
-/** The lead name to install under: what was typed, or the pack's own name. */
-export function crewRolesLeadName(value: string): string {
-  const name = value.trim();
-  return name.length > 0 ? name : INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT;
+/**
+ * The role→name map the install carries.
+ *
+ * Every scanned pack gets an entry, so the backend never has to guess what an
+ * absent key meant. A field the operator blanked falls back to its default —
+ * an identity with no name is not a thing this installer can write.
+ */
+export function crewRoleNamesMap(
+  packs: CrewRoleNameChoice[],
+  values: Record<string, string>,
+): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const pack of packs) {
+    const typed = (values[pack.role] ?? "").trim();
+    names[pack.role] = typed.length > 0 ? typed : pack.defaultName;
+  }
+  return names;
 }
 
 /**
@@ -60,6 +105,25 @@ export const INSTALL_CREW_ROLES_ROSTER_PLAN =
 
 export const INSTALL_CREW_ROLES_REFRESH_NOTE =
   "already installed from this pack — role and pack link refreshed";
+
+/**
+ * Marks a row whose identity this run renamed.
+ *
+ * Says the relay half out loud: the rename is only real to everyone else once
+ * the identity's kind:0 profile carries it, and an install that renamed a seat
+ * without republishing is exactly the state ledger 80 (e) found.
+ */
+export const INSTALL_CREW_ROLES_RENAMED_NOTE = "renamed; profile republished";
+
+/**
+ * Marks a renamed row on a run whose profile publishes did not all land.
+ *
+ * The backend reports one sentence for the whole run, not one per identity, so
+ * no row can claim its own publish succeeded. Every renamed row hedges rather
+ * than one of them lying.
+ */
+export const INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE =
+  "renamed here; the relay may still know it by the old name";
 
 /**
  * Marks a row that installed but holds no seat.
@@ -194,7 +258,15 @@ export function crewRoleResultRows(
 ): CrewRoleResultRow[] {
   const rows: CrewRoleResultRow[] = result.installed.map((row) => {
     const notes: string[] = [];
-    if (row.refreshed) notes.push(INSTALL_CREW_ROLES_REFRESH_NOTE);
+    // A rename subsumes the refresh note: an identity can only be renamed if
+    // it was already installed, and stacking both says the same fact twice.
+    if (row.renamed)
+      notes.push(
+        result.profileSyncError
+          ? INSTALL_CREW_ROLES_RENAMED_UNPUBLISHED_NOTE
+          : INSTALL_CREW_ROLES_RENAMED_NOTE,
+      );
+    else if (row.refreshed) notes.push(INSTALL_CREW_ROLES_REFRESH_NOTE);
     if (!row.seated) notes.push(INSTALL_CREW_ROLES_UNSEATED_NOTE);
     return {
       kind: "installed" as const,
@@ -207,6 +279,18 @@ export function crewRoleResultRows(
     rows.push({ kind: "skipped", text: `${skipped.path}: ${skipped.reason}` });
   }
   return rows;
+}
+
+/**
+ * One result row as a single line: `Designer — Banksy (renamed; profile
+ * republished)`.
+ *
+ * Lives here rather than in the component so the sentence an operator reads is
+ * a value a test can assert.
+ */
+export function crewRoleResultLine(row: CrewRoleResultRow): string {
+  if (row.kind === "skipped") return row.text;
+  return row.note ? `${row.text} (${row.note})` : row.text;
 }
 
 /** `true` when the folder held no role pack at all. */

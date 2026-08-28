@@ -40,6 +40,14 @@ fn write_pack(root: &Path, dir_name: &str, persona: &str, role: Option<&str>) ->
     dir
 }
 
+/// A helper building the role→name map the installer takes.
+fn names(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(role, name)| ((*role).to_string(), (*name).to_string()))
+        .collect()
+}
+
 /// A mint that hands out deterministic, distinguishable identities.
 fn counting_mint(minted: &mut usize) -> impl FnMut() -> Result<MintedCrewIdentity, String> + '_ {
     move || {
@@ -66,8 +74,16 @@ fn install(
 ) -> CrewRoleInstall {
     let mut minted = 0usize;
     let mut mint = counting_mint(&mut minted);
-    install_role_packs(scan, definitions, agents, teams, NOW, None, &mut mint)
-        .expect("install succeeds")
+    install_role_packs(
+        scan,
+        definitions,
+        agents,
+        teams,
+        NOW,
+        &names(&[]),
+        &mut mint,
+    )
+    .expect("install succeeds")
 }
 
 /// Depth 1 only, and a child that is not a role pack is reported — never
@@ -411,8 +427,16 @@ fn a_mint_failure_is_reported_as_a_key_failure_not_a_folder_one() {
     let scan = scan_role_packs(root.path()).expect("scan succeeds");
 
     let mut mint = || Err("the keychain is locked".to_string());
-    let error = install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, None, &mut mint)
-        .expect_err("a mint failure aborts the install");
+    let error = install_role_packs(
+        &scan,
+        Vec::new(),
+        Vec::new(),
+        &[],
+        NOW,
+        &names(&[]),
+        &mut mint,
+    )
+    .expect_err("a mint failure aborts the install");
 
     assert_eq!(error.failure, CrewRoleInstallFailure::Keys);
     assert_eq!(error.detail, "the keychain is locked");
@@ -485,7 +509,7 @@ fn the_lead_is_minted_under_the_name_the_operator_gave() {
         Vec::new(),
         &[],
         NOW,
-        Some("Keystone"),
+        &names(&[("lead", "Keystone")]),
         &mut mint,
     )
     .expect("install succeeds");
@@ -592,7 +616,7 @@ fn the_persona_card_an_install_writes_carries_the_identity_name() {
         Vec::new(),
         &[],
         NOW,
-        Some("Keystone"),
+        &names(&[("lead", "Keystone")]),
         &mut mint,
     )
     .expect("install succeeds");
@@ -642,8 +666,16 @@ fn a_refresh_renames_the_card_it_reuses_after_the_identity() {
     let mut minted = 0usize;
     let first = {
         let mut mint = counting_mint(&mut minted);
-        install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, None, &mut mint)
-            .expect("install succeeds")
+        install_role_packs(
+            &scan,
+            Vec::new(),
+            Vec::new(),
+            &[],
+            NOW,
+            &names(&[]),
+            &mut mint,
+        )
+        .expect("install succeeds")
     };
     assert_eq!(first.definitions[0].display_name, "lead");
 
@@ -654,7 +686,7 @@ fn a_refresh_renames_the_card_it_reuses_after_the_identity() {
         first.agents.clone(),
         std::slice::from_ref(&first.team),
         NOW,
-        Some("Keystone"),
+        &names(&[("lead", "Keystone")]),
         &mut mint,
     )
     .expect("install succeeds");
@@ -683,7 +715,7 @@ fn renaming_the_lead_owes_a_profile_publish_with_the_new_name() {
             Vec::new(),
             &[],
             NOW,
-            Some("Fizz"),
+            &names(&[("lead", "Fizz")]),
             &mut mint,
         )
         .expect("install succeeds")
@@ -706,7 +738,7 @@ fn renaming_the_lead_owes_a_profile_publish_with_the_new_name() {
         first.agents.clone(),
         std::slice::from_ref(&first.team),
         NOW,
-        Some("Keystone"),
+        &names(&[("lead", "Keystone")]),
         &mut mint,
     )
     .expect("install succeeds");
@@ -746,3 +778,8 @@ fn renaming_the_lead_owes_a_profile_publish_with_the_new_name() {
     assert_eq!(builder.display_name, "builder");
     assert_eq!(builder.previous_name.as_deref(), Some("builder"));
 }
+
+/// Naming every installed identity, and what a rename owes the relay. Split
+/// into its own file only to keep both under the repository file-size gate.
+#[path = "crew_roles_naming_tests.rs"]
+mod naming;

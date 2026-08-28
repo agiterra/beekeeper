@@ -5,14 +5,18 @@
 //! without an `AppHandle`; this module is the store IO, the key minting, and
 //! the relay publish around it.
 
+use std::collections::HashMap;
+
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
     app_state::AppState,
     managed_agents::{
         crew_roles::{
-            install_role_packs, role_profile_publishes, scan_role_packs, CrewRoleInstallError,
-            InstallCrewRolePacksResponse,
+            install_role_packs, role_name_choices, role_profile_publishes, scan_role_packs,
+            CrewRoleInstallError, CrewRoleNameChoice, InstallCrewRolePacksResponse,
+            SkippedCrewRolePack,
         },
         load_managed_agents, load_personas, load_teams, save_managed_agents, save_personas,
         save_teams, try_regenerate_nest,
@@ -21,12 +25,39 @@ use crate::{
     util::now_iso,
 };
 
-/// Open the OS folder picker for a folder of role packs.
+/// A chosen folder, together with what one scan of it found.
+///
+/// The scan travels with the pick because the dialog asks a name per role pack
+/// (ledger 84) and cannot render that list before something has read the
+/// folder. Scanning is read-only — it mints nothing and writes nothing — so
+/// doing it at pick time costs the operator nothing and lets the field list
+/// appear the moment the folder is chosen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedCrewRolePacks {
+    pub directory: String,
+    /// One row per role pack, lead first, each with the name its identity
+    /// currently carries on this computer.
+    pub packs: Vec<CrewRoleNameChoice>,
+    /// Children of the folder that produced no role, and why — the same list
+    /// the install reports, shown before anything is written.
+    pub skipped: Vec<SkippedCrewRolePack>,
+}
+
+/// Open the OS folder picker for a folder of role packs, and scan what was
+/// picked.
 ///
 /// The same picker `pick_coding_session_workdir` uses — `tauri-plugin-dialog`
 /// is already a dependency and already granted, so this adds no plugin surface.
+///
+/// # Errors
+///
+/// Returns the folder's own words when it cannot be read. Nothing here writes,
+/// so a failure leaves this computer exactly as it was.
 #[tauri::command]
-pub async fn pick_crew_role_packs_directory(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn pick_crew_role_packs_directory(
+    app: AppHandle,
+) -> Result<Option<PickedCrewRolePacks>, String> {
     use tauri_plugin_dialog::DialogExt;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -39,14 +70,36 @@ pub async fn pick_crew_role_packs_directory(app: AppHandle) -> Result<Option<Str
     let picked = rx
         .await
         .map_err(|_| "the folder picker closed unexpectedly".to_string())?;
-    Ok(picked.map(|path| path.to_string()))
+    let Some(directory) = picked.map(|path| path.to_string()) else {
+        return Ok(None);
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&directory);
+        if !path.is_dir() {
+            return Err(format!("{} is not a directory", path.display()));
+        }
+        let scan = scan_role_packs(&path)?;
+        // Read-only: the names already installed here are what the fields
+        // default to, so re-running the installer offers the identity's own
+        // name rather than proposing to rename it back to its role.
+        let agents = crate::managed_agents::load_managed_agents(&app).unwrap_or_default();
+        Ok(Some(PickedCrewRolePacks {
+            directory,
+            packs: role_name_choices(&scan, &agents),
+            skipped: scan.skipped,
+        }))
+    })
+    .await
+    .map_err(|error| format!("the folder scan did not finish: {error}"))?
 }
 
 /// Install every role pack in `directory` as an agent carrying its home role,
 /// all joined into one team that is a crew.
 ///
-/// `lead_name` names the lead identity (D11); every other role keeps its pack's
-/// name. Idempotent: an agent already installed from a pack is refreshed, never
+/// `names` maps a role to the name the operator gave that identity (D11); a
+/// role the operator left alone keeps its pack's name. Idempotent: an agent
+/// already installed from a pack is refreshed and renamed in place, never
 /// duplicated, and the team is updated rather than re-created.
 ///
 /// # Errors
@@ -60,8 +113,9 @@ pub async fn install_crew_role_packs(
     app: AppHandle,
     state: State<'_, AppState>,
     directory: String,
-    lead_name: Option<String>,
+    names: Option<HashMap<String, String>>,
 ) -> Result<InstallCrewRolePacksResponse, CrewRoleInstallError> {
+    let names = names.unwrap_or_default();
     let owner_keys = state.signing_keys().map_err(CrewRoleInstallError::keys)?;
     let directory = directory.trim().to_string();
     if directory.is_empty() {
@@ -99,7 +153,7 @@ pub async fn install_crew_role_packs(
             agents,
             &teams,
             &now_iso(),
-            lead_name.as_deref(),
+            &names,
             &mut mint,
         )?;
 

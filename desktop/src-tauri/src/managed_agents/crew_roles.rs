@@ -23,6 +23,7 @@
 //!   packs would make "Delete team" delete the operator's checkout. The pack
 //!   link lives on each agent instead.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -146,8 +147,40 @@ pub struct InstalledCrewRole {
     /// `true` when an agent already installed from this pack was refreshed
     /// rather than minted.
     pub refreshed: bool,
+    /// `true` when this run gave an already-installed identity a new name.
+    ///
+    /// Distinct from [`Self::refreshed`]: a refresh that changed nothing is
+    /// not a rename, and the dialog owes an operator who renamed the designer
+    /// a different sentence from the one it owes an operator who re-ran the
+    /// installer over an untouched team.
+    pub renamed: bool,
     /// `true` when this role is in the crew's default seat roster.
     pub seated: bool,
+}
+
+/// One row of the installer's "Name your team" list.
+///
+/// Ledger 84: the installer asked for one name — the lead's — so every other
+/// identity was called after its role on this computer *and* on the relay. A
+/// name is asked per pack the scan found, and the default is the name that
+/// identity already carries here, so re-running the installer over a named
+/// team offers `Keystone` rather than proposing to rename it back to `lead`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrewRoleNameChoice {
+    /// The role this pack's persona declares. The map key of the install.
+    pub role: String,
+    /// The persona's name inside the pack.
+    pub persona_name: String,
+    /// Absolute directory of the pack, for a row that has to say where it
+    /// came from.
+    pub pack_dir: String,
+    /// What the field starts on: the installed identity's current name, or
+    /// the pack's own display name when nothing is installed from it yet.
+    pub default_name: String,
+    /// `true` when an identity is already installed from this pack, so a
+    /// changed name here is a rename rather than a first naming.
+    pub installed: bool,
 }
 
 /// What one scan of the chosen folder found.
@@ -261,6 +294,33 @@ fn role_order(role: &str) -> (usize, String) {
 /// Whether a role is seated by default.
 pub fn is_seated_role(role: &str) -> bool {
     CREW_SEAT_ROSTER.contains(&role)
+}
+
+/// The "Name your team" field list for a scan, in the order the dialog renders
+/// it — the lead first, then the rest of the roster, then the unseated roles.
+///
+/// `agents` is this computer's current agent list: a pack that already has an
+/// identity here defaults to *that identity's* name, never the pack's, so an
+/// operator who leaves every field alone renames nobody.
+pub fn role_name_choices(
+    scan: &RolePackScan,
+    agents: &[ManagedAgentRecord],
+) -> Vec<CrewRoleNameChoice> {
+    scan.packs
+        .iter()
+        .map(|pack| {
+            let existing = existing_agent_for(agents, pack);
+            CrewRoleNameChoice {
+                role: pack.role.clone(),
+                persona_name: pack.persona_name.clone(),
+                pack_dir: pack.dir.display().to_string(),
+                default_name: existing
+                    .map(|record| record.name.clone())
+                    .unwrap_or_else(|| pack.display_name.clone()),
+                installed: existing.is_some(),
+            }
+        })
+        .collect()
 }
 
 /// Scan the **immediate children** of `directory` for role packs.
@@ -467,23 +527,21 @@ fn mint_agent_name(
 /// failure — a keyring or key-generation failure must abort the install rather
 /// than write a keyless agent.
 ///
-/// `lead_name` is the name the operator gave the lead identity (D11: a lead is
-/// an identity a person names once, not a role label). `None` — or an empty
-/// string — keeps the lead pack's own display name. Every other role keeps its
-/// pack's name; they are renamed from the agent dialog.
+/// `names` maps a **role** to the name the operator gave that identity (D11: an
+/// identity is something a person names once, not a role label). A role with no
+/// entry — or an entry that is blank — keeps its pack's own display name. A
+/// name that differs from what an already-installed identity carries renames
+/// *that* identity in place, record and persona card together; it never mints a
+/// second one, which is the whole of D11's "minted once" rule.
 pub fn install_role_packs(
     scan: &RolePackScan,
     mut definitions: Vec<AgentDefinition>,
     mut agents: Vec<ManagedAgentRecord>,
     teams: &[TeamRecord],
     now: &str,
-    lead_name: Option<&str>,
+    names: &HashMap<String, String>,
     mint: &mut dyn FnMut() -> Result<MintedCrewIdentity, String>,
 ) -> Result<CrewRoleInstall, CrewRoleInstallError> {
-    let lead_name = lead_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string);
     let existing_team = teams.iter().find(|team| {
         !team.is_builtin
             && (team.name == CREW_ROLES_TEAM_NAME || team.name == LEGACY_CREW_ROLES_TEAM_NAME)
@@ -506,18 +564,24 @@ pub fn install_role_packs(
             _ => mint_definition_id(&pack.persona_name, &definitions),
         };
 
-        // D11: the lead is an identity the operator names; the rest keep the
-        // name their pack declares and are renamed from the agent dialog.
-        let wanted_name = match (pack.role.as_str(), lead_name.as_deref()) {
-            ("lead", Some(name)) => name,
-            _ => pack.display_name.as_str(),
-        };
+        // D11: every one of these is an identity the operator names. A role
+        // the operator left alone keeps the name its pack declares.
+        let wanted_name = names
+            .get(&pack.role)
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(pack.display_name.as_str());
         let agent_name = match existing.as_ref() {
             // A refresh keeps the handle the operator already knows unless the
             // pack renamed the persona; either way the name stays unique.
             Some(record) => mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
             None => mint_agent_name(wanted_name, &agents, None),
         };
+        // A rename is only a rename when an identity that already existed here
+        // ends the run under a different name. A fresh mint is a naming.
+        let renamed = existing
+            .as_ref()
+            .is_some_and(|record| record.name != agent_name);
 
         let definition = AgentDefinition {
             id: persona_id.clone(),
@@ -640,6 +704,7 @@ pub fn install_role_packs(
             agent_name,
             pack_dir: pack.dir.display().to_string(),
             refreshed,
+            renamed,
             seated: is_seated_role(&pack.role),
         });
     }

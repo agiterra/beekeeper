@@ -234,8 +234,37 @@ export type InstalledCrewRole = {
   packDir: string;
   /** `true` when an agent already installed from this pack was refreshed. */
   refreshed: boolean;
+  /**
+   * `true` when this run gave an already-installed identity a new name.
+   *
+   * Distinct from `refreshed`: a refresh that changed nothing is not a
+   * rename, and only a rename owes the relay a fresh kind:0 profile.
+   */
+  renamed: boolean;
   /** `true` when this role is in the crew's default seat roster. */
   seated: boolean;
+};
+
+/** One row of the installer's "Name your team" list, as the scan reports it. */
+export type CrewRoleNameChoice = {
+  /** The role the pack's persona declares — the key of the install's map. */
+  role: string;
+  personaName: string;
+  packDir: string;
+  /**
+   * What the field starts on: the installed identity's current name, or the
+   * pack's own display name when nothing is installed from it yet.
+   */
+  defaultName: string;
+  /** `true` when an identity is already installed from this pack. */
+  installed: boolean;
+};
+
+/** A chosen folder together with what one read-only scan of it found. */
+export type PickedCrewRolePacks = {
+  directory: string;
+  packs: CrewRoleNameChoice[];
+  skipped: SkippedCrewRolePack[];
 };
 
 /** One child of the chosen folder that produced no role, and why. */
@@ -255,6 +284,15 @@ export type InstallCrewRolePacksResponse = {
   seated: string[];
   /** Roster roles whose pack was not installed, so they hold no seat. */
   dropped: string[];
+  /**
+   * What went wrong republishing the installed identities' relay profiles, or
+   * `null` when every one landed.
+   *
+   * The install itself succeeded when this is set — the stores are written.
+   * What is not true is that the relay knows these identities by the names
+   * this computer now uses, which is exactly the state ledger 80 (e) found.
+   */
+  profileSyncError: string | null;
 };
 
 /** Which stage of an install failed, as `CrewRoleInstallFailure` names it. */
@@ -266,26 +304,36 @@ export type CrewRoleInstallFailure = {
   detail: string;
 };
 
-/** Open the OS folder picker for a folder of role packs. `null` if cancelled. */
-export async function pickCrewRolePacksDirectory(): Promise<string | null> {
+/**
+ * Open the OS folder picker for a folder of role packs and scan what was
+ * picked. `null` if the operator cancelled.
+ *
+ * The scan comes back with the pick because the dialog asks a name per role
+ * pack, and cannot render that list before something has read the folder.
+ * Scanning writes nothing.
+ */
+export async function pickCrewRolePacksDirectory(): Promise<PickedCrewRolePacks | null> {
   return (
-    (await invokeTauri<string | null>("pick_crew_role_packs_directory")) ?? null
+    (await invokeTauri<PickedCrewRolePacks | null>(
+      "pick_crew_role_packs_directory",
+    )) ?? null
   );
 }
 
 /**
  * Install every role pack in `directory` as an agent carrying its home role.
  *
- * `leadName` is the name the lead identity is minted under (plan D11); every
- * other role installs under its pack's own name. Idempotent: a pack already
- * installed refreshes its agent rather than minting a second one.
+ * `names` maps a role to the name that identity is installed under (plan D11);
+ * a role missing from the map keeps its pack's own name. Idempotent: a pack
+ * already installed refreshes its agent — renaming it in place when the name
+ * changed — rather than minting a second one.
  */
 export async function installCrewRolePacks(
   directory: string,
-  leadName?: string | null,
+  names?: Record<string, string> | null,
 ): Promise<InstallCrewRolePacksResponse> {
   return invokeTauri<InstallCrewRolePacksResponse>("install_crew_role_packs", {
     directory,
-    leadName: leadName ?? null,
+    names: names ?? null,
   });
 }
