@@ -10,6 +10,7 @@ import { cn } from "@/shared/lib/cn";
 import {
   checkCodingSessionCrewFamilies,
   checkCodingSessionCrewSeatModels,
+  codingSessionCrewLaunchBlock,
   describeCodingSessionSeatVendor,
   resolveCodingSessionSeatVendor,
   type ResolvedCodingSessionCrewSeat,
@@ -38,6 +39,7 @@ export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 export function NewCodingSessionCrewTab({
   channelId,
   disabled,
+  ensureChannelId = null,
   onLaunched,
   providerAuthorityPubkey,
   providerInstanceRef,
@@ -47,6 +49,14 @@ export function NewCodingSessionCrewTab({
 }: {
   channelId: string | null;
   disabled: boolean;
+  /**
+   * Resolve — publishing it if this is its first session — the channel the
+   * team launches into. Supplied by the project flow, whose sessions channel
+   * has no id until the first create needs one; without it a null `channelId`
+   * is a refusal, because there is nowhere to publish and nothing that could
+   * make one.
+   */
+  ensureChannelId?: (() => Promise<string>) | null;
   onLaunched: (input: { channelId: string }) => void;
   providerAuthorityPubkey: string | null;
   providerInstanceRef: string | null;
@@ -128,23 +138,28 @@ export function NewCodingSessionCrewTab({
         (family && !family.ok ? family.reason : null));
 
   const { isLaunching, launch, result, steps } = useCodingSessionCrewLaunch({
+    ensureChannelId,
     providerInstanceRef,
     providerAuthorityPubkey,
     workdir: workdir.trim().length > 0 ? workdir.trim() : null,
     title: title.trim().length > 0 ? title.trim() : null,
   });
 
-  const canLaunch =
-    !disabled &&
-    !isLaunching &&
-    channelId !== null &&
-    selectedTeam !== null &&
-    seats !== null &&
-    refusal === null &&
-    goal.trim().length > 0;
+  // Every reason the button is off, in one sentence — and the same expression
+  // the button is disabled on, so a disabled control can never be silent.
+  const launchBlock = codingSessionCrewLaunchBlock({
+    hasTeam: selectedTeam !== null,
+    seatCount: seats?.length ?? null,
+    hasChannel: channelId !== null,
+    canCreateChannel: ensureChannelId !== null,
+    createInFlight: disabled,
+    isLaunching,
+    goal,
+  });
+  const canLaunch = refusal === null && launchBlock === null;
 
   const handleLaunch = React.useCallback(() => {
-    if (!canLaunch || !channelId || !selectedTeam || !seats) return;
+    if (!canLaunch || !selectedTeam || !seats) return;
     setLaunchError(null);
     void (async () => {
       try {
@@ -155,8 +170,15 @@ export function NewCodingSessionCrewTab({
           primaryPersonaId: selectedTeam.crew.primary,
           provider,
         });
-        if (result.ok) onLaunched({ channelId });
-        else setLaunchError(result.failureReason);
+        // The channel the launch settled on: for a project's first session it
+        // is the one the launch just published, not the null it was handed.
+        if (result.ok && result.channelId) {
+          onLaunched({ channelId: result.channelId });
+        } else if (result.ok) {
+          setLaunchError(
+            "The team launched, but into no channel this screen can name.",
+          );
+        } else setLaunchError(result.failureReason);
       } catch (error) {
         setLaunchError(
           error instanceof Error
@@ -205,10 +227,18 @@ export function NewCodingSessionCrewTab({
         <p className="text-2xs text-muted-foreground">
           {crewTeams.length === 0
             ? "A launchable team is one whose seats carry roles. None of this computer's teams do yet."
-            : `Every seat runs on ${providerLabel ?? "this computer's provider"}, ` +
+            : // A limitation, not a rule: per-seat providers are D13 and not
+              // built, so today the whole team lands on one runtime. Saying
+              // "every seat runs on X" alone read as the intended design
+              // (item 79e). To mix providers, launch here and then hire the
+              // other seat into the session with Add provider.
+              `Today a team launch runs every seat on one provider — ${
+                providerLabel ?? "this computer's provider"
+              } — ` +
               `in the directory below${
                 model ? `, on ${model} unless its seat names its own` : ""
-              }. Each seat's model is in the roster.`}
+              }. Each seat's model is in the roster. Seats on another provider ` +
+              "are added to the session afterwards."}
         </p>
       </div>
 
@@ -227,6 +257,16 @@ export function NewCodingSessionCrewTab({
         >
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
           {refusal}
+        </p>
+      ) : launchBlock ? (
+        // Not destructive: nothing is wrong, something is missing. But never
+        // silent — a disabled Launch with no sentence under it is the front
+        // door refusing without saying why (item 79).
+        <p
+          className="text-2xs text-muted-foreground"
+          data-testid="new-coding-session-crew-blocked"
+        >
+          {launchBlock}
         </p>
       ) : null}
 

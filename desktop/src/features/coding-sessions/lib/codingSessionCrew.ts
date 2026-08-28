@@ -17,6 +17,7 @@
  * the comfortable guess this rule exists to prevent.
  */
 
+import { formatCodingSessionRuntimeLabel } from "./codingSessionLabels";
 import {
   CODING_SESSION_ADAPTER_DEFAULT_MODEL,
   codingSessionModelChoices,
@@ -63,8 +64,21 @@ export type CodingSessionSeatVendorResolution =
   | {
       vendor: null;
       source: "conflict";
+      /** The vendor this build will not accept, and where the seat said it. */
       declared: CodingSessionModelVendor;
+      /** The vendor the stronger statement names. */
       derived: CodingSessionModelVendor;
+      /**
+       * The ACP driver whose single vendor produced `derived`.
+       *
+       * Present only when the runtime is what the seat contradicts. Without
+       * it the copy has to guess, and it guessed wrong: a seat pinned to the
+       * Claude adapter with an OpenAI model id was described as "declared
+       * openai, but gpt-5.6-sol is anthropic" — neither half true (item 79c).
+       */
+      runtime?: string;
+      /** Which of the seat's own statements produced `declared`. */
+      via?: "model" | "declaration";
     }
   | {
       /** The seat names the adapter's `default` alias, so no model is fixed. */
@@ -217,6 +231,9 @@ export function resolveCodingSessionSeatVendor(seat: {
         source: "conflict",
         declared: contradiction,
         derived: runtime,
+        runtime: (seat.driver ?? "").trim(),
+        via:
+          declared.length > 0 && declared !== runtime ? "declaration" : "model",
       };
     }
     return declared.length > 0
@@ -287,8 +304,19 @@ export function describeCodingSessionSeatVendor(
       return options?.annotateSource
         ? `${resolution.vendor} (from the model id)`
         : resolution.vendor;
-    case "conflict":
-      return `declared ${resolution.declared}, but ${(seat.model ?? "").trim()} is ${resolution.derived}`;
+    case "conflict": {
+      if (resolution.runtime === undefined) {
+        // The seat's own two statements disagree, and saying so is the truth.
+        return `declared ${resolution.declared}, but ${(seat.model ?? "").trim()} is ${resolution.derived}`;
+      }
+      // The runtime is the fact; the seat's other statement is the hope.
+      const runs = `runs on ${formatCodingSessionRuntimeLabel(resolution.runtime)} (${resolution.derived})`;
+      const said =
+        resolution.via === "declaration"
+          ? `this seat declares ${resolution.declared}`
+          : `${(seat.model ?? "").trim()} is ${vendorArticle(resolution.declared)} ${codingSessionVendorDisplayName(resolution.declared)} model`;
+      return `${runs}; ${said} — a team launch runs every seat on one provider`;
+    }
     case "adapter-default":
       return options?.annotateSource
         ? `unknown — ${CODING_SESSION_ADAPTER_DEFAULT_MODEL} lets the adapter pick the model`
@@ -296,6 +324,94 @@ export function describeCodingSessionSeatVendor(
     default:
       return options?.annotateSource ? "vendor not declared" : "unknown";
   }
+}
+
+/**
+ * Vendor slugs as their owners spell them.
+ *
+ * Only for copy — every comparison in this module is on the lowercase slug.
+ */
+export const CODING_SESSION_VENDOR_DISPLAY_NAMES: Readonly<
+  Record<string, string>
+> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  meta: "Meta",
+  xai: "xAI",
+};
+
+/** A vendor slug written the way a person would write it. */
+export function codingSessionVendorDisplayName(
+  vendor: CodingSessionModelVendor,
+): string {
+  const slug = vendor.trim().toLowerCase();
+  return CODING_SESSION_VENDOR_DISPLAY_NAMES[slug] ?? vendor.trim();
+}
+
+/** "a" or "an" for a vendor's display name — `x` reads as "ex". */
+function vendorArticle(vendor: CodingSessionModelVendor): string {
+  const first = codingSessionVendorDisplayName(vendor)
+    .slice(0, 1)
+    .toLowerCase();
+  return "aeioux".includes(first) ? "an" : "a";
+}
+
+/**
+ * Why the launch button is disabled, in one sentence a person can act on.
+ *
+ * Every condition that turns the button off has a row here, because a control
+ * that refuses without saying why is the front door's own version of lying:
+ * item 79 found a Team tab that could not launch from a project at all and
+ * said nothing about it. The caller gates the button on this returning null,
+ * so the two can never disagree.
+ *
+ * The hard seat/provider refusals are not here — they are their own sentence,
+ * and they are about the roster rather than about this form.
+ */
+export function codingSessionCrewLaunchBlock(input: {
+  /** A team is selected. */
+  hasTeam: boolean;
+  /** Seats resolved for that team; null when they could not be resolved. */
+  seatCount: number | null;
+  /** The destination channel exists and its id is known. */
+  hasChannel: boolean;
+  /** …or it does not exist yet, and this launch can publish it (a project). */
+  canCreateChannel: boolean;
+  /** A single-session create already holds this scope. */
+  createInFlight: boolean;
+  isLaunching: boolean;
+  goal: string;
+}): string | null {
+  if (input.isLaunching) {
+    return "This team is launching. The steps below say where it is.";
+  }
+  if (input.createInFlight) {
+    return (
+      "A session create is already in flight here. Finish or discard it on " +
+      "the One session tab before launching a team."
+    );
+  }
+  if (!input.hasTeam) {
+    return (
+      "There is no team to launch: none of this computer's teams carries " +
+      "seats with roles yet. Install team roles from the Agents screen to " +
+      "make one."
+    );
+  }
+  if (input.seatCount === null || input.seatCount === 0) {
+    return (
+      "This team has no seats this computer can fill, so there is nobody to " +
+      "launch."
+    );
+  }
+  if (!input.hasChannel && !input.canCreateChannel) {
+    return "Pick a channel first — a team launch publishes its session into one.";
+  }
+  if (input.goal.trim().length === 0) {
+    return "Write the goal — the lead's first turn carries it.";
+  }
+  return null;
 }
 
 /** A seat with everything the launch needs to create it. */
@@ -374,7 +490,7 @@ export function checkCodingSessionCrewFamilies(
     return {
       ok: false,
       reason:
-        `A seat's declared vendor contradicts its model id: ${said}. This ` +
+        `Two statements about a seat's vendor disagree: ${said}. This ` +
         "build will not guess which of the two is true, and the verifier " +
         `rule is decided on the vendor. ${CODING_SESSION_CREW_EDIT_HINT}`,
     };

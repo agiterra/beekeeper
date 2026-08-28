@@ -2,8 +2,9 @@
  * Launching a crew: one signed sequence, each step gated on the last one's
  * receipt.
  *
- * Genesis → a create per seat, in the crew's seat order → `grant-operator` to
- * the lead seat → the first turn to the primary, carrying the goal and the
+ * The channel the team lands in (minted here when a project has never had one)
+ * → genesis → a create per seat, in the crew's seat order → `grant-operator`
+ * to the lead seat → the first turn to the primary, carrying the goal and the
  * roster (plan D8).
  *
  * Two properties this module exists to hold:
@@ -47,6 +48,15 @@ export type LaunchedCodingSessionCrewSeat = {
 
 export type CodingSessionCrewLaunchResult = {
   ok: boolean;
+  /**
+   * The channel every event of this launch was published to.
+   *
+   * Not always the channel the caller passed in: a project whose sessions
+   * channel did not exist yet passes `null`, and this is the id that was
+   * minted for it. Null only when the launch stopped before a channel was
+   * settled.
+   */
+  channelId: string | null;
   /** Null only when the refusal happened before the genesis was published. */
   sessionRef: string | null;
   genesisRef: string | null;
@@ -70,6 +80,16 @@ export type CodingSessionCrewLaunchResult = {
 };
 
 export type CodingSessionCrewLaunchDeps = {
+  /**
+   * Resolve — creating it if needed — the channel this team launches into.
+   *
+   * Called once, and only when `input.channelId` is null, which is exactly the
+   * project case: a project's sessions channel is published by the first
+   * create that needs it, never on mount. The same helper the one-session path
+   * calls, so a team launch and a single create bring the same channel into
+   * existence and record the same project fact.
+   */
+  ensureChannel?: () => Promise<string>;
   /** Mint the umbrella's session ref. */
   newSessionRef: () => string;
   publishGenesis: (input: {
@@ -84,6 +104,8 @@ export type CodingSessionCrewLaunchDeps = {
   publishSeatCreate: (input: {
     seat: ResolvedCodingSessionCrewSeat;
     index: number;
+    /** The settled channel — never the caller's, which may have been null. */
+    channelId: string;
     sessionRef: string;
     genesisRef: string;
   }) => Promise<{
@@ -100,13 +122,16 @@ export type CodingSessionCrewLaunchDeps = {
    */
   awaitSeatReceipt: (input: {
     commandId: string;
+    channelId: string;
     seat: ResolvedCodingSessionCrewSeat;
   }) => Promise<CodingSessionCommandTarget>;
   grantOperator: (input: {
+    channelId: string;
     genesisRef: string;
     granteePubkey: string;
   }) => Promise<void>;
   sendFirstTurn: (input: {
+    channelId: string;
     target: CodingSessionCommandTarget;
     text: string;
   }) => Promise<void>;
@@ -115,7 +140,13 @@ export type CodingSessionCrewLaunchDeps = {
 };
 
 export type CodingSessionCrewLaunchInput = {
-  channelId: string;
+  /**
+   * The channel every seat is created in, or null when the caller has a
+   * destination but no id for it yet — a project whose sessions channel is
+   * published by the first create that needs one. Null requires
+   * [`CodingSessionCrewLaunchDeps.ensureChannel`].
+   */
+  channelId: string | null;
   goal: string;
   /** Seats in launch order, already resolved to actors. */
   seats: ReadonlyArray<ResolvedCodingSessionCrewSeat>;
@@ -139,6 +170,7 @@ export type CodingSessionCrewLaunchInput = {
 };
 
 /** Step ids, so a caller can talk about a failure without matching prose. */
+export const CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP = "channel";
 export const CODING_SESSION_CREW_LAUNCH_GENESIS_STEP = "genesis";
 export const CODING_SESSION_CREW_LAUNCH_GRANT_STEP = "grant-operator";
 export const CODING_SESSION_CREW_LAUNCH_TURN_STEP = "first-turn";
@@ -164,6 +196,16 @@ export function planCodingSessionCrewLaunch(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
       "Check the team's model families",
     ),
+    // Only when there is nothing to launch into yet: a channel that already
+    // exists is not a step anybody walks.
+    ...(input.channelId === null
+      ? [
+          step(
+            CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
+            "Create the project's sessions channel",
+          ),
+        ]
+      : []),
     step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session"),
     ...input.seats.map((seat, index) =>
       step(
@@ -215,6 +257,10 @@ export async function launchCodingSessionCrew(
   };
   const seated: LaunchedCodingSessionCrewSeat[] = [];
   const seatsWithoutRolePack: string[] = [];
+  // Settled below, before the genesis. Everything published by this launch
+  // goes here, so a project that had no channel gets one and then gets its
+  // whole team in it.
+  let channelId: string | null = input.channelId;
   const fail = (
     id: string,
     reason: string,
@@ -224,6 +270,7 @@ export async function launchCodingSessionCrew(
     mark(id, "failed", reason);
     return {
       ok: false,
+      channelId,
       sessionRef,
       genesisRef,
       seats: seated,
@@ -283,12 +330,39 @@ export async function launchCodingSessionCrew(
   }
   mark(CODING_SESSION_CREW_LAUNCH_FAMILY_STEP, "done");
 
+  if (channelId === null) {
+    mark(CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP, "running");
+    if (!deps.ensureChannel) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
+        "This team has no channel to launch into, and nothing here can create one.",
+        null,
+        null,
+      );
+    }
+    try {
+      channelId = await deps.ensureChannel();
+    } catch (error) {
+      return fail(
+        CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
+        describe(
+          error,
+          "The channel for this project's sessions could not be created.",
+        ),
+        null,
+        null,
+      );
+    }
+    mark(CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP, "done");
+  }
+  const launchChannelId = channelId;
+
   mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "running");
   const sessionRef = deps.newSessionRef();
   let genesisRef: string;
   try {
     genesisRef = (
-      await deps.publishGenesis({ channelId: input.channelId, sessionRef })
+      await deps.publishGenesis({ channelId: launchChannelId, sessionRef })
     ).eventId;
   } catch (error) {
     return fail(
@@ -307,13 +381,18 @@ export async function launchCodingSessionCrew(
       const { commandId, packStaged } = await deps.publishSeatCreate({
         seat,
         index,
+        channelId: launchChannelId,
         sessionRef,
         genesisRef,
       });
       if (packStaged === false) seatsWithoutRolePack.push(seat.actorLabel);
       // The gate. The next seat's create is not signed until this receipt
       // lands, so a provider that refuses seat two never sees seat three.
-      const target = await deps.awaitSeatReceipt({ commandId, seat });
+      const target = await deps.awaitSeatReceipt({
+        commandId,
+        channelId: launchChannelId,
+        seat,
+      });
       seated.push({ seat, target });
     } catch (error) {
       return fail(
@@ -337,7 +416,11 @@ export async function launchCodingSessionCrew(
 
   mark(CODING_SESSION_CREW_LAUNCH_GRANT_STEP, "running");
   try {
-    await deps.grantOperator({ genesisRef, granteePubkey: lead.actor });
+    await deps.grantOperator({
+      channelId: launchChannelId,
+      genesisRef,
+      granteePubkey: lead.actor,
+    });
   } catch (error) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
@@ -365,6 +448,7 @@ export async function launchCodingSessionCrew(
   }
   try {
     await deps.sendFirstTurn({
+      channelId: launchChannelId,
       target: primaryTarget,
       text: codingSessionCrewFirstTurnText({
         goal: input.goal,
@@ -387,6 +471,7 @@ export async function launchCodingSessionCrew(
 
   return {
     ok: true,
+    channelId: launchChannelId,
     sessionRef,
     genesisRef,
     seats: seated,

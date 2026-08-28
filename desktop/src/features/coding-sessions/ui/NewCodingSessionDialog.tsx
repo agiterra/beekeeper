@@ -548,6 +548,10 @@ export function NewCodingSessionForm({
           <NewCodingSessionCrewTab
             channelId={channelId}
             disabled={transaction !== null}
+            // A project's sessions channel is published by the first create
+            // that needs one — a team launch is one of those creates, and it
+            // mints it through the same helper the one-session path uses.
+            ensureChannelId={projectContext?.ensureChannelId ?? null}
             model={effectiveModel}
             // A crew launch mints one execution per seat and resolves no
             // single generation to open, so it closes the dialog and leaves

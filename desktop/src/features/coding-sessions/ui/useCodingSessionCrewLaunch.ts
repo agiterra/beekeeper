@@ -49,6 +49,15 @@ export function useCodingSessionCrewLaunch(input: {
   /** Provider that will run every seat. */
   providerInstanceRef: string | null;
   providerAuthorityPubkey: string | null;
+  /**
+   * Resolve — creating it if needed — the channel the team launches into.
+   *
+   * Supplied only where the destination is a fact without an id yet: a project
+   * whose sessions channel has never been published. It is the project flow's
+   * own `ensureChannelId`, so the team launch and the one-session create mint
+   * the same channel and record the same project fact.
+   */
+  ensureChannelId?: (() => Promise<string>) | null;
   /** Working directory every seat runs in, host-local and never on the wire. */
   workdir: string | null;
   title: string | null;
@@ -79,18 +88,24 @@ export function useCodingSessionCrewLaunch(input: {
         }
         const providerInstanceRef = current.providerInstanceRef;
         const providerAuthorityPubkey = current.providerAuthorityPubkey;
-        // Strict membership on 442xx: a provider that joins after the creates
-        // are published never sees them.
-        await ensureProviderChannelMembership({
-          channelId: launchInput.channelId,
-          providerPubkey: providerAuthorityPubkey,
-        });
         const launched = await launchCodingSessionCrew(launchInput, {
+          ensureChannel: current.ensureChannelId ?? undefined,
           newSessionRef: createCodingSessionSessionRef,
-          publishGenesis: publishCodingSessionGenesis,
+          publishGenesis: async ({ channelId, sessionRef }) => {
+            // Strict membership on 442xx: a provider that joins after the
+            // creates are published never sees them. Here rather than before
+            // the launch because the channel may not exist until the launch's
+            // own first step publishes it.
+            await ensureProviderChannelMembership({
+              channelId,
+              providerPubkey: providerAuthorityPubkey,
+            });
+            return publishCodingSessionGenesis({ channelId, sessionRef });
+          },
           publishSeatCreate: async ({
             seat,
             index,
+            channelId,
             sessionRef,
             genesisRef,
           }) => {
@@ -106,7 +121,7 @@ export function useCodingSessionCrewLaunch(input: {
               });
             }
             await publishSeatedCodingSessionCreate({
-              channelId: launchInput.channelId,
+              channelId,
               commandId,
               seat: { actor: seat.actor, role: seat.role },
               seatLabel: seat.actorLabel,
@@ -122,7 +137,7 @@ export function useCodingSessionCrewLaunch(input: {
               publish: async () => {
                 const event = await signRelayEvent(
                   buildCodingSessionCreateEvent({
-                    channelId: launchInput.channelId,
+                    channelId,
                     commandId,
                     projectRef: null,
                     repoRef: null,
@@ -152,23 +167,23 @@ export function useCodingSessionCrewLaunch(input: {
             });
             return { commandId, packStaged };
           },
-          awaitSeatReceipt: ({ commandId }) =>
+          awaitSeatReceipt: ({ channelId, commandId }) =>
             awaitCodingSessionCreateReceipt({
-              channelId: launchInput.channelId,
+              channelId,
               commandId,
               providerAuthorityPubkey,
             }),
-          grantOperator: async ({ genesisRef, granteePubkey }) => {
+          grantOperator: async ({ channelId, genesisRef, granteePubkey }) => {
             await publishCodingSessionAuthorityTransition({
-              channelId: launchInput.channelId,
+              channelId,
               genesisRef,
               type: "grant-operator",
               granteePubkey,
             });
           },
-          sendFirstTurn: async ({ target, text }) => {
+          sendFirstTurn: async ({ channelId, target, text }) => {
             await publishCodingSessionCommand({
-              channelId: launchInput.channelId,
+              channelId,
               commandId: createCodingSessionCommandId(),
               target,
               text,

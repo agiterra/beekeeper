@@ -5,8 +5,10 @@ import {
   checkCodingSessionCrewFamilies,
   checkCodingSessionCrewSeatModels,
   codingSessionCrewFirstTurnText,
+  codingSessionCrewLaunchBlock,
   codingSessionCrewRosterText,
   deriveCodingSessionModelVendor,
+  describeCodingSessionSeatVendor,
   parseCodingSessionCrew,
   resolveCodingSessionSeatVendor,
 } from "./codingSessionCrew.ts";
@@ -449,6 +451,10 @@ test("a seat whose declaration contradicts its runtime is a conflict", () => {
       source: "conflict",
       declared: "openai",
       derived: "anthropic",
+      // Which statement lost, and to what: the copy cannot be honest without
+      // knowing the runtime is the half this build can check.
+      runtime: "claude-agent-acp",
+      via: "declaration",
     },
   );
   // Agreement is not a conflict, and the declaration is what it says it is.
@@ -531,4 +537,121 @@ test("a lead seat cannot claim a vendor the selected provider will not run", () 
   );
   assert.equal(verdict.ok, false);
   assert.match(verdict.reason, /lead \(Keystone\)/);
+});
+
+test("a seat pinned to a Claude runtime says so, instead of calling its OpenAI model anthropic", () => {
+  // Item 79(c): the roster read "declared openai, but gpt-5.6-sol is
+  // anthropic" — two false claims in one line. The seat declared anthropic
+  // (the installer wrote it), and gpt-5.6-sol is not an Anthropic model. What
+  // is true is the runtime it is pinned to.
+  const seat = {
+    role: "architect",
+    actorLabel: "Sol",
+    driver: "claude-agent-acp",
+    model: "gpt-5.6-sol",
+    vendor: "anthropic",
+  };
+  const line = describeCodingSessionSeatVendor(seat);
+  assert.match(line, /runs on Claude Code \(anthropic\)/);
+  assert.match(line, /gpt-5\.6-sol is an OpenAI model/);
+  assert.match(line, /a team launch runs every seat on one provider/);
+  assert.doesNotMatch(line, /gpt-5\.6-sol is anthropic/);
+  assert.doesNotMatch(line, /declared openai/);
+});
+
+test("a seat that declares a vendor its runtime cannot run names the declaration, not the model", () => {
+  const line = describeCodingSessionSeatVendor({
+    driver: "codex-acp",
+    model: "gpt-5.6-sol",
+    vendor: "anthropic",
+  });
+  assert.match(line, /runs on Codex \(openai\)/);
+  assert.match(line, /this seat declares anthropic/);
+});
+
+test("two statements a seat makes about itself still contradict each other plainly", () => {
+  // No runtime pins this seat, so the disagreement really is between the
+  // declaration and the model id — and that copy was already true.
+  assert.equal(
+    describeCodingSessionSeatVendor({
+      model: "claude-opus-5",
+      vendor: "local",
+    }),
+    "declared local, but claude-opus-5 is anthropic",
+  );
+});
+
+test("a launch is never disabled without a sentence saying why", () => {
+  const ready = {
+    hasTeam: true,
+    seatCount: 3,
+    hasChannel: true,
+    canCreateChannel: false,
+    createInFlight: false,
+    isLaunching: false,
+    goal: "Close ledger item 79.",
+  };
+  assert.equal(codingSessionCrewLaunchBlock(ready), null);
+
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, hasTeam: false, seatCount: 0 }),
+    /no team/i,
+  );
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, seatCount: 0 }),
+    /no seats/i,
+  );
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, hasChannel: false }),
+    /^Pick a channel first/,
+  );
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, goal: "   " }),
+    /^Write the goal — the lead's first turn carries it\./,
+  );
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, isLaunching: true }),
+    /launching/i,
+  );
+  assert.match(
+    codingSessionCrewLaunchBlock({ ...ready, createInFlight: true }),
+    /in flight/i,
+  );
+});
+
+test("a project whose sessions channel is not published yet is not missing a channel", () => {
+  // The channel is a fact the launch will mint; refusing it would be the
+  // front door telling the operator to go find something that does not exist.
+  assert.equal(
+    codingSessionCrewLaunchBlock({
+      hasTeam: true,
+      seatCount: 3,
+      hasChannel: false,
+      canCreateChannel: true,
+      createInFlight: false,
+      isLaunching: false,
+      goal: "Close ledger item 79.",
+    }),
+    null,
+  );
+});
+
+test("a refusal about a seat pinned to the wrong runtime does not call it a model-id fight", () => {
+  const verdict = checkCodingSessionCrewFamilies([
+    {
+      role: "builder",
+      actorLabel: "Codey",
+      driver: "claude-agent-acp",
+      model: "gpt-5.6-sol",
+      vendor: "anthropic",
+    },
+    { role: "verifier", actorLabel: "Quinn", model: "grok-4" },
+  ]);
+  assert.equal(verdict.ok, false);
+  assert.doesNotMatch(
+    verdict.reason,
+    /declared vendor contradicts its model id/,
+  );
+  assert.match(verdict.reason, /runs on Claude Code \(anthropic\)/);
+  assert.match(verdict.reason, /gpt-5\.6-sol is an OpenAI model/);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
   CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
   CODING_SESSION_CREW_LAUNCH_GENESIS_STEP,
   CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
@@ -352,4 +353,91 @@ test("a seat staged without a role pack says so, and is not called seated craft"
   assert.match(builderStep.detail, /no role skills/);
   // The seats that did carry a pack say nothing extra.
   assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(0)).detail, null);
+});
+
+test("a project with no sessions channel yet mints one before the genesis, and seats into it", async () => {
+  // The front-door bug (item 79): from a project whose sessions channel has
+  // never been published, `channelId` is null and only the one-session path
+  // minted it — so the Team tab could not launch at all, and said nothing.
+  const seen = [];
+  const deps = recordingDeps({
+    ensureChannel: async () => {
+      seen.push("channel");
+      return "chan-minted";
+    },
+    publishGenesis: async ({ channelId }) => {
+      seen.push(`genesis:${channelId}`);
+      return { eventId: "genesis-1" };
+    },
+    publishSeatCreate: async ({ seat, index, channelId }) => {
+      seen.push(`publish:${seat.role}:${channelId}`);
+      return { commandId: `cmd-${index}` };
+    },
+    awaitSeatReceipt: async ({ commandId, channelId }) => {
+      seen.push(`receipt:${channelId}`);
+      return target(`sess-${commandId}`);
+    },
+    grantOperator: async ({ channelId }) => {
+      seen.push(`grant:${channelId}`);
+    },
+    sendFirstTurn: async ({ channelId }) => {
+      seen.push(`turn:${channelId}`);
+    },
+  });
+
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, channelId: null, seats: [LEAD] },
+    deps,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.channelId, "chan-minted");
+  assert.deepEqual(seen, [
+    "channel",
+    "genesis:chan-minted",
+    "publish:lead:chan-minted",
+    "receipt:chan-minted",
+    "grant:chan-minted",
+    "turn:chan-minted",
+  ]);
+  const channelStep = result.steps.find(
+    (entry) => entry.id === CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
+  );
+  assert.equal(channelStep.state, "done");
+});
+
+test("a launch with a channel already published never asks for another one", async () => {
+  const deps = recordingDeps({
+    ensureChannel: async () => {
+      throw new Error("a known channel must not be re-minted");
+    },
+    publishGenesis: async ({ channelId }) => {
+      deps.log.push(`genesis:${channelId}`);
+      return { eventId: "genesis-1" };
+    },
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  assert.equal(result.channelId, "chan-1");
+  assert.equal(deps.log[0], "genesis:chan-1");
+  assert.equal(
+    result.steps.some(
+      (entry) => entry.id === CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP,
+    ),
+    false,
+    "a channel that exists is not a step anybody walks",
+  );
+});
+
+test("no channel and nothing that can mint one fails before the genesis", async () => {
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    { ...INPUT, channelId: null },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP);
+  assert.match(result.failureReason, /channel/i);
+  assert.deepEqual(deps.log, [], "nothing may be signed");
+  assert.equal(result.channelId, null);
 });
