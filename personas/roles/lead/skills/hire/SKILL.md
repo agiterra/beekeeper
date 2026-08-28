@@ -59,6 +59,39 @@ Exit codes: **0** hired (prints the new seat's target and role), **1** refused
 (prints the code), **2** relay error, **5** published but unconfirmed inside
 60 s. On 5, do not re-run blind — `bee sessions list` first, or you hire twice.
 
+## Read `granted` before you end your turn
+
+A seat that exists and a seat that can answer you are two different facts, and
+the output prints both. `outcome: "created"` means the host seated the agent.
+**`granted: true` is what means it can report back to you.**
+
+Authority to steer is a `grant-operator` on the umbrella's chain. Without one
+the relay refuses the seat's `bee sessions send` with *"only a session founder
+or a granted operator may steer"* — so the agent wakes, does the entire job,
+and every word of its report bounces. That is not hypothetical: on 2026-08-28 a
+hired builder worked for seventeen minutes and committed, and its report never
+reached its lead, because the hire seated it and granted nothing.
+
+The host publishes the grant itself, right after the seat's create receipt. So:
+
+- **`granted: true`** — normal. End your turn; the report will wake you.
+- **`granted: false`** — the seat is live and mute. The detail line says so.
+  **Do not hire again** — you would get a second agent with the same problem
+  and two lanes on one brief. Ask the operator to grant it:
+
+  ```
+  bee sessions grant --channel <channel-uuid> --genesis <genesis-event-id> \
+    --pubkey <the seat's actor> --role collaborator
+  ```
+
+  The hire output carries both arguments you do not already have: `genesisRef`
+  and `seat.actor`. Only the session's founder may extend the chain, so this is
+  a request to the person, not a command you run. Put it on the ledger as a `blocker` and say
+  which seat is waiting. Once the grant lands the seat can report with no
+  re-brief: it kept working the whole time.
+- **`granted: null`** — no seat was created at all (refused, or unconfirmed).
+  Read `outcome` and the refusal table below instead.
+
 ## Model ids
 
 A model id is not a name you invent, and it is not the vendor's marketing
