@@ -827,10 +827,19 @@ test.describe("crew front door", () => {
       page.getByTestId("new-coding-session-crew-blocked"),
     ).toHaveText("Write the goal — the lead's first turn carries it.");
 
-    // Item 79(e): one provider for the whole team is where this build is, not
-    // what it thinks a team is.
+    // Item 79(e) asked this tab to disclose the distance between the button's
+    // name and what pressing it does. D14 moved that distance rather than
+    // closing it: the launch no longer runs every seat on one provider, it
+    // creates the lead alone and the other rows are only who the lead may
+    // hire (`planCodingSessionCrewLaunch`, codingSessionCrewLaunch.ts:213).
+    // So the sentence under test is the current one
+    // (`CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE`,
+    // NewCodingSessionCrewTab.tsx), and a tab that dropped it would again
+    // show four roles beside "Launch team" and start one agent.
+    await expect(crewTab).toContainText("Launching seats the lead only.");
     await expect(crewTab).toContainText(
-      "Today a team launch runs every seat on one provider",
+      "The roles below are who it may hire — it hires them with " +
+        "`bee sessions hire`",
     );
 
     // …and with a goal typed, the front door actually opens.
