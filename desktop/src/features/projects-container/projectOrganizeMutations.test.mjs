@@ -66,6 +66,8 @@ function makeProject(overrides = {}) {
     channelIds: [],
     visibility: "private",
     members: [{ pubkey: MEMBER_A, role: "viewer" }],
+    icon: "🐝",
+    color: "#3b82f6",
     ...overrides,
   };
 }
@@ -98,6 +100,39 @@ test("updateProjectContainer keeps members when switching to public", async () =
     // Members are roles now, not just a private ACL — a public flip must not
     // drop them from the head event.
     assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "viewer"]]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("updateProjectContainer keeps icon and color when omitted", async () => {
+  const stubs = setupStubs();
+  try {
+    await updateProjectContainer({
+      project: makeProject(),
+      name: "Skunkworks Renamed",
+    });
+    const event = stubs.signedEvents.at(-1);
+    // Omitted (undefined) means "keep" — only an explicit null clears.
+    assert.deepEqual(tagValues(event, "icon"), ["🐝"]);
+    assert.deepEqual(tagValues(event, "color"), ["#3b82f6"]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("updateProjectContainer clears icon and color on explicit null", async () => {
+  const stubs = setupStubs();
+  try {
+    await updateProjectContainer({
+      project: makeProject(),
+      name: "Skunkworks",
+      icon: null,
+      color: null,
+    });
+    const event = stubs.signedEvents.at(-1);
+    assert.deepEqual(tagValues(event, "icon"), []);
+    assert.deepEqual(tagValues(event, "color"), []);
   } finally {
     stubs.teardown();
   }

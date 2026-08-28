@@ -51,6 +51,11 @@ export async function publishGeneralProject(): Promise<ProjectContainer> {
   const realProjects = containers.filter(
     (project) => project.dtag !== GENERAL_PROJECT_DTAG,
   );
+  // A republish over an existing General (NIP-33 LWW) must carry its current
+  // metadata forward — publishProjectContainer rebuilds every tag from input.
+  const existingGeneral = containers.find(
+    (project) => project.dtag === GENERAL_PROJECT_DTAG,
+  );
   const claimedRepos = new Set(
     realProjects.flatMap((project) => project.repoAddrs),
   );
@@ -59,9 +64,13 @@ export async function publishGeneralProject(): Promise<ProjectContainer> {
   );
 
   return publishProjectContainer({
-    name: "General",
+    name: existingGeneral?.name ?? "General",
     dtag: GENERAL_PROJECT_DTAG,
-    description: "Default project for existing work.",
+    description:
+      existingGeneral?.description ?? "Default project for existing work.",
+    members: existingGeneral?.members,
+    icon: existingGeneral?.icon,
+    color: existingGeneral?.color,
     extraTags: [
       ...repos
         .flatMap((project) => project.repositories)

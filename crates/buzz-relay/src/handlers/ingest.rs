@@ -1631,12 +1631,14 @@ const PROJECT_METADATA_TAG_MAX_LEN: usize = 256;
 /// taking the first, another the last. For `buzz-access` a duplicate would be
 /// worse than ambiguous display — it would make the *access level* itself
 /// reader-dependent.
-const PROJECT_SINGLETON_METADATA_TAGS: [&str; 5] = [
+const PROJECT_SINGLETON_METADATA_TAGS: [&str; 7] = [
     "name",
     "description",
     "buzz-channel",
     "buzz-visibility",
     "buzz-access",
+    "icon",
+    "color",
 ];
 
 /// Maximum number of invited-member `p` tags on a kind:30621 project.
@@ -1721,6 +1723,8 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
     let mut buzz_channel: Option<&str> = None;
     let mut buzz_visibility: Option<&str> = None;
     let mut buzz_access: Option<&str> = None;
+    let mut icon: Option<&str> = None;
+    let mut color: Option<&str> = None;
     let mut singleton_counts = [0usize; PROJECT_SINGLETON_METADATA_TAGS.len()];
 
     for tag in event.tags.iter() {
@@ -1748,6 +1752,8 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
                         "buzz-channel" => buzz_channel = Some(value),
                         "buzz-visibility" => buzz_visibility = Some(value),
                         "buzz-access" => buzz_access = Some(value),
+                        "icon" => icon = Some(value),
+                        "color" => color = Some(value),
                         _ => {}
                     }
                 }
@@ -1874,6 +1880,31 @@ fn validate_project_envelope(event: &Event) -> Result<(), ProjectRejection> {
                 format!(
                     "project event `buzz-visibility` tag too long ({} bytes, max {PROJECT_METADATA_TAG_MAX_LEN})",
                     buzz_visibility.len()
+                ),
+            ));
+        }
+    }
+    // `icon`/`color` stay opaque at the relay — display hints where an
+    // unrecognized value harmlessly reads as unset — but their lengths are
+    // bounded like the other pass-through metadata tags.
+    if let Some(icon) = icon {
+        if icon.len() > PROJECT_METADATA_TAG_MAX_LEN {
+            return Err(ProjectRejection::new(
+                "metadata-length",
+                format!(
+                    "project event `icon` tag too long ({} bytes, max {PROJECT_METADATA_TAG_MAX_LEN})",
+                    icon.len()
+                ),
+            ));
+        }
+    }
+    if let Some(color) = color {
+        if color.len() > PROJECT_METADATA_TAG_MAX_LEN {
+            return Err(ProjectRejection::new(
+                "metadata-length",
+                format!(
+                    "project event `color` tag too long ({} bytes, max {PROJECT_METADATA_TAG_MAX_LEN})",
+                    color.len()
                 ),
             ));
         }
@@ -6657,6 +6688,30 @@ mod tests {
         let description = "x".repeat(PROJECT_DESCRIPTION_MAX_LEN);
         let ev = make_project(&[&["d", "platform"], &["description", &description]]);
         assert!(validate_project_envelope(&ev).is_ok());
+    }
+
+    #[test]
+    fn project_envelope_bounds_icon_and_color_but_not_their_values() {
+        // Both are client-interpreted display hints: any value within the
+        // byte cap passes (an unrecognized color reads as unset client-side),
+        // but an unbounded value must not ride into storage.
+        let ev = make_project(&[&["d", "platform"], &["icon", "🐝"], &["color", "#3b82f6"]]);
+        assert!(validate_project_envelope(&ev).is_ok());
+        let odd = make_project(&[&["d", "platform"], &["color", "not-a-color"]]);
+        assert!(
+            validate_project_envelope(&odd).is_ok(),
+            "the relay must not interpret color values"
+        );
+        for tag_name in ["icon", "color"] {
+            let long = "x".repeat(PROJECT_METADATA_TAG_MAX_LEN + 1);
+            let ev = make_project(&[&["d", "platform"], &[tag_name, &long]]);
+            let err = validate_project_envelope(&ev).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("`{tag_name}` tag too long")),
+                "got: {err}"
+            );
+        }
     }
 
     /// Membership is an assertion, not a permission grant: the relay must accept

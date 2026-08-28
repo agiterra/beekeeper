@@ -175,12 +175,16 @@ test("addProjectMembers preserves visibility and members through a republish", a
       channelIds: [],
       visibility: "private",
       members: [{ pubkey: MEMBER_A, role: "owner" }],
+      icon: "🐝",
+      color: "#3b82f6",
     };
     await addProjectMembers(project, { channelIds: ["chan-1"] });
     const event = stubs.signedEvents.at(-1);
     assert.deepEqual(tagValues(event, "buzz-access"), ["private"]);
     assert.deepEqual(pTags(event), [["p", MEMBER_A, "", "owner"]]);
     assert.deepEqual(tagValues(event, "channel"), ["chan-1"]);
+    assert.deepEqual(tagValues(event, "icon"), ["🐝"]);
+    assert.deepEqual(tagValues(event, "color"), ["#3b82f6"]);
   } finally {
     stubs.teardown();
   }
@@ -205,6 +209,8 @@ test("removeProjectMembers preserves visibility and members through a republish"
         { pubkey: MEMBER_A, role: "collaborator" },
         { pubkey: MEMBER_B, role: "viewer" },
       ],
+      icon: "🚀",
+      color: "#ef4444",
     };
     await removeProjectMembers(project, {
       repoAddrs: [`30617:${OWNER}:repo-1`],
@@ -217,6 +223,47 @@ test("removeProjectMembers preserves visibility and members through a republish"
     ]);
     assert.deepEqual(tagValues(event, "a"), []);
     assert.deepEqual(tagValues(event, "channel"), ["chan-1"]);
+    assert.deepEqual(tagValues(event, "icon"), ["🚀"]);
+    assert.deepEqual(tagValues(event, "color"), ["#ef4444"]);
+  } finally {
+    stubs.teardown();
+  }
+});
+
+test("publishProjectContainer emits icon and color tags only when set and valid", async () => {
+  const stubs = setupStubs();
+  try {
+    await publishProjectContainer({
+      name: "Skunkworks",
+      dtag: "skunkworks",
+      icon: "🐝",
+      color: "#3B82F6",
+    });
+    let event = stubs.signedEvents.at(-1);
+    assert.deepEqual(tagValues(event, "icon"), ["🐝"]);
+    // Color is normalized to lowercase on write.
+    assert.deepEqual(tagValues(event, "color"), ["#3b82f6"]);
+
+    await publishProjectContainer({
+      name: "Skunkworks",
+      dtag: "skunkworks",
+      icon: null,
+      color: null,
+    });
+    event = stubs.signedEvents.at(-1);
+    assert.deepEqual(tagValues(event, "icon"), []);
+    assert.deepEqual(tagValues(event, "color"), []);
+
+    // Malformed color never reaches the event.
+    await publishProjectContainer({
+      name: "Skunkworks",
+      dtag: "skunkworks",
+      icon: "  ",
+      color: "red",
+    });
+    event = stubs.signedEvents.at(-1);
+    assert.deepEqual(tagValues(event, "icon"), []);
+    assert.deepEqual(tagValues(event, "color"), []);
   } finally {
     stubs.teardown();
   }

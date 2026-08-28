@@ -34,6 +34,7 @@ import {
   useHideDmMutation,
   useOpenDmMutation,
 } from "@/features/channels/hooks";
+import { useActiveProjectTint } from "@/features/projects-container/useActiveProjectTint";
 import { useUnreadChannels } from "@/features/channels/useUnreadChannels";
 import { useMembershipNotifications } from "@/features/channels/useMembershipNotifications";
 import { useFeedItemState } from "@/features/home/useFeedItemState";
@@ -326,6 +327,12 @@ export function AppShell() {
       ? (channels.find((channel) => channel.id === targetChannelId) ?? null)
       : null;
   }, [channels, managedChannelId, selectedChannelId]);
+  // The active project's tint, washed over the content pane while its
+  // content is showing (project routes directly; channels via projectRef).
+  const projectTintColor = useActiveProjectTint(
+    location.pathname,
+    activeChannel?.projectRef,
+  );
   const {
     handleChannelNotification,
     handleDmNotification,
@@ -895,6 +902,7 @@ export function AppShell() {
                       isHuddleRoom={isHuddleRoom}
                       isHuddleRoomStarting={isHuddleRoomStarting}
                       mainInsetRef={mainInsetRef}
+                      projectTintColor={projectTintColor}
                       terminal={<TerminalBootstrap {...terminalContext} />}
                     >
                       <Outlet />

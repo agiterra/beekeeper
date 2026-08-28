@@ -20,6 +20,7 @@ import {
 
 import { cn } from "@/shared/lib/cn";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
+import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
@@ -34,6 +35,7 @@ import {
   SidebarMenuItem,
 } from "@/shared/ui/sidebar";
 
+import { projectTintVars } from "../lib/projectTint";
 import type { ProjectContainer } from "../hooks";
 import type {
   ExactProjectCodingSessionCoordinates,
@@ -273,7 +275,9 @@ export function ProjectSidebarGroup({
   return (
     <SidebarGroup
       className="group/sidebar-section py-0 pl-4"
+      data-project-tinted={project.color ? "" : undefined}
       data-testid={`project-group-${project.dtag}`}
+      style={projectTintVars(project.color)}
     >
       <div className="relative flex items-center">
         <SidebarMenu>
@@ -285,7 +289,14 @@ export function ProjectSidebarGroup({
               data-testid={`project-open-${project.dtag}`}
               tooltip={project.name}
             >
-              <FolderKanban />
+              {project.icon ? (
+                <StatusEmoji
+                  className="size-4 shrink-0 text-sm leading-none"
+                  value={project.icon}
+                />
+              ) : (
+                <FolderKanban />
+              )}
               <span className="truncate">{project.name}</span>
               {project.visibility === "private" ? (
                 <span className="flex shrink-0 items-center">

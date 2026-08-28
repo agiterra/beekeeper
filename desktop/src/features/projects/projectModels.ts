@@ -120,6 +120,8 @@ const SINGLETON_METADATA_TAGS = [
   "description",
   "buzz-channel",
   "buzz-visibility",
+  "icon",
+  "color",
 ] as const;
 
 const MAX_METADATA_TAG_BYTES: Record<string, number> = {
@@ -127,6 +129,8 @@ const MAX_METADATA_TAG_BYTES: Record<string, number> = {
   description: 2_048,
   "buzz-channel": 256,
   "buzz-visibility": 256,
+  icon: 256,
+  color: 256,
 };
 
 /**

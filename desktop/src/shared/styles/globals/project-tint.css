@@ -1,0 +1,34 @@
+/*
+ * Per-project tint. A project with a `color` sets `--project-tint` as an
+ * element-local inline var (never :root — see the scoping note above) plus a
+ * marker attribute, on two surfaces:
+ *
+ *  - the project's whole sidebar group (`ProjectSidebarGroup`), washed over
+ *    the group at low opacity by mixing with transparent so it sits on both
+ *    the light and dark sidebar gradients;
+ *  - the main content inset (`AppShellChannelSurface`) while that project's
+ *    content is showing — the inner content card repaints its `bg-background`
+ *    with the same hex mixed over the theme background.
+ *
+ * Theme-agnostic on purpose: the tint identifies the project in every theme,
+ * so no `data-buzz-*` gate.
+ */
+[data-testid="app-sidebar"] [data-project-tinted] {
+  border-radius: 0.75rem;
+  background-color: color-mix(in srgb, var(--project-tint) 10%, transparent);
+}
+
+/*
+ * The second selector outranks Buzz Dark's own content-surface repaint
+ * (`:root[data-buzz-sidebar].dark [data-buzz-content-surface]`, which also
+ * re-points `--background` — the mix picks that up, so the tint sits over
+ * the actual dark canvas).
+ */
+[data-project-tint] [data-buzz-content-surface],
+:root[data-buzz-sidebar].dark [data-project-tint] [data-buzz-content-surface] {
+  background-color: color-mix(
+    in srgb,
+    var(--project-tint) 8%,
+    hsl(var(--background))
+  );
+}

@@ -11,6 +11,8 @@ type AppShellChannelSurfaceProps = {
   isHuddleRoom: boolean;
   isHuddleRoomStarting: boolean;
   mainInsetRef: React.RefObject<HTMLElement | null>;
+  /** Active project's tint (`#rrggbb`), washed over the content surface. */
+  projectTintColor?: string | null;
   terminal?: React.ReactNode;
 };
 
@@ -19,8 +21,12 @@ export function AppShellChannelSurface({
   isHuddleRoom,
   isHuddleRoomStarting,
   mainInsetRef,
+  projectTintColor = null,
   terminal,
 }: AppShellChannelSurfaceProps) {
+  // Element-local, never :root — the tint scopes to this inset only, and the
+  // var + attribute appear and disappear together (see theme.css).
+  const tint = isHuddleRoom ? null : projectTintColor;
   return (
     <MainInsetProvider mainInsetRef={mainInsetRef}>
       <SidebarInset
@@ -33,7 +39,13 @@ export function AppShellChannelSurface({
         data-buzz-content-unframed={isHuddleRoom ? true : undefined}
         data-buzz-glass-inset
         data-buzz-shadow-viewport
-        style={chromeCssVarDefaults as React.CSSProperties}
+        data-project-tint={tint ? "" : undefined}
+        style={
+          {
+            ...chromeCssVarDefaults,
+            ...(tint ? { "--project-tint": tint } : {}),
+          } as React.CSSProperties
+        }
       >
         {isHuddleRoom && !isHuddleRoomStarting ? <HuddleRoomHeader /> : null}
         <BuzzTheme.ContentSurface terminal={terminal} unframed={isHuddleRoom}>

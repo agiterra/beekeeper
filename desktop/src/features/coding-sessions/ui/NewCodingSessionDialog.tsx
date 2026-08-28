@@ -66,6 +66,13 @@ export type NewCodingSessionProjectContext = {
    */
   defaultWorkdir: string | null;
   /**
+   * The project's per-device default agent seat, prefilled once the managed
+   * agents resolve — only while the seat is untouched, and only when the
+   * agent is still one this computer manages (a stale default is silently
+   * ignored rather than producing a create the provider refuses).
+   */
+  defaultSeat?: { actor: string; role: string } | null;
+  /**
    * Resolve — creating it if needed — the channel this session belongs in.
    * Called once, on submit: opening the dialog and walking away must not
    * leave a channel behind.
@@ -277,6 +284,31 @@ export function NewCodingSessionForm({
   // them — so the field can refuse a half-filled seat before anything is
   // published rather than throwing from the builder.
   const seatDraft = useCodingSessionSeatDraft(managedAgents);
+  // The project's per-device default seat, applied once managed agents
+  // resolve. Once a person touches the seat it stays out — including after
+  // they explicitly choose "No agent" — and a default naming an agent this
+  // computer no longer manages is ignored rather than refused at create.
+  const seatTouchedRef = React.useRef(false);
+  const defaultSeat = projectContext?.defaultSeat ?? null;
+  const { onActorChange: draftActorChange, onRoleChange: draftRoleChange } =
+    seatDraft;
+  React.useEffect(() => {
+    if (seatTouchedRef.current || seatDraft.actor !== null) return;
+    if (!defaultSeat) return;
+    if (!managedAgents.some((agent) => agent.pubkey === defaultSeat.actor)) {
+      return;
+    }
+    draftActorChange(defaultSeat.actor);
+    // The stored role was chosen deliberately in project settings, so it
+    // outranks the agent's home-role default.
+    draftRoleChange(defaultSeat.role.trim() || "builder");
+  }, [
+    defaultSeat,
+    draftActorChange,
+    draftRoleChange,
+    managedAgents,
+    seatDraft.actor,
+  ]);
   const [workdir, setWorkdir] = React.useState("");
   const [useWorktree, setUseWorktree] = React.useState(true);
   const [worktreeName, setWorktreeName] = React.useState("");
@@ -651,8 +683,14 @@ export function NewCodingSessionForm({
           agents={managedAgents}
           disabled={transaction !== null}
           error={seatDraft.error}
-          onActorChange={seatDraft.onActorChange}
-          onRoleChange={seatDraft.onRoleChange}
+          onActorChange={(next) => {
+            seatTouchedRef.current = true;
+            seatDraft.onActorChange(next);
+          }}
+          onRoleChange={(next) => {
+            seatTouchedRef.current = true;
+            seatDraft.onRoleChange(next);
+          }}
           role={seatDraft.role}
         />
 

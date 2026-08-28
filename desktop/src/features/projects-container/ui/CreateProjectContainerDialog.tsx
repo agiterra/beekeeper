@@ -5,7 +5,6 @@ import { Button } from "@/shared/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -15,13 +14,9 @@ import { Textarea } from "@/shared/ui/textarea";
 
 import { PersonaShareRecipients } from "@/features/agents/ui/PersonaShareRecipients";
 import type { CreateProjectContainerInput } from "../useCreateProjectContainer";
+import { ProjectColorPickerField } from "./ProjectColorPickerField";
+import { ProjectIconPickerField } from "./ProjectIconPickerField";
 import { ProjectVisibilitySettings } from "./ProjectVisibilitySettings";
-
-const VISIBILITY_COPY = {
-  public: "Everyone in the community can see it.",
-  private:
-    "Only you and the people you invite can see this project — its channels, forums, and code repositories. New projects are private by default.",
-} as const;
 
 /** Modal for creating a project container (kind:30621). */
 export function CreateProjectContainerDialog({
@@ -41,6 +36,8 @@ export function CreateProjectContainerDialog({
     "private",
   );
   const [members, setMembers] = React.useState<UserSearchResult[]>([]);
+  const [icon, setIcon] = React.useState("");
+  const [color, setColor] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -49,6 +46,8 @@ export function CreateProjectContainerDialog({
     setDescription("");
     setVisibility("private");
     setMembers([]);
+    setIcon("");
+    setColor(null);
     setErrorMessage(null);
   }, [open]);
 
@@ -68,6 +67,8 @@ export function CreateProjectContainerDialog({
           pubkey: member.pubkey,
           role: "collaborator" as const,
         })),
+        icon: icon.trim() || null,
+        color,
       });
       onOpenChange(false);
     } catch (error) {
@@ -79,24 +80,28 @@ export function CreateProjectContainerDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-sm">
+      <DialogContent aria-describedby={undefined} className="max-w-sm">
         <DialogHeader>
           <DialogTitle>New project</DialogTitle>
-          <DialogDescription>
-            A project groups agents, channels, code, shells, and forums in the
-            sidebar. {VISIBILITY_COPY[visibility]}
-          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="flex flex-col gap-3">
-            <Input
-              autoFocus
-              aria-label="Project name"
-              data-testid="create-project-container-name"
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Project name"
-              value={name}
-            />
+            <div className="flex items-center gap-2">
+              <ProjectIconPickerField
+                icon={icon}
+                onIconChange={setIcon}
+                testIdPrefix="create-project-container"
+              />
+              <Input
+                autoFocus
+                aria-label="Project name"
+                className="flex-1"
+                data-testid="create-project-container-name"
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Project name"
+                value={name}
+              />
+            </div>
             <Textarea
               aria-label="Project description"
               data-testid="create-project-container-description"
@@ -104,6 +109,11 @@ export function CreateProjectContainerDialog({
               placeholder="What is this project about? (optional)"
               rows={3}
               value={description}
+            />
+            <ProjectColorPickerField
+              color={color}
+              onColorChange={setColor}
+              testIdPrefix="create-project-container"
             />
             <ProjectVisibilitySettings
               onVisibilityChange={setVisibility}

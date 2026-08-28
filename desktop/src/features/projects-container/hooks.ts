@@ -46,6 +46,7 @@ import {
   displayProjectsWithGeneral,
   eventToProjectContainer,
   isProjectContainerDeleted,
+  normalizeProjectColor,
   normalizeProjectMemberEntries,
   parseMemberRef,
   partitionByChannelProject,
@@ -104,11 +105,15 @@ function containerSnapshotKey(
 }
 
 /** Snapshots written before the roles migration hold `members: string[]`;
- * normalize each entry to the `{pubkey, role}` shape before use. */
+ * normalize each entry to the `{pubkey, role}` shape before use. Snapshots
+ * from before icon/color existed lack those fields entirely — default them
+ * so consumers can rely on the `string | null` contract. */
 function normalizeSnapshotProjects(projects: unknown[]): ProjectContainer[] {
   return (projects as ProjectContainer[]).map((project) => ({
     ...project,
     members: normalizeProjectMemberEntries(project.members),
+    icon: typeof project.icon === "string" ? project.icon : null,
+    color: normalizeProjectColor(project.color),
   }));
 }
 

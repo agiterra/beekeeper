@@ -205,6 +205,10 @@ export type UpdateProjectContainerInput = {
    * kept across visibility changes — they carry roles, not just a
    * private-project ACL. */
   members?: ProjectContainer["members"];
+  /** undefined = keep the project's current icon; null = remove it. */
+  icon?: string | null;
+  /** undefined = keep the project's current color; null = remove it. */
+  color?: string | null;
 };
 
 /** Rename/edit a project the current identity owns (same-dtag republish).
@@ -216,6 +220,8 @@ export async function updateProjectContainer({
   description,
   visibility,
   members,
+  icon,
+  color,
 }: UpdateProjectContainerInput): Promise<ProjectContainer> {
   const self = await selfPubkey();
   if (project.owner !== self) {
@@ -232,6 +238,8 @@ export async function updateProjectContainer({
     description: description?.trim() ?? "",
     visibility: nextVisibility,
     members: members ?? project.members,
+    icon: icon === undefined ? project.icon : icon,
+    color: color === undefined ? project.color : color,
     extraTags: [
       ...project.repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),

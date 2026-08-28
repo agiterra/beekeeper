@@ -422,6 +422,7 @@ pub(crate) fn invoke_handler(
         commands::coding_session_popout::get_coding_session_popout_bootstrap,
         coding_sessions::workdir_store::get_coding_session_workdir_state,
         coding_sessions::workdir_store::set_coding_session_workdir,
+        coding_sessions::workdir_store::clear_coding_session_workdir,
         coding_sessions::workdir_store::record_coding_session_workdir_use,
         coding_sessions::workdir_store::stage_coding_session_create_hint,
         coding_sessions::workdir_store::clear_coding_session_create_hint,

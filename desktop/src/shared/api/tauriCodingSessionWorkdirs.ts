@@ -67,6 +67,17 @@ export async function setCodingSessionWorkdir(input: {
   });
 }
 
+/** Forget the directory remembered for a project coordinate or a channel. */
+export async function clearCodingSessionWorkdir(input: {
+  scope: CodingSessionWorkdirScope;
+  key: string;
+}): Promise<CodingSessionWorkdirState> {
+  return invokeTauri<CodingSessionWorkdirState>(
+    "clear_coding_session_workdir",
+    { scope: input.scope, key: input.key },
+  );
+}
+
 /** Promote a directory to the head of the MRU list. */
 export async function recordCodingSessionWorkdirUse(
   path: string,

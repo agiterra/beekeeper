@@ -348,16 +348,18 @@ test("private projects publish access tags and show a lock badge", async ({
     timeout: 10_000,
   });
 
-  // Edit dialog pre-fills visibility. Members are no longer edited here —
-  // the project page's Members card is the single management surface.
+  // Settings dialog pre-fills visibility. Members live on their own tab,
+  // backed by the same roster manager as the project page's Members card —
+  // the head event's p tags are never edited from the dialog.
   await page.getByTestId("manage-project-actions-skunkworks").click();
-  await page.getByRole("menuitem", { name: "Edit project" }).click();
+  await page.getByRole("menuitem", { name: "Project settings" }).click();
   await expect(page.getByTestId("edit-project-container-name")).toHaveValue(
     "Skunkworks",
   );
   await expect(
     page.getByTestId("edit-project-container-visibility"),
   ).toHaveText(/Private/);
+  await expect(page.getByTestId("project-settings-tab-members")).toBeVisible();
   await expect(
     page.getByTestId("edit-project-container-members-recipient-field"),
   ).toHaveCount(0);

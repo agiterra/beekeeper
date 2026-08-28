@@ -45,6 +45,23 @@ fn an_absent_file_decodes_as_the_empty_steady_state() {
 }
 
 #[test]
+fn clearing_a_scope_forgets_only_that_key() {
+    let mut store = store_with_choices();
+    store.clear(CodingSessionWorkdirScope::Project, PROJECT_REF);
+
+    assert!(store.by_project.is_empty());
+    assert_eq!(
+        store.by_channel[CHANNEL_ID].path,
+        PathBuf::from("/src/side-quest"),
+        "clearing a project key must not touch channel choices"
+    );
+    // The provider view drops the entry with it.
+    assert!(store.projects_view().projects.is_empty());
+    // Clearing an unknown key is a no-op, not an error.
+    store.clear(CodingSessionWorkdirScope::Project, "30621:absent:none");
+}
+
+#[test]
 fn setting_a_scope_replaces_rather_than_accumulates() {
     let mut store = CodingSessionWorkdirStore::default();
     store.set(

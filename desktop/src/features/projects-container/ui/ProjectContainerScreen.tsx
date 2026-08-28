@@ -63,7 +63,7 @@ import {
   useLinkProjectRepoMutation,
 } from "../useLinkProjectRepo";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
-import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
+import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { LinkProjectRepoDialog } from "./LinkProjectRepoDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
 import { ProjectMembersCard } from "./ProjectMembersCard";
@@ -348,7 +348,10 @@ export function ProjectContainerScreen({
             })()}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {canManage ? (
+            {/* Settings are reachable for every published project — the
+                dialog itself renders relay fields read-only for non-owners.
+                Delete stays owner-only. */}
+            {!isFallback ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -366,9 +369,9 @@ export function ProjectContainerScreen({
                     onSelect={() => setEditOpen(true)}
                   >
                     <Pencil />
-                    Edit project
+                    Project settings
                   </DropdownMenuItem>
-                  {!isGeneral ? (
+                  {canManage && !isGeneral ? (
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       data-testid="project-screen-delete"
@@ -630,7 +633,7 @@ export function ProjectContainerScreen({
         )}
       </div>
 
-      <EditProjectContainerDialog
+      <ProjectSettingsDialog
         isSaving={updateMutation.isPending}
         onOpenChange={(open) => {
           if (!open) setEditOpen(false);

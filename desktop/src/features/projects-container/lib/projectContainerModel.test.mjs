@@ -9,6 +9,7 @@ import {
   isProjectContainerDeleted,
   isProjectMember,
   makeLocalGeneral,
+  normalizeProjectColor,
   normalizeProjectMemberEntries,
   parseMemberRef,
   partitionByChannelProject,
@@ -367,4 +368,43 @@ test("displayProjectsWithGeneral passes through when a real general exists", () 
   const project = eventToProjectContainer(makeProjectEvent({ dtag: "alpha" }));
   const projects = [general, project];
   assert.equal(displayProjectsWithGeneral(projects), projects);
+});
+
+test("eventToProjectContainer reads icon and normalized color tags", () => {
+  const event = makeProjectEvent({
+    tags: [
+      ["icon", "🐝"],
+      ["color", "#3B82F6"],
+    ],
+  });
+  const project = eventToProjectContainer(event);
+  assert.equal(project.icon, "🐝");
+  // Hex is normalized to lowercase for stable comparisons.
+  assert.equal(project.color, "#3b82f6");
+});
+
+test("eventToProjectContainer treats absent or malformed color as unset", () => {
+  assert.equal(eventToProjectContainer(makeProjectEvent()).icon, null);
+  assert.equal(eventToProjectContainer(makeProjectEvent()).color, null);
+  for (const bad of ["red", "#fff", "#gggggg", "3b82f6", "#3b82f6ff"]) {
+    const project = eventToProjectContainer(
+      makeProjectEvent({ tags: [["color", bad]] }),
+    );
+    assert.equal(project.color, null, `expected ${bad} to read as unset`);
+  }
+});
+
+test("normalizeProjectColor accepts only #rrggbb and lowercases it", () => {
+  assert.equal(normalizeProjectColor("#AABBCC"), "#aabbcc");
+  assert.equal(normalizeProjectColor("#aabbcc"), "#aabbcc");
+  assert.equal(normalizeProjectColor("aabbcc"), null);
+  assert.equal(normalizeProjectColor("#abc"), null);
+  assert.equal(normalizeProjectColor(undefined), null);
+  assert.equal(normalizeProjectColor(null), null);
+});
+
+test("makeLocalGeneral carries no icon or color", () => {
+  const general = makeLocalGeneral();
+  assert.equal(general.icon, null);
+  assert.equal(general.color, null);
 });

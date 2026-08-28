@@ -76,7 +76,30 @@ export type ProjectContainer = {
    * roster until the first membership op; the authoritative read is the
    * kind:39010 projection (see lib/projectMembers.ts). */
   members: ProjectMember[];
+  /** Display emoji from the `icon` tag (unicode or `:shortcode:`), or null. */
+  icon: string | null;
+  /** Display tint from the `color` tag, normalized `#rrggbb` lowercase.
+   * Unrecognized values read as unset — never an error. */
+  color: string | null;
 };
+
+/** Singleton tag carrying a project's display emoji. */
+export const PROJECT_ICON_TAG = "icon";
+
+/** Singleton tag carrying a project's display tint (`#rrggbb`). */
+export const PROJECT_COLOR_TAG = "color";
+
+/**
+ * Normalizes a `color` tag value to lowercase `#rrggbb`. Anything else —
+ * named colors, shorthand hex, garbage from a foreign client — reads as
+ * unset (null) rather than failing the event.
+ */
+export function normalizeProjectColor(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") return null;
+  return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+}
 
 /** Reserved dtag for the auto-created default project. Always public — the
  * relay never auto-privatizes it and the desktop write path guards it too. */
@@ -119,6 +142,8 @@ export function makeLocalGeneral(): ProjectContainer {
     channelIds: [],
     visibility: "public",
     members: [],
+    icon: null,
+    color: null,
   };
 }
 
@@ -254,6 +279,8 @@ export function eventToProjectContainer(
     channelIds: [...new Set(getAllTags(event, "channel"))],
     visibility,
     members,
+    icon: getTag(event, PROJECT_ICON_TAG) ?? null,
+    color: normalizeProjectColor(getTag(event, PROJECT_COLOR_TAG)),
   };
 }
 

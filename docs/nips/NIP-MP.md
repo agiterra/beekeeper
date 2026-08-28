@@ -96,6 +96,8 @@ Both external registries are advisory, not authoritative allocators: neither res
 | `buzz-channel` | 0 or 1 | UUID of the channel this project's discussion lives in. Metadata only — see [Authority](#authority). At most 256 bytes. |
 | `buzz-visibility` | 0 or 1 | `listed` (default) or `unlisted`. Feeds [listing eligibility](#listing-eligibility). At most 256 bytes. |
 | `buzz-access` | 0 or 1 | `public` (default) or `private`. Buzz access extension — see [Access levels](#access-levels-buzz-extension). |
+| `icon` | 0 or 1 | Display emoji for the project (unicode or `:shortcode:`). Client-interpreted. At most 256 bytes. |
+| `color` | 0 or 1 | Display tint for the project as lowercase `#rrggbb`. Client-interpreted. At most 256 bytes. |
 | `p` | 0 to 256 | One invited-member pubkey each (lowercase 64-hex, optional NIP-01 relay hint, optional role in element 4 — see [Member roles](#member-roles)). Meaningful only with `buzz-access` `private`. |
 
 `content` carries no meaning. Writers SHOULD emit the empty string. Readers and relays MUST ignore whatever it holds: a non-empty `content` is not a rejection cause, and no consumer may parse semantics from it. Reserving it costs nothing and keeps a future writer that fills it from invalidating its events for today's readers.
@@ -109,6 +111,7 @@ Ingest bounds metadata cardinality and length; it interprets no metadata value. 
 - `name` absent → clients display the `d` value.
 - `buzz-visibility` absent or holding any value other than `listed` or `unlisted` → treated as `listed`. An unrecognized token MUST NOT hide a project: a typo in a metadata field is not a privacy signal, and treating it as one would make a project vanish for reasons its author cannot see.
 - `buzz-channel` absent, or naming a channel the viewer cannot resolve or read → the project renders without a channel link. It MUST NOT be dropped from the collection, and the unresolvable value MUST NOT be surfaced as a broken link.
+- `icon` and `color` are display hints. A `color` value that is not `#rrggbb` (case-insensitive) MUST be treated as unset — never a rejection, never an error surfaced to the reader.
 
 ### Access levels (Buzz extension)
 

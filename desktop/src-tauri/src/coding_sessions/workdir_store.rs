@@ -154,6 +154,18 @@ impl CodingSessionWorkdirStore {
         }
     }
 
+    /// Forget the directory recorded for one scope key.
+    pub(crate) fn clear(&mut self, scope: CodingSessionWorkdirScope, key: &str) {
+        match scope {
+            CodingSessionWorkdirScope::Project => {
+                self.by_project.remove(key);
+            }
+            CodingSessionWorkdirScope::Channel => {
+                self.by_channel.remove(key);
+            }
+        }
+    }
+
     /// Move a directory to the head of the MRU list.
     ///
     /// De-duplicates first so re-using a directory promotes it instead of
@@ -331,6 +343,24 @@ pub fn set_coding_session_workdir(
         return Err("a coding-session working directory must be an absolute path".to_string());
     }
     mutate(&app, &state, |store| store.set(scope, &key, path))
+}
+
+/// Forget the directory remembered for a project coordinate or a channel.
+///
+/// Goes through `mutate` like `set` does, so the provider's projects view is
+/// re-materialized without the entry.
+#[tauri::command]
+pub fn clear_coding_session_workdir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    scope: CodingSessionWorkdirScope,
+    key: String,
+) -> Result<CodingSessionWorkdirStore, String> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("a working-directory scope key is required".to_string());
+    }
+    mutate(&app, &state, |store| store.clear(scope, &key))
 }
 
 /// Promote a directory to the head of the MRU list.

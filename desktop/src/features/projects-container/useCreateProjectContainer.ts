@@ -13,7 +13,10 @@ import {
 import {
   eventToProjectContainer,
   GENERAL_PROJECT_DTAG,
+  normalizeProjectColor,
   PROJECT_ACCESS_TAG,
+  PROJECT_COLOR_TAG,
+  PROJECT_ICON_TAG,
   type ProjectMember,
 } from "./lib/projectContainerModel";
 
@@ -22,6 +25,10 @@ export type CreateProjectContainerInput = {
   description?: string;
   visibility?: ProjectContainer["visibility"];
   members?: ProjectMember[];
+  /** Display emoji; absent/null publishes no `icon` tag. */
+  icon?: string | null;
+  /** Display tint (`#rrggbb`); absent/null publishes no `color` tag. */
+  color?: string | null;
 };
 
 function slugFromName(name: string): string {
@@ -37,11 +44,12 @@ function slugFromName(name: string): string {
  * refs (`a`/`channel`) — used by the General migration sweep; the plain
  * create dialog publishes with none.
  *
- * ⚠️ Rebuilds the visibility/`p`-member tags from `visibility`/`members`
- * on every call — every caller that republishes an existing project (add/
- * remove-member, organize mutations, the legacy-kind migration) MUST pass the
- * project's current `visibility`/`members` through, or the republish silently
- * drops them and a private project goes public / loses its roster seed.
+ * ⚠️ Rebuilds every tag from its input on each call — every caller that
+ * republishes an existing project (add/remove-member, organize mutations, the
+ * legacy-kind migration) MUST pass the project's current `visibility`/
+ * `members`/`icon`/`color` through, or the republish silently drops them and
+ * a private project goes public / loses its roster seed / loses its icon and
+ * tint.
  *
  * Note the head's `p` tags are only the roster until the first kind:9010/9011
  * membership op — after that the relay sources the roster from ops and
@@ -53,6 +61,8 @@ export async function publishProjectContainer(input: {
   description?: string;
   visibility?: ProjectContainer["visibility"];
   members?: ProjectMember[];
+  icon?: string | null;
+  color?: string | null;
   extraTags?: string[][];
   createdAt?: number;
 }): Promise<ProjectContainer> {
@@ -73,6 +83,14 @@ export async function publishProjectContainer(input: {
   const description = input.description?.trim() ?? "";
   if (description) {
     tags.push(["description", description]);
+  }
+  const icon = input.icon?.trim();
+  if (icon) {
+    tags.push([PROJECT_ICON_TAG, icon]);
+  }
+  const color = normalizeProjectColor(input.color);
+  if (color) {
+    tags.push([PROJECT_COLOR_TAG, color]);
   }
   if (visibility === "private") {
     tags.push([PROJECT_ACCESS_TAG, "private"]);
@@ -137,6 +155,8 @@ async function createProjectContainer(
     description: input.description,
     visibility: input.visibility,
     members: input.members,
+    icon: input.icon,
+    color: input.color,
   });
 }
 
@@ -162,6 +182,8 @@ export async function addProjectMembers(
     description: project.description,
     visibility: project.visibility,
     members: project.members,
+    icon: project.icon,
+    color: project.color,
     extraTags: [
       ...repoAddrs.map((addr) => ["a", addr]),
       ...project.agentAddrs.map((addr) => ["a", addr]),
@@ -186,6 +208,8 @@ export async function removeProjectMembers(
     description: project.description,
     visibility: project.visibility,
     members: project.members,
+    icon: project.icon,
+    color: project.color,
     extraTags: [
       ...project.repoAddrs
         .filter((addr) => !dropRepos.has(addr))

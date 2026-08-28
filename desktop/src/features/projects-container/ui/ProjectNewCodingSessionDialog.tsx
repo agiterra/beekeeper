@@ -11,6 +11,7 @@ import {
   type NewCodingSessionProjectContext,
 } from "@/features/coding-sessions/ui/NewCodingSessionDialog";
 import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
+import { useCommunities } from "@/features/communities/useCommunities";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import {
   Dialog,
@@ -38,6 +39,7 @@ import {
   projectSessionsChannelName,
   resolveProjectSessionsChannel,
 } from "../lib/projectSessionsChannel";
+import { useProjectDefaultAgent } from "../lib/projectDefaultAgentStorage";
 import { addProjectMembers } from "../useCreateProjectContainer";
 import { ensureRealProject } from "../useGeneralProjectMigration";
 
@@ -136,6 +138,21 @@ export function ProjectNewCodingSessionDialog({
 
   const { mutateAsync: createChannel } = createChannelMutation;
   const selfPubkey = identity.data?.pubkey?.toLowerCase();
+
+  // This device's default agent seat for the project (never published) —
+  // handed to the dialog as its seat prefill. Memoized into the shape the
+  // dialog reads so the projectContext stays reference-stable.
+  const { activeCommunity } = useCommunities();
+  const { defaultSeat: storedSeat } = useProjectDefaultAgent(
+    selfPubkey,
+    activeCommunity?.relayUrl,
+    project?.id ?? "",
+  );
+  const defaultSeat = React.useMemo(
+    () =>
+      storedSeat ? { actor: storedSeat.pubkey, role: storedSeat.role } : null,
+    [storedSeat],
+  );
   const ensureChannelId = React.useCallback(async () => {
     if (!project) {
       throw new Error("This project is no longer available.");
@@ -193,10 +210,11 @@ export function ProjectNewCodingSessionDialog({
               project.id === LOCAL_GENERAL_ID ? null : project.address,
             channelId: resolvedChannel?.channelId ?? null,
             defaultWorkdir: repoCheckout,
+            defaultSeat,
             ensureChannelId,
           }
         : null,
-    [ensureChannelId, project, repoCheckout, resolvedChannel],
+    [defaultSeat, ensureChannelId, project, repoCheckout, resolvedChannel],
   );
 
   if (!projectContext) {

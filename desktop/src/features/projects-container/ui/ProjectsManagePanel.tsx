@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
+import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import {
@@ -53,7 +54,7 @@ import {
 } from "../lib/projectContainerModel";
 import { useUpdateProjectContainerMutation } from "../projectOrganizeMutations";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
-import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
+import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
 import { useProjectItemMoves } from "./useProjectItemMoves";
 
@@ -330,7 +331,14 @@ export function ProjectsManagePanel() {
         <div className="mb-3 flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <FolderKanban className="size-4 shrink-0" />
+              {project.icon ? (
+                <StatusEmoji
+                  className="size-4 shrink-0 leading-none"
+                  value={project.icon}
+                />
+              ) : (
+                <FolderKanban className="size-4 shrink-0" />
+              )}
               <span className="truncate">{project.name}</span>
               {project.visibility === "private" ? (
                 <Lock
@@ -351,7 +359,10 @@ export function ProjectsManagePanel() {
               </p>
             ) : null}
           </div>
-          {canManage ? (
+          {/* Settings are reachable for every published project — the dialog
+              renders relay fields read-only for non-owners. Delete stays
+              owner-only. */}
+          {!isFallback ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -366,9 +377,9 @@ export function ProjectsManagePanel() {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setEditTarget(project)}>
                   <Pencil />
-                  Edit project
+                  Project settings
                 </DropdownMenuItem>
-                {!isGeneral ? (
+                {canManage && !isGeneral ? (
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onSelect={() => setDeleteTarget(project)}
@@ -507,7 +518,7 @@ export function ProjectsManagePanel() {
         {displayProjects.map(renderProjectCard)}
       </div>
 
-      <EditProjectContainerDialog
+      <ProjectSettingsDialog
         isSaving={updateMutation.isPending}
         onOpenChange={(open) => {
           if (!open) setEditTarget(null);
