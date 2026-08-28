@@ -356,6 +356,36 @@ void main() {
       expect(decoded.value!.genesisRef, genesisEventIdA);
     });
 
+    test('a seated create (actor + role) decodes', () {
+      final decoded = decodeCodingSessionCreate(
+        createEvent(
+          commandId: 'cmd-1',
+          sessionRef: sessionRefA,
+          genesisRef: genesisEventIdA,
+          actor: 'd' * 64,
+          role: 'lead',
+        ),
+      );
+      expect(decoded.value, isNotNull);
+      expect(decoded.value!.providerAuthorityPubkey, providerPubkey);
+    });
+
+    test('half a seat or a bad seat is malformed', () {
+      final cases = <NostrEvent>[
+        createEvent(commandId: 'cmd-1', role: 'lead'),
+        createEvent(commandId: 'cmd-1', actor: 'd' * 64),
+        createEvent(commandId: 'cmd-1', actor: 'D' * 64, role: 'lead'),
+        createEvent(commandId: 'cmd-1', actor: 'd' * 64, role: 'Lead'),
+      ];
+      for (final source in cases) {
+        expect(
+          decodeCodingSessionCreate(source).reason,
+          CodingSessionDecodeReason.malformedPayload,
+          reason: source.content,
+        );
+      }
+    });
+
     test('a genesisRef without a sessionRef is malformed', () {
       final source = createEvent(commandId: 'cmd-1');
       final payload = jsonDecode(source.content) as Map<String, dynamic>;
