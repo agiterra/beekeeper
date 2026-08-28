@@ -3,6 +3,7 @@ import type {
   CrewRoleInstallFailureStage,
   CrewRoleNameChoice,
   InstallCrewRolePacksResponse,
+  ProjectRolePacksScan,
 } from "@/shared/api/tauriTeams";
 
 /**
@@ -19,6 +20,47 @@ export const INSTALL_CREW_ROLES_BODY =
   "Pick a folder of role packs. Every pack whose persona declares a role becomes one agent on this computer — carrying that role and that pack — and they all join one team you can launch.";
 
 export const INSTALL_CREW_ROLES_CHOOSE_FOLDER = "Choose folder…";
+
+/**
+ * The label over a folder the dialog chose for the operator (ledger 85).
+ *
+ * Shown only when the path came from the project's own checkout, so a folder
+ * the operator picked is never captioned as the project's.
+ */
+export const INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL =
+  "The project's role packs";
+
+/**
+ * The project this dialog was opened in has no checkout directory on this
+ * computer, so there is nowhere to look for its packs.
+ *
+ * Names the setting that fixes it rather than only saying no: the checkout
+ * directory is a per-computer project setting (Andy's 75f9fc8f), and an
+ * operator who has never opened that tab has no way to guess that from
+ * "No folder chosen".
+ */
+export const INSTALL_CREW_ROLES_NO_CHECKOUT =
+  "This project has no checkout directory yet — set one in Project settings, or choose a folder";
+
+/**
+ * Why the project's folder was not pre-chosen, or `null` when it was.
+ *
+ * Absent and empty are told apart, because they are different problems: the
+ * first says this checkout has no role packs folder at all, the second says
+ * the folder is there and nothing in it is a role pack. Both name the exact
+ * path, so nobody has to guess where the dialog looked.
+ */
+export function crewRolesProjectFolderNote(
+  scan: ProjectRolePacksScan,
+): string | null {
+  if (!scan.exists) {
+    return `${scan.directory} is not there, so this project has no role packs to install — choose a folder instead.`;
+  }
+  if (scan.packs.length === 0) {
+    return `${scan.directory} holds no role packs — choose a folder instead.`;
+  }
+  return null;
+}
 
 /** Heading of the per-identity name fields (plan D11, ledger 84). */
 export const INSTALL_CREW_ROLES_TEAM_NAMES_LABEL = "Name your team";

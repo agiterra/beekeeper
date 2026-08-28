@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import * as React from "react";
 
+import { getCodingSessionWorkdirState } from "@/shared/api/tauriCodingSessionWorkdirs";
 import type {
   InstallCrewRolePacksResponse,
   PickedCrewRolePacks,
@@ -8,6 +9,7 @@ import type {
 import {
   installCrewRolePacks,
   pickCrewRolePacksDirectory,
+  scanProjectRolePacks,
 } from "@/shared/api/tauriTeams";
 import { Button } from "@/shared/ui/button";
 import {
@@ -25,18 +27,35 @@ import {
   crewRolesDroppedNotes,
   crewRolesFailureMessage,
   crewRolesFoundNothing,
+  crewRolesProjectFolderNote,
   crewRolesSeatedNote,
   crewRolesUnreadableFolder,
   INSTALL_CREW_ROLES_BODY,
   INSTALL_CREW_ROLES_CHOOSE_FOLDER,
+  INSTALL_CREW_ROLES_NO_CHECKOUT,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
+  INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
   INSTALL_CREW_ROLES_TEAM_NAMES_HINT,
   INSTALL_CREW_ROLES_TEAM_NAMES_LABEL,
   INSTALL_CREW_ROLES_TITLE,
 } from "./installCrewRolesCopy";
 
+/** The project the installer was opened in, when it was opened in one. */
+export type InstallCrewRolesProject = {
+  /** The NIP-MP coordinate the checkout directory is remembered under. */
+  address: string;
+};
+
 type InstallCrewRolesFormProps = {
+  /**
+   * The project showing when the dialog opened, or `null`/absent outside one.
+   *
+   * With a project, the folder is chosen before the operator touches
+   * anything — from *that project's* checkout directory. Without one, nothing
+   * is looked up and the dialog is exactly what it was.
+   */
+  project?: InstallCrewRolesProject | null;
   /** Called after a successful install so the caller can refetch and toast. */
   onInstalled: (result: InstallCrewRolePacksResponse) => void;
   /** Dismiss the surrounding dialog. */
@@ -53,6 +72,7 @@ type InstallCrewRolesFormProps = {
  * portal — the same split `AddCodingSessionProviderForm` uses.
  */
 export function InstallCrewRolesForm({
+  project,
   onInstalled,
   onClose,
   onBusyChange,
@@ -63,28 +83,91 @@ export function InstallCrewRolesForm({
   const [result, setResult] =
     React.useState<InstallCrewRolePacksResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  /** `true` while the shown folder is the project's, not one that was picked. */
+  const [isProjectFolder, setIsProjectFolder] = React.useState(false);
+  /** Why the project's folder was not used, when it was not. */
+  const [projectNote, setProjectNote] = React.useState<string | null>(null);
+  /** Set the moment the operator opens the picker, so a slow lookup landing
+   * afterwards can never overwrite the folder they chose themselves. */
+  const operatorChose = React.useRef(false);
 
   React.useEffect(() => {
     onBusyChange?.(isInstalling);
   }, [isInstalling, onBusyChange]);
 
+  // Stable so the project lookup's effect depends on it without re-running on
+  // every render; the setters it closes over are stable already.
+  const applyScan = React.useCallback((next: PickedCrewRolePacks) => {
+    setPicked(next);
+    // Every field starts on the name that identity already carries here, so
+    // an operator who installs without touching anything renames nobody.
+    setNames(
+      Object.fromEntries(
+        crewRoleNameFields(next.packs).map((field) => [
+          field.role,
+          field.defaultName,
+        ]),
+      ),
+    );
+    setResult(null);
+  }, []);
+
+  // Ledger 85: opened inside a project, the dialog looks in that project's
+  // checkout for `personas/roles` and opens on it. Read-only — the same scan
+  // the picker runs, so the two can never disagree about what a folder holds.
+  const projectAddress = project?.address ?? null;
+  React.useEffect(() => {
+    if (!projectAddress) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const state = await getCodingSessionWorkdirState();
+        if (cancelled || operatorChose.current) return;
+        const checkout = state.byProject[projectAddress]?.path?.trim() ?? "";
+        if (checkout.length === 0) {
+          setProjectNote(INSTALL_CREW_ROLES_NO_CHECKOUT);
+          return;
+        }
+        const scan = await scanProjectRolePacks(checkout);
+        if (cancelled || operatorChose.current) return;
+        const note = crewRolesProjectFolderNote(scan);
+        if (note !== null) {
+          setProjectNote(note);
+          return;
+        }
+        applyScan({
+          directory: scan.directory,
+          packs: scan.packs,
+          skipped: scan.skipped,
+        });
+        setIsProjectFolder(true);
+      } catch (cause) {
+        // A folder that is there and unreadable is the folder's fault, and
+        // saying so beats leaving "No folder chosen" with no explanation.
+        if (cancelled || operatorChose.current) return;
+        setProjectNote(
+          crewRolesUnreadableFolder(
+            cause instanceof Error ? cause.message : String(cause),
+          ),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyScan, projectAddress]);
+
   const choose = async () => {
     setError(null);
+    operatorChose.current = true;
     try {
       const next = await pickCrewRolePacksDirectory();
       if (!next) return;
-      setPicked(next);
-      // Every field starts on the name that identity already carries here, so
-      // an operator who installs without touching anything renames nobody.
-      setNames(
-        Object.fromEntries(
-          crewRoleNameFields(next.packs).map((field) => [
-            field.role,
-            field.defaultName,
-          ]),
-        ),
-      );
-      setResult(null);
+      // A folder the operator picked is theirs, not the project's — the label
+      // and the note both belong to the folder they replaced.
+      setIsProjectFolder(false);
+      setProjectNote(null);
+      applyScan(next);
     } catch (cause) {
       // The picker only ever fails at picking or at reading, so this one *is*
       // the folder.
@@ -129,23 +212,41 @@ export function InstallCrewRolesForm({
   return (
     <>
       {isDone ? null : (
-        <div className="flex items-center gap-2">
-          <input
-            className="min-w-0 flex-1 truncate rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
-            data-testid="install-crew-roles-path"
-            placeholder="No folder chosen"
-            readOnly
-            value={picked?.directory ?? ""}
-          />
-          <Button
-            data-testid="install-crew-roles-choose"
-            disabled={isInstalling}
-            onClick={choose}
-            type="button"
-            variant="outline"
-          >
-            {INSTALL_CREW_ROLES_CHOOSE_FOLDER}
-          </Button>
+        <div className="flex flex-col gap-1.5">
+          {isProjectFolder ? (
+            <p
+              className="text-xs font-medium text-foreground"
+              data-testid="install-crew-roles-folder-label"
+            >
+              {INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <input
+              className="min-w-0 flex-1 truncate rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+              data-testid="install-crew-roles-path"
+              placeholder="No folder chosen"
+              readOnly
+              value={picked?.directory ?? ""}
+            />
+            <Button
+              data-testid="install-crew-roles-choose"
+              disabled={isInstalling}
+              onClick={choose}
+              type="button"
+              variant="outline"
+            >
+              {INSTALL_CREW_ROLES_CHOOSE_FOLDER}
+            </Button>
+          </div>
+          {projectNote ? (
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="install-crew-roles-project-note"
+            >
+              {projectNote}
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -286,6 +387,8 @@ export function InstallCrewRolesForm({
 type InstallCrewRolesDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The project showing when this opened, or `null` outside one. */
+  project?: InstallCrewRolesProject | null;
   /** Called after a successful install so the caller can refetch and toast. */
   onInstalled: (result: InstallCrewRolePacksResponse) => void;
 };
@@ -305,6 +408,7 @@ type InstallCrewRolesDialogProps = {
 export function InstallCrewRolesDialog({
   open,
   onOpenChange,
+  project,
   onInstalled,
 }: InstallCrewRolesDialogProps) {
   const [isInstalling, setIsInstalling] = React.useState(false);
@@ -335,6 +439,7 @@ export function InstallCrewRolesDialog({
           onBusyChange={setIsInstalling}
           onClose={() => onOpenChange(false)}
           onInstalled={onInstalled}
+          project={project}
         />
       </DialogContent>
     </Dialog>

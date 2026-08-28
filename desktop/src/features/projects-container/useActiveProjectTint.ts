@@ -45,13 +45,16 @@ export function resolveActiveProjectId(
 }
 
 /**
- * The active project's tint color (`#rrggbb`), or null when the current
- * surface belongs to no project or that project has no color set.
+ * The project the current surface belongs to, or null when it belongs to none.
+ *
+ * The same resolution the tint uses, exposed whole because callers need more
+ * than a color off it — the installer needs the project's address to find the
+ * checkout directory this computer remembers for it (ledger 85).
  */
-export function useActiveProjectTint(
+export function useActiveProjectContainer(
   pathname: string,
   channelProjectRef: string | null | undefined,
-): string | null {
+): ProjectContainer | null {
   const projectsEnabled = useFeatureEnabled("projects");
   const projectsQuery = useProjectContainersQuery({
     enabled: projectsEnabled,
@@ -65,8 +68,17 @@ export function useActiveProjectTint(
       projects,
     );
     if (!projectId) return null;
-    return (
-      projects.find((candidate) => candidate.id === projectId)?.color ?? null
-    );
+    return projects.find((candidate) => candidate.id === projectId) ?? null;
   }, [channelProjectRef, pathname, projects, projectsEnabled]);
+}
+
+/**
+ * The active project's tint color (`#rrggbb`), or null when the current
+ * surface belongs to no project or that project has no color set.
+ */
+export function useActiveProjectTint(
+  pathname: string,
+  channelProjectRef: string | null | undefined,
+): string | null {
+  return useActiveProjectContainer(pathname, channelProjectRef)?.color ?? null;
 }

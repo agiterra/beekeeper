@@ -305,6 +305,41 @@ export type CrewRoleInstallFailure = {
 };
 
 /**
+ * What one read-only look at a project's `personas/roles` folder found.
+ *
+ * `exists` is separate from an empty `packs` list on purpose: "that checkout
+ * has no personas/roles folder" and "it has one and it is empty" send an
+ * operator to different places, and the dialog says which.
+ */
+export type ProjectRolePacksScan = {
+  /** The folder the scan looked in, named whether or not it is there. */
+  directory: string;
+  exists: boolean;
+  /** The same rows `pickCrewRolePacksDirectory` returns, from the same scan. */
+  packs: CrewRoleNameChoice[];
+  skipped: SkippedCrewRolePack[];
+};
+
+/**
+ * Look at `<checkoutDir>/personas/roles` without opening a picker.
+ *
+ * Read-only — it mints nothing and writes nothing. Rejects only when a folder
+ * that is there cannot be read; a folder that is absent comes back as
+ * `exists: false`, because a checkout with no role packs is an ordinary state
+ * rather than a failure.
+ */
+export async function scanProjectRolePacks(
+  checkoutDir: string,
+): Promise<ProjectRolePacksScan> {
+  return invokeTauri<ProjectRolePacksScan>(
+    "scan_project_role_packs_directory",
+    {
+      checkoutDir,
+    },
+  );
+}
+
+/**
  * Open the OS folder picker for a folder of role packs and scan what was
  * picked. `null` if the operator cancelled.
  *

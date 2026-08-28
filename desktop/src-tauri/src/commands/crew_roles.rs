@@ -14,9 +14,9 @@ use crate::{
     app_state::AppState,
     managed_agents::{
         crew_roles::{
-            install_role_packs, role_name_choices, role_profile_publishes, scan_role_packs,
-            CrewRoleInstallError, CrewRoleNameChoice, InstallCrewRolePacksResponse,
-            SkippedCrewRolePack,
+            install_role_packs, role_name_choices, role_profile_publishes, scan_project_role_packs,
+            scan_role_packs, CrewRoleInstallError, CrewRoleNameChoice,
+            InstallCrewRolePacksResponse, ProjectRolePacksScan, SkippedCrewRolePack,
         },
         load_managed_agents, load_personas, load_teams, save_managed_agents, save_personas,
         save_teams, try_regenerate_nest,
@@ -89,6 +89,39 @@ pub async fn pick_crew_role_packs_directory(
             packs: role_name_choices(&scan, &agents),
             skipped: scan.skipped,
         }))
+    })
+    .await
+    .map_err(|error| format!("the folder scan did not finish: {error}"))?
+}
+
+/// Look at `<checkout>/personas/roles` for the project the operator is in,
+/// without opening a picker and without writing anything.
+///
+/// This is how the installer opens on a folder that is already chosen
+/// (ledger 85): a new operator had to know where a project keeps its packs.
+/// The answer says which of the three states it found — no such folder, an
+/// empty one, or one that scans — because the dialog has to say which rather
+/// than showing an empty list for both of the first two.
+///
+/// # Errors
+///
+/// Returns the folder's own words when a folder that *is* there cannot be
+/// read. A folder that is simply absent is reported in the answer, not as an
+/// error: a checkout with no role packs is an ordinary state, not a fault.
+#[tauri::command]
+pub async fn scan_project_role_packs_directory(
+    app: AppHandle,
+    checkout_dir: String,
+) -> Result<ProjectRolePacksScan, String> {
+    let checkout_dir = checkout_dir.trim().to_string();
+    if checkout_dir.is_empty() {
+        return Err("no checkout directory was given".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        // Read-only, exactly like the picker's scan: the names already
+        // installed here are what the fields default to.
+        let agents = load_managed_agents(&app).unwrap_or_default();
+        scan_project_role_packs(std::path::Path::new(&checkout_dir), &agents)
     })
     .await
     .map_err(|error| format!("the folder scan did not finish: {error}"))?

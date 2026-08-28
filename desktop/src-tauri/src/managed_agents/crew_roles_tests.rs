@@ -779,6 +779,108 @@ fn renaming_the_lead_owes_a_profile_publish_with_the_new_name() {
     assert_eq!(builder.previous_name.as_deref(), Some("builder"));
 }
 
+// ── The project's own role packs (ledger 85) ─────────────────────────────────
+//
+// The installer opened on "No folder chosen", so a new operator had to know
+// that a project's packs live in `<checkout>/personas/roles`. These pin the
+// read-only look the dialog takes before anybody clicks anything: where it
+// looks, and the three answers it can come back with — a folder that is not
+// there, a folder holding nothing, and a folder that scans to exactly the
+// fields the picker path would have rendered.
+
+/// A project's role packs live in `personas/roles` under its checkout.
+#[test]
+fn a_projects_role_packs_live_under_personas_roles_in_its_checkout() {
+    let checkout = tempfile::tempdir().expect("temp dir");
+    assert_eq!(
+        project_role_packs_dir(checkout.path()),
+        checkout.path().join("personas").join("roles"),
+    );
+}
+
+/// A checkout without that folder is a fact the dialog states, not an error
+/// it blames the operator for — and the answer still names the folder it
+/// looked in, so the sentence on screen can say where.
+#[test]
+fn a_checkout_with_no_personas_roles_folder_is_reported_missing_not_failed() {
+    let checkout = tempfile::tempdir().expect("temp dir");
+
+    let scan =
+        scan_project_role_packs(checkout.path(), &[]).expect("a missing folder is not a failure");
+
+    assert!(
+        !scan.exists,
+        "the folder is not there, and the scan says so"
+    );
+    assert!(scan.packs.is_empty());
+    assert!(scan.skipped.is_empty());
+    assert_eq!(
+        scan.directory,
+        project_role_packs_dir(checkout.path())
+            .display()
+            .to_string(),
+    );
+}
+
+/// A folder that is there and holds nothing is a different fact from a folder
+/// that is not there — the dialog says which, so `exists` cannot be inferred
+/// from an empty pack list.
+#[test]
+fn an_empty_personas_roles_folder_exists_and_holds_no_packs() {
+    let checkout = tempfile::tempdir().expect("temp dir");
+    fs::create_dir_all(project_role_packs_dir(checkout.path())).expect("roles dir");
+
+    let scan = scan_project_role_packs(checkout.path(), &[]).expect("scan succeeds");
+
+    assert!(scan.exists, "the folder is there");
+    assert!(scan.packs.is_empty(), "and it holds nothing");
+}
+
+/// The pre-chosen folder is the *same* scan the picker runs: same rows, same
+/// order, same defaults, same skip list. A second code path here would let the
+/// two disagree about what the folder holds.
+#[test]
+fn a_projects_roles_folder_scans_to_exactly_what_the_picker_would_have_shown() {
+    let checkout = tempfile::tempdir().expect("temp dir");
+    let roles = project_role_packs_dir(checkout.path());
+    fs::create_dir_all(&roles).expect("roles dir");
+    write_pack(&roles, "lead", "lead", Some("lead"));
+    write_pack(&roles, "designer", "designer", Some("designer"));
+    write_pack(&roles, "notes", "notes", None);
+    // The names an operator already gave, read back the way the dialog reads
+    // them: off this computer's agent list, not off the packs.
+    let installed = {
+        let mut minted = 0usize;
+        let mut mint = counting_mint(&mut minted);
+        install_role_packs(
+            &scan_role_packs(&roles).expect("first scan"),
+            Vec::new(),
+            Vec::new(),
+            &[],
+            NOW,
+            &names(&[("lead", "Keystone")]),
+            &mut mint,
+        )
+        .expect("install succeeds")
+    };
+    let agents = installed.agents.clone();
+
+    let scan = scan_project_role_packs(checkout.path(), &agents).expect("scan succeeds");
+
+    assert!(scan.exists);
+    let picker = role_name_choices(&scan_role_packs(&roles).expect("picker scan"), &agents);
+    assert_eq!(scan.packs, picker, "one scan, not two that can disagree");
+    assert_eq!(
+        scan.packs
+            .iter()
+            .map(|pack| pack.default_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Keystone", "designer"],
+        "a pack already installed here defaults to that identity's name",
+    );
+    assert_eq!(scan.skipped.len(), 1, "the child with no role is reported");
+}
+
 /// Naming every installed identity, and what a rename owes the relay. Split
 /// into its own file only to keep both under the repository file-size gate.
 #[path = "crew_roles_naming_tests.rs"]

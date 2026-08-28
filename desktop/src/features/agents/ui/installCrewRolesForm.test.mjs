@@ -100,7 +100,7 @@ const installedRow = (role, name, overrides = {}) => ({
   ...overrides,
 });
 
-async function mountForm(onInstalled = () => {}) {
+async function mountForm(onInstalled = () => {}, props = {}) {
   const React = (await import("react")).default;
   const { act, render } = await import("@testing-library/react");
   const { InstallCrewRolesForm } = await import("./InstallCrewRolesDialog.tsx");
@@ -109,6 +109,7 @@ async function mountForm(onInstalled = () => {}) {
       React.createElement(InstallCrewRolesForm, {
         onClose: () => {},
         onInstalled,
+        ...props,
       }),
     );
   });
@@ -332,4 +333,176 @@ test("a failed profile publish is shown, and no renamed row claims a republish",
     "a row must not claim a publish that failed",
   );
   assert.match(line, /the relay may still know it by the old name/);
+});
+
+// ── The project's own role packs, already chosen (ledger 85) ─────────────────
+//
+// The installer opened on "No folder chosen", so a new operator had to know
+// that a project's packs live in `<checkout>/personas/roles`. When the project
+// showing has a checkout directory and that folder scans to something, the
+// dialog opens on it. When it does not, it says which of the three reasons it
+// is and leaves the picker exactly as it was — a folder nobody can find is not
+// a folder to pre-fill with.
+
+const PROJECT = { address: "30621:owner:beekeeper" };
+
+/** The workdir store's answer with one checkout recorded for `PROJECT`. */
+const workdirState = (path) => ({
+  version: 1,
+  byProject: path ? { [PROJECT.address]: { path, updatedAt: "now" } } : {},
+  byChannel: {},
+  mru: [],
+  pending: {},
+});
+
+const PROJECT_SCAN = {
+  directory: "/checkout/personas/roles",
+  exists: true,
+  packs: PICKED.packs,
+  skipped: [],
+};
+
+test("a project whose checkout holds role packs opens on that folder, already chosen", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = PROJECT_SCAN;
+  await mountForm(() => {}, { project: PROJECT });
+
+  assert.equal(
+    screen.getByTestId("install-crew-roles-path").value,
+    "/checkout/personas/roles",
+    "the folder is already chosen, not left on 'No folder chosen'",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-folder-label").textContent,
+    "The project's role packs",
+    "and it says whose folder that is",
+  );
+  const inputs = [
+    ...screen.getByTestId("install-crew-roles-names").querySelectorAll("input"),
+  ];
+  assert.deepEqual(
+    inputs.map((input) => input.value),
+    ["Keystone", "builder", "designer"],
+    "the same name fields the picker path renders, from the same scan",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-submit").disabled,
+    false,
+    "there is something to install, and the button says so",
+  );
+  assert.equal(
+    calls.filter((entry) => entry.command === "pick_crew_role_packs_directory")
+      .length,
+    0,
+    "nothing opened the OS picker behind the operator's back",
+  );
+  const scan = calls.find(
+    (entry) => entry.command === "scan_project_role_packs_directory",
+  );
+  assert.deepEqual(scan.args, { checkoutDir: "/checkout" });
+  assert.equal(screen.queryByTestId("install-crew-roles-project-note"), null);
+});
+
+test("a project with no checkout directory says so, and the picker is untouched", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState(null);
+  await mountForm(() => {}, { project: PROJECT });
+
+  assert.equal(
+    screen.getByTestId("install-crew-roles-project-note").textContent,
+    "This project has no checkout directory yet — set one in Project settings, or choose a folder",
+  );
+  assert.equal(screen.getByTestId("install-crew-roles-path").value, "");
+  assert.equal(screen.queryByTestId("install-crew-roles-names"), null);
+  assert.equal(screen.queryByTestId("install-crew-roles-folder-label"), null);
+  assert.equal(
+    calls.filter(
+      (entry) => entry.command === "scan_project_role_packs_directory",
+    ).length,
+    0,
+    "with no checkout there is nothing to scan",
+  );
+  assert.equal(screen.getByTestId("install-crew-roles-submit").disabled, true);
+});
+
+test("a checkout with no personas/roles folder names the folder it looked for", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = {
+    directory: "/checkout/personas/roles",
+    exists: false,
+    packs: [],
+    skipped: [],
+  };
+  await mountForm(() => {}, { project: PROJECT });
+
+  const note = screen.getByTestId(
+    "install-crew-roles-project-note",
+  ).textContent;
+  assert.match(note, /\/checkout\/personas\/roles/);
+  assert.match(note, /is not there/);
+  assert.equal(screen.getByTestId("install-crew-roles-path").value, "");
+  assert.equal(screen.queryByTestId("install-crew-roles-names"), null);
+});
+
+test("a personas/roles folder holding no packs is reported as empty, not as missing", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = {
+    directory: "/checkout/personas/roles",
+    exists: true,
+    packs: [],
+    skipped: [
+      { path: "/checkout/personas/roles/notes", reason: "no persona…" },
+    ],
+  };
+  await mountForm(() => {}, { project: PROJECT });
+
+  const note = screen.getByTestId(
+    "install-crew-roles-project-note",
+  ).textContent;
+  assert.match(note, /\/checkout\/personas\/roles/);
+  assert.match(note, /holds no role packs/);
+  assert.doesNotMatch(note, /is not there/);
+  assert.equal(screen.getByTestId("install-crew-roles-path").value, "");
+});
+
+test("outside a project the dialog is exactly what it was: no lookup, no note", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = PROJECT_SCAN;
+  await mountForm();
+
+  assert.equal(screen.getByTestId("install-crew-roles-path").value, "");
+  assert.equal(screen.queryByTestId("install-crew-roles-project-note"), null);
+  assert.equal(screen.queryByTestId("install-crew-roles-folder-label"), null);
+  assert.equal(
+    calls.filter(
+      (entry) =>
+        entry.command === "scan_project_role_packs_directory" ||
+        entry.command === "get_coding_session_workdir_state",
+    ).length,
+    0,
+    "no project, no lookup",
+  );
+});
+
+test("choosing another folder over the project's default drops the project label", async () => {
+  const { act, fireEvent, screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = PROJECT_SCAN;
+  answers.pick_crew_role_packs_directory = PICKED;
+  await mountForm(() => {}, { project: PROJECT });
+
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("install-crew-roles-choose"));
+  });
+
+  assert.equal(screen.getByTestId("install-crew-roles-path").value, "/packs");
+  assert.equal(
+    screen.queryByTestId("install-crew-roles-folder-label"),
+    null,
+    "a folder the operator picked is not the project's role packs",
+  );
 });

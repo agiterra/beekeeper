@@ -323,6 +323,69 @@ pub fn role_name_choices(
         .collect()
 }
 
+/// What one read-only look at a project's `personas/roles` folder found.
+///
+/// Three answers, kept apart on purpose: the folder is not there, the folder
+/// is there and holds nothing, or the folder scans to packs. An empty `packs`
+/// list alone cannot tell the first two apart, and the dialog has to say
+/// which — "set a checkout" and "that checkout has no packs in it" send an
+/// operator to different places.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRolePacksScan {
+    /// The folder this scan looked in, named whether or not it exists.
+    pub directory: String,
+    /// `true` when that folder is there and is a directory.
+    pub exists: bool,
+    /// The same rows the picker path renders, from the same scan.
+    pub packs: Vec<CrewRoleNameChoice>,
+    /// Children that produced no role, and why.
+    pub skipped: Vec<SkippedCrewRolePack>,
+}
+
+/// Where a project keeps its role packs: `personas/roles` under its checkout.
+///
+/// One function rather than a string joined at each call site, because the
+/// dialog shows this path to the operator and the scan reads it — the two
+/// must never be able to disagree about which folder was meant.
+pub fn project_role_packs_dir(checkout: &Path) -> PathBuf {
+    checkout.join("personas").join("roles")
+}
+
+/// Look at `<checkout>/personas/roles` without writing anything.
+///
+/// A folder that is not there is reported (`exists: false`), never returned as
+/// an error: a project whose checkout has no role packs is an ordinary state
+/// the dialog explains, not a failure to blame the operator for. `Err` is kept
+/// for a folder that exists and still cannot be read.
+///
+/// `agents` is this computer's agent list, so a pack already installed here
+/// defaults to that identity's own name — the same rule
+/// [`role_name_choices`] applies on the picker path, because it *is* that
+/// call.
+pub fn scan_project_role_packs(
+    checkout: &Path,
+    agents: &[ManagedAgentRecord],
+) -> Result<ProjectRolePacksScan, String> {
+    let directory = project_role_packs_dir(checkout);
+    let display = directory.display().to_string();
+    if !directory.is_dir() {
+        return Ok(ProjectRolePacksScan {
+            directory: display,
+            exists: false,
+            packs: Vec::new(),
+            skipped: Vec::new(),
+        });
+    }
+    let scan = scan_role_packs(&directory)?;
+    Ok(ProjectRolePacksScan {
+        directory: display,
+        exists: true,
+        packs: role_name_choices(&scan, agents),
+        skipped: scan.skipped,
+    })
+}
+
 /// Scan the **immediate children** of `directory` for role packs.
 ///
 /// No recursion, by decision: a nested pack belongs to whichever folder the
