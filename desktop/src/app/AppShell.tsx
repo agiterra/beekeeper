@@ -925,8 +925,11 @@ export function AppShell() {
                 <NewCodingSessionDialogHost />
                 {/* Renders nothing; answers `session.hire` for as long as the
                     app is open. Here rather than on a session screen because a
-                    hire arrives whether or not anybody is looking at one. */}
-                <CodingSessionHireHost />
+                    hire arrives whether or not anybody is looking at one — and
+                    in the main window only, because a huddle window runs this
+                    same shell and two hosts would seat two agents for one
+                    hire. (A session pop-out returns above this point.) */}
+                {!isHuddleRoom ? <CodingSessionHireHost /> : null}
                 <AppShellOverlays
                   activeChannel={managedChannel}
                   browseDialogType={browseDialogType}
