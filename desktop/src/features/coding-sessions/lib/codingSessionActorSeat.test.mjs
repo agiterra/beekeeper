@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  codingSessionSeatRoleNotice,
+  defaultCodingSessionSeatRole,
   isCodingSessionRoleSlug,
   normalizeCodingSessionRoleSlug,
   resolveCodingSessionActorSeat,
@@ -176,6 +178,104 @@ test("a role with no actor is malformed metadata, not a partial dialect", () => 
   );
   assert.equal(
     parseBuzzCodingSessionMetadata(metadata({ agentRef: ACTOR, role: "" })),
+    null,
+  );
+});
+
+/**
+ * A seat's role defaults to the agent's *home* role — what the pack behind it
+ * actually knows — and every departure from it is said out loud, because the
+ * pack that gets staged is still the home role's.
+ */
+test("an untouched role box fills from the agent's home role", () => {
+  const agent = { pubkey: ACTOR, name: "Ada", homeRole: "builder" };
+  assert.equal(
+    defaultCodingSessionSeatRole({ agent, roleTouched: false, role: "" }),
+    "builder",
+  );
+});
+
+test("a role the person typed is never overwritten by a home role", () => {
+  const agent = { pubkey: ACTOR, name: "Ada", homeRole: "builder" };
+  assert.equal(
+    defaultCodingSessionSeatRole({ agent, roleTouched: true, role: "lead" }),
+    "lead",
+  );
+});
+
+test("an agent with no home role fills nothing, and clearing the agent clears the role", () => {
+  const bare = { pubkey: ACTOR, name: "Ada" };
+  assert.equal(
+    defaultCodingSessionSeatRole({
+      agent: bare,
+      roleTouched: false,
+      role: "",
+    }),
+    "",
+  );
+  assert.equal(
+    defaultCodingSessionSeatRole({
+      agent: { pubkey: ACTOR, name: "Ada", homeRole: null },
+      roleTouched: false,
+      role: "",
+    }),
+    "",
+  );
+  assert.equal(
+    defaultCodingSessionSeatRole({
+      agent: null,
+      roleTouched: true,
+      role: "lead",
+    }),
+    "",
+  );
+});
+
+test("a seat on its own home role says so, quietly", () => {
+  const notice = codingSessionSeatRoleNotice({
+    agent: { pubkey: ACTOR, name: "Ada", homeRole: "builder" },
+    role: "builder",
+  });
+  assert.deepEqual(notice, { tone: "muted", message: "Its home role." });
+});
+
+test("a seat given someone else's role names the pack it will actually carry", () => {
+  const notice = codingSessionSeatRoleNotice({
+    agent: { pubkey: ACTOR, name: "Ada", homeRole: "builder" },
+    role: "lead",
+  });
+  assert.equal(notice?.tone, "warn");
+  assert.equal(
+    notice?.message,
+    "Ada is a builder — seating it as lead; it will carry the builder pack.",
+  );
+});
+
+test("an agent whose home role was never asked about claims nothing", () => {
+  assert.equal(
+    codingSessionSeatRoleNotice({
+      agent: { pubkey: ACTOR, name: "Ada" },
+      role: "lead",
+    }),
+    null,
+  );
+  assert.equal(
+    codingSessionSeatRoleNotice({
+      agent: { pubkey: ACTOR, name: "Ada", homeRole: null },
+      role: "lead",
+    }),
+    null,
+  );
+  // No agent, or no role yet: there is no mismatch to disclose.
+  assert.equal(
+    codingSessionSeatRoleNotice({ agent: null, role: "lead" }),
+    null,
+  );
+  assert.equal(
+    codingSessionSeatRoleNotice({
+      agent: { pubkey: ACTOR, name: "Ada", homeRole: "builder" },
+      role: "  ",
+    }),
     null,
   );
 });

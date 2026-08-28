@@ -11,6 +11,7 @@
  * relay — it is staged host-locally by
  * {@link import("@/shared/api/tauri").stageCodingSessionActorSeat}.
  */
+import type { CodingSessionSeatAgent } from "./codingSessionSeatAgent";
 
 /** Role slugs offered in the create dialog. Free text is still accepted. */
 export const CODING_SESSION_ROLE_SUGGESTIONS = [
@@ -109,4 +110,85 @@ export function resolveCodingSessionActorSeat(input: {
     };
   }
   return { seat: { actor, role }, error: null };
+}
+
+/**
+ * The role a seat should show, given the agent chosen and whether the person
+ * has touched the role box.
+ *
+ * An agent's *home* role is what the pack behind it knows, so it is the only
+ * honest default: seating a builder as a builder is the case that needs no
+ * explanation. A typed role always wins — this fills a box, it does not
+ * govern one — and an agent with no home role fills nothing at all rather
+ * than guessing a role from a name.
+ */
+export function defaultCodingSessionSeatRole(input: {
+  agent: CodingSessionSeatAgent | null;
+  /** Has the person typed in the role box since the last agent change? */
+  roleTouched: boolean;
+  /** The role box's current text. */
+  role: string;
+}): string {
+  // No seat, no role: clearing the agent clears both halves together, because
+  // half a seat is refused by `resolveCodingSessionActorSeat` anyway.
+  if (input.agent === null) return "";
+  if (input.roleTouched) return input.role;
+  return input.agent.homeRole ?? "";
+}
+
+/** A line under the role box, or null when there is nothing truthful to say. */
+export type CodingSessionSeatRoleNotice = {
+  /** `warn` exactly when the seat's role is not the pack it will carry. */
+  tone: "muted" | "warn";
+  message: string;
+};
+
+/**
+ * Disclose the distance between the role this seat is given and the role the
+ * agent *is*.
+ *
+ * The wire carries the seat's role, but custody staging carries the agent's
+ * **home** role pack — so a builder seated as a lead is briefed as a builder.
+ * That gap is invisible unless it is said here, before anything is signed.
+ *
+ * An agent whose home role is unknown (`undefined`) or absent (`null`)
+ * produces no notice at all. Absence is not a claim: a build that never asked
+ * must not present "no home role" as a finding.
+ */
+export function codingSessionSeatRoleNotice(input: {
+  agent: CodingSessionSeatAgent | null;
+  role: string;
+}): CodingSessionSeatRoleNotice | null {
+  const homeRole = input.agent?.homeRole?.trim();
+  if (!input.agent || !homeRole) return null;
+  const typed = input.role.trim();
+  if (typed.length === 0) return null;
+  const role = normalizeCodingSessionRoleSlug(typed) ?? typed;
+  if (role === (normalizeCodingSessionRoleSlug(homeRole) ?? homeRole)) {
+    return { tone: "muted", message: "Its home role." };
+  }
+  return {
+    tone: "warn",
+    message:
+      `${input.agent.name} is a ${homeRole} — seating it as ${role}; ` +
+      `it will carry the ${homeRole} pack.`,
+  };
+}
+
+/**
+ * The disclosure a seat owes before submit when this computer holds no role
+ * pack behind the agent.
+ *
+ * `undefined` — a backend that cannot answer — renders nothing, so a build
+ * without the pack installer never accuses an agent of missing a pack it was
+ * never asked about.
+ */
+export function codingSessionSeatPackNotice(
+  agent: CodingSessionSeatAgent | null,
+): string | null {
+  if (!agent || agent.hasRolePack !== false) return null;
+  return (
+    `${agent.name} has no role pack on this computer, so this seat carries ` +
+    `no role skills and runs on its persona prompt alone.`
+  );
 }
