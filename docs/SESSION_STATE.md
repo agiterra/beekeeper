@@ -2412,6 +2412,77 @@ written and `bash -n` clean but **was not executed** — that harness needs
     seated join, `bee events query` / founder column against hive), then
     land.
 
+77. **Live crew runs, 2026-08-27 evening — every open finding, queued for the
+    next batch.** (Numbering: 74/75 live on `fix/seated-session-followups`,
+    76 is reserved for the front-door batch's finalizer on `crew/front-door`;
+    this item is written on the live checkout so nothing below depends on my
+    context surviving.) Proven tonight, by hand-seated crews on Brian's dev
+    provider `1958c6c4…`: lead→builder→lead over the relay with per-stage
+    receipts (`comssv2`, channel `a02ce90b…`); a **Codex** builder under a
+    **Claude** lead (`codextest`, channel `905116f0…`): brief → deviation →
+    written amendment → report → operator BLOCK → Amendment 2 → rework →
+    lead verified the live value → APPROVE (`codextest-builder@31f2ea99`);
+    the S2 interrupt path on a seated agent (`interrupt_delivered` 22:12:30);
+    the provider role briefing (ledger 75) live — the lead recites the five
+    verbs. Two founder-column implementations exist and neither is landed:
+    `comssv2-builder@50e8d18d` (Claude builder, bool column) and
+    `codextest-builder@31f2ea99` (Codex builder, pubkey column, fails safe to
+    null) — lane C of the front-door batch owns that surface and should take
+    the Codex one. **Open, by owner:**
+    - *Fence (S3, tier 2).* (a) Seats run with `HOME=/Users/brian` and share
+      `~/.claude`, so Claude Code's local `SendMessage` and `Task` tools reach
+      other sessions — the lead "dispatched" via a local subagent once and both
+      seats talked outside the relay twice; give each seat its own
+      `CLAUDE_CONFIG_DIR` (and the Codex equivalent) under the provider's state
+      dir, and say in the seat briefing that the relay is the only channel to
+      other seats and local subagent/cross-session tools are out of bounds.
+      (b) Seats commit as the operator (`git` identity inherited); a seat
+      should commit as itself. (c) `build_augmented_path`
+      (`managed_agents/runtime/path.rs:104`) puts `~/.local/bin` before the
+      app's own bundle dir, so a stale `bee` shadowed the shipped one — bundled
+      binaries first. (d) A hand-seated identity needs an owner attestation
+      (NIP-OA `auth` tag) or the relay's HTTP gate answers
+      `relay_membership_required`; lane A's "install crew roles" must mint
+      attested identities.
+    - *Lead pack (`personas/roles/lead`).* (a) `triage-report`: verify the
+      acceptance output yourself on the wire/binary before APPROVE — the lead
+      approved a founder column that named the provider until the operator
+      blocked it. (b) The crew's ledger is the relay: publish dispositions as
+      Pulse entries (`bee pulse update`, kind 44240), not a repo doc the seat
+      cannot edit. (c) After dispatching, end the turn; the report arrives as
+      a turn — polling `bee sessions inbox` inside a 12-minute turn made the
+      lead read every report twice and call it relay redelivery (the wire has
+      one 44220 and one queued/started pair per command; six distinct turns).
+      (d) `write-brief`: evidence = two or three `file:line` entry points, not
+      an exploration (3½ min of grepping before the first brief); spell out the
+      dispatch command with `--session-ref` (a role is only unique inside one
+      umbrella; the CLI refuses `--to lead` without it).
+    - *Seat briefing.* "Nothing wakes you between turns" is misleading for a
+      seat — an addressed relay turn does; say so.
+    - *Roster vocabulary.* `bee sessions grant --role` takes
+      `collaborator|viewer` while seats carry crew roles (`lead`, `builder`);
+      the same word means two things — designer decides the surface.
+    - *Umbrella UI (designer + poker).* (a) "Last word" is the last execution
+      with activity, so the lead's verdict collapses to a one-line pill while
+      the builder's "Standing by" is expanded — the operator cannot see the
+      crew is done; add a per-umbrella disposition strip (`lead · idle`,
+      `B1 · builder · codex · APPROVE @ 31f2ea99 · not landed`) and expand the
+      panel holding the latest *decision*. (b) Agent-to-agent turns render in
+      full as the recipient's "user" bubble while the sender's panel collapses;
+      the sender's panel is canonical, the recipient shows a reference.
+      (c) The seat header shows the provider pubkey (`Builder 1958c6c4…`,
+      identical on every row) instead of actor · role · vendor/model — an
+      honesty bug; provider pubkey belongs in the provenance popover.
+    - *Founder semantics (designer).* Every agent row reads "not founder"
+      because only the human genesis signer is the founder; decide whether the
+      operator question is "who founded" (session-level line) or "which seat
+      holds authority" (the roster), then land one implementation.
+    Hand-edits on Brian's machine that these must replace: Fizz's record
+    linked to `personas/roles/lead` by hand; `~/.local/bin/bee` repointed at
+    `target/debug/bee`; `Application Support/Bee Keeper` copied to
+    `…/Beekeeper`; provider binary swapped for the patched build from
+    `seat-prompt` (a `tauri dev` rebuild will overwrite it).
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
