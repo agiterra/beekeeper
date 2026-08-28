@@ -4525,7 +4525,7 @@ old CLI unless you repoint that symlink; (3) seats still share the operator's
 `~/.claude` (same `HOME`), so a seat's local cross-session tools can reach
 other sessions — the fence item in 77 is not landed yet. Also open: the
 "no-surface-by-decision" calls recorded in item 76 are waiting on Brian's
-sign-off.
+sign-off. **To mint a team on your machine (2026-08-28 evening):** Agents → the team card's menu → *Install team roles…* → *Choose folder…* and pick `<your checkout>/personas/roles` (the folder that contains `lead`, `architect`, `builder`, … — the parent, not one role) → name the lead → Install. The picker has no default yet; a follow-up lane defaults it to the project's checkout dir. Then New session → Team → Launch team seats the lead alone; the lead hires the rest with `bee sessions hire` (your desktop answers hires automatically; policy is on by default, 4 seats, installed roles).
 
 **Read §2 item 78 first (2026-08-28).** The SWAT batch on `crew/front-door`
 supersedes two of the three traps above: the installed team now launches
