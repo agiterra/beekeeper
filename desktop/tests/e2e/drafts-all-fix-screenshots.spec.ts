@@ -45,7 +45,7 @@ test("Inbox All hides drafts while the Drafts filter keeps them", async ({
     },
   );
   await installMockBridge(page);
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
     return typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function";

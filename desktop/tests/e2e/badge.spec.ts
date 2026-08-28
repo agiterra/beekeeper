@@ -89,21 +89,24 @@ test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
 
-test("selected Inbox and Agents rows keep their highlight without bold text", async ({
+test("selected Dashboard row keeps its highlight without bold text", async ({
   page,
 }) => {
   await page.goto("/");
 
-  const inbox = page
+  const dashboard = page
     .getByTestId("sidebar-primary-menu")
-    .getByRole("button", { name: "Inbox", exact: true });
-  await expect(inbox).toHaveAttribute("data-active", "true");
-  await expect(inbox).toHaveCSS("font-weight", "400");
+    .getByTestId("open-dashboard-view");
+  await expect(dashboard).toHaveAttribute("data-active", "true");
+  await expect(dashboard).toHaveCSS("font-weight", "400");
 
+  // Agents is a Dashboard tab now; the sidebar row stays selected while the
+  // tab strip moves.
   const agents = page.getByTestId("open-agents-view");
   await agents.click();
   await expect(agents).toHaveAttribute("data-active", "true");
-  await expect(agents).toHaveCSS("font-weight", "400");
+  await expect(dashboard).toHaveAttribute("data-active", "true");
+  await expect(dashboard).toHaveCSS("font-weight", "400");
 });
 
 test("primary navigation rows share the same inactive emphasis", async ({
@@ -112,14 +115,10 @@ test("primary navigation rows share the same inactive emphasis", async ({
   await page.goto("/");
   await page.getByTestId("channel-general").click();
 
-  const primaryMenu = page.getByTestId("sidebar-primary-menu");
-  const inactiveRows = [
-    primaryMenu.getByRole("button", { name: "Inbox", exact: true }),
-    page.getByTestId("open-pulse-view"),
-    page.getByTestId("open-projects-view"),
-    page.getByTestId("open-agents-view"),
-    page.getByTestId("open-workflows-view"),
-  ];
+  // The Projects row sits in its own group below the primary menu, outside
+  // the `.sidebar-primary-menu` opacity rule, and Workflows lives inside
+  // each project with the Projects experiment on — so Dashboard is the set.
+  const inactiveRows = [page.getByTestId("open-dashboard-view")];
 
   for (const row of inactiveRows) {
     await expect(row).toHaveAttribute("data-active", "false");
@@ -130,14 +129,14 @@ test("primary navigation rows share the same inactive emphasis", async ({
     await expect(row.locator("svg")).toHaveCSS("opacity", "0.8");
   }
 
-  const pulse = page.getByTestId("open-pulse-view");
-  await pulse.click();
-  await expect(pulse).toHaveAttribute("data-active", "true");
-  await expect(pulse.locator("[data-sidebar=menu-label]")).toHaveCSS(
+  const dashboard = page.getByTestId("open-dashboard-view");
+  await dashboard.click();
+  await expect(dashboard).toHaveAttribute("data-active", "true");
+  await expect(dashboard.locator("[data-sidebar=menu-label]")).toHaveCSS(
     "opacity",
     "1",
   );
-  await expect(pulse.locator("svg")).toHaveCSS("opacity", "1");
+  await expect(dashboard.locator("svg")).toHaveCSS("opacity", "1");
 });
 
 test("hovering a channel keeps its text color", async ({ page }) => {
@@ -196,7 +195,7 @@ test("light mode reserves full opacity for unread text and avatars", async ({
 
   const inbox = page
     .getByTestId("sidebar-primary-menu")
-    .getByRole("button", { name: "Inbox", exact: true });
+    .getByTestId("open-dashboard-view");
   await expect(inbox).toHaveCSS("opacity", "1");
   await expect(inbox.locator("[data-sidebar=menu-label]")).toHaveCSS(
     "opacity",
@@ -236,16 +235,12 @@ test("dark mode keeps selected labels regular and channel-level unread labels bo
   await expect(page.locator("html")).toHaveClass(/dark/);
   const inbox = page
     .getByTestId("sidebar-primary-menu")
-    .getByRole("button", { name: "Inbox", exact: true });
+    .getByTestId("open-dashboard-view");
   await expect(inbox).toHaveAttribute("data-active", "true");
   await expect(inbox).toHaveCSS("font-weight", "400");
-  await expect(page.getByTestId("open-agents-view")).toHaveCSS("opacity", "1");
-  await expect(
-    page.getByTestId("open-agents-view").locator("[data-sidebar=menu-label]"),
-  ).toHaveCSS("opacity", "0.8");
-  await expect(page.getByTestId("open-agents-view").locator("svg")).toHaveCSS(
+  await expect(inbox.locator("[data-sidebar=menu-label]")).toHaveCSS(
     "opacity",
-    "0.8",
+    "1",
   );
 
   await page.getByTestId("channel-general").click();

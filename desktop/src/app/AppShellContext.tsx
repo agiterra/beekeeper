@@ -85,6 +85,11 @@ type AppShellContextValue = {
   // that render under AppShell (channel, home, projects, pulse, agents).
   // Used by config-nudge cards to deep-link to Settings → Agents.
   onOpenSettings: ((section: SettingsSection) => void) | null;
+  // The number the Dashboard sidebar row wears: unread inbox items plus due
+  // reminders, computed once in AppShell. The Dashboard overview reads it
+  // from here rather than re-running the notification fold, which owns
+  // seen-set side effects and must mount exactly once.
+  inboxBadgeCount: number;
 };
 
 const AppShellContext = React.createContext<AppShellContextValue>({
@@ -125,6 +130,7 @@ const AppShellContext = React.createContext<AppShellContextValue>({
     unreadSet: EMPTY_SET,
   },
   onOpenSettings: null,
+  inboxBadgeCount: 0,
 });
 
 export function AppShellProvider({

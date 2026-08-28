@@ -1,50 +1,18 @@
-import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import {
-  parseProfilePanelTab,
-  parseProfilePanelView,
-  type ProfilePanelTab,
-  type ProfilePanelView,
-} from "@/features/profile/ui/UserProfilePanelUtils";
-import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
+import { forwardProfilePanelSearch } from "@/features/profile/ui/UserProfilePanelUtils";
 
-type AgentsRouteSearch = {
-  profile?: string;
-  profilePersona?: string;
-  profileTab?: ProfilePanelTab;
-  profileView?: ProfilePanelView;
-};
-
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function validateAgentsSearch(
-  search: Record<string, unknown>,
-): AgentsRouteSearch {
-  return {
-    profile: nonEmptyString(search.profile),
-    profilePersona: nonEmptyString(search.profilePersona),
-    profileTab: parseProfilePanelTab(search.profileTab) ?? undefined,
-    profileView: parseProfilePanelView(search.profileView) ?? undefined,
-  };
-}
-
-const AgentsScreen = React.lazy(async () => {
-  const module = await import("@/features/agents/ui/AgentsScreen");
-  return { default: module.AgentsScreen };
-});
-
+/**
+ * `/agents` used to be its own screen; Agents is now a tab on the Dashboard.
+ * The path stays so deep links keep resolving — they land on `/?tab=agents`
+ * with any profile-panel keys carried across.
+ */
 export const Route = createFileRoute("/agents")({
-  validateSearch: validateAgentsSearch,
-  component: AgentsRouteComponent,
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: "/",
+      search: { tab: "agents", ...forwardProfilePanelSearch(search) },
+      replace: true,
+    });
+  },
 });
-
-function AgentsRouteComponent() {
-  return (
-    <React.Suspense fallback={<ViewLoadingFallback kind="agents" />}>
-      <AgentsScreen />
-    </React.Suspense>
-  );
-}

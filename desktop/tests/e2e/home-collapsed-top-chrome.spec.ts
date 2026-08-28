@@ -8,7 +8,7 @@ test.describe("home inbox chrome", () => {
 
   test.beforeEach(async ({ page }) => {
     await installMockBridge(page);
-    await page.goto("/");
+    await page.goto("/#/?tab=inbox");
     await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   });
 

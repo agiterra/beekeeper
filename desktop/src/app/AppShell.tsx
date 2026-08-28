@@ -142,11 +142,10 @@ export function AppShell() {
   const queryClient = useQueryClient();
   useManagedAgentRuntimeReconciliation(communitiesHook.communities); // sync storage snapshot
   const {
-    goAgents,
     goChannel,
     goHome,
+    goInbox,
     goNewMessage,
-    goPulse,
     goSettings,
     goWorkflows,
     closeSettings,
@@ -155,6 +154,7 @@ export function AppShell() {
   const { canGoBack, canGoForward, goBack, goForward } =
     useBackForwardControls();
   const {
+    dashboardTab,
     isCodingSessionPopout,
     selectedChannelId,
     selectedView,
@@ -341,7 +341,7 @@ export function AppShell() {
     channels,
     enabled: !isHuddleRoom,
     goChannel,
-    goHome,
+    goInbox,
     notificationSettings: notificationSettings.settings,
     openSearchHit,
     pubkey: identityQuery.data?.pubkey,
@@ -440,7 +440,10 @@ export function AppShell() {
       notificationSettings.settings,
       notificationSettings.setDesktopEnabled,
       !isHuddleRoom,
-      selectedView === "home" && !settingsOpen,
+      // Only the inbox tab counts as "viewing the inbox": landing on the
+      // Dashboard overview must not mark the feed seen or zero the badge the
+      // overview's own inbox card is about to show.
+      selectedView === "home" && dashboardTab === "inbox" && !settingsOpen,
       getChannelReadAt,
       readStateVersion,
       highPriorityUnreadChannelIds,
@@ -723,6 +726,7 @@ export function AppShell() {
             hasSidebarUnreadProjections: true,
             feedItemState,
             onOpenSettings: handleOpenSettings,
+            inboxBadgeCount: homeBadgeCount + dueReminderBadge,
           }}
         >
           <AppHuddleShell
@@ -853,7 +857,6 @@ export function AppShell() {
                             });
                           await goChannel(directMessage.id);
                         }}
-                        onSelectAgents={() => void goAgents()}
                         onSelectChannel={handleSidebarChannelSelect}
                         onOpenSearchResult={handleOpenSearchResult}
                         searchChannels={channels}
@@ -862,7 +865,6 @@ export function AppShell() {
                           scopeSearchFocusRequest,
                         ]}
                         onSelectHome={() => void goHome()}
-                        onSelectPulse={() => void goPulse()}
                         onSelectSettings={handleOpenSettings}
                         onSelectWorkflows={() => void goWorkflows()}
                         onSetPresenceStatus={(status) =>

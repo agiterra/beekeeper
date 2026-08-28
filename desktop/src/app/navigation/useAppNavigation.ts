@@ -63,11 +63,39 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  // Inbox, Pulse, Agent progress and Agents are tabs of the Dashboard at `/`;
+  // these target the tab directly rather than bouncing through the legacy
+  // `/pulse`, `/agents`, `/agent-progress` redirect shims.
+  const goInbox = React.useCallback(
+    (behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/",
+          search: { tab: "inbox" },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goAgents = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
         {
-          to: "/agents",
+          to: "/",
+          search: { tab: "agents" },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
+  const goAgentProgress = React.useCallback(
+    (behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/",
+          search: { tab: "agent-progress" },
         },
         behavior,
       ),
@@ -78,7 +106,8 @@ export function useAppNavigation() {
     (behavior?: NavigationBehavior) =>
       commitNavigation(
         {
-          to: "/pulse",
+          to: "/",
+          search: { tab: "pulse" },
         },
         behavior,
       ),
@@ -89,8 +118,8 @@ export function useAppNavigation() {
     (pubkey: string, behavior?: NavigationBehavior) =>
       commitNavigation(
         {
-          to: "/pulse",
-          search: { profile: pubkey },
+          to: "/",
+          search: { tab: "pulse", profile: pubkey },
         },
         behavior,
       ),
@@ -389,11 +418,13 @@ export function useAppNavigation() {
     closeForumPost,
     closeSettings,
     closeWorkflowDetail,
+    goAgentProgress,
     goAgents,
     goChannel,
     goCodingSession,
     goForumPost,
     goHome,
+    goInbox,
     goNewCodingSession,
     goNewProjectCodingSession,
     goNewMessage,

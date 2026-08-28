@@ -3,6 +3,7 @@ import type { Locator, Page } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
+import { openDashboardTab } from "../helpers/dashboard";
 
 // Shot 6 reorders custom channel sections in the flat sidebar, which only
 // exists with the Projects experiment off (projects fold channels into
@@ -57,7 +58,7 @@ test.describe("list virtualization", () => {
   }) => {
     await installMockBridge(page);
     await page.goto("/");
-    await page.getByTestId("open-pulse-view").click();
+    await openDashboardTab(page, "pulse");
 
     // The seeded feed overflows the viewport (30 notes), so the windowed list
     // renders a subset and the composer stays pinned. Wait for virtual rows.

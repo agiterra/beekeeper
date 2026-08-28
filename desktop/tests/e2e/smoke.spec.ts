@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { installMockBridge, openCreateChannelDialog } from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
+import { openDashboardTab } from "../helpers/dashboard";
 
 async function getTimelineMetrics(page: import("@playwright/test").Page) {
   return page.getByTestId("message-timeline").evaluate((element) => {
@@ -141,7 +142,7 @@ test("Buzz shared compute explains automatic model selection", async ({
       }
     ).__BUZZ_E2E_SET_MESH__?.({ models: [] });
   });
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
   await chooseSharedComputeProvider(page);
 
@@ -169,7 +170,7 @@ test("create agent persists Buzz shared compute with auto model", async ({
   const agentName = `Shared compute agent ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
   await page.locator("#persona-display-name").fill(agentName);
 
@@ -215,7 +216,7 @@ test("create agent supports parallelism and system prompt overrides", async ({
   const agentName = `Parallel agent ${Date.now()}`;
 
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
 
   await page.locator("#persona-display-name").fill(agentName);
@@ -287,7 +288,7 @@ test("create agent supports parallelism and system prompt overrides", async ({
 test("opens a mocked channel from the inbox feed", async ({ page }) => {
   const inboxList = page.getByTestId("home-inbox-list");
 
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expectHomeView(page);
   await expect(inboxList).toContainText("Please review the release checklist.");
@@ -307,7 +308,7 @@ test("Inbox excludes generic channel and unowned agent traffic", async ({
 }) => {
   const inboxList = page.getByTestId("home-inbox-list");
 
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expectHomeView(page);
 
   await expect(inboxList).not.toContainText(
@@ -322,7 +323,7 @@ test("Inbox excludes generic channel and unowned agent traffic", async ({
 });
 
 test("inbox feed renders resolved author labels", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("home-inbox-list")).toContainText("alice");
   await expect(page.getByTestId("home-inbox-list")).not.toContainText("You");
@@ -581,7 +582,7 @@ test("channel find shortcut opens unified search with scope selected", async ({
 test("global search omits channel scoping when no channel is active", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expectHomeView(page);
 
   await focusSidebarSearchWithShortcut(page);

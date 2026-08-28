@@ -6,6 +6,7 @@ import {
   TEST_IDENTITIES,
 } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openDashboardTab } from "../helpers/dashboard";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ async function readCommandLog(page: import("@playwright/test").Page) {
 
 async function gotoAgentsPage(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
 }
 
 // Minimal .team.json bytes — the bridge returns a canned preview/result
@@ -518,7 +519,7 @@ test("team sharing keeps link copy and export in the shared surface", async ({
   await expect(sentTeamCard).toContainText("Add team");
   await expect(sentTeamCard.locator("img")).toHaveCount(0);
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByLabel("Engineering team actions").click();
   await page.getByRole("menuitem", { name: "Share" }).click();
   await page.getByTestId("team-share-export").click();

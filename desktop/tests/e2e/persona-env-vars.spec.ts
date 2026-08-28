@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
@@ -268,7 +269,7 @@ test("env vars editor renders in PersonaDialog new-persona form", async ({
   await gotoApp(page);
 
   // Open the Agents view; the new-agent card opens the embedded create pane.
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
 
   // Scope all env-vars queries to the dialog: AgentDefaultsSettingsCard
@@ -312,7 +313,7 @@ test("persona model options follow the selected LLM provider", async ({
 }) => {
   await gotoApp(page);
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
 
   const provider = page.locator("#persona-runtime");

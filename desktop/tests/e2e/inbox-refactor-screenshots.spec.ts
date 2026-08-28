@@ -158,7 +158,7 @@ test.describe("inbox refactor screenshots", () => {
     await seedTwoDrafts(page);
     await installMockBridge(page, { mode: "mock" });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("home-inbox")).toBeVisible({
       timeout: 10_000,
     });
@@ -179,19 +179,26 @@ test.describe("inbox refactor screenshots", () => {
   }) => {
     await installMockBridge(page, { mode: "mock" });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("home-inbox")).toBeVisible({
       timeout: 10_000,
     });
 
     // The sidebar must be in frame — the label is the point of this shot.
-    const inboxButton = page
+    const dashboardButton = page
       .getByTestId("sidebar-primary-menu")
-      .getByRole("button", { name: "Inbox", exact: true });
-    await expect(inboxButton).toBeVisible();
-    // Inbox is a destination, not a notification tray, so it carries the inbox
-    // glyph rather than a bell. Asserted because nothing else pins the icon.
-    await expect(inboxButton.locator("svg.lucide-inbox")).toHaveCount(1);
+      .getByTestId("open-dashboard-view");
+    await expect(dashboardButton).toBeVisible();
+    // The Dashboard row is a destination, not a notification tray, so it
+    // carries the dashboard glyph rather than a bell. Asserted because
+    // nothing else pins the icon.
+    await expect(
+      dashboardButton.locator("svg.lucide-layout-dashboard"),
+    ).toHaveCount(1);
+    await expect(page.getByTestId("open-inbox-view")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
 
     await page.getByTestId("inbox-options-trigger").click();
     await expect(page.getByText("Show unread only")).toBeVisible();
@@ -206,7 +213,7 @@ test.describe("inbox refactor screenshots", () => {
   }) => {
     await installMockBridge(page, { mode: "mock" });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
     await waitForMockFeedHelpers(page);
 
     const dmIds = ["shot-dm-first", "shot-dm-second", "shot-dm-third"];
@@ -275,7 +282,7 @@ test.describe("inbox refactor screenshots", () => {
   test("04 — thread opens at the oldest unread reply", async ({ page }) => {
     await installMockBridge(page, { mode: "mock" });
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
     await waitForMockFeedHelpers(page);
 
     const replyIds = [

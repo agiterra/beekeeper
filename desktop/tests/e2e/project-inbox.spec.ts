@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openInboxTab } from "../helpers/dashboard";
 
 const DEFAULT_MOCK_PUBKEY = "deadbeef".repeat(8);
 const BUZZ_REPO_ADDRESS = `30617:${DEFAULT_MOCK_PUBKEY}:buzz`;
@@ -18,7 +19,7 @@ test("Buzz Git pull request renders and stays actionable in Inbox", async ({
   await installMockBridge(page);
   await page.setViewportSize({ width: 1024, height: 720 });
 
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
   await page.getByTestId("open-projects-view").click();
   await page.getByRole("button", { name: "Repositories", exact: true }).click();
   await page
@@ -39,7 +40,7 @@ test("Buzz Git pull request renders and stays actionable in Inbox", async ({
   );
   expect(pullRequestId).toBeTruthy();
 
-  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await openInboxTab(page);
   await page.evaluate(
     ({ author, id, repoAddress, viewer }) => {
       window.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?.({

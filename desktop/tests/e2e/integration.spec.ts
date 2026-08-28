@@ -8,6 +8,7 @@ import {
 } from "../helpers/bridge";
 import { openSettings } from "../helpers/settings";
 import { assertRelaySeeded } from "../helpers/seed";
+import { openInboxTab } from "../helpers/dashboard";
 
 const isCi = Boolean(process.env.CI);
 const relaySeedHookTimeoutMs = isCi ? 90_000 : 30_000;
@@ -278,8 +279,8 @@ test("live mentions refetch the home feed without waiting for polling", async ({
     await installRelayBridge(targetPage, "tyler");
     await installRelayBridge(senderPage, "alice");
 
-    await targetPage.goto("/");
-    await senderPage.goto("/");
+    await targetPage.goto("/#/?tab=inbox");
+    await senderPage.goto("/#/?tab=inbox");
     await assertDesktopNotificationsEnabled(targetPage);
 
     await targetPage.getByTestId("channel-general").click();
@@ -308,10 +309,7 @@ test("live mentions refetch the home feed without waiting for polling", async ({
     // reading #general — reading in-channel advances the NIP-RS marker past
     // the new mention — so the assertion that the refetch happened is the
     // Inbox-list content, not the badge.
-    await targetPage
-      .getByTestId("app-sidebar")
-      .getByRole("button", { name: "Inbox" })
-      .click();
+    await openInboxTab(targetPage);
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
     await expect(targetPage.getByTestId("home-inbox-list")).toContainText(
       message.replace("@tyler", "tyler"),
@@ -339,8 +337,8 @@ test("live forum mentions refetch the home feed without waiting for polling", as
     await installRelayBridge(targetPage, "tyler");
     await installRelayBridge(senderPage, "alice");
 
-    await targetPage.goto("/");
-    await senderPage.goto("/");
+    await targetPage.goto("/#/?tab=inbox");
+    await senderPage.goto("/#/?tab=inbox");
     await assertDesktopNotificationsEnabled(targetPage);
 
     await targetPage.getByTestId("channel-general").click();
@@ -364,10 +362,7 @@ test("live forum mentions refetch the home feed without waiting for polling", as
       },
     ]);
 
-    await targetPage
-      .getByTestId("app-sidebar")
-      .getByRole("button", { name: "Inbox" })
-      .click();
+    await openInboxTab(targetPage);
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
     await expect(targetPage.getByTestId("home-inbox-list")).toBeVisible();
     await expect(targetPage.getByTestId("home-inbox-list")).toContainText(

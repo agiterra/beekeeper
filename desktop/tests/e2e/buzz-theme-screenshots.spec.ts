@@ -101,7 +101,9 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
     (element) => getComputedStyle(element, "::before").backgroundColor,
   );
   expect(pinnedSpacerColor).toBe("rgba(0, 0, 0, 0)");
-  await expect(sidebarScroller.getByTestId("open-agents-view")).toBeVisible();
+  await expect(
+    sidebarScroller.getByTestId("open-dashboard-view"),
+  ).toBeVisible();
   // The primary menu scrolls with the sidebar content (only the search row
   // stays pinned) and mount auto-scrolls to the active channel — reset to
   // the top so the header geometry below is deterministic.
@@ -112,7 +114,7 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
   const pinnedHeaderBox = await pinnedHeader.boundingBox();
   const primaryMenuBox = await primaryMenu.boundingBox();
   const primaryRowBox = await page
-    .getByTestId("open-agents-view")
+    .getByTestId("open-dashboard-view")
     .boundingBox();
   const activeRowBox = await page.getByTestId("channel-general").boundingBox();
   const hoverRowBox = await page.getByTestId("channel-random").boundingBox();
@@ -198,7 +200,7 @@ async function expectBuzzSidebarPalette(page: Page, mode: "light" | "dark") {
   });
   const hoverChannelLabel = hoverChannel.locator("[data-sidebar-row-label]");
   const hoverChannelIcon = hoverChannel.locator("svg").first();
-  const agentsButton = page.getByTestId("open-agents-view");
+  const agentsButton = page.getByTestId("open-dashboard-view");
   const agentsLabel = agentsButton.locator('[data-sidebar="menu-label"]');
   const agentsIcon = agentsButton.locator("svg").first();
   const sidebarForeground = await page

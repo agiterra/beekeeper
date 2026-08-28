@@ -13,6 +13,7 @@ import {
   openNewMessagePage,
 } from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
+import { openDashboardTab, openInboxTab } from "../helpers/dashboard";
 
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const RANDOM_CHANNEL_ID = "9dae0116-799b-5071-a0a8-fdd30a91a35d";
@@ -2955,7 +2956,7 @@ async function seedHomeInboxMention(
   { navigate = true }: { navigate?: boolean } = {},
 ) {
   if (navigate) {
-    await page.goto("/");
+    await page.goto("/#/?tab=inbox");
   }
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(
@@ -3008,7 +3009,7 @@ async function seedHomeInboxMention(
 }
 
 test("Inbox All excludes generic channel traffic", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
     return typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function";
@@ -3070,7 +3071,7 @@ test("Inbox type labels keep the same height with and without a channel chip", a
   const mentionId = "inbox-type-label-mention";
   const dmChannelId = "f48efb06-0c93-5025-aac9-2e646bb6bfa8";
 
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
@@ -3195,7 +3196,7 @@ test("Inbox All never lists drafts and unread-only hides reminders", async ({
       draftStoreKey: `buzz-drafts.v2:ws://localhost:3000:${MOCK_IDENTITY_PUBKEY}`,
     },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
     return typeof win.__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__ === "function";
@@ -3353,7 +3354,7 @@ test("Inbox merges a due reminder into its represented conversation", async ({
 test("Inbox All keeps its filter when opening a due reminder", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox")).toBeVisible();
 
   const reminderId = "inbox-stable-reminder";
@@ -3403,7 +3404,7 @@ test("Inbox All keeps its filter when opening a due reminder", async ({
 });
 
 test("Inbox reminder rows and detail identify DM context", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox")).toBeVisible();
 
   const reminderId = "inbox-dm-reminder";
@@ -3568,7 +3569,7 @@ test("Inbox filter changes preserve valid detail and directly select a replaceme
 test("Inbox keeps the unread boundary for replies from multiple agents", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
@@ -3661,7 +3662,7 @@ test("home inbox groups consecutive DMs and opens the full conversation", async 
   const dmChannelId = "f48efb06-0c93-5025-aac9-2e646bb6bfa8";
   const dmIds = ["inbox-dm-first", "inbox-dm-second", "inbox-dm-third"];
 
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(() => {
     const win = window as MockFeedWindow;
@@ -3788,7 +3789,7 @@ test("home inbox manage affordance opens management without leaving home", async
 test("home channel settings keeps agent lifecycle actions scoped to the active community", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   const agentPubkey = await addGenericAgent(
     page,
     "general",
@@ -3804,7 +3805,7 @@ test("home channel settings keeps agent lifecycle actions scoped to the active c
     "stop_managed_agent",
   );
 
-  await page.getByRole("button", { exact: true, name: "Inbox" }).click();
+  await openInboxTab(page);
   await seedHomeInboxMention(
     page,
     "mock-feed-home-agent-lifecycle",
@@ -4362,7 +4363,7 @@ test("removing a channel-scoped agent preserves the managed agent record", async
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
 });
 
@@ -4527,7 +4528,7 @@ test("members sidebar omits bulk controls for managed bots", async ({
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(
     page.getByTestId(`managed-agent-${firstAgentPubkey}`),
   ).toHaveCount(1);
@@ -4586,7 +4587,7 @@ test("removing a multi-channel managed bot preserves its record after removal fr
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
 
   let commands = await readCommandLog(page);
@@ -4605,7 +4606,7 @@ test("removing a multi-channel managed bot preserves its record after removal fr
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("members-sidebar")).not.toBeVisible();
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId(`managed-agent-${agentPubkey}`)).toHaveCount(1);
 
   commands = await readCommandLog(page);
@@ -4733,7 +4734,7 @@ test("manage channel can archive and unarchive a stream", async ({ page }) => {
 test("manage channel can delete an owned stream", async ({ page }) => {
   const channelName = `delete-me-${Date.now()}`;
 
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await openCreateChannelDialog(page);
   await page.getByTestId("create-channel-name").fill(channelName);
   await page.getByTestId("create-channel-submit").click();
@@ -4747,7 +4748,8 @@ test("manage channel can delete an owned stream", async ({ page }) => {
   ).toBeVisible();
   await page.getByTestId("channel-delete-confirm").click();
 
-  await expect(page.getByTestId("home-inbox-list")).toBeVisible();
+  // Deleting the open channel sends the viewer home — the Dashboard overview.
+  await expect(page.getByTestId("dashboard-overview")).toBeVisible();
   await expect(page.getByTestId("stream-list")).not.toContainText(channelName);
 });
 

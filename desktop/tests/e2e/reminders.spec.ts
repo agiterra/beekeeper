@@ -8,7 +8,7 @@ const MOCK_PUBKEY = "deadbeef".repeat(8);
 // The inbox filter dropdown lives in the home pane, not the chat view. Land on
 // home and wait for the inbox before reaching for the filter trigger.
 async function gotoInboxHome(page: import("@playwright/test").Page) {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox")).toBeVisible();
 }
 

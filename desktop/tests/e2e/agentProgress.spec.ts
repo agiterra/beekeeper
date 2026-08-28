@@ -33,6 +33,7 @@ import {
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 /**
  * Agent Progress, end to end through the mock relay.
@@ -534,8 +535,8 @@ async function seedSessionFacts(page: Page, events: RelayEvent[]) {
 }
 
 async function openPanel(page: Page) {
-  await page.getByTestId("open-agent-progress-view").click();
-  await expect(page).toHaveURL(/\/agent-progress$/);
+  await openDashboardTab(page, "agent-progress");
+  await expect(page).toHaveURL(/\?tab=agent-progress$/);
   await expect(page.getByTestId("agent-progress-panel")).toBeVisible({
     timeout: 10_000,
   });

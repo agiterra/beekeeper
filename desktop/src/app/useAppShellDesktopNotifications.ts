@@ -29,7 +29,7 @@ export function useAppShellDesktopNotifications({
   channels,
   enabled,
   goChannel,
-  goHome,
+  goInbox,
   notificationSettings,
   openSearchHit,
   pubkey,
@@ -38,7 +38,8 @@ export function useAppShellDesktopNotifications({
   channels: Channel[];
   enabled: boolean;
   goChannel: (channelId: string) => Promise<unknown>;
-  goHome: () => Promise<unknown>;
+  /** Channel-less notifications land on the Dashboard's inbox tab. */
+  goInbox: () => Promise<unknown>;
   notificationSettings: NotificationSettings;
   openSearchHit: (
     hit: import("@/shared/api/types").SearchHit,
@@ -156,7 +157,7 @@ export function useAppShellDesktopNotifications({
       await revealDesktopAppWindow();
 
       if (!target.channelId) {
-        void goHome();
+        void goInbox();
         return;
       }
 

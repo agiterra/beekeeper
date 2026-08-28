@@ -25,6 +25,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 type Page = import("@playwright/test").Page;
 
@@ -90,7 +91,7 @@ async function selectRunOnOption(
 /** Open Advanced in the create-agent dialog and select the mocked provider. */
 async function openCreateDialogOnProvider(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
   const dialog = page.getByTestId("persona-dialog");
   await expect(dialog).toBeVisible({ timeout: 10_000 });

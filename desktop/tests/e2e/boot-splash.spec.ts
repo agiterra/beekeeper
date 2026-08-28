@@ -23,7 +23,7 @@ test("boot splash overlay holds with a flapping bee, then dismisses", async ({
       bootSplashHoldMs: 1_500,
     };
   });
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   const overlay = page.getByTestId("boot-splash-overlay");
   await expect(overlay).toBeVisible();
@@ -50,7 +50,7 @@ test("boot splash overlay is skipped when the hold is zero (e2e default)", async
   page,
 }) => {
   await installMockBridge(page);
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await expect(page.getByTestId("boot-splash-overlay")).toHaveCount(0);

@@ -56,7 +56,56 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-28 — the project sidebar overhaul, built on
+_Last updated: 2026-08-28 (later) — **the Dashboard**, built on
+`worktree-dashboard` and not yet landed. Inbox, Pulse, Agent progress and
+Agents are no longer four sidebar rows and four routes; they are tabs of one
+Dashboard page at `/`, behind one sidebar row that wears the inbox badge.
+**URL contract:** `/` is the Overview (no param) — one card per surface, each
+a link to its tab, every number read through the same hook the tab uses
+(`inboxBadgeCount` via `AppShellContext`, `useAgentProgress` with the
+"at least N" floor preserved, `useManagedAgentsQuery` + `isManagedAgentActive`,
+`useGlobalNotesQuery` ×3). `/?tab=inbox|pulse|agent-progress|agents` selects
+a tab; `?item=` with no `tab` implies the inbox, so notification and
+`beekeeper://` deep links still land on it. The old `/pulse`, `/agents`,
+`/agent-progress` paths are `beforeLoad` redirects onto their tab (profile
+panel keys carried across); `goAgents`/`goPulse`/`goProfile` target the tab
+directly and there is a `goInbox` for channel-less notification clicks.
+⌘⇧A, app launch and a community switch land on the Overview. Preview gates:
+a `pulse`/`agent-progress` tab exists only when its flag is on; a URL naming
+a hidden tab resolves to the Overview and fires the usual preview toast.
+**One correctness point worth knowing:** the "viewing the inbox" flag that
+marks the feed seen and zeroes the badge
+(`useHomeFeedNotificationState`, `AppShell.tsx`) is now scoped to
+`dashboardTab === "inbox"` — sitting on the Overview does not consume the
+inbox. Only the selected tab body mounts (all four are lazy), so a hidden
+tab never polls. Tab triggers carry the old sidebar testids
+(`open-pulse-view`, `open-agent-progress-view`, `open-agents-view`, plus new
+`open-inbox-view`/`open-overview-view`; the sidebar row is
+`open-dashboard-view`). From a channel the strip is not on screen, so every
+spec tab click is `openDashboardTab(page, tab)` (`tests/helpers/dashboard.ts`
+— takes the Dashboard row first when needed); specs that landed on `/`
+expecting the inbox now go to `/#/?tab=inbox`, and clicking "Inbox" in the
+sidebar is `openInboxTab(page)`.
+Gate: desktop unit 6521/6521, `tsc`, Biome and the px-text guard clean, new
+`dashboard.spec.ts` 7/7; the 47 touched smoke specs 427/443, and every one
+of the 16 failures **reproduces on a pristine `main` build** (control copy
+via `git archive main`, same specs on port 4174): (a) **Settings → Agents
+crashes** to the "Something went wrong!" boundary — `TypeError: Cannot read
+properties of undefined (reading 'map')` in a `useState` initializer inside
+the `AgentCreationPreview` chunk — which takes down every spec that opens
+the AI-defaults settings (`agent-lifecycle-feedback` ×5,
+`agent-numeric-tuning` ×3, `agent-provider-dropdowns` ×2,
+`global-agent-config-screenshots` ×4); (b) `inbox-edit.spec.ts` "Edit and
+Delete actions only for manageable messages" — a moderator Delete is
+offered on another person's message; (c) `needs-restart-screenshots` 08
+still expects "Buzz can restart it automatically" after `d62bcb029` renamed
+it to Beekeeper. One more pre-existing break fixed in passing: `badge.spec.ts`
+"primary navigation rows share the same inactive emphasis" asserted the 0.8
+label opacity on the Projects row, which `0d7e001a1` moved out of
+`.sidebar-primary-menu` where that rule lives (the spec now asserts the
+Dashboard row only). **Not yet exercised against hive.**_
+
+_Previously: 2026-08-28 — the project sidebar overhaul, built on
 `worktree-project-sidebar-overhaul` and not yet landed. A project group is now
 two flat lists (channels, then coding sessions + terminals) with no
 collapsible sub-headers and no session cap; repositories, workflows, curated

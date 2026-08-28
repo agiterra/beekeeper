@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 // Mock agent pubkeys (distinct from the relay agents seeded by default).
 const AGENT_PAUL = "aa".repeat(32);
@@ -37,7 +38,7 @@ async function waitForBridge(page: import("@playwright/test").Page) {
 async function openAgentsView(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await waitForBridge(page);
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
     timeout: 10_000,
   });

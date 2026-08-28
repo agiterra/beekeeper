@@ -1,57 +1,150 @@
 import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
+import { useAgentProgress } from "@/app/agentProgressComposition";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { useChannelsQuery } from "@/features/channels/hooks";
-import { HomeScreen } from "@/features/home/ui/HomeScreen";
+import {
+  type DashboardTab,
+  parseDashboardTab,
+  resolveDashboardTab,
+} from "@/features/dashboard/lib/dashboardTabs";
+import { DashboardScreen } from "@/features/dashboard/ui/DashboardScreen";
 import {
   consumePendingWelcomeChannel,
   WELCOME_CHANNEL_READY_EVENT,
 } from "@/features/onboarding/welcome";
+import {
+  parseProfilePanelTab,
+  parseProfilePanelView,
+  type ProfilePanelTab,
+  type ProfilePanelView,
+} from "@/features/profile/ui/UserProfilePanelUtils";
 import { useIdentityQuery } from "@/shared/api/hooks";
+import { useFeatureEnabled, usePreviewFeatureWarning } from "@/shared/features";
+import { ViewLoadingFallback } from "@/shared/ui/ViewLoadingFallback";
 
-type HomeRouteSearch = {
+const HomeScreen = React.lazy(async () => {
+  const module = await import("@/features/home/ui/HomeScreen");
+  return { default: module.HomeScreen };
+});
+
+const PulseScreen = React.lazy(async () => {
+  const module = await import("@/features/pulse/ui/PulseScreen");
+  return { default: module.PulseScreen };
+});
+
+const AgentProgressScreen = React.lazy(async () => {
+  const module = await import(
+    "@/features/agent-progress/ui/AgentProgressScreen"
+  );
+  return { default: module.AgentProgressScreen };
+});
+
+const AgentsScreen = React.lazy(async () => {
+  const module = await import("@/features/agents/ui/AgentsScreen");
+  return { default: module.AgentsScreen };
+});
+
+/**
+ * The union of every search key the tab bodies read through
+ * `useHistorySearchState`: `item` for the inbox, the profile-panel keys for
+ * Pulse and Agents. Anything not returned here is stripped on the next
+ * search patch, so each body's keys must survive the route boundary.
+ */
+type DashboardRouteSearch = {
+  tab?: Exclude<DashboardTab, "overview">;
   item?: string;
   profile?: string;
-  profileTab?: string;
-  profileView?: string;
+  profilePersona?: string;
+  profileTab?: ProfilePanelTab;
+  profileView?: ProfilePanelView;
 };
 
-function validateHomeSearch(search: Record<string, unknown>): HomeRouteSearch {
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function validateDashboardSearch(
+  search: Record<string, unknown>,
+): DashboardRouteSearch {
+  const tab = parseDashboardTab(search);
   return {
-    item:
-      typeof search.item === "string" && search.item.length > 0
-        ? search.item
-        : undefined,
-    profile:
-      typeof search.profile === "string" && search.profile.length > 0
-        ? search.profile
-        : undefined,
-    profileTab:
-      typeof search.profileTab === "string" && search.profileTab.length > 0
-        ? search.profileTab
-        : undefined,
-    profileView:
-      typeof search.profileView === "string" && search.profileView.length > 0
-        ? search.profileView
-        : undefined,
+    tab: tab === "overview" ? undefined : tab,
+    item: nonEmptyString(search.item),
+    profile: nonEmptyString(search.profile),
+    profilePersona: nonEmptyString(search.profilePersona),
+    profileTab: parseProfilePanelTab(search.profileTab) ?? undefined,
+    profileView: parseProfilePanelView(search.profileView) ?? undefined,
   };
 }
 
 export const Route = createFileRoute("/")({
-  validateSearch: validateHomeSearch,
-  component: HomeRouteComponent,
+  validateSearch: validateDashboardSearch,
+  component: DashboardRouteComponent,
 });
 
-function HomeRouteComponent() {
-  const { goChannel } = useAppNavigation();
+function DashboardRouteComponent() {
+  const { tab } = Route.useSearch();
+  const requested: DashboardTab = tab ?? "overview";
+  const showPulse = useFeatureEnabled("pulse");
+  const showAgentProgress = useFeatureEnabled("agent-progress");
+  const active = resolveDashboardTab(requested, {
+    pulse: showPulse,
+    agentProgress: showAgentProgress,
+  });
+  // The warning names the preview the URL asked for, whether or not the gate
+  // let it render — same as the standalone routes did. Tab ids that are not
+  // manifest feature ids (overview, inbox, agents) make the hook a no-op.
+  usePreviewFeatureWarning(requested);
+  useWelcomeChannelRedirect();
+
+  return (
+    <DashboardScreen
+      active={active}
+      agentProgress={
+        <React.Suspense fallback={<ViewLoadingFallback kind="agents" />}>
+          <AgentProgressTab />
+        </React.Suspense>
+      }
+      agents={
+        <React.Suspense fallback={<ViewLoadingFallback kind="agents" />}>
+          <AgentsScreen />
+        </React.Suspense>
+      }
+      inbox={
+        <React.Suspense fallback={<ViewLoadingFallback kind="projects" />}>
+          <InboxTab />
+        </React.Suspense>
+      }
+      pulse={
+        <React.Suspense fallback={<ViewLoadingFallback kind="pulse" />}>
+          <PulseScreen />
+        </React.Suspense>
+      }
+      showAgentProgress={showAgentProgress}
+      showPulse={showPulse}
+    />
+  );
+}
+
+function useAvailableChannelIds() {
   const channelsQuery = useChannelsQuery();
-  const identityQuery = useIdentityQuery();
   const channels = channelsQuery.data ?? [];
-  const availableChannelIds = React.useMemo(
+  return React.useMemo(
     () => new Set(channels.map((channel) => channel.id)),
     [channels],
   );
+}
+
+/**
+ * Onboarding parks the welcome channel until the channel list can prove it
+ * exists; this route is where that promise is kept, on whichever tab the
+ * user landed.
+ */
+function useWelcomeChannelRedirect() {
+  const { goChannel } = useAppNavigation();
+  const availableChannelIds = useAvailableChannelIds();
   const availableChannelIdsRef = React.useRef(availableChannelIds);
   const openPendingWelcomeChannel = React.useCallback(
     (ids: ReadonlySet<string>) => {
@@ -89,13 +182,39 @@ function HomeRouteComponent() {
   React.useEffect(() => {
     openPendingWelcomeChannel(availableChannelIds);
   }, [availableChannelIds, openPendingWelcomeChannel]);
+}
 
+function InboxTab() {
+  const { goChannel } = useAppNavigation();
+  const identityQuery = useIdentityQuery();
+  const availableChannelIds = useAvailableChannelIds();
   return (
     <HomeScreen
       availableChannelIds={availableChannelIds}
       currentPubkey={identityQuery.data?.pubkey}
       onOpenContext={(channelId, messageId, threadRootId) => {
         void goChannel(channelId, { messageId, threadRootId });
+      }}
+    />
+  );
+}
+
+function AgentProgressTab() {
+  const navigate = useNavigate();
+  const state = useAgentProgress();
+  return (
+    <AgentProgressScreen
+      state={state}
+      onOpenLane={(lane) => {
+        if (!lane.openTarget) return;
+        void navigate({
+          to: "/coding-sessions/$channelId/$generationId",
+          params: {
+            channelId: lane.openTarget.channelId,
+            generationId: lane.openTarget.generationId,
+          },
+          search: { surface: "main" },
+        });
       }}
     />
   );

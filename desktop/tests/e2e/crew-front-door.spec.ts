@@ -24,6 +24,7 @@ import type { RelayEvent } from "@/shared/api/types";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 /**
  * The crew front door, driven rather than described.
@@ -554,7 +555,7 @@ test.describe("crew front door", () => {
     page,
   }) => {
     await openApp(page);
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -633,7 +634,7 @@ test.describe("crew front door", () => {
     // dialog names the seats that exist instead of reciting the roster.
     // Install a folder missing the verifier pack and read what the screen says.
     await openApp(page);
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -689,7 +690,7 @@ test.describe("crew front door", () => {
     // used to wrap every failure in "That folder could not be read:" and send
     // the operator to look at a folder that was read fine.
     await openApp(page);
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
@@ -737,7 +738,7 @@ test.describe("crew front door", () => {
     // `home_role`, one of them with `has_role_pack: false`, plus one plain
     // agent the backend answered nothing about.
     await openApp(page);
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
     await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
       timeout: 15_000,
     });

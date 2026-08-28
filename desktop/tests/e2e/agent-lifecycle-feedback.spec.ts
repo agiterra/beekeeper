@@ -13,6 +13,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/screenshots-lifecycle";
 
@@ -30,7 +31,7 @@ const CASCADE_AGENT_B_PUBKEY = "bb".repeat(32);
  */
 async function openAgentsView(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
     timeout: 10_000,
   });

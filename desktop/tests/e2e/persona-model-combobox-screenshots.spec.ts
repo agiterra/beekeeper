@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/persona-model-combobox";
 
@@ -30,7 +31,7 @@ async function openNewPersonaDialog(page: import("@playwright/test").Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await waitForInvokeBridge(page);
 
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId("agents-library-personas")).toBeVisible({
     timeout: 8_000,
   });

@@ -146,11 +146,21 @@ test("the feature stays behind a hard preview gate and depends only on shared se
     );
   }
 
+  // Agent progress is a Dashboard tab; the Dashboard route decides whether
+  // the tab exists at all from the preview flag, and the legacy path only
+  // redirects — neither renders the surface with the flag off.
   const route = await readFile(
+    new URL("../../../../src/app/routes/index.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(route, /useFeatureEnabled\("agent-progress"\)/);
+  assert.match(route, /resolveDashboardTab\(/);
+  const legacyRoute = await readFile(
     new URL("../../../../src/app/routes/agent-progress.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(route, /<FeatureGate feature="agent-progress">/);
+  assert.match(legacyRoute, /redirect\(/);
+  assert.doesNotMatch(legacyRoute, /AgentProgressScreen/);
 });
 
 test("coordination comes from the shared fold verbatim, never recomputed", () => {

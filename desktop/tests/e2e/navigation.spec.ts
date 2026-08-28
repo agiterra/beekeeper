@@ -232,7 +232,7 @@ test("open thread panels survive reload", async ({ page }) => {
 test("home inbox selection survives reload and back restores it", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   const inboxList = page.getByTestId("home-inbox-list");
   await expect(inboxList).toBeVisible();

@@ -312,7 +312,7 @@ test("non-interactive inbox preview spoilers let row clicks pass through", async
   page,
 }) => {
   await installSpoilerBridge(page);
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(
     () =>

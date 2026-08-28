@@ -27,6 +27,7 @@ export default defineConfig({
       name: "smoke",
       testMatch: [
         "**/smoke.spec.ts",
+        "**/dashboard.spec.ts",
         "**/sidebar-offcanvas-rail.spec.ts",
         "**/search-scope-screenshots.spec.ts",
         "**/coding-sessions.spec.ts",

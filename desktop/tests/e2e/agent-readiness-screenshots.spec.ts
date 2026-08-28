@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/agent-readiness";
 
@@ -16,7 +17,7 @@ const EDIT_AGENT_PUBKEY = TEST_IDENTITIES.tyler.pubkey;
  */
 async function openCreateDialog(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByTestId("new-agent-card").click();
   await page.locator("#persona-display-name").fill("Test Agent");
 }
@@ -86,7 +87,7 @@ async function openEditDialog(
   agentName: string,
 ) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
 
   const agentButton = page.getByRole("button", {
     name: `${agentName} agent profile`,

@@ -17,6 +17,7 @@
 
 import { expect, test } from "@playwright/test";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ async function openEditAgentDialog(
   agentName: string,
 ) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
 
   const agentButton = page.getByRole("button", {
     name: `${agentName} agent profile`,
@@ -198,7 +199,7 @@ test("goose_per_agent_advanced_max_tokens_shows_inherited_global_placeholder", a
   // agent. We use the app's Back link rather than page.goto("/") to preserve
   // the in-memory mock state (page.goto causes a full reload that resets it).
   await page.getByRole("button", { name: "Back to app" }).click();
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   const agentButton = page.getByRole("button", {
     name: "Tyler Agent agent profile",
   });

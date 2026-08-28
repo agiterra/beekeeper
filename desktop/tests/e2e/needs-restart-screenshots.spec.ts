@@ -15,6 +15,7 @@ import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { waitForAnimations } from "../helpers/animations";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/restart-diff-screenshots";
 
@@ -123,7 +124,7 @@ async function gotoAgentsView(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("open-agents-view")).toBeVisible({
     timeout: 10_000,
   });
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await expect(page.getByTestId("agents-library-personas")).toBeVisible({
     timeout: 10_000,
   });

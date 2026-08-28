@@ -690,7 +690,7 @@ test("completed users skip the loading gate while profile is still settling", as
   await installMockBridge(page, {
     profileReadDelayMs: 3_000,
   });
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
   await expectHomeView(page);
@@ -2912,7 +2912,7 @@ test("returning user with blank display name and real profile event skips onboar
     },
     { skipOnboardingSeed: true },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   // Profile event exists → onboarding is skipped, app renders.
   await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
@@ -3264,7 +3264,7 @@ test("existing relay profile with display name auto-skips onboarding without loc
     },
     { skipOnboardingSeed: true },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
   await expectHomeView(page);
@@ -3291,7 +3291,7 @@ test("completed onboarding backfills missing starter channels", async ({
   await seedActiveIdentity(page, BLANK_TYLER_IDENTITY);
   await seedOnboardingCompletion(page, BLANK_TYLER_IDENTITY.pubkey);
   await installMockBridge(page, undefined, { skipOnboardingSeed: true });
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
   await expectHomeView(page);
@@ -3400,7 +3400,7 @@ test("failed first profile saves can be skipped for the current session", async 
     },
     { skipOnboardingSeed: true },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("onboarding-gate")).toBeVisible();
   await expect(page.getByTestId("onboarding-display-name")).toHaveValue("");
@@ -3542,7 +3542,7 @@ test("existing relay profile with display name auto-completes onboarding", async
     },
     { skipOnboardingSeed: true },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await expect(page.getByTestId("onboarding-gate")).toHaveCount(0);
   await expectHomeView(page);
@@ -3581,7 +3581,7 @@ test("membership denial can import a different invited key", async ({
     },
     { skipOnboardingSeed: true },
   );
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
 
   await page.getByTestId("onboarding-display-name").fill("Morty QA");
   await page.getByTestId("onboarding-next").click();

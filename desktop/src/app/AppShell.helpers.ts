@@ -2,6 +2,10 @@ import { isCodingSessionPopoutLocation } from "@/features/coding-sessions/lib/co
 import { isThreadReply } from "@/features/messages/lib/threading";
 import type { DesktopNotificationTarget } from "@/features/notifications/lib/desktop";
 import {
+  type DashboardTab,
+  parseDashboardTab,
+} from "@/features/dashboard/lib/dashboardTabs";
+import {
   DEFAULT_SETTINGS_SECTION,
   isSettingsSection,
   type SettingsSection,
@@ -22,9 +26,7 @@ export type AppView =
   | "home"
   | "channel"
   | "messages"
-  | "agents"
   | "workflows"
-  | "pulse"
   | "projects";
 
 const WINDOW_DRAG_HANDLE_HEIGHT = 44;
@@ -192,13 +194,6 @@ export function deriveShellRoute(pathname: string): {
     };
   }
 
-  if (pathname === "/agents") {
-    return {
-      selectedChannelId: null,
-      selectedView: "agents",
-    };
-  }
-
   if (pathname === "/workflows" || pathname.startsWith("/workflows/")) {
     return {
       selectedChannelId: null,
@@ -210,13 +205,6 @@ export function deriveShellRoute(pathname: string): {
     return {
       selectedChannelId: null,
       selectedView: "projects",
-    };
-  }
-
-  if (pathname === "/pulse") {
-    return {
-      selectedChannelId: null,
-      selectedView: "pulse",
     };
   }
 
@@ -238,6 +226,9 @@ export function deriveAppSurface(location: {
   pathname: string;
   search: Record<string, unknown>;
 }): {
+  /** Which Dashboard tab the location names; meaningful only when
+   * `selectedView` is `"home"`. */
+  dashboardTab: DashboardTab;
   isCodingSessionPopout: boolean;
   selectedChannelId: string | null;
   selectedView: AppView;
@@ -247,6 +238,7 @@ export function deriveAppSurface(location: {
   const section = location.search.section;
   return {
     ...deriveShellRoute(location.pathname),
+    dashboardTab: parseDashboardTab(location.search),
     isCodingSessionPopout: isCodingSessionPopoutLocation(location),
     settingsOpen: location.pathname === "/settings",
     settingsSection: isSettingsSection(section)

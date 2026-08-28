@@ -1,5 +1,4 @@
-import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Bot, Gauge, Inbox, Zap } from "lucide-react";
+import { LayoutDashboard, Zap } from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -17,9 +16,7 @@ type SidebarSelectedView =
   | "home"
   | "channel"
   | "messages"
-  | "agents"
   | "workflows"
-  | "pulse"
   | "projects";
 
 type AppSidebarPinnedHeaderProps = {
@@ -40,9 +37,7 @@ type AppSidebarPinnedHeaderProps = {
 
 type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
-  onSelectAgents: () => void;
   onSelectHome: () => void;
-  onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   selectedView: SidebarSelectedView;
   /** With the Projects experiment on, workflows live inside each project's
@@ -89,43 +84,9 @@ export function AppSidebarPinnedHeader({
   );
 }
 
-/**
- * The Agent-progress preview entry.
- *
- * Self-navigating rather than prop-driven: the surface is a preview flag that
- * may never graduate, and threading one more `onSelect*` callback through
- * AppSidebar and AppShell would spread its footprint across files another
- * branch is editing. When it graduates, it moves onto the same callback shape
- * as its neighbours.
- */
-function AgentProgressMenuItem() {
-  const navigate = useNavigate();
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
-  });
-  return (
-    <FeatureGate feature="agent-progress">
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          data-testid="open-agent-progress-view"
-          isActive={pathname.startsWith("/agent-progress")}
-          onClick={() => void navigate({ to: "/agent-progress" })}
-          tooltip="Agent progress"
-          type="button"
-        >
-          <Gauge className="h-4 w-4" />
-          <SidebarMenuLabel>Agent progress</SidebarMenuLabel>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </FeatureGate>
-  );
-}
-
 export function AppSidebarPrimaryMenu({
   homeBadgeCount,
-  onSelectAgents,
   onSelectHome,
-  onSelectPulse,
   onSelectWorkflows,
   selectedView,
   showWorkflows,
@@ -137,16 +98,21 @@ export function AppSidebarPrimaryMenu({
       data-testid="sidebar-primary-menu"
     >
       <SidebarMenu className="sidebar-primary-menu pb-2">
+        {/* Inbox, Pulse, Agent progress and Agents are tabs of the Dashboard
+            at `/`; this one row is their door, and it wears the inbox badge
+            because the inbox is the only one of the four with a count that
+            asks for a person. */}
         <SidebarMenuItem>
           <SidebarMenuButton
             className="data-[active=true]:font-normal"
+            data-testid="open-dashboard-view"
             isActive={selectedView === "home"}
             onClick={onSelectHome}
-            tooltip="Inbox"
+            tooltip="Dashboard"
             type="button"
           >
-            <Inbox className="h-4 w-4" />
-            <SidebarMenuLabel>Inbox</SidebarMenuLabel>
+            <LayoutDashboard className="h-4 w-4" />
+            <SidebarMenuLabel>Dashboard</SidebarMenuLabel>
           </SidebarMenuButton>
           {homeBadgeCount > 0 ? (
             <SidebarMenuBadge
@@ -156,34 +122,6 @@ export function AppSidebarPrimaryMenu({
               {Math.min(homeBadgeCount, 99)}
             </SidebarMenuBadge>
           ) : null}
-        </SidebarMenuItem>
-        <FeatureGate feature="pulse">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              data-testid="open-pulse-view"
-              isActive={selectedView === "pulse"}
-              onClick={onSelectPulse}
-              tooltip="Pulse"
-              type="button"
-            >
-              <Activity className="h-4 w-4" />
-              <SidebarMenuLabel>Pulse</SidebarMenuLabel>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </FeatureGate>
-        <AgentProgressMenuItem />
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            className="data-[active=true]:font-normal"
-            data-testid="open-agents-view"
-            isActive={selectedView === "agents"}
-            onClick={onSelectAgents}
-            tooltip="Agents"
-            type="button"
-          >
-            <Bot className="h-4 w-4" />
-            <SidebarMenuLabel>Agents</SidebarMenuLabel>
-          </SidebarMenuButton>
         </SidebarMenuItem>
         {showWorkflows ? (
           <FeatureGate feature="workflows">

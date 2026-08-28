@@ -88,6 +88,38 @@ export function profilePanelTabFromSearch(value: unknown): ProfilePanelTab {
   return parseProfilePanelTab(value) ?? "info";
 }
 
+/**
+ * The profile-panel search keys, validated, for carrying across a redirect.
+ * Undefined entries are dropped so the target URL stays clean.
+ */
+export function forwardProfilePanelSearch(search: Record<string, unknown>): {
+  profile?: string;
+  profilePersona?: string;
+  profileTab?: ProfilePanelTab;
+  profileView?: ProfilePanelView;
+} {
+  const forwarded: {
+    profile?: string;
+    profilePersona?: string;
+    profileTab?: ProfilePanelTab;
+    profileView?: ProfilePanelView;
+  } = {};
+  if (typeof search.profile === "string" && search.profile.length > 0) {
+    forwarded.profile = search.profile;
+  }
+  if (
+    typeof search.profilePersona === "string" &&
+    search.profilePersona.length > 0
+  ) {
+    forwarded.profilePersona = search.profilePersona;
+  }
+  const tab = parseProfilePanelTab(search.profileTab);
+  if (tab) forwarded.profileTab = tab;
+  const view = parseProfilePanelView(search.profileView);
+  if (view) forwarded.profileView = view;
+  return forwarded;
+}
+
 export function profilePanelTargetKey(
   pubkey: string | undefined,
   personaId: string | undefined,

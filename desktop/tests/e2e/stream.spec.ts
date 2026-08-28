@@ -209,8 +209,8 @@ test("loads the home feed from the relay", async ({ browser }) => {
   try {
     await installRelayBridge(page, "tyler");
     await installRelayBridge(senderPage, "alice");
-    await page.goto("/");
-    await senderPage.goto("/");
+    await page.goto("/#/?tab=inbox");
+    await senderPage.goto("/#/?tab=inbox");
 
     await expect(page.getByTestId("home-inbox")).toBeVisible();
     await expect(page.getByTestId("home-inbox-list")).toBeVisible();
@@ -242,8 +242,8 @@ test("shows sent inbox replies immediately in the inbox detail pane", async ({
   try {
     await installRelayBridge(page, "tyler");
     await installRelayBridge(senderPage, "alice");
-    await page.goto("/");
-    await senderPage.goto("/");
+    await page.goto("/#/?tab=inbox");
+    await senderPage.goto("/#/?tab=inbox");
 
     await sendChannelMessage(senderPage, {
       channelName: "general",

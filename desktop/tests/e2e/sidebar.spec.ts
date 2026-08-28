@@ -416,7 +416,7 @@ test("channel owner can archive from the context menu", async ({ page }) => {
 });
 
 test("channel owner can delete from the context menu", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await page.getByTestId("channel-general").click();
 
   await page.getByTestId("channel-general").click({ button: "right" });

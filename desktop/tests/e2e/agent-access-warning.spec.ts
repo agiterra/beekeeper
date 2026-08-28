@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const SHOTS = "test-results/agent-access-warning";
 
@@ -300,7 +301,7 @@ test("persona-backed edit warns before saving open access", async ({
     ],
   });
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
   await page.getByRole("button", { name: "Tyler Agent agent profile" }).click();
   await page.getByTestId("user-profile-edit-agent").click();
 

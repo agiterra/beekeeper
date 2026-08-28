@@ -443,7 +443,10 @@ test.describe("community rail", () => {
       ),
     );
     expect(publications).toHaveLength(0);
-    await expect(page.getByTestId("message-input")).toHaveText("");
+    // The switch lands on the Dashboard overview, which has no composer —
+    // so there is no input for the cancelled draft to survive in.
+    await expect(page.getByTestId("dashboard-overview")).toBeVisible();
+    await expect(page.getByTestId("message-input")).toHaveCount(0);
   });
 
   test("community switch stops preview media before it reaches the new community", async ({
@@ -590,7 +593,7 @@ test.describe("community rail", () => {
     await page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`).click();
     await expect(page).toHaveURL(randomUrl);
 
-    await page.getByRole("button", { name: "Inbox" }).click();
+    await page.getByTestId("open-dashboard-view").click();
     await expect(page).toHaveURL(/#\/$/);
     await page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`).click();
     await expect(page).toHaveURL(generalUrl);

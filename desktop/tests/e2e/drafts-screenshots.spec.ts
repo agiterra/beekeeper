@@ -107,7 +107,7 @@ async function seedDraftStore(
 
 /** Navigate to `/`, wait for inbox, then select the Drafts filter. */
 async function openDraftsPanel(page: import("@playwright/test").Page) {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("home-inbox")).toBeVisible({ timeout: 10_000 });
 
   await page.getByTestId("inbox-filter-trigger").click();
@@ -354,7 +354,7 @@ test.describe("drafts screenshots", () => {
     await patchCommunityPubkey(page);
     await seedDraftStore(page, ACTIVE_DRAFTS);
 
-    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("home-inbox")).toBeVisible({
       timeout: 10_000,
     });

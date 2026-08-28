@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import { openDashboardTab } from "../helpers/dashboard";
 
 const BAKED_DEFAULTS = [
   { key: "BUZZ_AGENT_PROVIDER", value: "anthropic", masked: false },
@@ -43,7 +44,7 @@ const PERSONA_ID = "persona-edit-e2e";
  */
 async function openEditDialog(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByTestId("open-agents-view").click();
+  await openDashboardTab(page, "agents");
 
   const agentButton = page.getByRole("button", {
     name: `${AGENT_NAME} agent profile`,
@@ -87,7 +88,7 @@ test.describe("agent definition dialog", () => {
       bakedBuildEnv: BAKED_DEFAULTS,
     });
     await page.goto("/");
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
     await page.getByTestId("new-agent-card").click();
 
     const dialog = page.getByRole("dialog");
@@ -382,7 +383,7 @@ test.describe("edit agent dialog", () => {
     });
 
     await page.goto("/");
-    await page.getByTestId("open-agents-view").click();
+    await openDashboardTab(page, "agents");
 
     // Persona-linked agents render grouped under the persona's card name.
     const agentButton = page.getByRole("button", {

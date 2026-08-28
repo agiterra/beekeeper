@@ -102,14 +102,7 @@ type AppSidebarProps = {
   selfPresenceStatus: PresenceStatus;
   errorMessage?: string;
   selectedChannelId: string | null;
-  selectedView:
-    | "home"
-    | "channel"
-    | "messages"
-    | "agents"
-    | "workflows"
-    | "pulse"
-    | "projects";
+  selectedView: "home" | "channel" | "messages" | "workflows" | "projects";
   unreadChannelCounts: ReadonlyMap<string, number>;
   unreadChannelIds: ReadonlySet<string>;
   previewActivityChannelIds: ReadonlySet<string>;
@@ -137,8 +130,6 @@ type AppSidebarProps = {
   ) => void;
   onRemoveCommunity: (id: string) => Promise<LeaveCommunityResult | undefined>;
   onCreateAgent: () => void;
-  onSelectAgents: () => void;
-  onSelectPulse: () => void;
   onSelectWorkflows: () => void;
   onSelectHome: () => void;
   onSelectChannel: (channelId: string) => void;
@@ -204,8 +195,6 @@ export function AppSidebar({
   onUpdateCommunity,
   onRemoveCommunity,
   onCreateAgent,
-  onSelectAgents,
-  onSelectPulse,
   onSelectWorkflows,
   onSelectHome,
   onSelectChannel,
@@ -566,9 +555,7 @@ export function AppSidebar({
             >
               <AppSidebarPrimaryMenu
                 homeBadgeCount={homeBadgeCount}
-                onSelectAgents={onSelectAgents}
                 onSelectHome={onSelectHome}
-                onSelectPulse={onSelectPulse}
                 onSelectWorkflows={onSelectWorkflows}
                 selectedView={selectedView}
                 showWorkflows={!projectsEnabled}

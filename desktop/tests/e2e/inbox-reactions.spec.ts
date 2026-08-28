@@ -37,7 +37,7 @@ test("inbox reaction on a thread-reply mention persists after refetch", async ({
   page,
 }) => {
   await installMockBridge(page);
-  await page.goto("/");
+  await page.goto("/#/?tab=inbox");
   await expect(page.getByTestId("home-inbox-list")).toBeVisible();
   await page.waitForFunction(() => {
     const win = window as MockWindow;

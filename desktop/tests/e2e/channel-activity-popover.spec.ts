@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForAnimations } from "../helpers/animations";
 import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 import { overridePreviewFeatures } from "../helpers/features";
+import { openInboxTab } from "../helpers/dashboard";
 
 // The activity popover hangs off the flat-sidebar channel rows, which only
 // exist with the Projects experiment off (projects fold channels into
@@ -504,10 +505,10 @@ test.describe("channel activity hover preview", () => {
       "older-inbox-thread-for-hover",
       "second-inbox-thread-for-hover",
     ];
-    await page.goto("/");
+    await page.goto("/#/?tab=inbox");
     await page.getByTestId("channel-general").click();
     await expect(page.getByTestId("chat-title")).toHaveText("general");
-    await page.getByRole("button", { name: "Inbox", exact: true }).click();
+    await openInboxTab(page);
     await expect(page.getByTestId("home-inbox-list")).toBeVisible();
     await pushMockInboxFeedItems(
       page,
@@ -607,7 +608,7 @@ test.describe("channel activity hover preview", () => {
 
     await page.mouse.move(900, 680);
     await expect(popover).toBeHidden();
-    await page.getByRole("button", { name: "Inbox", exact: true }).click();
+    await openInboxTab(page);
     const topLevelItemId = "top-level-inbox-item-for-channel-read";
     await pushMockInboxFeedItems(page, [
       {
@@ -647,7 +648,7 @@ test.describe("channel activity hover preview", () => {
   test("reading a grouped Inbox thread preserves an unrelated manual unread", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/#/?tab=inbox");
     await page.getByTestId("channel-general").click();
     await expect(page.getByTestId("chat-title")).toHaveText("general");
     await waitForMockLiveSubscription(page, "general");
@@ -669,7 +670,7 @@ test.describe("channel activity hover preview", () => {
       .getByTestId(`mark-read-toggle-${manualUnreadMessage.id}`)
       .click();
 
-    await page.getByRole("button", { name: "Inbox", exact: true }).click();
+    await openInboxTab(page);
     const groupedRootId = "grouped-inbox-root-preserve-manual";
     const groupedReplyId = "grouped-inbox-reply-preserve-manual";
     await pushMockInboxFeedItems(page, [
@@ -709,10 +710,10 @@ test.describe("channel activity hover preview", () => {
   test("preserves Inbox ownership while another top-level row remains unread", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/#/?tab=inbox");
     await page.getByTestId("channel-general").click();
     await expect(page.getByTestId("chat-title")).toHaveText("general");
-    await page.getByRole("button", { name: "Inbox", exact: true }).click();
+    await openInboxTab(page);
     const topLevelItemIds = [
       "first-top-level-inbox-owner",
       "second-top-level-inbox-owner",
@@ -740,7 +741,7 @@ test.describe("channel activity hover preview", () => {
     );
     await expect.poll(() => getForcedUnreadSources(page)).toEqual(["inbox"]);
 
-    await page.getByRole("button", { name: "Inbox", exact: true }).click();
+    await openInboxTab(page);
     for (const [index, itemId] of topLevelItemIds.entries()) {
       const inboxRow = page.getByTestId(`home-inbox-item-${itemId}`);
       await inboxRow.hover();

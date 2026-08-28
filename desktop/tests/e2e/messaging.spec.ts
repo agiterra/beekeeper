@@ -1195,7 +1195,7 @@ test("draft auto-send promotes link preview preparation and sends exactly once",
   // Drive the real Drafts-panel "Send message" confirm flow. This does an
   // in-app client navigation to the channel with ?autoSend=<draftKey>, arming
   // the main composer's auto-submit effect — the exact production path.
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.goto("/#/?tab=inbox", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("home-inbox")).toBeVisible({ timeout: 10_000 });
   await page.getByTestId("inbox-filter-trigger").click();
   await page.getByRole("menuitemradio", { name: "Drafts" }).click();
