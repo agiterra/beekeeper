@@ -112,6 +112,12 @@ export type TeamSnapshotImportPreview = {
   instructions: string | null;
   members: TeamSnapshotMemberPreview[];
   hasSourceAllowlist: boolean;
+  /**
+   * Set when the snapshot declares a crew whose seats cannot be bound to its
+   * own members. The team still imports — without the crew — and this sentence
+   * is why, so the import does not silently look like an ordinary team.
+   */
+  crewWarning?: string | null;
 };
 
 export type TeamSnapshotImportConfirm = {

@@ -264,3 +264,86 @@ fn an_unreadable_folder_is_an_error_not_an_empty_scan() {
     let missing = root.path().join("does-not-exist");
     assert!(scan_role_packs(&missing).is_err());
 }
+
+/// The repo's own `personas/roles` — the folder an operator actually points
+/// the installer at — installs seven agents, seats five of them in launch
+/// order, and every minted agent resolves its pack.
+///
+/// This is the acceptance case run against the real packs rather than a
+/// fixture: a scan that passes on hand-written fixtures and fails on the
+/// shipped packs would be a green test over a broken front door.
+#[test]
+fn the_repo_role_packs_install_seven_agents_and_seat_five() {
+    let roles_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("personas")
+        .join("roles");
+    let Ok(roles_dir) = std::fs::canonicalize(&roles_dir) else {
+        // A checkout without the packs is not a failure of this code.
+        return;
+    };
+
+    let scan = scan_role_packs(&roles_dir).expect("the repo's role packs scan");
+    let roles: Vec<&str> = scan.packs.iter().map(|p| p.role.as_str()).collect();
+    assert_eq!(
+        roles,
+        vec![
+            "lead",
+            "architect",
+            "builder",
+            "verifier",
+            "runner",
+            "poker",
+            "designer"
+        ],
+        "install order is the roster, then the two unseated roles"
+    );
+    assert!(scan.skipped.is_empty(), "no shipped pack is skipped");
+
+    let result = install(&scan, Vec::new(), Vec::new(), &[]);
+    assert_eq!(result.agents.len(), 7);
+    let teams = vec![result.team.clone()];
+    for agent in &result.agents {
+        assert!(
+            crate::managed_agents::actor_seats::resolve_seat_pack(agent, &teams).is_some(),
+            "agent {} would stage no role pack",
+            agent.name
+        );
+    }
+
+    let crew = result.team.crew.clone().expect("the team is a crew");
+    assert_eq!(
+        crew.seats.len(),
+        5,
+        "five seats, poker and designer unseated"
+    );
+    assert_eq!(
+        crew.seats
+            .iter()
+            .map(|seat| seat.role.as_str())
+            .collect::<Vec<_>>(),
+        vec!["lead", "architect", "builder", "verifier", "runner"]
+    );
+    let lead = result
+        .installed
+        .iter()
+        .find(|row| row.role == "lead")
+        .expect("the lead pack installed");
+    assert_eq!(
+        crew.primary, lead.persona_id,
+        "the lead takes the first turn"
+    );
+
+    // And every seat names a persona this install actually minted.
+    for seat in &crew.seats {
+        assert!(
+            result
+                .agents
+                .iter()
+                .any(|agent| agent.persona_id.as_deref() == Some(seat.persona_id.as_str())),
+            "seat {} names a persona no agent fills",
+            seat.role
+        );
+    }
+}

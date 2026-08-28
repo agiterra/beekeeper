@@ -167,6 +167,17 @@ function PreviewBody({
         imported team is independent of the source — identity never travels.
       </p>
 
+      {/* A crew that cannot be bound to its own members imports as an
+          ordinary team — say so before the import, not after. */}
+      {preview.crewWarning ? (
+        <p
+          className="text-xs text-warning"
+          data-testid="team-snapshot-import-crew-warning"
+        >
+          {preview.crewWarning}
+        </p>
+      ) : null}
+
       {/* Member list */}
       {preview.members.length > 0 ? (
         <div className="space-y-1">
