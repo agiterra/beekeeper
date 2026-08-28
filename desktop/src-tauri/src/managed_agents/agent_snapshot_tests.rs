@@ -51,6 +51,8 @@ fn minimal_record() -> ManagedAgentRecord {
         provider_binary_path: Some("/usr/bin/SENTINEL_PROVIDER_BINARY".to_string()), // MUST NOT appear
         persona_team_dir: Some(std::path::PathBuf::from("SENTINEL_TEAM_DIR")), // MUST NOT appear
         persona_name_in_team: Some("SENTINEL_NAME_IN_TEAM".to_string()),       // MUST NOT appear
+        // The role travels; the pack behind it does not.
+        home_role: Some("builder".to_string()),
         created_at: "2024-01-01T00:00:00Z".to_string(),
         updated_at: "2024-01-02T00:00:00Z".to_string(),
         last_started_at: Some("2024-01-03T00:00:00Z".to_string()), // MUST NOT appear
@@ -515,6 +517,23 @@ fn secret_exclusion_lineage_ids_absent() {
     assert!(
         !json.contains("SENTINEL_NAME_IN_TEAM"),
         "personaNameInTeam value must not appear"
+    );
+}
+
+/// The role is portable; the *path* it came from is not. A snapshot must carry
+/// `homeRole` and still no host-local pack path — an imported agent has the
+/// role and no pack behind it, and every seat screen must be able to say so.
+#[test]
+fn a_snapshot_still_carries_no_host_local_pack_path() {
+    let record = minimal_record();
+    let snapshot = build_snapshot(&record, MemoryLevel::None, vec![], None);
+    let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+
+    assert_eq!(snapshot.definition.home_role.as_deref(), Some("builder"));
+    assert!(json.contains("\"homeRole\":\"builder\""));
+    assert!(
+        !json.contains("SENTINEL_TEAM_DIR") && !json.contains("personaTeamDir"),
+        "a host-local pack path must never be exported alongside the role"
     );
 }
 

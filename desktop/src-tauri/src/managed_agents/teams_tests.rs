@@ -195,6 +195,7 @@ fn managed_agent(name: &str) -> ManagedAgentRecord {
         provider_binary_path: None,
         persona_team_dir: None,
         persona_name_in_team: None,
+        home_role: None,
         created_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
         last_started_at: None,

@@ -130,6 +130,10 @@ impl AgentDefinition {
             team_id: None,
             persona_team_dir: None,
             persona_name_in_team: None,
+            // A definition carries no home role: the role lives on the agent
+            // the crew-role installer mints, never on the persona view that
+            // `save_personas` rewrites from.
+            home_role: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
             last_started_at: None,
@@ -337,6 +341,12 @@ pub struct ManagedAgentRecord {
         alias = "persona_name_in_pack"
     )]
     pub persona_name_in_team: Option<String>,
+    /// The role this agent *is*, taken from its pack persona's `role:`
+    /// frontmatter at install time. `None` for every agent that predates the
+    /// crew-role installer and for any persona that declares no role — never
+    /// guessed from a name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_role: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_started_at: Option<String>,
@@ -501,6 +511,12 @@ pub struct ManagedAgentSummary {
     /// delete-confirmation flow). `None` = inherit from the linked persona.
     pub runtime: Option<String>,
     pub team_id: Option<String>,
+    /// Mirror of `ManagedAgentRecord.home_role`.
+    pub home_role: Option<String>,
+    /// Whether this computer can stage a role pack for this agent — exactly
+    /// `resolve_seat_pack(record, &teams).is_some()`. `false` means a seat on
+    /// this agent runs on its persona prompt alone.
+    pub has_role_pack: bool,
     pub relay_url: String,
     pub acp_command: String,
     pub agent_command: String,

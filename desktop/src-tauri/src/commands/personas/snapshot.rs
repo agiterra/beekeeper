@@ -490,6 +490,7 @@ mod png_body_tests {
                 name_pool: vec![],
                 idle_timeout_seconds: None,
                 max_turn_duration_seconds: None,
+                home_role: None,
             },
             profile: crate::managed_agents::agent_snapshot::AgentSnapshotProfile {
                 display_name: "Agent".to_string(),

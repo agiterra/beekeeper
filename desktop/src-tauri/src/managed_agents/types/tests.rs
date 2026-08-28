@@ -721,6 +721,8 @@ fn summary_fixture(
         persona_id: None,
         runtime: None,
         team_id: None,
+        home_role: None,
+        has_role_pack: false,
         relay_url: String::new(),
         acp_command: "buzz-acp".into(),
         agent_command: "goose".into(),
@@ -798,4 +800,87 @@ fn summary_with_drift_serializes_restart_diff_entries() {
             "change": { "kind": "value", "before": "gpt-5", "after": "claude-4" },
         }]))
     );
+}
+
+/// A record stored before the crew-role installer existed has no `home_role`
+/// key at all; it must read as "no home role", never as a guess. And a record
+/// with none must not grow the key back on the next save — an absent field is
+/// how every other optional record field stays byte-stable across versions.
+#[test]
+fn home_role_round_trips_and_is_absent_on_old_records() {
+    let legacy: ManagedAgentRecord = serde_json::from_str(
+        r#"{
+            "pubkey": "abc123",
+            "name": "Legacy",
+            "relay_url": "ws://localhost:3000",
+            "acp_command": "buzz-acp",
+            "agent_command": "goose",
+            "agent_args": [],
+            "mcp_command": "",
+            "turn_timeout_seconds": 320,
+            "system_prompt": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "last_started_at": null,
+            "last_stopped_at": null,
+            "last_exit_code": null,
+            "last_error": null
+        }"#,
+    )
+    .expect("a pre-installer record still deserializes");
+    assert_eq!(legacy.home_role, None);
+
+    let wire = serde_json::to_value(&legacy).expect("record serializes");
+    assert!(
+        wire.get("home_role").is_none(),
+        "a record with no home role must not write the key"
+    );
+
+    let mut seated = legacy.clone();
+    seated.home_role = Some("builder".to_string());
+    let wire = serde_json::to_value(&seated).expect("record serializes");
+    assert_eq!(wire.get("home_role"), Some(&serde_json::json!("builder")));
+    let back: ManagedAgentRecord = serde_json::from_value(wire).expect("record round-trips");
+    assert_eq!(back.home_role.as_deref(), Some("builder"));
+
+    // The role lives on the agent, never on the persona view: a definition
+    // round-tripped through `into_agent_record` carries none, so a
+    // `save_personas` rewrite cannot invent one.
+    let definition = AgentDefinition {
+        id: "def".to_string(),
+        display_name: "Def".to_string(),
+        avatar_url: None,
+        system_prompt: String::new(),
+        runtime: None,
+        model: None,
+        provider: None,
+        name_pool: Vec::new(),
+        is_builtin: false,
+        is_active: true,
+        shared: false,
+        source_team: None,
+        source_team_persona_slug: None,
+        catalog_source: None,
+        env_vars: Default::default(),
+        respond_to: None,
+        respond_to_allowlist: Vec::new(),
+        parallelism: None,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    assert_eq!(definition.into_agent_record().home_role, None);
+}
+
+/// The summary mirrors the record's home role and states, separately, whether
+/// this computer can stage a pack for it. `has_role_pack` is always present on
+/// the wire — an absent field would read as "unknown" in the UI, which is
+/// exactly the comfortable guess the disclosure exists to prevent.
+#[test]
+fn summary_carries_home_role_and_has_role_pack() {
+    let mut summary = summary_fixture(Vec::new());
+    summary.home_role = Some("lead".into());
+    summary.has_role_pack = false;
+    let wire = serde_json::to_value(&summary).expect("summary serializes");
+    assert_eq!(wire.get("home_role"), Some(&serde_json::json!("lead")));
+    assert_eq!(wire.get("has_role_pack"), Some(&serde_json::json!(false)));
 }

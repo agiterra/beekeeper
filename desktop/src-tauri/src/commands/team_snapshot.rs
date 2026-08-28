@@ -154,6 +154,33 @@ pub(crate) fn build_import_definitions(
         .collect()
 }
 
+/// The disclosure shown when a snapshot's crew cannot be bound to its members.
+pub(crate) const CREW_UNMATCHED_NOTE: &str =
+    "This snapshot's crew could not be matched to its members, so it was imported as an ordinary team.";
+
+/// Bind the snapshot's crew, if it has one, to the ids this import minted.
+///
+/// `None` covers two different facts — no crew, and a crew whose seats do not
+/// all name a member — and the caller distinguishes them so the second is
+/// disclosed rather than silently swallowed.
+pub(crate) fn remap_import_crew(
+    snapshot: &TeamSnapshot,
+    persona_ids: &[String],
+) -> Option<crate::managed_agents::TeamCrew> {
+    let crew = snapshot.team.crew.as_ref()?;
+    let member_names: Vec<String> = snapshot
+        .members
+        .iter()
+        .map(|member| member.definition.name.clone())
+        .collect();
+    crate::managed_agents::team_snapshot::remap_snapshot_crew(crew, &member_names, persona_ids)
+}
+
+/// `true` when the snapshot declares a crew this import could not bind.
+pub(crate) fn import_crew_is_unmatched(snapshot: &TeamSnapshot, persona_ids: &[String]) -> bool {
+    snapshot.team.crew.is_some() && remap_import_crew(snapshot, persona_ids).is_none()
+}
+
 /// Assemble the one new team record that references freshly built definitions.
 pub(crate) fn build_import_team(
     snapshot: &TeamSnapshot,
@@ -165,12 +192,14 @@ pub(crate) fn build_import_team(
         return Err("Team snapshot name is empty.".to_string());
     }
 
+    let crew = remap_import_crew(snapshot, &persona_ids);
+
     Ok(TeamRecord {
         id: Uuid::new_v4().to_string(),
         name: name.to_string(),
         description: snapshot.team.description.clone(),
         persona_ids,
-        crew: None,
+        crew,
         instructions: snapshot.team.instructions.clone(),
         is_builtin: false,
         source_dir: None,
@@ -212,6 +241,11 @@ pub struct TeamSnapshotImportPreview {
     pub instructions: Option<String>,
     pub members: Vec<TeamSnapshotMemberPreview>,
     pub has_source_allowlist: bool,
+    /// Set when the snapshot declares a crew whose seats cannot be bound to
+    /// its own members — the team still imports, without the crew, and the
+    /// preview says so instead of showing a crew that will not exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crew_warning: Option<String>,
 }
 
 /// Confirmation input for a team snapshot import.
@@ -463,12 +497,20 @@ pub async fn preview_team_snapshot_import(
     tokio::task::spawn_blocking(move || {
         let snapshot = decode_team_snapshot_from_bytes(&file_bytes)?;
         let members: Vec<_> = snapshot.members.iter().map(member_preview).collect();
+        // The preview mints nothing, so it asks the same question against a
+        // stand-in id per member: whether every seat names a member at all.
+        let stand_in_ids: Vec<String> = (0..snapshot.members.len())
+            .map(|index| index.to_string())
+            .collect();
+        let crew_warning = import_crew_is_unmatched(&snapshot, &stand_in_ids)
+            .then(|| CREW_UNMATCHED_NOTE.to_string());
         Ok(TeamSnapshotImportPreview {
             name: snapshot.team.name,
             description: snapshot.team.description,
             instructions: snapshot.team.instructions,
             has_source_allowlist: members.iter().any(|member| member.has_source_allowlist),
             members,
+            crew_warning,
         })
     })
     .await
@@ -583,8 +625,12 @@ pub async fn confirm_team_snapshot_import(
             provider_policy_pending: false,
             provider_binary_path: None,
             team_id: Some(imported_team.id.clone()),
+            // Host-local: a pack never travels in a snapshot, so an imported
+            // agent carries its role and no pack behind it. `has_role_pack`
+            // then reads false and every seat screen says so.
             persona_team_dir: None,
             persona_name_in_team: None,
+            home_role: member.definition.home_role.clone(),
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,

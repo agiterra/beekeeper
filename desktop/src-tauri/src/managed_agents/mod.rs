@@ -11,6 +11,7 @@ pub(crate) use agent_env::{
 };
 mod backend;
 pub(crate) mod config_bridge;
+pub(crate) mod crew_roles;
 pub(crate) mod custom_harnesses;
 mod definition_validation;
 mod discovery;

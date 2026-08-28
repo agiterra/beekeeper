@@ -301,6 +301,12 @@ pub fn build_managed_agent_summary(
         persona_id: record.persona_id.clone(),
         runtime: record.runtime.clone(),
         team_id: record.team_id.clone(),
+        home_role: record.home_role.clone(),
+        // Computed against the caller's one `load_teams` — never a per-record
+        // disk read. `false` is the honest answer for an agent whose pack this
+        // computer cannot read: its seats carry no role skills.
+        has_role_pack: crate::managed_agents::actor_seats::resolve_seat_pack(record, teams)
+            .is_some(),
         relay_url: record.relay_url.clone(),
         acp_command: record.acp_command.clone(),
         agent_command: descriptor.command,

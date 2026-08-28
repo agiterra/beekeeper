@@ -1,4 +1,4 @@
-use nostr::{Keys, ToBech32};
+use nostr::Keys;
 use tauri::{AppHandle, State};
 
 use super::managed_agent_definition::validate_create_definition;
@@ -46,6 +46,52 @@ pub(super) fn summarize_from_disk(
         &load_teams(app).unwrap_or_default(),
         &crate::managed_agents::load_global_agent_config(app).unwrap_or_default(),
     )
+}
+
+/// Mint one agent identity: a fresh keypair, its bech32 secret, and the NIP-OA
+/// auth tag binding it to this workspace's owner.
+///
+/// The single key-minting path for a managed agent. `create_managed_agent` and
+/// the crew-role installer both call it, so an agent can never appear with a
+/// key the owner never attested — the divergence that produces an actor the
+/// provider cannot impersonate.
+///
+/// # Errors
+///
+/// Fails closed: a bad owner key, an un-encodable secret, or an auth tag that
+/// cannot be computed aborts before anything is written.
+pub(super) fn mint_agent_identity(
+    owner_keys: &nostr::Keys,
+) -> Result<
+    (
+        nostr::Keys,
+        crate::managed_agents::crew_roles::MintedCrewIdentity,
+    ),
+    String,
+> {
+    use nostr::ToBech32;
+
+    let agent_keys = nostr::Keys::generate();
+    let pubkey = agent_keys.public_key().to_hex();
+    let private_key_nsec = agent_keys
+        .secret_key()
+        .to_bech32()
+        .map_err(|error| format!("failed to encode private key: {error}"))?;
+    // Bridge nostr 0.37 → 0.36 (buzz-sdk) via hex round-trip.
+    let compat_owner = nostr::Keys::parse(&owner_keys.secret_key().to_secret_hex())
+        .map_err(|e| format!("failed to bridge owner keys: {e}"))?;
+    let compat_agent = nostr::PublicKey::from_hex(&pubkey)
+        .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
+    let auth_tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
+        .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?;
+    Ok((
+        agent_keys,
+        crate::managed_agents::crew_roles::MintedCrewIdentity {
+            pubkey,
+            private_key_nsec,
+            auth_tag: Some(auth_tag),
+        },
+    ))
 }
 
 /// Retain a freshly authored managed-agent event in the local store, flagged
@@ -555,8 +601,12 @@ pub async fn create_managed_agent(
     // fallback. Computed outside the records lock to keep lock ordering simple.
     let owner_hex = workspace_owner_hex(&state)?;
 
-    // ── Phase 1: generate keys (sync lock) ────────────────────────────────────
-    let (agent_keys, private_key_nsec, pubkey, resolved_relay_url, input) = {
+    // ── Phase 1: mint the identity (sync lock) ───────────────────────────────
+    // Keys and the NIP-OA auth tag come from the one shared minting path
+    // (`mint_agent_identity`), so a crew-role install and a hand-made agent
+    // can never disagree about how an agent identity is attested.
+    let owner_signing_keys = state.signing_keys()?;
+    let (agent_keys, private_key_nsec, pubkey, auth_tag, resolved_relay_url, input) = {
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
@@ -579,15 +629,13 @@ pub async fn create_managed_agent(
             let personas = load_personas(&app)?;
             ensure_persona_is_active(&personas, persona_id)?;
         }
-        let keys = Keys::generate();
-        let pubkey = keys.public_key().to_hex();
+        let (keys, minted) = mint_agent_identity(&owner_signing_keys)?;
+        let pubkey = minted.pubkey;
         if records.iter().any(|record| record.pubkey == pubkey) {
             return Err(format!("agent {pubkey} already exists"));
         }
-        let private_key_nsec = keys
-            .secret_key()
-            .to_bech32()
-            .map_err(|error| format!("failed to encode private key: {error}"))?;
+        let private_key_nsec = minted.private_key_nsec;
+        let auth_tag = minted.auth_tag;
 
         // Store the relay override exactly as supplied (trimmed). An explicit
         // value pins the agent; empty stays empty and resolves to the active
@@ -599,7 +647,14 @@ pub async fn create_managed_agent(
             .unwrap_or("")
             .to_string();
 
-        (keys, private_key_nsec, pubkey, resolved_relay_url, input)
+        (
+            keys,
+            private_key_nsec,
+            pubkey,
+            auth_tag,
+            resolved_relay_url,
+            input,
+        )
     };
 
     // ── Pre-Phase 2: validate provider config BEFORE any side effects ────────
@@ -610,21 +665,6 @@ pub async fn create_managed_agent(
     }
 
     let relay_mesh = normalize_relay_mesh(input.relay_mesh.as_ref(), &input.backend)?;
-
-    // ── Phase 2: compute NIP-OA auth tag (sync) ──────────────────────────────
-    // Agents authenticate via the auth tag in their kind:0 profile event.
-    // No tokens are minted. Fail closed: bad auth tag → don't create agent.
-    let auth_tag = {
-        let owner_keys = state.signing_keys()?;
-        // Bridge nostr 0.37 → 0.36 (buzz-sdk) via hex round-trip.
-        let compat_owner = nostr::Keys::parse(&owner_keys.secret_key().to_secret_hex())
-            .map_err(|e| format!("failed to bridge owner keys: {e}"))?;
-        let compat_agent = nostr::PublicKey::from_hex(&agent_keys.public_key().to_hex())
-            .map_err(|e| format!("failed to bridge agent pubkey: {e}"))?;
-        let tag = buzz_sdk_pkg::nip_oa::compute_auth_tag(&compat_owner, &compat_agent, "")
-            .map_err(|e| format!("failed to compute NIP-OA auth tag: {e}"))?;
-        Some(tag)
-    };
 
     // ── Phase 3: save record (sync lock) ───────────────────────────────────────
     let (agent, resolved_avatar_url) = {
@@ -832,6 +872,7 @@ pub async fn create_managed_agent(
             provider_binary_path,
             persona_team_dir: None,
             persona_name_in_team: None,
+            home_role: None,
             env_vars: input.env_vars.clone(),
             created_at: now_iso(),
             updated_at: now_iso(),

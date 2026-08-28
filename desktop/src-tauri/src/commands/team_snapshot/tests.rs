@@ -24,6 +24,7 @@ fn member(name: &str) -> AgentSnapshot {
             name_pool: vec![],
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
+            home_role: None,
         },
         profile: AgentSnapshotProfile {
             display_name: name.to_string(),
@@ -46,6 +47,7 @@ fn snapshot(members: Vec<AgentSnapshot>) -> TeamSnapshot {
             name: "Review Team".to_string(),
             description: Some("Reviews changes".to_string()),
             instructions: Some("Be thorough.".to_string()),
+            crew: None,
         },
         members,
     }
@@ -197,6 +199,7 @@ fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
         turn_timeout_seconds: 0,
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
+        home_role: None,
         parallelism: crate::managed_agents::DEFAULT_AGENT_PARALLELISM,
         system_prompt: None,
         model: None,
@@ -764,4 +767,64 @@ mod egress_guard_boundary {
         .unwrap_err();
         assert!(err.contains("key-backup material"), "{err}");
     }
+}
+
+/// A snapshot's crew binds to the ids this import mints, keyed by member name.
+#[test]
+fn an_imported_crew_binds_to_the_freshly_minted_definition_ids() {
+    use crate::managed_agents::crew_roles::{TeamSnapshotCrew, TeamSnapshotCrewSeat};
+
+    let mut manifest = snapshot(vec![member("Alice"), member("Bob")]);
+    manifest.team.crew = Some(TeamSnapshotCrew {
+        primary_member_name: "Alice".to_string(),
+        seats: vec![
+            TeamSnapshotCrewSeat {
+                member_name: "Alice".to_string(),
+                role: "lead".to_string(),
+            },
+            TeamSnapshotCrewSeat {
+                member_name: "Bob".to_string(),
+                role: "builder".to_string(),
+            },
+        ],
+    });
+    let persona_ids = vec!["mint-1".to_string(), "mint-2".to_string()];
+    assert!(!import_crew_is_unmatched(&manifest, &persona_ids));
+
+    let team =
+        build_import_team(&manifest, persona_ids, "2026-08-27T00:00:00Z").expect("team imports");
+    let crew = team.crew.expect("the crew is bound");
+    assert_eq!(crew.primary, "mint-1");
+    assert_eq!(crew.seats[0].persona_id, "mint-1");
+    assert_eq!(crew.seats[1].persona_id, "mint-2");
+    assert_eq!(crew.seats[1].role, "builder");
+}
+
+/// A crew that cannot be matched imports as an ordinary team, with the
+/// disclosure attached — never as a crew whose seats name nothing.
+#[test]
+fn a_snapshot_crew_whose_member_is_missing_imports_as_an_ordinary_team() {
+    use crate::managed_agents::crew_roles::{TeamSnapshotCrew, TeamSnapshotCrewSeat};
+
+    let mut manifest = snapshot(vec![member("Alice")]);
+    manifest.team.crew = Some(TeamSnapshotCrew {
+        primary_member_name: "Alice".to_string(),
+        seats: vec![TeamSnapshotCrewSeat {
+            member_name: "Ghost".to_string(),
+            role: "builder".to_string(),
+        }],
+    });
+    let persona_ids = vec!["mint-1".to_string()];
+
+    assert!(import_crew_is_unmatched(&manifest, &persona_ids));
+    let team = build_import_team(&manifest, persona_ids, "2026-08-27T00:00:00Z")
+        .expect("the team still imports");
+    assert!(
+        team.crew.is_none(),
+        "an unmatched crew is dropped, not faked"
+    );
+    assert_eq!(
+        CREW_UNMATCHED_NOTE,
+        "This snapshot's crew could not be matched to its members, so it was imported as an ordinary team."
+    );
 }

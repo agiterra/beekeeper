@@ -479,6 +479,7 @@ fn make_agent(name: &str, persona_id: Option<&str>) -> ManagedAgentRecord {
         team_id: None,
         persona_team_dir: None,
         persona_name_in_team: None,
+        home_role: None,
         created_at: String::new(),
         updated_at: String::new(),
         last_started_at: None,

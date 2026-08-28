@@ -40,6 +40,8 @@ use std::io::Cursor;
 
 use crate::managed_agents::{
     agent_snapshot::{make_png_with_text, validate_snapshot, AgentSnapshot, MemoryLevel},
+    crew_roles::{TeamSnapshotCrew, TeamSnapshotCrewSeat},
+    team_events::TeamCrew,
     TeamRecord,
 };
 
@@ -65,6 +67,75 @@ pub struct TeamSnapshotMeta {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    /// Crew composition, keyed by **member name**. `None` for an ordinary
+    /// team — and for a crew whose seats cannot all be named by a member of
+    /// this snapshot, because a crew with a hole in it is worse than no crew.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crew: Option<TeamSnapshotCrew>,
+}
+
+/// Describe a team's crew by member name, for export.
+///
+/// Returns `None` when any seat (or the primary) names a persona this
+/// snapshot's members do not cover: seat ids are meaningless on the importing
+/// computer, so a seat we cannot name is a seat we must not export.
+pub fn snapshot_crew_from_team(
+    team: &TeamRecord,
+    members: &[AgentSnapshot],
+) -> Option<TeamSnapshotCrew> {
+    let crew = team.crew.as_ref()?;
+    let name_of = |persona_id: &str| -> Option<String> {
+        let index = team
+            .persona_ids
+            .iter()
+            .position(|candidate| candidate == persona_id)?;
+        members
+            .get(index)
+            .map(|member| member.definition.name.clone())
+    };
+    let mut seats = Vec::with_capacity(crew.seats.len());
+    for seat in &crew.seats {
+        seats.push(TeamSnapshotCrewSeat {
+            member_name: name_of(&seat.persona_id)?,
+            role: seat.role.clone(),
+        });
+    }
+    Some(TeamSnapshotCrew {
+        primary_member_name: name_of(&crew.primary)?,
+        seats,
+    })
+}
+
+/// Bind a snapshot's crew back to freshly minted definition ids.
+///
+/// `member_names[i]` and `persona_ids[i]` describe the same member. Returns
+/// `None` when any seat — or the primary — names a member this import did not
+/// mint; the caller then imports an ordinary team and says so.
+pub fn remap_snapshot_crew(
+    crew: &TeamSnapshotCrew,
+    member_names: &[String],
+    persona_ids: &[String],
+) -> Option<TeamCrew> {
+    let id_of = |member_name: &str| -> Option<String> {
+        let index = member_names
+            .iter()
+            .position(|candidate| candidate == member_name)?;
+        persona_ids.get(index).cloned()
+    };
+    let mut seats = Vec::with_capacity(crew.seats.len());
+    for seat in &crew.seats {
+        seats.push(crate::managed_agents::team_events::TeamCrewSeat {
+            persona_id: id_of(&seat.member_name)?,
+            role: seat.role.clone(),
+            driver: None,
+            model: None,
+            vendor: None,
+        });
+    }
+    Some(TeamCrew {
+        primary: id_of(&crew.primary_member_name)?,
+        seats,
+    })
 }
 
 // ── Top-level manifest ────────────────────────────────────────────────────────
@@ -101,6 +172,7 @@ pub fn build_team_snapshot(team: &TeamRecord, members: Vec<AgentSnapshot>) -> Te
             name: team.name.clone(),
             description: team.description.clone(),
             instructions: team.instructions.clone(),
+            crew: snapshot_crew_from_team(team, &members),
         },
         members,
     }
@@ -289,6 +361,7 @@ mod tests {
             team_id: None,
             persona_team_dir: None,
             persona_name_in_team: None,
+            home_role: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
             updated_at: "2024-01-02T00:00:00Z".to_string(),
             last_started_at: None,
@@ -588,5 +661,131 @@ mod tests {
         assert_eq!(decoded.members.len(), 2);
         assert_eq!(decoded.members[1].memory.level, MemoryLevel::Everything);
         assert_eq!(decoded.members[1].memory.entries.len(), 1);
+    }
+
+    // ── Crew round-trip ───────────────────────────────────────────────────────
+
+    /// A crew survives export and import keyed by **member name**. Ids do not:
+    /// import mints fresh ones, so a snapshot that named seats by `personaId`
+    /// would arrive naming personas that do not exist on the new computer.
+    #[test]
+    fn a_team_snapshot_round_trips_its_crew_by_member_name() {
+        use crate::managed_agents::team_events::{TeamCrew, TeamCrewSeat};
+
+        let mut team = team_record("Crew roles");
+        team.persona_ids = vec!["def-alice".to_string(), "def-bob".to_string()];
+        team.crew = Some(TeamCrew {
+            primary: "def-alice".to_string(),
+            seats: vec![
+                TeamCrewSeat {
+                    persona_id: "def-alice".to_string(),
+                    role: "lead".to_string(),
+                    driver: None,
+                    model: None,
+                    vendor: None,
+                },
+                TeamCrewSeat {
+                    persona_id: "def-bob".to_string(),
+                    role: "builder".to_string(),
+                    driver: None,
+                    model: None,
+                    vendor: None,
+                },
+            ],
+        });
+        let members = vec![
+            build_snapshot(&agent_record("Alice"), MemoryLevel::None, vec![], None),
+            build_snapshot(&agent_record("Bob"), MemoryLevel::None, vec![], None),
+        ];
+        let snapshot = build_team_snapshot(&team, members);
+
+        let bytes = encode_team_snapshot_json(&snapshot).unwrap();
+        let parsed = decode_team_snapshot_json(&bytes).unwrap();
+        let crew = parsed.team.crew.clone().expect("the crew survives export");
+        assert_eq!(crew.primary_member_name, "Alice Display");
+        assert_eq!(
+            crew.seats
+                .iter()
+                .map(|seat| (seat.member_name.as_str(), seat.role.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("Alice Display", "lead"), ("Bob Display", "builder")]
+        );
+        let json = String::from_utf8(bytes).unwrap();
+        assert!(
+            !json.contains("def-alice") && !json.contains("def-bob"),
+            "definition ids are meaningless on the importing computer and are never exported"
+        );
+
+        let member_names: Vec<String> = parsed
+            .members
+            .iter()
+            .map(|member| member.definition.name.clone())
+            .collect();
+        let fresh_ids = vec!["new-1".to_string(), "new-2".to_string()];
+        let remapped = remap_snapshot_crew(&crew, &member_names, &fresh_ids).expect("crew remaps");
+        assert_eq!(remapped.primary, "new-1");
+        assert_eq!(remapped.seats[0].persona_id, "new-1");
+        assert_eq!(remapped.seats[1].persona_id, "new-2");
+    }
+
+    /// A crew naming a member the snapshot does not carry cannot be bound, and
+    /// the team must import as an ordinary team rather than as a crew whose
+    /// seats point at nothing.
+    #[test]
+    fn a_snapshot_crew_whose_member_is_missing_imports_as_an_ordinary_team() {
+        let crew = TeamSnapshotCrew {
+            primary_member_name: "Alice Display".to_string(),
+            seats: vec![
+                TeamSnapshotCrewSeat {
+                    member_name: "Alice Display".to_string(),
+                    role: "lead".to_string(),
+                },
+                TeamSnapshotCrewSeat {
+                    member_name: "Ghost".to_string(),
+                    role: "builder".to_string(),
+                },
+            ],
+        };
+        let member_names = vec!["Alice Display".to_string()];
+        let ids = vec!["new-1".to_string()];
+        assert!(remap_snapshot_crew(&crew, &member_names, &ids).is_none());
+
+        // And a crew whose *primary* is missing is equally unusable.
+        let orphan_primary = TeamSnapshotCrew {
+            primary_member_name: "Ghost".to_string(),
+            seats: vec![TeamSnapshotCrewSeat {
+                member_name: "Alice Display".to_string(),
+                role: "lead".to_string(),
+            }],
+        };
+        assert!(remap_snapshot_crew(&orphan_primary, &member_names, &ids).is_none());
+    }
+
+    /// A team whose crew names a persona outside its own roster exports with no
+    /// crew — never with a seat the importer cannot name.
+    #[test]
+    fn an_unnameable_seat_exports_no_crew() {
+        use crate::managed_agents::team_events::{TeamCrew, TeamCrewSeat};
+
+        let mut team = team_record("Crew roles");
+        team.persona_ids = vec!["def-alice".to_string()];
+        team.crew = Some(TeamCrew {
+            primary: "def-alice".to_string(),
+            seats: vec![TeamCrewSeat {
+                persona_id: "def-missing".to_string(),
+                role: "builder".to_string(),
+                driver: None,
+                model: None,
+                vendor: None,
+            }],
+        });
+        let members = vec![build_snapshot(
+            &agent_record("Alice"),
+            MemoryLevel::None,
+            vec![],
+            None,
+        )];
+        let snapshot = build_team_snapshot(&team, members);
+        assert!(snapshot.team.crew.is_none());
     }
 }

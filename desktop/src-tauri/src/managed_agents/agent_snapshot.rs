@@ -117,6 +117,11 @@ pub struct AgentSnapshotDefinition {
     pub idle_timeout_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turn_duration_seconds: Option<u64>,
+    /// The role this agent is, from its pack persona. Portable; the pack
+    /// itself is not — `persona_team_dir` is host-local and is never
+    /// exported, so an imported agent carries the role and no pack behind it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_role: Option<String>,
 }
 
 /// kind:0 presentation fields.
@@ -210,6 +215,7 @@ pub fn build_snapshot(
         name_pool: record.name_pool.clone(),
         idle_timeout_seconds: record.idle_timeout_seconds,
         max_turn_duration_seconds: record.max_turn_duration_seconds,
+        home_role: record.home_role.clone(),
     };
 
     // ── Profile ─────────────────────────────────────────────────────────

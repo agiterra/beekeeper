@@ -343,6 +343,7 @@ mod tests {
                 name_pool: Vec::new(),
                 idle_timeout_seconds: None,
                 max_turn_duration_seconds: None,
+                home_role: None,
                 source_is_builtin: false,
             },
             profile: AgentSnapshotProfile {
@@ -380,6 +381,7 @@ mod tests {
             turn_timeout_seconds: 300,
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
+            home_role: None,
             parallelism: 1,
             system_prompt: None,
             model: None,

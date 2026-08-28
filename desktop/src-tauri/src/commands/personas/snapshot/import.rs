@@ -631,6 +631,7 @@ pub async fn confirm_agent_snapshot_import(
             team_id: None,
             persona_team_dir: None,
             persona_name_in_team: None,
+            home_role: None,
             created_at: now.clone(),
             updated_at: now.clone(),
             last_started_at: None,

@@ -28,6 +28,7 @@ fn make_definition(slug: &str) -> ManagedAgentRecord {
         turn_timeout_seconds: 0,
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
+        home_role: None,
         parallelism: 1,
         system_prompt: None,
         model: None,
@@ -89,6 +90,7 @@ fn make_snapshot(
             name_pool: vec![],
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
+            home_role: None,
         },
         profile: AgentSnapshotProfile {
             display_name: "Test Agent".to_string(),
