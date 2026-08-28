@@ -2920,6 +2920,35 @@ written and `bash -n` clean but **was not executed** — that harness needs
     builders via **Add provider**; then the lead works from inside Beekeeper.
     Everything above is unproven until that walk happens.
 
+79. **First team launch from the UI (Brian, 2026-08-28 ~11:00) — what the
+    front door got wrong on contact.** Install team roles worked (Keystone +
+    Architect/Builder/Runner seated, Verifier/Poker/Designer unseated, `Team
+    roles` carries driver+vendor per seat). Then: (a) **The Agents grid shows
+    the persona card's name, not the identity's.** The installer named the
+    identity `Keystone` but reused Fizz's persona card and titled it `Lead`
+    (managed-agents.json: persona record `name: "Lead"`, agent record `name:
+    "Keystone"`), so the grid read "Lead" with Fizz's avatar. Hand-fixed on
+    Brian's machine (persona card renamed); the installer must name the
+    persona card it creates or reuses after the identity, and the grid should
+    show the identity's name. (b) **No filter on the Agents screen** — with
+    every team member's agents on one relay Brian wants to see *his* agents
+    (owner) and a team's agents; D16 hub item. (c) **A team launch is
+    single-provider, and the refusal copy is inverted.** Brian set Architect's
+    model to `gpt-5.6-sol`; the roster read *"declared openai, but gpt-5.6-sol
+    is anthropic"* and Launch stayed disabled. The truth: the seat is pinned to
+    `claude-agent-acp` (anthropic) by the installer and a team launch runs
+    every seat on the one provider the dialog holds, so a Codex seat cannot be
+    launched with the team today (lane R residual, item 78). The copy must say
+    that — "this seat runs on Claude Code; gpt-5.6-sol is an OpenAI model" —
+    and D13 needs **per-seat provider** in the team launch. Workaround: launch
+    the team on Claude, then hire the Codex architect into the umbrella via
+    Add provider → seat (that path picks the provider per seat). (d) The model
+    change was made on the persona card and did not reach the agent record
+    (`model: None`) — two places to set one model; the identity's model should
+    be the one the roster reads. (e) "Every seat runs on Claude Code…" copy is
+    honest about (c) but reads as a product rule; it is a limitation, say so.
+    (f) Team picker auto-selects the only team — expected, not a bug.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
