@@ -1839,3 +1839,107 @@ fn a_turn_receipt_never_joins_a_create() {
     ];
     assert_eq!(index_of(&events).of(&target), Founding::default());
 }
+
+// ── Delivery reporting ───────────────────────────────────────────────────────
+
+fn stage(status: ReceiptStatus, error: Option<(&str, &str)>) -> TurnStage {
+    TurnStage {
+        status,
+        error_code: error.map(|(code, _)| code.to_string()),
+        error_message: error.map(|(_, message)| message.to_string()),
+        turn_id: (status == ReceiptStatus::TurnStarted).then(|| "turn-7".to_string()),
+        at: 1_000,
+    }
+}
+
+/// Ledger 80 (c): `--deliver steer` printed `accepted:true` over a provider
+/// that had degraded the steer to a boundary delivery, so the sender believed
+/// a mid-turn injection had happened that had not. The relay's `accepted` is
+/// about storage; this is about delivery, and it must say the unwelcome half.
+#[test]
+fn a_degraded_steer_reports_the_degradation_not_acceptance() {
+    let report = fold_delivery(
+        CodingSessionDelivery::Steer,
+        Some(&stage(ReceiptStatus::TurnDegraded, None)),
+        true,
+    );
+    assert_eq!(report.status, "turn_degraded");
+    assert_eq!(report.delivered, Some(true), "the words are not lost");
+    assert_eq!(
+        report.detail,
+        "steer requested, provider degraded to boundary"
+    );
+}
+
+/// The three shapes a sender must be able to tell apart: it ran, it never
+/// will, and nobody answered. `unknown` is its own answer.
+#[test]
+fn delivery_separates_ran_never_and_unanswered() {
+    let started = fold_delivery(
+        CodingSessionDelivery::Boundary,
+        Some(&stage(ReceiptStatus::TurnStarted, None)),
+        true,
+    );
+    assert_eq!(started.delivered, Some(true));
+    assert_eq!(started.status, "turn_started");
+    assert!(started.detail.contains("turn-7"), "{}", started.detail);
+
+    let dropped = fold_delivery(
+        CodingSessionDelivery::Boundary,
+        Some(&stage(
+            ReceiptStatus::TurnDropped,
+            Some((NO_LIVE_EXECUTION, "no live execution")),
+        )),
+        true,
+    );
+    assert_eq!(dropped.delivered, Some(false));
+    assert!(
+        dropped.detail.contains("not delivered"),
+        "{}",
+        dropped.detail
+    );
+    assert!(
+        dropped.detail.contains(NO_LIVE_EXECUTION),
+        "{}",
+        dropped.detail
+    );
+
+    let silent = fold_delivery(CodingSessionDelivery::Interrupt, None, true);
+    assert_eq!(silent.delivered, None, "silence is never a delivery");
+    assert_eq!(silent.status, DELIVERY_UNCONFIRMED);
+    assert!(silent.detail.contains("unknown"), "{}", silent.detail);
+    assert!(
+        silent.detail.contains(&DELIVERY_WAIT_SECONDS.to_string()),
+        "{}",
+        silent.detail
+    );
+}
+
+/// An interrupt that landed says the running turn was cancelled — the fact the
+/// sender asked for, not merely that the command was stored.
+#[test]
+fn a_delivered_interrupt_says_the_turn_was_cancelled() {
+    let report = fold_delivery(
+        CodingSessionDelivery::Interrupt,
+        Some(&stage(ReceiptStatus::InterruptDelivered, None)),
+        true,
+    );
+    assert_eq!(report.delivered, Some(true));
+    assert_eq!(report.status, "interrupt_delivered");
+    assert!(report.detail.contains("cancelled"), "{}", report.detail);
+}
+
+/// `--no-wait` never says "nothing answered" — nothing was asked. Both are
+/// `unknown`; only one of them is a fact about the provider.
+#[test]
+fn no_wait_says_it_did_not_look_rather_than_that_nobody_answered() {
+    let skipped = fold_delivery(CodingSessionDelivery::Steer, None, false);
+    assert_eq!(skipped.delivered, None);
+    assert_eq!(skipped.status, DELIVERY_UNCONFIRMED);
+    assert!(skipped.detail.contains("--no-wait"), "{}", skipped.detail);
+    assert!(
+        !skipped.detail.contains("no provider receipt arrived"),
+        "{}",
+        skipped.detail
+    );
+}

@@ -1434,7 +1434,13 @@ impl Provider {
                         let skills = seat_skills(seat);
                         (
                             Some(identity),
-                            seat.post_fence_env(plan.role.as_deref()),
+                            // The umbrella's project, so `bee pulse update`
+                            // writes where the operator is looking rather than
+                            // minting a project of its own (ledger 80 d).
+                            seat.post_fence_env_in_project(
+                                plan.role.as_deref(),
+                                plan.project_ref.as_deref(),
+                            ),
                             skills,
                         )
                     }
@@ -2009,7 +2015,12 @@ impl Provider {
                         let skills = seat_skills(seat);
                         (
                             Some(identity),
-                            seat.post_fence_env(record.role.as_deref()),
+                            // Same coordinate the create carried: a resumed
+                            // generation writes the same project's pulse.
+                            seat.post_fence_env_in_project(
+                                record.role.as_deref(),
+                                record.project_ref.as_deref(),
+                            ),
                             skills,
                         )
                     }

@@ -40,9 +40,9 @@ use buzz_sdk::kind::{
 
 use super::crew::{
     build_executions, build_founder_index, build_inbox, caller_umbrella, decode_leases,
-    decode_resumes, decode_turn_commands, format_age, newest_turn_stages, plan_readdress,
-    resolve_send_target, short_pubkey, turn_load, CrewExecution, FounderIndex, ReaddressPlan,
-    TurnCommand, TurnStage,
+    decode_resumes, decode_turn_commands, fold_delivery, format_age, newest_turn_stages,
+    plan_readdress, resolve_send_target, short_pubkey, turn_load, CrewExecution, FounderIndex,
+    ReaddressPlan, TurnCommand, TurnStage, DELIVERY_WAIT_SECONDS,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
@@ -183,14 +183,19 @@ async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewF
     })
 }
 
-/// Publish one signed coding-session event and print the write response,
+/// Publish one signed coding-session event and return the write response,
 /// merged with the crew fields the caller needs to follow it up.
-async fn publish_with(
+///
+/// Separate from [`publish_with`] because `bee sessions send` has one more
+/// fact to gather — what the provider did with the turn — *after* the relay
+/// has answered and *before* anything is printed. Printing twice would make a
+/// scripted reader parse two JSON documents for one command.
+async fn submit_with(
     client: &BuzzClient,
     event: nostr::Event,
     conflict: &str,
     extra: Value,
-) -> Result<(), CliError> {
+) -> Result<Value, CliError> {
     let raw = client.submit_event(event).await?;
     let response = crate::commands::parse_write_response(&raw, conflict)?;
     let mut merged: Value = serde_json::from_str(&response)
@@ -200,11 +205,79 @@ async fn publish_with(
             object.insert(key.clone(), value.clone());
         }
     }
+    Ok(merged)
+}
+
+/// Publish one signed coding-session event and print the write response,
+/// merged with the crew fields the caller needs to follow it up.
+async fn publish_with(
+    client: &BuzzClient,
+    event: nostr::Event,
+    conflict: &str,
+    extra: Value,
+) -> Result<(), CliError> {
+    let merged = submit_with(client, event, conflict, extra).await?;
     println!("{merged}");
     Ok(())
 }
 
+/// How often the delivery wait re-asks the relay for a receipt.
+///
+/// Short enough that the common case (a provider that answers immediately)
+/// costs one poll, long enough that a ten-second wait is twenty queries and
+/// not two hundred.
+const DELIVERY_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Wait for the first turn receipt answering `command_id`.
+///
+/// Returns `None` when [`DELIVERY_WAIT_SECONDS`] elapse with no answer — which
+/// is a real answer and is reported as such, never smoothed into a success.
+/// Query failures inside the window are retried rather than raised: the write
+/// already landed, and turning a transient read error into a command failure
+/// would tell the sender its turn was not sent when it was.
+async fn await_delivery(
+    client: &BuzzClient,
+    channel_id: &str,
+    command_id: &str,
+    since: i64,
+) -> Option<TurnStage> {
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(DELIVERY_WAIT_SECONDS);
+    // `since` bounds the read to receipts that could possibly answer this
+    // command, so the wait does not re-read the channel's whole receipt
+    // history on every poll.
+    let filter = json!({
+        "kinds": [KIND_CODING_SESSION_LIFECYCLE_RECEIPT],
+        "#h": [channel_id],
+        "since": since,
+    });
+    loop {
+        if let Ok(events) = client.query_all(filter.clone()).await {
+            let (receipts, _) = decode_receipts(&events);
+            if let Some(stage) = newest_turn_stages(&receipts).remove(command_id) {
+                return Some(stage);
+            }
+        }
+        if std::time::Instant::now() + DELIVERY_POLL >= deadline {
+            return None;
+        }
+        tokio::time::sleep(DELIVERY_POLL).await;
+    }
+}
+
 /// `bee sessions send` — publish one 44220 to a named seat.
+///
+/// Prints one JSON object carrying two different facts, deliberately not
+/// collapsed: `accepted` is the relay's — it stored the command — and
+/// `delivered`/`deliveryStatus`/`delivery` are the provider's, read from the
+/// first turn receipt that answers this `commandId`. Ledger 80 (c): a `steer`
+/// the runtime cannot honour is answered `turn_degraded` and delivered at the
+/// next boundary, and printing only `accepted:true` told the sender its words
+/// had gone in mid-turn when they had not.
+///
+/// `no_wait` skips the receipt wait entirely; the command then reports the
+/// relay's fact alone and says the delivery is unconfirmed, which is what it
+/// is.
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_send(
     client: &BuzzClient,
@@ -215,6 +288,7 @@ pub async fn cmd_send(
     content: Option<&str>,
     readdress: Option<&str>,
     reply_to: Option<&str>,
+    no_wait: bool,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
     if reply_to.is_some() {
@@ -297,7 +371,31 @@ pub async fn cmd_send(
         object.insert("target".into(), json!(target_key));
         object.insert("deliver".into(), json!(delivery.as_str()));
     }
-    publish_with(client, event, "turn command already accepted", extra).await
+    // Taken before the write so a receipt published in the same second as the
+    // command cannot fall outside the window, with a second of slack for
+    // clock skew between this host and the provider's.
+    let since = chrono::Utc::now().timestamp() - 1;
+    let mut merged = submit_with(client, event, "turn command already accepted", extra).await?;
+
+    let stage = if no_wait {
+        None
+    } else {
+        await_delivery(client, channel_id, &command_id, since).await
+    };
+    let report = fold_delivery(delivery, stage.as_ref(), !no_wait);
+    if let Some(object) = merged.as_object_mut() {
+        object.insert(
+            "delivered".into(),
+            match report.delivered {
+                Some(delivered) => json!(delivered),
+                None => Value::Null,
+            },
+        );
+        object.insert("deliveryStatus".into(), json!(report.status));
+        object.insert("delivery".into(), json!(report.detail));
+    }
+    println!("{merged}");
+    Ok(())
 }
 
 /// The re-addressing facts a sender needs on stdout: what did not run, where

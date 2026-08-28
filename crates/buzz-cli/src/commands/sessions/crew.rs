@@ -847,6 +847,126 @@ pub fn newest_turn_stages(receipts: &[ReceiptRecord]) -> HashMap<String, TurnSta
         .collect()
 }
 
+// ── Delivery, as the provider answered it ────────────────────────────────────
+
+/// How long `bee sessions send` waits for the first receipt for its command.
+///
+/// The relay's `accepted:true` is a statement about storage, not about
+/// delivery; the provider answers separately and usually within a second.
+/// Ten seconds is long enough to cover a busy provider's first poll and short
+/// enough that a scripted sender is not left hanging — after it, the command
+/// reports that nothing answered rather than guessing that something did.
+pub const DELIVERY_WAIT_SECONDS: u64 = 10;
+
+/// What became of a turn the relay accepted.
+///
+/// Ledger 80 (c): `--deliver steer` printed `accepted:true` while the provider
+/// was quietly degrading the steer to a boundary delivery, so the sender
+/// believed a mid-turn injection had happened that had not. `accepted` is kept
+/// as what it always was — the relay stored the command — and this carries the
+/// separate fact of what the execution did with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryReport {
+    /// `Some(true)` when a receipt says the turn reached the execution in some
+    /// form, `Some(false)` when a receipt says it will never run, and `None`
+    /// when no receipt arrived inside [`DELIVERY_WAIT_SECONDS`] — unknown is
+    /// its own answer and is never rendered as either of the other two.
+    pub delivered: Option<bool>,
+    /// The receipt's own status word, or `unconfirmed` when none arrived.
+    pub status: &'static str,
+    /// One sentence naming what happened, in the sender's terms.
+    pub detail: String,
+}
+
+/// The status word used when no receipt answered inside the wait.
+pub const DELIVERY_UNCONFIRMED: &str = "unconfirmed";
+
+/// Fold the requested delivery class and the receipt that answered it into the
+/// report `bee sessions send` prints.
+///
+/// `waited` says whether the sender actually gave the provider a chance to
+/// answer, so the two ways of having no receipt — nobody answered, and nobody
+/// was asked — are never printed as the same sentence.
+///
+/// Pure so the wording of an unpleasant answer is testable without a relay:
+/// the whole point of this function is that a degraded steer reads as a
+/// degraded steer.
+pub fn fold_delivery(
+    requested: CodingSessionDelivery,
+    stage: Option<&TurnStage>,
+    waited: bool,
+) -> DeliveryReport {
+    let asked = requested.as_str();
+    let Some(stage) = stage else {
+        return DeliveryReport {
+            delivered: None,
+            status: DELIVERY_UNCONFIRMED,
+            detail: if waited {
+                format!(
+                    "the relay stored the command, but no provider receipt arrived within \
+                     {DELIVERY_WAIT_SECONDS}s — whether the turn reached the execution is unknown"
+                )
+            } else {
+                "the relay stored the command; --no-wait skipped the receipt read, so whether \
+                 the turn reached the execution is unknown"
+                    .to_owned()
+            },
+        };
+    };
+    let error = match (stage.error_code.as_deref(), stage.error_message.as_deref()) {
+        (Some(code), Some(message)) => format!("{code} — {message}"),
+        (Some(code), None) => code.to_owned(),
+        (None, Some(message)) => message.to_owned(),
+        (None, None) => "no reason given".to_owned(),
+    };
+    let (delivered, detail) = match stage.status {
+        // The degradation this report exists for: the runtime advertised no
+        // native steering, so the words are queued for the next boundary.
+        ReceiptStatus::TurnDegraded => (
+            Some(true),
+            format!("{asked} requested, provider degraded to boundary"),
+        ),
+        ReceiptStatus::TurnQueued => (
+            Some(true),
+            format!("{asked} accepted; the turn is queued and has not started yet"),
+        ),
+        ReceiptStatus::TurnStarted => (
+            Some(true),
+            match stage.turn_id.as_deref() {
+                Some(turn_id) => format!("{asked} accepted; the turn is running as {turn_id}"),
+                None => format!("{asked} accepted; the turn is running"),
+            },
+        ),
+        ReceiptStatus::InterruptDelivered => (
+            Some(true),
+            format!("{asked} delivered; the running turn was cancelled"),
+        ),
+        ReceiptStatus::TurnDropped => (
+            Some(false),
+            format!("not delivered: the turn was dropped ({error})"),
+        ),
+        ReceiptStatus::TurnRefused => (
+            Some(false),
+            format!("not delivered: the turn was refused ({error})"),
+        ),
+        // `newest_turn_stages` only ever yields `is_turn_stage` statuses, so
+        // this arm is unreachable through the CLI. It still refuses to guess:
+        // a lifecycle word over a turn command is not evidence of delivery.
+        other => (
+            None,
+            format!(
+                "the provider answered `{}`, which does not report a turn stage",
+                other.as_str()
+            ),
+        ),
+    };
+    DeliveryReport {
+        delivered,
+        status: stage.status.as_str(),
+        detail,
+    }
+}
+
 // ── Addressing ───────────────────────────────────────────────────────────────
 
 /// Collapse candidate generations of one execution to its newest.

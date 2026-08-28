@@ -762,7 +762,20 @@ bee sessions send --channel "$CHANNEL_ID" --to builder --content 'x' 2>&1; echo 
 # `turn_degraded`/`STEER_UNSUPPORTED` receipt beside its `turn_queued` and runs
 # at the next boundary. That is the honest downgrade, not a failure.
 bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --deliver steer --content 'while you are there…' | jq .
+#  accepted:true                                   <- the relay stored it
+#  deliveryStatus:"turn_degraded"                  <- what the provider answered
+#  delivered:true
+#  delivery:"steer requested, provider degraded to boundary"
 bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --deliver interrupt --content 'stop' | jq .
+
+# Every send waits up to 10s for the FIRST turn receipt answering its own
+# commandId and prints what it said (ledger 80 c: `accepted:true` alone told a
+# steer's sender its words had gone in mid-turn when they had not). Nothing
+# answering is its own answer — `delivered:null`,
+# `deliveryStatus:"unconfirmed"` — and is never rendered as success.
+bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --content 'go' --no-wait | jq '.delivery'
+#  "the relay stored the command; --no-wait skipped the receipt read, so
+#   whether the turn reached the execution is unknown"
 
 # --reply-to is REFUSED, and says why:
 bee sessions send --channel "$CHANNEL_ID" --to "$TARGET" --content 'x' --reply-to 7 2>&1; echo "exit: $?"

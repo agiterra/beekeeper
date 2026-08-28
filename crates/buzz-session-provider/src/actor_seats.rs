@@ -107,6 +107,13 @@ impl std::fmt::Debug for ActorSeat {
 /// this is the one that claims nothing.
 pub const SEAT_EMAIL_DOMAIN: &str = "agents.beekeeper";
 
+/// The variable `bee pulse` reads when `--project` is not passed.
+///
+/// Named here rather than inlined because the seat side and the CLI side must
+/// agree exactly: `crates/buzz-cli/src/lib.rs` declares it as clap's
+/// `env = "BUZZ_PULSE_PROJECT"` on every `pulse` subcommand.
+pub const PULSE_PROJECT_ENV: &str = "BUZZ_PULSE_PROJECT";
+
 /// How much of the seat's pubkey the address carries.
 ///
 /// Long enough that two seats on one machine cannot collide by accident, short
@@ -182,6 +189,39 @@ impl ActorSeat {
         env.push(("GIT_AUTHOR_EMAIL".to_owned(), email.clone()));
         env.push(("GIT_COMMITTER_NAME".to_owned(), name));
         env.push(("GIT_COMMITTER_EMAIL".to_owned(), email));
+        env
+    }
+
+    /// [`Self::post_fence_env`] plus the coordinate of the project this
+    /// execution belongs to, when the umbrella named one.
+    ///
+    /// Ledger 80 (d): a seat had no project coordinate, so `bee pulse update`
+    /// had nowhere to write and minted a private project of its own. Six
+    /// entries the operator could never see is the same class of untruth as a
+    /// status that reads Idle over a dead process — the writes appeared to
+    /// land, and did, somewhere nobody was looking.
+    ///
+    /// `BUZZ_PULSE_PROJECT` is the variable `bee pulse` already reads for its
+    /// `--project` flag (`buzz_cli::PulseCmd`), so passing it here targets the
+    /// operator's project without teaching the seat a new flag. It rides the
+    /// post-fence list because the fence strips the whole `BUZZ_*` namespace;
+    /// an unseated execution never gets it, and neither does a seat whose
+    /// umbrella has no project — an absent coordinate is absent, never
+    /// guessed.
+    ///
+    /// A blank or whitespace-only `project_ref` is treated as no project: an
+    /// empty `BUZZ_PULSE_PROJECT` would fill clap's `--project` with a
+    /// coordinate that cannot resolve, which reads as a broken project rather
+    /// than as no project at all.
+    pub fn post_fence_env_in_project(
+        &self,
+        role: Option<&str>,
+        project_ref: Option<&str>,
+    ) -> Vec<(String, String)> {
+        let mut env = self.post_fence_env(role);
+        if let Some(project_ref) = project_ref.map(str::trim).filter(|it| !it.is_empty()) {
+            env.push((PULSE_PROJECT_ENV.to_owned(), project_ref.to_owned()));
+        }
         env
     }
 }
@@ -460,6 +500,44 @@ mod tests {
             assert!(
                 seat.pack_coordinates().is_none(),
                 "half-staged entry {fragment:?} was treated as a pack"
+            );
+        }
+    }
+
+    /// Ledger 80 (d): a seated execution used to reach `bee pulse update` with
+    /// no project coordinate at all, so the lead minted a private project of
+    /// its own and wrote six entries the operator could not see. The
+    /// umbrella's `projectRef` now rides the post-fence list — and only when
+    /// the umbrella actually has one.
+    #[test]
+    fn a_seated_execution_targets_the_umbrellas_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_seats(dir.path(), &seats_body("create-1"));
+        let file = ActorSeatsFile::load(Some(&path));
+        let seat = file.seat("create-1").expect("the seat is held here");
+        let coordinate = format!("30621:{}:beekeeper", "ab".repeat(32));
+
+        let targeted = seat.post_fence_env_in_project(Some("lead"), Some(&coordinate));
+        assert_eq!(
+            targeted
+                .iter()
+                .find(|(name, _)| name == PULSE_PROJECT_ENV)
+                .map(|(_, value)| value.as_str()),
+            Some(coordinate.as_str()),
+            "a seat in a project must be able to write that project's pulse"
+        );
+        // Everything the fence-era list carried is still there, in order.
+        assert_eq!(
+            targeted[..targeted.len() - 1],
+            seat.post_fence_env(Some("lead"))[..]
+        );
+
+        for absent in [None, Some(""), Some("   ")] {
+            assert!(
+                seat.post_fence_env_in_project(Some("lead"), absent)
+                    .iter()
+                    .all(|(name, _)| name != PULSE_PROJECT_ENV),
+                "an umbrella with no project ({absent:?}) exported a coordinate anyway"
             );
         }
     }

@@ -2300,6 +2300,7 @@ pub async fn dispatch(
             content,
             readdress,
             reply_to,
+            no_wait,
         } => {
             crew_cmds::cmd_send(
                 client,
@@ -2310,6 +2311,7 @@ pub async fn dispatch(
                 content.as_deref(),
                 readdress.as_deref(),
                 reply_to.as_deref(),
+                no_wait,
             )
             .await
         }

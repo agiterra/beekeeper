@@ -2389,6 +2389,12 @@ pub enum SessionsCmd {
     /// resolves inside one umbrella — pass `--session-ref`, or run as a
     /// seated actor whose own umbrella scopes the lookup — and an ambiguous
     /// name is an error listing every candidate, never a guess.
+    ///
+    /// `accepted` reports the relay storing the command. Delivery is a
+    /// separate fact and is read from the provider's first receipt for this
+    /// `commandId`: `delivered` (true/false/null), `deliveryStatus` (the
+    /// receipt's own word, or `unconfirmed`), and `delivery` (one sentence).
+    /// A `--deliver steer` a runtime cannot honour reports `turn_degraded`.
     #[command(
         after_help = "Examples:\n  echo 'rebase and re-run the gate' | bee sessions send --channel <uuid> --to builder --session-ref <uuid> --content -\n  bee sessions send --channel <uuid> --to '<cs-target>' --deliver interrupt --content 'stop'\n  bee sessions send --channel <uuid> --readdress <commandId>"
     )]
@@ -2415,6 +2421,10 @@ pub enum SessionsCmd {
         /// Refused: 44220 carries no reply reference (see the error text)
         #[arg(long = "reply-to")]
         reply_to: Option<String>,
+        /// Print the relay's acceptance without waiting for the provider's
+        /// first turn receipt; delivery is then reported as unconfirmed
+        #[arg(long = "no-wait")]
+        no_wait: bool,
     },
     /// Create a coding-session execution (kind 44221 `session.create`).
     ///

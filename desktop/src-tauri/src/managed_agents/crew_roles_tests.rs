@@ -662,3 +662,87 @@ fn a_refresh_renames_the_card_it_reuses_after_the_identity() {
     assert_eq!(second.definitions[0].display_name, "Keystone");
     assert_eq!(second.agents[0].name, "Keystone");
 }
+
+/// Ledger 80 (e): the session header read "Fizz · Lead" over an identity the
+/// installer had just renamed, because the seat's name comes from the
+/// identity's kind:0 relay profile and the install never republished it. A
+/// rename must produce a profile publish carrying the new name.
+#[test]
+fn renaming_the_lead_owes_a_profile_publish_with_the_new_name() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let first = {
+        let mut mint = counting_mint(&mut minted);
+        install_role_packs(
+            &scan,
+            Vec::new(),
+            Vec::new(),
+            &[],
+            NOW,
+            Some("Fizz"),
+            &mut mint,
+        )
+        .expect("install succeeds")
+    };
+    // A first install owes a publish for every identity it minted: none of
+    // them has a profile on the relay yet.
+    let first_publishes = role_profile_publishes(&[], &first);
+    assert_eq!(first_publishes.len(), first.installed.len());
+    assert!(
+        first_publishes
+            .iter()
+            .all(|publish| publish.previous_name.is_none()),
+        "a minted identity has no previous name"
+    );
+
+    let mut mint = counting_mint(&mut minted);
+    let second = install_role_packs(
+        &scan,
+        first.definitions.clone(),
+        first.agents.clone(),
+        std::slice::from_ref(&first.team),
+        NOW,
+        Some("Keystone"),
+        &mut mint,
+    )
+    .expect("install succeeds");
+
+    let publishes = role_profile_publishes(&first.agents, &second);
+    let lead_pubkey = second
+        .installed
+        .iter()
+        .find(|row| row.role == "lead")
+        .expect("lead installed")
+        .agent_pubkey
+        .clone();
+    let lead = publishes
+        .iter()
+        .find(|publish| publish.pubkey == lead_pubkey)
+        .expect("the renamed lead owes a profile publish");
+    assert_eq!(
+        lead.display_name, "Keystone",
+        "the publish must carry the name the operator gave, not the pack's"
+    );
+    assert_eq!(lead.previous_name.as_deref(), Some("Fizz"));
+
+    // The seats that were not renamed are still republished — a refreshed
+    // identity may carry a profile from an install whose publish failed — and
+    // they carry their own unchanged name, never the lead's.
+    let builder_pubkey = second
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed")
+        .agent_pubkey
+        .clone();
+    let builder = publishes
+        .iter()
+        .find(|publish| publish.pubkey == builder_pubkey)
+        .expect("the builder owes a profile publish too");
+    assert_eq!(builder.display_name, "builder");
+    assert_eq!(builder.previous_name.as_deref(), Some("builder"));
+}
