@@ -14,6 +14,7 @@ import {
   type CodingSessionActorSeat,
 } from "@/features/coding-sessions/lib/codingSessionActorSeat";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
+import { codingSessionWorktreeSlug } from "@/features/coding-sessions/lib/codingSessionWorktreeName";
 import {
   isNewCodingSessionTargetReady,
   type NewCodingSessionTarget,
@@ -141,6 +142,12 @@ export function buildAddCodingSessionProviderSubmit(input: {
   model: string | null;
   initialTurn: string;
   workdir: string;
+  /**
+   * The directory to remember for next time, when it differs from the one
+   * this execution runs in — the checkout a per-seat worktree was made from.
+   * Omit when the execution runs in the directory that was chosen.
+   */
+  rememberWorkdir?: string | null;
   /** The seat draft, exactly as the field holds it. Both halves or neither. */
   seat?: { actor: string | null; role: string | null } | null;
   /** Display name for the seat, used only in failure copy. */
@@ -151,6 +158,12 @@ export function buildAddCodingSessionProviderSubmit(input: {
   title: string | null;
   initialTurn: string | null;
   workdir: string | null;
+  /**
+   * The directory the recent-folders list should learn, or null when that is
+   * simply {@link workdir}. A seat's worktree did not exist a moment ago, so
+   * promoting it would prefill the next session with a worktree of a worktree.
+   */
+  rememberWorkdir: string | null;
   sessionRef: string;
   genesisRef?: string;
   projectRef: string | null;
@@ -171,6 +184,7 @@ export function buildAddCodingSessionProviderSubmit(input: {
   });
   if (seat.error !== null) return null;
   const title = input.umbrella.title.trim();
+  const remembered = (input.rememberWorkdir ?? "").trim();
   return {
     seat: seat.seat,
     seatLabel: seat.seat ? (input.seatLabel ?? null) : null,
@@ -179,6 +193,7 @@ export function buildAddCodingSessionProviderSubmit(input: {
     title: title.length > 0 ? title : null,
     initialTurn: input.initialTurn.trim().length > 0 ? input.initialTurn : null,
     workdir: input.workdir.trim().length > 0 ? input.workdir.trim() : null,
+    rememberWorkdir: remembered.length > 0 ? remembered : null,
     sessionRef,
     ...(input.umbrella.genesisRef
       ? { genesisRef: input.umbrella.genesisRef }
@@ -210,6 +225,57 @@ export function addCodingSessionProviderOptionNote(
   option: AddCodingSessionProviderOption,
 ): string | null {
   return option.alreadyInSession ? "already in this session" : null;
+}
+
+/**
+ * The worktree a seated join proposes: the session's slug, narrowed by the
+ * role this seat holds — `<session-slug>-<role>`.
+ *
+ * A hired seat must not run where anything else does. Item 80(a): three seats
+ * joined `AgentTeams` with the working directory this dialog remembered from
+ * last time, which was the checkout the app itself runs from; 80(b) is what
+ * that did to their role packs, which all materialized into one
+ * `.agents/skills`. Naming the tree after the session *and* the role is what
+ * keeps two seats of one session apart.
+ *
+ * This is a prefill, exactly like the founding path's: the host re-slugs it,
+ * caps it, and disambiguates a name already taken. It is composed through
+ * `codingSessionWorktreeSlug` so what the field shows is what the host would
+ * compute — and it is idempotent, so the field may re-slug it freely.
+ *
+ * Returns `""` when neither half survives slugging, because inventing a name
+ * would name a branch after nothing.
+ */
+export function addCodingSessionProviderSeatWorktreeName(input: {
+  title: string;
+  role: string;
+}): string {
+  return codingSessionWorktreeSlug(`${input.title} ${input.role}`);
+}
+
+/**
+ * The one sentence naming the directory a seat will actually run in.
+ *
+ * Only for a seat: an unseated join is the person's own execution, and the
+ * working-directory field already says where that runs. With the worktree off
+ * it says the unpleasant half — one branch, one index, one `.agents/skills`
+ * shared with whatever else is open there — rather than staying quiet.
+ */
+export function addCodingSessionProviderSeatWorkdirNote(input: {
+  /** The seat's display name, or null when this join seats nobody. */
+  seatLabel: string | null;
+  useWorktree: boolean;
+  workdir: string;
+}): string | null {
+  const workdir = input.workdir.trim();
+  if (input.seatLabel === null || workdir.length === 0) return null;
+  return input.useWorktree
+    ? `${input.seatLabel} runs in a new worktree made from ${workdir} — its ` +
+        `own directory and branch. It does not share that checkout's index, ` +
+        `HEAD, or role skills.`
+    : `${input.seatLabel} runs directly in ${workdir}, sharing its branch, ` +
+        `uncommitted changes, and role skills with anything else running ` +
+        `there.`;
 }
 
 function runtimeIdentity(signerPubkey: string, runtime: string): string {

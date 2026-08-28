@@ -810,7 +810,7 @@ fn materialize_seat_skills(
 /// new dependency; a host with neither variable set simply has no shared roots
 /// to refuse, which is the same answer the desktop gives when it cannot
 /// resolve a home.
-fn shared_workdir_roots() -> Vec<PathBuf> {
+pub(crate) fn shared_workdir_roots() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
@@ -826,10 +826,91 @@ fn shared_workdir_roots() -> Vec<PathBuf> {
 /// Roots are a parameter so the refusal can be proved against directories a
 /// test owns. Nothing here may read or write a person's real home.
 fn is_shared_workdir(cwd: &Path, shared_roots: &[PathBuf]) -> bool {
-    let target = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     shared_roots
         .iter()
-        .any(|shared| shared.canonicalize().unwrap_or_else(|_| shared.clone()) == target)
+        .any(|shared| same_directory(cwd, shared))
+}
+
+/// Do two paths name the same directory on this computer?
+///
+/// Canonicalized when the path exists, compared verbatim when it does not —
+/// a directory that is not there yet cannot be the one a live execution is
+/// working in.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    resolve(left) == resolve(right)
+}
+
+/// A seated create asked for a working directory that is not this seat's own.
+///
+/// Either a directory every agent on this computer shares (the operator's home
+/// or the nest), or one another live execution of the same session is already
+/// running in. Both are the same failure from the seat's point of view: it was
+/// hired into somebody else's tree.
+///
+/// Not one of the codes in `buzz_core::coding_session_payload` — it is defined
+/// here because this crate is the only thing that can raise it; a consumer
+/// renders the message, which names the seat that was already there.
+pub const SEAT_CWD_SHARED: &str = "SEAT_CWD_SHARED";
+
+/// One live execution's claim on a working directory.
+///
+/// Live means "still accepting turns" — the definition
+/// `SessionState::live_session_count` uses. A closed execution has no process
+/// in that tree and holds nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveWorkdirClaim {
+    /// The directory that execution runs in.
+    pub cwd: PathBuf,
+    /// The role it holds as a seat, or `None` for the execution the person who
+    /// opened the session runs themselves. The lead's own tree is somebody
+    /// else's tree too.
+    pub role: Option<String>,
+}
+
+/// Why this seat must not be created in `cwd`, or `None` when it may.
+///
+/// Item 80(a)/(b), found live: the join dialog defaulted a hired seat's
+/// working directory to the last one used, which was the checkout the app
+/// itself runs from, and three seats landed in it. They shared one git index,
+/// one HEAD, and one `.agents/skills` — so every role's pack materialized into
+/// a single union directory, and no seat had the skills it was hired for. The
+/// desktop now offers each seat its own worktree; this is the rule underneath
+/// it, so a create built by anything else is refused the same way.
+///
+/// `shared_roots` and `live` are parameters so the refusal can be proved
+/// against directories a test owns.
+pub fn seated_workdir_refusal(
+    cwd: &Path,
+    live: &[LiveWorkdirClaim],
+    shared_roots: &[PathBuf],
+) -> Option<CreateFailure> {
+    if is_shared_workdir(cwd, shared_roots) {
+        return Some(CreateFailure {
+            code: SEAT_CWD_SHARED,
+            message: format!(
+                "refusing to seat an agent in {} — that directory is shared by every agent on \
+                 this computer (and may be your own home directory). A seat belongs in a working \
+                 directory of its own.",
+                cwd.display()
+            ),
+        });
+    }
+    let occupant = live.iter().find(|claim| same_directory(cwd, &claim.cwd))?;
+    let who = match occupant.role.as_deref() {
+        Some(role) => format!("the {role} seat of this same session is"),
+        None => "the person who opened this session is".to_owned(),
+    };
+    Some(CreateFailure {
+        code: SEAT_CWD_SHARED,
+        message: format!(
+            "refusing to seat an agent in {} — {who} already running there. Two executions in one \
+             working directory share a git index, a HEAD, and one .agents/skills, so their role \
+             packs become a union and neither seat has the skills it was hired for. Give this \
+             seat its own worktree.",
+            cwd.display()
+        ),
+    })
 }
 
 /// [`materialize_seat_skills`], with the shared directories named.
@@ -4500,6 +4581,80 @@ mod seat_skill_materialization_tests {
                 .expect("materialized"),
             "# Pack report"
         );
+    }
+
+    /// Item 80(a)/(b): three seats of one session were hired into the same
+    /// checkout, so they shared a git index, a HEAD, and one `.agents/skills`
+    /// that ended up holding every role's pack at once. A seat asking for a
+    /// directory another live execution of its own session already runs in is
+    /// refused, and the refusal names the seat it would have collided with.
+    #[test]
+    fn a_seat_is_refused_the_tree_another_live_seat_of_this_session_runs_in() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let shared = tmp.path().join("beekeeper");
+        std::fs::create_dir_all(&shared).expect("shared");
+        let own = tmp.path().join("beekeeper.worktrees/agentteams-builder");
+        std::fs::create_dir_all(&own).expect("own");
+
+        let claims = vec![LiveWorkdirClaim {
+            cwd: shared.clone(),
+            role: Some("architect".into()),
+        }];
+        let failure = seated_workdir_refusal(&shared, &claims, &[])
+            .expect("two seats in one tree must be refused");
+        assert_eq!(failure.code, SEAT_CWD_SHARED);
+        assert!(
+            failure.message.contains("architect"),
+            "the refusal must name the other seat: {}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains(&shared.display().to_string()),
+            "{}",
+            failure.message
+        );
+
+        // The lead's own execution counts exactly the same, whether or not it
+        // is seated: it is a process working in that tree.
+        let unseated = vec![LiveWorkdirClaim {
+            cwd: shared.clone(),
+            role: None,
+        }];
+        let failure =
+            seated_workdir_refusal(&shared, &unseated, &[]).expect("the operator counts too");
+        assert_eq!(failure.code, SEAT_CWD_SHARED);
+        assert!(
+            failure.message.contains("opened this session"),
+            "{}",
+            failure.message
+        );
+
+        // A seat's own tree is not refused, and neither is a directory only a
+        // *closed* execution used — those never reach this call.
+        assert!(seated_workdir_refusal(&own, &claims, &[]).is_none());
+    }
+
+    /// The shared roots are refused for every seated create, not only for one
+    /// carrying a role pack: the reason a seat may not run in `$HOME` is that
+    /// no single agent owns it, which is true before any skill is written.
+    #[test]
+    fn a_seat_is_refused_a_directory_every_agent_on_this_computer_shares() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let home = tmp.path().join("home");
+        let nest = home.join(".beekeeper");
+        std::fs::create_dir_all(&nest).expect("nest");
+        let roots = vec![nest.clone(), home.clone()];
+
+        for shared in [&home, &nest] {
+            let failure =
+                seated_workdir_refusal(shared, &[], &roots).expect("a shared root must be refused");
+            assert_eq!(failure.code, SEAT_CWD_SHARED);
+            assert!(failure.message.contains("shared"), "{}", failure.message);
+        }
+
+        let own = home.join("Projects/checkout");
+        std::fs::create_dir_all(&own).expect("own");
+        assert!(seated_workdir_refusal(&own, &[], &roots).is_none());
     }
 
     #[test]

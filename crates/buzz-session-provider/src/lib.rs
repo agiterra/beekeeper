@@ -1338,6 +1338,46 @@ impl Provider {
             return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
         };
 
+        // A hired seat never runs in somebody else's tree. Item 80(a)/(b):
+        // three seats joined one umbrella with the working directory the
+        // dialog remembered — the checkout the app itself runs from — and
+        // shared a git index, a HEAD, and one `.agents/skills` that ended up
+        // holding every role's pack. Refused before anything is provisioned,
+        // and the staged key goes with the refusal.
+        if plan.actor.is_some() {
+            let refusal = {
+                let live: Vec<session::LiveWorkdirClaim> = plan
+                    .session_ref
+                    .as_deref()
+                    .map(|umbrella| {
+                        self.state
+                            .sessions()
+                            .filter(|record| {
+                                !record.closed && record.session_ref.as_deref() == Some(umbrella)
+                            })
+                            .map(|record| session::LiveWorkdirClaim {
+                                cwd: record.cwd.clone(),
+                                role: record.role.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                session::seated_workdir_refusal(&plan.cwd, &live, &session::shared_workdir_roots())
+            };
+            if let Some(failure) = refusal {
+                tracing::warn!(
+                    target: "csp",
+                    command_id = %plan.command_id,
+                    code = failure.code,
+                    "seated create refused: {}", failure.message
+                );
+                self.forget_actor_seat(&plan.command_id);
+                let receipt =
+                    LifecycleReceipt::failed(&plan.command_id, failure.code, &failure.message);
+                return self.enqueue_receipt(plan.channel_id, &plan.command_id, &receipt);
+            }
+        }
+
         let target = CodingSessionTarget {
             driver: descriptor.driver.clone(),
             instance_id: self.config.instance_id.clone(),
@@ -8180,6 +8220,138 @@ mod tests {
         );
         assert_eq!(provider.state().sessions().count(), 0);
         assert_eq!(provider.sessions.live_count(), 0);
+    }
+
+    /// A seated create whose working directory is already a live execution's
+    /// is refused — item 80(a)/(b), where three hired seats were given the
+    /// operator's own checkout and their role packs merged into one
+    /// `.agents/skills`. The refusal names the seat that was already there,
+    /// nothing is spawned, and the staged key does not survive the refusal.
+    #[tokio::test]
+    async fn a_seated_create_sharing_a_live_executions_tree_is_refused_by_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let actor = "cd".repeat(32);
+        let seats = write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        // The lead is already working in that checkout, under this umbrella.
+        let mut lead = governed_record(channel_id, &cwd, &"ab".repeat(32));
+        lead.role = Some("lead".into());
+        lead.actor = Some("ef".repeat(32));
+        let umbrella = lead.session_ref.clone().expect("umbrella");
+        provider.state.insert_session(lead).expect("insert");
+
+        let event = seated_join_event(
+            &provider, channel_id, "create-1", &umbrella, &actor, "builder",
+        );
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1, "{receipts:?}");
+        assert_eq!(receipts[0]["status"], "failed");
+        assert_eq!(receipts[0]["error"]["code"], session::SEAT_CWD_SHARED);
+        let message = receipts[0]["error"]["message"]
+            .as_str()
+            .expect("message")
+            .to_owned();
+        assert!(message.contains("lead"), "{message}");
+        assert!(message.contains("worktree"), "{message}");
+
+        // Nothing was created, and nothing was left staged.
+        assert_eq!(
+            provider.state().sessions().count(),
+            1,
+            "a session was minted"
+        );
+        assert_eq!(provider.sessions.live_count(), 0);
+        let body = std::fs::read_to_string(&seats).expect("read seats");
+        assert!(
+            !body.contains(TEST_SEAT_NSEC),
+            "the seat's key is still at rest: {body}"
+        );
+    }
+
+    /// A seat that asks for a tree of its own is created exactly as before:
+    /// the guard above must refuse collisions, not seats.
+    #[tokio::test]
+    async fn a_seated_create_in_its_own_tree_is_untouched_by_the_guard() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().join("checkout");
+        std::fs::create_dir_all(&cwd).expect("mkdir");
+        let other = dir.path().join("checkout.worktrees/builder");
+        std::fs::create_dir_all(&other).expect("mkdir other");
+        let channel_id = Uuid::new_v4();
+        let projects = write_projects(dir.path(), channel_id, &cwd);
+        let actor = "cd".repeat(32);
+        write_actor_seats(dir.path(), "create-1", &actor);
+        let mut provider = provider(&dir.path().join("state"), Some(&projects));
+
+        // The lead runs somewhere else entirely.
+        let mut lead = governed_record(channel_id, &other, &"ab".repeat(32));
+        lead.role = Some("lead".into());
+        let umbrella = lead.session_ref.clone().expect("umbrella");
+        provider.state.insert_session(lead).expect("insert");
+
+        let event = seated_join_event(
+            &provider, channel_id, "create-1", &umbrella, &actor, "builder",
+        );
+        provider
+            .handle_command_event(channel_id, &event)
+            .await
+            .expect("handle");
+
+        let sink = CollectingSink::new();
+        provider.flush(&sink).await.expect("flush");
+
+        let receipts = sink.contents_of(KIND_CODING_SESSION_LIFECYCLE_RECEIPT);
+        assert_eq!(receipts.len(), 1, "{receipts:?}");
+        assert_ne!(
+            receipts[0]["error"]["code"],
+            session::SEAT_CWD_SHARED,
+            "a seat in its own tree was refused: {:?}",
+            receipts[0]
+        );
+    }
+
+    /// A seated create joining an umbrella, with the seat and the umbrella's
+    /// ref on the same action.
+    fn seated_join_event(
+        provider: &Provider,
+        channel_id: Uuid,
+        command_id: &str,
+        session_ref: &str,
+        actor: &str,
+        role: &str,
+    ) -> Event {
+        let content = serde_json::json!({
+            "schema": "buzz-coding-session-lifecycle-command/v1",
+            "commandId": command_id,
+            "action": {
+                "type": "session.create",
+                "projectRef": null,
+                "repoRef": null,
+                "sessionRef": session_ref,
+                "providerInstanceRef": "claude-primary",
+                "providerAuthorityPubkey": provider.config.pubkey_hex(),
+                "actor": actor,
+                "role": role,
+                "model": null,
+                "title": "Ship it",
+                "initialTurn": null,
+            },
+        })
+        .to_string();
+        signed_lifecycle_event(channel_id, content)
     }
 
     /// The resume path has the same one-shot rule: a reconnect the provider

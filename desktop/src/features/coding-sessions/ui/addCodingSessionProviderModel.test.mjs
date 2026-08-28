@@ -14,6 +14,8 @@ import { buildNewCodingSessionCreateInput } from "./useNewCodingSessionCreate.ts
 import {
   addCodingSessionProviderGenesisGateMessage,
   addCodingSessionProviderOptionNote,
+  addCodingSessionProviderSeatWorkdirNote,
+  addCodingSessionProviderSeatWorktreeName,
   buildAddCodingSessionProviderSubmit,
   defaultAddCodingSessionProviderKey,
   listAddCodingSessionProviderOptions,
@@ -507,4 +509,115 @@ test("a half-filled seat builds no join at all", () => {
     }),
     null,
   );
+});
+
+/**
+ * Item 80(a)/(b): three hired seats ran in the operator's own checkout,
+ * because the join dialog defaulted the working directory to the last one
+ * used — and their role packs then landed in one `.agents/skills` as a union.
+ * A seat gets its own tree, named after the session and the role it holds.
+ */
+test("a seated join names its worktree after the session and the seat's role", () => {
+  assert.equal(
+    addCodingSessionProviderSeatWorktreeName({
+      title: "Advance Buzz live sessions",
+      role: "builder",
+    }),
+    "advance-buzz-live-sessions-builder",
+  );
+  // The slug is the host's own: punctuation collapses, case folds, and the
+  // 48-character cap is applied once so the field shows the final name.
+  assert.equal(
+    addCodingSessionProviderSeatWorktreeName({
+      title: "Front door — item 79/80!",
+      role: "runner",
+    }),
+    "front-door-item-79-80-runner",
+  );
+  assert.equal(
+    addCodingSessionProviderSeatWorktreeName({
+      title:
+        "A session whose name is very considerably longer than the slug cap",
+      role: "architect",
+    }).length,
+    48,
+  );
+  // Nothing addressable in either half is no name at all, never a made-up one.
+  assert.equal(
+    addCodingSessionProviderSeatWorktreeName({ title: "…", role: "" }),
+    "",
+  );
+});
+
+test("the join dialog says which directory a seat will run in", () => {
+  assert.match(
+    addCodingSessionProviderSeatWorkdirNote({
+      seatLabel: "Ada",
+      useWorktree: true,
+      workdir: "/Users/brian/Projects/beekeeper/beekeeper",
+    }),
+    /^Ada runs in a new worktree made from \/Users\/brian\/Projects\/beekeeper\/beekeeper — its own directory and branch\./,
+  );
+  // Turning the worktree off is allowed, and then the sentence says the
+  // unpleasant truth rather than staying quiet about it.
+  assert.match(
+    addCodingSessionProviderSeatWorkdirNote({
+      seatLabel: "Ada",
+      useWorktree: false,
+      workdir: "/Users/brian/Projects/beekeeper/beekeeper",
+    }),
+    /Ada runs directly in \/Users\/brian\/Projects\/beekeeper\/beekeeper, sharing its branch, uncommitted changes, and role skills with anything else running there\./,
+  );
+  // An unseated join is unchanged: the working directory field already says
+  // where a person's own execution runs.
+  assert.equal(
+    addCodingSessionProviderSeatWorkdirNote({
+      seatLabel: null,
+      useWorktree: true,
+      workdir: "/Users/brian/checkout",
+    }),
+    null,
+  );
+  // No directory chosen yet names none.
+  assert.equal(
+    addCodingSessionProviderSeatWorkdirNote({
+      seatLabel: "Ada",
+      useWorktree: true,
+      workdir: "   ",
+    }),
+    null,
+  );
+});
+
+test("a join that made a worktree remembers the checkout, not the worktree", () => {
+  const umbrella = singleClaudeUmbrella();
+  umbrella.genesisRef = "d".repeat(64);
+  umbrella.genesisResolution = "governed";
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "/Users/brian/checkout.worktrees/live-sessions-builder",
+    rememberWorkdir: " /Users/brian/checkout ",
+  });
+  assert.equal(
+    payload.workdir,
+    "/Users/brian/checkout.worktrees/live-sessions-builder",
+  );
+  assert.equal(payload.rememberWorkdir, "/Users/brian/checkout");
+
+  // Without a worktree there is nothing to distinguish, and the field stays
+  // null rather than repeating the working directory.
+  const plain = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "/Users/brian/checkout",
+  });
+  assert.equal(plain.rememberWorkdir, null);
 });

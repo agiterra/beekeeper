@@ -219,3 +219,101 @@ test("a seat whose pack this computer does not hold says so before submit", asyn
     cleanup();
   }
 });
+
+/**
+ * Item 80(a): the seats hired into `AgentTeams` ran in Brian's own live
+ * checkout, because this dialog's working directory defaulted to the last
+ * directory used — which is the directory the app itself runs from. A hired
+ * seat gets a tree of its own, and the dialog says which one.
+ */
+test("seating an agent gives the seat its own worktree, and names it", async () => {
+  const { act, cleanup, fireEvent, screen } = await mountJoinForm([
+    {
+      pubkey: ADA,
+      name: "Ada",
+      status: "running",
+      homeRole: "builder",
+      hasRolePack: true,
+    },
+  ]);
+  try {
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("coding-session-workdir-input"), {
+        target: { value: "/Users/brian/Projects/beekeeper/beekeeper" },
+      });
+    });
+    // An unseated join is the person's own execution: unchanged, no worktree.
+    assert.equal(screen.queryByTestId("coding-session-worktree-toggle"), null);
+    assert.equal(
+      screen.queryByTestId("add-coding-session-provider-workdir-note"),
+      null,
+    );
+
+    await act(async () => {
+      fireEvent.pointerDown(
+        screen.getByTestId("new-coding-session-seat-agent"),
+        { button: 0, pointerType: "mouse" },
+      );
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`new-coding-session-seat-agent-${ADA}`),
+      );
+    });
+
+    const toggle = screen.getByTestId("coding-session-worktree-toggle");
+    assert.equal(toggle.getAttribute("data-state"), "checked");
+    assert.equal(
+      screen.getByTestId("coding-session-worktree-name").value,
+      "advance-buzz-live-sessions-builder",
+    );
+    assert.match(
+      screen.getByTestId("add-coding-session-provider-workdir-note")
+        .textContent,
+      /Ada runs in a new worktree made from \/Users\/brian\/Projects\/beekeeper\/beekeeper/,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("a seat whose worktree is turned off is told it shares the checkout", async () => {
+  const { act, cleanup, fireEvent, screen } = await mountJoinForm([
+    {
+      pubkey: ADA,
+      name: "Ada",
+      status: "running",
+      homeRole: "builder",
+      hasRolePack: true,
+    },
+  ]);
+  try {
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("coding-session-workdir-input"), {
+        target: { value: "/Users/brian/Projects/beekeeper/beekeeper" },
+      });
+    });
+    await act(async () => {
+      fireEvent.pointerDown(
+        screen.getByTestId("new-coding-session-seat-agent"),
+        { button: 0, pointerType: "mouse" },
+      );
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByTestId(`new-coding-session-seat-agent-${ADA}`),
+      );
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("coding-session-worktree-toggle"));
+    });
+
+    assert.match(
+      screen.getByTestId("add-coding-session-provider-workdir-note")
+        .textContent,
+      /Ada runs directly in \/Users\/brian\/Projects\/beekeeper\/beekeeper, sharing its branch, uncommitted changes, and role skills/,
+    );
+  } finally {
+    cleanup();
+  }
+});

@@ -17,6 +17,7 @@ import {
   type NewCodingSessionTarget,
 } from "@/features/coding-sessions/lib/newCodingSessionModel";
 import { useCodingSessionProviderCatalog } from "@/features/coding-sessions/useCodingSessionProviderCatalog";
+import { createCodingSessionWorktree } from "@/shared/api/tauriCodingSessionWorktrees";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -31,6 +32,8 @@ import { cn } from "@/shared/lib/cn";
 import {
   addCodingSessionProviderGenesisGateMessage,
   addCodingSessionProviderOptionNote,
+  addCodingSessionProviderSeatWorkdirNote,
+  addCodingSessionProviderSeatWorktreeName,
   buildAddCodingSessionProviderSubmit,
   defaultAddCodingSessionProviderKey,
   listAddCodingSessionProviderOptions,
@@ -41,6 +44,7 @@ import {
 } from "./NewCodingSessionProviderPicker";
 import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
+import { NewCodingSessionWorktreeField } from "./NewCodingSessionWorktreeField";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 
 /**
@@ -61,6 +65,12 @@ import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
  * home-role default, same disclosures, same membership + custody staging
  * before the publish. Without it an agent could only ever be seated at the
  * moment a session was born.
+ *
+ * A *seated* join also gets its own git worktree, on by default and named
+ * `<session-slug>-<role>`: item 80(a) hired three seats into this dialog and
+ * every one of them landed in the operator's live checkout, because the
+ * working directory defaulted to the last one used. An unseated join is the
+ * person's own execution and is unchanged.
  */
 export function AddCodingSessionProviderDialog({
   channelId,
@@ -201,6 +211,13 @@ export function AddCodingSessionProviderForm({
     selectionExplicit: modelSelection.explicit,
   });
   const [workdir, setWorkdir] = React.useState("");
+  const [useWorktree, setUseWorktree] = React.useState(true);
+  const [worktreeName, setWorktreeName] = React.useState("");
+  const [worktreeSource, setWorktreeSource] = React.useState<string | null>(
+    null,
+  );
+  const [worktreeError, setWorktreeError] = React.useState<string | null>(null);
+  const [isPreparingWorktree, setIsPreparingWorktree] = React.useState(false);
   const [initialTurn, setInitialTurn] = React.useState("");
   const managedAgentsQuery = useManagedAgentsQuery();
   const managedAgents = React.useMemo(
@@ -221,6 +238,19 @@ export function AddCodingSessionProviderForm({
         model: null,
       }).primary
     : null;
+
+  // A seat runs in a tree of its own; a person's own join runs where they
+  // said. Everything worktree-shaped below is gated on this one fact.
+  const seated = seatDraft.seat !== null;
+  const seatWorktreeName = addCodingSessionProviderSeatWorktreeName({
+    title: umbrella.title,
+    role: seatDraft.role,
+  });
+  const seatWorkdirNote = addCodingSessionProviderSeatWorkdirNote({
+    seatLabel: seated ? (seatDraft.label ?? "This seat") : null,
+    useWorktree,
+    workdir,
+  });
 
   const failureCode =
     lifecycle?.state === "failed" ? lifecycle.error.code : undefined;
@@ -250,6 +280,7 @@ export function AddCodingSessionProviderForm({
     sessionRef !== null &&
     genesisGateMessage === null &&
     !isPublishing &&
+    !isPreparingWorktree &&
     transaction === null &&
     selectedTarget !== null &&
     isNewCodingSessionTargetReady(selectedTarget) &&
@@ -258,17 +289,47 @@ export function AddCodingSessionProviderForm({
 
   const handleSubmit = React.useCallback(() => {
     if (!canSubmit) return;
-    const payload = buildAddCodingSessionProviderSubmit({
-      umbrella,
-      channelId,
-      target: selectedTarget,
-      model: effectiveModel,
-      initialTurn,
-      workdir,
-      seat: { actor: seatDraft.actor, role: seatDraft.role },
-      seatLabel: seatDraft.label,
-    });
-    if (payload) void submit(payload);
+    setWorktreeError(null);
+    void (async () => {
+      // The worktree exists before the command is signed, because its path
+      // *is* the working directory the create names. A seat is never signed
+      // against a directory that does not exist yet.
+      const checkout = workdir.trim();
+      let effectiveWorkdir = checkout;
+      if (seated && useWorktree && checkout.length > 0) {
+        setIsPreparingWorktree(true);
+        try {
+          const created = await createCodingSessionWorktree({
+            workdir: checkout,
+            name: worktreeName.trim(),
+            source: worktreeSource,
+          });
+          effectiveWorkdir = created.path;
+        } catch (error) {
+          setWorktreeError(
+            `Could not create this seat's worktree: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return;
+        } finally {
+          setIsPreparingWorktree(false);
+        }
+      }
+      const payload = buildAddCodingSessionProviderSubmit({
+        umbrella,
+        channelId,
+        target: selectedTarget,
+        model: effectiveModel,
+        initialTurn,
+        workdir: effectiveWorkdir,
+        // Remember the checkout, never the worktree just made from it.
+        rememberWorkdir: effectiveWorkdir === checkout ? null : checkout,
+        seat: { actor: seatDraft.actor, role: seatDraft.role },
+        seatLabel: seatDraft.label,
+      });
+      if (payload) await submit(payload);
+    })();
   }, [
     canSubmit,
     channelId,
@@ -277,10 +338,14 @@ export function AddCodingSessionProviderForm({
     seatDraft.actor,
     seatDraft.label,
     seatDraft.role,
+    seated,
     selectedTarget,
     submit,
     umbrella,
+    useWorktree,
     workdir,
+    worktreeName,
+    worktreeSource,
   ]);
 
   if (sessionRef === null) {
@@ -341,6 +406,40 @@ export function AddCodingSessionProviderForm({
         onRoleChange={seatDraft.onRoleChange}
         role={seatDraft.role}
       />
+
+      {seated ? (
+        <NewCodingSessionWorktreeField
+          checked={useWorktree}
+          disabled={transaction !== null}
+          name={worktreeName}
+          onCheckedChange={setUseWorktree}
+          onNameChange={setWorktreeName}
+          onSourceChange={setWorktreeSource}
+          sessionName={seatWorktreeName}
+          source={worktreeSource}
+          workdir={workdir}
+        />
+      ) : null}
+
+      {seatWorkdirNote ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="add-coding-session-provider-workdir-note"
+        >
+          {seatWorkdirNote}
+        </p>
+      ) : null}
+
+      {worktreeError ? (
+        <p
+          className="flex items-start gap-2 text-sm text-destructive"
+          data-testid="add-coding-session-provider-worktree-error"
+          role="alert"
+        >
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          {worktreeError}
+        </p>
+      ) : null}
 
       {stagedSeatLabel ? (
         <p
