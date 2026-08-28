@@ -4648,6 +4648,123 @@ written and `bash -n` clean but **was not executed** — that harness needs
     seven "Valid."; `pnpm build:e2e` plus Playwright
     `crew-front-door.spec.ts --project=smoke` 8 passed / 0 failed in 17.8 s.
 
+85 (draft, 2026-08-28 19:0x). **Install team roles has no default folder**
+    — a new operator (Andy) must know to pick `<checkout>/personas/roles`.
+    Fix: default the field to the project's checkout dir +
+    `/personas/roles` (project settings now record the checkout dir —
+    Andy's 75f9fc8f), show it as the chosen path with "the project's role
+    packs" as the label, keep *Choose folder…* for the exception; later,
+    D12's project-ref fetch replaces the picker.
+
+    **Fixed ae2b3bbe:**
+
+    - Worktree setup:
+      /Users/brian/Projects/beekeeper/beekeeper.worktrees/fd-int, branch
+      crew/front-door, clean, `git fetch origin` + `git merge --ff-only
+      refs/remotes/origin/main` -> 'Already up to date.' (base 32f2e8e4).
+
+    - New Rust policy (ledger 85):
+      desktop/src-tauri/src/managed_agents/crew_roles.rs:325
+      `project_role_packs_dir(checkout) = checkout/personas/roles`, and
+      :353 `scan_project_role_packs(checkout, agents) ->
+      ProjectRolePacksScan { directory, exists, packs, skipped }`. A
+      missing folder returns Ok with `exists: false` (an ordinary state,
+      not a fault); Err is kept for a folder that is there and unreadable.
+      `packs` is literally `role_name_choices(&scan_role_packs(dir),
+      agents)` so the pre-chosen path and the picker path can never
+      disagree.
+
+    - New command: desktop/src-tauri/src/commands/crew_roles.rs:111
+      `scan_project_role_packs_directory(checkoutDir)` (read-only,
+      spawn_blocking, loads managed agents so name fields default to the
+      installed identity's name). Registered at
+      desktop/src-tauri/src/handlers.rs:250. This is the one new
+      command/param the task asked me to report.
+
+    - TS wrapper: desktop/src/shared/api/tauriTeams.ts:315
+      `ProjectRolePacksScan` + `scanProjectRolePacks(checkoutDir)`.
+
+    - Copy: desktop/src/features/agents/ui/installCrewRolesCopy.ts:23
+      `INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL = "The project's role
+      packs"`; :34 `INSTALL_CREW_ROLES_NO_CHECKOUT` verbatim "This project
+      has no checkout directory yet — set one in Project settings, or
+      choose a folder"; :46 `crewRolesProjectFolderNote(scan)`
+      distinguishes absent ("<path> is not there, so this project has no
+      role packs to install — choose a folder instead.") from empty
+      ("<path> holds no role packs — choose a folder instead.").
+
+    - Dialog: desktop/src/features/agents/ui/InstallCrewRolesDialog.tsx:63
+      optional `project: { address }` prop; :101 effect reads
+      `getCodingSessionWorkdirState().byProject[address].path` (Andy's
+      per-project checkout store, 75f9fc8f), scans it, and either applies
+      the scan (`isProjectFolder` true, label + name fields rendered,
+      submit enabled) or sets a note. `operatorChose` ref (:99) means a
+      slow lookup can never overwrite a folder the operator picked;
+      `choose()` clears the label and note (:167).
+
+    - Wiring: desktop/src/features/agents/ui/AgentsView.tsx:59 resolves
+      the active project with the app's own resolution via the new
+      `useActiveProjectContainer`
+      (desktop/src/features/projects-container/useActiveProjectTint.ts:47,
+      which `useActiveProjectTint` now delegates to), and passes `project`
+      at AgentsView:314.
+
+    - RED BEFORE GREEN (TS): 4 new tests in
+      desktop/src/features/agents/ui/installCrewRolesForm.test.mjs:340+
+      failed against the old dialog — 'a project whose checkout holds role
+      packs opens on that folder, already chosen', 'a project with no
+      checkout directory says so, and the picker is untouched', 'a
+      checkout with no personas/roles folder names the folder it looked
+      for', 'a personas/roles folder holding no packs is reported as
+      empty, not as missing' (run: 13 tests, 9 pass, 4 fail — 'Unable to
+      find an element by:
+      [data-testid="install-crew-roles-project-note"]'). After the change:
+      13 pass, 0 fail. Two more tests pin the unchanged paths ('outside a
+      project ... no lookup, no note' asserts zero
+      `scan_project_role_packs_directory`/`get_coding_session_workdir_state`
+      calls; 'choosing another folder over the project's default drops the
+      project label').
+
+    - RED BEFORE GREEN (Rust): 4 new tests in
+      desktop/src-tauri/src/managed_agents/crew_roles_tests.rs:790+ failed
+      to compile — 'error[E0425]: cannot find function
+      `project_role_packs_dir` in this scope' and '...
+      `scan_project_role_packs` ...', 7 errors, 'could not compile
+      beekeeper-desktop (lib test)'. After the change: `cargo test --lib
+      crew_roles` = 27 passed, 0 failed.
+
+    - Gates, each with its exit line: desktop `pnpm typecheck` EXIT 0;
+      `pnpm test` EXIT 0 (6641 tests, 6641 pass, 0 fail); `pnpm
+      check:px-text` EXIT 0; `cargo test --manifest-path
+      desktop/src-tauri/Cargo.toml --lib crew_roles` EXIT 0; `cargo clippy
+      --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D
+      warnings` EXIT 0; `cargo fmt -- --check` EXIT 0; `just
+      file-size-check` EXIT 0 (largest touched file 920 lines,
+      crew_roles.rs).
+
+    - E2E: killed port 4173, `pnpm build:e2e` EXIT 0, `npx playwright test
+      tests/e2e/crew-front-door.spec.ts --project=smoke` EXIT 0 — 8
+      passed. Test 01 needed no update: the dashboard route names no
+      project, so the installer it drives is byte-for-byte the surface it
+      was, and the existing screenshots keep their distinct hashes.
+
+    - FINDING (reachability, honest): the pre-chosen folder cannot appear
+      in the app today. The only entry point is TeamsSection's 'Install
+      team roles…' inside AgentsView, which is a Dashboard tab at
+      `/?tab=agents`; `resolveActiveProjectId`
+      (useActiveProjectTint.ts:20) needs either a `/projects/<id>` route
+      or an active channel's `projectRef`, and the dashboard has neither
+      (deriveAppSurface in AppShell.helpers.ts:225 yields
+      `selectedChannelId: null` there). So `project` is null at that call
+      site and the dialog behaves exactly as before. Making it live needs
+      a product decision I did not take on my own: either an 'Install team
+      roles…' entry on a project surface, or giving the Agents tab a
+      project. Everything below that entry point is built, tested and
+      ready for it.
+
+    - Not done on purpose: no push, no ledger edit (docs/SESSION_STATE.md
+      item 85 is the lead's to write), no new entry point invented.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -4742,7 +4859,7 @@ old CLI unless you repoint that symlink; (3) seats still share the operator's
 `~/.claude` (same `HOME`), so a seat's local cross-session tools can reach
 other sessions — the fence item in 77 is not landed yet. Also open: the
 "no-surface-by-decision" calls recorded in item 76 are waiting on Brian's
-sign-off. **To mint a team on your machine (2026-08-28 evening):** Agents → the team card's menu → *Install team roles…* → *Choose folder…* and pick `<your checkout>/personas/roles` (the folder that contains `lead`, `architect`, `builder`, … — the parent, not one role) → name the lead → Install. The picker has no default yet; a follow-up lane defaults it to the project's checkout dir. Then New session → Team → Launch team seats the lead alone; the lead hires the rest with `bee sessions hire` (your desktop answers hires automatically; policy is on by default, 4 seats, installed roles).
+sign-off. **To mint a team on your machine (2026-08-28 evening):** Agents → the team card's menu → *Install team roles…* → *Choose folder…* and pick `<your checkout>/personas/roles` (the folder that contains `lead`, `architect`, `builder`, … — the parent, not one role) → name the lead → Install. Inside a project the folder is pre-chosen from the project's checkout dir (`<checkout>/personas/roles`, labelled "The project's role packs"); *Choose folder…* still overrides it — see item 85, including the entry point that does not name a project yet. Then New session → Team → Launch team seats the lead alone; the lead hires the rest with `bee sessions hire` (your desktop answers hires automatically; policy is on by default, 4 seats, installed roles).
 
 **Read §2 item 78 first (2026-08-28).** The SWAT batch on `crew/front-door`
 supersedes two of the three traps above: the installed team now launches
