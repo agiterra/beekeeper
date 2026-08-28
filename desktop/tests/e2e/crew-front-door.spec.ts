@@ -193,6 +193,10 @@ const INSTALL_RESPONSE = {
     agentName: role.name,
     packDir: `${PACK_ROOT}/${role.role}`,
     refreshed: role.refreshed,
+    // Set by the mock from the names the dialog submitted, exactly as the
+    // backend sets it: only an identity that was already installed can be
+    // renamed.
+    renamed: false,
     seated: role.seated,
   })),
   skipped: [
@@ -202,6 +206,8 @@ const INSTALL_RESPONSE = {
         "no persona in this pack declares a role, so it was skipped." as const,
     },
   ],
+  /** Every kind:0 republish landed on this run. */
+  profileSyncError: null as string | null,
 };
 
 function crewInvokeInitScript(input: {
@@ -217,6 +223,21 @@ function crewInvokeInitScript(input: {
       args?: Record<string, unknown>,
       options?: unknown,
     ) => Promise<unknown>;
+
+    /** The parts of `InstallCrewRolePacksResponse` this mock rewrites. */
+    type InstallResponseShape = {
+      installed: {
+        role: string;
+        personaName: string;
+        packDir: string;
+        agentName: string;
+        refreshed: boolean;
+        renamed: boolean;
+      }[];
+      skipped: { path: string; reason: string }[];
+      seated: string[];
+      dropped: string[];
+    };
 
     const state = {
       // Flipped by the spec before a seated create, so the pending screen's
@@ -302,18 +323,53 @@ function crewInvokeInitScript(input: {
         let real: Invoke | undefined;
         const wrapped: Invoke = async (cmd, args, options) => {
           switch (cmd) {
-            case "pick_crew_role_packs_directory":
-              return config.packRoot;
+            case "pick_crew_role_packs_directory": {
+              // `PickedCrewRolePacks`: the pick *and* the read-only scan the
+              // dialog renders one name field per (ledger 84). Answering with
+              // the bare directory string this used to return is the shape the
+              // command carried before that landed, and the dialog reading
+              // `packs` off it took the whole app to the error boundary.
+              const scanned = (config.installResponse as InstallResponseShape)
+                .installed;
+              return {
+                directory: config.packRoot,
+                packs: scanned
+                  .filter((row) => row.role !== state.dropRole)
+                  .map((row) => ({
+                    role: row.role,
+                    personaName: row.personaName,
+                    packDir: row.packDir,
+                    // The field starts on the name that identity already
+                    // carries here; a pack nothing is installed from yet
+                    // offers the pack's own name.
+                    defaultName: row.agentName,
+                    installed: row.refreshed,
+                  })),
+                skipped: (config.installResponse as InstallResponseShape)
+                  .skipped,
+              };
+            }
             case "install_crew_role_packs": {
               state.installArgs = (args ?? {}) as Record<string, unknown>;
               // The backend rejects with `CrewRoleInstallError`, a serialised
               // struct — not a string. Throwing the struct is what the real
               // bridge does, and it is what the dialog now reads the stage off.
               if (state.installFailure) throw state.installFailure;
-              const response = config.installResponse as {
-                installed: { role: string }[];
-                seated: string[];
-                dropped: string[];
+              const submitted = (
+                (args ?? {}) as { names?: Record<string, string> | null }
+              ).names;
+              const base = config.installResponse as InstallResponseShape;
+              // The rows come back under the names the install was given, and
+              // a name typed over an identity that was already installed is a
+              // rename — which is what the backend reports and what the result
+              // list has to be able to say.
+              const response = {
+                ...base,
+                installed: base.installed.map((row) => {
+                  const named = submitted?.[row.role];
+                  if (!named || named === row.agentName) return row;
+                  return { ...row, agentName: named, renamed: row.refreshed };
+                }),
               };
               if (!state.dropRole) return response;
               const dropped = state.dropRole;
@@ -582,17 +638,23 @@ test.describe("crew front door", () => {
     );
     await expect(page.getByTestId("install-crew-roles-submit")).toBeEnabled();
 
-    // D11: the lead is an identity a person names, not a role label. The
-    // field defaults to the pack's own name so leaving it alone changes
-    // nothing.
-    const leadNameField = page.getByTestId("install-crew-roles-lead-name");
+    // D11, ledger 84: every pack in the folder is an identity a person names,
+    // not one role label the installer asks about. One field per scanned pack,
+    // each starting on the name that identity already carries here, so an
+    // operator who touches nothing renames nobody.
+    const leadNameField = page.getByTestId("install-crew-roles-name-lead");
     await expect(leadNameField).toHaveValue("Lead");
+    await expect(
+      page.getByTestId("install-crew-roles-name-designer"),
+    ).toHaveValue("Designer");
     await leadNameField.fill("Keystone");
 
     await page.getByTestId("install-crew-roles-submit").click();
     const result = page.getByTestId("install-crew-roles-result");
     await expect(result).toBeVisible();
-    await expect(result).toContainText("Lead — Lead");
+    // The row reads the name that was installed, not the role it came from.
+    await expect(result).toContainText("Lead — Keystone");
+    await expect(result).toContainText("Designer — Designer");
     await expect(result).toContainText(
       "already installed from this pack — role and pack link refreshed",
     );
@@ -602,14 +664,24 @@ test.describe("crew front door", () => {
     await waitForAnimations(page);
     await dialog.screenshot({ path: `${SHOTS}/03-install-result.png` });
 
-    // …and the name reached the installer, which is what mints the record.
+    // …and the names reached the installer, which is what mints the records.
+    // Every scanned role is in the map — an absent key would leave the backend
+    // guessing what the operator meant — and the untouched ones carry the name
+    // they already had.
     const installArgs = await page.evaluate(() => {
       const w = window as unknown as {
         __FD1__: { installArgs: Record<string, unknown> | null };
       };
       return w.__FD1__.installArgs;
     });
-    expect(installArgs?.leadName).toBe("Keystone");
+    const submittedNames = installArgs?.names as
+      | Record<string, string>
+      | undefined;
+    expect(submittedNames?.lead).toBe("Keystone");
+    expect(submittedNames?.designer).toBe("Designer");
+    expect(Object.keys(submittedNames ?? {}).sort()).toEqual(
+      CREW_ROLES.map((role) => role.role).sort(),
+    );
 
     await page.getByTestId("install-crew-roles-close").click();
     await expect(dialog).toHaveCount(0);
@@ -664,17 +736,18 @@ test.describe("crew front door", () => {
     );
     await expect(dialog).not.toContainText("Seated by default");
     // The two roles installed on purpose and seated on purpose never say so
-    // on their own rows, rather than reading like the seated ones.
+    // on their own rows, rather than reading like the seated ones. The note is
+    // parenthesised, as `crewRoleResultLine` renders it.
     await expect(result).toContainText(
-      "Poker — Poker — installed, but not seated in the team",
+      "Poker — Poker (installed, but not seated in the team)",
     );
     await expect(result).toContainText(
-      "Designer — Designer — installed, but not seated in the team",
+      "Designer — Designer (installed, but not seated in the team)",
     );
     // And the verifier, unseated for a reason the plan gives rather than for
     // want of a pack: it is installed, and it holds no seat.
     await expect(result).toContainText(
-      "Verifier — Verifier — installed, but not seated in the team",
+      "Verifier — Verifier (installed, but not seated in the team)",
     );
     await expect(seats).not.toContainText("verifier: no pack installed");
     await waitForAnimations(page);
