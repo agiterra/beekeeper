@@ -56,6 +56,11 @@ export type CodingSessionHireSeatPlan = {
   title: string | null;
   /** The brief, prefixed. Never empty. */
   initialTurn: string;
+  /**
+   * What the host substituted for the lead's requested model, or null. Said
+   * out loud in the umbrella when the seat is published.
+   */
+  modelNotice: string | null;
   /** Display name for the seat, used in membership and failure copy. */
   seatLabel: string;
   /** `<session-slug>-<role>-<n>`; the host re-slugs and disambiguates it. */
@@ -77,6 +82,8 @@ export function buildCodingSessionHireSeatPlan(input: {
   providerInstanceRef: string;
   providerAuthorityPubkey: string;
   model: string | null;
+  /** The host's model substitution, disclosed with the seat. */
+  modelNotice?: string | null;
   /** Which seat of this role this is, 1-based; names the worktree. */
   seatOrdinal: number;
 }): CodingSessionHireSeatPlan {
@@ -93,6 +100,7 @@ export function buildCodingSessionHireSeatPlan(input: {
     providerAuthorityPubkey: input.providerAuthorityPubkey,
     model: input.model,
     title: input.title,
+    modelNotice: input.modelNotice ?? null,
     // A brief that already opens with the prefix keeps one, not two: the lead
     // writing the sentence itself must not produce "[From the lead] [From the
     // lead] …".
@@ -201,15 +209,24 @@ export function isCodingSessionHireAuthorized(
 }
 
 /**
- * The hires this host has not answered yet, deduped by `commandId`.
+ * The hires this host has not answered yet, deduped by `commandId` and
+ * **newest first**.
  *
  * A hire is observed from history *and* live, and both stores replay on every
- * reconnect — so without this a reconnect would seat the same agent again, on
- * a second worktree, with a second process. Keyed by `commandId` because that
- * is what the create's receipt will be keyed by.
+ * reconnect — so without the dedupe a reconnect would seat the same agent
+ * again, on a second worktree, with a second process. Keyed by `commandId`
+ * because that is what the create's receipt will be keyed by.
+ *
+ * Newest first because a host coming back sees a whole backlog at once and the
+ * seat ceiling is finite: whichever hire is answered first may be the only one
+ * seated, and the lead is waiting on its most recent request, not on the one
+ * it sent an hour ago. (Anything genuinely old is refused `HIRE_STALE` a step
+ * later; the order decides which of the *live* ones wins the last seat.)
+ * Requests carrying no `createdAt` keep their observed order relative to each
+ * other, so a caller that has no clock loses nothing.
  */
 export function selectUnansweredCodingSessionHires<
-  T extends { commandId: string },
+  T extends { commandId: string; createdAt?: number },
 >(requests: readonly T[], answered: ReadonlySet<string>): T[] {
   const seen = new Set<string>();
   const pending: T[] = [];
@@ -220,5 +237,9 @@ export function selectUnansweredCodingSessionHires<
     seen.add(request.commandId);
     pending.push(request);
   }
-  return pending;
+  // Stable in every engine this ships on, so equal timestamps stay in the
+  // order the relay handed them over.
+  return pending.sort(
+    (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0),
+  );
 }

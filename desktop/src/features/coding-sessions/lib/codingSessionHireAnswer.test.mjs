@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  codingSessionHireModelNoticeLine,
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
 } from "./codingSessionHireAnswer.ts";
@@ -57,6 +58,10 @@ function answer(overrides = {}) {
     availableProviderInstanceRefs: ["claude-primary"],
     providerAuthorityPubkey: PROVIDER,
     commandId: "csl-seat-1",
+    // The fixture request is fixed in time, so the clock is too: a suite
+    // whose hires age out as the wall clock moves is a suite that starts
+    // failing on its own.
+    now: REQUEST.createdAt,
     ...overrides,
   });
 }
@@ -138,4 +143,70 @@ test("the umbrella's line names who asked, for what, and the answer", () => {
     }),
     "Keystone asked to hire a builder — hire refused: HIRE_LIMIT — no room.",
   );
+});
+
+test("a hire older than the host's window is refused HIRE_STALE, never seated", () => {
+  const result = answer({
+    now: REQUEST.createdAt + 16 * 60,
+  });
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_STALE");
+  assert.equal(
+    result.reason,
+    "this hire request is older than the host's window; hire again",
+  );
+  assert.equal(result.text, `hire refused: HIRE_STALE — ${result.reason}`);
+});
+
+test("a hire inside the window is still seated", () => {
+  const result = answer({ now: REQUEST.createdAt + 14 * 60 });
+  assert.equal(result.kind, "seat");
+});
+
+test("a stranger's stale hire is still ignored, not refused", () => {
+  const result = answer({
+    request: { ...REQUEST, requesterPubkey: STRANGER },
+    now: REQUEST.createdAt + 60 * 60,
+  });
+  assert.deepEqual(result, { kind: "ignored", why: "unauthorized" });
+});
+
+test("a hire whose model the runtime cannot offer is refused, with the list", () => {
+  const result = answer({
+    request: {
+      ...REQUEST,
+      action: { ...REQUEST.action, model: "claude-sonnet-5" },
+    },
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "claude-fable-5[1m]"]],
+    ]),
+  });
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  assert.match(result.reason, /claude-fable-5\[1m\]/);
+});
+
+test("a translated model reaches the seat plan with its disclosure", () => {
+  const result = answer({
+    request: {
+      ...REQUEST,
+      action: { ...REQUEST.action, model: "claude-sonnet-5" },
+    },
+    modelCatalogs: new Map([["claude-primary", ["default", "sonnet"]]]),
+  });
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.model, "sonnet");
+  assert.match(result.plan.modelNotice, /claude-sonnet-5/);
+});
+
+test("a substituted model is disclosed in the umbrella, naming the seat's role", () => {
+  const line = codingSessionHireModelNoticeLine({
+    role: "builder",
+    notice:
+      "The hire asked for claude-sonnet-5; this computer's claude-primary " +
+      "runtime does not offer that id, so the seat runs sonnet instead.",
+  });
+  assert.match(line, /^Hired a builder — /);
+  assert.match(line, /claude-sonnet-5/);
+  assert.match(line, /sonnet instead\.$/);
 });

@@ -187,3 +187,21 @@ test("a hire is answered once, however many times it is observed", () => {
     ["csl-1"],
   );
 });
+
+test("a backlog is answered newest first, so the freshest hire is seated first", () => {
+  // What a host that was shut sees the moment it reconnects: a channel's whole
+  // hire history at once. The ceiling is finite, so whichever of these is
+  // answered first may be the only one seated — and the lead is waiting on the
+  // newest, not on the one it sent before lunch.
+  const requests = [
+    { commandId: "csl-old", createdAt: 1_000 },
+    { commandId: "csl-new", createdAt: 3_000 },
+    { commandId: "csl-mid", createdAt: 2_000 },
+  ];
+  assert.deepEqual(
+    selectUnansweredCodingSessionHires(requests, new Set()).map(
+      (request) => request.commandId,
+    ),
+    ["csl-new", "csl-mid", "csl-old"],
+  );
+});

@@ -36,6 +36,21 @@ import {
 } from "./codingSessionHireSeat";
 import type { CodingSessionHireRequest } from "./codingSessionHireWire";
 
+/**
+ * How old a hire may be and still be answered, in seconds.
+ *
+ * Fifteen minutes: long enough that a host restarting, or a relay catching up
+ * after a reconnect, still seats what a lead is genuinely waiting for; short
+ * enough that nobody is surprised by a seat appearing for a request they made
+ * before lunch. The CLI waits sixty seconds for an answer, so anything past
+ * this window has already been reported `unconfirmed` to the lead.
+ */
+export const CODING_SESSION_HIRE_MAX_AGE_SECONDS = 15 * 60;
+
+/** The exact sentence a stale hire is refused with. */
+export const CODING_SESSION_HIRE_STALE_REASON =
+  "this hire request is older than the host's window; hire again";
+
 export type CodingSessionHireAnswer =
   | { kind: "ignored"; why: "unauthorized" | "unknown-umbrella" }
   | {
@@ -66,6 +81,15 @@ export type CodingSessionHireAnswerInput = {
   providerAuthorityPubkey: string;
   /** Fresh 44221 command id for the seat's create. */
   commandId: string;
+  /** Each runtime's offered model ids, by instance ref. See the decision. */
+  modelCatalogs?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * This host's clock, Unix seconds. Supplied so the staleness window is a
+   * fact of the call rather than of when the module happened to run.
+   */
+  now?: number;
+  /** How old a hire may be and still be answered. Seconds. */
+  maxAgeSeconds?: number;
 };
 
 /** Decide, without doing anything, what this host owes one hire request. */
@@ -91,6 +115,25 @@ export function planCodingSessionHireAnswer(
     return { kind: "ignored", why: "unauthorized" };
   }
 
+  // Age is checked after authority and before policy: a host that has been
+  // shut for an hour comes back to a channel full of requests nobody is
+  // waiting on any more, and seating them would hand a lead a team it asked
+  // for in another context entirely. Refused rather than dropped, because a
+  // lead that heard nothing cannot tell this host from a dead one.
+  const now = input.now ?? Math.floor(Date.now() / 1000);
+  const maxAge = input.maxAgeSeconds ?? CODING_SESSION_HIRE_MAX_AGE_SECONDS;
+  if (now - request.createdAt > maxAge) {
+    const refusal = {
+      code: "HIRE_STALE" as const,
+      reason: CODING_SESSION_HIRE_STALE_REASON,
+    };
+    return {
+      kind: "refused",
+      ...refusal,
+      text: formatCodingSessionHireRefusal(refusal),
+    };
+  }
+
   const liveSeats = listCodingSessionHireLiveSeats(umbrella);
   const decision = decideCodingSessionHire({
     request: {
@@ -102,6 +145,7 @@ export function planCodingSessionHireAnswer(
     candidates: input.candidates,
     liveSeats,
     availableProviderInstanceRefs: input.availableProviderInstanceRefs,
+    ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
   });
   if (!decision.ok) {
     return {
@@ -129,9 +173,26 @@ export function planCodingSessionHireAnswer(
       providerInstanceRef: decision.providerInstanceRef,
       providerAuthorityPubkey: input.providerAuthorityPubkey,
       model: decision.model,
+      modelNotice: decision.modelNotice,
       seatOrdinal: codingSessionHireSeatOrdinal(liveSeats, decision.role),
     }),
   };
+}
+
+/**
+ * The umbrella's line for a hire this host answered with somebody else's
+ * model.
+ *
+ * Same reasoning as the refusal notice below: a substitution recorded only in
+ * the seat's create is one nobody reads. The lead asked for a model, the host
+ * ran a different one, and both the lead and the person get told in the
+ * timeline where the work is.
+ */
+export function codingSessionHireModelNoticeLine(input: {
+  role: string;
+  notice: string;
+}): string {
+  return `Hired a ${input.role} — ${input.notice}`;
 }
 
 /**
