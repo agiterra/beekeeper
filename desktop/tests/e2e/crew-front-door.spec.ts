@@ -818,10 +818,28 @@ test.describe("crew front door", () => {
       page.getByTestId("new-coding-session-crew-refusal"),
     ).toHaveCount(0);
 
+    // Item 79: Launch is disabled here — with no goal yet — and a disabled
+    // control that says nothing is the front door refusing in silence.
+    await expect(
+      page.getByTestId("new-coding-session-crew-launch"),
+    ).toBeDisabled();
+    await expect(
+      page.getByTestId("new-coding-session-crew-blocked"),
+    ).toHaveText("Write the goal — the lead's first turn carries it.");
+
+    // Item 79(e): one provider for the whole team is where this build is, not
+    // what it thinks a team is.
+    await expect(crewTab).toContainText(
+      "Today a team launch runs every seat on one provider",
+    );
+
     // …and with a goal typed, the front door actually opens.
     await page
       .getByTestId("new-coding-session-crew-goal")
       .fill("Close ledger item 77.");
+    await expect(
+      page.getByTestId("new-coding-session-crew-blocked"),
+    ).toHaveCount(0);
     await expect(
       page.getByTestId("new-coding-session-crew-launch"),
     ).toBeEnabled();
