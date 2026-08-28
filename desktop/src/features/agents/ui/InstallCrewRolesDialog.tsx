@@ -16,12 +16,15 @@ import {
 } from "@/shared/ui/dialog";
 import {
   crewRoleResultRows,
+  crewRolesDroppedNotes,
+  crewRolesFailureMessage,
   crewRolesFoundNothing,
+  crewRolesSeatedNote,
   crewRolesUnreadableFolder,
   INSTALL_CREW_ROLES_BODY,
   INSTALL_CREW_ROLES_CHOOSE_FOLDER,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
-  INSTALL_CREW_ROLES_ROSTER_NOTE,
+  INSTALL_CREW_ROLES_ROSTER_PLAN,
   INSTALL_CREW_ROLES_TITLE,
 } from "./installCrewRolesCopy";
 
@@ -69,7 +72,12 @@ export function InstallCrewRolesDialog({
         setResult(null);
       }
     } catch (cause) {
-      setError(crewRolesUnreadableFolder(String(cause)));
+      // The picker only ever fails at picking, so this one *is* the folder.
+      setError(
+        crewRolesUnreadableFolder(
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      );
     }
   };
 
@@ -84,7 +92,10 @@ export function InstallCrewRolesDialog({
         onInstalled(installed);
       }
     } catch (cause) {
-      setError(crewRolesUnreadableFolder(String(cause)));
+      // Which stage failed comes off the backend's own answer. Wrapping every
+      // failure in the folder sentence sent an operator with a locked keychain
+      // to look at their folder.
+      setError(crewRolesFailureMessage(cause));
     } finally {
       setIsInstalling(false);
     }
@@ -175,9 +186,23 @@ export function InstallCrewRolesDialog({
           </ul>
         ) : null}
 
-        <p className="text-xs text-muted-foreground">
-          {INSTALL_CREW_ROLES_ROSTER_NOTE}
-        </p>
+        {result && !foundNothing ? (
+          <div
+            className="space-y-1 text-xs text-muted-foreground"
+            data-testid="install-crew-roles-seats"
+          >
+            <p>{crewRolesSeatedNote(result)}</p>
+            {crewRolesDroppedNotes(result).map((note) => (
+              <p className="text-amber-600 dark:text-amber-400" key={note}>
+                {note}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {INSTALL_CREW_ROLES_ROSTER_PLAN}
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
           {isDone ? (

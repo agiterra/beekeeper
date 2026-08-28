@@ -246,6 +246,24 @@ export type InstallCrewRolePacksResponse = {
   teamName: string;
   installed: InstalledCrewRole[];
   skipped: SkippedCrewRolePack[];
+  /**
+   * The roles the crew that was written actually seats, in seat order.
+   *
+   * Read off the crew block the install produced, never off the default
+   * roster: a partial install seats fewer roles than the roster names.
+   */
+  seated: string[];
+  /** Roster roles whose pack was not installed, so they hold no seat. */
+  dropped: string[];
+};
+
+/** Which stage of an install failed, as `CrewRoleInstallFailure` names it. */
+export type CrewRoleInstallFailureStage = "folder" | "keys" | "store";
+
+/** A failed install: the stage that failed, and the cause verbatim. */
+export type CrewRoleInstallFailure = {
+  failure: CrewRoleInstallFailureStage;
+  detail: string;
 };
 
 /** Open the OS folder picker for a folder of role packs. `null` if cancelled. */
