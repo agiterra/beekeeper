@@ -721,6 +721,12 @@ pub struct AcpClient {
     /// the adapter's own internals, unredacted, and they are wanted for one
     /// debugging session at a time rather than for a session's life.
     emit_raw_sdk_frames: bool,
+    /// Tool names claude-agent-acp is asked to remove from this session.
+    ///
+    /// Empty by default, and empty means the `_meta` key is omitted entirely
+    /// rather than sent as `[]`, so a session that denies nothing is
+    /// byte-identical to one from before the option existed.
+    disallowed_tools: Vec<String>,
     /// Adapter build from `initialize` (`agentInfo.version`, else
     /// `serverInfo.version`), verbatim. `None` when the adapter reported none.
     ///
@@ -1193,6 +1199,7 @@ impl AcpClient {
             stderr_tail,
             answer_stall_timeout: None,
             emit_raw_sdk_frames: false,
+            disallowed_tools: Vec::new(),
             agent_name: "unknown".to_owned(),
             agent_version: None,
             protocol_version: 1,
@@ -1445,6 +1452,7 @@ impl AcpClient {
             // knowing yet which frames matter.
             params["_meta"]["claudeCode"]["emitRawSDKMessages"] = serde_json::Value::Bool(true);
         }
+        self.apply_disallowed_tools_meta(&mut params);
         let result = self.send_request("session/new", params).await?;
         let session_id = result["sessionId"]
             .as_str()
@@ -1468,16 +1476,17 @@ impl AcpClient {
         cwd: &str,
         mcp_servers: Vec<McpServer>,
     ) -> Result<SessionNewResponse, AcpError> {
-        let result = self
-            .send_request(
-                "session/resume",
-                serde_json::json!({
-                    "sessionId": session_id,
-                    "cwd": cwd,
-                    "mcpServers": mcp_servers,
-                }),
-            )
-            .await?;
+        // A reattachment re-enters the conversation on a fresh adapter
+        // process, and the adapter rebuilds the SDK query from this request's
+        // `_meta` — so the denial has to be restated or the fence lapses at
+        // the first resume.
+        let mut params = serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "mcpServers": mcp_servers,
+        });
+        self.apply_disallowed_tools_meta(&mut params);
+        let result = self.send_request("session/resume", params).await?;
         tracing::info!(target: "acp::session", "session resumed");
         Ok(SessionNewResponse {
             session_id: session_id.to_owned(),
@@ -1496,16 +1505,15 @@ impl AcpClient {
         cwd: &str,
         mcp_servers: Vec<McpServer>,
     ) -> Result<SessionNewResponse, AcpError> {
-        let result = self
-            .send_request(
-                "session/load",
-                serde_json::json!({
-                    "sessionId": session_id,
-                    "cwd": cwd,
-                    "mcpServers": mcp_servers,
-                }),
-            )
-            .await?;
+        // See `session_resume_full`: the adapter rebuilds the session from
+        // this request's `_meta`, so the denial is restated here too.
+        let mut params = serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "mcpServers": mcp_servers,
+        });
+        self.apply_disallowed_tools_meta(&mut params);
+        let result = self.send_request("session/load", params).await?;
         tracing::info!(target: "acp::session", "session loaded");
         Ok(SessionNewResponse {
             session_id: session_id.to_owned(),
@@ -1765,6 +1773,40 @@ impl AcpClient {
 
     pub fn set_emit_raw_sdk_frames(&mut self, emit: bool) {
         self.emit_raw_sdk_frames = emit;
+    }
+
+    /// Ask claude-agent-acp to deny these tool names for this session.
+    ///
+    /// The adapter merges the list into the SDK query's `disallowedTools`
+    /// (`dist/acp-agent.js:4913` in 0.70.0), so the tools are gone from the
+    /// model's toolset rather than merely discouraged. It reads the list off
+    /// the `_meta` of the request that opens the session and never re-reads
+    /// it, so this must be set **before** `session/new`, `session/resume` or
+    /// `session/load`; a later call is inert for the session already open.
+    ///
+    /// Other adapters ignore the key: it lives under `_meta.claudeCode`, and
+    /// codex-acp 1.6.2 offers no per-session tool denial of any kind. Setting
+    /// it there is harmless but buys nothing.
+    ///
+    /// An empty list omits the key.
+    pub fn set_disallowed_tools(&mut self, tools: &[&str]) {
+        self.disallowed_tools = tools.iter().map(|tool| (*tool).to_owned()).collect();
+    }
+
+    /// Write the denied-tool list into a request's `_meta`, if there is one.
+    ///
+    /// Merges rather than assigns: `_meta` may already carry `systemPrompt`,
+    /// `sessionTitle` or `claudeCode.emitRawSDKMessages`.
+    fn apply_disallowed_tools_meta(&self, params: &mut serde_json::Value) {
+        if self.disallowed_tools.is_empty() {
+            return;
+        }
+        params["_meta"]["claudeCode"]["options"]["disallowedTools"] = serde_json::Value::Array(
+            self.disallowed_tools
+                .iter()
+                .map(|tool| serde_json::Value::String(tool.clone()))
+                .collect(),
+        );
     }
 
     pub fn set_answer_stall_timeout(&mut self, timeout: Option<std::time::Duration>) {
@@ -5110,6 +5152,86 @@ mod tests {
             sent.pointer("/_meta/claudeCode"),
             None,
             "off must mean absent, not false: {sent}"
+        );
+    }
+
+    /// The seat fence is only real if the denial reaches the adapter. It is
+    /// read off `session/new`'s `_meta`, merged into the SDK query there and
+    /// nowhere else, so a list set after the open is inert.
+    #[tokio::test]
+    async fn denied_tools_reach_session_new_meta() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        client.set_disallowed_tools(&["Task", "Agent", "SendMessage"]);
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode/options/disallowedTools"),
+            Some(&serde_json::json!(["Task", "Agent", "SendMessage"])),
+            "the adapter merges this key into the SDK query: {sent}"
+        );
+    }
+
+    /// A reattachment re-enters the same conversation on a fresh adapter
+    /// process, so the denial has to be restated or the fence lapses at the
+    /// first resume.
+    #[tokio::test]
+    async fn denied_tools_reach_session_resume_meta() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        client.set_disallowed_tools(&["Task"]);
+        let response = client
+            .session_resume_full("ses_prior", "/tmp", vec![])
+            .await
+            .expect("session/resume");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode/options/disallowedTools"),
+            Some(&serde_json::json!(["Task"])),
+            "resume forwards _meta to the same session builder: {sent}"
+        );
+    }
+
+    /// Default off, and off means the key is absent rather than an empty list:
+    /// a session that denied nothing must be byte-identical to one from before
+    /// the option existed.
+    #[tokio::test]
+    async fn a_session_that_denied_nothing_sends_no_disallowed_tools_key() {
+        let script = r#"
+            read -t 2 _init
+            echo '{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}'
+            read -t 2 REQ
+            echo '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_test","_receivedRequest":'"$REQ"'}}'
+            sleep 1
+        "#;
+        let mut client = spawn_script(script).await;
+        client.initialize().await.expect("initialize");
+        let response = client
+            .session_new_full("/tmp", vec![], None, None)
+            .await
+            .expect("session/new");
+        let sent = &response.raw["_receivedRequest"]["params"];
+        assert_eq!(
+            sent.pointer("/_meta/claudeCode"),
+            None,
+            "denying nothing must leave the key absent: {sent}"
         );
     }
 

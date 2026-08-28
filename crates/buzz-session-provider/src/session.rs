@@ -924,6 +924,18 @@ async fn start_agent(
     // Before session/new: the adapter reads the flag off that request's
     // `_meta` exactly once.
     client.set_emit_raw_sdk_frames(request.emit_raw_sdk_frames);
+    // The seat fence, enforced rather than only briefed: a seated execution
+    // launches with the local subagent and cross-session tools removed from
+    // its toolset. Seats only — an unseated execution's `session/new` is
+    // unchanged, and an empty list omits the key entirely.
+    //
+    // This is the same list `agent_fence::actor_seat_briefing` names, so the
+    // briefing and the toolset cannot drift apart. claude-agent-acp honours
+    // it; codex-acp has no equivalent and ignores it, which is why the
+    // briefing still states the rule in words.
+    if request.seat.is_some() {
+        client.set_disallowed_tools(crate::agent_fence::SEAT_OUT_OF_BOUNDS_TOOLS);
+    }
 
     if let Err(failure) = client
         .initialize()
@@ -2560,6 +2572,77 @@ done
         assert!(
             system_prompt.contains(".agents/skills/ (brief)"),
             "the materialized skill names must be listed: {system_prompt}"
+        );
+    }
+
+    /// The seat fence is an enforcement on claude-agent-acp, not only a
+    /// briefing: the tools named in [`crate::agent_fence::SEAT_OUT_OF_BOUNDS_TOOLS`]
+    /// must arrive on `session/new`'s `_meta`, which is the only place the
+    /// adapter reads them.
+    #[tokio::test]
+    async fn a_seated_create_denies_the_out_of_bounds_tools_on_session_new() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workdir = dir.path().join("work");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let log_path = dir.path().join("seated-fence.requests");
+        let agent = fake_agent(dir.path(), "seated-fence-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, &workdir);
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+            ("MCP_TEST_MODE".to_owned(), "fresh".to_owned()),
+            ("MCP_TEST_PROTOCOL".to_owned(), "2".to_owned()),
+            ("MCP_TEST_AGENT_NAME".to_owned(), "claude-code".to_owned()),
+        ];
+        create.seat = Some(SeatIdentity {
+            actor_pubkey: "d".repeat(64),
+            role: "builder".into(),
+            relay_url: "wss://relay.test".into(),
+        });
+        manager.create(create).await.expect("seated create");
+        manager.shutdown("s1");
+
+        let session_new = request_by_method(&log_path, "session/new");
+        assert_eq!(
+            session_new.pointer("/params/_meta/claudeCode/options/disallowedTools"),
+            Some(&serde_json::json!(["Task", "Agent", "SendMessage"])),
+            "a seat must launch with the out-of-bounds tools denied: {session_new}"
+        );
+    }
+
+    /// An execution that is not a seat is unchanged: no denial key at all, so
+    /// the request is byte-identical to one from before the fence existed.
+    #[tokio::test]
+    async fn an_unseated_create_denies_no_tools() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workdir = dir.path().join("work");
+        std::fs::create_dir_all(&workdir).expect("workdir");
+        let log_path = dir.path().join("unseated-fence.requests");
+        let agent = fake_agent(dir.path(), "unseated-fence-agent", MCP_RECORDING_AGENT);
+        let (tx, _rx) = mpsc::channel(16);
+        let mut manager = SessionManager::new(tx);
+        let mut create = request(agent, &workdir);
+        create.agent_env = vec![
+            (
+                "MCP_TEST_LOG".to_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+            ("MCP_TEST_MODE".to_owned(), "fresh".to_owned()),
+            ("MCP_TEST_PROTOCOL".to_owned(), "2".to_owned()),
+            ("MCP_TEST_AGENT_NAME".to_owned(), "claude-code".to_owned()),
+        ];
+        manager.create(create).await.expect("unseated create");
+        manager.shutdown("s1");
+
+        let session_new = request_by_method(&log_path, "session/new");
+        assert_eq!(
+            session_new.pointer("/params/_meta/claudeCode"),
+            None,
+            "an unseated execution must carry no denial key: {session_new}"
         );
     }
 

@@ -81,32 +81,44 @@ const EXEMPT: &[&str] = &[];
 /// another session directly. All three produce coordination that the
 /// provider's transcript never sees.
 ///
-/// # This list is a briefing, not an enforcement
+/// # Enforced on claude-agent-acp; a briefing on codex-acp
 ///
-/// Nothing in this crate can remove these tools from the adapter. The
-/// mechanisms that can, measured against `claude` 2.1.248 and
-/// `@agentclientprotocol/claude-agent-acp` 0.70.0 on 2026-08-28:
+/// For a seated execution on `claude-agent-acp`, [`crate::session`] passes
+/// this list to `AcpClient::set_disallowed_tools`, which writes it to
+/// `_meta.claudeCode.options.disallowedTools` on `session/new` (and on
+/// `session/resume` / `session/load`, which rebuild the session from the same
+/// `_meta`). The adapter merges it into the SDK query's `disallowedTools`
+/// (`dist/acp-agent.js:4913` in 0.70.0), so the tools are absent from the
+/// model's toolset, not merely discouraged.
 ///
-/// - `session/new` `_meta.claudeCode.options.disallowedTools`, which the
-///   adapter merges into the SDK query (`dist/acp-agent.js:4913`). This is the
-///   right mechanism and it costs nothing at spawn time — but the `_meta`
-///   object is built in `buzz-acp`'s `session_new_full`, not here.
+/// **On codex-acp it is still only a briefing.** `codex-acp` 1.6.2 exposes no
+/// per-session tool denial: its argv is `--client-name/--client-title/
+/// --client-version` on `login`, it reads `CODEX_PATH` and `CODEX_CONFIG`, and
+/// there is no `_meta` option of this shape. There is nothing to enforce with,
+/// so a codex seat is held to this list by [`actor_seat_briefing`] alone.
+/// Unseated executions are not fenced this way at all, by design.
+///
+/// # Mechanisms measured and rejected
+///
+/// Measured against `claude` 2.1.248 and `@agentclientprotocol/claude-agent-acp`
+/// 0.70.0 on 2026-08-28. Neither of these works; do not retry them:
+///
 /// - A per-seat `CLAUDE_CONFIG_DIR` holding a `permissions.deny` settings
-///   file. **Measured and rejected:** relocating it makes `claude` answer
-///   `Not logged in · Please run /login`, because the credential it reads out
-///   of the macOS keychain is keyed by the configuration home. Seeding the new
-///   directory with the operator's `.claude.json`, and pointing
-///   `CLAUDE_SECURESTORAGE_CONFIG_DIR` back at `~/.claude`, both still fail.
+///   file. Relocating it makes `claude` answer `Not logged in · Please run
+///   /login`, because the credential it reads out of the macOS keychain is
+///   keyed by the configuration home. Seeding the new directory with the
+///   operator's `.claude.json`, and pointing `CLAUDE_SECURESTORAGE_CONFIG_DIR`
+///   back at `~/.claude`, both still fail.
 /// - `CLAUDE_CODE_MANAGED_SETTINGS_PATH`. The name exists in the binary but a
 ///   settings file supplied that way had no effect on the resolved
 ///   permissions; the same file passed as `--settings` removed the denied tool
 ///   from the toolset outright. The adapter offers no argv for it.
 ///
-/// So there is no environment or argv the provider can set that denies these
-/// tools without breaking the seat's login. Until the `_meta` option is wired,
-/// the briefing is the whole of the fence here, and
-/// [`actor_seat_briefing`] must keep naming the tools rather than implying
-/// they are unavailable.
+/// So the per-session `_meta` option is the only mechanism that denies these
+/// tools without breaking the seat's login, and it is the one wired up.
+/// [`actor_seat_briefing`] must keep naming the tools regardless: on codex it
+/// is the whole fence, and on claude a named rule beats a tool that has simply
+/// vanished without explanation.
 pub(crate) const SEAT_OUT_OF_BOUNDS_TOOLS: &[&str] = &["Task", "Agent", "SendMessage"];
 
 /// The fence every adapter this sidecar spawns is subject to.
