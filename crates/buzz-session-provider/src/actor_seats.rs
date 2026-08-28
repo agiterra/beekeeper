@@ -53,6 +53,15 @@ pub struct ActorSeat {
     pub auth_tag: Option<String>,
     /// The relay the seat authenticates against.
     pub relay_url: String,
+    /// The agent's display name, when the launcher staged one.
+    ///
+    /// Not a secret and not on the wire — the desktop already publishes it as
+    /// the agent's profile name. It is here for one purpose: a seated
+    /// execution's `git` identity ([`Self::post_fence_env`]). Absent means the
+    /// launcher had no name to give, and the seat commits under its role or,
+    /// failing that, under its own pubkey.
+    #[serde(default)]
+    pub display_name: Option<String>,
     /// Host-local path to the role pack this seat was launched from, when the
     /// launcher staged one.
     ///
@@ -83,12 +92,48 @@ impl std::fmt::Debug for ActorSeat {
             .field("pubkey", &self.pubkey)
             .field("has_auth_tag", &self.auth_tag.is_some())
             .field("relay_url", &self.relay_url)
+            .field("display_name", &self.display_name)
             .field("has_pack", &self.pack_coordinates().is_some())
             .finish_non_exhaustive()
     }
 }
 
+/// Domain of the address a seated execution commits from.
+///
+/// Deliberately not a mail host and deliberately not a domain this project
+/// owns a mailbox on: a seat's commits must be attributable to the seat's
+/// Nostr identity, and a plausible-looking address that silently bounces is
+/// worse than one that is obviously synthetic. `git` requires *an* address;
+/// this is the one that claims nothing.
+pub const SEAT_EMAIL_DOMAIN: &str = "agents.beekeeper";
+
+/// How much of the seat's pubkey the address carries.
+///
+/// Long enough that two seats on one machine cannot collide by accident, short
+/// enough to read in `git log`. The full key is on the wire in the session's
+/// 44223 metadata; this is a handle for it, not a substitute.
+const SEAT_EMAIL_PUBKEY_PREFIX: usize = 16;
+
 impl ActorSeat {
+    /// The `git` author/committer identity this seat commits under.
+    ///
+    /// Returns `(name, email)`. The name is the agent's display name when the
+    /// launcher staged one, else the role it was seated with, else
+    /// `agent-<pubkey-prefix>` — never the operator's, which is what an
+    /// inherited `~/.gitconfig` would otherwise supply (ledger 77, *Fence*
+    /// (b)). The address is `<pubkey-prefix>@`[`SEAT_EMAIL_DOMAIN`].
+    pub fn git_identity(&self, role: Option<&str>) -> (String, String) {
+        let prefix: String = self.pubkey.chars().take(SEAT_EMAIL_PUBKEY_PREFIX).collect();
+        let name = [self.display_name.as_deref(), role]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|candidate| !candidate.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("agent-{prefix}"));
+        (name, format!("{prefix}@{SEAT_EMAIL_DOMAIN}"))
+    }
+
     /// The role pack this seat runs from, as `(pack directory, persona name)`.
     ///
     /// `None` unless the launcher staged both halves: a pack path with no
@@ -104,13 +149,24 @@ impl ActorSeat {
 
     /// The environment an actor seat's adapter is given **after** the fence.
     ///
-    /// Exactly four variables and never a fifth: the signing key, the relay it
-    /// signs against, the owner attestation when one exists, and the
-    /// `NOSTR_PRIVATE_KEY` mirror the `bee` CLI and the SDK also read. The
-    /// list is closed by design — the fence's value is that everything else in
-    /// the `BUZZ_*` namespace stays removed, and an open-ended injection here
-    /// would give it back one variable at a time.
-    pub fn post_fence_env(&self) -> Vec<(String, String)> {
+    /// A closed list, in two halves.
+    ///
+    /// *Identity on the relay*: the signing key, the relay it signs against,
+    /// the owner attestation when one exists, and the `NOSTR_PRIVATE_KEY`
+    /// mirror the `bee` CLI and the SDK also read. The fence's value is that
+    /// everything else in the `BUZZ_*` namespace stays removed, and an
+    /// open-ended injection here would give it back one variable at a time.
+    ///
+    /// *Identity in the checkout*: the four `GIT_*` variables from
+    /// [`Self::git_identity`]. `git` resolves author and committer from the
+    /// environment before `~/.gitconfig`, so without them a seat's commits are
+    /// signed off by whoever owns the home directory — the operator. That is
+    /// the same class of untruth as a forged transcript: a diff attributed to
+    /// a person who did not write it.
+    ///
+    /// `role` is the role this execution was seated with, used as the name
+    /// when the launcher staged no display name.
+    pub fn post_fence_env(&self, role: Option<&str>) -> Vec<(String, String)> {
         let mut env = vec![
             ("BUZZ_PRIVATE_KEY".to_owned(), self.nsec.clone()),
             ("NOSTR_PRIVATE_KEY".to_owned(), self.nsec.clone()),
@@ -121,6 +177,11 @@ impl ActorSeat {
         if let Some(auth_tag) = &self.auth_tag {
             env.push(("BUZZ_AUTH_TAG".to_owned(), auth_tag.clone()));
         }
+        let (name, email) = self.git_identity(role);
+        env.push(("GIT_AUTHOR_NAME".to_owned(), name.clone()));
+        env.push(("GIT_AUTHOR_EMAIL".to_owned(), email.clone()));
+        env.push(("GIT_COMMITTER_NAME".to_owned(), name));
+        env.push(("GIT_COMMITTER_EMAIL".to_owned(), email));
         env
     }
 }
@@ -271,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn a_seat_is_read_by_command_id_and_yields_exactly_four_variables() {
+    fn a_seat_is_read_by_command_id_and_yields_exactly_the_closed_list() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_seats(dir.path(), &seats_body("create-1"));
         let file = ActorSeatsFile::load(Some(&path));
@@ -279,7 +340,7 @@ mod tests {
         assert_eq!(seat.pubkey, "cd".repeat(32));
         assert!(file.seat("create-2").is_none());
 
-        let env = seat.post_fence_env();
+        let env = seat.post_fence_env(Some("builder"));
         let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
@@ -287,11 +348,68 @@ mod tests {
                 "BUZZ_PRIVATE_KEY",
                 "NOSTR_PRIVATE_KEY",
                 "BUZZ_RELAY_URL",
-                "BUZZ_AUTH_TAG"
+                "BUZZ_AUTH_TAG",
+                "GIT_AUTHOR_NAME",
+                "GIT_AUTHOR_EMAIL",
+                "GIT_COMMITTER_NAME",
+                "GIT_COMMITTER_EMAIL",
             ]
         );
         assert_eq!(env[0].1, NSEC);
         assert_eq!(env[1].1, NSEC, "the NOSTR_PRIVATE_KEY mirror");
+    }
+
+    /// The name falls back role → pubkey handle, and never to the operator's.
+    #[test]
+    fn a_seat_without_a_display_name_commits_under_its_role() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write_seats(dir.path(), &seats_body("create-1"));
+        let seat_file = ActorSeatsFile::load(Some(&path));
+        let seat = seat_file.seat("create-1").expect("seat");
+
+        assert_eq!(seat.git_identity(Some("lead")).0, "lead");
+        assert_eq!(
+            seat.git_identity(Some("  ")).0,
+            format!("agent-{}", "cd".repeat(8))
+        );
+        assert_eq!(
+            seat.git_identity(None).0,
+            format!("agent-{}", "cd".repeat(8))
+        );
+        assert_eq!(
+            seat.git_identity(None).1,
+            format!("{}@agents.beekeeper", "cd".repeat(8))
+        );
+    }
+
+    /// Ledger 77 (Fence, b): a seat used to commit as the operator, because
+    /// `git` fell back to the inherited `~/.gitconfig`. A seated execution
+    /// gets its own four `GIT_*` variables — the agent's display name (or the
+    /// role it holds) and a `<pubkey-prefix>@agents.beekeeper` address that is
+    /// deliberately not a mailbox.
+    #[test]
+    fn a_seat_commits_as_itself_not_as_the_operator() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let body = format!(
+            r#"{{"version":1,"pending":{{"create-1":{{"pubkey":"{pubkey}","nsec":"{NSEC}","relayUrl":"wss://relay.example","displayName":"Levain"}}}}}}"#,
+            pubkey = "cd".repeat(32)
+        );
+        let path = write_seats(dir.path(), &body);
+        let file = ActorSeatsFile::load(Some(&path));
+        let seat = file.seat("create-1").expect("the seat is held here");
+
+        let env = seat.post_fence_env(Some("builder"));
+        let lookup = |name: &str| -> String {
+            env.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_else(|| panic!("{name} was not exported for a seat"))
+        };
+        assert_eq!(lookup("GIT_AUTHOR_NAME"), "Levain");
+        assert_eq!(lookup("GIT_COMMITTER_NAME"), "Levain");
+        let expected_email = format!("{}@agents.beekeeper", "cd".repeat(8));
+        assert_eq!(lookup("GIT_AUTHOR_EMAIL"), expected_email);
+        assert_eq!(lookup("GIT_COMMITTER_EMAIL"), expected_email);
     }
 
     /// The launcher's pack coordinates survive the round trip, and a seat that
@@ -313,7 +431,7 @@ mod tests {
 
         // Pack coordinates never join the closed four-variable environment.
         assert!(
-            seat.post_fence_env()
+            seat.post_fence_env(Some("builder"))
                 .iter()
                 .all(|(name, value)| !name.contains("PACK") && value != "/packs/roles"),
             "the pack path leaked into the seat environment"
@@ -359,9 +477,18 @@ mod tests {
             ),
         );
         let file = ActorSeatsFile::load(Some(&path));
-        let env = file.seat("create-1").expect("seat").post_fence_env();
-        assert_eq!(env.len(), 3);
+        let env = file
+            .seat("create-1")
+            .expect("seat")
+            .post_fence_env(Some("builder"));
         assert!(env.iter().all(|(name, _)| name != "BUZZ_AUTH_TAG"));
+        assert_eq!(
+            env.iter()
+                .filter(|(name, _)| name.starts_with("BUZZ_"))
+                .count(),
+            2,
+            "only the key and the relay survive without an attestation"
+        );
     }
 
     /// The one-shot rule: after the create that used it, the entry is gone and

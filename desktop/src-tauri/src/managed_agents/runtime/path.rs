@@ -80,11 +80,12 @@ pub(crate) fn compose_path_entries(
 /// Assemble the augmented `PATH` for a launched managed-agent child process.
 ///
 /// Concatenates, in priority order:
-///   1. `<home>/.local/bin` — bundled CLI symlink
+///   1. exe parent dir — the binaries shipped beside the app itself
+///      (`Contents/MacOS/`: `bee`, `buzz-acp`, the other sidecars)
 ///   2. Buzz-managed npm prefix bin dir — app-private ACP adapter shims
 ///   3. Buzz-managed Node.js bin dir — app-private Node/npm runtime
-///   4. `nvm_bin` — nvm's default Node.js bin dir (if the user uses nvm)
-///   5. exe parent dir — DMG sidecars under `Contents/MacOS/`
+///   4. `<home>/.local/bin` — the user's own CLI dir
+///   5. `nvm_bin` — nvm's default Node.js bin dir (if the user uses nvm)
 ///   6. user's login-shell `PATH` — runtimes like node/python from other managers
 ///   7. the current process `PATH` — appended on every platform when no
 ///      login-shell PATH exists, because callers use `Command::env("PATH", …)`
@@ -101,6 +102,17 @@ pub(crate) fn compose_path_entries(
 /// error), collapsing the entire augmented `PATH` to `None` — the bug this
 /// guards against, which left managed agents unable to find `buzz`. Returns
 /// `None` only when no entries exist.
+///
+/// # Why the app's own directory comes first
+///
+/// `~/.local/bin` used to lead this list, on the reading that it holds the
+/// bundled CLI symlink. It does not have to: it is an ordinary user directory
+/// that anything may write. On 2026-08-27 a hand-repointed `~/.local/bin/bee`
+/// shadowed the `bee` shipped inside the app, so a seat ran a binary this
+/// build never produced and reported behaviour the build could not explain
+/// (`docs/SESSION_STATE.md` item 77, *Fence* (c)). The app-owned directories
+/// therefore outrank it: what the app ships is what a seat runs, and a user's
+/// own `~/.local/bin` still resolves everything the app does not ship.
 pub(in crate::managed_agents) fn build_augmented_path(
     home: Option<PathBuf>,
     exe_parent: Option<PathBuf>,
@@ -112,9 +124,13 @@ pub(in crate::managed_agents) fn build_augmented_path(
     let has_local_context = home_added || exe_added;
 
     // Build the managed/prefix entries (everything before login-shell PATH).
+    //
+    // App-owned directories first — the exe parent, then the Buzz-managed npm
+    // and Node bins — so the binaries this build ships win over anything a
+    // user (or an earlier debugging session) left in `~/.local/bin`.
     let mut managed: Vec<PathBuf> = Vec::new();
-    if let Some(home) = home {
-        managed.push(home.join(".local").join("bin"));
+    if let Some(parent) = exe_parent {
+        managed.push(parent);
     }
     // Only add managed runtime dirs when a home or executable context exists.
     // This keeps tests/utility callers that intentionally pass no local context
@@ -127,11 +143,11 @@ pub(in crate::managed_agents) fn build_augmented_path(
             managed.push(managed_node_bin);
         }
     }
+    if let Some(home) = home {
+        managed.push(home.join(".local").join("bin"));
+    }
     if let Some(nvm_bin) = nvm_bin {
         managed.push(nvm_bin);
-    }
-    if let Some(parent) = exe_parent {
-        managed.push(parent);
     }
 
     // Split the login-shell PATH into individual entries.
@@ -161,6 +177,30 @@ mod tests {
     use super::build_augmented_path;
     use std::path::PathBuf;
 
+    /// Ledger 77 (Fence, c): a stale `~/.local/bin/bee` shadowed the `bee`
+    /// shipped beside the app, so a seat ran a binary the build did not
+    /// produce. The app's own executable directory and the Buzz-managed bins
+    /// must therefore outrank `~/.local/bin`.
+    #[cfg(unix)]
+    #[test]
+    fn bundled_binaries_outrank_local_bin() {
+        let result = build_augmented_path(
+            Some(PathBuf::from("/home/agent")),
+            Some(PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS")),
+            Some("/usr/local/bin:/usr/bin:/bin".to_string()),
+            None,
+        )
+        .expect("path");
+        let exe = result
+            .find("/Applications/Beekeeper.app/Contents/MacOS")
+            .expect("exe parent");
+        let local = result.find("/home/agent/.local/bin").expect("local bin");
+        assert!(
+            exe < local,
+            "the app's own executable dir must precede ~/.local/bin: {result}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn splits_colon_delimited_shell_path() {
@@ -175,11 +215,11 @@ mod tests {
             None,
         );
         let result = result.expect("path");
-        assert!(result.starts_with("/home/agent/.local/bin:"), "{result}");
         assert!(
-            result.contains(":/Applications/Beekeeper.app/Contents/MacOS:"),
+            result.starts_with("/Applications/Beekeeper.app/Contents/MacOS:"),
             "{result}"
         );
+        assert!(result.contains(":/home/agent/.local/bin:"), "{result}");
         assert!(
             result.ends_with(":/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"),
             "{result}"
@@ -200,7 +240,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn nvm_bin_inserted_after_local_bin_before_exe_parent() {
+    fn nvm_bin_inserted_after_local_bin_and_after_exe_parent() {
         let result = build_augmented_path(
             Some(PathBuf::from("/home/user")),
             Some(PathBuf::from("/Applications/Beekeeper.app/Contents/MacOS")),
@@ -215,7 +255,9 @@ mod tests {
         let exe = result
             .find("/Applications/Beekeeper.app/Contents/MacOS")
             .unwrap();
-        assert!(local < nvm && nvm < exe, "{result}");
+        // The app's own directory leads; the user's own dirs keep their
+        // relative order behind it.
+        assert!(exe < local && local < nvm, "{result}");
         assert!(result.ends_with(":/usr/bin:/bin"), "{result}");
     }
 
@@ -241,11 +283,11 @@ mod tests {
         }
 
         let result = result.expect("path");
-        assert!(result.starts_with("/home/user/.local/bin:"), "{result}");
+        assert!(result.starts_with("/usr/local/bin:"), "{result}");
         assert!(!result.contains(".nvm"), "no nvm segment: {result}");
         assert!(
-            result.contains(":/usr/local/bin:"),
-            "exe parent must precede the inherited PATH: {result}"
+            result.contains(":/home/user/.local/bin:"),
+            "the user's own bin dir must precede the inherited PATH: {result}"
         );
         assert!(
             result.ends_with(":/sentinel/inherited"),
@@ -272,8 +314,8 @@ mod tests {
 
         let result = result.expect("path must not be None with a home dir");
         assert!(
-            result.starts_with("/home/user/.local/bin:"),
-            "home/.local/bin must be first: {result}"
+            result.contains("/home/user/.local/bin:"),
+            "home/.local/bin must be present: {result}"
         );
         assert!(
             result.ends_with(":/usr/bin:/bin"),
@@ -327,8 +369,8 @@ mod tests {
 
         let result = result.expect("path must not be None with a home dir");
         assert!(
-            result.starts_with(r"C:\Users\agent\.local\bin;"),
-            "home/.local/bin must be first: {result}"
+            result.contains(r"C:\Users\agent\.local\bin;"),
+            "home/.local/bin must be present: {result}"
         );
         assert!(
             result.ends_with(r";C:\Program Files\nodejs"),

@@ -72,6 +72,43 @@ const KEYS: &[&str] = &[
 /// reason to weaken [`PREFIXES`]. Do not add a credential here.
 const EXEMPT: &[&str] = &[];
 
+/// The tools a seated execution must not use, named in its own briefing.
+///
+/// Seats run with the operator's `HOME`, so a harness that keeps its session
+/// registry there — Claude Code's `~/.claude` is the live example — exposes
+/// tools that reach *other* sessions on this machine without going near the
+/// relay. `Task` and `Agent` spawn local subagents; `SendMessage` addresses
+/// another session directly. All three produce coordination that the
+/// provider's transcript never sees.
+///
+/// # This list is a briefing, not an enforcement
+///
+/// Nothing in this crate can remove these tools from the adapter. The
+/// mechanisms that can, measured against `claude` 2.1.248 and
+/// `@agentclientprotocol/claude-agent-acp` 0.70.0 on 2026-08-28:
+///
+/// - `session/new` `_meta.claudeCode.options.disallowedTools`, which the
+///   adapter merges into the SDK query (`dist/acp-agent.js:4913`). This is the
+///   right mechanism and it costs nothing at spawn time — but the `_meta`
+///   object is built in `buzz-acp`'s `session_new_full`, not here.
+/// - A per-seat `CLAUDE_CONFIG_DIR` holding a `permissions.deny` settings
+///   file. **Measured and rejected:** relocating it makes `claude` answer
+///   `Not logged in · Please run /login`, because the credential it reads out
+///   of the macOS keychain is keyed by the configuration home. Seeding the new
+///   directory with the operator's `.claude.json`, and pointing
+///   `CLAUDE_SECURESTORAGE_CONFIG_DIR` back at `~/.claude`, both still fail.
+/// - `CLAUDE_CODE_MANAGED_SETTINGS_PATH`. The name exists in the binary but a
+///   settings file supplied that way had no effect on the resolved
+///   permissions; the same file passed as `--settings` removed the denied tool
+///   from the toolset outright. The adapter offers no argv for it.
+///
+/// So there is no environment or argv the provider can set that denies these
+/// tools without breaking the seat's login. Until the `_meta` option is wired,
+/// the briefing is the whole of the fence here, and
+/// [`actor_seat_briefing`] must keep naming the tools rather than implying
+/// they are unavailable.
+pub(crate) const SEAT_OUT_OF_BOUNDS_TOOLS: &[&str] = &["Task", "Agent", "SendMessage"];
+
 /// The fence every adapter this sidecar spawns is subject to.
 pub(crate) const FENCE: EnvFence = EnvFence {
     keys: KEYS,
@@ -133,13 +170,30 @@ pub(crate) const FENCED_SESSION_BRIEFING: &str = "Buzz coding-session briefing: 
 ///   is seated, so background work an agent promises to report back on is a
 ///   promise the provider cannot keep.
 ///
+/// - The relay is the only channel out. A seat runs under the operator's
+///   `HOME`, so the harness's own local subagent and cross-session tools
+///   ([`SEAT_OUT_OF_BOUNDS_TOOLS`]) can reach other sessions on this machine
+///   directly — and on 2026-08-27 a lead used one to dispatch a builder, and
+///   the two seats then talked twice outside the relay. Nothing said that way
+///   is in the transcript the provider publishes, so it cannot be read, cited
+///   or replayed. Until the fence is enforced in the adapter's own options,
+///   this sentence is the only thing standing there, and it says so plainly
+///   rather than implying the tools are absent.
+/// - After dispatching, end the turn. The report comes back as its own
+///   addressed turn.
+/// - Reports arrive as turns, so polling the inbox inside a turn reads the
+///   same report the relay is about to deliver — which is exactly how the
+///   2026-08-27 lead came to read every report twice and call it relay
+///   redelivery.
+///
 /// It deliberately does **not** hand out a task list of `bee` commands. What a
 /// seat may usefully do with its identity is a slice-4 question (`bee sessions
 /// send`, the inbox, the roster); promising verbs that do not exist yet would
 /// reproduce the 2026-08-21 failure in the opposite direction.
 pub(crate) fn actor_seat_briefing(actor_pubkey: &str, role: &str, relay_url: &str) -> String {
+    let out_of_bounds = SEAT_OUT_OF_BOUNDS_TOOLS.join(", ");
     format!(
-        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. The `bee` CLI works here and speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - nothing reads this process between turns, so nothing will wake you to do so, and whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
+        "Buzz coding-session briefing: you are running inside a Buzz coding session, launched and supervised by the Buzz session provider, and you are seated in it as a Buzz agent.\n\nYou hold your own Buzz identity in this shell: public key {actor_pubkey}, seated with the role \"{role}\", authenticated against the relay at {relay_url}. The `bee` CLI works here and speaks as that identity. Those credentials are yours, not the provider's: the session provider signs this session's transcript, metadata, and receipts with a different key, and nothing you publish can claim to be provider-authored fact.\n\nEvery other Buzz variable is removed from this process's environment before you start, so anything under BUZZ_* that you cannot find is deliberately absent rather than misconfigured. Do not go looking for additional keys in .env, ~/.config/buzz/, or the environment, and never write your own key anywhere - not into a file in the working tree, not into a commit, and not into anything you post.\n\nThe provider itself observes and publishes this session's state - branch, HEAD commit, dirty worktree, and verified liveness - so routine progress needs no post from you. You will not receive a Project Pulse digest in this session.\n\nThe relay is the only channel to other seats and to the operator. Local subagent and cross-session tools - {out_of_bounds} - are out of bounds in this seat: they reach other sessions on this computer directly, and nothing said through them appears in the transcript this session publishes, so no one can read it, cite it, or replay it. Say it over the relay or it did not happen.\n\nAfter you dispatch work to another seat, end your turn. An addressed relay turn wakes you, so the reply arrives as a turn of its own; holding this turn open to wait for it only leaves the seat busy with nothing to say.\n\nReports arrive as turns. Do not poll `bee sessions inbox` inside a turn looking for one - you will read the same report the relay is about to hand you and count it twice.\n\nRun long work in the foreground and wait for it. Do not detach a build, a test run, or any other command into the background and end your turn promising to report back when it finishes - only an addressed relay turn wakes you, and a background job finishing is not one, so whoever is waiting on you is left watching a seat that looks busy and has nothing left to say. If something takes a long time, run it in the foreground with an explicit timeout, or run it in pieces you can report on as you go."
     )
 }
 
@@ -284,6 +338,91 @@ mod tests {
                 "the {label} briefing lost the do-not-detach rule"
             );
         }
+    }
+
+    /// Ledger 77 (*Fence*, a): a lead dispatched a builder through a local
+    /// subagent and the two seats then talked twice outside the relay. The
+    /// briefing must name the tools rather than leave the seat to infer them.
+    #[test]
+    fn the_seat_briefing_names_the_tools_that_bypass_the_relay() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        for tool in SEAT_OUT_OF_BOUNDS_TOOLS {
+            assert!(
+                briefing.contains(tool),
+                "the seated briefing does not name `{tool}`"
+            );
+        }
+        for tool in ["Task", "Agent", "SendMessage"] {
+            assert!(
+                SEAT_OUT_OF_BOUNDS_TOOLS.contains(&tool),
+                "`{tool}` is no longer named as out of bounds for a seat"
+            );
+        }
+        assert!(
+            briefing.contains("The relay is the only channel to other seats"),
+            "the seated briefing must say where coordination happens"
+        );
+        assert!(
+            briefing.contains("out of bounds"),
+            "the seated briefing must say the tools are forbidden, not absent"
+        );
+    }
+
+    /// Ledger 77 (*Lead pack*, c): after dispatching, end the turn — the
+    /// report arrives as its own addressed turn.
+    #[test]
+    fn the_seat_briefing_tells_a_dispatcher_to_end_its_turn() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        assert!(
+            briefing.contains("end your turn"),
+            "the seated briefing must tell a dispatching seat to end the turn"
+        );
+        assert!(
+            briefing.contains("An addressed relay turn wakes you"),
+            "the seated briefing must say what does wake a seat"
+        );
+    }
+
+    /// Same finding, second half: polling the inbox inside a turn reads the
+    /// report the relay is about to deliver, which is how the 2026-08-27 lead
+    /// counted every report twice.
+    #[test]
+    fn the_seat_briefing_forbids_polling_the_inbox_inside_a_turn() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        assert!(
+            briefing.contains("Reports arrive as turns"),
+            "the seated briefing must say how a report arrives"
+        );
+        assert!(
+            briefing.contains("Do not poll `bee sessions inbox` inside a turn"),
+            "the seated briefing must forbid polling the inbox inside a turn"
+        );
+    }
+
+    /// Ledger 77 (*Seat briefing*): "nothing wakes you between turns" is false
+    /// for a seat, and the do-not-detach rule must survive without it.
+    #[test]
+    fn the_seated_do_not_detach_rule_no_longer_rests_on_a_falsehood() {
+        let briefing = actor_seat_briefing(&"cd".repeat(32), "lead", "wss://relay.example");
+        assert!(
+            briefing.contains("foreground"),
+            "the seated briefing lost the do-not-detach rule"
+        );
+        for falsehood in [
+            "nothing will wake you",
+            "nothing reads this process between turns, so nothing will wake you",
+            "Nothing wakes you between turns",
+        ] {
+            assert!(
+                !briefing.contains(falsehood),
+                "the seated briefing still claims `{falsehood}`, which an \
+                 addressed relay turn disproves"
+            );
+        }
+        assert!(
+            briefing.contains("a background job finishing is not one"),
+            "the seated briefing must say why detaching still fails a seat"
+        );
     }
 
     /// The fence itself is unchanged by seating: `EXEMPT` stays empty, so a

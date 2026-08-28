@@ -2696,7 +2696,7 @@ done
     /// `agent_env`, and the seat's through `post_fence_env`; the child must
     /// end up with the second set and none of the first.
     #[tokio::test]
-    async fn an_agent_seat_receives_exactly_its_own_four_variables() {
+    async fn an_agent_seat_receives_exactly_its_own_identity_variables() {
         let dir = tempfile::tempdir().expect("tempdir");
         let dump = dir.path().join("child-env");
         let agent = fake_agent(
@@ -2721,12 +2721,18 @@ done
             role: "lead".into(),
             relay_url: "wss://seat.example".into(),
         });
-        create.post_fence_env = vec![
-            ("BUZZ_PRIVATE_KEY".into(), "nsec1seat".into()),
-            ("NOSTR_PRIVATE_KEY".into(), "nsec1seat".into()),
-            ("BUZZ_RELAY_URL".into(), "wss://seat.example".into()),
-            ("BUZZ_AUTH_TAG".into(), "[\"seat\"]".into()),
-        ];
+        // Built by the custody type itself, not hand-listed: the property
+        // under test is that what `ActorSeat` exports is what the child gets.
+        create.post_fence_env = crate::actor_seats::ActorSeat {
+            pubkey: "cd".repeat(32),
+            nsec: "nsec1seat".into(),
+            auth_tag: Some("[\"seat\"]".into()),
+            relay_url: "wss://seat.example".into(),
+            display_name: Some("Levain".into()),
+            pack_dir: None,
+            persona_id: None,
+        }
+        .post_fence_env(Some("lead"));
         manager.create(create).await.expect("create");
 
         let dumped = std::fs::read_to_string(&dump).expect("the agent dumped its environment");
@@ -2767,6 +2773,20 @@ done
             "a seat received more than its own identity: {buzz_keys:?}"
         );
 
+        // Ledger 77 (Fence, b): the seat commits as itself. `git` reads these
+        // four before `~/.gitconfig`, which is the operator's.
+        for expected in [
+            "GIT_AUTHOR_NAME=Levain",
+            "GIT_COMMITTER_NAME=Levain",
+            &format!("GIT_AUTHOR_EMAIL={}@agents.beekeeper", "cd".repeat(8)),
+            &format!("GIT_COMMITTER_EMAIL={}@agents.beekeeper", "cd".repeat(8)),
+        ] {
+            assert!(
+                dumped.contains(expected),
+                "the seat did not receive {expected}:\n{dumped}"
+            );
+        }
+
         // The developer toolchain is untouched by seating.
         assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
         assert!(dumped.contains("PATH="), "{dumped}");
@@ -2805,6 +2825,13 @@ done
             "an unseated execution received a BUZZ_ variable:\n{dumped}"
         );
         assert!(!dumped.contains("nsec1provider"), "{dumped}");
+        // No seat, so no seat identity in the checkout either: the four `GIT_*`
+        // variables are a seating artefact, and an unseated execution keeps
+        // whatever `git` identity the host already had.
+        assert!(
+            !dumped.contains("@agents.beekeeper"),
+            "an unseated execution was given a seat's git identity:\n{dumped}"
+        );
         assert!(dumped.contains("CLAUDE_CODE_EXECUTABLE"), "{dumped}");
         manager.shutdown("s1");
     }

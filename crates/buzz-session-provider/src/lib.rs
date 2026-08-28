@@ -1392,7 +1392,11 @@ impl Provider {
                         // read here for the same reason the key is: it names
                         // machine state a signed create must never carry.
                         let skills = seat_skills(seat);
-                        (Some(identity), seat.post_fence_env(), skills)
+                        (
+                            Some(identity),
+                            seat.post_fence_env(plan.role.as_deref()),
+                            skills,
+                        )
                     }
                     _ => {
                         self.forget_actor_seat(&plan.command_id);
@@ -1963,7 +1967,11 @@ impl Provider {
                         // workdir may have moved on since the create, and the
                         // write is a no-op when it has not.
                         let skills = seat_skills(seat);
-                        (Some(identity), seat.post_fence_env(), skills)
+                        (
+                            Some(identity),
+                            seat.post_fence_env(record.role.as_deref()),
+                            skills,
+                        )
                     }
                     _ => {
                         self.state.consume_command(&plan.command_id, now_secs())?;
