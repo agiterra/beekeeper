@@ -34,8 +34,9 @@ import { ensureProviderChannelMembership } from "../lib/providerChannelMembershi
  * The crew launch, wired to this computer's relay, provider and keyring.
  *
  * The sequence itself lives in `codingSessionCrewLaunch.ts` and is tested
- * there; this hook only supplies the four things that touch the outside world
- * and keeps the step list for the screen.
+ * there; this hook only supplies the steps that touch the outside world — the
+ * channel, the relay publishes, the receipts and this computer's seat custody
+ * — and keeps the step list for the screen.
  *
  * **Not resumable.** Unlike the single-session create, a crew launch is not
  * written to durable storage before it publishes: the durable record holds one
