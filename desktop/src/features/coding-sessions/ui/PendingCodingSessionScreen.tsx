@@ -99,7 +99,10 @@ export function PendingCodingSessionScreen({
   });
   const seatLabel = seat
     ? formatCodingSessionExecutionLabel({
-        agentRef: transaction.input.actor ?? seat.actorLabel ?? seat.role,
+        // `seat` existing is the statement that this create carries one; the
+        // formatter reads `agentRef` only to decide seat-ness, and a durable
+        // transaction always carries the actor it signed.
+        agentRef: transaction.input.actor ?? "seated",
         role: seat.role,
         agentDisplayName: seat.actorLabel,
         runtime: null,
