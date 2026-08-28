@@ -4053,7 +4053,122 @@ written and `bash -n` clean but **was not executed** — that harness needs
       from the Team tab, and Keystone hires. Note lane H's first residual —
       **the hire hook is not mounted**, so the founder's desktop will not
       answer a hire until that plumbing lands; a hire will read `unconfirmed`
-      after 60 s until then.
+      after 60 s until then. (**Closed by item 82**, 2026-08-28 evening: the
+      host is mounted and two more refusal codes exist. Item 82 is the current
+      state of hiring; read it after this one.)
+
+82. **The hire that nothing answered — mounting the host, and what a model id
+    is (built 2026-08-28 evening on `crew/front-door`, commits `4fae757f`,
+    `aed8dd6a`, `f3d55c5c`, `56c81870`, `b0df69a0`, on top of `03ddbc86`).**
+
+    Live finding, this machine, 14:37:41: Keystone (lead, session HiringTest,
+    channel 20e2e7f0-e58f-40fd-af0d-3f8323e1de0b) published a valid
+    `session.hire` — commandId 9a2f9956…, role builder, model
+    `claude-sonnet-5` — and nothing answered inside 60 s. Two separate causes,
+    both now fixed:
+
+    - **Nothing was listening.** `useCodingSessionHire` was written,
+      typechecked and unit-covered, and no component rendered it (item 81, lane
+      H's first residual, in capitals). A running desktop therefore never
+      subscribed to the 44221 stream. This is the second time a written-but-
+      unmounted surface has cost a live run; the ledger entry did not prevent
+      it.
+    - **The model id was not one the runtime offers.** `claude-primary`'s
+      catalog is `default, claude-fable-5[1m], haiku, opus[1m], sonnet`.
+      `claude-sonnet-5` is a vendor name, not a catalog id, and nothing
+      checked — so even a mounted host would have seated a create naming a
+      model the runtime would have to reinterpret or reject later.
+
+    What landed:
+
+    - `desktop/src/features/coding-sessions/ui/CodingSessionHireHost.tsx`
+      (new): a component that renders nothing and answers hires for as long as
+      the app is open. Mounted from `desktop/src/app/AppShell.tsx:932`, beside
+      `NewCodingSessionDialogHost`, inside the community-scoped subtree (so a
+      community switch remounts it) and **only in the main window** —
+      `{!isHuddleRoom ? … : null}`, because a huddle room is a second window
+      running the same shell down the same return path, and two hosts would
+      seat two agents for one hire. Session pop-outs return before that point
+      already. It holds no module state, so `resetCommunityState()` gains
+      nothing. Sourcing lives in the host (identity, channels incl.
+      transports, the global catalog grouped into umbrellas, managed agents,
+      provider identity + runtimes, the remembered checkout via
+      `byChannel ?? mru[0]`, the requesting seat's newest command target);
+      `CodingSessionHireRunner` is the hook and nothing else.
+
+    - `useCodingSessionHire` now takes its outside world as
+      `CodingSessionHireDeps` (bus, worktree, create hint, the three seat
+      custody/membership steps, signer, publisher, two id minters, clock) with
+      `DEFAULT_CODING_SESSION_HIRE_DEPS` as the real thing, and its queries as
+      input rather than calling React Query itself.
+
+    - `lib/codingSessionHireModel.ts` (new): offered ids used byte for byte;
+      Claude vendor aliases (`claude-sonnet-*`, `claude-opus-*`,
+      `claude-haiku-*`) translated onto the catalog's family alias when it
+      offers one, and the translation **disclosed** in the umbrella
+      (`codingSessionHireModelNoticeLine`, published beside the seated create);
+      anything else refused `HIRE_MODEL_NOT_OFFERED` with the offered ids in
+      the reason. An unread catalog (empty list) refuses nothing — that is
+      "not read", not "offers nothing". `opus` and `opus[1m]` stay distinct
+      ids.
+
+    - Staleness: a hire older than
+      `CODING_SESSION_HIRE_MAX_AGE_SECONDS` (15 min) is refused `HIRE_STALE`
+      ("this hire request is older than the host's window; hire again") —
+      checked after authority, so a stranger's stale hire is still ignored in
+      silence. `selectUnansweredCodingSessionHires` now returns the backlog
+      newest first (the seat ceiling is finite, so the last seat should go to
+      the request the lead is actually waiting on).
+
+    - Wire + CLI (`03ddbc86`): `HIRE_MODEL_NOT_OFFERED` and `HIRE_STALE` joined
+      `HIRE_REFUSAL_CODES` in buzz-core, and `bee sessions hire` prints a
+      remedy per known code after the host's own sentence (an unknown code
+      prints the host's words alone).
+
+    - Lead pack (`b0df69a0`): `personas/roles/lead/skills/hire/SKILL.md` gains
+      a **Model ids** section — ids come from the provider catalog; read them
+      with `bee --format json sessions status --channel <uuid>` (what live
+      seats run) or the runtime's kind:44222 catalog; a
+      `HIRE_MODEL_NOT_OFFERED` reason is itself a catalog; omitting `--model`
+      is always safe — plus the alias table and the two new refusal rows.
+      `bee pack validate personas/roles/lead` prints `Valid.`
+
+    Red before green: `codingSessionHireModel`'s suite failed on the missing
+    module and four policy tests failed with `modelCatalogs` unknown to the
+    decision; the staleness tests returned `seat` for a 16-minute-old hire; the
+    ordering test returned observed order; `codingSessionHireModelNoticeLine`
+    did not exist; and the whole new jsdom suite
+    (`ui/CodingSessionHireHost.test.mjs`, 6 tests) failed
+    `ERR_MODULE_NOT_FOUND` on the host component — the exact state the running
+    desktop was in. Mutating the disclosure branch to `false &&` turned the
+    translation test red again, so the suite bites.
+
+    Gates (this branch): desktop `pnpm typecheck` clean, `pnpm test` 6,614
+    passed / 0 failed, `pnpm check:px-text` clean, `just file-size-check` ok;
+    `cargo test -p buzz-core -p buzz-cli --lib` 588 + 447 passed; `cargo clippy
+    -p buzz-core -p buzz-cli --all-targets -- -D warnings` clean; `cargo fmt
+    --all -- --check` clean.
+
+    Open after this:
+
+    - **No live exercise yet.** Nothing on this branch has been run against a
+      relay: no hire has been seated by the mounted host, and the huddle-window
+      guard is reasoning about the shell's return paths, not an observed double
+      seat. The next live run is the evidence.
+    - The model catalog the host checks against is the runtime table's
+      `allowedModels` (`getCodingSessionProviderRuntimes`), not the live
+      `coding_session_provider_models` probe. Where the two differ, a model the
+      probe would offer can be refused; the refusal names what this host
+      believes is offered, which is at least a fact about this host.
+    - The translation is disclosed as a session-lane message, not as a
+      lifecycle system row — the same deviation lane H recorded for the refusal
+      notice, for the same file-ownership reason.
+    - `bee` has no subcommand that prints a runtime's catalog, so the skill
+      points at `sessions status` and at the refusal's own list. A
+      `bee sessions models` would be better.
+    - The stale window is host-side only: the CLI still waits 60 s and reports
+      `unconfirmed`, so a lead sees `unconfirmed` for a hire the host will
+      later refuse `HIRE_STALE` if it comes back inside 15 minutes.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
@@ -4100,10 +4215,11 @@ relay). **This changes the relay**, so hive redeploys on the green pipeline;
 until it does, the desktop and the CLI both print "this relay does not accept
 hire requests yet" — that is the wire rule working, not a bug. After the
 deploy: Brian relaunches the dev app, launches the lead alone from the Team
-tab, and Keystone hires. Item 81 records the gate counts and the one residual
-that blocks the walk — the founder desktop's hire hook is written but **not
-mounted**, so a hire will read `unconfirmed` after 60 s until that plumbing
-lands.
+tab, and Keystone hires. Item 81 records the gate counts; **item 82 supersedes
+its blocking residual** — the founder desktop's hire host is now mounted
+(`AppShell.tsx:932`), model ids are checked against the runtime's catalog, and
+a hire older than fifteen minutes is refused rather than seated. None of that
+has been exercised live yet.
 
 **Read §2 item 80 first (2026-08-28 afternoon).** Keystone's first mission
 from inside Beekeeper found seven things by doing; three lanes on
