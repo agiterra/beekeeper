@@ -2543,12 +2543,7 @@ agent into a running session (join dialog, pending screen, session header),
 status` and `bee sessions list`. The installer also stages the designer and
 poker packs as unseated roles, and item 76 records which surfaces this batch
 deliberately did not build. Item 77 is the ledger of open findings from the
-2026-08-27 live crew runs. **Not in this landing:** the fixes for items 73, 74
-and 75 (pending-create honesty copy; observers accepting a seated create; the
-provider briefing a seat with its pack) were still sitting on
-`fix/pending-create-honesty` and `fix/seated-session-followups` when this
-commit was written — run `git log --oneline origin/main` before assuming they
-are on `main`. Three things that will bite you on a dev machine: (1) the
+2026-08-27 live crew runs. **Also in this landing:** the fixes for items 73, 74 and 75 (pending-create honesty copy; every observer accepting a seated create; the provider briefing a seat with its pack) — they were cherry-picked into `crew/front-door` when the integration branch was cut, so they are on `main` as `02e17411`, `b76e22e0` and `b16dee88`; the topic branches `fix/pending-create-honesty` and `fix/seated-session-followups` are therefore redundant, not pending (`git log --oneline origin/main | grep -E "never confirmed|seated create|brief a seated"` shows all three). Three things that will bite you on a dev machine: (1) the
 Beekeeper rename moved the managed runtime dir to `Application
 Support/Beekeeper`, so the first launch re-provisions the managed Node
 runtime and ACP shims — or copy the old
