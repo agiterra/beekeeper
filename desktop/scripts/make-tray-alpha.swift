@@ -41,11 +41,8 @@ let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8
                     space: nil, bitmapInfo: alphaOnly)!
 ctx.interpolationQuality = .high
 ctx.draw(solid, in: CGRect(x: 0, y: 0, width: width, height: height))
-// CGContext rows run bottom-up relative to the PNG; flip so the .bin is
-// top-down row-major, matching the pixel loop in tray_menu.rs.
-let buf = ctx.data!.assumingMemoryBound(to: UInt8.self)
-var out = Data(capacity: width * height)
-for row in stride(from: height - 1, through: 0, by: -1) {
-    out.append(Data(bytes: buf + row * width, count: width))
-}
+// CGBitmapContext memory is already top-down row-major — exactly what the
+// pixel loop in tray_menu.rs expects — so write the buffer as-is. (Flipping
+// here shipped an upside-down menu-bar hat once already.)
+let out = Data(bytes: ctx.data!, count: width * height)
 try! out.write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
