@@ -4057,6 +4057,146 @@ written and `bash -n` clean but **was not executed** — that harness needs
       host is mounted and two more refusal codes exist. Item 82 is the current
       state of hiring; read it after this one.)
 
+    **Follow-up 0ce25f6e — the host is mounted:** lane H's residual above
+    was not theoretical. Live, this machine, 2026-08-28 14:37:41: Keystone's
+    first hire (commandId 9a2f9956…) went unanswered because the host was
+    never mounted, and the lead blocked correctly with "the founder's host
+    must be online". What the follow-up seat did, verbatim:
+
+    - MOUNT SITE (exact): desktop/src/app/AppShell.tsx:932 — `{!isHuddleRoom
+      ? <CodingSessionHireHost /> : null}`, immediately after
+      `<NewCodingSessionDialogHost />` (:931), inside the community-scoped
+      subtree (AppShell is the root route under `<AppReady
+      key={communityKey}>`); import at AppShell.tsx:54.
+
+    - (1) HOST:
+      desktop/src/features/coding-sessions/ui/CodingSessionHireHost.tsx:41
+      `CodingSessionHireHost` renders nothing and sources identity, channels
+      (incl. session transports), the global catalog grouped via
+      groupCodingSessionCatalog, managed agents, provider identity +
+      runtimes, checkout (byChannel ?? mru[0]) and the requesting seat's
+      newest command target; :148 `CodingSessionHireRunner` is the hook and
+      nothing else, so a test mounts the real hook against injected effects.
+      Holds no module state — nothing added to resetCommunityState().
+
+    - (1) DEPS INJECTABLE:
+      desktop/src/features/coding-sessions/hooks/useCodingSessionHire.ts:109
+      `CodingSessionHireDeps` (bus, worktree, create hint, the three seat
+      custody/membership steps, signer, publisher, two id minters, clock)
+      with :126 DEFAULT_CODING_SESSION_HIRE_DEPS as the real thing; queries
+      moved out of the hook into the host's input.
+      publishSeatedCodingSessionCreate stays real, so membership→custody
+      ordering is observed rather than mocked.
+
+    - (1) JSDOM TEST:
+      desktop/src/features/coding-sessions/ui/CodingSessionHireHost.test.mjs
+      — 6 tests, all pass. Drives a real signed 44221 through the mounted
+      runner and asserts the sequence exactly
+      ['worktree','hint','membership','custody','sign:44221','publish:44221']
+      plus the seated create's actor/role/`[From the lead] ` first turn; a
+      refusal as a 44220 turn to the requester's target (`hire refused:
+      HIRE_OFF — …`) plus the umbrella lane line and nothing cut or seated;
+      HIRE_STALE; the model translation and its disclosure;
+      HIRE_MODEL_NOT_OFFERED with the offered ids; and one answer per hire
+      however often observed.
+
+    - RED BEFORE GREEN (1): with CodingSessionHireHost.tsx moved aside, the
+      whole new suite failed `ERR_MODULE_NOT_FOUND …
+      CodingSessionHireHost.tsx` — the exact state the running desktop was
+      in at 14:37. Then green 6/6. Mutation check: changing `if
+      (plan.modelNotice !== null)` to `if (false && …)` in
+      useCodingSessionHire.ts turned the translation test red (5 pass / 1
+      fail), so the suite bites; reverted.
+
+    - (2) MODEL IDS:
+      desktop/src/features/coding-sessions/lib/codingSessionHireModel.ts:57
+      resolveCodingSessionHireModel (offered → byte-for-byte;
+      claude-sonnet-*/opus-*/haiku-* → the catalog's family alias, `opus`
+      and `opus[1m]` kept distinct; empty catalog = 'not read', refuses
+      nothing), :93 describeCodingSessionHireModelRefusal (offered ids in
+      the reason), :114 codingSessionHireModelNotice (the disclosure). Wired
+      at codingSessionHirePolicy.ts:218-232 (+ `modelCatalogs` on
+      CodingSessionHireDecisionInput, the one typecheck error the prior seat
+      left) and fed from the runtimes' allowedModels at
+      useCodingSessionHire.ts:302.
+
+    - (2) DISCLOSURE: codingSessionHireAnswer.ts:191
+      codingSessionHireModelNoticeLine → published as an umbrella lane
+      message beside the seated create (useCodingSessionHire.ts, after
+      publishSeatedCodingSessionCreate). Deviation from the brief's 'create
+      title/notice': the seat's title stays the umbrella's and the brief
+      stays the brief; the substitution is said in the umbrella timeline
+      instead — same surface lane H used for the refusal notice, for the
+      same file-ownership reason.
+
+    - (2) RED BEFORE GREEN: codingSessionHireModel.test.mjs failed on the
+      missing module and 4 codingSessionHirePolicy tests failed with
+      `modelCatalogs` unknown to the decision (prior seat, kept);
+      codingSessionHireModelNoticeLine's test failed `does not provide an
+      export named 'codingSessionHireModelNoticeLine'` before I added it.
+      Wire side (03ddbc86, kept): HIRE_MODEL_NOT_OFFERED + HIRE_STALE at
+      crates/buzz-core/src/coding_session_lifecycle_command.rs:500,503 and
+      the CLI's remedy table at
+      crates/buzz-cli/src/commands/sessions/crew.rs:1661.
+
+    - (3) SKILL: personas/roles/lead/skills/hire/SKILL.md:62 new '## Model
+      ids' section — ids are the provider catalog's; read them with `bee
+      --format json sessions status --channel <uuid>` (the `model` of each
+      live execution) or the runtime's kind:44222 catalog; a
+      HIRE_MODEL_NOT_OFFERED reason is itself a catalog; omitting --model is
+      always safe. Alias table included; refusal table gains
+      HIRE_MODEL_NOT_OFFERED and HIRE_STALE rows with a remedy each. `cargo
+      run -q -p buzz-cli -- pack validate personas/roles/lead` printed
+      `Valid.` (exit 0). Honest limit: `bee` has no subcommand that prints a
+      runtime's catalog, so the skill does not claim one.
+
+    - (4) STALE: codingSessionHireAnswer.ts:48
+      CODING_SESSION_HIRE_MAX_AGE_SECONDS = 15*60 and the HIRE_STALE branch
+      after the authority check (a stranger's stale hire is still ignored,
+      not refused); codingSessionHireSeat.ts:242 sorts the unanswered
+      backlog newest first (createdAt desc, stable; no createdAt keeps
+      observed order). Red first: the newest-first test returned
+      ['csl-old','csl-new','csl-mid'] before the sort existed; the staleness
+      tests (prior seat, kept) returned `seat` for a 16-minute-old hire.
+
+    - EXTRA FINDING, fixed: the mount had to be gated to the main window. A
+      huddle room is a second window running the same AppShell down the same
+      return path (session pop-outs return earlier at AppShell.tsx:679), so
+      an ungated host would answer every hire twice — two identities, two
+      worktrees, two processes — because the hook's dedupe set is per
+      instance. Commit 56c81870.
+
+    - GATES (all foreground, exit lines captured): desktop `pnpm typecheck`
+      exit 0; `pnpm test` exit 0, 6,614 passed / 0 failed / 78 suites; `pnpm
+      check:px-text` exit 0; `just file-size-check` exit 0 (AppShell.tsx
+      970/1000, useCodingSessionHire.ts 456, CodingSessionHireHost.tsx 152);
+      `cargo test -p buzz-core -p buzz-cli --lib` exit 0 (588 + 447 passed);
+      `cargo clippy -p buzz-core -p buzz-cli --all-targets -- -D warnings`
+      exit 0; `cargo fmt --all -- --check` exit 0.
+
+    - COMMITS (all -s, no push, no rebase): 4fae757f model ids · aed8dd6a
+      stale window + newest-first + disclosure line · f3d55c5c mount +
+      injectable deps + jsdom suite · b0df69a0 lead skill · 56c81870
+      huddle-window guard · 0ce25f6e ledger item 82. The inherited lane
+      commit 03ddbc86 was kept untouched. Working tree clean.
+
+    - LEDGER: docs/SESSION_STATE.md gains item 82 (line 4060) with the live
+      14:37 finding, the two causes, the mount site, the alias rule, the
+      window, the gates and five open items; item 81's 'THE HOOK IS NOT
+      MOUNTED' residual and §3's lede now point at item 82 instead of
+      asserting something false.
+
+    - NOT DONE / HONEST LIMITS: (a) no live exercise — nothing here has met
+      a relay, so the mounted host has never actually seated a hire and the
+      huddle guard is reasoning about return paths, not an observed double
+      seat; (b) the catalog checked is the runtime table's allowedModels,
+      not the live `coding_session_provider_models` probe, so the two can
+      disagree; (c) the CLI still reports `unconfirmed` at 60 s for a hire
+      the host may later refuse HIRE_STALE; (d) I did not run `git fetch` —
+      it needs NIP-98 credentials and would hang this non-interactive shell
+      — but the local `origin/main` is afeff218, which is exactly this
+      branch's base, so no rebase was needed.
+
 82. **The hire that nothing answered — mounting the host, and what a model id
     is (built 2026-08-28 evening on `crew/front-door`, commits `4fae757f`,
     `aed8dd6a`, `f3d55c5c`, `56c81870`, `b0df69a0`, on top of `03ddbc86`).**
