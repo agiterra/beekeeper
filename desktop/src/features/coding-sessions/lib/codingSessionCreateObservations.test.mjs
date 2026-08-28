@@ -606,3 +606,39 @@ test("a turn receipt does not dispute the create's real answer", () => {
   assert.equal(observations.length, 1);
   assert.deepEqual(observations[0].target, CLAUDE_TARGET);
 });
+
+test("a seated create (actor + role) is a create, and joins like any other", () => {
+  const allowed = new Set([CHANNEL_ID]);
+  const seat = (extra) => {
+    const content = JSON.parse(createEvent().content);
+    return createEvent({
+      overrideContent: JSON.stringify({
+        ...content,
+        action: { ...content.action, ...extra },
+      }),
+    });
+  };
+  const seated = seat({ actor: "d".repeat(64), role: "lead" });
+  assert.equal(
+    classifyCodingSessionCreateEvent(seated, allowed).kind,
+    "create",
+  );
+  const store = ingest([seated, receiptEvent()]);
+  assert.equal(store.snapshot([CHANNEL_ID]).length, 1);
+  assert.equal(store.counts().malformedCount, 0);
+  // Half a seat, an uppercase actor, or a bad slug is malformed — the same
+  // rule buzz-core enforces on ingest.
+  for (const bad of [
+    { role: "lead" },
+    { actor: "d".repeat(64) },
+    { actor: "D".repeat(64), role: "lead" },
+    { actor: "d".repeat(64), role: "Lead" },
+    { actor: "d".repeat(64), role: "" },
+  ]) {
+    assert.equal(
+      classifyCodingSessionCreateEvent(seat(bad), allowed).kind,
+      "malformed",
+      JSON.stringify(bad),
+    );
+  }
+});

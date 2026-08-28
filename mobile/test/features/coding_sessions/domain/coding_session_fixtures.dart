@@ -199,6 +199,8 @@ NostrEvent createEvent({
   String? genesisRef,
   int createdAt = 800,
   String? id,
+  String? actor,
+  String? role,
 }) {
   final action = <String, Object?>{
     'type': 'session.create',
@@ -211,6 +213,8 @@ NostrEvent createEvent({
     'model': 'opus',
     'title': null,
     'initialTurn': null,
+    'actor': ?actor,
+    'role': ?role,
   };
   return event(
     kind: EventKind.codingSessionLifecycleCommand,

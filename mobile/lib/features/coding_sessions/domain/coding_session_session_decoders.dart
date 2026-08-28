@@ -94,6 +94,14 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
   }
   final hasSessionRef = action.containsKey('sessionRef');
   final hasGenesisRef = action.containsKey('genesisRef');
+  // An agent seat: `actor` and `role` travel together or not at all, in the
+  // exact forms buzz-core accepts (lowercase 64-hex; `[a-z0-9-]` slug).
+  final hasActor = action.containsKey('actor');
+  if (hasActor != action.containsKey('role')) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
   final createKeys = [
     'type',
     'projectRef',
@@ -105,8 +113,18 @@ CodingSessionDecoded<CodingSessionCreate> decodeCodingSessionCreate(
     'model',
     'title',
     'initialTurn',
+    if (hasActor) 'actor',
+    if (hasActor) 'role',
   ];
   if (!hasExactKeys(action, createKeys) || (hasGenesisRef && !hasSessionRef)) {
+    return const CodingSessionDecoded.failed(
+      CodingSessionDecodeReason.malformedPayload,
+    );
+  }
+  if (hasActor &&
+      (!isHex64(action['actor']) ||
+          action['actor'] != normalizePubkey(action['actor']) ||
+          !_isRoleSlug(action['role']))) {
     return const CodingSessionDecoded.failed(
       CodingSessionDecodeReason.malformedPayload,
     );
@@ -472,3 +490,9 @@ CodingSessionDecodeReason? _checkSignature(
       ? CodingSessionDecodeReason.badSignature
       : null;
 }
+
+final RegExp _roleSlugPattern = RegExp(r'^[a-z0-9-]{1,64}$');
+
+/// A role slug exactly as buzz-core accepts it.
+bool _isRoleSlug(Object? value) =>
+    value is String && _roleSlugPattern.hasMatch(value);

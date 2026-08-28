@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  hasStrictLifecycleCommandJson,
+  hasStrictLifecycleCommandValues,
   hasStrictMetadataJson,
   isStrictMetadataContent,
 } from "./sessionCoordinationStrictJson.ts";
@@ -134,4 +136,33 @@ test("an unknown key is still a hard rejection", () => {
     isStrictMetadataContent(metadata({ observedCommit: "a".repeat(40) })),
     false,
   );
+});
+
+test("a seated create (actor + role) is a strict lifecycle command", () => {
+  const create = (extra = {}) => ({
+    schema: "buzz-coding-session-lifecycle-command/v1",
+    commandId: "csl-1",
+    action: {
+      type: "session.create",
+      projectRef: null,
+      repoRef: null,
+      sessionRef: SESSION_REF,
+      genesisRef: "b".repeat(64),
+      providerInstanceRef: "claude-primary",
+      providerAuthorityPubkey: "a".repeat(64),
+      model: null,
+      title: "roletest",
+      initialTurn: null,
+      ...extra,
+    },
+  });
+  const strict = (content) =>
+    hasStrictLifecycleCommandJson(JSON.stringify(content), content) &&
+    hasStrictLifecycleCommandValues(content);
+  assert.equal(strict(create()), true);
+  assert.equal(strict(create({ actor: ACTOR, role: "lead" })), true);
+  assert.equal(strict(create({ role: "lead" })), false);
+  assert.equal(strict(create({ actor: ACTOR })), false);
+  assert.equal(strict(create({ actor: ACTOR, role: "Lead" })), false);
+  assert.equal(strict(create({ actor: "C".repeat(64), role: "lead" })), false);
 });

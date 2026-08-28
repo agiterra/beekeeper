@@ -114,10 +114,16 @@ export function hasStrictLifecycleCommandJson(
       "title",
       "initialTurn",
     ];
-    return hasExactFields(action, [
+    const unseated = [
       base,
       [...base.slice(0, 3), "sessionRef", ...base.slice(3)],
       [...base.slice(0, 3), "sessionRef", "genesisRef", ...base.slice(3)],
+    ];
+    // The seated forms buzz-core accepts: every unseated form plus the
+    // `actor`/`role` pair, which travels together or not at all.
+    return hasExactFields(action, [
+      ...unseated,
+      ...unseated.map((form) => [...form, "actor", "role"]),
     ]);
   }
   return (
@@ -150,6 +156,12 @@ export function hasStrictLifecycleCommandValues(
       (isCanonicalSessionRef(action.sessionRef) &&
         typeof action.genesisRef === "string" &&
         /^[0-9a-f]{64}$/.test(action.genesisRef));
+    const seatValid =
+      !Object.hasOwn(action, "actor") ||
+      (typeof action.actor === "string" &&
+        /^[0-9a-f]{64}$/.test(action.actor) &&
+        typeof action.role === "string" &&
+        isRoleSlug(action.role));
     return (
       boundedNullable(action.projectRef, MAX_REFERENCE_BYTES) &&
       boundedNullable(action.repoRef, MAX_REFERENCE_BYTES) &&
@@ -158,7 +170,8 @@ export function hasStrictLifecycleCommandValues(
       boundedNullable(action.title, MAX_REFERENCE_BYTES) &&
       boundedNullable(action.initialTurn, 12 * 1024) &&
       sessionRefValid &&
-      genesisValid
+      genesisValid &&
+      seatValid
     );
   }
   return hasStrictSessionTargetValues(action.session);
