@@ -21,6 +21,13 @@
  * event.
  */
 
+import {
+  codingSessionHireModelNotice,
+  codingSessionHireModelOf,
+  describeCodingSessionHireModelRefusal,
+  resolveCodingSessionHireModel,
+} from "./codingSessionHireModel";
+
 /** The stored policy, exactly as the settings panel edits it. */
 export type CodingSessionHirePolicy = {
   /** Master switch. Off means every hire is refused `HIRE_OFF`. */
@@ -58,13 +65,15 @@ export const CODING_SESSION_HIRE_MAX_SEATS_CEILING = 32;
 export const CODING_SESSION_HIRE_POLICY_STORAGE_KEY =
   "buzz.codingSessions.hirePolicy.v1";
 
-/** The five refusal codes the contract defines. Nothing else is published. */
+/** The refusal codes the contract defines. Nothing else is published. */
 export type CodingSessionHireRefusalCode =
   | "HIRE_OFF"
   | "HIRE_ROLE_NOT_ALLOWED"
   | "HIRE_LIMIT"
   | "HIRE_NO_IDENTITY"
-  | "HIRE_PROVIDER_NOT_ALLOWED";
+  | "HIRE_PROVIDER_NOT_ALLOWED"
+  | "HIRE_MODEL_NOT_OFFERED"
+  | "HIRE_STALE";
 
 /** A managed agent this computer could seat, as the decision needs it. */
 export type CodingSessionHireCandidate = {
@@ -103,6 +112,13 @@ export type CodingSessionHireDecision =
       providerInstanceRef: string;
       /** Model the create carries, or null to let the runtime choose. */
       model: string | null;
+      /**
+       * What the host substituted for the lead's words, when it substituted
+       * anything. Null when the model is exactly the one asked for (or none
+       * was asked for): a disclosure nobody needs is noise, and noise is how
+       * a real disclosure gets skipped.
+       */
+      modelNotice: string | null;
     }
   | { ok: false; code: CodingSessionHireRefusalCode; reason: string };
 
@@ -122,6 +138,13 @@ export type CodingSessionHireDecisionInput = {
    * one the policy also allows is the default a hire naming no provider gets.
    */
   availableProviderInstanceRefs: readonly string[];
+  /**
+   * What each runtime on this computer says it offers, by instance ref. A ref
+   * this map has no entry for is a catalog nobody read: the model passes
+   * through untouched rather than being refused against a list that does not
+   * exist. See `codingSessionHireModel.ts`.
+   */
+  modelCatalogs?: ReadonlyMap<string, readonly string[]>;
 };
 
 /**
@@ -202,6 +225,21 @@ export function decideCodingSessionHire(
     };
   }
 
+  // Against the runtime's own catalog, and only for the model the *lead*
+  // named: an identity's stored model is this computer's own record and is
+  // not the lead's request to be refused over.
+  const resolution = resolveCodingSessionHireModel(
+    request.model,
+    input.modelCatalogs?.get(provider) ?? [],
+  );
+  if (resolution?.kind === "not-offered") {
+    return {
+      ok: false,
+      code: "HIRE_MODEL_NOT_OFFERED",
+      reason: describeCodingSessionHireModelRefusal(provider, resolution),
+    };
+  }
+
   const identity = chooseIdentity(role, input);
   if (identity === null) {
     return {
@@ -222,7 +260,8 @@ export function decideCodingSessionHire(
     // The lead's choice first (D13 makes the model the lead's call), then the
     // identity's own. Never a guess: null means "let the runtime decide", and
     // that is a different statement from naming a model nobody chose.
-    model: request.model ?? identity.model ?? null,
+    model: codingSessionHireModelOf(resolution) ?? identity.model ?? null,
+    modelNotice: codingSessionHireModelNotice(provider, resolution),
   };
 }
 

@@ -245,3 +245,82 @@ test("the shipped default is on, every installed role, four seats, all providers
     allowedProviderInstanceRefs: null,
   });
 });
+
+test("a model the chosen runtime's catalog offers is seated exactly as asked", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: "opus[1m]",
+    },
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "haiku", "opus[1m]", "sonnet"]],
+    ]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "opus[1m]");
+  assert.equal(result.modelNotice, null);
+});
+
+test("a Claude vendor alias is translated, and the translation is disclosed", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: "claude-sonnet-5",
+    },
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "haiku", "opus[1m]", "sonnet"]],
+    ]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "sonnet");
+  assert.match(result.modelNotice, /claude-sonnet-5/);
+  assert.match(result.modelNotice, /sonnet/);
+});
+
+test("a model the catalog does not offer is refused with the offered ids", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: "claude-sonnet-5",
+    },
+    // The live 2026-08-28 catalog, minus the alias — nothing to translate onto.
+    modelCatalogs: new Map([
+      ["claude-primary", ["default", "claude-fable-5[1m]"]],
+    ]),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "HIRE_MODEL_NOT_OFFERED");
+  assert.match(result.reason, /claude-sonnet-5/);
+  assert.match(result.reason, /default, claude-fable-5\[1m\]/);
+});
+
+test("a catalog this host never read refuses nothing", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: "claude-sonnet-5",
+    },
+    modelCatalogs: new Map(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "claude-sonnet-5");
+  assert.equal(result.modelNotice, null);
+});
+
+test("the identity's own model is taken when the hire names none", () => {
+  const result = decide({
+    request: {
+      role: "builder",
+      providerInstanceRef: "claude-primary",
+      model: null,
+    },
+    modelCatalogs: new Map([["claude-primary", ["default", "sonnet"]]]),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "sonnet");
+  assert.equal(result.modelNotice, null);
+});
