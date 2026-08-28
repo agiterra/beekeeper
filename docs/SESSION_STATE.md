@@ -3425,6 +3425,587 @@ written and `bash -n` clean but **was not executed** — that harness needs
     desktop `pnpm build:e2e` + `playwright crew-front-door.spec.ts
     --project=smoke` — build succeeded, 8 passed (18.0s), exit 0.
 
+81. **D14 hire — the lead brings agents in (built 2026-08-28 on
+    `crew/front-door`, commits `c3db10f0`, `19664da3`, `e11ae068`,
+    `3c9e2d53`).** Launching a team now seats the lead and nobody else; the
+    roster it sees is the seats it may *hire*. A lead publishes a
+    `session.hire` action on kind 44221, the relay authorizes it (founder or
+    granted operator only), and the founder's desktop answers it by seating an
+    identity whose home role matches. Three lanes built it; each lane's own
+    report of what it delivered, where it deviated, and what it did not do
+    follows.
+
+    *Lane C — the wire and the CLI (`session.hire`) (`c3db10f0`)*
+
+    - buzz-core: CodingSessionLifecycleAction::SessionHire — exactly seven keys
+      {type, sessionRef, genesisRef, role, providerInstanceRef, model, brief},
+      one accepted form only (no historical shapes, because the action is new
+      with the relay that validates it). providerInstanceRef/model nullable but
+      structurally present; genesisRef required non-null (a create's is
+      optional) because a hire is authorized against the genesis; brief
+      1..MAX_LIFECYCLE_INITIAL_TURN_BYTES (12288) since it becomes the seat's
+      first turn; role reuses validate_role_slug. New public
+      HIRE_REFUSAL_PREFIX ("hire refused: ") and HIRE_REFUSAL_CODES (HIRE_OFF,
+      HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY,
+      HIRE_PROVIDER_NOT_ALLOWED) so the desktop and the CLI agree on a
+      refusal's shape. New
+      CodingSessionLifecycleCommandPayload::hire_session_ref().
+
+    - buzz-core red-before-green: 5 new tests, watched compile-red (`variant
+      SessionHire not found` x3, `no method named hire_session_ref` x2) then
+      green — accepts_exactly_the_seven_key_hire_action,
+      only_a_hire_names_a_hire_session_ref,
+      refuses_a_hire_with_extra_missing_or_null_required_keys,
+      refuses_a_hire_whose_role_is_not_a_slug,
+      refuses_a_brief_past_the_initial_turn_ceiling.
+
+    - buzz-relay: the hire is the one lifecycle action the relay must authorize
+      itself, because it never reaches a provider. New
+      KIND_CODING_SESSION_LIFECYCLE_COMMAND arm in
+      check_coding_session_membership (ingest.rs), with two pure helpers:
+      hire_umbrella_of(event) reads the umbrella out of the action (the 44221
+      envelope is exactly h/csl-v/csl-command and has no room for a fourth tag;
+      content that does not decode is not a hire) and
+      hire_authority_verdict(Option<&SessionAuthority>, pubkey) requires
+      founder-or-operator via the same SessionAuthority::may_steer the 44227
+      goal rule uses. Message on refusal is exactly "restricted: only the
+      session founder or a granted operator may hire". The gate's doc comment
+      gained a 44221 bullet.
+
+    - buzz-relay red-before-green: 2 new tests, watched red (`cannot find
+      function hire_umbrella_of/hire_authority_verdict`, 8 errors) then green —
+      only_a_session_hire_names_an_umbrella_the_relay_must_authorize (a create
+      and unparseable content both report None) and
+      a_hire_is_refused_unless_the_signer_founded_or_was_granted_the_umbrella
+      (founder ok, operator ok, viewer refused, stranger refused, unknown
+      umbrella refused by its own sentence).
+
+    - buzz-sdk: no new builder needed (creates have none either —
+      build_coding_session_lifecycle_command is generic over the payload).
+      Added a_lifecycle_command_builder_signs_a_session_hire: three ordered
+      tags, round-trip through the relay's strict decoder, and a non-slug role
+      refused at the builder.
+
+    - buzz-cli: `bee sessions hire --channel <uuid> --session-ref <uuid> --role
+      <slug> [--genesis <hex>] [--provider-instance <ref>] [--model <id>]
+      (--brief <file> | --content <text>) [--no-wait]`. --genesis is resolved
+      from the channel's 44226 when omitted (two geneses claiming one label is
+      an error listing both, never a coin flip). Publishes, then waits up to
+      HIRE_WAIT_SECONDS=60 (2 s polls) and folds what the channel says into one
+      printed JSON document: `accepted` stays the relay's fact,
+      `outcome`/`detail`/`seat`/`code`/`reason` are the host's.
+
+    - buzz-cli pure folds in crew.rs, all unit-tested: find_hired_seat (the
+      answer is recognized by what it is — a seated create for this role, in
+      this umbrella, after the request; the request carries no id the answer
+      echoes), newest_create_receipt (non-turn receipts only),
+      parse_hire_refusal (structural: prefix + [A-Z0-9_]+ code +
+      em-dash-or-hyphen + non-empty reason, so an agent merely talking about a
+      refused hire does not parse), find_hire_refusal (scoped to executions the
+      channel says belong to this umbrella, and to after the request),
+      fold_hire (a published seat outranks a refusal), hire_report,
+      hire_exit_code, hire_unsupported_by_relay, hire_payload,
+      resolve_umbrella_genesis.
+
+    - buzz-cli WIRE RULE: hire_unsupported_by_relay recognizes the three shape
+      errors an older relay answers with ("action type is unsupported", "has
+      missing or unsupported fields", "malformed … payload") and turns them
+      into `this relay does not accept hire requests yet — it validates kind
+      44221 against a closed action list that has no `session.hire` in it … The
+      relay said: <the relay's own words>`, raised as CliError::Relay{400} →
+      exit 2. The relay's sentence is kept, not replaced.
+
+    - buzz-cli exit codes: 0 created, 1 refused (host policy) or failed
+      (provider refused the seated create), 2 relay error, 5 seating (a create
+      with no receipt inside 60 s) or unconfirmed (nothing answered, or
+      --no-wait). `seating` is deliberately its own word and its own sentence —
+      a seat exists but nothing says it runs.
+
+    - buzz-cli red-before-green: 9 new tests in crew_tests.rs, watched red (37
+      compile errors, `cannot find … HireRefusal/find_hired_seat/fold_hire/…`)
+      then green, including a_hire_publishes_the_seven_key_action_byte_for_byte
+      (a literal string comparison of the serialized payload).
+
+    - Docs: NIP-CSL.md gains a `session.hire` fork amendment (wire shape, why
+      genesisRef is required, relay-checked authority and why, the host's two
+      answers with the seated create's receipts being the hire's receipts, the
+      refusal turn's exact text, and the deployment-order rule); the existing
+      'additive v1 evolution' paragraph now names hire as what the fail-closed
+      rule makes safe. crates/buzz-cli/TESTING.md gains a hire runbook block, a
+      recorded live run table, and checklist row 70.
+
+    - Live evidence (relay built from this branch, 127.0.0.1:3077, docker
+      pg/redis, founder 88cfb21c…, granted operator 8b2bd4e6…, channel
+      ddcccba6-893b-4fcb-bf29-543ddecc260d, umbrella 5b7e1c2a-…-7c2d8e6f4a10,
+      genesis b13cbd5f…): founder hire accepted (event 3fe71e03…); the stored
+      content read back out of Postgres is
+      `{"type":"session.hire","sessionRef":…,"genesisRef":…,"role":"builder","providerInstanceRef":null,"model":null,"brief":…}`;
+      a granted collaborator's hire accepted (3ad96681…); a stranger refused
+      400 `restricted: only the session founder or a granted operator may
+      hire`; a forced --genesis into an unclaimed umbrella refused `restricted:
+      no coding-session genesis in this channel claims that sessionRef…`; a
+      seeded seated create + `created` receipt produced outcome=created, seat
+      8b2bd4e6·runner, exit 0; a seeded refusal turn produced outcome=refused,
+      code HIRE_OFF, exit 1; --no-wait produced outcome=unconfirmed, exit 5.
+
+    Lane C deviations:
+
+    - Three files outside the named ownership were touched, all forced by
+      adding an enum variant or a subcommand, and all minimal. (1)
+      crates/buzz-core/src/pulse_fold.rs — two match arms: a hire never
+      succeeds a receipt (it produces none of its own) and names no provider
+      authority (empty string matches no signer). (2)
+      crates/buzz-session-provider/src/commands.rs — decide_lifecycle now
+      returns Ignore(NotAddressed) for a hire, because a hire is addressed to
+      the umbrella's host and names no providerAuthorityPubkey; the second,
+      guarded match's `SessionCreate { .. } => unreachable!()` became `_ =>
+      unreachable!()`. (3) crates/buzz-cli/src/commands/sessions.rs — one
+      dispatch arm for SessionsCmd::Hire (the clap variant is in lib.rs, the
+      match is here, so the enum cannot be extended without it).
+
+    - crates/buzz-cli/src/error.rs gained two variants, CliError::Refused (exit
+      1, category "refused") and CliError::Unconfirmed (exit 5, category
+      "unconfirmed"). The brief's exit table needs 1 for a refusal and 5 for an
+      unconfirmed hire, and the existing variants that carry those codes are
+      Usage/NotFound ("user_error"/"not_found") and Conflict ("conflict") —
+      every one of which would have printed a category that lies about what
+      happened. error.rs has no exhaustive CliError match outside itself and
+      has not been touched since the 2026-08 rebrand, so the change is additive
+      and low-conflict.
+
+    - An umbrella that no genesis in the channel claims is REFUSED for a hire,
+      where the 44227 goal rule falls back to base channel membership for an
+      unclaimed label. Reason: the goal rule protects legacy signers, and a
+      hire has none — it is new with the relay that validates it — so falling
+      back would let any channel member spend the founder's machine. The
+      refusal has its own sentence naming the missing genesis, distinct from
+      the founder-or-grant one.
+
+    - The CLI takes `--genesis` as an optional override and resolves it from
+      the channel by default. The brief's signature did not list it, but the
+      wire requires a non-null genesisRef; resolving is the better default and
+      the flag exists for the ambiguous case (two geneses on one label, which
+      NIP-CSG explicitly allows a relay to store).
+
+    - `--brief <file>` uses read_file_or_stdin and `--content <text>` uses
+      read_or_stdin, matching the brief's `(--brief <file> | --content <text>)`
+      split. `bee sessions create --brief` treats its argument as literal text;
+      the two flags now differ across the two subcommands. Documented in both
+      help strings.
+
+    - A fifth outcome word, `seating`, exists beyond the brief's
+      created/failed/refused/unconfirmed: a seated create published with no
+      provider receipt inside the wait. It exits 5 with the rest of the
+      unconfirmed family, but says something different, because 'a seat exists
+      and nothing has said whether it runs' is not the same fact as 'nothing
+      answered at all'.
+
+    - The live run used two throwaway `cargo run --example` seeders (in
+      crates/buzz-cli/examples/) to play the host and the provider — no host
+      implements session.hire yet. Both files were deleted before the commit;
+      nothing of them is in the diff. The dev Postgres now holds one extra
+      community row (host 127.0.0.1:3077), one channel, and the seeded session
+      events.
+
+    Lane C residuals:
+
+    - No host implements session.hire. Everything downstream of the relay — the
+      standing policy (hiring on/off, allowed roles, max live seats, allowed
+      providers), identity selection by home_role, the per-seat worktree,
+      custody staging, the seated create with initialTurn prefixed "[From the
+      lead] ", the refusal turn and its umbrella system line — is another
+      lane's. Until it lands, every hire on a real relay ends `unconfirmed`
+      after 60 s.
+
+    - The `failed` outcome (a provider receipt refusing the seated create) and
+      the `seating` outcome are unit-tested only; the live run covered created,
+      refused and unconfirmed.
+
+    - The "this relay does not accept hire requests yet" path is unit-tested
+      only — proving it live needs a relay built before this branch.
+      hire_unsupported_by_relay keys on three substrings of the relay's
+      rejection message; if the relay's wording changes, the sentence degrades
+      to passing the shape error through, which is why the relay's own words
+      are always appended.
+
+    - A refusal turn is bound to its request by (umbrella, after-the-request,
+      structural text), not by an id: the 44220 payload has no field to echo
+      the hire's commandId, and the brief pins the refusal's exact copy. Two
+      hires into one umbrella inside the same window could in principle read
+      each other's refusal. Fixing it properly needs a field on the refusal — a
+      contract change, not this lane's.
+
+    - The wait polls four kinds over the whole channel every 2 s for up to 60 s
+      (30 reads). It is bounded but not cheap on a busy channel; a `since`
+      bound like the one `bee sessions send` uses is only possible for the
+      receipt kind, since the seated create must be matched by content.
+
+    - find_hire_refusal only sees executions the channel's 44223 metadata
+      describes. A refusal addressed to a seat whose metadata has aged out, or
+      that never published any, is invisible and the hire reads `unconfirmed`.
+
+    - newest_create_receipt does not fence on the create's
+      providerAuthorityPubkey the way build_founder_index's joined_target does
+      — any signer's receipt for that commandId is read. Tightening it is a
+      small follow-up; the looser read cannot manufacture a seat that does not
+      exist, only report someone else's claim about one.
+
+    - The relay resolves the hire's umbrella by decoding event content inside
+      the ingest gate. That is one extra decode per 44221 on the write path
+      (the envelope validator decodes again a few steps later). Measured cost
+      not taken.
+
+    - The desktop is untouched by this lane: nothing in the app can send or
+      show a hire yet, and the umbrella has no system line for a refusal.
+
+    - The dev database used for the live run keeps its seeded rows (community
+      127.0.0.1:3077, channel ddcccba6…, one genesis, two hires, one seated
+      create, one receipt, one metadata, one refusal turn, one 44228 grant).
+      Harmless dev data; delete the community row if the clutter matters.
+
+    *Lane H — the founder's desktop honours hires (`19664da3`)*
+
+    - Wire (lib/codingSessionHireWire.ts): the 44221 `session.hire` action with
+      exactly the seven contract keys in order
+      (type/sessionRef/genesisRef/role/providerInstanceRef/model/brief), tags h
+      / csl-v csl1-1 / csl-command. buildCodingSessionHireEvent +
+      validateCodingSessionHireInput refuse every bound before signing;
+      classifyCodingSessionHireEvent accepts the exact key set or returns
+      malformed. A `session.create` on the same kind classifies `irrelevant`,
+      not malformed, so ordinary sessions never inflate a malformed count.
+
+    - WIRE RULE:
+      describeCodingSessionHireFailure/isCodingSessionHireUnsupportedRelayFailure
+      translate the relay's `malformed coding-session lifecycle command
+      payload` rejection into CODING_SESSION_HIRE_UNSUPPORTED_RELAY_MESSAGE —
+      "This relay does not accept hire requests yet — it refused the request as
+      malformed. The relay has to ship session.hire before a lead can hire a
+      seat." publishCodingSessionHire rejects with that sentence already
+      applied, so no caller can surface the raw JSON wording. Every other
+      failure keeps its own words.
+
+    - Policy (lib/codingSessionHirePolicy.ts): CodingSessionHirePolicy
+      {enabled, allowedRoles|null, maxSeatsPerUmbrella,
+      allowedProviderInstanceRefs|null}, default {true, null, 4, null},
+      persisted in localStorage under buzz.codingSessions.hirePolicy.v1 (same
+      device-preference pattern as model favourites / session width).
+      decideCodingSessionHire produces exactly one of the five contract codes:
+      HIRE_OFF, HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_PROVIDER_NOT_ALLOWED,
+      HIRE_NO_IDENTITY (whose reason names the remedy "Install team roles").
+      formatCodingSessionHireRefusal renders `hire refused: <code> — <reason>`
+      exactly as the contract spells it.
+
+    - Identity choice: codingSessionHireAllowedRoles derives the default role
+      list from installed packs (homeRole present and hasRolePack !== false;
+      `undefined` subtracts nothing, since "nobody asked" is not "no pack").
+      Selection takes only agents whose home_role IS the hired role (D12),
+      skips any already live in that umbrella, and orders deterministically by
+      pack-staged, then name, then pubkey. Every builder already seated yields
+      HIRE_NO_IDENTITY rather than a duplicate seat.
+
+    - Seat (lib/codingSessionHireSeat.ts + codingSessionHireAnswer.ts):
+      buildCodingSessionHireSeatPlan produces exactly what
+      buildCodingSessionCreateEvent accepts — actor, role,
+      sessionRef/genesisRef, inherited title, initialTurn = "[From the lead] "
+      + brief (not doubled if the lead already wrote the prefix),
+      providerInstanceRef = request's or the policy default, model = request's
+      or the identity's. Per-seat worktree name `<session-slug>-<role>-<n>` via
+      the host's own codingSessionWorktreeSlug, ordinal counting the seats of
+      that role already in the umbrella. listCodingSessionHireLiveSeats reads
+      live seats from the umbrella (ended = completed/stopped/failed;
+      disconnected and interrupted still hold their seat).
+
+    - Authority: isCodingSessionHireAuthorized — founder or a live
+      grant-operator, same rule as steer. An unresolved founder authorises
+      nobody (the permissive fallback used elsewhere would here read as "anyone
+      may spend this computer"). planCodingSessionHireAnswer *ignores* an
+      unauthorised or unknown-umbrella request rather than refusing it, so a
+      stranger cannot make this host sign events on demand.
+
+    - Hook (hooks/useCodingSessionHire.ts): subscribes through
+      subscribeToObservedCodingSessionEvents — the existing create-observation
+      fan-out bus — so no second relay connection is opened. Dedupes by
+      commandId and marks answered *before* the effect, so a history replay on
+      reconnect cannot seat the same agent twice. Reuses
+      createCodingSessionWorktree + stageCodingSessionCreateHint,
+      publishSeatedCodingSessionCreate with ensureActorChannelMembership /
+      stageCodingSessionActorSeat / clearCodingSessionActorSeat,
+      fetchCodingSessionRosterFold for grants, publishCodingSessionCommand for
+      the refusal turn to the requesting seat, and
+      publishCodingSessionLaneMessage for the umbrella's visible line.
+
+    - Settings (features/settings/ui/CodingSessionsSettingsPanel.tsx): a new
+      "Hiring" group with CodingSessionHiringCard — on/off switch, allowed
+      roles (only roles whose packs are installed here), live seats per
+      session, allowed providers (only runtimes whose authState is `ready`).
+      Every control names the refusal code it produces; the off state says
+      "every hire request is refused HIRE_OFF, and the lead is told so" rather
+      than just reading disabled.
+
+    - D14 lead-only launch (lib/codingSessionCrewLaunch.ts +
+      ui/NewCodingSessionCrewTab.tsx): launchCodingSessionCrew now publishes
+      exactly ONE seated create — the lead's — and reports the rest as
+      `hireableSeats`. planCodingSessionCrewLaunch emits one create step. The
+      model/vendor checks are scoped to the seat actually created, which
+      retires the item 79(c) block: a Codex architect no longer disables
+      Launch. New codingSessionCrewLeadFirstTurnText gives the lead the goal,
+      the roster labelled as who it may hire, the `bee sessions hire` command,
+      and the rule that a hired seat's first turn IS the brief. The roster
+      renders data-seat-state="seated"/"hireable" with "· not launched — the
+      lead may hire it", and CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE says
+      "Launching seats the lead only" above the button.
+
+    - Red before green, watched on this host: the exact-key rule watched red by
+      deleting it (classifier returned `hire` where `malformed` was expected);
+      codingSessionHirePolicy/HireSeat/HireAnswer suites all failed on the
+      missing module before it existed; the four D14 launch tests failed 4/23
+      against the multi-seat launch; the roster seated/hireable test failed on
+      the missing CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE export.
+
+    Lane H deviations:
+
+    - desktop/src/shared/api/types.ts was NOT touched: ManagedAgent already
+      carries `homeRole: string | null` and `hasRolePack?: boolean`
+      (types.ts:236,244), which is everything identity selection needs. No
+      optional field was required.
+
+    - desktop/src-tauri/src was NOT touched: no new Tauri command was needed.
+      The policy is a device preference read by the desktop's own TS, so it is
+      persisted in localStorage like the session-width and model-favourite
+      preferences, not through the provider settings store the turn budget uses
+      (that one has to reach the Rust supervisor; this one does not).
+
+    - The umbrella refusal is published as a session-lane message (kind:9 +
+      cs-session tag, via the existing publishCodingSessionLaneMessage) rather
+      than as a lifecycle system row. The brief asked for "the existing
+      system-row rendering"; that rendering lives in
+      desktop/src/features/coding-sessions/ui/CodingSessionUmbrellaWorkspace.tsx
+      (line 809), which is outside this lane's ownership and is 988/1000 lines
+      — adding a branch there risked both an ownership breach and the file-size
+      gate. The lane message lands in the same umbrella timeline as a
+      conversation row and is signed by the operator, which is true. Converting
+      it to a lifecycle row is a small follow-up in whichever lane owns that
+      file.
+
+    - The launch's family check (verifier vendor != every builder vendor, D8)
+      no longer fires at launch, because neither seat is created there any
+      more. It is not repealed — it moves to hire time. Pinned by the rewritten
+      test "a same-vendor verifier no longer refuses a launch that never
+      creates it". The check that DOES still guard the created seat is the
+      runtime-vendor conflict (a seat declaring a vendor the selected runtime
+      cannot run), pinned by "a created seat on a vendor the selected runtime
+      cannot run is refused".
+
+    - The `default` model alias is no longer a hard refusal for a one-seat
+      launch. The old refusal existed only so the verifier rule would not check
+      a model nothing ran; with no verifier created at launch there is no
+      cross-seat rule left for the alias to fool, and refusing would block
+      every runtime without live model discovery. Documented in the rewritten
+      test and in the launch module's header.
+
+    - codingSessionCrewLaunch.test.mjs had 11 tests encoding the multi-seat
+      contract; each was rewritten (not deleted) against the seat the launch
+      actually creates, using a new PRIMARY_BUILDER fixture where the check
+      under test only applies to builder/verifier roles. Two were superseded
+      outright by the new D14 tests ("a launch is receipt-gated", "the first
+      turn carries the goal and the roster") and their content is now covered
+      by "a launch publishes exactly one seated create" and "the lead's first
+      turn carries the goal and the roster it may hire from".
+
+    - No relay-side, CLI-side, or lead-pack work was done — those are other
+      lanes. Nothing in this branch publishes a hire from the desktop UI;
+      publishCodingSessionHire exists as the canonical encoder plus the
+      wire-rule failure mapping, tested against a mock publisher.
+
+    Lane H residuals:
+
+    - THE HOOK IS NOT MOUNTED. useCodingSessionHire is written, typechecked,
+      and its whole decision path is tested through planCodingSessionHireAnswer
+      — but nothing renders it, so a running desktop does not yet honour a
+      hire. Mounting needs app-level plumbing outside this lane: a host
+      component (features/coding-sessions/ui/) rendered from app/AppShell.tsx
+      (beside NewCodingSessionDialogHost at :922), supplying channelIds from
+      the session-transport channels, operatorPubkey from the identity query,
+      umbrellas from groupCodingSessionCatalog over
+      useGlobalCodingSessionCatalog, checkoutForChannel from
+      getCodingSessionWorkdirState (byProject ?? byChannel ?? mru[0]), and
+      targetForActor from the same catalog. I did not take those two files.
+      Until that lands, the lane's headline claim is machinery, not behaviour.
+
+    - The hook itself has no test. Its rules are all in tested pure modules,
+      but the effect sequence (worktree → hint → membership → custody → sign →
+      publish; refusal turn + lane message) is proven only by typecheck. A
+      jsdom test with injected deps is the natural follow-up, and would want
+      the deps injectable — today they are imported directly, matching
+      useCodingSessionCrewLaunch's shape.
+
+    - No live exercise. No 44221 carrying `session.hire` was seen on a wire, no
+      relay refused one, no seat was hired on this machine. The "this relay
+      does not accept hire requests yet" sentence is proven against a mock
+      publisher throwing the relay's exact string, not against a real relay.
+
+    - When the host knows no checkout for an umbrella's channel, the hired
+      seat's create is published with no workdir hint and no worktree; the
+      provider then resolves its own cwd and lane W's SEAT_CWD_SHARED guard is
+      the only backstop. The five contract refusal codes have no member for
+      "this host has no directory to cut a tree from", so the failure surfaces
+      through the create's own failed receipt rather than as a hire refusal.
+      Worth a sixth code, or a policy-level default checkout.
+
+    - The refusal lane message says "A seat asked to hire a <role>" — it does
+      not resolve the requester's display name, because the operator-profile
+      resolver is on another surface. codingSessionHireRefusalNotice takes
+      requesterLabel, so wiring a real name is a one-line change at the call
+      site.
+
+    - No Playwright coverage for the Hiring settings card or for the changed
+      Team tab (desktop/tests/e2e is outside this lane).
+      desktop/tests/e2e/crew-front-door.spec.ts asserts Team-tab copy that this
+      lane rewrote — I did not read or run it, so it may need updating; whoever
+      owns that file should re-run pnpm test:e2e:smoke. (Closed by `3c9e2d53`:
+      the spec was updated to the D14 disclosure and the smoke project passes
+      8/8.)
+
+    - No relay-backed check that the desktop's exact-key hire classifier and
+      buzz-core's deny_unknown_fields decoder agree byte-for-byte — they are
+      written to the same seven keys, but nothing cross-checks them. A
+      conformance test belongs in the relay lane.
+
+    *Lane K — the lead learns to hire (`e11ae068`)*
+
+    - personas/roles/lead/skills/hire/SKILL.md (new, 113 lines): when to hire
+      (a lane with exclusive file ownership you can brief in one file) and the
+      three cases not to (a seat already holds the role → sessions send; a
+      question, not a lane; two lanes over one file); the three decisions
+      before the command (role — home role is fixed per identity, so no hiring
+      a builder 'as an architect'; model/vendor via skills/choose-model with
+      the one-clause reason; the brief written to a file).
+
+    - Exact command block per the contract: bee sessions hire --channel
+      <channel-uuid> --session-ref <umbrella-uuid> --role <slug>
+      [--provider-instance <ref>] [--model <id>] (--brief <path> | --content
+      <text>) [--no-wait], with each flag's default spelled out (omit
+      --provider-instance → operator default; omit --model → the identity's
+      own; brief 1..12288 bytes; --no-wait only when you will not act on the
+      outcome, otherwise it waits 60 s) and exit codes 0 hired / 1 refused / 2
+      relay error / 5 unconfirmed — with 'on 5, bee sessions list before you
+      re-run, or you hire twice'.
+
+    - Brief-as-first-turn rule stated three ways: the host publishes the create
+      with the brief prefixed '[From the lead] '; do NOT send a second
+      start/here-is-your-brief turn; END YOUR TURN after hiring (same rule as
+      dispatch — polling sessions inbox inside the hiring turn buys nothing and
+      invents duplicates); a correction is one sessions send, never a re-hire.
+
+    - Refusal section: refusals arrive both as exit 1 and as a 44220 turn
+      reading 'hire refused: <code> — <reason>' plus a system line in the
+      umbrella, seat never created. Table of all five codes with the remedy
+      that clears each — HIRE_OFF (ask the operator to turn hiring on, do not
+      retry), HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT (default ceiling 4 — close a
+      seat or ask to raise it), HIRE_NO_IDENTITY (ask the operator to Install
+      team roles, or the only identity with that role is already live here),
+      HIRE_PROVIDER_NOT_ALLOWED (name an allowed provider or drop the flag).
+      Plus: never retry unchanged; publish the code as a blocker Pulse entry
+      then change the request or BLOCK with the missing input.
+
+    - WIRE RULE honesty section: lifecycle payloads are validated with exact
+      keys, so a relay predating session.hire rejects the request as malformed
+      and the CLI says 'this relay does not accept hire requests yet' (exit 2)
+      — nothing reached the operator, no seat was considered; report it so the
+      operator deploys a relay carrying the action, seat by hand via Add
+      provider meanwhile, and never read that sentence as 'the role is
+      unavailable'.
+
+    - 'What a hire cannot do': cannot mint an identity (custody stays with the
+      host, the lead never sees or passes a key); cannot choose a working
+      directory (host makes <session-slug>-<role>-<n>); cannot reach an
+      umbrella it does not lead (founder or granted operator, same rule as
+      steer).
+
+    - lead.persona.md: skills frontmatter lists ./skills/hire/; verb 2 (Brief)
+      now says to hire with skills/hire when the lane has no seat yet and that
+      the brief file IS the hire's first turn; the Hiring section opens with
+      'launching a team seats you and nobody else; the roster you see is the
+      seats you may hire', carries the command, and points at skills/hire for
+      refusals and the end-your-turn rule.
+
+    - write-brief/SKILL.md: the template's Seat: line gains the alternative
+      'hire: <role> on <provider>/<model> — when no seat holds this lane yet';
+      the Dispatch line gains the matching bee sessions hire --brief <this
+      file> form; and a paragraph under 'The dispatch line is part of the
+      brief' says the brief is the new seat's first turn, so no follow-up start
+      message.
+
+    - Lead pack version bumped 0.2.0 → 0.3.0.
+
+    Lane K deviations:
+
+    - Bumped personas/roles/lead/.plugin/plugin.json to 0.3.0. Not named in the
+      brief, but inside the owned path and the pack's skill set changed;
+      nothing in desktop/src-tauri or crates pins the old version (grep for
+      "0.2.0" hits only crates/buzz-relay/CHANGELOG.md).
+
+    - Skipped the setup's `pnpm install --frozen-lockfile` — this lane touches
+      no JS/TS and runs no desktop gate. Rust/just gates were run from the
+      activated hermit env as instructed.
+
+    - No red-before-green test: the lane is tier-0/1 pack prose with no runtime
+      behaviour. The mechanical check (pack validate/inspect resolving the new
+      skill) was run before and after; before the persona frontmatter edit the
+      pack still printed Valid with the skill dir unreferenced, which is why
+      the frontmatter entry — not the file's existence — is what makes the
+      skill reach a seat.
+
+    Lane K residuals:
+
+    - `bee sessions hire` did not exist when this lane was written — the skill
+      documents the contract ahead of the CLI/host/relay lanes (lane C landed
+      it in the same batch). If any lane's final flag names, refusal wording,
+      or exit codes drift from the contract, this SKILL.md needs the same edit
+      and no test will catch the drift.
+
+    - Verbatim copy is asserted nowhere. The skill quotes 'this relay does not
+      accept hire requests yet' and 'hire refused: <code> — <reason>'; nothing
+      pins those strings to the CLI's actual output. A shared-constant or a doc
+      test is a follow-up for whichever lane owns the CLI strings.
+
+    - Not exercised live: no hire was published, refused, or seated from this
+      pack. Evidence is pack validation and inspection only.
+
+    - personas/roles/lead/skills/beekeeper-project/SKILL.md was left alone
+      (item 80f's ledger-digest problem is another lane's), so a lead's context
+      budget is unchanged by this lane apart from the new 113-line skill.
+
+    Gate, run on the integration branch after all three lanes and the e2e fix
+    (all green):
+
+    - (1) `cargo test -p buzz-core -p buzz-sdk -p buzz-cli -p
+      buzz-session-provider -p buzz-persona -p buzz-acp --lib` — 394 passed, 0
+      failed. (2) `cargo test -p buzz-relay --lib` — 965 passed, 0 failed, 53
+      ignored, 1 filtered (skip=demo_join_forwarded_arm_round_trips_echo). (3)
+      `cargo clippy --workspace --all-targets -- -D warnings` clean. (4) `cargo
+      fmt --check` clean. (5) desktop `pnpm typecheck` clean + `pnpm test`
+      6,583 passed / 0 failed. (6) `cargo test --manifest-path
+      desktop/src-tauri/Cargo.toml` — 2,748 passed, 0 failed, 18 ignored, plus
+      csp (7), rodio (3), main (0) all ok. (7) `pnpm check:px-text` clean. (8)
+      `just file-size-check` — 9/9 node tests plus desktop/web/mobile size
+      scripts ok. (9) `just test` with docker Postgres+Redis — 12/12 suites
+      passed, "All tests passed!". (10) port 4173 killed, `pnpm build:e2e` +
+      `playwright crew-front-door.spec.ts --project=smoke` — 8 passed.
+
+    What has to happen next, in order:
+
+    - **This batch changes the relay** (`session.hire` on kind 44221), so hive
+      must redeploy on the green pipeline before any hire can be accepted.
+      Until it does, the desktop and the CLI both print "this relay does not
+      accept hire requests yet" — that is the WIRE RULE working, not a bug.
+
+    - After the deploy: Brian relaunches the dev app, launches the lead alone
+      from the Team tab, and Keystone hires. Note lane H's first residual —
+      **the hire hook is not mounted**, so the founder's desktop will not
+      answer a hire until that plumbing lands; a hire will read `unconfirmed`
+      after 60 s until then.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -3462,6 +4043,18 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Read §2 item 81 first (2026-08-28 evening).** D14 hire landed on
+`crew/front-door`: a launch now seats the lead alone, and the lead hires the
+rest with `bee sessions hire` (kind 44221 `session.hire`, authorized by the
+relay). **This changes the relay**, so hive redeploys on the green pipeline;
+until it does, the desktop and the CLI both print "this relay does not accept
+hire requests yet" — that is the wire rule working, not a bug. After the
+deploy: Brian relaunches the dev app, launches the lead alone from the Team
+tab, and Keystone hires. Item 81 records the gate counts and the one residual
+that blocks the walk — the founder desktop's hire hook is written but **not
+mounted**, so a hire will read `unconfirmed` after 60 s until that plumbing
+lands.
 
 **Read §2 item 80 first (2026-08-28 afternoon).** Keystone's first mission
 from inside Beekeeper found seven things by doing; three lanes on
