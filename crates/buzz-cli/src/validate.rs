@@ -35,6 +35,25 @@ pub fn validate_hex64(s: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Validate a 64-character **lowercase** hex string, naming the flag it came
+/// from.
+///
+/// Stricter than [`validate_hex64`], which accepts uppercase: pubkeys and
+/// event ids are lowercase everywhere on the wire, and an uppercase copy of a
+/// key silently matches nothing in a relay filter rather than failing.
+pub fn validate_lower_hex64(label: &str, value: &str) -> Result<(), CliError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err(CliError::Usage(format!(
+            "{label} must be a 64-character lowercase hex string: {value}"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a git repo identifier: `[a-zA-Z0-9._-]{1,64}`, no leading dots, no `..`.
 pub fn validate_repo_id(s: &str) -> Result<(), CliError> {
     if s.is_empty() || s.len() > 64 {

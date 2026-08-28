@@ -84,7 +84,7 @@ fn events_query_builds_the_filter_it_was_asked_for() {
         authors: Some(&format!("{author},{other}")),
         ids: Some(&id),
         since: Some("2026-08-27T00:00:00Z"),
-        until: Some("1756339200"),
+        until: Some("1787875200"),
         limit: Some(20),
     })
     .expect("prepares");
@@ -96,8 +96,8 @@ fn events_query_builds_the_filter_it_was_asked_for() {
             "#h": ["9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50"],
             "authors": [author, other],
             "ids": [id],
-            "since": 1_756_252_800,
-            "until": 1_756_339_200,
+            "since": 1_787_788_800,
+            "until": 1_787_875_200,
         })
     );
     assert_eq!(prepared.limit, Some(20));
@@ -217,7 +217,7 @@ fn compact_rows_survive_an_event_whose_content_is_not_json() {
         "id": "e".repeat(64),
         "pubkey": "f".repeat(64),
         "kind": 44225,
-        "created_at": 1_756_252_800_i64,
+        "created_at": 1_787_788_800_i64,
         "tags": [["h", "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50"], ["cst-seq", "4"]],
         "content": "{ this is not json\nand never was",
         "sig": "0".repeat(128),

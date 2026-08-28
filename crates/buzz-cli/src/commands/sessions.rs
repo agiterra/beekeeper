@@ -53,7 +53,7 @@ use buzz_sdk::kind::{
 
 use crate::client::BuzzClient;
 use crate::error::CliError;
-use crate::validate::validate_uuid;
+use crate::validate::{validate_lower_hex64, validate_uuid};
 
 pub mod crew;
 pub mod crew_cmds;
@@ -1978,20 +1978,6 @@ pub fn fold_authority_receipts(mut receipts: Vec<AuthorityReceipt>) -> Authority
         state.head_event_id = Some(receipt.accepted_event_id);
     }
     state
-}
-
-/// Validate a 64-character lowercase-hex id (genesis event id or pubkey).
-fn validate_lower_hex64(label: &str, value: &str) -> Result<(), CliError> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
-        return Err(CliError::Usage(format!(
-            "{label} must be a 64-character lowercase hex string: {value}"
-        )));
-    }
-    Ok(())
 }
 
 /// Resolve a `--pubkey` grant/revoke/roster target to a 64-character

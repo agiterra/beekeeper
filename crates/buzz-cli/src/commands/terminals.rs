@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use crate::client::BuzzClient;
 use crate::commands::parse_write_response;
 use crate::error::CliError;
+use crate::validate::validate_lower_hex64;
 
 /// Maximum raw bytes per kind:24312 input event. The relay caps content at
 /// 8 KiB of base64; 6 KiB of raw bytes encodes to exactly that budget.
@@ -51,21 +52,6 @@ fn validate_session_id(session_id: &str) -> Result<(), CliError> {
     {
         return Err(CliError::Usage(format!(
             "session id must be 1-64 characters of [A-Za-z0-9-]: {session_id:?}"
-        )));
-    }
-    Ok(())
-}
-
-/// Validate a pubkey as 64 lowercase hex characters (roster and relay gates
-/// compare byte-exact).
-fn validate_lower_hex64(label: &str, value: &str) -> Result<(), CliError> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    {
-        return Err(CliError::Usage(format!(
-            "{label} must be a 64-character lowercase hex string: {value}"
         )));
     }
     Ok(())

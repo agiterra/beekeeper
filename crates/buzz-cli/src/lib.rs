@@ -2918,6 +2918,7 @@ mod tests {
             "channels",
             "dms",
             "emoji",
+            "events",
             "feed",
             "git",
             "issues",
