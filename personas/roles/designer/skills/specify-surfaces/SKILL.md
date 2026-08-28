@@ -58,7 +58,51 @@ down it can be reversed. What is never legitimate is silence.
 - Desktop text uses rem tokens only (`text-base`, `text-sm`, `text-xs`,
   `text-2xs`, `text-3xs`) — never an arbitrary px or rem literal.
 
-## 5. Hand off
+## 5. From a mock to a spec
+
+A mock is a proposal drawn without wire knowledge. Turning it into a spec is a
+per-element walk, not a paraphrase. Look at the image first
+(`skills/see-the-app`), then take the elements **one at a time**, in reading
+order, and write five lines for each:
+
+```
+<element> — cite the mock: <file> → <region> → <element>
+  replaces: <file:line> of the surface it supersedes, or "new surface"
+  reads: <row from skills/wire-sources-for-surfaces>
+  copy: verbatim strings, including the empty and unknown ones
+  walk: how the poker reaches this state, step by step
+```
+
+Rules for the walk:
+
+- **Every element gets all five lines or a decision line.** An element you are
+  dropping is written as `<element>: dropped — <reason>`; silently omitting it
+  is how a mock's best idea disappears.
+- **An element whose fact has no row is not designable yet.** Either it maps
+  to a row, or the spec says "no signed source today" in the words
+  `wire-sources-for-surfaces` gives, and the surface shows the unknown copy.
+  Never let a mock's placeholder number become a rendered number.
+- **A mock's label is a suggestion; the wire decides the truth.** Where the
+  mock says "Idle" over something the wire only knows as unreachable, the spec
+  says `No provider answering` and records that you overrode the mock.
+- **Density and lifecycle are different axes.** A view mode is a lens on the
+  same data; a lifecycle state is a fact about the work. If a mock uses one
+  word for both, split them in the spec and name both.
+- **Reuse before invention.** If the codebase already renders this fact, cite
+  it and extend it. A second control doing the same job in a different voice
+  is a regression even when both are correct.
+
+### Naming: Singularity is the surface
+
+The shared work surface a person opens is a **Singularity**. The underlying
+runtime objects are still **sessions** — `sessionRef`, umbrella session,
+execution, generation — on the wire, in the CLI, and in the code. Do not
+rename them, and do not call a Singularity a session in user-facing copy. A
+Singularity has one goal, one team and one stream; it may be led by an agent,
+led by a human, or have no lead at all, so no copy may assume a lead exists or
+name a particular one.
+
+## 6. Hand off
 
 Every `Surfaces` section ends with:
 

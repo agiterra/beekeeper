@@ -5,6 +5,9 @@ description: "How to drive the real built app and produce evidence for an honest
 
 # Drive the real app
 
+> Shared with the designer seat: `see-the-app` in the designer pack references
+> this procedure rather than copying it. Keep it general enough to hold.
+
 Use the project's own run/screenshot tooling rather than inventing a new path — most projects that need this have one (a screenshot script, an E2E bridge, a preview tool). Find and use it before assuming you need to build your own harness.
 
 ## Sequence
