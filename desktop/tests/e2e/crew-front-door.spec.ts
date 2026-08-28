@@ -45,7 +45,7 @@ import { installMockBridge } from "../helpers/bridge";
  * `.../actor_seats.rs`). Everything else is the app's own code path.
  */
 
-const SHOTS = "test-results/fd1-poke";
+const SHOTS = "test-results/fd2-poke";
 
 const PROVIDER_SECRET = generateSecretKey();
 const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
@@ -163,10 +163,15 @@ const CREW_ROLES: CrewRoleFixture[] = [
 
 const CREW_TEAM_ID = "team-crew-roles";
 
+/** The roster, in seat order — `CREW_SEAT_ROSTER` in `crew_roles.rs`. */
+const SEAT_ROSTER = ["lead", "architect", "builder", "verifier", "runner"];
+
 /** `InstallCrewRolePacksResponse`, exactly as `crew_roles.rs` serialises it. */
 const INSTALL_RESPONSE = {
   teamId: CREW_TEAM_ID,
   teamName: "Crew roles",
+  seated: SEAT_ROSTER,
+  dropped: [] as string[],
   installed: CREW_ROLES.map((role) => ({
     personaId: role.personaId,
     personaName: role.role,
@@ -203,7 +208,7 @@ function crewInvokeInitScript(input: {
       // Flipped by the spec before a seated create, so the pending screen's
       // three-valued `packStaged` can be driven to each of its states.
       packStaged: false,
-      installFailure: null as string | null,
+      installFailure: null as { failure: string; detail: string } | null,
       /** Role whose pack this folder does not hold, for the dropped-seat case. */
       dropRole: null as string | null,
     };
@@ -279,16 +284,26 @@ function crewInvokeInitScript(input: {
             case "pick_crew_role_packs_directory":
               return config.packRoot;
             case "install_crew_role_packs": {
-              if (state.installFailure) throw new Error(state.installFailure);
+              // The backend rejects with `CrewRoleInstallError`, a serialised
+              // struct — not a string. Throwing the struct is what the real
+              // bridge does, and it is what the dialog now reads the stage off.
+              if (state.installFailure) throw state.installFailure;
               const response = config.installResponse as {
                 installed: { role: string }[];
+                seated: string[];
+                dropped: string[];
               };
               if (!state.dropRole) return response;
+              const dropped = state.dropRole;
               return {
                 ...response,
                 installed: response.installed.filter(
-                  (row) => row.role !== state.dropRole,
+                  (row) => row.role !== dropped,
                 ),
+                // A roster role whose pack is missing is dropped from the
+                // seats the install writes, exactly as `build_crew` does.
+                seated: response.seated.filter((role) => role !== dropped),
+                dropped: [...response.dropped, dropped],
               };
             }
             case "stage_coding_session_actor_seat":
@@ -579,13 +594,13 @@ test.describe("crew front door", () => {
     await teamCard.screenshot({ path: `${SHOTS}/14-team-crew-badge.png` });
   });
 
-  test("07 — a roster role with no pack is dropped, and nothing on the result says so", async ({
+  test("07 — a roster role with no pack is dropped, and the result says so", async ({
     page,
   }) => {
     // Lane A's rule: "a roster role with no installed pack is dropped from
-    // `seats` and reported". `InstallCrewRolePacksResponse` has no field for
-    // that report, and the dialog's roster note is a constant. Install a
-    // folder missing the verifier pack and read what the screen claims.
+    // `seats` and reported". The response now carries both lists, so the
+    // dialog names the seats that exist instead of reciting the roster.
+    // Install a folder missing the verifier pack and read what the screen says.
     await openApp(page);
     await page.getByTestId("open-agents-view").click();
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
@@ -608,22 +623,36 @@ test.describe("crew front door", () => {
     // The verifier is genuinely absent from what was installed…
     await expect(result).not.toContainText("Verifier — Verifier");
     const dialog = page.getByTestId("install-crew-roles-dialog");
-    // …and the dialog still tells the operator it is seated by default.
-    await expect(dialog).toContainText(
-      "Seated by default: lead, architect, builder, verifier, runner.",
+    // …and the seat report names the four seats that exist, not the five the
+    // roster names.
+    const seats = page.getByTestId("install-crew-roles-seats");
+    await expect(seats).toContainText(
+      "Seated: lead, architect, builder, runner.",
+    );
+    await expect(seats).toContainText(
+      "verifier: no pack installed, so it holds no seat.",
+    );
+    await expect(dialog).not.toContainText("Seated by default");
+    // The two roles installed on purpose and seated on purpose never say so
+    // on their own rows, rather than reading like the seated ones.
+    await expect(result).toContainText(
+      "Poker — Poker — installed, but not seated in the crew",
+    );
+    await expect(result).toContainText(
+      "Designer — Designer — installed, but not seated in the crew",
     );
     await waitForAnimations(page);
     await dialog.screenshot({ path: `${SHOTS}/15-install-dropped-role.png` });
   });
 
-  test("08 — a failure that is not the folder's is still blamed on the folder", async ({
+  test("08 — a failure that is not the folder's is not blamed on the folder", async ({
     page,
   }) => {
-    // `install_crew_role_packs` prefixes its own folder failures with "That
-    // folder could not be read:" (commands/crew_roles.rs:61-73). Everything
-    // else it can fail with — `state.signing_keys()` at :58, key minting, the
-    // agent store — arrives unprefixed, and the dialog's catch wraps whatever
-    // it caught in that same sentence (InstallCrewRolesDialog.tsx:84).
+    // `install_crew_role_packs` now answers with a `CrewRoleInstallError`
+    // naming the stage that failed — folder, keys, or store. A locked keychain
+    // is a `keys` failure, and the dialog owes it its own sentence: the catch
+    // used to wrap every failure in "That folder could not be read:" and send
+    // the operator to look at a folder that was read fine.
     await openApp(page);
     await page.getByTestId("open-agents-view").click();
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
@@ -631,10 +660,15 @@ test.describe("crew front door", () => {
     });
     await page.evaluate(() => {
       const w = window as unknown as {
-        __FD1__: { installFailure: string | null };
+        __FD1__: {
+          installFailure: { failure: string; detail: string } | null;
+        };
       };
-      w.__FD1__.installFailure =
-        "the keychain is locked, so a new agent key could not be minted";
+      w.__FD1__.installFailure = {
+        failure: "keys",
+        detail:
+          "the keychain is locked, so a new agent key could not be minted",
+      };
     });
 
     await page.getByTestId("new-team-card").click();
@@ -644,21 +678,29 @@ test.describe("crew front door", () => {
 
     const error = page.getByTestId("install-crew-roles-error");
     await expect(error).toBeVisible();
-    await expect(error).toContainText("That folder could not be read");
-    await expect(error).toContainText("keychain is locked");
+    await expect(error).toHaveText(
+      "No agent key could be minted, so nothing was installed: the keychain " +
+        "is locked, so a new agent key could not be minted",
+    );
+    await expect(error).not.toContainText("folder");
+    // And nothing of the thrown value's own plumbing reaches the operator.
+    await expect(error).not.toContainText("Error:");
     await waitForAnimations(page);
     await page
       .getByTestId("install-crew-roles-dialog")
-      .screenshot({ path: `${SHOTS}/16-install-error-blames-folder.png` });
+      .screenshot({ path: `${SHOTS}/16-install-error-names-the-keychain.png` });
   });
 
-  test("02 — the home-role badges never reach a screen", async ({ page }) => {
-    // `ManagedAgentRow` renders `Home role: {Role}` and the
-    // `No role pack on this computer` warning — the disclosure `hasRolePack`
-    // exists for. Nothing in the app mounts that row: `AgentGroupRows` is its
-    // only caller and nothing imports `AgentGroupRows`. Driven here rather
-    // than read: seven agents, each with a `home_role`, one of them with
-    // `has_role_pack: false`, and neither badge appears anywhere.
+  test("02 — the home-role badges reach both screens the Agents view renders", async ({
+    page,
+  }) => {
+    // `Home role: {Role}` and the no-pack warning are the disclosure
+    // `hasRolePack` exists for, and they used to render only from
+    // `ManagedAgentRow` — a row whose only caller, `AgentGroupRows`, nothing
+    // imported. Both are deleted; the badges are on the card grid and the
+    // profile panel. Driven here rather than read: seven agents each with a
+    // `home_role`, one of them with `has_role_pack: false`, plus one plain
+    // agent the backend answered nothing about.
     await openApp(page);
     await page.getByTestId("open-agents-view").click();
     await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
@@ -668,20 +710,44 @@ test.describe("crew front door", () => {
       `managed-agent-${CREW_ROLES[3].pubkey}`,
     );
     await expect(verifierCard).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("agent-home-role")).toHaveCount(0);
-    await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(0);
+    // Seven role-carrying agents, each showing the role it is…
+    await expect(page.getByTestId("agent-home-role")).toHaveCount(
+      CREW_ROLES.length,
+    );
+    // …and exactly one of them disclosing that its pack is not installed here.
+    await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(1);
+    await expect(verifierCard.getByTestId("agent-home-role")).toHaveText(
+      "Home role: Verifier",
+    );
+    // The card states the fact; the remedy needs room the card does not have.
+    await expect(verifierCard.getByTestId("agent-no-role-pack")).toHaveText(
+      "Role pack not installed here",
+    );
+    // The plain agent the backend never answered about claims neither.
+    const plainCard = page.getByTestId(`managed-agent-${"b0".repeat(32)}`);
+    await expect(plainCard).toBeVisible();
+    await expect(plainCard.getByTestId("agent-home-role")).toHaveCount(0);
+    await expect(plainCard.getByTestId("agent-no-role-pack")).toHaveCount(0);
     await waitForAnimations(page);
     await page
       .getByTestId("unified-agents-groups")
-      .screenshot({ path: `${SHOTS}/04-agents-no-home-role-badge.png` });
+      .screenshot({ path: `${SHOTS}/04-agents-home-role-badges.png` });
 
     // The card's own detail surface is the other place an operator would look.
     await verifierCard.click();
+    const panel = page.getByTestId("user-profile-summary-scroll-layout");
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    await expect(panel.getByTestId("agent-home-role")).toHaveText(
+      "Home role: Verifier",
+    );
+    // The panel has room for the remedy, so it carries the whole sentence.
+    await expect(panel.getByTestId("agent-no-role-pack")).toHaveText(
+      "Role pack not installed here — install crew roles from the project's " +
+        "personas/roles",
+    );
     await waitForAnimations(page);
-    await expect(page.getByTestId("agent-home-role")).toHaveCount(0);
-    await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(0);
     await page.screenshot({
-      path: `${SHOTS}/05-agent-detail-no-home-role.png`,
+      path: `${SHOTS}/05-agent-detail-home-role.png`,
       clip: { x: 640, y: 0, width: 640, height: 900 },
     });
   });
@@ -705,8 +771,17 @@ test.describe("crew front door", () => {
     await crewTab.screenshot({ path: `${SHOTS}/06-crew-tab.png` });
 
     // The honesty question this tab has to answer before it signs anything:
-    // one of these five seats has no role pack on this computer. Capture the
-    // roster on its own so the reader can see whether it says so.
+    // one of these five seats has no role pack on this computer, and it says
+    // so on that seat's own line — before the launch, not after staging
+    // reports it.
+    await expect(
+      roster.getByTestId(`crew-seat-no-role-pack-${CREW_ROLES[3].personaId}`),
+    ).toContainText(
+      "carries no role skills: this computer has no role pack behind it.",
+    );
+    await expect(
+      roster.locator("[data-testid^='crew-seat-no-role-pack-']"),
+    ).toHaveCount(1);
     await roster.screenshot({ path: `${SHOTS}/07-crew-roster.png` });
   });
 
@@ -790,15 +865,15 @@ test.describe("crew front door", () => {
     await seatField.screenshot({ path: `${SHOTS}/10-seat-no-pack.png` });
   });
 
-  test("05 — a plain agent with no home role is still told it has no pack", async ({
+  test("05 — a plain agent nobody asked about a pack is accused of nothing", async ({
     page,
   }) => {
     // The seat field's own contract says an unanswered field renders nothing
-    // ("absence is not a claim", codingSessionActorSeat.ts:180-190). But
-    // `fromRawManagedAgent` maps a missing `has_role_pack` to `false`
-    // (tauriManagedAgentRecord.ts:63), so `undefined` never reaches the
-    // component: every ordinary managed agent — one that carries no role at
-    // all — reads as an agent whose role pack is missing.
+    // ("absence is not a claim", codingSessionActorSeat.ts:180-190).
+    // `fromRawManagedAgent` used to map a missing `has_role_pack` to `false`,
+    // so `undefined` never reached the component and every ordinary managed
+    // agent read as one whose role pack is missing. It now maps to
+    // `undefined`, and this drives the whole path to prove it.
     await openApp(page);
     await openNewCodingSessionDialog(page);
 
@@ -825,13 +900,13 @@ test.describe("crew front door", () => {
     await expect(
       page.getByTestId("new-coding-session-seat-role-notice"),
     ).toHaveCount(0);
-    // …but the pack line is stated as fact anyway.
-    await expect(
-      page.getByTestId("new-coding-session-seat-pack"),
-    ).toBeVisible();
+    // …and no pack claim either: nothing was ever asked about this one.
+    await expect(page.getByTestId("new-coding-session-seat-pack")).toHaveCount(
+      0,
+    );
     await waitForAnimations(page);
     await seatField.screenshot({
-      path: `${SHOTS}/11-seat-plain-agent-no-pack.png`,
+      path: `${SHOTS}/11-seat-plain-agent-says-nothing.png`,
     });
   });
 

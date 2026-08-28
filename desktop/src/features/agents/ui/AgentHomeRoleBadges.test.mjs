@@ -36,6 +36,18 @@ test("a home role with no pack on this computer says so, and says what to do", (
   );
 });
 
+test("a card-sized badge still states the fact, and drops only the remedy", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(AgentHomeRoleBadges, {
+      agent: { homeRole: "verifier", hasRolePack: false },
+      withRemedy: false,
+    }),
+  );
+  assert.match(markup, /data-testid="agent-no-role-pack"/);
+  assert.match(markup, /Role pack not installed here/);
+  assert.doesNotMatch(markup, /install crew roles/);
+});
+
 test("an agent with no home role claims nothing at all", () => {
   assert.equal(render({ homeRole: null, hasRolePack: false }), "");
   assert.equal(render(undefined), "");

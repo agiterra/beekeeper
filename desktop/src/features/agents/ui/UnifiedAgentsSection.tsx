@@ -343,14 +343,18 @@ function AgentCardStatusBadges({ agent }: { agent: ManagedAgent | undefined }) {
   const hasHomeRole = Boolean(agent?.homeRole?.trim());
   if (!isOrphaned && !hasHomeRole) return null;
   return (
-    <div className="flex flex-wrap items-start gap-1">
+    // `pointer-events-none`: the card's own click target is a full-bleed button
+    // *under* this block, and a badge that swallows a click would make a card
+    // stop opening its profile — which is where the remedy this badge omits is
+    // spelled out.
+    <div className="pointer-events-none flex flex-wrap items-start gap-1">
       {isOrphaned ? (
         <Badge className="gap-1" variant="warning">
           <AlertTriangle className="h-3 w-3" />
           Configuration missing
         </Badge>
       ) : null}
-      <AgentHomeRoleBadges agent={agent} />
+      <AgentHomeRoleBadges agent={agent} withRemedy={false} />
     </div>
   );
 }

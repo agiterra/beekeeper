@@ -19,14 +19,18 @@ export type AgentHomeRoleBadgeAgent = {
 };
 
 /**
- * The disclosure the reworded no-pack line carries.
+ * The fact: this computer holds no pack behind the agent's role.
  *
  * The first wording ("No role pack on this computer") read as if roles were
- * something a machine either had or lacked. It is a pack the operator installs,
- * so the label says where it comes from.
+ * something a machine either had or lacked. A pack is something the operator
+ * installs, so the label says "not installed here" and the remedy below says
+ * where from.
  */
-export const AGENT_NO_ROLE_PACK_LABEL =
-  "Role pack not installed here — install crew roles from the project's personas/roles";
+export const AGENT_NO_ROLE_PACK_LABEL = "Role pack not installed here";
+
+/** What to do about it. Together: `{LABEL} — {REMEDY}`. */
+export const AGENT_NO_ROLE_PACK_REMEDY =
+  "install crew roles from the project's personas/roles";
 
 /**
  * The role this agent *is*, and whether this computer can stage the pack
@@ -37,11 +41,19 @@ export const AGENT_NO_ROLE_PACK_LABEL =
  * render as if it carried the role's craft — a seat on it runs on the persona
  * prompt alone. An agent with no home role shows neither badge, and an agent
  * whose pack was never looked for shows only the first.
+ *
+ * `withRemedy` is the only thing a surface gets to vary, and it only ever
+ * *adds*: a card in a five-column grid states the fact, a detail panel states
+ * the fact and what to do about it. Neither drops the fact, because that is
+ * the claim; the remedy is advice, and leaving advice off a thumbnail is not a
+ * lie about the agent.
  */
 export function AgentHomeRoleBadges({
   agent,
+  withRemedy = true,
 }: {
   agent: AgentHomeRoleBadgeAgent | null | undefined;
+  withRemedy?: boolean;
 }) {
   const homeRole = agent?.homeRole?.trim();
   if (!homeRole) return null;
@@ -58,7 +70,9 @@ export function AgentHomeRoleBadges({
           variant="warning"
         >
           <AlertTriangle className="mt-0.5 size-3 shrink-0 self-start" />
-          {AGENT_NO_ROLE_PACK_LABEL}
+          {withRemedy
+            ? `${AGENT_NO_ROLE_PACK_LABEL} — ${AGENT_NO_ROLE_PACK_REMEDY}`
+            : AGENT_NO_ROLE_PACK_LABEL}
         </Badge>
       ) : null}
     </>
