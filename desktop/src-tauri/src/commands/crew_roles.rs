@@ -10,7 +10,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::{
     app_state::AppState,
     managed_agents::{
-        crew_roles::{install_role_packs, scan_role_packs, InstallCrewRolePacksResponse},
+        crew_roles::{
+            install_role_packs, scan_role_packs, CrewRoleInstallError, InstallCrewRolePacksResponse,
+        },
         load_managed_agents, load_personas, load_teams, save_managed_agents, save_personas,
         save_teams, try_regenerate_nest,
     },
@@ -46,41 +48,41 @@ pub async fn pick_crew_role_packs_directory(app: AppHandle) -> Result<Option<Str
 ///
 /// # Errors
 ///
-/// Returns the "That folder could not be read" disclosure for a path that is
-/// not a readable directory, and propagates any store or minting failure —
-/// an install that cannot write its agents must not report success.
+/// Returns a [`CrewRoleInstallError`] naming the stage that failed — the
+/// folder, the keychain, or a store — so the dialog can say which. It never
+/// blames the folder for a failure that happened after the scan, and an
+/// install that cannot write its agents never reports success.
 #[tauri::command]
 pub async fn install_crew_role_packs(
     app: AppHandle,
     state: State<'_, AppState>,
     directory: String,
-) -> Result<InstallCrewRolePacksResponse, String> {
-    let owner_keys = state.signing_keys()?;
+) -> Result<InstallCrewRolePacksResponse, CrewRoleInstallError> {
+    let owner_keys = state.signing_keys().map_err(CrewRoleInstallError::keys)?;
     let directory = directory.trim().to_string();
     if directory.is_empty() {
-        return Err("That folder could not be read: no folder was chosen".to_string());
+        return Err(CrewRoleInstallError::folder("no folder was chosen"));
     }
 
     tokio::task::spawn_blocking(move || {
         let path = std::path::PathBuf::from(&directory);
         if !path.is_dir() {
-            return Err(format!(
-                "That folder could not be read: {} is not a directory",
+            return Err(CrewRoleInstallError::folder(format!(
+                "{} is not a directory",
                 path.display()
-            ));
+            )));
         }
-        let scan = scan_role_packs(&path)
-            .map_err(|error| format!("That folder could not be read: {error}"))?;
+        let scan = scan_role_packs(&path).map_err(CrewRoleInstallError::folder)?;
 
         let state = app.state::<AppState>();
         let _store_guard = state
             .managed_agents_store_lock
             .lock()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| CrewRoleInstallError::store(error.to_string()))?;
 
-        let definitions = load_personas(&app)?;
-        let agents = load_managed_agents(&app)?;
-        let teams = load_teams(&app)?;
+        let definitions = load_personas(&app).map_err(CrewRoleInstallError::store)?;
+        let agents = load_managed_agents(&app).map_err(CrewRoleInstallError::store)?;
+        let teams = load_teams(&app).map_err(CrewRoleInstallError::store)?;
 
         let mut mint =
             || crate::commands::agents::mint_agent_identity(&owner_keys).map(|(_, minted)| minted);
@@ -89,15 +91,16 @@ pub async fn install_crew_role_packs(
         // Definitions first: `save_personas` preserves the instance half of the
         // unified store, and `save_managed_agents` preserves the definition
         // half, so writing them in this order never drops either.
-        save_personas(&app, &result.definitions)?;
-        save_managed_agents(&app, &result.agents)?;
+        save_personas(&app, &result.definitions).map_err(CrewRoleInstallError::store)?;
+        save_managed_agents(&app, &result.agents).map_err(CrewRoleInstallError::store)?;
 
-        let mut teams: Vec<_> = load_teams(&app)?
+        let mut teams: Vec<_> = load_teams(&app)
+            .map_err(CrewRoleInstallError::store)?
             .into_iter()
             .filter(|team| team.id != result.team.id)
             .collect();
         teams.push(result.team.clone());
-        save_teams(&app, &teams)?;
+        save_teams(&app, &teams).map_err(CrewRoleInstallError::store)?;
 
         // Publish what was authored here, exactly as create/update do.
         for row in &result.installed {
@@ -118,8 +121,10 @@ pub async fn install_crew_role_packs(
             team_name: result.team.name.clone(),
             installed: result.installed,
             skipped: scan.skipped,
+            seated: result.seated,
+            dropped: result.dropped,
         })
     })
     .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))?
+    .map_err(|e| CrewRoleInstallError::store(format!("spawn_blocking failed: {e}")))?
 }

@@ -135,6 +135,76 @@ pub struct CrewRoleInstall {
     /// Every agent, existing ones included — write this list wholesale.
     pub agents: Vec<ManagedAgentRecord>,
     pub installed: Vec<InstalledCrewRole>,
+    /// The roles the crew that was written actually seats, in seat order.
+    ///
+    /// Read off the crew block, never off [`CREW_SEAT_ROSTER`]: a partial
+    /// install seats fewer roles than the roster names, and a screen printing
+    /// the roster would claim seats nothing holds.
+    pub seated: Vec<String>,
+    /// Roster roles with no installed pack, dropped from the crew's seats.
+    ///
+    /// Empty is the ordinary case. A non-empty list is a disclosure the
+    /// installer owes: the operator asked for a crew and got a smaller one.
+    pub dropped: Vec<String>,
+}
+
+/// Which stage of an install failed.
+///
+/// Carried instead of a prefixed sentence so the dialog can name the real
+/// cause. Every failure used to reach the operator wrapped in "That folder
+/// could not be read:", which sent someone with a locked keychain to look at
+/// their folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrewRoleInstallFailure {
+    /// The chosen folder is not a readable directory.
+    Folder,
+    /// The keychain was unavailable, or a new agent key could not be minted.
+    Keys,
+    /// A store — personas, managed agents, or teams — could not be saved.
+    Store,
+}
+
+/// A failed install: the stage that failed, and the cause verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrewRoleInstallError {
+    pub failure: CrewRoleInstallFailure,
+    /// The underlying cause, with no sentence wrapped around it. The dialog
+    /// supplies the sentence that matches `failure`.
+    pub detail: String,
+}
+
+impl CrewRoleInstallError {
+    /// The chosen folder could not be read.
+    pub fn folder(detail: impl Into<String>) -> Self {
+        Self {
+            failure: CrewRoleInstallFailure::Folder,
+            detail: detail.into(),
+        }
+    }
+
+    /// A key could not be minted, or the keychain could not be reached.
+    pub fn keys(detail: impl Into<String>) -> Self {
+        Self {
+            failure: CrewRoleInstallFailure::Keys,
+            detail: detail.into(),
+        }
+    }
+
+    /// A store could not be read or written.
+    pub fn store(detail: impl Into<String>) -> Self {
+        Self {
+            failure: CrewRoleInstallFailure::Store,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for CrewRoleInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
 }
 
 /// Sort key placing a role in install order: roster first, then poker and
@@ -346,8 +416,9 @@ fn mint_agent_name(
 ///
 /// # Errors
 ///
-/// Propagates whatever `mint` returns as an error — a keyring or key-generation
-/// failure must abort the install rather than write a keyless agent.
+/// Propagates whatever `mint` returns as a [`CrewRoleInstallFailure::Keys`]
+/// failure — a keyring or key-generation failure must abort the install rather
+/// than write a keyless agent.
 pub fn install_role_packs(
     scan: &RolePackScan,
     mut definitions: Vec<AgentDefinition>,
@@ -355,7 +426,7 @@ pub fn install_role_packs(
     teams: &[TeamRecord],
     now: &str,
     mint: &mut dyn FnMut() -> Result<MintedCrewIdentity, String>,
-) -> Result<CrewRoleInstall, String> {
+) -> Result<CrewRoleInstall, CrewRoleInstallError> {
     let existing_team = teams
         .iter()
         .find(|team| !team.is_builtin && team.name == CREW_ROLES_TEAM_NAME);
@@ -424,7 +495,7 @@ pub fn install_role_packs(
                 record.created_at.clone(),
             ),
             None => {
-                let minted = mint()?;
+                let minted = mint().map_err(CrewRoleInstallError::keys)?;
                 (
                     minted.pubkey,
                     minted.private_key_nsec,
@@ -448,7 +519,11 @@ pub fn install_role_packs(
             .iter()
             .find(|def| def.id == persona_id)
             .cloned()
-            .ok_or_else(|| format!("definition {persona_id} disappeared during install"))?
+            .ok_or_else(|| {
+                CrewRoleInstallError::store(format!(
+                    "definition {persona_id} disappeared during install"
+                ))
+            })?
             .into_agent_record();
         record.pubkey = pubkey.clone();
         record.name = agent_name.clone();
@@ -503,6 +578,17 @@ pub fn install_role_packs(
     }
 
     let crew = build_crew(&roles_to_personas);
+    // Both lists come off the crew that was actually built, so they cannot
+    // drift from the seats the launch will read.
+    let seated: Vec<String> = crew
+        .as_ref()
+        .map(|crew| crew.seats.iter().map(|seat| seat.role.clone()).collect())
+        .unwrap_or_default();
+    let dropped: Vec<String> = CREW_SEAT_ROSTER
+        .iter()
+        .filter(|role| !seated.iter().any(|seat| seat == *role))
+        .map(|role| (*role).to_string())
+        .collect();
     let team = TeamRecord {
         id: team_id,
         name: CREW_ROLES_TEAM_NAME.to_string(),
@@ -529,6 +615,8 @@ pub fn install_role_packs(
         definitions,
         agents,
         installed,
+        seated,
+        dropped,
     })
 }
 
@@ -540,6 +628,11 @@ pub struct InstallCrewRolePacksResponse {
     pub team_name: String,
     pub installed: Vec<InstalledCrewRole>,
     pub skipped: Vec<SkippedCrewRolePack>,
+    /// The roles this install actually seated, in seat order. The dialog
+    /// renders this, never the roster constant.
+    pub seated: Vec<String>,
+    /// Roster roles whose pack was not installed, so they hold no seat.
+    pub dropped: Vec<String>,
 }
 
 /// Crew composition carried by a team snapshot, keyed by **member name**.

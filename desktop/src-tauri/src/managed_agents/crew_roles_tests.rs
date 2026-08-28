@@ -347,3 +347,96 @@ fn the_repo_role_packs_install_seven_agents_and_seat_five() {
         );
     }
 }
+
+/// A partial install has to report the seats it actually wrote **and** the
+/// roster roles it dropped.
+///
+/// Without both lists the dialog can only print a constant roster, which is
+/// what it did: "Seated by default: lead, architect, builder, verifier,
+/// runner." under a result list holding no verifier (SESSION_STATE item 76,
+/// poke finding F2).
+#[test]
+fn an_install_reports_the_seats_it_wrote_and_the_roster_roles_it_dropped() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    write_pack(root.path(), "builder", "builder", Some("builder"));
+    write_pack(root.path(), "poker", "poker", Some("poker"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let result = install(&scan, Vec::new(), Vec::new(), &[]);
+
+    assert_eq!(
+        result.seated,
+        vec!["lead".to_string(), "builder".to_string()],
+        "seated names the seats the crew actually holds, in seat order"
+    );
+    assert_eq!(
+        result.dropped,
+        vec![
+            "architect".to_string(),
+            "verifier".to_string(),
+            "runner".to_string()
+        ],
+        "a roster role with no installed pack is reported as dropped"
+    );
+    let poker = result
+        .installed
+        .iter()
+        .find(|row| row.role == "poker")
+        .expect("the poker pack installed");
+    assert!(!poker.seated, "poker installs but is never seated");
+}
+
+/// A full roster drops nothing, and the unseated packs are not "dropped" —
+/// they were never on the roster to begin with.
+#[test]
+fn a_full_roster_drops_nothing() {
+    let root = tempfile::tempdir().expect("temp dir");
+    for role in CREW_SEAT_ROSTER {
+        write_pack(root.path(), role, role, Some(role));
+    }
+    write_pack(root.path(), "designer", "designer", Some("designer"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let result = install(&scan, Vec::new(), Vec::new(), &[]);
+
+    assert_eq!(result.seated, CREW_SEAT_ROSTER.map(str::to_string).to_vec());
+    assert!(result.dropped.is_empty());
+}
+
+/// A mint that fails is a **key** failure, not a folder one.
+///
+/// The dialog wrapped every failure in "That folder could not be read:", so an
+/// operator with a locked keychain was sent to look at their folder
+/// (SESSION_STATE item 76, poke finding F3). The stage has to travel with the
+/// error for the dialog to say anything else.
+#[test]
+fn a_mint_failure_is_reported_as_a_key_failure_not_a_folder_one() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut mint = || Err("the keychain is locked".to_string());
+    let error = install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, &mut mint)
+        .expect_err("a mint failure aborts the install");
+
+    assert_eq!(error.failure, CrewRoleInstallFailure::Keys);
+    assert_eq!(error.detail, "the keychain is locked");
+    assert!(
+        !error.detail.contains("folder"),
+        "the detail must not mention the folder"
+    );
+}
+
+/// The failure stage is on the wire as a plain lowercase word the dialog
+/// switches on — not a sentence it has to pattern-match.
+#[test]
+fn the_failure_stage_serialises_as_a_word() {
+    let error = CrewRoleInstallError {
+        failure: CrewRoleInstallFailure::Store,
+        detail: "disk full".to_string(),
+    };
+    let json = serde_json::to_value(&error).expect("serialises");
+    assert_eq!(json["failure"], "store");
+    assert_eq!(json["detail"], "disk full");
+}
