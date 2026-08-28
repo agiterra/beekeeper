@@ -9,6 +9,10 @@
  * session it joins) and the runtime picker says which runtimes the session
  * already has, without hiding them.
  */
+import {
+  resolveCodingSessionActorSeat,
+  type CodingSessionActorSeat,
+} from "@/features/coding-sessions/lib/codingSessionActorSeat";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import {
   isNewCodingSessionTargetReady,
@@ -122,6 +126,10 @@ export function addCodingSessionProviderGenesisGateMessage(
  * genesis is unresolved or conflicted refuses to build a join at all — see
  * {@link addCodingSessionProviderGenesisGateMessage} — rather than falling
  * back to an ungoverned 9-key create.
+ *
+ * A seat travels exactly as it does on the founding path: both halves or
+ * neither. A half-filled one builds nothing at all, so a join can never reach
+ * the signing builder with an actor the relay would not accept a role for.
  */
 export function buildAddCodingSessionProviderSubmit(input: {
   umbrella: Pick<
@@ -133,6 +141,10 @@ export function buildAddCodingSessionProviderSubmit(input: {
   model: string | null;
   initialTurn: string;
   workdir: string;
+  /** The seat draft, exactly as the field holds it. Both halves or neither. */
+  seat?: { actor: string | null; role: string | null } | null;
+  /** Display name for the seat, used only in failure copy. */
+  seatLabel?: string | null;
 }): {
   target: NewCodingSessionTarget;
   model: string | null;
@@ -143,6 +155,8 @@ export function buildAddCodingSessionProviderSubmit(input: {
   genesisRef?: string;
   projectRef: string | null;
   repoRef: string | null;
+  seat: CodingSessionActorSeat | null;
+  seatLabel: string | null;
 } | null {
   const sessionRef = input.umbrella.sessionRef;
   const target = input.target;
@@ -151,8 +165,15 @@ export function buildAddCodingSessionProviderSubmit(input: {
   if (addCodingSessionProviderGenesisGateMessage(input.umbrella) !== null) {
     return null;
   }
+  const seat = resolveCodingSessionActorSeat({
+    actor: input.seat?.actor ?? null,
+    role: input.seat?.role ?? null,
+  });
+  if (seat.error !== null) return null;
   const title = input.umbrella.title.trim();
   return {
+    seat: seat.seat,
+    seatLabel: seat.seat ? (input.seatLabel ?? null) : null,
     target,
     model: input.model && input.model.length > 0 ? input.model : null,
     title: title.length > 0 ? title : null,

@@ -421,3 +421,90 @@ test("conflicting genesis claims block the join", () => {
     null,
   );
 });
+
+/**
+ * Joining is the only way to put an agent on a session that is already
+ * running. It signs the same 44221 the founding path signs — so the seat
+ * travels through the same builder, and the same refusal of half a seat
+ * applies before anything is signed.
+ */
+test("a join carries the seat, and the seat's label for failure copy", () => {
+  const umbrella = singleClaudeUmbrella();
+  umbrella.genesisRef = "d".repeat(64);
+  umbrella.genesisResolution = "governed";
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+    seat: { actor: "F".repeat(64), role: " Code Reviewer " },
+    seatLabel: "Ada",
+  });
+
+  // The same normalisation the founding path applies: a role a person typed
+  // is folded into the slug that is actually signed.
+  assert.deepEqual(payload.seat, {
+    actor: "f".repeat(64),
+    role: "code-reviewer",
+  });
+  assert.equal(payload.seatLabel, "Ada");
+});
+
+test("an unseated join carries no seat at all", () => {
+  const umbrella = singleClaudeUmbrella();
+  umbrella.genesisRef = "d".repeat(64);
+  umbrella.genesisResolution = "governed";
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const payload = buildAddCodingSessionProviderSubmit({
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  });
+  assert.equal(payload.seat, null);
+  assert.equal(payload.seatLabel, null);
+});
+
+test("a half-filled seat builds no join at all", () => {
+  const umbrella = singleClaudeUmbrella();
+  umbrella.genesisRef = "d".repeat(64);
+  umbrella.genesisResolution = "governed";
+  const [codex] = localTargets(CHANNEL_ID, [CODEX_RUNTIME]);
+  const base = {
+    umbrella,
+    channelId: CHANNEL_ID,
+    target: codex,
+    model: null,
+    initialTurn: "",
+    workdir: "",
+  };
+  // An agent with no role, a role with no agent, and a role that is not a
+  // slug: each one is refused here rather than thrown from the builder that
+  // signs the event.
+  assert.equal(
+    buildAddCodingSessionProviderSubmit({
+      ...base,
+      seat: { actor: "f".repeat(64), role: "" },
+    }),
+    null,
+  );
+  assert.equal(
+    buildAddCodingSessionProviderSubmit({
+      ...base,
+      seat: { actor: null, role: "lead" },
+    }),
+    null,
+  );
+  assert.equal(
+    buildAddCodingSessionProviderSubmit({
+      ...base,
+      seat: { actor: "not-a-key", role: "lead" },
+    }),
+    null,
+  );
+});

@@ -1,7 +1,10 @@
 import * as React from "react";
 import { CircleAlert, LoaderCircle, UserPlus } from "lucide-react";
 
+import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
+import { formatCodingSessionExecutionLabel } from "@/features/coding-sessions/lib/codingSessionLabels";
+import { useCodingSessionSeatDraft } from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
 import { establishedCodingSessionTarget } from "@/features/coding-sessions/lib/codingSessionTrustedIngress";
 import type { CodingSessionUmbrellaRecord } from "@/features/coding-sessions/lib/codingSessionTypes";
 import {
@@ -36,6 +39,7 @@ import {
   NewCodingSessionProviderPicker,
   ProviderLoginNeeded,
 } from "./NewCodingSessionProviderPicker";
+import { NewCodingSessionAgentSeatField } from "./NewCodingSessionAgentSeatField";
 import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
 
@@ -52,6 +56,11 @@ import { useNewCodingSessionCreate } from "./useNewCodingSessionCreate";
  *
  * The workspace re-renders as an umbrella on its own once the joining
  * execution's records land in the catalog, so success here is simply: close.
+ *
+ * The join can seat an agent, exactly as founding can — same field, same
+ * home-role default, same disclosures, same membership + custody staging
+ * before the publish. Without it an agent could only ever be seated at the
+ * moment a session was born.
  */
 export function AddCodingSessionProviderDialog({
   channelId,
@@ -106,7 +115,7 @@ export function AddCodingSessionProviderDialog({
  * computer's provider on mount, and a person who never adds a provider should
  * never pay for that.
  */
-function AddCodingSessionProviderForm({
+export function AddCodingSessionProviderForm({
   channelId,
   channelName,
   onDone,
@@ -132,6 +141,8 @@ function AddCodingSessionProviderForm({
     lifecycleErrorMessage,
     lifecycleIsLoading,
     retryExact,
+    seat: signedSeat,
+    seatPackStaged,
     startFresh,
     submit,
     transaction,
@@ -191,6 +202,25 @@ function AddCodingSessionProviderForm({
   });
   const [workdir, setWorkdir] = React.useState("");
   const [initialTurn, setInitialTurn] = React.useState("");
+  const managedAgentsQuery = useManagedAgentsQuery();
+  const managedAgents = React.useMemo(
+    () => managedAgentsQuery.data ?? [],
+    [managedAgentsQuery.data],
+  );
+  const seatDraft = useCodingSessionSeatDraft(managedAgents);
+  // What custody actually staged for the seat, once it has. `null` means it
+  // has not run here, and is never shown as "no pack".
+  const stagedSeatLabel = signedSeat
+    ? formatCodingSessionExecutionLabel({
+        agentRef: signedSeat.actor,
+        role: signedSeat.role,
+        agentDisplayName:
+          managedAgents.find((agent) => agent.pubkey === signedSeat.actor)
+            ?.name ?? null,
+        runtime: null,
+        model: null,
+      }).primary
+    : null;
 
   const failureCode =
     lifecycle?.state === "failed" ? lifecycle.error.code : undefined;
@@ -223,6 +253,7 @@ function AddCodingSessionProviderForm({
     transaction === null &&
     selectedTarget !== null &&
     isNewCodingSessionTargetReady(selectedTarget) &&
+    seatDraft.error === null &&
     !turnOverCap;
 
   const handleSubmit = React.useCallback(() => {
@@ -234,6 +265,8 @@ function AddCodingSessionProviderForm({
       model: effectiveModel,
       initialTurn,
       workdir,
+      seat: { actor: seatDraft.actor, role: seatDraft.role },
+      seatLabel: seatDraft.label,
     });
     if (payload) void submit(payload);
   }, [
@@ -241,6 +274,9 @@ function AddCodingSessionProviderForm({
     channelId,
     effectiveModel,
     initialTurn,
+    seatDraft.actor,
+    seatDraft.label,
+    seatDraft.role,
     selectedTarget,
     submit,
     umbrella,
@@ -295,6 +331,28 @@ function AddCodingSessionProviderForm({
         onChange={setWorkdir}
         value={workdir}
       />
+
+      <NewCodingSessionAgentSeatField
+        actor={seatDraft.actor}
+        agents={managedAgents}
+        disabled={transaction !== null}
+        error={seatDraft.error}
+        onActorChange={seatDraft.onActorChange}
+        onRoleChange={seatDraft.onRoleChange}
+        role={seatDraft.role}
+      />
+
+      {stagedSeatLabel ? (
+        <p
+          className="text-xs text-muted-foreground"
+          data-testid="add-coding-session-provider-seat"
+        >
+          {seatPackStaged === false
+            ? `Seated: ${stagedSeatLabel} — seated with no role skills: this ` +
+              `computer has no role pack behind this persona.`
+            : `Seated: ${stagedSeatLabel}`}
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-2">
         <label
