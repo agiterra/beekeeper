@@ -47,6 +47,8 @@ bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
   default provider. Name one when `choose-model` picked a vendor your own
   runtime cannot run (a Codex architect beside Claude builders).
 - `--model` — optional. Omit it and the seat runs the identity's own model.
+  When you name one, it must be an id the *provider catalog* offers — see
+  **Model ids** below. A guess is refused, not approximated.
 - `--brief <path>` or `--content <text>` — one of the two, 1 byte to 12288 bytes.
   Prefer the file: it is the artefact you can cite later.
 - `--no-wait` — publishes and returns. Use it only if you are not going to act
@@ -56,6 +58,51 @@ bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
 Exit codes: **0** hired (prints the new seat's target and role), **1** refused
 (prints the code), **2** relay error, **5** published but unconfirmed inside
 60 s. On 5, do not re-run blind — `bee sessions list` first, or you hire twice.
+
+## Model ids
+
+A model id is not a name you invent, and it is not the vendor's marketing
+string. It is an id the runtime's own catalog publishes — the `allowedModels`
+of its kind:44222 provider catalog, which is what the host checks a hire
+against.
+
+Read the ids before you name one:
+
+- `bee --format json sessions status --channel <uuid>` — every live execution's
+  `model` field. Those ids are known-good on this host: something is running
+  them right now.
+- The runtime's kind:44222 catalog is the full offered list. The operator can
+  read it in the desktop's provider picker; there is no `bee` subcommand for it
+  yet.
+- A refusal is also a catalog: `HIRE_MODEL_NOT_OFFERED` names every id the
+  runtime offers. One refused hire tells you exactly what to ask for.
+
+**Omitting `--model` is always safe** — the seat runs the identity's own model
+and nothing is checked or translated. Name one only when `choose-model` gave
+you a reason to.
+
+### The alias table
+
+Vendor names for the Claude family are translated onto the catalog's alias when
+that alias is offered, and the host discloses the substitution in the umbrella
+("the hire asked for X … so the seat runs Y instead"). Nothing else is guessed.
+
+| what you write | what the catalog offers | what runs |
+| --- | --- | --- |
+| `claude-sonnet-5`, `claude-sonnet-*` | `sonnet` | `sonnet` |
+| `claude-opus-4-1`, `claude-opus-*` | `opus`, or `opus[1m]` | that id |
+| `claude-haiku-*` | `haiku` | `haiku` |
+| `sonnet`, `opus[1m]`, `default`, … | the same id | exactly what you wrote |
+| `claude-sonnet-5` | a catalog with no `sonnet` | **refused** |
+| `gpt-9`, anything else | — | **refused** |
+
+Matching is exact on offered ids — `opus` and `opus[1m]` are different ids and
+the host never silently swaps one for the other. A bracketed suffix (`[1m]`)
+belongs to the family for translation purposes only.
+
+If this host has not read a runtime's catalog at all, nothing is refused: an
+empty list is "not read", not "offers nothing". You may still get a runtime
+error later, from the runtime itself.
 
 ## The brief is the first turn
 
@@ -83,6 +130,8 @@ umbrella also shows as a system line. The seat was never created.
 | `HIRE_LIMIT` | the umbrella is at its live-seat ceiling (default 4) | Close or finish a seat, or ask the operator to raise the limit. |
 | `HIRE_NO_IDENTITY` | no installed agent has that home role, or the only one is already live here | Ask the operator to **install team roles** (Agents → Install team roles…), or hire a role that is installed and free. |
 | `HIRE_PROVIDER_NOT_ALLOWED` | the named provider is outside the allowed providers | Re-run naming an allowed provider, or drop `--provider-instance` and take the default. |
+| `HIRE_MODEL_NOT_OFFERED` | the model you named is not an id that runtime's catalog offers, and not an alias the host could translate | The reason lists every offered id. Re-run with one of them, or drop `--model` and take the identity's own. |
+| `HIRE_STALE` | the request sat unanswered longer than the host's window (15 minutes) — the operator's computer was shut or offline | Hire again. Do not assume the first one will land late; it will not be answered at all. |
 
 Never retry a refusal unchanged. Put it on the ledger as a `blocker` Pulse entry
 with its code, then either change the request or `BLOCK: missing-input = <the
