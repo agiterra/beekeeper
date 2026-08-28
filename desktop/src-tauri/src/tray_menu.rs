@@ -104,80 +104,24 @@ fn format_elapsed(elapsed: Duration) -> String {
     format!("{hours}h {minutes}m {seconds}s")
 }
 
-/// Builds the standalone Buzz bee as a transparent, macOS template image.
+/// Builds the standalone beekeeper hat as a transparent, macOS template image.
 ///
 /// The app icon includes a rounded square, which is useful for the Dock but
-/// looks out of place beside the monochrome menu-bar icons. Keeping this
-/// vector-derived mask here also lets macOS tint it correctly in light and
-/// dark menu bars without a separate bitmap asset.
-fn tray_bee_icon() -> Image<'static> {
-    const WIDTH: u32 = 64;
+/// looks out of place beside the monochrome menu-bar icons. Template images
+/// render from the alpha channel alone, so the embedded artifact is a raw
+/// alpha mask — the hat silhouette, regenerated from the source drawing by
+/// `desktop/scripts/make-tray-alpha.swift` — and macOS tints it correctly in
+/// light and dark menu bars without a separate bitmap per theme.
+fn tray_hat_icon() -> Image<'static> {
+    const WIDTH: u32 = 37;
     const HEIGHT: u32 = 43;
-    const SAMPLES_PER_AXIS: u32 = 4;
-    const BEE_WIDTH: f32 = 466.0;
-    const BEE_HEIGHT: f32 = 309.0;
-
-    fn circle_contains(x: f32, y: f32, center_x: f32, center_y: f32, radius: f32) -> bool {
-        let delta_x = x - center_x;
-        let delta_y = y - center_y;
-        delta_x * delta_x + delta_y * delta_y <= radius * radius
-    }
-
-    fn rounded_rect_contains(
-        x: f32,
-        y: f32,
-        left: f32,
-        top: f32,
-        width: f32,
-        height: f32,
-        radius: f32,
-    ) -> bool {
-        let right = left + width;
-        let bottom = top + height;
-        let closest_x = x.clamp(left + radius, right - radius);
-        let closest_y = y.clamp(top + radius, bottom - radius);
-        let delta_x = x - closest_x;
-        let delta_y = y - closest_y;
-        delta_x * delta_x + delta_y * delta_y <= radius * radius
-    }
-
-    fn bee_contains(x: f32, y: f32) -> bool {
-        let silhouette = circle_contains(x, y, 91.7, 154.5, 91.7)
-            || circle_contains(x, y, 374.3, 154.5, 91.7)
-            || rounded_rect_contains(x, y, 128.0, 0.0, 210.0, 309.0, 34.0);
-        let cutout = circle_contains(x, y, 193.3, 84.4, 27.0)
-            || circle_contains(x, y, 276.0, 84.4, 27.0)
-            || rounded_rect_contains(x, y, 166.3, 157.2, 136.9, 38.3, 5.0)
-            || rounded_rect_contains(x, y, 166.9, 235.1, 136.2, 37.6, 5.0);
-
-        silhouette && !cutout
-    }
+    const ALPHA: &[u8] = include_bytes!("../icons/tray-hat-alpha.bin");
+    const _: () = assert!(ALPHA.len() == (WIDTH * HEIGHT) as usize);
 
     let mut rgba = vec![0; (WIDTH * HEIGHT * 4) as usize];
-    let samples = SAMPLES_PER_AXIS * SAMPLES_PER_AXIS;
-
-    for pixel_y in 0..HEIGHT {
-        for pixel_x in 0..WIDTH {
-            let mut covered_samples = 0;
-            for sample_y in 0..SAMPLES_PER_AXIS {
-                for sample_x in 0..SAMPLES_PER_AXIS {
-                    let x = (pixel_x as f32 + (sample_x as f32 + 0.5) / SAMPLES_PER_AXIS as f32)
-                        / WIDTH as f32
-                        * BEE_WIDTH;
-                    let y = (pixel_y as f32 + (sample_y as f32 + 0.5) / SAMPLES_PER_AXIS as f32)
-                        / HEIGHT as f32
-                        * BEE_HEIGHT;
-                    if bee_contains(x, y) {
-                        covered_samples += 1;
-                    }
-                }
-            }
-
-            let index = ((pixel_y * WIDTH + pixel_x) * 4) as usize;
-            rgba[index + 3] = (covered_samples * u8::MAX as u32 / samples) as u8;
-        }
+    for (index, &alpha) in ALPHA.iter().enumerate() {
+        rgba[index * 4 + 3] = alpha;
     }
-
     Image::new_owned(rgba, WIDTH, HEIGHT)
 }
 
@@ -488,7 +432,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     });
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
-        .icon(tray_bee_icon())
+        .icon(tray_hat_icon())
         .icon_as_template(true)
         .on_menu_event(|app, event| handle_menu_event(app, event.id.as_ref()))
         .build(app)?;
