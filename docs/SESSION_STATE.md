@@ -2522,6 +2522,279 @@ written and `bash -n` clean but **was not executed** — that harness needs
     `…/Beekeeper`; provider binary swapped for the patched build from
     `seat-prompt` (a `tauri dev` rebuild will overwrite it).
 
+78. **SWAT batch 2026-08-28 — the dogfooding position.** Three lanes on
+    `crew/front-door` (`1b125465`, `7840dba8`, `2ca15bec`), briefed from item
+    77's rulings and `docs/CREW_SESSIONS_PLAN.md` §3.1. The batch's purpose is
+    narrow: make the installed team *launchable*, make a seat *behave like a
+    seat*, and give the lead enough of this project to work from inside
+    Beekeeper. Brian's standing go for the batch was "just send it home".
+
+    **Lane R — the installed team launches, and it is called a team**
+    (`1b125465`).
+    - F7 part 1 (installer): `build_crew` now writes `driver=claude-agent-acp`
+      and `vendor=anthropic` on every seat (`crew_roles.rs`
+      `DEFAULT_CREW_SEAT_DRIVER` + `DRIVER_VENDORS` table, claude→anthropic,
+      codex→openai, goose/buzz-agent deliberately absent because their
+      provider is config-driven). Red test first:
+      `every_seat_declares_the_runtime_and_vendor_it_will_launch_on` failed
+      with "seat lead names no runtime" before the change.
+    - F7 part 2 (desktop resolution): `resolveCodingSessionSeatVendor`
+      consults the seat's ACP driver before the model id or the declaration.
+      `CODING_SESSION_RUNTIME_VENDORS` maps driver slugs and
+      `providerInstanceRef`s that run exactly one vendor; sonnet/opus/haiku/
+      fable **and `default`** on `claude-agent-acp` all resolve anthropic,
+      with a new `source:"runtime"`. A bare alias with no driver still
+      resolves to nothing, and a declaration the runtime contradicts is a
+      conflict, not an answer. The seat's driver is carried through
+      `resolveCodingSessionCrewSeats`.
+    - F7 part 3 (the launch actually enables): the default roster no longer
+      seats a verifier — `CREW_SEAT_ROSTER` is `[lead, architect, builder,
+      runner]`. Reason: `useCodingSessionCrewLaunch` publishes every seat's
+      create against the one `providerInstanceRef` the dialog selected, so
+      every seat runs on that runtime's vendor and a seated verifier can only
+      ever share its builders'. D8 is kept intact and the roster is made
+      launchable instead. The verifier pack still installs, unseated beside
+      poker and designer, and the dialog copy states the reason. e2e test 03
+      now drives the Team tab to an enabled Launch button with no refusal on
+      screen.
+    - New honesty guard: `checkCodingSessionCrewSeatModels` takes the
+      provider's `instanceRef` and refuses when ANY seat's resolved vendor
+      differs from the vendor that provider can run (e.g. the installed
+      anthropic roster launched on `codex-primary`). Without it the written
+      vendor would be an unchecked claim.
+    - Rename (ruling 77a): "Crew" is "Team" in every user-facing string the
+      lane owns — the New session tab label, "Install team roles…", the
+      dialog title/body/roster plan, "installed, but not seated in the team",
+      the success toast, "Team · n seats", "No teams with seats on this
+      computer", "Launch team", "What is this team for?", the `[Team]` roster
+      header in the lead's first turn, launch step "Check the team's model
+      families", all launch failure copy, `CODING_SESSION_CREW_EDIT_HINT`,
+      and `docs/CREW_ROLES.md` prose. Test ids and internal identifiers
+      unchanged. The installer's team is now "Team roles", and a computer
+      already holding "Crew roles" is renamed in place
+      (`LEGACY_CREW_ROLES_TEAM_NAME` dedupe) rather than given a second team.
+    - D11 named lead: the install dialog has a "Name the lead" field
+      defaulting to "Lead", wired `installCrewRolePacks(directory, leadName)`
+      → `install_crew_role_packs(leadName)` → `install_role_packs(lead_name)`.
+      Red tests: the minted lead record carries the given name (Rust,
+      `the_lead_is_minted_under_the_name_the_operator_gave` — "Keystone"), the
+      builder keeps its role name, and the e2e spec types "Keystone" and
+      asserts `leadName` reached the invoke.
+
+    **Lane F — a seat cannot leave the relay, runs the shipped `bee`, and
+    commits as itself** (`7840dba8`, item 77 *Fence*).
+    - (1) **Research, no code — the negative result is the finding.** Measured
+      on this machine 2026-08-28 against `claude` 2.1.248 and
+      `@agentclientprotocol/claude-agent-acp` 0.70.0. **There is NO adapter arg
+      or env var the provider can set that denies Task/Agent/SendMessage
+      without breaking the seat's login.** Evidence: (a)
+      `CLAUDE_CONFIG_DIR=/tmp/… claude -p …` answers "Not logged in · Please
+      run /login" while the identical control run succeeds; seeding the
+      relocated dir with `~/.claude.json` and pointing
+      `CLAUDE_SECURESTORAGE_CONFIG_DIR` back at `~/.claude` both still fail —
+      the macOS-keychain credential is keyed by the configuration home.
+      (b) `CLAUDE_CODE_MANAGED_SETTINGS_PATH` exists as a string in the CLI
+      binary, but a `permissions.deny:["Bash"]` file supplied that way had no
+      effect (Bash ran); the same file passed as `--settings` removed Bash
+      from the toolset outright — the file shape is right, the env var is not
+      honoured. (c) The adapter's argv accepts only `--cli`, `--version`,
+      `--hide-claude-auth` (`dist/index.js:10-40`, `acp-agent.js:277`).
+      (d) The one working mechanism is per-session
+      `_meta.claudeCode.options.disallowedTools`, merged by the adapter into
+      the SDK query (`dist/acp-agent.d.ts:522`, `dist/acp-agent.js:4913`),
+      built in `crates/buzz-acp/src/acp.rs` — outside the lane's ownership.
+      **Codex:** no equivalent exists; `codex-acp` 1.6.2 exposes only
+      `--client-name/--client-title/--client-version` on `login` and reads
+      `CODEX_PATH`/`CODEX_CONFIG`, with no per-session tool denial and no
+      subagent/cross-session tool of the kind the finding names.
+    - (1b) Shipped instead, honestly labelled: `SEAT_OUT_OF_BOUNDS_TOOLS =
+      ["Task","Agent","SendMessage"]` in `agent_fence.rs`, with the measured
+      rationale in its doc comment under the heading "This list is a briefing,
+      not an enforcement". It is live, not dead code — the seat briefing
+      renders the names from it.
+    - (2) Seat briefing (`agent_fence.rs` `actor_seat_briefing`): four new
+      sentences — "The relay is the only channel to other seats and to the
+      operator. Local subagent and cross-session tools — Task, Agent,
+      SendMessage — are out of bounds in this seat…"; "After you dispatch work
+      to another seat, end your turn. An addressed relay turn wakes you…";
+      "Reports arrive as turns. Do not poll `bee sessions inbox` inside a
+      turn…"; and the do-not-detach rule restated as "only an addressed relay
+      turn wakes you, and a background job finishing is not one". The false
+      "nothing reads this process between turns, so nothing will wake you" is
+      gone from the **seated** briefing only (`FENCED_SESSION_BRIEFING`, the
+      unseated one, is untouched). Four new tests, one per sentence, all four
+      watched red by reverting the text (6 passed / 4 FAILED) and green after.
+    - (3) `build_augmented_path` (`managed_agents/runtime/path.rs`): order is
+      now exe-parent → managed npm bin → managed node bin → `~/.local/bin` →
+      nvm → login-shell PATH → inherited PATH. This closes the "`~/.local/bin`
+      shadows the bundled `bee`" trap §3 warns Andy about. New red test
+      `bundled_binaries_outrank_local_bin` watched fail then pass; three
+      existing order tests updated to the new contract.
+    - (4) Git identity per seat: `ActorSeat::git_identity(role)` + four vars
+      appended in `post_fence_env(role)` — `GIT_AUTHOR_NAME`/
+      `GIT_COMMITTER_NAME` = display name, else role, else
+      `agent-<pubkey16>`; `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` =
+      `<pubkey16>@agents.beekeeper` (`SEAT_EMAIL_DOMAIN`, deliberately not a
+      mailbox). Desktop `ActorSeatEntry` gains `displayName` (blank trims to
+      absent). Red first: the new provider test failed to compile against the
+      old 0-arg signature. End-to-end proof in `session.rs`: the seated
+      subprocess-env test builds `post_fence_env` from a real `ActorSeat` and
+      asserts the child's dumped environment contains all four values; the
+      unseated twin asserts no variable contains `@agents.beekeeper`.
+
+    **Lane L — the lead learns this week, and the umbrella shows team state**
+    (`2ca15bec`).
+    - Lead persona: dispatch **then end the turn** (the report arrives as a
+      turn; no `bee sessions inbox` polling inside the dispatch turn); address
+      seats with `bee sessions send --channel <uuid> --session-ref <uuid> --to
+      <role>`, with the note that a role is unique only inside one umbrella
+      (verified against `crates/buzz-cli/src/lib.rs:2395-2418`); the ledger is
+      the relay — every disposition published as `bee pulse update --kind
+      milestone --session <ref> --content "<lane> — <verdict> @ <sha> —
+      <next>"` (kind 44240 = `KIND_PULSE_ENTRY`,
+      `crates/buzz-core/src/kind.rs:619`); "no APPROVE on a report alone".
+    - `skills/write-brief`: evidence = two or three `file:line` entry points,
+      time-boxed to one read per file named, no grep sweep before the first
+      brief; the template gains a `Seat:` line and ends with the exact
+      dispatch command including `--session-ref`.
+    - `skills/triage-report`: a **mandatory live-value check before APPROVE**
+      (run the lane's acceptance yourself, read the value; "cannot run it
+      here" is a BLOCK, not a note), with the founder-column incident as the
+      reason; disposition published as a Pulse line.
+    - New `personas/roles/lead/skills/choose-model/SKILL.md` (D13): task class
+      → minimum tier (small/mid/frontier), modality → vendor (multimodal for
+      images; a refuter never shares the builder's vendor), thinking level vs
+      tier, and a mandatory "say why" clause. Written in tiers, never product
+      slugs, so the pack stays model-agnostic.
+    - New `personas/roles/lead/skills/beekeeper-project/SKILL.md` (114 lines):
+      relay-canonical git (push `origin` only, the bridge mirrors GitHub,
+      `rebase --signoff`, `commit -s`, never hard-code a remote), the item-71
+      401-after-long-hooks retry rule, worktrees + the operator's hot live
+      checkout + `activate-hermit`, the ledger discipline (SESSION_STATE is
+      the record; in-flight dispositions go on the wire), the wire facts
+      (44220–44230 named individually, per-stage receipts keyed by
+      `commandId`, roles unique per umbrella), D11–D16, the quality gates, and
+      what the operator rejects (the word "crew", menus, reports without
+      `file:line`, comfortable guesses, approving on a report alone).
+    - `plugin.json`: display name "Crew Lead" → "Team Lead", description and
+      keywords de-crewed, version 0.1.0 → 0.2.0. The `id`
+      (`com.beekeeper.crew.lead`) is an internal identifier and stayed.
+    - Umbrella disposition strip: new pure selectors
+      `listCodingSessionUmbrellaDispositions`, `codingSessionDispositionWord`
+      and `formatCodingSessionDispositionLine` in
+      `codingSessionUmbrellaModel.ts`, and `CodingSessionDispositionStrip`
+      exported from `CodingSessionHeader.tsx`, rendered under the header for
+      multi-execution umbrellas. One line per execution: `<agent> · <role> ·
+      <live|idle|released> · last turn <age>`, the lead's execution first.
+      **Honesty:** only working/idle/ended get the three team words; every
+      other status keeps its own sentence, so an unreachable provider reads
+      "no provider answering", never "idle". Status comes through the same
+      reachability-demoted `deriveCodingSessionWorkspaceStatus` the focus
+      chips use (resolver injected — reading the raw wire status would let a
+      dead provider read `live`). An execution with no transcript renders "no
+      turn observed" rather than an age it does not have. No new data fetch:
+      every fact is 44223 metadata already on the catalog record. Red before
+      green watched (missing-export `SyntaxError` on both new suites); 5 model
+      tests + 2 header render tests added.
+
+    **Gate on `crew/front-door` (green, run in `fd-int`):** `cargo test -p
+    buzz-cli -p buzz-session-provider -p buzz-persona -p buzz-core --lib` →
+    573 + 441 + 157 + 387 passed, 0 failed; `cargo clippy --workspace
+    --all-targets -- -D warnings` → 0 warnings; `cargo fmt --all -- --check` →
+    clean; desktop `pnpm typecheck && pnpm test` → clean, **6483 passed, 0
+    failed**; `cargo test --manifest-path desktop/src-tauri/Cargo.toml` →
+    **2744 passed, 0 failed, 18 ignored**; `pnpm check:px-text` → clean; `just
+    file-size-check` → clean; `pnpm build:e2e && playwright test
+    tests/e2e/crew-front-door.spec.ts --project=smoke` → **8 passed**. Logs
+    `/tmp/swat1-gate-r1-{1..8}.log`. `just ci` itself was not run.
+
+    **Deviations worth a ruling.**
+    - *Product decision outside the brief's letter (lane R):* the default
+      roster no longer seats a verifier. The brief asked for both "keep D8"
+      and "a default roster that passes the family check"; those are only
+      simultaneously satisfiable while every seat launches on one provider
+      (`useCodingSessionCrewLaunch.ts:88-140`). Per-seat providers are the
+      real fix and are a separate lane.
+    - *Lane R could not implement "write the vendor the installer minted each
+      seat on" literally:* the installer mints managed-agent records whose
+      `agent_command` resolves to `buzz-agent` (`discovery.rs:290-295`; the
+      packs declare no runtime), which is not the runtime a team seat runs on.
+      Implemented instead as: the seat states the always-offered
+      coding-session runtime, and a launch on a different provider is refused
+      rather than silently run.
+    - *Lane F stopped at the ownership boundary for enforcement.* The fix
+      needs `crates/buzz-acp/src/acp.rs`: a setter beside
+      `set_emit_raw_sdk_frames` (`acp.rs:1766`) and one line in the
+      `session/new` `_meta` builder (`acp.rs:1405-1450`, beside
+      `…["claudeCode"]["emitRawSDKMessages"]` at `acp.rs:1446`) writing
+      `_meta.claudeCode.options.disallowedTools`; `CreateRequest` would carry
+      the list. The lane deliberately did **not** add a dead `denied_tools`
+      field, because a fence field nothing reads is the exact "control that
+      lies about what it enforces" bug it exists to fix.
+    - *Signature changes:* `post_fence_env()` gained `role: Option<&str>`
+      (both call sites in `crates/buzz-session-provider/src/lib.rs` updated);
+      `build_actor_seat_entry` gained `display_name: Option<&str>` (eight
+      in-file test call sites). Two desktop PATH tests that asserted
+      `~/.local/bin` is *first* now assert it is merely present.
+    - *Lane L:* the umbrella workspace never passed a `seat` chip to
+      `CodingSessionHeader`, so the strip is a new element rather than an
+      extension of item 76's chip; and the derivation lives in the strip
+      because `CodingSessionUmbrellaWorkspace.tsx` was 978/1000 lines and the
+      memo pushed it to 1004 (`just file-size-check` failed; the limit was not
+      raised).
+    - *User-facing "crew" strings still owned by nobody in this batch:*
+      `useCodingSessionCrewLaunch.ts:77,148,149`,
+      `CodingSessionCapacityCard.tsx:382,407`,
+      `codingSessionCapacity.ts:228` ("per crew session"),
+      `CodingSessionsSettingsPanel.tsx:15`, and the `crewWarning` sentence
+      rendered by `TeamSnapshotImportDialog.tsx:177` (text produced in Rust).
+      Every other role pack's `plugin.json` still says "Crew <Role>".
+
+    **Residuals.**
+    - **No live acceptance anywhere in this batch.** Nothing was installed,
+      minted, launched or committed against Brian's real keyring, provider or
+      relay. All evidence is unit, Tauri-lib and mock-bridge e2e.
+    - Item 77 *Fence* (a) **enforcement remains OPEN**: the fence for local
+      subagent/cross-session tools is prompt-level only, and
+      `SEAT_OUT_OF_BOUNDS_TOOLS`'s doc comment says so in as many words.
+      Item 77 *Fence* (d) — owner attestation (NIP-OA `auth` tag) — untouched.
+    - The provider-vendor refusal can only fire for runtimes that run exactly
+      one vendor (claude, codex). A seat on `goose-primary` is unchecked,
+      because goose takes its provider from `GOOSE_PROVIDER`.
+    - The installed seats pin `driver=claude-agent-acp`. An operator who picks
+      `codex-primary` or `goose-primary` gets a refusal naming the mismatch,
+      and the only remedy this build offers is editing `teams.json` — there is
+      no team editor (`CODING_SESSION_CREW_EDIT_HINT` says so).
+    - The lead name sets the managed-agent record's `name` only; the
+      `AgentDefinition`'s `display_name` stays the pack's ("Lead"), so a
+      persona list shows "Lead" while the agent shows "Keystone".
+    - `bee pulse update` needs a project coordinate (`--project` /
+      `BUZZ_PULSE_PROJECT`, `crates/buzz-cli/src/lib.rs:2604-2626`). A team
+      session with no project ref has no Pulse target and the lead persona
+      does not say what to do then — **needs a ruling**: either the umbrella's
+      `sessionRef` alone is a valid Pulse scope, or the lead needs a named
+      fallback project.
+    - The seat's git email uses a 16-hex pubkey prefix
+      (`SEAT_EMAIL_PUBKEY_PREFIX`); the UI elsewhere abbreviates to 8. A Codex
+      seat is briefed with Claude-Code tool names it does not have (harmless —
+      it forbids what is absent — but a designer's eye is warranted).
+    - A seat whose declared vendor agrees with its runtime prints just the
+      vendor ("anthropic · sonnet"); the "(the only vendor claude-agent-acp
+      runs)" annotation only appears for a seat that declares none. Both are
+      honest; the two rows read differently for the same fact.
+    - The strip's age is memoized on `[actorNames, resolveReachability,
+      umbrella]`, so a quiet session's "last turn 4m ago" can lag.
+    - `docs/CREW_ROLES.md` is renamed in prose only; the file name,
+      `install_crew_role_packs`, `crew_roles.rs`, the `crew` block on the wire
+      and every `data-testid` remain "crew" per the internal-identifier rule.
+      Anyone reading the code still sees both words.
+
+    **Next — Brian dogfoods from inside Beekeeper.** Relaunch the dev app on
+    `main`; `Install team roles…` from `personas/roles`; name the lead
+    **Keystone**; start a session with Keystone on **claude-fable-5**; seat
+    builders via **Add provider**; then the lead works from inside Beekeeper.
+    Everything above is unproven until that walk happens.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -2579,6 +2852,14 @@ old CLI unless you repoint that symlink; (3) seats still share the operator's
 other sessions — the fence item in 77 is not landed yet. Also open: the
 "no-surface-by-decision" calls recorded in item 76 are waiting on Brian's
 sign-off.
+
+**Read §2 item 78 first (2026-08-28).** The SWAT batch on `crew/front-door`
+supersedes two of the three traps above: the installed team now launches
+(vendor written on every seat, roster made launchable), and
+`build_augmented_path` now ranks the bundled `bee` ahead of `~/.local/bin`.
+The fence is briefing-only, not enforced. Nothing in that batch has been run
+live — the next action is Brian's dogfooding walk, spelled out at the end of
+item 78.
 
 **Crew front door batch (§2 item 76) landed on `main` on 2026-08-28 after
 Brian's go; relay code was untouched, so the hive deploy is a same-code
