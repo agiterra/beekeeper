@@ -277,6 +277,47 @@ enum Cmd {
     /// (kind 44240) folded with observed coding-session facts
     #[command(subcommand)]
     Pulse(PulseCmd),
+    /// Run raw Nostr filters against the relay — the debugging verb
+    #[command(subcommand)]
+    Events(EventsCmd),
+}
+
+/// Raw relay queries — no contract decoding, no writes.
+#[derive(Subcommand)]
+pub enum EventsCmd {
+    /// Run a raw authenticated REQ against the relay. --kinds is required;
+    /// the relay's p-gate refuses a filter without it.
+    #[command(
+        about = "Run a raw authenticated REQ against the relay. --kinds is required; \
+                 the relay's p-gate refuses a filter without it."
+    )]
+    Query {
+        /// Event kinds to match, comma-separated. Required: the relay's
+        /// p-gate answers 403 to a filter that names none.
+        #[arg(long)]
+        kinds: Option<String>,
+        /// Channel UUID to scope to; written to the filter's `#h` key
+        #[arg(long, conflicts_with = "h")]
+        channel: Option<String>,
+        /// Raw `#h` tag value, for an h-scope that is not a channel UUID
+        #[arg(long)]
+        h: Option<String>,
+        /// Author pubkeys, comma-separated 64-char lowercase hex
+        #[arg(long)]
+        authors: Option<String>,
+        /// Event ids, comma-separated 64-char lowercase hex
+        #[arg(long)]
+        ids: Option<String>,
+        /// Lower time bound: RFC 3339 or Unix seconds
+        #[arg(long)]
+        since: Option<String>,
+        /// Upper time bound: RFC 3339 or Unix seconds
+        #[arg(long)]
+        until: Option<String>,
+        /// Stop after this many events; absent pages the whole result
+        #[arg(long)]
+        limit: Option<u32>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -2782,6 +2823,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Sessions(sub) => commands::sessions::dispatch(sub, &client, &cli.format).await,
         Cmd::Terminals(sub) => commands::terminals::dispatch(sub, &client).await,
         Cmd::Pulse(sub) => commands::pulse::dispatch(sub, &client, &cli.format).await,
+        Cmd::Events(sub) => commands::events::dispatch(sub, &client, &cli.format).await,
         Cmd::Pack(_) => unreachable!("handled above"),
         Cmd::Git(_) => unreachable!("handled above"),
         Cmd::Session(_) => unreachable!("handled above"),
