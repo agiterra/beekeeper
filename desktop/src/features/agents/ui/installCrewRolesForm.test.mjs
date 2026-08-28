@@ -344,7 +344,8 @@ test("a failed profile publish is shown, and no renamed row claims a republish",
 // is and leaves the picker exactly as it was — a folder nobody can find is not
 // a folder to pre-fill with.
 
-const PROJECT = { address: "30621:owner:beekeeper" };
+const PROJECT = { address: "30621:owner:beekeeper", name: "Beekeeper" };
+const OTHER_PROJECT = { address: "30621:owner:attic", name: "Attic" };
 
 /** The workdir store's answer with one checkout recorded for `PROJECT`. */
 const workdirState = (path) => ({
@@ -375,8 +376,8 @@ test("a project whose checkout holds role packs opens on that folder, already ch
   );
   assert.equal(
     screen.getByTestId("install-crew-roles-folder-label").textContent,
-    "The project's role packs",
-    "and it says whose folder that is",
+    "The project's role packs — Beekeeper",
+    "and it says whose folder that is, by name",
   );
   const inputs = [
     ...screen.getByTestId("install-crew-roles-names").querySelectorAll("input"),
@@ -415,7 +416,11 @@ test("a project with no checkout directory says so, and the picker is untouched"
   );
   assert.equal(screen.getByTestId("install-crew-roles-path").value, "");
   assert.equal(screen.queryByTestId("install-crew-roles-names"), null);
-  assert.equal(screen.queryByTestId("install-crew-roles-folder-label"), null);
+  assert.equal(
+    screen.getByTestId("install-crew-roles-folder-label").textContent,
+    "The project's role packs — Beekeeper",
+    "the project the installer resolved is named even when its folder failed",
+  );
   assert.equal(
     calls.filter(
       (entry) => entry.command === "scan_project_role_packs_directory",
@@ -504,5 +509,184 @@ test("choosing another folder over the project's default drops the project label
     screen.queryByTestId("install-crew-roles-folder-label"),
     null,
     "a folder the operator picked is not the project's role packs",
+  );
+});
+
+test("switching the project re-scans that project's checkout, and drops the old one", async () => {
+  const React = (await import("react")).default;
+  const { act, render, screen } = await import("@testing-library/react");
+  const { InstallCrewRolesForm } = await import("./InstallCrewRolesDialog.tsx");
+
+  answers.get_coding_session_workdir_state = {
+    version: 1,
+    byProject: {
+      [PROJECT.address]: { path: "/checkout", updatedAt: "2026-08-01" },
+      [OTHER_PROJECT.address]: { path: "/attic", updatedAt: "2026-08-27" },
+    },
+    byChannel: {},
+    mru: [],
+    pending: {},
+  };
+  answers.scan_project_role_packs_directory = ({ checkoutDir }) =>
+    checkoutDir === "/attic"
+      ? {
+          directory: "/attic/personas/roles",
+          exists: true,
+          packs: [PICKED.packs[0]],
+          skipped: [],
+        }
+      : PROJECT_SCAN;
+
+  let rerender;
+  await act(async () => {
+    ({ rerender } = render(
+      React.createElement(InstallCrewRolesForm, {
+        onClose: () => {},
+        onInstalled: () => {},
+        project: PROJECT,
+      }),
+    ));
+  });
+  assert.equal(
+    screen.getByTestId("install-crew-roles-path").value,
+    "/checkout/personas/roles",
+  );
+
+  await act(async () => {
+    rerender(
+      React.createElement(InstallCrewRolesForm, {
+        onClose: () => {},
+        onInstalled: () => {},
+        project: OTHER_PROJECT,
+      }),
+    );
+  });
+
+  const scans = calls.filter(
+    (entry) => entry.command === "scan_project_role_packs_directory",
+  );
+  assert.deepEqual(
+    scans.map((entry) => entry.args.checkoutDir),
+    ["/checkout", "/attic"],
+    "the second project's own checkout is scanned, not the first one again",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-path").value,
+    "/attic/personas/roles",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-folder-label").textContent,
+    "The project's role packs — Attic",
+  );
+  const inputs = [
+    ...screen.getByTestId("install-crew-roles-names").querySelectorAll("input"),
+  ];
+  assert.deepEqual(
+    inputs.map((input) => input.value),
+    ["Keystone"],
+    "the fields belong to the folder now shown, not the one it replaced",
+  );
+});
+
+test("switching to a project with no checkout clears the folder it replaced", async () => {
+  const React = (await import("react")).default;
+  const { act, render, screen } = await import("@testing-library/react");
+  const { InstallCrewRolesForm } = await import("./InstallCrewRolesDialog.tsx");
+
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = PROJECT_SCAN;
+
+  let rerender;
+  await act(async () => {
+    ({ rerender } = render(
+      React.createElement(InstallCrewRolesForm, {
+        onClose: () => {},
+        onInstalled: () => {},
+        project: PROJECT,
+      }),
+    ));
+  });
+  assert.equal(
+    screen.getByTestId("install-crew-roles-path").value,
+    "/checkout/personas/roles",
+  );
+
+  await act(async () => {
+    rerender(
+      React.createElement(InstallCrewRolesForm, {
+        onClose: () => {},
+        onInstalled: () => {},
+        project: OTHER_PROJECT,
+      }),
+    );
+  });
+
+  assert.equal(
+    screen.getByTestId("install-crew-roles-path").value,
+    "",
+    "a folder belonging to the project that is no longer shown is not left on screen",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-folder-label").textContent,
+    "The project's role packs — Attic",
+    "the label names the project now shown, not the one it replaced",
+  );
+  assert.equal(
+    screen.getByTestId("install-crew-roles-project-note").textContent,
+    "This project has no checkout directory yet — set one in Project settings, or choose a folder",
+  );
+  assert.equal(screen.getByTestId("install-crew-roles-submit").disabled, true);
+});
+
+// ── Found in the live e2e run of this change ────────────────────────────────
+//
+// The Agents tab resolves a project without being told which one, so two
+// things the operator can no longer infer have to be said out loud: which
+// project was resolved (above), and — when the lookup itself fails — that the
+// failure was not the folder's. The mock bridge answering
+// `get_coding_session_workdir_state` with "Unsupported mocked Tauri command"
+// produced "That folder could not be read: …" over a dialog where no folder
+// had been read at all.
+
+test("a checkout lookup that fails is not blamed on a folder nobody read", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = () => {
+    throw new Error("Unsupported mocked Tauri command");
+  };
+  await mountForm(() => {}, { project: PROJECT });
+
+  const note = screen.getByTestId(
+    "install-crew-roles-project-note",
+  ).textContent;
+  assert.doesNotMatch(
+    note,
+    /That folder could not be read/,
+    "no folder was read, so no folder is at fault",
+  );
+  assert.match(note, /Unsupported mocked Tauri command/, "the cause survives");
+  assert.match(
+    note,
+    /checkout director/i,
+    "and it names what actually could not be read",
+  );
+  assert.equal(
+    calls.filter(
+      (entry) => entry.command === "scan_project_role_packs_directory",
+    ).length,
+    0,
+  );
+});
+
+test("a folder that is there and unreadable is still the folder's fault", async () => {
+  const { screen } = await import("@testing-library/react");
+  answers.get_coding_session_workdir_state = workdirState("/checkout");
+  answers.scan_project_role_packs_directory = () => {
+    throw new Error("permission denied");
+  };
+  await mountForm(() => {}, { project: PROJECT });
+
+  assert.equal(
+    screen.getByTestId("install-crew-roles-project-note").textContent,
+    "That folder could not be read: permission denied",
   );
 });

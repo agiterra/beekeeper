@@ -26,15 +26,16 @@ import {
   crewRoleResultRows,
   crewRolesDroppedNotes,
   crewRolesFailureMessage,
+  crewRolesCheckoutLookupFailed,
   crewRolesFoundNothing,
   crewRolesProjectFolderNote,
   crewRolesSeatedNote,
   crewRolesUnreadableFolder,
+  installCrewRolesProjectFolderLabel,
   INSTALL_CREW_ROLES_BODY,
   INSTALL_CREW_ROLES_CHOOSE_FOLDER,
   INSTALL_CREW_ROLES_NO_CHECKOUT,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
-  INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
   INSTALL_CREW_ROLES_TEAM_NAMES_HINT,
   INSTALL_CREW_ROLES_TEAM_NAMES_LABEL,
@@ -45,6 +46,14 @@ import {
 export type InstallCrewRolesProject = {
   /** The NIP-MP coordinate the checkout directory is remembered under. */
   address: string;
+  /**
+   * The project's display name, put on the folder label.
+   *
+   * Required, not optional: the Agents tab resolves this project without
+   * being told which one by the route, so a label that does not name it is a
+   * folder the operator cannot check.
+   */
+  name: string;
 };
 
 type InstallCrewRolesFormProps = {
@@ -83,8 +92,9 @@ export function InstallCrewRolesForm({
   const [result, setResult] =
     React.useState<InstallCrewRolePacksResponse | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  /** `true` while the shown folder is the project's, not one that was picked. */
-  const [isProjectFolder, setIsProjectFolder] = React.useState(false);
+  /** `true` once the operator has picked a folder of their own, which retires
+   * the project label for good — that folder is theirs, not the project's. */
+  const [operatorPickedFolder, setOperatorPickedFolder] = React.useState(false);
   /** Why the project's folder was not used, when it was not. */
   const [projectNote, setProjectNote] = React.useState<string | null>(null);
   /** Set the moment the operator opens the picker, so a slow lookup landing
@@ -119,15 +129,39 @@ export function InstallCrewRolesForm({
   React.useEffect(() => {
     if (!projectAddress) return;
     let cancelled = false;
+    // The project can change under an open dialog (the Agents tab's selector),
+    // and the previous project's folder, label and note must not outlive it —
+    // a path from one checkout under a label naming another is the exact lie
+    // this whole change exists to remove. Cleared before the lookup, not
+    // after, so nothing stale is on screen while it runs.
+    if (!operatorChose.current) {
+      setPicked(null);
+      setNames({});
+      setResult(null);
+      setProjectNote(null);
+    }
     void (async () => {
+      // Two reads, two different things to be at fault. The store read comes
+      // first and touches no folder, so its failure is reported as its own.
+      let checkout: string;
       try {
         const state = await getCodingSessionWorkdirState();
         if (cancelled || operatorChose.current) return;
-        const checkout = state.byProject[projectAddress]?.path?.trim() ?? "";
-        if (checkout.length === 0) {
-          setProjectNote(INSTALL_CREW_ROLES_NO_CHECKOUT);
-          return;
-        }
+        checkout = state.byProject[projectAddress]?.path?.trim() ?? "";
+      } catch (cause) {
+        if (cancelled || operatorChose.current) return;
+        setProjectNote(
+          crewRolesCheckoutLookupFailed(
+            cause instanceof Error ? cause.message : String(cause),
+          ),
+        );
+        return;
+      }
+      if (checkout.length === 0) {
+        setProjectNote(INSTALL_CREW_ROLES_NO_CHECKOUT);
+        return;
+      }
+      try {
         const scan = await scanProjectRolePacks(checkout);
         if (cancelled || operatorChose.current) return;
         const note = crewRolesProjectFolderNote(scan);
@@ -140,7 +174,6 @@ export function InstallCrewRolesForm({
           packs: scan.packs,
           skipped: scan.skipped,
         });
-        setIsProjectFolder(true);
       } catch (cause) {
         // A folder that is there and unreadable is the folder's fault, and
         // saying so beats leaving "No folder chosen" with no explanation.
@@ -165,7 +198,7 @@ export function InstallCrewRolesForm({
       if (!next) return;
       // A folder the operator picked is theirs, not the project's — the label
       // and the note both belong to the folder they replaced.
-      setIsProjectFolder(false);
+      setOperatorPickedFolder(true);
       setProjectNote(null);
       applyScan(next);
     } catch (cause) {
@@ -213,12 +246,16 @@ export function InstallCrewRolesForm({
     <>
       {isDone ? null : (
         <div className="flex flex-col gap-1.5">
-          {isProjectFolder ? (
+          {/* Named whenever a project was resolved, not only when its folder
+              was usable: this surface resolves a project the route never
+              named, so an operator who cannot see which one cannot check it.
+              A folder the operator picked themselves retires it. */}
+          {projectAddress && !operatorPickedFolder ? (
             <p
               className="text-xs font-medium text-foreground"
               data-testid="install-crew-roles-folder-label"
             >
-              {INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL}
+              {installCrewRolesProjectFolderLabel(project?.name)}
             </p>
           ) : null}
           <div className="flex items-center gap-2">

@@ -384,6 +384,20 @@ function crewInvokeInitScript(input: {
                 dropped: [...response.dropped, dropped],
               };
             }
+            case "get_coding_session_workdir_state":
+              // A real command the shared bridge does not answer. The Agents
+              // tab now resolves a project and asks which checkout directory
+              // belongs to it; leaving it unanswered made the installer report
+              // "That folder could not be read" over a folder it never opened.
+              // No checkout is recorded here, which is the state a machine that
+              // has never opened a coding session is actually in.
+              return {
+                version: 1,
+                byProject: {},
+                byChannel: {},
+                mru: [],
+                pending: {},
+              };
             case "stage_coding_session_actor_seat":
               return { packStaged: state.packStaged };
             case "clear_coding_session_actor_seat":
@@ -629,6 +643,23 @@ test.describe("crew front door", () => {
     const dialog = page.getByTestId("install-crew-roles-dialog");
     await expect(dialog).toBeVisible();
     await expect(page.getByTestId("install-crew-roles-submit")).toBeDisabled();
+    // Ledger 85's reachability follow-up: this route names no project, so the
+    // installer resolves one — and then says which one, before anything is
+    // installed. A resolved project the operator cannot see is the guess this
+    // change exists to remove. This fixture has exactly one project, so there
+    // is nothing to choose between and no selector is offered; the name is
+    // still on the label.
+    await expect(
+      page.getByTestId("install-crew-roles-folder-label"),
+    ).toHaveText(/^The project's role packs — .+/);
+    await expect(
+      page.getByTestId("install-crew-roles-project-note"),
+    ).toHaveText(
+      "This project has no checkout directory yet — set one in Project settings, or choose a folder",
+    );
+    await expect(page.getByTestId("role-packs-project-selector")).toHaveCount(
+      0,
+    );
     await waitForAnimations(page);
     await dialog.screenshot({ path: `${SHOTS}/02-install-idle.png` });
 
@@ -637,6 +668,11 @@ test.describe("crew front door", () => {
       PACK_ROOT,
     );
     await expect(page.getByTestId("install-crew-roles-submit")).toBeEnabled();
+    // A folder the operator picked is theirs, so the label naming the project
+    // retires with the folder it described.
+    await expect(
+      page.getByTestId("install-crew-roles-folder-label"),
+    ).toHaveCount(0);
 
     // D11, ledger 84: every pack in the folder is an identity a person names,
     // not one role label the installer asks about. One field per scanned pack,

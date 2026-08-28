@@ -31,6 +31,36 @@ export const INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL =
   "The project's role packs";
 
 /**
+ * That label with the project named (ledger 85's reachability follow-up).
+ *
+ * On the Agents tab the route names no project, so the installer resolves one
+ * for the operator. "The project's role packs" over a folder nobody chose
+ * leaves *which* project unsaid, and a folder from the wrong checkout looks
+ * exactly like a folder from the right one. Naming it is the whole fix.
+ * A project with no usable name falls back to the bare label rather than
+ * printing an em dash with nothing after it.
+ */
+export function installCrewRolesProjectFolderLabel(
+  projectName: string | null | undefined,
+): string {
+  const name = projectName?.trim() ?? "";
+  if (name.length === 0) return INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL;
+  return `${INSTALL_CREW_ROLES_PROJECT_FOLDER_LABEL} — ${name}`;
+}
+
+/**
+ * The Agents tab's project selector, shown when there is more than one
+ * project to read packs from.
+ *
+ * Written as a prefix rather than a whole sentence because the project's own
+ * name is the value of the control next to it.
+ */
+export const ROLE_PACKS_PROJECT_SELECTOR_LABEL = "Role packs for:";
+
+/** Accessible name of that selector's trigger. */
+export const ROLE_PACKS_PROJECT_SELECTOR_ARIA = "Choose the role packs project";
+
+/**
  * The project this dialog was opened in has no checkout directory on this
  * computer, so there is nowhere to look for its packs.
  *
@@ -188,6 +218,19 @@ export function crewRolesUnreadableFolder(error: string): string {
   return message.startsWith("That folder could not be read")
     ? message
     : `That folder could not be read: ${message}`;
+}
+
+/**
+ * The per-computer record of project checkout directories could not be read.
+ *
+ * Not the same failure as an unreadable folder, and it must not borrow that
+ * sentence: when this fails no folder has been opened yet, so "That folder
+ * could not be read" sends an operator to inspect a directory that was never
+ * touched. Found in the live e2e run of ledger 85's reachability fix, where
+ * the workdir-store read failed and the dialog blamed a folder.
+ */
+export function crewRolesCheckoutLookupFailed(error: string): string {
+  return `This computer's project checkout directories could not be read: ${error.trim()} — choose a folder instead.`;
 }
 
 /** The sentence that belongs to each failure stage. */

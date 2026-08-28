@@ -1,3 +1,4 @@
+import type * as React from "react";
 import {
   CopyPlus,
   EllipsisVertical,
@@ -39,6 +40,12 @@ type TeamsSectionProps = {
   onShare: (team: AgentTeam) => void;
   onImport: () => void;
   onInstallCrewRoles: () => void;
+  /**
+   * Which project the "Install team roles…" entry will read packs from,
+   * rendered above the cards so the answer is on screen before the dialog
+   * opens. `null` when there is nothing to choose between.
+   */
+  projectSelector?: React.ReactNode;
 };
 
 export function TeamsSection({
@@ -55,6 +62,7 @@ export function TeamsSection({
   onShare,
   onImport,
   onInstallCrewRoles,
+  projectSelector,
 }: TeamsSectionProps) {
   return (
     <section className="relative space-y-4" data-testid="agents-library-teams">
@@ -63,6 +71,7 @@ export function TeamsSection({
           title="Agent teams"
           description="Group agents that you can add to a channel together."
         />
+        {projectSelector}
       </div>
 
       {isLoading ? (

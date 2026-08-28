@@ -12,11 +12,14 @@ export function ProjectsListScopeDropdown<T extends string>({
   label,
   onChange,
   options,
+  triggerTestId,
   value,
 }: {
   label: string;
   onChange: (value: T) => void;
   options: Array<{ label: string; value: T }>;
+  /** Set by callers a test has to drive the trigger of. */
+  triggerTestId?: string;
   value: T;
 }) {
   const selectedLabel =
@@ -29,6 +32,7 @@ export function ProjectsListScopeDropdown<T extends string>({
         <Button
           aria-label={label}
           className="-ml-2 h-8 gap-1.5 px-2 text-xs font-medium"
+          data-testid={triggerTestId}
           variant="ghost"
         >
           {selectedLabel}

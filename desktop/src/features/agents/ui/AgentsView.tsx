@@ -1,5 +1,4 @@
 import * as React from "react";
-import { useLocation } from "@tanstack/react-router";
 import { EllipsisVertical, OctagonX, Settings2 } from "lucide-react";
 import {
   consumePendingSnapshotImport,
@@ -20,12 +19,13 @@ import { TeamShareDialog } from "./TeamShareDialog";
 import { TeamDeleteDialog } from "./TeamDeleteDialog";
 import { TeamDialog } from "./TeamDialog";
 import { InstallCrewRolesDialog } from "./InstallCrewRolesDialog";
+import { RolePacksProjectSelector } from "./RolePacksProjectSelector";
 import { TeamsSection } from "./TeamsSection";
+import { useRolePacksProject } from "./useRolePacksProject";
 import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
 import { useManagedAgentActions } from "./useManagedAgentActions";
 import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
-import { useActiveProjectContainer } from "@/features/projects-container/useActiveProjectTint";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
@@ -55,14 +55,13 @@ export function AgentsView() {
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
   const [isInstallCrewRolesOpen, setIsInstallCrewRolesOpen] =
     React.useState(false);
-  // Ledger 85: opened inside a project, the installer opens on that project's
-  // own `personas/roles` folder. This surface is a Dashboard tab, so it names
-  // a project only when the route does — outside one the dialog is unchanged,
-  // which is exactly what it must be.
-  const activeProjectPathname = useLocation({
-    select: (location) => location.pathname,
-  });
-  const activeProject = useActiveProjectContainer(activeProjectPathname, null);
+  // Ledger 85: the installer opens on the project's own `personas/roles`
+  // folder. This surface is a Dashboard tab, so the route names no project and
+  // one is resolved from what the app already records — and then named, on the
+  // selector when there is a choice and on the dialog's folder label always.
+  // With no project at all nothing is resolved and the dialog is unchanged.
+  const rolePacksProject = useRolePacksProject();
+  const activeProject = rolePacksProject.project;
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -304,6 +303,13 @@ export function AgentsView() {
               }}
               onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
               personas={personas.libraryPersonas}
+              projectSelector={
+                <RolePacksProjectSelector
+                  onSelect={rolePacksProject.chooseProject}
+                  project={activeProject}
+                  projects={rolePacksProject.projects}
+                />
+              }
               teams={teamActions.teams}
             />
           </div>
@@ -319,7 +325,11 @@ export function AgentsView() {
         }}
         onOpenChange={setIsInstallCrewRolesOpen}
         open={isInstallCrewRolesOpen}
-        project={activeProject ? { address: activeProject.address } : null}
+        project={
+          activeProject
+            ? { address: activeProject.address, name: activeProject.name }
+            : null
+        }
       />
 
       <AgentDefaultsDialog
