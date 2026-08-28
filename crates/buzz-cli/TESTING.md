@@ -900,7 +900,11 @@ bee sessions hire --channel "$CHANNEL_ID" --session-ref "$UMBRELLA" --role build
 # The four non-zero outcomes, and the exit code each earns:
 #   refused      → the host's policy refused; "code" is one of HIRE_OFF,
 #                  HIRE_ROLE_NOT_ALLOWED, HIRE_LIMIT, HIRE_NO_IDENTITY,
-#                  HIRE_PROVIDER_NOT_ALLOWED; exit 1
+#                  HIRE_PROVIDER_NOT_ALLOWED, HIRE_MODEL_NOT_OFFERED (the
+#                  model is not in the chosen provider's catalog and is no
+#                  alias the host could translate) or HIRE_STALE (the request
+#                  is older than the host's 15-minute answering window);
+#                  "detail" appends the remedy for the code; exit 1
 #   failed       → the host seated it and the PROVIDER refused the create;
 #                  "code" is the receipt's own (e.g. ACTOR_UNAVAILABLE); exit 1
 #   seating      → a seated create was published, no provider receipt inside

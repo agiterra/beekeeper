@@ -2496,6 +2496,16 @@ pub enum SessionsCmd {
     /// receipt answered inside the wait), or `unconfirmed` (nothing answered
     /// at all). Exit codes follow: 0 created, 1 refused/failed, 2 relay
     /// error, 5 seating/unconfirmed.
+    ///
+    /// A refusal's `code` is one of HIRE_OFF, HIRE_ROLE_NOT_ALLOWED,
+    /// HIRE_LIMIT, HIRE_NO_IDENTITY, HIRE_PROVIDER_NOT_ALLOWED,
+    /// HIRE_MODEL_NOT_OFFERED or HIRE_STALE, and the detail carries the
+    /// remedy for it. Model ids are the provider catalog's own ids — read
+    /// them from `bee sessions status` (the `model` a live seat runs) or the
+    /// runtime's kind:44222 catalog; the host translates `claude-sonnet-*`,
+    /// `claude-opus-*` and `claude-haiku-*` onto the catalog's `sonnet`,
+    /// `opus` and `haiku` when it offers them, and refuses anything else
+    /// HIRE_MODEL_NOT_OFFERED with the offered ids in the reason.
     #[command(
         after_help = "Examples:\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role builder --brief ./briefs/lane-c.md\n  bee sessions hire --channel <uuid> --session-ref <uuid> --role architect --model <id> --content 'Read §3 and report' --no-wait\n\nA relay that predates session.hire refuses the request as malformed; the\ncommand says so in those words rather than blaming the request."
     )]

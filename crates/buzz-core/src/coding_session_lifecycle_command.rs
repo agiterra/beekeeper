@@ -480,7 +480,9 @@ pub const HIRE_REFUSAL_PREFIX: &str = "hire refused: ";
 ///
 /// A refusal names which standing policy stopped the hire, so the lead can
 /// act on it rather than retry blindly. `HIRE_NO_IDENTITY` is the one whose
-/// remedy is the operator's ("install team roles"); the rest are policy.
+/// remedy is the operator's ("install team roles"); `HIRE_MODEL_NOT_OFFERED`
+/// and `HIRE_STALE` are facts about the request the lead can fix by itself;
+/// the rest are policy.
 pub const HIRE_REFUSAL_CODES: &[&str] = &[
     // Hiring is switched off for this host.
     "HIRE_OFF",
@@ -492,6 +494,14 @@ pub const HIRE_REFUSAL_CODES: &[&str] = &[
     "HIRE_NO_IDENTITY",
     // The requested provider instance is not on the host's allowed list.
     "HIRE_PROVIDER_NOT_ALLOWED",
+    // The requested model is not one the chosen provider's catalog offers,
+    // and it is not an alias the host could translate into one. The reason
+    // carries the offered ids, because a model id is only ever the catalog's.
+    "HIRE_MODEL_NOT_OFFERED",
+    // The request is older than the host's answering window. A host that only
+    // now observed it seats nothing, so a lead is never surprised by a seat
+    // from an hour ago.
+    "HIRE_STALE",
 ];
 
 /// The three historical create key sets, oldest first, before the additive

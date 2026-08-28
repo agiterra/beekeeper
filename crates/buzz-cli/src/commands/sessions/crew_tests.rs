@@ -2473,3 +2473,56 @@ fn hire_errors_carry_the_documented_exit_codes() {
         2
     );
 }
+
+/// Every refusal code the contract defines is one this CLI can act on.
+///
+/// A lead reads the refusal through `bee sessions hire`, so a code the CLI has
+/// never heard of prints as a bare token with no way forward. The remedy table
+/// is the CLI's list of known codes, and it must cover the contract's — which
+/// is what keeps a new code from shipping in `buzz-core` alone.
+#[test]
+fn every_contract_refusal_code_has_a_remedy_this_cli_can_print() {
+    for code in buzz_core::coding_session_lifecycle_command::HIRE_REFUSAL_CODES {
+        let remedy = hire_refusal_remedy(code)
+            .unwrap_or_else(|| panic!("no remedy for refusal code {code}"));
+        assert!(!remedy.trim().is_empty(), "empty remedy for {code}");
+    }
+    // The two codes this CLI learned with the host's model check and its
+    // staleness window; named literally so a rename cannot pass silently.
+    assert!(hire_refusal_remedy("HIRE_MODEL_NOT_OFFERED").is_some());
+    assert!(hire_refusal_remedy("HIRE_STALE").is_some());
+    // An invented code is not known, and the report says nothing rather than
+    // guessing a remedy for it.
+    assert_eq!(hire_refusal_remedy("HIRE_NOT_A_REAL_CODE"), None);
+}
+
+/// A refused hire prints the host's own sentence *and* what to do next.
+#[test]
+fn a_refused_hire_report_carries_the_remedy_for_its_code() {
+    let report = hire_report(
+        &HireOutcome::Refused(HireRefusal {
+            event_id: "e1".into(),
+            at: 10,
+            code: "HIRE_MODEL_NOT_OFFERED".into(),
+            reason: "this computer's claude-primary runtime does not offer the model \
+                     claude-sonnet-5. It offers default, haiku, opus, sonnet."
+                .into(),
+        }),
+        true,
+    );
+    assert_eq!(report.status, "refused");
+    assert!(
+        report
+            .detail
+            .contains("hire refused: HIRE_MODEL_NOT_OFFERED"),
+        "detail {:?}",
+        report.detail
+    );
+    assert!(
+        report
+            .detail
+            .contains(hire_refusal_remedy("HIRE_MODEL_NOT_OFFERED").expect("remedy")),
+        "detail {:?}",
+        report.detail
+    );
+}

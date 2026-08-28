@@ -1644,6 +1644,46 @@ pub fn newest_create_receipt(receipts: &[ReceiptRecord], command_id: &str) -> Op
     best.map(|(_, _, receipt)| receipt)
 }
 
+/// What a lead does next about one refusal code — the CLI's list of known
+/// codes.
+///
+/// A refusal reaches a lead as a code and the host's own sentence about *this*
+/// host. The sentence says what happened; this says what to do, and it is the
+/// same answer every time, so it belongs to the CLI rather than to each host's
+/// prose. `None` for a code this build has never heard of: a guessed remedy
+/// for an unknown refusal is worse than none, and the host's own reason is
+/// still printed either way.
+///
+/// Every code in
+/// [`buzz_core::coding_session_lifecycle_command::HIRE_REFUSAL_CODES`] has an
+/// entry here, pinned by a test — a code that ships in `buzz-core` alone would
+/// reach a lead as a bare token with no way forward.
+pub fn hire_refusal_remedy(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "HIRE_OFF" => {
+            "ask the operator to turn hiring on in Settings → Sessions → Hiring; do not retry \
+             unchanged"
+        }
+        "HIRE_ROLE_NOT_ALLOWED" => {
+            "hire one of the roles the reason lists, or ask the operator to allow this one"
+        }
+        "HIRE_LIMIT" => "end a seat in this session, or ask the operator to raise the ceiling",
+        "HIRE_NO_IDENTITY" => {
+            "ask the operator to install team roles on the Agents screen, or hire a role whose \
+             identity is free"
+        }
+        "HIRE_PROVIDER_NOT_ALLOWED" => {
+            "name a provider instance the reason lists, or drop --provider-instance and take the \
+             host's default"
+        }
+        "HIRE_MODEL_NOT_OFFERED" => {
+            "re-run with a model id the reason lists, or drop --model and take the identity's own"
+        }
+        "HIRE_STALE" => "hire again: this request sat unanswered past the host's window",
+        _ => return None,
+    })
+}
+
 /// Split a host's refusal turn into its code and reason.
 ///
 /// The shape is fixed — `hire refused: <CODE> — <reason>` — so a refusal is
@@ -1791,7 +1831,18 @@ pub fn hire_report(outcome: &HireOutcome, waited: bool) -> HireReport {
         },
         HireOutcome::Refused(refusal) => HireReport {
             status: "refused",
-            detail: format!("hire refused: {} — {}", refusal.code, refusal.reason),
+            // The host's own words first, then what to do about them. An
+            // unknown code prints the host's sentence alone rather than a
+            // remedy this build invented for it.
+            detail: format!(
+                "hire refused: {} — {}{}",
+                refusal.code,
+                refusal.reason,
+                match hire_refusal_remedy(&refusal.code) {
+                    Some(remedy) => format!(" Next: {remedy}."),
+                    None => String::new(),
+                }
+            ),
         },
         HireOutcome::Unconfirmed if waited => HireReport {
             status: DELIVERY_UNCONFIRMED,
