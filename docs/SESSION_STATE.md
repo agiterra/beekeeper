@@ -2789,6 +2789,131 @@ written and `bash -n` clean but **was not executed** — that harness needs
       and every `data-testid` remain "crew" per the internal-identifier rule.
       Anyone reading the code still sees both words.
 
+    **Follow-up `7ce3f74d` (2026-08-28, SWAT seat, on top of `e1dbc06a`
+    "fence", parent `f4550c1d`).** Head `7ce3f74d` (strings) on top of
+    `e1dbc06a` (fence), parent `f4550c1d`; `git pull --ff-only origin main` =
+    Already up to date; tree clean before and after. **(1) The fence is now
+    enforced on claude seats.** The exact `_meta` key path used is
+    `_meta.claudeCode.options.disallowedTools` (a JSON array of tool-name
+    strings), written on the session/new params object — confirmed by reading
+    the managed runtime adapter at `~/Library/Application
+    Support/Beekeeper/node-tools/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js`:
+    line 4766-4767 `const sessionMeta = params._meta; const
+    userProvidedOptions = sessionMeta?.claudeCode?.options;` and line 4913
+    `disallowedTools: [...(userProvidedOptions?.disallowedTools || []),
+    ...disallowedTools],` inside `createSession`. Scope extension (deliberate,
+    worth a ruling): the key is also written on `session/resume` and
+    `session/load`, not only `session/new` — reason measured in the same file,
+    `newSession` (4747), `resumeSession` (778) and `loadSession` (788) all
+    funnel into `createSession`, and `getOrCreateSession` (4645-4667) forwards
+    `_meta: params._meta` verbatim; our provider always spawns a fresh adapter
+    process, so a reattached seat re-enters `createSession` and without
+    restating the denial the fence would lapse at the first resume.
+    Implemented as one shared helper `AcpClient::apply_disallowed_tools_meta`
+    called from all three. In `buzz-acp`: new private field `disallowed_tools:
+    Vec<String>` (`acp.rs` ~line 723, default empty at the constructor),
+    public setter `set_disallowed_tools(&mut self, tools: &[&str])`
+    immediately after `set_emit_raw_sdk_frames` (`acp.rs:1766` area), and the
+    merge helper; an empty list omits the key entirely rather than sending
+    `[]`, so a session that denies nothing is byte-identical to one from
+    before the option existed, and the doc comments on the new public API
+    state that the adapter reads it once, at the opening request, so a later
+    call is inert. In `buzz-session-provider`: `start_agent` (`session.rs`,
+    beside `client.set_emit_raw_sdk_frames`) calls
+    `client.set_disallowed_tools(crate::agent_fence::SEAT_OUT_OF_BOUNDS_TOOLS)`
+    gated on `request.seat.is_some()`; unseated executions are unchanged,
+    proved by the green unseated test asserting `/params/_meta/claudeCode` is
+    absent entirely. Red before green, evidence 1 of 2 — `buzz-acp`
+    compile-red: `cargo test -p buzz-acp --lib denied_tools` → ``error[E0599]:
+    no method named `set_disallowed_tools` found for struct
+    `acp::AcpClient` `` at `acp.rs:5130` and `acp.rs:5157`, ``error: could not
+    compile `buzz-acp` (lib test) due to 2 previous errors``; three tests
+    added: `denied_tools_reach_session_new_meta`,
+    `denied_tools_reach_session_resume_meta`,
+    `a_session_that_denied_nothing_sends_no_disallowed_tools_key`. Evidence 2
+    of 2 — `buzz-session-provider` assertion-red on the recorded wire: `test
+    session::tests::a_seated_create_denies_the_out_of_bounds_tools_on_session_new
+    ... FAILED` at `session.rs:2598`, `left: None / right: Some(Array
+    [String("Task"), String("Agent"), String("SendMessage")])`, with the
+    recorded `session/new` dumped in the failure showing
+    `"_meta":{"sessionTitle":"Ship it"}` and no `claudeCode` key; its twin
+    `an_unseated_create_denies_no_tools ... ok` passed both before and after,
+    which is the point of the pair. Both green after the change; harness
+    `MCP_RECORDING_AGENT` + `request_by_method`. `SEAT_OUT_OF_BOUNDS_TOOLS`'s
+    doc comment (`agent_fence.rs`) was rewritten: the heading "This list is a
+    briefing, not an enforcement" is gone and it now reads "Enforced on
+    claude-agent-acp; a briefing on codex-acp", saying in as many words that
+    `codex-acp` 1.6.2 exposes no per-session tool denial so there is nothing
+    to enforce with there and `actor_seat_briefing` is the whole fence for a
+    codex seat; lane F's two measured dead ends (relocated
+    `CLAUDE_CONFIG_DIR` breaking the keychain-keyed login;
+    `CLAUDE_CODE_MANAGED_SETTINGS_PATH` being unhonoured while `--settings`
+    works) are kept verbatim under "Mechanisms measured and rejected" so
+    nobody retries them. **Item 77 *Fence* (a) is now closed for claude seats
+    and explicitly still open for codex seats** — the residual above and the
+    "Lane F stopped at the ownership boundary" deviation are stale as of this
+    commit. **(2) The last operator-facing "crew" strings say team.** All five
+    briefed files done, copy only — identifiers, test ids and the
+    `crewWarning` wire field untouched: `useCodingSessionCrewLaunch.ts` ("run
+    this crew"→team, "Timed out while seating the crew."→team, "Failed to seat
+    the crew."→team); `CodingSessionCapacityCard.tsx` (five strings — the
+    "Turns per crew session" label, "Reading this computer's crew budget…",
+    "per crew session.", "A crew session is one launch…", "Could not save the
+    crew turn budget."); `codingSessionCapacity.ts:228` ("per crew session");
+    `CodingSessionsSettingsPanel.tsx:15` ("how many turns a crew session may
+    take"). The `crewWarning` producer was found and changed:
+    `desktop/src-tauri/src/commands/team_snapshot/import_crew.rs`, const
+    `CREW_UNMATCHED_NOTE` (the string `TeamSnapshotImportDialog.tsx:177`
+    renders), new copy "This snapshot's seat roster could not be matched to
+    its members, so it was imported as an ordinary team." — deliberately *not*
+    a literal crew→team swap, which would give "This snapshot's team could not
+    be matched to its members, so it was imported as an ordinary team" and
+    name the wrong noun twice; what failed to bind is the seating plan inside
+    the team, and the team itself imported fine. The Rust test asserting the
+    old sentence (`team_snapshot/tests.rs:827`) was updated with it. Two
+    extra edits beyond the brief's file list, both forced by honesty rather
+    than tidiness: (a) the budget refusal message produced in Rust *quotes the
+    settings control by name* — `crates/buzz-session-provider/src/commands.rs:624`
+    and `lib.rs:1575` both said `raising "Turns per crew session" takes
+    effect…`, and renaming the control without these would have sent the
+    operator hunting for a control that no longer exists, so both were renamed
+    in the same commit along with their two desktop test assertions
+    (`codingSessionTurnRefusal.test.mjs:64,67`); (b)
+    `CodingSessionComposerDeck.tsx` read the same number under `label="Crew
+    turns"` with the sentence "The turn count is the whole crew session's…",
+    renamed to "Team turns" / "team session's" so the Info popover and the
+    settings panel agree. Remaining "crew" strings, reported not changed
+    (outside this brief's scope): six role packs' `plugin.json` display names
+    and keywords still say "Crew <Role>"
+    (`personas/roles/{architect,builder,runner,verifier,poker,designer}/.plugin/plugin.json`
+    lines 4 and 7 — only lead was renamed, by lane L); agent-facing prompt
+    text `crates/buzz-session-provider/src/session.rs:1069`
+    `FRESH_CREW_BOOTSTRAP_PREFIX` contains "this session is a crew room",
+    which is read by the agent, not the operator, and names no UI control, so
+    it was left — but it is the last non-identifier "crew" an agent will see;
+    internal-only and correctly left alone are all `crew`/`Crew`/`CREW_*`
+    identifiers, the `com.beekeeper.crew.*` plugin ids, the `crewWarning` wire
+    field, `data-testid="team-snapshot-import-crew-warning"`, and "crew"
+    inside doc comments (e.g. `codingSessionCapacity.ts:29-39`,
+    `tauriSessionProvider.ts:91-142`). **Gate — every command from the brief,
+    run in `fd-int` under hermit, exit lines observed:** `cargo test -p
+    buzz-acp -p buzz-session-provider --lib` → 865 passed / 0 failed and 389
+    passed / 0 failed, EXIT:0; `cargo clippy -p buzz-acp -p
+    buzz-session-provider --all-targets -- -D warnings` → EXIT:0, zero
+    warnings; `cargo fmt --all -- --check` → EXIT:0; desktop `pnpm typecheck`
+    → EXIT:0 and `pnpm test` → 6483 tests, 6483 pass, 0 fail; `pnpm
+    check:px-text` → EXIT:0; `cargo test --manifest-path
+    desktop/src-tauri/Cargo.toml --lib -- snapshot crew` → 273 passed / 0
+    failed (unfiltered suite also run: 2744 passed, 0 failed, 18 ignored);
+    `just file-size-check` → EXIT:0; extra, since `import_crew.rs` changed,
+    `cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets
+    -- -D warnings` → EXIT:0. **Not done / residual:** no live acceptance —
+    nothing was launched against a real provider, so the claim that the
+    adapter actually drops Task/Agent/SendMessage from a running seat's
+    toolset rests on the adapter source at `acp-agent.js:4913` plus the
+    recorded wire, not on a seat that tried to call Task and could not; that
+    is the one check worth doing on the next real launch.
+
     **Next — Brian dogfoods from inside Beekeeper.** Relaunch the dev app on
     `main`; `Install team roles…` from `personas/roles`; name the lead
     **Keystone**; start a session with Keystone on **claude-fable-5**; seat
