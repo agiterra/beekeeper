@@ -3,7 +3,10 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CodingSessionHeader } from "./CodingSessionHeader.tsx";
+import {
+  CodingSessionDispositionStrip,
+  CodingSessionHeader,
+} from "./CodingSessionHeader.tsx";
 
 test("header keeps signed generation identity visible beside runtime context", () => {
   const markup = renderToStaticMarkup(
@@ -319,4 +322,132 @@ test("a seated session wears its seat beside the title, and an unseated one does
     React.createElement(CodingSessionHeader, { ...baseProps, seat: null }),
   );
   assert.equal(explicitlyUnseated, unseated);
+});
+
+// --- Disposition strip (ledger 77, "Umbrella UI (a)") ------------------------
+
+const AGENT_ADA = "1a".repeat(32);
+const AGENT_GRACE = "2b".repeat(32);
+
+function execution({
+  executionKey,
+  agentRef,
+  role,
+  status = "idle",
+  runtime = "claude",
+  model = "claude-opus-5",
+  transcript = [],
+}) {
+  return {
+    executionKey,
+    signerPubkey: "a".repeat(64),
+    operatorPubkey: null,
+    priorGenerations: [],
+    activeGeneration: {
+      generationId: executionKey,
+      label: executionKey,
+      title: "Team session",
+      providerAuthorityPubkey: "a".repeat(64),
+      metadataAuthorityPubkey: "a".repeat(64),
+      lastEventAt: "2026-08-12T10:06:00.000Z",
+      status,
+      statusAt: null,
+      transcript,
+      conflictCount: 0,
+      commandTarget: null,
+      projectRef: null,
+      repoRef: null,
+      sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+      provider: `${runtime}-primary`,
+      runtime,
+      model,
+      agentRef,
+      role,
+      turnBudget: null,
+      capabilities: null,
+    },
+  };
+}
+
+test("disposition strip renders one honest line per execution, lead first", () => {
+  const names = new Map([
+    [AGENT_ADA, "Ada"],
+    [AGENT_GRACE, "Grace"],
+  ]);
+  const markup = renderToStaticMarkup(
+    React.createElement(CodingSessionDispositionStrip, {
+      actorNames: (pubkey) => names.get(pubkey) ?? null,
+      nowMs: Date.parse("2026-08-12T10:10:00.000Z"),
+      resolveReachability: () => ({ known: false }),
+      umbrella: {
+        umbrellaKey: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        sessionRef: "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10",
+        title: "Team session",
+        founderPubkey: null,
+        genesisRef: null,
+        genesisResolution: "legacy",
+        status: "idle",
+        lastEventAt: "2026-08-12T10:06:00.000Z",
+        conflictCount: 0,
+        foreignAttachmentCount: 0,
+        executions: [
+          execution({
+            executionKey: "execution-builder",
+            agentRef: AGENT_GRACE,
+            role: "builder",
+            status: "stopped",
+          }),
+          execution({
+            executionKey: "execution-lead",
+            agentRef: AGENT_ADA,
+            role: "lead",
+            status: "running",
+            transcript: [
+              {
+                id: "item-1",
+                type: "message",
+                renderClass: "message",
+                role: "assistant",
+                title: "Assistant",
+                text: "APPROVE",
+                timestamp: "2026-08-12T10:06:00.000Z",
+              },
+            ],
+          }),
+        ],
+      },
+    }),
+  );
+
+  assert.match(markup, /data-testid="coding-session-disposition-strip"/);
+  assert.match(markup, /Ada · Lead · live · last turn 4m ago/);
+  assert.match(markup, /Grace · Builder · released · no turn observed/);
+  assert.ok(
+    markup.indexOf("Ada · Lead") < markup.indexOf("Grace · Builder"),
+    markup,
+  );
+});
+
+test("disposition strip renders nothing when the umbrella holds no execution", () => {
+  assert.equal(
+    renderToStaticMarkup(
+      React.createElement(CodingSessionDispositionStrip, {
+        resolveReachability: () => ({ known: false }),
+        umbrella: {
+          umbrellaKey: "empty",
+          sessionRef: null,
+          title: "Team session",
+          founderPubkey: null,
+          genesisRef: null,
+          genesisResolution: "legacy",
+          status: "idle",
+          lastEventAt: "2026-08-12T10:06:00.000Z",
+          conflictCount: 0,
+          foreignAttachmentCount: 0,
+          executions: [],
+        },
+      }),
+    ),
+    "",
+  );
 });

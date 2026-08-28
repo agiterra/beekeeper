@@ -17,7 +17,9 @@ import type {
   CodingSessionExecution,
   CodingSessionStatus,
   CodingSessionUmbrellaRecord,
+  CodingSessionWorkspaceStatus,
 } from "./codingSessionTypes";
+import { formatCoordinationAge } from "@/shared/coordination/sessionCoordinationFormat";
 
 /**
  * One observed, accepted 44221 create, as far as umbrella authority needs it.
@@ -550,4 +552,119 @@ function executionLabel(
     runtime,
     model: record.model,
   }).primary;
+}
+
+// ---------------------------------------------------------------------------
+// Disposition strip
+// ---------------------------------------------------------------------------
+
+/**
+ * One execution's line in the umbrella disposition strip.
+ *
+ * The strip answers the question the narrative could not: *is this team still
+ * working?* "Last word" is the last execution with activity, so a lead that
+ * has already delivered its verdict collapses to a pill while a builder's
+ * "Standing by" stays expanded — and the operator cannot tell the run is done
+ * (ledger 77, "Umbrella UI (a)").
+ */
+export type CodingSessionUmbrellaDisposition = {
+  executionKey: string;
+  /** `Agent · Role` when seated; runtime · model when not — never a pubkey. */
+  label: string;
+  /** The seat's role slug, or null when this execution carries no seat. */
+  role: string | null;
+  /** See {@link codingSessionDispositionWord}. */
+  disposition: string;
+  /** Newest observed transcript timestamp in ms, or null when none has arrived. */
+  lastTurnAt: number | null;
+};
+
+/**
+ * The team word for a resolved workspace status.
+ *
+ * Only three states have a team word: `live`, `idle`, `released`. Everything
+ * else keeps the status's own sentence — a provider nobody is answering for
+ * reads "no provider answering", never the comfortable "idle" it is not.
+ */
+export function codingSessionDispositionWord(
+  status: CodingSessionWorkspaceStatus,
+): string {
+  switch (status.kind) {
+    case "working":
+      return "live";
+    case "idle":
+      return "idle";
+    case "ended":
+      return "released";
+    default:
+      return status.label.toLowerCase();
+  }
+}
+
+/**
+ * One disposition per execution, the lead's first.
+ *
+ * `resolveStatus` is supplied by the surface because reachability demotion is
+ * a hook the pure model cannot reach — and reading the wire status directly
+ * here would let a dead provider report `live`. No new data: every fact comes
+ * from the 44223 metadata already on the catalog record.
+ */
+export function listCodingSessionUmbrellaDispositions(
+  umbrella: CodingSessionUmbrellaRecord,
+  resolveStatus: (
+    execution: CodingSessionExecution,
+  ) => CodingSessionWorkspaceStatus,
+  resolveActorName?: CodingSessionActorNameResolver,
+): CodingSessionUmbrellaDisposition[] {
+  const entries = umbrella.executions.map((execution) => ({
+    executionKey: execution.executionKey,
+    label: executionLabel(execution, resolveActorName),
+    role: execution.activeGeneration.role,
+    disposition: codingSessionDispositionWord(resolveStatus(execution)),
+    lastTurnAt: executionLastTurnAt(execution),
+  }));
+  // Stable partition, not a sort: the umbrella's own attach order is the only
+  // other ordering anything here has agreed on.
+  return [
+    ...entries.filter((entry) => isLeadRole(entry.role)),
+    ...entries.filter((entry) => !isLeadRole(entry.role)),
+  ];
+}
+
+/** The strip's line, exactly as a person reads it. */
+export function formatCodingSessionDispositionLine(
+  entry: CodingSessionUmbrellaDisposition,
+  nowMs: number = Date.now(),
+): string {
+  return `${entry.label} · ${entry.disposition} · ${formatLastTurn(entry.lastTurnAt, nowMs)}`;
+}
+
+function formatLastTurn(lastTurnAt: number | null, nowMs: number): string {
+  // Absence is not a claim: an execution with no transcript has not been
+  // quiet for zero seconds, it has said nothing at all.
+  if (lastTurnAt === null) return "no turn observed";
+  const age = formatCoordinationAge(
+    Math.max(0, Math.floor((nowMs - lastTurnAt) / 1_000)),
+  );
+  return age === "just now" ? "last turn just now" : `last turn ${age} ago`;
+}
+
+function isLeadRole(role: string | null): boolean {
+  return role?.trim().toLowerCase() === "lead";
+}
+
+/** Newest transcript timestamp across every generation of one execution. */
+function executionLastTurnAt(execution: CodingSessionExecution): number | null {
+  let newest: number | null = null;
+  for (const record of [
+    ...execution.priorGenerations,
+    execution.activeGeneration,
+  ]) {
+    for (const item of record.transcript) {
+      const at = Date.parse(item.timestamp);
+      if (!Number.isFinite(at)) continue;
+      if (newest === null || at > newest) newest = at;
+    }
+  }
+  return newest;
 }

@@ -47,7 +47,10 @@ import { useElementWidth } from "@/shared/hooks/use-mobile";
 import { cn } from "@/shared/lib/cn";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { truncatePubkey } from "@/shared/lib/pubkey";
-import { CodingSessionHeader } from "./CodingSessionHeader";
+import {
+  CodingSessionDispositionStrip,
+  CodingSessionHeader,
+} from "./CodingSessionHeader";
 import { CodingSessionFounderLine } from "./CodingSessionFounderLine";
 import { useCodingSessionColumnGutter } from "../lib/codingSessionWidthPreference";
 import {
@@ -416,6 +419,13 @@ export function UmbrellaCodingSessionWorkspace({
           }
           taskRailOpen={composerTaskDock.open}
         />
+        {isMultiExecution ? (
+          <CodingSessionDispositionStrip
+            actorNames={workspaceActorName}
+            resolveReachability={resolveReachability}
+            umbrella={umbrella}
+          />
+        ) : null}
       </div>
       {umbrella.sessionRef ? (
         <CodingSessionNameDialog

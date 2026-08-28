@@ -12,11 +12,24 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
+import * as React from "react";
 import type { ReactNode } from "react";
 
 import { formatCodingSessionModelSummary } from "@/features/coding-sessions/lib/codingSessionLabels";
-import type { CodingSessionWorkspaceStatus } from "@/features/coding-sessions/lib/codingSessionTypes";
-import { codingSessionWorkspaceStatusDetail } from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
+import type { CodingSessionReachabilityResolver } from "@/features/coding-sessions/hooks/useCodingSessionProviderReachability";
+import type {
+  CodingSessionUmbrellaRecord,
+  CodingSessionWorkspaceStatus,
+} from "@/features/coding-sessions/lib/codingSessionTypes";
+import {
+  formatCodingSessionDispositionLine,
+  listCodingSessionUmbrellaDispositions,
+  type CodingSessionActorNameResolver,
+} from "@/features/coding-sessions/lib/codingSessionUmbrellaModel";
+import {
+  codingSessionWorkspaceStatusDetail,
+  deriveCodingSessionWorkspaceStatus,
+} from "@/features/coding-sessions/lib/codingSessionWorkspaceModel";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
@@ -512,4 +525,67 @@ function uniqueNonemptyLabels(
     labels.push(label);
   }
   return labels;
+}
+
+/**
+ * The umbrella's disposition strip: one line per execution, the lead's first.
+ *
+ * It sits directly under the header because it answers a header question —
+ * *is this team still working?* — that the aggregate status badge cannot: a
+ * lead that has delivered its verdict and a builder still standing by are one
+ * "Working" between them (ledger 77, "Umbrella UI (a)").
+ *
+ * Every line comes from the 44223 facts the umbrella already holds; nothing
+ * here fetches. The status is the same reachability-demoted one the focus
+ * chips use, so a provider nothing is answering for can never read `live`, and
+ * an execution with no transcript says so rather than reporting an age it does
+ * not have.
+ */
+export function CodingSessionDispositionStrip({
+  actorNames,
+  nowMs,
+  resolveReachability,
+  umbrella,
+}: {
+  /** Resolves a seat's actor pubkey to a display name, when one is known. */
+  actorNames?: CodingSessionActorNameResolver;
+  /** Fixed clock for tests; defaults to now at render time. */
+  nowMs?: number;
+  resolveReachability: CodingSessionReachabilityResolver;
+  umbrella: CodingSessionUmbrellaRecord;
+}) {
+  const items = React.useMemo(
+    () =>
+      listCodingSessionUmbrellaDispositions(
+        umbrella,
+        (execution) =>
+          deriveCodingSessionWorkspaceStatus(
+            execution.activeGeneration.transcript,
+            execution.activeGeneration.status,
+            execution.activeGeneration.statusAt,
+            resolveReachability(execution.activeGeneration.commandTarget),
+          ),
+        actorNames,
+      ),
+    [actorNames, resolveReachability, umbrella],
+  );
+  if (items.length === 0) return null;
+  const at = nowMs ?? Date.now();
+  return (
+    <ul
+      aria-label="Session team disposition"
+      className="flex flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-border/60 bg-background/70 px-4 py-1 text-2xs text-muted-foreground"
+      data-testid="coding-session-disposition-strip"
+    >
+      {items.map((item) => (
+        <li
+          className="min-w-0 truncate"
+          data-testid="coding-session-disposition-row"
+          key={item.executionKey}
+        >
+          {formatCodingSessionDispositionLine(item, at)}
+        </li>
+      ))}
+    </ul>
+  );
 }

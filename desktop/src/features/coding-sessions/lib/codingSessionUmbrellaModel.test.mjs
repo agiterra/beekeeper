@@ -19,7 +19,9 @@ import {
 } from "./codingSessionTrustedIngress.ts";
 import {
   buildCodingSessionExecutionKey,
+  formatCodingSessionDispositionLine,
   groupCodingSessionCatalog,
+  listCodingSessionUmbrellaDispositions,
   listCodingSessionUmbrellaParticipants,
 } from "./codingSessionUmbrellaModel.ts";
 
@@ -670,4 +672,175 @@ test("participant labels: an unresolved seat name never becomes a pubkey", () =>
     .filter((participant) => participant.kind === "execution")
     .map((participant) => participant.label);
   assert.deepEqual(labels, ["Lead"]);
+});
+
+// --- Disposition strip (ledger 77, "Umbrella UI (a)") ------------------------
+
+const WORKING = { kind: "working", label: "Working" };
+const IDLE_STATUS = { kind: "idle", label: "Idle" };
+const ENDED = { kind: "ended", label: "Ended" };
+const NO_PROVIDER = {
+  kind: "unknown",
+  label: "No provider answering",
+  attention: "unreachable",
+};
+
+function turn(timestamp) {
+  return {
+    id: `item-${timestamp}`,
+    type: "message",
+    renderClass: "message",
+    role: "assistant",
+    title: "Assistant",
+    text: "…",
+    timestamp,
+  };
+}
+
+test("disposition strip: the lead's execution is listed first", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({
+      sessionRef: SESSION_REF,
+      target: CODEX_TARGET,
+      signerPubkey: CODEX_SIGNER,
+      agentRef: AGENT_GRACE,
+      role: "builder",
+      runtime: "codex",
+      model: "gpt-5.6-sol",
+    }),
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+  ]);
+  const names = new Map([
+    [AGENT_ADA, "Ada"],
+    [AGENT_GRACE, "Grace"],
+  ]);
+  const dispositions = listCodingSessionUmbrellaDispositions(
+    umbrella,
+    () => IDLE_STATUS,
+    (pubkey) => names.get(pubkey) ?? null,
+  );
+  assert.deepEqual(
+    dispositions.map((entry) => entry.label),
+    ["Ada · Lead", "Grace · Builder"],
+  );
+  assert.deepEqual(
+    dispositions.map((entry) => entry.role),
+    ["lead", "builder"],
+  );
+});
+
+test("disposition strip: live, idle and released come from the resolved status", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+    record({
+      sessionRef: SESSION_REF,
+      target: CODEX_TARGET,
+      signerPubkey: CODEX_SIGNER,
+      agentRef: AGENT_GRACE,
+      role: "builder",
+      runtime: "codex",
+    }),
+  ]);
+  const byRole = new Map([
+    ["lead", WORKING],
+    ["builder", ENDED],
+  ]);
+  const dispositions = listCodingSessionUmbrellaDispositions(
+    umbrella,
+    (execution) => byRole.get(execution.activeGeneration.role) ?? IDLE_STATUS,
+  );
+  assert.deepEqual(
+    dispositions.map((entry) => entry.disposition),
+    ["live", "released"],
+  );
+  assert.equal(
+    listCodingSessionUmbrellaDispositions(umbrella, () => IDLE_STATUS)[0]
+      .disposition,
+    "idle",
+  );
+});
+
+test("disposition strip: an unreachable provider never reads idle", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+  ]);
+  const [entry] = listCodingSessionUmbrellaDispositions(
+    umbrella,
+    () => NO_PROVIDER,
+  );
+  assert.equal(entry.disposition, "no provider answering");
+});
+
+test("disposition strip: last turn is the newest transcript item, prior generations included", () => {
+  const [umbrella] = groupCodingSessionCatalog([
+    record({
+      sessionRef: SESSION_REF,
+      agentRef: AGENT_ADA,
+      role: "lead",
+      transcript: [turn("2026-08-12T09:58:00.000Z")],
+    }),
+    record({
+      sessionRef: SESSION_REF,
+      target: { ...CLAUDE_TARGET, generation: 2 },
+      agentRef: AGENT_ADA,
+      role: "lead",
+      transcript: [turn("2026-08-12T10:02:00.000Z")],
+    }),
+  ]);
+  const [entry] = listCodingSessionUmbrellaDispositions(
+    umbrella,
+    () => IDLE_STATUS,
+  );
+  assert.equal(entry.lastTurnAt, Date.parse("2026-08-12T10:02:00.000Z"));
+
+  const [quiet] = listCodingSessionUmbrellaDispositions(
+    groupCodingSessionCatalog([
+      record({ sessionRef: SESSION_REF, agentRef: AGENT_ADA, role: "lead" }),
+    ])[0],
+    () => IDLE_STATUS,
+  );
+  assert.equal(quiet.lastTurnAt, null);
+});
+
+test("disposition line: says how old the last turn is, or that there is none", () => {
+  const now = Date.parse("2026-08-12T10:10:00.000Z");
+  assert.equal(
+    formatCodingSessionDispositionLine(
+      {
+        executionKey: "k",
+        label: "Ada · Lead",
+        role: "lead",
+        disposition: "live",
+        lastTurnAt: Date.parse("2026-08-12T10:06:00.000Z"),
+      },
+      now,
+    ),
+    "Ada · Lead · live · last turn 4m ago",
+  );
+  assert.equal(
+    formatCodingSessionDispositionLine(
+      {
+        executionKey: "k",
+        label: "Grace · Builder",
+        role: "builder",
+        disposition: "released",
+        lastTurnAt: null,
+      },
+      now,
+    ),
+    "Grace · Builder · released · no turn observed",
+  );
+  assert.equal(
+    formatCodingSessionDispositionLine(
+      {
+        executionKey: "k",
+        label: "Ada · Lead",
+        role: "lead",
+        disposition: "live",
+        lastTurnAt: now - 5_000,
+      },
+      now,
+    ),
+    "Ada · Lead · live · last turn just now",
+  );
 });
