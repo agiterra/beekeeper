@@ -5,28 +5,49 @@ description: "Project overlay: how a lead works on Beekeeper itself — git, the
 
 # Beekeeper — the project overlay
 
-Base `lead` says how to lead. This says how this project works. Where the two
-disagree about *current state*, `docs/SESSION_STATE.md` wins — read it first,
-every session.
+Base `lead` says how to lead. This says how this project works, and it **carries
+the project's rules itself** — you do not read `docs/SESSION_STATE.md` whole to
+find them. Anything below that also lives in `AGENTS.md` (loaded into your
+context already) is a pointer, not a restatement; read the named section there
+rather than a second copy here.
+
+## The ledger — read §3, and only the items your brief cites
+
+`docs/SESSION_STATE.md` is the living record: §1 what is live, §2 the open
+findings (numbered, each with the code or transcript that proves it), §3 `Next`
+(the ordered track), §3a environment facts that already cost hours.
+
+**Read §3 Next, and only the numbered §2 items your brief cites. Never the whole
+file.** It is ~3,700 lines: a seat that reads it start to finish spends about a
+quarter of its context window before it has done anything, and a codex seat
+already spends ~25% at boot (ledger item 80f). §3 is not at the top — jump to it:
+
+```
+grep -n '^## ' docs/SESSION_STATE.md                       # section line numbers
+sed -n '/^## 3\. Next/,/^## 3a\./p' docs/SESSION_STATE.md  # the track, ~195 lines
+grep -n '^79\. ' docs/SESSION_STATE.md                     # where item 79 starts
+sed -n '<start>,<start+100>p' docs/SESSION_STATE.md        # read that window only
+```
+
+(Do not range an item to the next number — the last item has no successor and
+the range runs to EOF, which is the whole file again.)
+
+Where this skill and the ledger disagree about *current state*, the ledger wins
+— but ask it about one thing, not everything. Findings go **into** the ledger,
+never into a new handoff document. A team's in-flight dispositions go on the
+wire as Pulse entries (kind 44240); the repo document is for what landed.
+
+Brief your own lanes the same way: cite ledger items by number so a lane reads
+those items and nothing else.
 
 ## Git is relay-canonical
 
-- Three remotes: `origin` = the relay's own git hosting (`hive.agiterra.org`),
-  `upstream` = the GitHub mirror CI watches, `vanilla` = the block/buzz mirror.
-  The names moved on 2026-08-24; run `git remote -v` rather than trusting a
-  document. **Never hard-code a remote name in tooling** — two pre-push guards
-  did and both broke silently.
+`AGENTS.md` (the block at the top) has the remotes, the rebase-not-merge rule,
+`git commit -s`, and `just install-git-credentials`. Two things it does not say:
+
 - **Push to `origin` only.** The forge's mirror bridge pushes every ref to
-  GitHub within seconds and GitHub triggers CI. Pushing to GitHub directly
+  GitHub within seconds and GitHub triggers CI; pushing to GitHub directly
   races the bridge.
-- Pushing needs Nostr credentials: `just install-git-credentials` (NIP-98, not
-  a password). Without the helper `git fetch origin` waits on a username prompt
-  that can never be answered. `bee git status` says whether it is set up.
-- Topic branches are **rebased** onto `main`, never merged into it:
-  `git rebase --signoff main`, then force-push the topic branch. `vanilla/main`
-  is the exception — it is merged, never rebased.
-- Every commit is signed off (`git commit -s`); the DCO gate fails a PR
-  without the trailer, and rebase/cherry-pick need `--signoff` explicitly.
 - **A push that returns HTTP 401 after green pre-push hooks is ledger item 71**,
   not a broken credential: git mints the NIP-98 credential during ref
   discovery, so a long hook window expires it. Retry **once** with
@@ -38,19 +59,12 @@ Every lane works in its own worktree under
 `/Users/brian/Projects/beekeeper/beekeeper.worktrees/<lane>`. The main checkout
 `/Users/brian/Projects/beekeeper/beekeeper` is **hot**: Brian's dev app runs
 from it and `tauri dev` rebuilds on write. Never edit, rebase or switch
-branches there — a seat that does is editing under a running app.
+branches there — a seat that does is editing under a running app. A seat handed
+that cwd stops and says so (ledger item 80a).
 
 Before any `cargo`/`pnpm`/`just`/git-hook command:
 `cd <worktree> && . ./bin/activate-hermit`. Do not rewrite hook commands to
 work around an unconfigured `PATH`.
-
-## The ledger
-
-`docs/SESSION_STATE.md` is the living record: what is deployed, what is open
-(each item with the code or transcript that proves it), and the environment
-facts that already cost hours. Findings go **into** it, never into a new
-handoff document. A team's in-flight dispositions go on the wire as Pulse
-entries (kind 44240) — the repo document is for what landed.
 
 ## The wire
 
@@ -64,9 +78,8 @@ entries (kind 44240) — the repo document is for what landed.
   not happen; do not infer it from a transcript.
 - **A role slug is unique only inside one umbrella.** `bee sessions send
   --to <role>` is refused without `--session-ref`.
-- Prefer a new event kind (`buzz-core/src/kind.rs`) over a new HTTP endpoint.
-- Channel-scoped events carry `h` tags; addressable events describing a
-  channel carry the id in `d`.
+- Event kinds over new HTTP endpoints, and channel scoping by `h` tag: see
+  `AGENTS.md` § Key Patterns.
 
 ## The team model (plan §3.1, D11–D16)
 
@@ -88,27 +101,22 @@ entries (kind 44240) — the repo document is for what landed.
 
 ## Quality gates
 
-`just ci` before any PR (fmt and clippy are separate — passing one is not
-passing the other). `just test` if you touched `buzz-relay`, `buzz-db` or
-`buzz-auth` (needs Postgres + Redis). No `unsafe`; no new `unwrap()`/`expect()`
-in production paths; doc comments on new public API; desktop text uses rem
-tokens only (`pnpm check:px-text`); every file stays under 1000 lines
-(`just file-size-check`) — split it, never raise the limit.
+`AGENTS.md` § Quality Gates is the contract — `just ci` before any PR (fmt and
+clippy are separate), `just test` for `buzz-relay`/`buzz-db`/`buzz-auth`, no
+`unsafe`, no new `unwrap()`/`expect()` in production paths, doc comments on new
+public API. Desktop text uses rem tokens only (§ Text sizing & zoom); every
+file stays under 1000 lines (`just file-size-check`) — split it, never raise
+the limit. Nothing in this file relaxes any of it.
 
 ## What the operator will not accept
 
+`AGENTS.md` § Working agreements is the source: make the call instead of
+offering a menu, cite `file:line` or the run, prefer an unpleasant truth over a
+comfortable guess, and check in only for genuine irreversibility. Three things
+that section does not say:
+
 - **The word "crew" in anything a person reads.** It is "team" now. Internal
   identifiers follow when you are already editing the line.
-- **A menu of options.** Decide, act, report: *"Did X. Result. Next: Y."*
-- **A completion report without evidence.** `file:line`, a SHA, or an exit
-  code — or it did not happen. This applies to your own prior claims and to
-  every document in `docs/`.
-- **A comfortable guess in the product.** A control that lies about what it
-  enforces, a badge pointing at a message you cannot find, a status reading
-  Idle over a disconnected provider — those are bugs of crash severity.
-  Absence is not a claim: say nothing rather than guess.
-- **Approving on a report alone.** Run the acceptance, read the value.
-
-Check in only for genuine irreversibility: destroying someone else's work,
-outward-facing communication, money or production deploys, or a change of
-direction. Anything another commit can undo — just do it.
+- **Approving on a report alone.** Run the lane's acceptance yourself and read
+  the value it produced — see `skills/triage-report`.
+- **Absence is not a claim.** Say nothing rather than guess.

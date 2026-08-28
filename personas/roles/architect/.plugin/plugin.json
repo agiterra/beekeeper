@@ -1,9 +1,9 @@
 {
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.architect",
-  "name": "Crew Architect",
+  "name": "Team Architect",
   "version": "0.1.0",
   "description": "One-sitting shape verdicts on a design: right shape, or a simpler one. Vendor- and model-agnostic; model_min: capable of holding a whole design in view and giving a terminal verdict without re-deriving it.",
-  "keywords": ["crew", "architect", "design-review"],
+  "keywords": ["team", "architect", "design-review"],
   "personas": ["personas/architect.persona.md"]
 }

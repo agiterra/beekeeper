@@ -1,9 +1,9 @@
 {
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.poker",
-  "name": "Crew Poker",
+  "name": "Team Poker",
   "version": "0.1.0",
   "description": "Drives the built app through its real UI and reports honesty bugs with screenshots. Vendor- and model-agnostic. model_min: driving a UI via tool calls and comparing what it displays against what it actually does.",
-  "keywords": ["crew", "poker", "honesty-review"],
+  "keywords": ["team", "poker", "honesty-review"],
   "personas": ["personas/poker.persona.md"]
 }

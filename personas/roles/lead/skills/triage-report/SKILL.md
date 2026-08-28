@@ -54,3 +54,5 @@ bee pulse update --project <coordinate> --kind milestone --session <umbrella-uui
 ```
 
 `--kind blocker` for a `BLOCK`. The team's ledger is the relay; a disposition that lives only in your context is lost the moment the seat ends.
+
+Cite the `docs/SESSION_STATE.md` item number the disposition settles. That number is what the next seat reads — it reads §3 Next plus the items you cite, never the whole 3,700-line file (ledger item 80f).

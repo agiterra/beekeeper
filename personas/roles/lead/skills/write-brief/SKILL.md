@@ -13,6 +13,7 @@ Tier: 0/1 | 2 — because it touches <what>.
 Branch: <topic>/<lane>, worktree from local main @ <sha>.
 Owns (exclusive): <paths>. Must not touch anything else; if it needs to, STOP and report.
 Problem, with evidence: <2–3 file:line entry points, or reproduced output>.
+Ledger: §3 Next, plus items <numbers> — read those and nothing else of SESSION_STATE.md.
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
 Seat: <model + thinking level, and why> — see the choose-model skill.
@@ -27,6 +28,21 @@ Dispatch: bee sessions send --channel <channel-uuid> --session-ref <umbrella-uui
 ## Evidence is entry points, not an exploration
 
 Two or three `file:line` pointers is the whole evidence budget. **Time-box it: one read per file you name, and no grep sweep before the first brief.** A lead spent three and a half minutes exploring before writing brief one, produced no better a brief for it, and did the builder's job while doing it. If you cannot name an entry point after one read, that is the missing input — say so in the brief and let the lane find it.
+
+## Name the ledger items; never send a lane at the whole file
+
+`docs/SESSION_STATE.md` is ~3,700 lines. A seat told to "read the ledger" spends
+about a quarter of its context before it starts, and a codex seat is already
+~25% used at boot (ledger item 80f). Cite the numbered items the lane actually
+needs and let it read §3 Next plus those:
+
+```
+grep -n '^79\. ' docs/SESSION_STATE.md               # where the item starts
+sed -n '<start>,<start+100>p' docs/SESSION_STATE.md  # read that window only
+```
+
+If you cannot say which items a lane needs, that is a brief you are not ready
+to write — not a licence to hand over the whole file.
 
 ## The dispatch line is part of the brief
 
