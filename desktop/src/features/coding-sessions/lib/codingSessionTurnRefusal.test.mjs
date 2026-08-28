@@ -61,10 +61,10 @@ test("a spent crew allowance reaches the pending row with its two numbers", () =
     formatCodingSessionTurnRefusal({
       code: "BUDGET_EXHAUSTED",
       message:
-        'this crew session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per crew session" takes effect the next time the provider starts',
+        'this team session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per team session" takes effect the next time the provider starts',
       outcome: "refused",
     }),
-    'Turn refused (BUDGET_EXHAUSTED): this crew session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per crew session" takes effect the next time the provider starts',
+    'Turn refused (BUDGET_EXHAUSTED): this team session has started 200 of its 200 allowed turns; the session founder can still send turns, and raising "Turns per team session" takes effect the next time the provider starts',
   );
 });
 

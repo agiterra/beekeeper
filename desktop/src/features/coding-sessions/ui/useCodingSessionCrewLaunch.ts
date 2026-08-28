@@ -74,7 +74,7 @@ export function useCodingSessionCrewLaunch(input: {
       try {
         if (!current.providerInstanceRef || !current.providerAuthorityPubkey) {
           throw new Error(
-            "No coding-session provider is available to run this crew.",
+            "No coding-session provider is available to run this team.",
           );
         }
         const providerInstanceRef = current.providerInstanceRef;
@@ -145,8 +145,8 @@ export function useCodingSessionCrewLaunch(input: {
                 );
                 await relayClient.publishEvent(
                   event,
-                  "Timed out while seating the crew.",
-                  "Failed to seat the crew.",
+                  "Timed out while seating the team.",
+                  "Failed to seat the team.",
                 );
               },
             });

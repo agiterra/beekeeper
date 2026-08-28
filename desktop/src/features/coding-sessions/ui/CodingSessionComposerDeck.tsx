@@ -149,7 +149,7 @@ export function CodingSessionComposerDeck({
                 />
                 {context?.turnBudget ? (
                   <ComposerDefinition
-                    label="Crew turns"
+                    label="Team turns"
                     testId="coding-session-control-turn-budget"
                     value={codingSessionTurnBudgetUsage(context.turnBudget)}
                   />
@@ -161,7 +161,7 @@ export function CodingSessionComposerDeck({
               </p>
               {context?.turnBudget ? (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  The turn count is the whole crew session's, shared by every
+                  The turn count is the whole team session's, shared by every
                   execution under it. At the limit the provider refuses further
                   turns from the agents; only the execution's founder is exempt.
                 </p>

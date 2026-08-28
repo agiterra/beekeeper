@@ -5,9 +5,14 @@
 
 use super::TeamSnapshot;
 
-/// The disclosure shown when a snapshot's crew cannot be bound to its members.
-pub(crate) const CREW_UNMATCHED_NOTE: &str =
-    "This snapshot's crew could not be matched to its members, so it was imported as an ordinary team.";
+/// The disclosure shown when a snapshot's seat roster cannot be bound to its
+/// members.
+///
+/// "Seat roster" rather than "team": the thing that failed to bind is the
+/// seating plan *inside* the team, and the team itself imported fine — saying
+/// "team" here would name the wrong noun twice in one sentence. The internal
+/// identifier stays `crew` (ruling 77a renames copy, not code).
+pub(crate) const CREW_UNMATCHED_NOTE: &str = "This snapshot's seat roster could not be matched to its members, so it was imported as an ordinary team.";
 
 /// Bind the snapshot's crew, if it has one, to the ids this import minted.
 ///

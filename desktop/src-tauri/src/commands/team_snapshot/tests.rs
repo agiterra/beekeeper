@@ -825,6 +825,6 @@ fn a_snapshot_crew_whose_member_is_missing_imports_as_an_ordinary_team() {
     );
     assert_eq!(
         CREW_UNMATCHED_NOTE,
-        "This snapshot's crew could not be matched to its members, so it was imported as an ordinary team."
+        "This snapshot's seat roster could not be matched to its members, so it was imported as an ordinary team."
     );
 }

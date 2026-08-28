@@ -621,8 +621,8 @@ pub fn decide_turn(context: &CommandContext<'_>, created_at: u64, content: &str)
                 target: command.target,
                 code: BUDGET_EXHAUSTED,
                 message: format!(
-                    "this crew session has started {used} of its {limit} allowed turns; the \
-                     session founder can still send turns, and raising \"Turns per crew \
+                    "this team session has started {used} of its {limit} allowed turns; the \
+                     session founder can still send turns, and raising \"Turns per team \
                      session\" takes effect the next time the provider starts"
                 ),
             };

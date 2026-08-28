@@ -328,7 +328,7 @@ export function CodingSessionCapacityCard() {
               className="text-xs font-medium text-muted-foreground"
               htmlFor="coding-session-turn-budget"
             >
-              Turns per crew session
+              Turns per team session
             </label>
             <Input
               className="h-9 w-24"
@@ -379,12 +379,12 @@ export function CodingSessionCapacityCard() {
         </div>
         <p className="text-xs text-muted-foreground">
           {settings === null
-            ? "Reading this computer's crew budget…"
+            ? "Reading this computer's team budget…"
             : `Now: ${codingSessionTurnBudgetLabel(
                 settings.turnBudget,
                 settings.defaultTurnBudget,
-              ).toLowerCase()} per crew session.`}{" "}
-          A crew session is one launch and every execution under it, counted
+              ).toLowerCase()} per team session.`}{" "}
+          A team session is one launch and every execution under it, counted
           together. Once they have taken this many turns the provider refuses
           further turns from the agents with a signed receipt — <em>you</em> can
           always send more, and each session shows what it has spent.
@@ -404,7 +404,7 @@ export function CodingSessionCapacityCard() {
           >
             {saveBudget.error instanceof Error
               ? saveBudget.error.message
-              : "Could not save the crew turn budget."}
+              : "Could not save the team turn budget."}
           </p>
         ) : null}
       </div>

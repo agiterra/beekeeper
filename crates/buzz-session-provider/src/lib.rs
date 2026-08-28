@@ -1572,9 +1572,9 @@ impl Provider {
         let dispatch_error = match (&plan.initial_turn, self.sessions.handle(&target.session_id)) {
             _ if budget_refusal.is_some() => budget_refusal.map(|(used, limit)| {
                 format!(
-                    "{}: this crew session has started {used} of its {limit} \
+                    "{}: this team session has started {used} of its {limit} \
                      allowed turns, so the first turn was not delivered; the session founder can \
-                     still send turns, and raising \"Turns per crew session\" takes effect the \
+                     still send turns, and raising \"Turns per team session\" takes effect the \
                      next time the provider starts",
                     payload::BUDGET_EXHAUSTED
                 )

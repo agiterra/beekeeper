@@ -170,7 +170,7 @@ test("a crew budget that is not yet in force says so", () => {
       runningTurnBudget: null,
       providerRunning: true,
     }),
-    "The provider running now allows 200 turns per crew session. Your change applies the next time it starts.",
+    "The provider running now allows 200 turns per team session. Your change applies the next time it starts.",
   );
   assert.equal(
     codingSessionTurnBudgetPending({

@@ -225,7 +225,7 @@ export function codingSessionTurnBudgetPending(settings: {
   return `The provider running now allows ${codingSessionTurnBudgetLabel(
     running,
     settings.defaultTurnBudget,
-  ).toLowerCase()} per crew session. Your change applies the next time it starts.`;
+  ).toLowerCase()} per team session. Your change applies the next time it starts.`;
 }
 
 /**

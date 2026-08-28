@@ -12,7 +12,7 @@ export function CodingSessionsSettingsPanel() {
     <SettingsOptionGroupList>
       <SettingsOptionGroup
         data-testid="settings-coding-sessions"
-        description="How many coding sessions this computer will run at once, how long one turn may go silent, and how many turns a crew session may take before its agents are refused. Each live session is an agent process here — these limits are Beekeeper's own, not your model provider's."
+        description="How many coding sessions this computer will run at once, how long one turn may go silent, and how many turns a team session may take before its agents are refused. Each live session is an agent process here — these limits are Beekeeper's own, not your model provider's."
         title="Sessions"
       >
         <CodingSessionCapacityCard />
