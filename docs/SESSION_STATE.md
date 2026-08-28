@@ -4310,6 +4310,137 @@ written and `bash -n` clean but **was not executed** — that harness needs
       `unconfirmed`, so a lead sees `unconfirmed` for a hire the host will
       later refuse `HIRE_STALE` if it comes back inside 15 minutes.
 
+83 (2026-08-28 17:3x). **First hire from inside Beekeeper (session HiringTest,
+    channel 20e2e7f0…).** The chain worked: Keystone's `claude-sonnet-5` hire
+    refused HIRE_MODEL_NOT_OFFERED in the same second; its re-hire without a
+    model seated Builder (identity default opus[1m]) at 17:07:00 with the
+    brief as the first turn; the builder worked 1,009 s and committed 7e8be279
+    as `Builder <1ddd35c6…@agents.beekeeper>` in hiringtest-builder-1.
+    **Break:** the builder's report (`bee sessions send --to lead`) was
+    refused by the relay — "only a session founder or a granted operator may
+    steer" — because the hire host seated the identity but never granted it
+    (the crew launcher grants after the created receipt; the hire path has no
+    grant step). Keystone noticed the commit on disk with no report and
+    re-addressed the builder; it could not have succeeded. Founder granted the
+    builder collaborator by hand at 17:3x to unblock. Fix: the hire host
+    publishes grant-operator for the seated identity after the created
+    receipt, exactly as codingSessionCrewLaunch does, and the CLI's hire wait
+    reports "seated, not yet granted" until the 44228 lands.
+
+    **Fixed cd482f7e:**
+
+    - (1) Hire host grants the seat.
+      desktop/src/features/coding-sessions/hooks/useCodingSessionHire.ts:155
+      adds `awaitSeatReceipt` and :161 `grantOperator` to
+      CodingSessionHireDeps, defaulted at :185-:190 to the launcher's own
+      `awaitCodingSessionCreateReceipt` (same 120 s
+      CODING_SESSION_CREW_RECEIPT_TIMEOUT_MS, no override) and
+      `publishCodingSessionAuthorityTransition({type:"grant-operator"})` — the
+      same roster/seq logic useCodingSessionCrewLaunch.ts:177 uses.
+
+    - (1) The sequence: useCodingSessionHire.ts:447 calls `grantSeat(plan,
+      hireDeps)` after the seated create, implemented at :483 — receipt first,
+      then grant for `plan.actor` (the seat's own actor, not the requesting
+      lead), for the launcher's reason: a grant on a create the provider
+      refused is authority over a seat that does not exist. The
+      model-substitution notice still publishes before the wait, so a 120 s
+      receipt timeout cannot delay that disclosure.
+
+    - (1) A failed grant is never silent. useCodingSessionHire.ts:450
+      publishes both disclosures via a new shared helper
+      `discloseCodingSessionHire` (:512), which publishRefusal (:557) now also
+      uses — the refusal path's duplicated two-place publish collapsed into
+      one function. The 44220 to the requesting seat reads exactly `seated,
+      but not granted: <reason> — it cannot report until granted`
+      (codingSessionHireAnswer.ts:226), and the umbrella lane line is `Hired a
+      <role> — <same sentence>` (codingSessionHireAnswer.ts:234). The outcome
+      gained `granted: boolean`, and a seated-but-ungranted hire carries the
+      reason in `detail` instead of null.
+
+    - (1) RED BEFORE GREEN (desktop): with the tests written and the hook
+      unchanged, `node --import ./test-loader.mjs --experimental-strip-types
+      --test src/features/coding-sessions/ui/CodingSessionHireHost.test.mjs`
+      gave 3 failures — the ordering test's deepStrictEqual diff showed `-
+      'receipt'`, `- 'grant'` missing from the effect list, and both
+      disclosure tests failed on `AssertionError: the lead was never told the
+      seat cannot report` / `the lead was never told`. After the change: 8/8
+      pass.
+
+    - (1) Tests at
+      desktop/src/features/coding-sessions/ui/CodingSessionHireHost.test.mjs:250
+      (sequence is exactly
+      ['worktree','hint','membership','custody','sign:44221','publish:44221','receipt','grant']
+      and `host.grants` deep-equals `[{channelId, genesisRef: GENESIS_REF,
+      granteePubkey: ADA_PUBKEY}]` — the seat's actor), :374 (grant failure
+      produces both the 44220 to LEAD_TARGET and the kind:9 umbrella line,
+      with the create still published), :403 (a receipt that never lands is
+      disclosed the same way and no grant is attempted).
+
+    - (2) CLI. crates/buzz-cli/src/commands/sessions/crew.rs:1530 adds
+      `granted: bool` to `HireOutcome::Created`; :1771 `fold_hire` takes it as
+      a fourth argument. The report at crew.rs:1837 appends one sentence:
+      granted true → "It holds operator authority, so it can report back to
+      you"; false → "It is seated, but not granted: no grant-operator named it
+      within 60s, and the relay refuses an ungranted seat's report — ask the
+      operator to run `bee sessions grant --role collaborator` for it. Do not
+      hire again". Outcome stays `created` and exit stays 0 either way.
+
+    - (2) The read: crew_cmds.rs:568 folds the umbrella's authority chain
+      through `super::fetch_authority_state` (kind:40099 acceptance receipts,
+      `grants[actor] == "collaborator"`) and only once a seat exists — a hire
+      with no seat has nothing to grant, so the extra query never runs on the
+      refusal path. `read_hire_answer`/`wait_for_hire` now take `genesis_ref`.
+      crew_cmds.rs:801 holds `Created { granted: false, .. }` and keeps
+      polling inside the same 60 s HIRE_WAIT_SECONDS window, exactly as it
+      already held `Seating` — the grant lands after the create receipt, so
+      reporting the moment the provider speaks would report a mute seat.
+
+    - (2) JSON: crew_cmds.rs:757 adds top-level `granted` — the bool for
+      Created, `false` for Failed/Seating (a seat exists and nothing granted
+      it), and `null` for Refused/Unconfirmed, where no seat was created and
+      `false` would assert a different fact.
+
+    - (2) RED BEFORE GREEN (CLI): with the test written and crew.rs unchanged,
+      `cargo test -p buzz-cli --lib` failed to build with `error[E0026]:
+      variant sessions::crew::HireOutcome::Created does not have a field named
+      granted` at crew_tests.rs:2196, plus E0061 arity errors on every
+      fold_hire call. Test at
+      crates/buzz-cli/src/commands/sessions/crew_tests.rs:2164 asserts the
+      ungranted fold is `Created { granted: false }`, status `created`, exit
+      0, detail containing "seated, but not granted" and "bee sessions grant
+      --role collaborator", and that the granted fold says "can report back"
+      and never "not granted".
+
+    - (3) personas/roles/lead/skills/hire/SKILL.md:62 adds "Read `granted`
+      before you end your turn": what true/false/null each mean, the relay's
+      exact refusal sentence, the 2026-08-28 break as the reason, the `bee
+      sessions grant --channel … --genesis … --pubkey … --role collaborator`
+      line with a note that `genesisRef` and `seat.actor` both come from the
+      hire output, that only the founder may extend the chain so it is a
+      request to the person, and an explicit "do not hire again" (a second
+      agent would have the same problem and two lanes would own one brief).
+      `cargo run -q -p buzz-cli -- pack validate personas/roles/lead` →
+      "Valid."
+
+    - Not done / worth knowing: nothing in the desktop UI consumes
+      `CodingSessionHireOutcome` — the hook's outcomes array has no reader
+      (grep found only CodingSessionHireHost.tsx mounting the hook), so the
+      `granted` field there is currently for tests and future screens; the
+      user-visible disclosure is the 44220 turn and the umbrella lane line,
+      which is where the lead and the person actually look. No live relay run
+      was performed — this is unit-level evidence only, and the next real hire
+      is what confirms the grant lands end-to-end.
+
+    Gates on this branch: `cargo test -p buzz-core -p buzz-cli -p
+    buzz-session-provider -p buzz-persona -p buzz-acp --lib` 394 passed / 0
+    failed; `cargo clippy` workspace all-targets `-D warnings` 0 warnings;
+    `cargo fmt --check` clean; desktop `pnpm typecheck` clean and `pnpm test`
+    6,616 passed / 0 failed; `cargo test` (desktop/src-tauri) 2,748 passed / 0
+    failed / 18 ignored; `pnpm check:px-text` clean; `just file-size-check` 9
+    passed / 0 failed; `bee pack validate personas/roles/lead` Valid; `pnpm
+    build:e2e` plus Playwright `crew-front-door.spec.ts --project=smoke` 8
+    passed / 0 failed.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -4347,6 +4478,15 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Read §2 item 83 first (2026-08-28 evening).** The first hire from inside
+Beekeeper seated a builder that could not report: the hire host granted it
+nothing, and the relay refuses an ungranted seat's `sessions send`. Fixed on
+`crew/front-door` (`cd482f7e`): the host publishes `grant-operator` after the
+create receipt and discloses a failed grant to both the lead and the umbrella;
+`bee sessions hire` now prints and returns `granted`, and the lead pack tells
+the lead to read it. Unit-level evidence only — the next live hire is what
+confirms the grant lands.
 
 **Read §2 item 81 first (2026-08-28 evening).** D14 hire landed on
 `crew/front-door`: a launch now seats the lead alone, and the lead hires the
