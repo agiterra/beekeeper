@@ -2410,7 +2410,9 @@ written and `bash -n` clean but **was not executed** — that harness needs
     `list_managed_agents` poll for every agent that carries a pack link.
     **Next:** Brian's live look on the dev instance (installer walk, a
     seated join, `bee events query` / founder column against hive), then
-    land.
+    land. Findings F1–F5 from the adversarial pass are fixed on this branch
+    (`4d84431f`, `ab3f96bc`, `e8c9eb03`, `e5e2511c`, with the front-door
+    spec rewritten to prove them in `447ed22e`); F6 stays open.
 
 77. **Live crew runs, 2026-08-27 evening — every open finding, queued for the
     next batch.** (Numbering: 74/75 live on `fix/seated-session-followups`,
@@ -2533,7 +2535,34 @@ than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
 
-**Crew front door batch (§2 item 76) is gate-green and awaiting Brian's live look on the dev instance before it lands.**
+**Andy, read this first (2026-08-28 morning):** the crew front door (item 76)
+landed on `main` last night, together with the ledger entries for items 76 and
+77. What that gives you: `Install crew roles…` on the team card, seating an
+agent into a running session (join dialog, pending screen, session header),
+`bee events query`, and `founder` / `createSigner` columns on `bee sessions
+status` and `bee sessions list`. The installer also stages the designer and
+poker packs as unseated roles, and item 76 records which surfaces this batch
+deliberately did not build. Item 77 is the ledger of open findings from the
+2026-08-27 live crew runs. **Not in this landing:** the fixes for items 73, 74
+and 75 (pending-create honesty copy; observers accepting a seated create; the
+provider briefing a seat with its pack) were still sitting on
+`fix/pending-create-honesty` and `fix/seated-session-followups` when this
+commit was written — run `git log --oneline origin/main` before assuming they
+are on `main`. Three things that will bite you on a dev machine: (1) the
+Beekeeper rename moved the managed runtime dir to `Application
+Support/Beekeeper`, so the first launch re-provisions the managed Node
+runtime and ACP shims — or copy the old
+`Bee Keeper` dir across; (2) `~/.local/bin/bee` shadows the bundled `bee`
+because `build_augmented_path` puts `~/.local/bin` first, so a seat can run an
+old CLI unless you repoint that symlink; (3) seats still share the operator's
+`~/.claude` (same `HOME`), so a seat's local cross-session tools can reach
+other sessions — the fence item in 77 is not landed yet. Also open: the
+"no-surface-by-decision" calls recorded in item 76 are waiting on Brian's
+sign-off.
+
+**Crew front door batch (§2 item 76) landed on `main` on 2026-08-28 after
+Brian's go; relay code was untouched, so the hive deploy is a same-code
+rebuild.**
 
 **Direction set 2026-08-25: crew sessions.** Executions become agent seats
 with roles that address each other durably, a lead seat dispatches, and the
