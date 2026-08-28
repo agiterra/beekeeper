@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
   CodingSessionCrewLaunchSteps,
   CodingSessionCrewRoster,
   CodingSessionCrewSkillNotice,
@@ -136,4 +137,29 @@ test("a roster whose agents were never asked about a pack claims nothing", () =>
     }),
   );
   assert.doesNotMatch(html, /carries no role skills/);
+});
+
+/**
+ * D14 — a launch seats the lead only, so the roster is an offer, not a
+ * manifest. A row that reads exactly like the seated one is the same lie the
+ * launch used to tell in events: four rows, one agent.
+ */
+test("the roster marks the lead as the seat that is created and the rest as hireable", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewRoster, {
+      primaryPersonaId: "p-lead",
+      seats: SEATS,
+    }),
+  );
+  assert.match(html, /data-seat-state="seated"/);
+  assert.match(html, /data-seat-state="hireable"/);
+  assert.match(html, /the lead may hire/);
+});
+
+test("the tab says a launch seats the lead only", () => {
+  assert.match(
+    CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE,
+    /Launching seats the lead only/,
+  );
+  assert.match(CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE, /bee sessions hire/);
 });

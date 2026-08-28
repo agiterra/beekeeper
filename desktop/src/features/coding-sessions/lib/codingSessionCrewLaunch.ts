@@ -1,25 +1,35 @@
 /**
- * Launching a crew: one signed sequence, each step gated on the last one's
+ * Launching a team: one signed sequence, each step gated on the last one's
  * receipt.
  *
  * The channel the team lands in (minted here when a project has never had one)
- * → genesis → a create per seat, in the crew's seat order → `grant-operator`
- * to the lead seat → the first turn to the primary, carrying the goal and the
- * roster (plan D8).
+ * → genesis → **one** create, for the lead → `grant-operator` to that seat →
+ * its first turn, carrying the goal and the roster it may hire from.
  *
- * Two properties this module exists to hold:
+ * **D14: a launch seats the lead only.** The roster is not what the launch
+ * creates; it is who the lead may bring in, one `bee sessions hire` at a time,
+ * after it has heard the mission. That is a deliberate reversal of the earlier
+ * design, and it buys back a limitation the person was previously made to
+ * work around: a team launch created every seat against the one selected
+ * runtime, so a Codex architect on a Claude provider disabled Launch outright
+ * (item 79c). With one seat created here, each later seat picks its own
+ * runtime at hire time.
  *
- * 1. **Nothing is published until the family check passes.** The verifier /
- *    builder vendor rule is a refusal, not a warning, and it runs before the
- *    genesis — a crew that fails it leaves no events behind at all. The rule
- *    is decided on a (provider, model) pair this step has verified: the
- *    selected runtime must actually offer each decided seat's model, because a
- *    model it does not have is replaced by its default and the seat then runs
- *    on a vendor nothing checked.
- * 2. **A failed step names itself and leaves the earlier seats alone.** Seat
- *    three failing does not un-create seats one and two; they are real, they
- *    are visible, and the report says exactly which step stopped. Rolling
- *    them back would delete work the provider may already be doing.
+ * Three properties this module exists to hold:
+ *
+ * 1. **Nothing is published until the lead's model checks pass.** The check is
+ *    decided on a (provider, model) pair this step has verified: the selected
+ *    runtime must actually offer the seat's model, because a model it does not
+ *    have is replaced by its default and the seat then runs on a vendor
+ *    nothing checked. It is scoped to the seats this launch actually creates —
+ *    refusing a launch over a seat it will never create would be refusing a
+ *    fact that is not yet true.
+ * 2. **A failed step names itself and leaves the earlier work alone.** A grant
+ *    failing does not un-create the lead; it is a real execution, it is
+ *    visible, and the report says exactly which step stopped.
+ * 3. **The roster is disclosed as hireable, not as seated.** A first turn that
+ *    listed three colleagues who do not exist would have the lead addressing
+ *    empty seats for its whole first turn.
  *
  * Every relay interaction is injected, so the order above is a property of
  * this function rather than of the hook that calls it.
@@ -28,7 +38,7 @@ import type { CodingSessionCommandTarget } from "./codingSessionCommand";
 import {
   checkCodingSessionCrewFamilies,
   checkCodingSessionCrewSeatModels,
-  codingSessionCrewFirstTurnText,
+  codingSessionCrewRosterText,
   type ResolvedCodingSessionCrewSeat,
 } from "./codingSessionCrew";
 
@@ -60,8 +70,20 @@ export type CodingSessionCrewLaunchResult = {
   /** Null only when the refusal happened before the genesis was published. */
   sessionRef: string | null;
   genesisRef: string | null;
-  /** Seats whose create receipt landed, in creation order. */
+  /**
+   * Seats whose create receipt landed, in creation order.
+   *
+   * Under D14 this is the lead alone on a successful launch — one entry, not
+   * one per roster row.
+   */
   seats: LaunchedCodingSessionCrewSeat[];
+  /**
+   * The rest of the roster: seats this launch deliberately did NOT create.
+   *
+   * Reported so a screen can say "shown, not launched" rather than letting a
+   * roster of four imply four live agents. The lead hires these itself.
+   */
+  hireableSeats: ResolvedCodingSessionCrewSeat[];
   /**
    * Labels of the seats staged with no role pack on this computer, in seat
    * order.
@@ -191,6 +213,7 @@ export function codingSessionCrewLaunchSeatStepId(index: number): string {
 export function planCodingSessionCrewLaunch(
   input: CodingSessionCrewLaunchInput,
 ): CodingSessionCrewLaunchStep[] {
+  const lead = leadSeat(input.seats, input.primaryPersonaId);
   return [
     step(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
@@ -207,17 +230,24 @@ export function planCodingSessionCrewLaunch(
         ]
       : []),
     step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session"),
-    ...input.seats.map((seat, index) =>
-      step(
-        codingSessionCrewLaunchSeatStepId(index),
-        `Seat ${seat.actorLabel} as ${seat.role}`,
-      ),
-    ),
+    // Exactly one, because exactly one seat is created (D14). A step list
+    // showing four creates would be the same lie the roster used to tell.
+    ...(lead
+      ? [
+          step(
+            codingSessionCrewLaunchSeatStepId(0),
+            `Seat ${lead.actorLabel} as ${lead.role}`,
+          ),
+        ]
+      : []),
     step(
       CODING_SESSION_CREW_LAUNCH_GRANT_STEP,
-      `Grant the ${leadSeat(input.seats, input.primaryPersonaId)?.role ?? "lead"} seat operator authority`,
+      `Grant the ${lead?.role ?? "lead"} seat operator authority`,
     ),
-    step(CODING_SESSION_CREW_LAUNCH_TURN_STEP, "Send the goal and the roster"),
+    step(
+      CODING_SESSION_CREW_LAUNCH_TURN_STEP,
+      "Send the goal and the team it may hire",
+    ),
   ];
 }
 
@@ -235,6 +265,66 @@ export function leadSeat(
     seats.find((seat) => seat.personaId === primaryPersonaId) ??
     null
   );
+}
+
+/**
+ * Split the roster into the seat this launch creates and the seats it does
+ * not.
+ *
+ * One place, so the plan, the launch and the screen cannot disagree about
+ * which rows are live and which are an offer.
+ */
+export function partitionCodingSessionCrewLaunchSeats(
+  seats: ReadonlyArray<ResolvedCodingSessionCrewSeat>,
+  primaryPersonaId: string,
+): {
+  lead: ResolvedCodingSessionCrewSeat | null;
+  hireable: ResolvedCodingSessionCrewSeat[];
+} {
+  const lead = leadSeat(seats, primaryPersonaId);
+  return {
+    lead,
+    hireable: lead
+      ? seats.filter((seat) => seat.personaId !== lead.personaId)
+      : [...seats],
+  };
+}
+
+/**
+ * The lead's first turn: the goal, then the team it may hire — labelled as an
+ * offer, with the verb that takes it up.
+ *
+ * The distinction is the whole point. A roster that reads like a seated team
+ * has the lead addressing three agents that do not exist, waiting for reports
+ * that cannot come; naming it as hireable, with the command, is what turns the
+ * same list into work it can actually start.
+ */
+export function codingSessionCrewLeadFirstTurnText(input: {
+  goal: string;
+  lead: ResolvedCodingSessionCrewSeat;
+  hireable: ReadonlyArray<ResolvedCodingSessionCrewSeat>;
+}): string {
+  const goal = input.goal.trim();
+  if (input.hireable.length === 0) {
+    return `${goal}\n\nYou are seated. Nobody else is — this team has no other roles on this computer.`;
+  }
+  const roster = codingSessionCrewRosterText({
+    seats: input.hireable,
+    primaryPersonaId: input.lead.personaId,
+  });
+  return [
+    goal,
+    "",
+    "You are seated. Nobody else is: the roster below is who you may hire, " +
+      "one at a time, once you know what the work is.",
+    "",
+    roster,
+    "",
+    "Hire with:",
+    "  bee sessions hire --channel <uuid> --session-ref <uuid> --role <role> --brief <file>",
+    "A hired seat's first turn IS the brief — do not send a second start " +
+      "message. End your turn after hiring.",
+  ].join("\n");
 }
 
 export async function launchCodingSessionCrew(
@@ -256,6 +346,9 @@ export async function launchCodingSessionCrew(
     emit();
   };
   const seated: LaunchedCodingSessionCrewSeat[] = [];
+  // Filled in once the lead is known; a refusal before that reports an empty
+  // roster rather than guessing which seat would have been created.
+  let hireable: ResolvedCodingSessionCrewSeat[] = [];
   const seatsWithoutRolePack: string[] = [];
   // Settled below, before the genesis. Everything published by this launch
   // goes here, so a project that had no channel gets one and then gets its
@@ -274,6 +367,7 @@ export async function launchCodingSessionCrew(
       sessionRef,
       genesisRef,
       seats: seated,
+      hireableSeats: [...hireable],
       seatsWithoutRolePack,
       failedStep: id,
       failureReason: reason,
@@ -296,12 +390,29 @@ export async function launchCodingSessionCrew(
       null,
     );
   }
+  const lead = leadSeat(input.seats, input.primaryPersonaId);
+  if (!lead) {
+    return fail(
+      CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
+      "This team has no lead seat to hold operator authority.",
+      null,
+      null,
+    );
+  }
+  const { hireable: rest } = partitionCodingSessionCrewLaunchSeats(
+    input.seats,
+    input.primaryPersonaId,
+  );
+  hireable = rest;
+  // Scoped to the seats this launch actually creates — today, the lead alone.
+  // Checking the whole roster here refused launches over a seat that was never
+  // going to be created against this runtime (item 79c); each hired seat's own
+  // runtime is decided, and checked, when the lead hires it.
+  //
   // Before the vendor rule, because the vendor rule reads the model: a model
   // this provider cannot run is a model the seat will not run on.
-  const runnable = checkCodingSessionCrewSeatModels(
-    input.seats,
-    input.provider,
-  );
+  const created = [lead];
+  const runnable = checkCodingSessionCrewSeatModels(created, input.provider);
   if (!runnable.ok) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
@@ -310,20 +421,11 @@ export async function launchCodingSessionCrew(
       null,
     );
   }
-  const family = checkCodingSessionCrewFamilies(input.seats);
+  const family = checkCodingSessionCrewFamilies(created);
   if (!family.ok) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
       family.reason,
-      null,
-      null,
-    );
-  }
-  const lead = leadSeat(input.seats, input.primaryPersonaId);
-  if (!lead) {
-    return fail(
-      CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
-      "This team has no lead seat to hold operator authority.",
       null,
       null,
     );
@@ -374,7 +476,7 @@ export async function launchCodingSessionCrew(
   }
   mark(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "done");
 
-  for (const [index, seat] of input.seats.entries()) {
+  for (const [index, seat] of created.entries()) {
     const id = codingSessionCrewLaunchSeatStepId(index);
     mark(id, "running");
     try {
@@ -435,13 +537,13 @@ export async function launchCodingSessionCrew(
   mark(CODING_SESSION_CREW_LAUNCH_GRANT_STEP, "done");
 
   mark(CODING_SESSION_CREW_LAUNCH_TURN_STEP, "running");
-  const primaryTarget = seated.find(
-    (entry) => entry.seat.personaId === input.primaryPersonaId,
+  const leadTarget = seated.find(
+    (entry) => entry.seat.personaId === lead.personaId,
   )?.target;
-  if (!primaryTarget) {
+  if (!leadTarget) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_TURN_STEP,
-      "The primary seat has no execution to send the goal to.",
+      "The lead seat has no execution to send the goal to.",
       sessionRef,
       genesisRef,
     );
@@ -449,11 +551,11 @@ export async function launchCodingSessionCrew(
   try {
     await deps.sendFirstTurn({
       channelId: launchChannelId,
-      target: primaryTarget,
-      text: codingSessionCrewFirstTurnText({
+      target: leadTarget,
+      text: codingSessionCrewLeadFirstTurnText({
         goal: input.goal,
-        seats: input.seats,
-        primaryPersonaId: input.primaryPersonaId,
+        lead,
+        hireable,
       }),
     });
   } catch (error) {
@@ -475,6 +577,7 @@ export async function launchCodingSessionCrew(
     sessionRef,
     genesisRef,
     seats: seated,
+    hireableSeats: hireable,
     seatsWithoutRolePack,
     failedStep: null,
     failureReason: null,

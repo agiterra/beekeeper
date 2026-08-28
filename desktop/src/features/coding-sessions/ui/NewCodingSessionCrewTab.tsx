@@ -15,7 +15,10 @@ import {
   resolveCodingSessionSeatVendor,
   type ResolvedCodingSessionCrewSeat,
 } from "../lib/codingSessionCrew";
-import type { CodingSessionCrewLaunchStep } from "../lib/codingSessionCrewLaunch";
+import {
+  leadSeat,
+  type CodingSessionCrewLaunchStep,
+} from "../lib/codingSessionCrewLaunch";
 import {
   listCodingSessionCrewTeams,
   resolveCodingSessionCrewSeats,
@@ -25,6 +28,19 @@ import { NewCodingSessionWorkdirField } from "./NewCodingSessionWorkdirField";
 import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
 
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
+
+/**
+ * What Launch actually does, said before it is pressed.
+ *
+ * D14 makes the launch a front door rather than a batch: the lead hears the
+ * mission and hires the team itself, one brief at a time. A screen listing
+ * four roles beside a button called "Launch team" implies four agents start —
+ * so the sentence names the one that does, and the verb that brings the rest.
+ */
+export const CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE =
+  "Launching seats the lead only. The roles below are who it may hire — it " +
+  "hires them with `bee sessions hire` once it knows what the work is, each " +
+  "one on whatever provider that seat needs.";
 
 /**
  * Launch a team into one session: pick the team, the repo, and the goal.
@@ -227,18 +243,15 @@ export function NewCodingSessionCrewTab({
         <p className="text-2xs text-muted-foreground">
           {crewTeams.length === 0
             ? "A launchable team is one whose seats carry roles. None of this computer's teams do yet."
-            : // A limitation, not a rule: per-seat providers are D13 and not
-              // built, so today the whole team lands on one runtime. Saying
-              // "every seat runs on X" alone read as the intended design
-              // (item 79e). To mix providers, launch here and then hire the
-              // other seat into the session with Add provider.
-              `Today a team launch runs every seat on one provider — ${
+            : // The one-provider limitation that used to block a mixed-vendor
+              // roster (item 79c/79e) applies to the lead alone now, because
+              // the lead is the only seat this launch creates. Each later seat
+              // picks its own runtime when the lead hires it.
+              `${CODING_SESSION_CREW_LAUNCH_SCOPE_NOTE} The lead runs on ${
                 providerLabel ?? "this computer's provider"
-              } — ` +
-              `in the directory below${
-                model ? `, on ${model} unless its seat names its own` : ""
-              }. Each seat's model is in the roster. Seats on another provider ` +
-              "are added to the session afterwards."}
+              }` +
+              `${model ? `, on ${model} unless its seat names its own` : ""}, ` +
+              "in the directory below."}
         </p>
       </div>
 
@@ -335,8 +348,8 @@ export function NewCodingSessionCrewTab({
       ) : null}
 
       <p className="text-2xs text-muted-foreground">
-        A team launch is not resumable. If it stops partway, the seats already
-        created stay — finish the rest from the session itself.
+        A team launch is not resumable. If it stops partway, whatever it already
+        published stays — finish from the session itself.
       </p>
 
       <div className="flex shrink-0 items-center justify-end">
@@ -358,7 +371,14 @@ export function NewCodingSessionCrewTab({
   );
 }
 
-/** The seats, each with the vendor the family rule will read. */
+/**
+ * The seats: which one this launch creates, and which the lead may hire.
+ *
+ * The distinction is rendered, not implied. Before D14 every row looked
+ * identical and every row was created; now exactly one is, and a roster that
+ * still read as a manifest would tell the same lie on screen that the launch
+ * used to tell in events — four rows, one live agent.
+ */
 export function CodingSessionCrewRoster({
   primaryPersonaId,
   seats,
@@ -367,6 +387,7 @@ export function CodingSessionCrewRoster({
   seats: ResolvedCodingSessionCrewSeat[] | null;
 }) {
   if (!seats) return null;
+  const lead = leadSeat(seats, primaryPersonaId);
   return (
     <ul
       className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
@@ -374,9 +395,11 @@ export function CodingSessionCrewRoster({
     >
       {seats.map((seat) => {
         const vendor = resolveCodingSessionSeatVendor(seat);
+        const seated = lead !== null && seat.personaId === lead.personaId;
         return (
           <li
             className="flex items-baseline gap-2 text-sm"
+            data-seat-state={seated ? "seated" : "hireable"}
             key={`${seat.personaId}:${seat.actor}`}
           >
             <span className="font-medium">{seat.role}</span>
@@ -394,11 +417,11 @@ export function CodingSessionCrewRoster({
                 ? ` · ${seat.model}`
                 : ""}
             </span>
-            {seat.personaId === primaryPersonaId ? (
-              <span className="text-2xs text-muted-foreground">
-                · first turn
-              </span>
-            ) : null}
+            <span className="text-2xs text-muted-foreground">
+              {seated
+                ? "· seated on launch, first turn"
+                : "· not launched — the lead may hire it"}
+            </span>
             {/* Before the launch, not after it. The launch's own
                 `seatsWithoutRolePack` only exists once staging has answered,
                 which is after the seats are signed for; the agent already told

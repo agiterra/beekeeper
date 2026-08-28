@@ -10,6 +10,7 @@ import {
   codingSessionCrewLaunchSeatStepId,
   launchCodingSessionCrew,
   leadSeat,
+  planCodingSessionCrewLaunch,
 } from "./codingSessionCrewLaunch.ts";
 
 const LEAD = {
@@ -81,6 +82,14 @@ const PROVIDER = {
   allowedModels: ["claude-opus-5[1m]", "gpt-5.6-sol", "grok-4"],
 };
 
+/**
+ * A team whose primary seat is a builder: with no `lead` role in the roster,
+ * the primary is the seat the launch creates. Used by the checks below, which
+ * are about the seat that is actually created (D14) — not about the roster the
+ * lead may hire from.
+ */
+const PRIMARY_BUILDER = { ...BUILDER, personaId: "p-lead" };
+
 const INPUT = {
   channelId: "chan-1",
   goal: "Close ledger item 53.",
@@ -89,61 +98,56 @@ const INPUT = {
   provider: PROVIDER,
 };
 
-test("a seat whose model the selected provider cannot run is refused before anything is published", async () => {
-  // The bug this pins: every seat's create goes to the one selected
-  // providerInstanceRef, and the provider's apply_model does not refuse an
-  // unknown model — it logs "using its default" and creates the session. So a
-  // verifier declared openai on a Claude-only runtime passed the vendor check
-  // on gpt-5.6-sol and then ran on Anthropic, in the builder's own family.
+test("a created seat whose model the selected provider cannot run is refused before anything is published", async () => {
+  // The bug this pins: a create goes to the one selected providerInstanceRef,
+  // and the provider's apply_model does not refuse an unknown model — it logs
+  // "using its default" and creates the session. So a seat declared openai on
+  // a Claude-only runtime passed the vendor check and then ran on Anthropic.
+  // Under D14 only the lead is created, so this is the seat it must hold for.
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
     {
       ...INPUT,
-      seats: [LEAD, { ...BUILDER, model: "claude-opus-5" }, VERIFIER],
+      seats: [PRIMARY_BUILDER, VERIFIER],
       provider: { label: "claude-agent-acp", allowedModels: ["claude-opus-5"] },
     },
     deps,
   );
   assert.equal(result.ok, false);
   assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
-  assert.match(result.failureReason, /grok-4/);
+  assert.match(result.failureReason, /gpt-5\.6-sol/);
   assert.match(result.failureReason, /claude-agent-acp/);
   assert.deepEqual(deps.log, [], "nothing may be signed");
   assert.equal(result.genesisRef, null);
   assert.equal(result.sessionRef, null);
 });
 
-test("a crew whose whole catalog is the `default` alias publishes nothing", async () => {
-  // A runtime without live model discovery publishes allowedModels:
-  // ["default"], and every seat is created with model "default". apply_model
-  // then finds no such model, logs "using its default", and every seat runs
-  // the one adapter's model — so the verifier rule would have checked a model
-  // nothing ran. Refuse before anything is signed.
+test("the `default` alias is a choice the runtime makes, not a refusal, for a one-seat launch", async () => {
+  // It used to be a hard refusal, and the reason was the verifier rule: a
+  // runtime without live model discovery publishes allowedModels: ["default"],
+  // every seat is created on it, and apply_model then runs whatever the one
+  // adapter chose — so a verifier "on openai" ran beside its builder. Under
+  // D14 no verifier is created by a launch, so there is no cross-seat rule
+  // left for the alias to fool, and refusing here would block every runtime
+  // that cannot list its models. The roster still says the vendor is
+  // undecided rather than claiming one.
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
     {
       ...INPUT,
-      seats: [
-        { ...LEAD, model: "default" },
-        { ...BUILDER, model: "default", vendor: "anthropic" },
-        { ...VERIFIER, model: "default", vendor: "openai" },
-      ],
+      seats: [{ ...PRIMARY_BUILDER, model: "default", vendor: null }, VERIFIER],
       provider: { label: "claude-agent-acp", allowedModels: ["default"] },
     },
     deps,
   );
-  assert.equal(result.ok, false);
-  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
-  assert.match(result.failureReason, /default/);
-  assert.deepEqual(deps.log, [], "nothing may be signed");
-  assert.equal(result.genesisRef, null);
-  assert.equal(result.sessionRef, null);
+  assert.equal(result.ok, true);
+  assert.equal(result.seats.length, 1);
 });
 
 test("a seat with no model at all cannot be vendor-checked, so it is refused", async () => {
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
-    { ...INPUT, seats: [LEAD, { ...BUILDER, model: null }, VERIFIER] },
+    { ...INPUT, seats: [{ ...PRIMARY_BUILDER, model: null }] },
     deps,
   );
   assert.equal(result.ok, false);
@@ -155,7 +159,11 @@ test("a seat with no model at all cannot be vendor-checked, so it is refused", a
 test("an empty provider catalog is a refusal, not a pass", async () => {
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
-    { ...INPUT, provider: { label: "goose", allowedModels: [] } },
+    {
+      ...INPUT,
+      seats: [PRIMARY_BUILDER],
+      provider: { label: "goose", allowedModels: [] },
+    },
     deps,
   );
   assert.equal(result.ok, false);
@@ -191,38 +199,11 @@ test("a lead's model is not the vendor rule's business", async () => {
   assert.equal(result.ok, true);
 });
 
-test("a launch is receipt-gated: no seat is published before the last one's receipt", async () => {
-  const deps = recordingDeps();
-  const result = await launchCodingSessionCrew(INPUT, deps);
-  assert.equal(result.ok, true);
-  assert.deepEqual(deps.log, [
-    "genesis",
-    "publish:lead",
-    "receipt:lead",
-    "publish:builder",
-    "receipt:builder",
-    "publish:verifier",
-    "receipt:verifier",
-    `grant:${LEAD.actor.slice(0, 4)}`,
-    "turn",
-  ]);
-  assert.equal(result.seats.length, 3);
-  assert.equal(result.genesisRef, "genesis-1");
-});
-
-test("the first turn carries the goal and the roster", async () => {
-  const deps = recordingDeps();
-  await launchCodingSessionCrew(INPUT, deps);
-  assert.ok(deps.sentText.startsWith("Close ledger item 53.\n\n[Team]"));
-  assert.match(
-    deps.sentText,
-    /- lead: Fable \(anthropic · claude-opus-5\) — you/,
-  );
-  assert.match(deps.sentText, /- builder: Codey \(openai · gpt-5\.6-sol\)/);
-  assert.match(deps.sentText, /- verifier: Grokker \(xai · grok-4\)/);
-});
-
-test("a same-vendor verifier is refused before anything is published", async () => {
+test("a same-vendor verifier no longer refuses a launch that never creates it", async () => {
+  // The verifier/builder family rule (D8) is not repealed — it moves. Neither
+  // seat is created by a launch any more, so refusing here would be refusing a
+  // fact that is not yet true; the rule belongs at hire time, on the seat
+  // actually being created.
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
     {
@@ -231,62 +212,59 @@ test("a same-vendor verifier is refused before anything is published", async () 
     },
     deps,
   );
-  assert.equal(result.ok, false);
-  assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
-  assert.match(result.failureReason, /openai/);
-  // The refusal is hard: nothing signed, no genesis, no seats.
-  assert.deepEqual(deps.log, []);
-  assert.equal(result.genesisRef, null);
-  assert.equal(result.sessionRef, null);
-  assert.deepEqual(result.seats, []);
+  assert.equal(result.ok, true);
+  assert.equal(result.seats.length, 1);
+  assert.deepEqual(
+    result.hireableSeats.map((seat) => seat.role),
+    ["builder", "verifier"],
+  );
 });
 
-test("an undeclared vendor is refused before anything is published", async () => {
+test("a created seat on a vendor the selected runtime cannot run is refused", async () => {
+  // The check that survives a one-seat launch: the runtime the create is
+  // published against runs exactly one vendor, and a seat whose own vendor is
+  // another one would run on a vendor nothing on screen names (item 79c is the
+  // copy for this; this is the refusal behind it).
   const deps = recordingDeps();
   const result = await launchCodingSessionCrew(
     {
       ...INPUT,
-      seats: [LEAD, BUILDER, { ...VERIFIER, model: "qwen3-coder" }],
-      // The runtime really does run it — so the refusal below is about the
-      // vendor being underivable, not about the provider not having it.
+      seats: [PRIMARY_BUILDER],
       provider: {
-        ...PROVIDER,
-        allowedModels: [...PROVIDER.allowedModels, "qwen3-coder"],
+        label: "claude-agent-acp",
+        instanceRef: "claude-primary",
+        allowedModels: ["gpt-5.6-sol"],
       },
     },
     deps,
   );
   assert.equal(result.ok, false);
   assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_FAMILY_STEP);
-  assert.match(result.failureReason, /Declare the model vendor/);
-  assert.deepEqual(deps.log, []);
+  assert.match(result.failureReason, /anthropic/);
+  assert.deepEqual(deps.log, [], "nothing may be signed");
 });
 
-test("a failed seat names its step and leaves the earlier seats live", async () => {
+test("a refused lead create names its step, and the session it founded stays", async () => {
   const deps = recordingDeps({
-    awaitSeatReceipt: async ({ seat }) => {
-      if (seat.role === "builder") {
-        throw new Error("ACTOR_UNAVAILABLE");
-      }
-      return target(`sess-${seat.role}`);
+    awaitSeatReceipt: async () => {
+      throw new Error("ACTOR_UNAVAILABLE");
     },
   });
   const result = await launchCodingSessionCrew(INPUT, deps);
   assert.equal(result.ok, false);
-  assert.equal(result.failedStep, codingSessionCrewLaunchSeatStepId(1));
-  assert.match(result.failureReason, /builder seat was not created/);
+  assert.equal(result.failedStep, codingSessionCrewLaunchSeatStepId(0));
+  assert.match(result.failureReason, /lead seat was not created/);
   assert.match(result.failureReason, /ACTOR_UNAVAILABLE/);
-  // Seat one survived; seat three was never published.
-  assert.equal(result.seats.length, 1);
-  assert.equal(result.seats[0].seat.role, "lead");
-  assert.ok(!deps.log.includes("publish:verifier"));
-  assert.ok(!deps.log.includes("grant:" + LEAD.actor.slice(0, 4)));
-  // Every step is still reported, so the untouched ones read as untouched.
+  assert.deepEqual(result.seats, []);
+  assert.ok(!deps.log.includes(`grant:${LEAD.actor.slice(0, 4)}`));
+  assert.ok(!deps.log.includes("turn"));
+  // The genesis is real and is reported, rather than being rolled back into a
+  // launch that claims to have left nothing behind.
+  assert.equal(result.genesisRef, "genesis-1");
   const byId = new Map(result.steps.map((s) => [s.id, s.state]));
   assert.equal(byId.get(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP), "done");
-  assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(0)), "done");
-  assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(1)), "failed");
-  assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(2)), "pending");
+  assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(0)), "failed");
+  assert.equal(byId.get(CODING_SESSION_CREW_LAUNCH_GRANT_STEP), "pending");
   assert.equal(byId.get(CODING_SESSION_CREW_LAUNCH_TURN_STEP), "pending");
 });
 
@@ -300,7 +278,7 @@ test("a failed grant is named rather than swallowed", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.failedStep, CODING_SESSION_CREW_LAUNCH_GRANT_STEP);
   assert.match(result.failureReason, /cannot steer its siblings/);
-  assert.equal(result.seats.length, 3);
+  assert.equal(result.seats.length, 1);
   assert.ok(!deps.log.includes("turn"));
 });
 
@@ -341,17 +319,28 @@ test("a seat staged without a role pack says so, and is not called seated craft"
   const deps = recordingDeps({
     publishSeatCreate: async ({ seat, index }) => {
       deps.log.push(`publish:${seat.role}`);
-      return { commandId: `cmd-${index}`, packStaged: seat.role !== "builder" };
+      return { commandId: `cmd-${index}`, packStaged: false };
     },
   });
   const result = await launchCodingSessionCrew(INPUT, deps);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.seatsWithoutRolePack, ["Codey"]);
+  assert.deepEqual(result.seatsWithoutRolePack, ["Fable"]);
   const byId = new Map(result.steps.map((entry) => [entry.id, entry]));
-  const builderStep = byId.get(codingSessionCrewLaunchSeatStepId(1));
-  assert.equal(builderStep.state, "done");
-  assert.match(builderStep.detail, /no role skills/);
-  // The seats that did carry a pack say nothing extra.
+  const leadStep = byId.get(codingSessionCrewLaunchSeatStepId(0));
+  assert.equal(leadStep.state, "done");
+  assert.match(leadStep.detail, /no role skills/);
+});
+
+test("a seat that did carry a pack says nothing extra", async () => {
+  const deps = recordingDeps({
+    publishSeatCreate: async ({ index }) => ({
+      commandId: `cmd-${index}`,
+      packStaged: true,
+    }),
+  });
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.deepEqual(result.seatsWithoutRolePack, []);
+  const byId = new Map(result.steps.map((entry) => [entry.id, entry]));
   assert.equal(byId.get(codingSessionCrewLaunchSeatStepId(0)).detail, null);
 });
 
@@ -440,4 +429,65 @@ test("no channel and nothing that can mint one fails before the genesis", async 
   assert.match(result.failureReason, /channel/i);
   assert.deepEqual(deps.log, [], "nothing may be signed");
   assert.equal(result.channelId, null);
+});
+
+/**
+ * D14 — launching a team seats the LEAD ONLY.
+ *
+ * The roster is what the lead may hire, not what the launch creates. Two
+ * things fall out of that and are pinned here: exactly one create goes out,
+ * and a seat the launch never creates can no longer refuse the launch over
+ * the one-provider limitation (item 79c).
+ */
+test("a launch publishes exactly one seated create — the lead's", async () => {
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(INPUT, deps);
+  assert.equal(result.ok, true);
+  assert.deepEqual(deps.log, [
+    "genesis",
+    "publish:lead",
+    "receipt:lead",
+    `grant:${LEAD.actor.slice(0, 4)}`,
+    "turn",
+  ]);
+  assert.equal(result.seats.length, 1);
+  assert.equal(result.seats[0].seat.role, "lead");
+  assert.deepEqual(
+    result.hireableSeats.map((seat) => seat.role),
+    ["builder", "verifier"],
+  );
+});
+
+test("the plan names one create step and lists the rest as hireable", () => {
+  const steps = planCodingSessionCrewLaunch(INPUT);
+  const creates = steps.filter((step) => step.id.startsWith("create:"));
+  assert.equal(creates.length, 1);
+  assert.match(creates[0].label, /Fable/);
+});
+
+test("a seat the launch never creates cannot refuse the launch", async () => {
+  // Item 79(c): a Codex architect on a Claude runtime disabled Launch, because
+  // every seat was created against the one selected provider. Under D14 only
+  // the lead is created, so the architect's model is the lead's problem to
+  // solve at hire time — not a reason nobody can launch at all.
+  const deps = recordingDeps();
+  const result = await launchCodingSessionCrew(
+    {
+      ...INPUT,
+      seats: [LEAD, { ...BUILDER, model: "gpt-5.6-sol" }],
+      provider: { label: "claude-agent-acp", allowedModels: ["claude-opus-5"] },
+    },
+    deps,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.seats.length, 1);
+});
+
+test("the lead's first turn carries the goal and the roster it may hire from", async () => {
+  const deps = recordingDeps();
+  await launchCodingSessionCrew(INPUT, deps);
+  assert.ok(deps.sentText.startsWith("Close ledger item 53.\n\n"));
+  assert.match(deps.sentText, /You are seated. Nobody else is/);
+  assert.match(deps.sentText, /- builder: Codey \(openai · gpt-5\.6-sol\)/);
+  assert.match(deps.sentText, /bee sessions hire/);
 });

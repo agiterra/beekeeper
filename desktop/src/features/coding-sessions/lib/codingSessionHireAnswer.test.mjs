@@ -1,0 +1,141 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  codingSessionHireRefusalNotice,
+  planCodingSessionHireAnswer,
+} from "./codingSessionHireAnswer.ts";
+import { DEFAULT_CODING_SESSION_HIRE_POLICY } from "./codingSessionHirePolicy.ts";
+
+const SESSION_REF = "5b7e1c2a-90d4-4b0e-a1f3-7c2d8e6f4a10";
+const GENESIS_REF = "a".repeat(64);
+const CHANNEL_ID = "3d2a7b18-9b7a-4a41-9a86-6a52a1c0b7e1";
+const FOUNDER = "f".repeat(64);
+const LEAD = "1".repeat(64);
+const STRANGER = "2".repeat(64);
+const ADA = "d".repeat(64);
+const PROVIDER = "9".repeat(64);
+
+const REQUEST = {
+  eventId: "e".repeat(64),
+  channelId: CHANNEL_ID,
+  commandId: "csl-hire-1",
+  requesterPubkey: LEAD,
+  createdAt: 1_700_000_000,
+  action: {
+    type: "session.hire",
+    sessionRef: SESSION_REF,
+    genesisRef: GENESIS_REF,
+    role: "builder",
+    providerInstanceRef: null,
+    model: null,
+    brief: "Take the badge lane. Red test first.",
+  },
+};
+
+const UMBRELLA = {
+  sessionRef: SESSION_REF,
+  genesisRef: GENESIS_REF,
+  title: "Agent Teams",
+  projectRef: "30621:owner:beekeeper",
+  executions: [
+    {
+      activeGeneration: { agentRef: LEAD, role: "lead", status: "running" },
+    },
+  ],
+};
+
+function answer(overrides = {}) {
+  return planCodingSessionHireAnswer({
+    request: REQUEST,
+    umbrella: UMBRELLA,
+    authority: { founderPubkey: FOUNDER, grantedOperators: [LEAD] },
+    policy: DEFAULT_CODING_SESSION_HIRE_POLICY,
+    candidates: [
+      { pubkey: ADA, name: "Ada", homeRole: "builder", hasRolePack: true },
+    ],
+    availableProviderInstanceRefs: ["claude-primary"],
+    providerAuthorityPubkey: PROVIDER,
+    commandId: "csl-seat-1",
+    ...overrides,
+  });
+}
+
+test("a granted lead's hire produces a seat carrying the brief as its first turn", () => {
+  const result = answer();
+  assert.equal(result.kind, "seat");
+  assert.equal(result.plan.actor, ADA);
+  assert.equal(result.plan.role, "builder");
+  assert.equal(
+    result.plan.initialTurn,
+    "[From the lead] Take the badge lane. Red test first.",
+  );
+  assert.equal(result.plan.title, "Agent Teams");
+  assert.equal(result.plan.projectRef, "30621:owner:beekeeper");
+  assert.equal(result.plan.providerAuthorityPubkey, PROVIDER);
+  assert.equal(result.plan.worktreeName, "agent-teams-builder-1");
+});
+
+test("a stranger's hire is ignored, never answered", () => {
+  const result = answer({
+    request: { ...REQUEST, requesterPubkey: STRANGER },
+  });
+  assert.deepEqual(result, { kind: "ignored", why: "unauthorized" });
+});
+
+test("the founder may hire without a grant", () => {
+  const result = answer({ request: { ...REQUEST, requesterPubkey: FOUNDER } });
+  assert.equal(result.kind, "seat");
+});
+
+test("an umbrella this host has not observed is ignored, not refused", () => {
+  assert.deepEqual(answer({ umbrella: null }), {
+    kind: "ignored",
+    why: "unknown-umbrella",
+  });
+  // A hire naming a genesis this umbrella does not have is somebody else's
+  // session, however matching its sessionRef looks.
+  assert.deepEqual(
+    answer({ umbrella: { ...UMBRELLA, genesisRef: "b".repeat(64) } }),
+    { kind: "ignored", why: "unknown-umbrella" },
+  );
+});
+
+test("a policy refusal is a code, a reason, and the exact turn text", () => {
+  const result = answer({
+    policy: { ...DEFAULT_CODING_SESSION_HIRE_POLICY, enabled: false },
+  });
+  assert.equal(result.kind, "refused");
+  assert.equal(result.code, "HIRE_OFF");
+  assert.equal(result.text, `hire refused: HIRE_OFF — ${result.reason}`);
+});
+
+test("the seat ordinal counts the builders already in this umbrella", () => {
+  const result = answer({
+    umbrella: {
+      ...UMBRELLA,
+      executions: [
+        ...UMBRELLA.executions,
+        {
+          activeGeneration: {
+            agentRef: "c".repeat(64),
+            role: "builder",
+            status: "running",
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(result.plan.worktreeName, "agent-teams-builder-2");
+});
+
+test("the umbrella's line names who asked, for what, and the answer", () => {
+  assert.equal(
+    codingSessionHireRefusalNotice({
+      role: "builder",
+      requesterLabel: "Keystone",
+      text: "hire refused: HIRE_LIMIT — no room.",
+    }),
+    "Keystone asked to hire a builder — hire refused: HIRE_LIMIT — no room.",
+  );
+});
