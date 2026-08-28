@@ -906,6 +906,103 @@ S4 acceptance run seats two managed agents in one umbrella.
 
 ---
 
+### 6.14 Raw events (`bee events query`)
+
+The debugging verb: one authenticated REQ, no contract decoding, no writes.
+`--kinds` is required — the relay's p-gate answers 403 to a filter that names
+none, so the CLI refuses it locally instead of turning a knowable input error
+into an auth-shaped one.
+
+```bash
+# The 20 newest coding-session metadata events in a channel, reduced for scanning
+bee --format compact events query --kinds 44223 --channel "$CHANNEL_ID" --limit 20 | jq .
+# → [{"id":"…","kind":44223,"pubkey":"…","createdAt":"2026-08-27T…","h":"<channel>",
+#    "summary":"first 120 chars of raw content, newlines collapsed"}]
+
+# Full signed events, signature included, newest-first by (created_at, id)
+bee events query --kinds 44226 --channel "$CHANNEL_ID" | jq '.[0]'
+
+# Several kinds, an author, and a time window (RFC 3339 or Unix seconds)
+bee events query --kinds 44221,44224 --channel "$CHANNEL_ID" \
+  --authors "$PUBKEY" --since 2026-08-01T00:00:00Z --until 1787875200 | jq 'length'
+
+# `--h` writes the same filter key as `--channel`, for an h-scope that is not a UUID
+bee events query --kinds 44226 --h "$CHANNEL_ID" | jq 'length'
+
+# No kinds → refused before any request
+bee events query --channel "$CHANNEL_ID" 2>&1; echo "exit: $?"
+# stderr: {"error":"user_error","message":"--kinds is required: a filter with no kinds is refused by the relay with 403."}
+# exit: 1
+
+# A malformed author, id, channel, kind, or timestamp is refused locally too
+bee events query --kinds 44223 --authors deadbeef 2>&1; echo "exit: $?"
+# stderr: {"error":"user_error","message":"--authors must be a 64-character lowercase hex string: deadbeef"}
+# exit: 1
+bee events query --kinds 44223 --since yesterday 2>&1; echo "exit: $?"
+# exit: 1
+
+# Nothing matched is an answer, not a failure
+bee events query --kinds 44226 --channel "00000000-0000-0000-0000-000000000000"; echo "exit: $?"
+# stdout: []
+# exit: 0
+```
+
+What it deliberately does not do: no live subscription (`events sub`), no write
+path (`events publish`), and no `--search` — NIP-50 belongs to
+`messages search`. `--format compact` never parses `content`, so an event whose
+payload is malformed — usually the exact event a raw query is looking for —
+still prints a row, with the raw content as its `summary`.
+
+### 6.15 Who founded a session (`sessions status` / `sessions list`)
+
+Both commands name the founder of each execution. This exists because a probe
+aimed at "a 3-day-quiet session" once landed in someone else's session
+(`docs/SESSION_STATE.md` item 73): the row said what was running, never whose
+it was.
+
+```bash
+bee sessions status --channel "$CHANNEL_ID" | jq '{founders, executions: [.executions[] | {target, seat, founder, createSigner}]}'
+bee --format compact sessions status --channel "$CHANNEL_ID" | jq .
+# → [{"target":"…","seat":"…","founder":"3d3b7169","live":"quiet 2h",…}]
+
+bee sessions list --channel "$CHANNEL_ID" | jq '[.[] | {target, founder, createSigner}]'
+bee --format compact sessions list --channel "$CHANNEL_ID" | jq .
+```
+
+Two fields, each derived once (`crates/buzz-cli/src/commands/sessions/crew.rs`,
+`build_founder_index`) and used by both commands:
+
+- **`createSigner`** — the pubkey that signed the `session.create` (44221) a
+  lifecycle receipt (44224) joined to this execution. Only the provider the
+  create *named* may answer it, so a stranger's receipt joins nothing.
+- **`founder`** — the pubkey that signed the genesis (44226) that create named
+  by event id, when that genesis is in the channel and founds the umbrella the
+  create claimed.
+
+`sessions status` also prints a channel-level `founders` array: every distinct
+non-null founder above.
+
+**`null` means the channel does not contain the record that would say** — a
+create that aged out, a create no provider ever answered, a create with no
+`genesisRef`, or a genesis published elsewhere. It never falls back to the
+provider's key: the provider signs *every* execution in the channel, so that
+fallback would make every session look like it belonged to the same person.
+A `session.resume` founds nothing, so a resume signer never appears in either
+field; the founding create's signer carries forward to every later generation
+of the same execution instead.
+
+Compact prints the short (8-character) form of the founder pubkey, the same
+form `seat` uses; JSON prints full 64-character hex.
+
+**What it costs.** `sessions status` already fetched 44221 (it needs resumes)
+and now also fetches 44226 — genesis events are one per umbrella, so the
+addition is roughly *one event per session*, not per turn. `sessions list`
+previously fetched only 44223 + 44224 and now also fetches 44221 + 44226: one
+create per execution plus one resume per resume, plus one genesis per umbrella.
+Both stay a single `#h`-scoped `POST /query` with explicit `kinds`.
+
+---
+
 ## 7. Error Path Testing
 
 Verify the CLI produces correct JSON on stderr and correct exit codes.
@@ -1043,8 +1140,10 @@ bee channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
-| 63 | `sessions list` | ☐ | Empty channel → `[]`; compact keeps target/title/status/model/createdAt |
+| 63 | `sessions list` | ☐ | Empty channel → `[]`; compact keeps target/title/status/model/founder/createdAt |
 | 64 | `sessions transcript` | ☐ | `--target` and `--session`; md turns + tool outcomes; jsonl seq numerically ordered |
 | 65 | `sessions tools` | ☐ | Call/error counts, error rate, `itemKinds` incl. `other`; `--target` narrows |
 | 66 | `sessions export` | ☐ | Files + manifest.json; non-empty `--out` refused with exit 1 |
 | 67 | turn-stage receipts (kind 44224, §6.13.1) | ☐ | NOT YET RUN LIVE — `sessions list`/`transcript` unaffected by a turn receipt on an otherwise-known or unknown target |
+| 68 | `events query` | ☐ | `--kinds` required (verbatim refusal, exit 1); compact row survives non-JSON content; empty result → `[]`, exit 0 |
+| 69 | `sessions status` / `list` founder | ☐ | `founder`/`createSigner` per row, `founders` array on status; `null` when the channel holds no joined create; never the provider's key |
