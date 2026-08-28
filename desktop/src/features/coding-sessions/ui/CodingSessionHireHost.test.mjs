@@ -119,6 +119,8 @@ async function harness({
   policy,
   runtimes = [CLAUDE_RUNTIME],
   now = HIRE_CREATED_AT,
+  receiptError = null,
+  grantError = null,
 } = {}) {
   const { act, render } = await import("@testing-library/react");
   const React = (await import("react")).default;
@@ -131,6 +133,7 @@ async function harness({
 
   const steps = [];
   const published = [];
+  const grants = [];
   let listener = null;
 
   const deps = {
@@ -172,6 +175,21 @@ async function harness({
         published.push(event);
         return event;
       },
+    },
+    awaitSeatReceipt: async ({ channelId, commandId }) => {
+      steps.push("receipt");
+      if (receiptError !== null) throw new Error(receiptError);
+      return {
+        driver: "claude",
+        instanceId: "claude-primary",
+        sessionId: `${channelId}:${commandId}`,
+        generation: 1,
+      };
+    },
+    grantOperator: async (input) => {
+      steps.push("grant");
+      grants.push(input);
+      if (grantError !== null) throw new Error(grantError);
     },
     newSeatCommandId: () => "csl-seat-1",
     newTurnCommandId: () => "csc-refusal-1",
@@ -221,6 +239,7 @@ async function harness({
       });
       await settle();
     },
+    grants,
     of: (kind) => published.filter((event) => event.kind === kind),
     published,
     steps,
@@ -228,10 +247,14 @@ async function harness({
   };
 }
 
-test("a hire is answered in order: worktree, hint, membership, custody, sign, publish", async () => {
+test("a hire is answered in order, and the seat it creates is granted", async () => {
   const host = await harness();
   await host.deliver(await signedHire());
 
+  // The grant is the last step and it is not optional: a seated agent that
+  // was never granted cannot answer the lead at all — the relay refuses its
+  // `sessions send` with "only a session founder or a granted operator may
+  // steer" (item 83, live 2026-08-28).
   assert.deepEqual(host.steps, [
     "worktree",
     "hint",
@@ -239,6 +262,16 @@ test("a hire is answered in order: worktree, hint, membership, custody, sign, pu
     "custody",
     "sign:44221",
     "publish:44221",
+    "receipt",
+    "grant",
+  ]);
+  assert.deepEqual(host.grants, [
+    {
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      // The seat's own actor, never the lead that asked for it.
+      granteePubkey: ADA_PUBKEY,
+    },
   ]);
 
   const [create] = host.of(44221);
@@ -335,5 +368,52 @@ test("the same hire observed twice is answered once", async () => {
   await host.deliver(hire);
 
   assert.equal(host.of(44221).length, 1);
+  host.teardown();
+});
+
+test("a grant that fails is said to the lead and to the umbrella, never silently", async () => {
+  const host = await harness({
+    grantError: "the relay refused the transition",
+  });
+  await host.deliver(await signedHire());
+
+  // The seat is real — a failed grant does not un-create it — and that is
+  // exactly why it has to be disclosed: the agent will work and its report
+  // will bounce.
+  assert.equal(host.of(44221).length, 1);
+
+  const [turn] = host.of(44220);
+  assert.ok(turn, "the lead was never told the seat cannot report");
+  const payload = JSON.parse(turn.content);
+  assert.deepEqual(payload.target, LEAD_TARGET);
+  assert.equal(
+    payload.action.text,
+    "seated, but not granted: the relay refused the transition — it cannot report until granted",
+  );
+
+  const [notice] = host.of(9);
+  assert.ok(notice, "the umbrella was never told");
+  assert.match(
+    notice.content,
+    /^Hired a builder — seated, but not granted: the relay refused the transition — it cannot report until granted$/,
+  );
+  host.teardown();
+});
+
+test("a create receipt that never lands is disclosed as ungranted, not as granted", async () => {
+  const host = await harness({
+    receiptError: "The provider did not answer within the wait",
+  });
+  await host.deliver(await signedHire());
+
+  // No grant was attempted: granting an identity whose create the provider
+  // never confirmed would hand authority to a seat that may not exist.
+  assert.equal(host.steps.includes("grant"), false);
+  const [turn] = host.of(44220);
+  assert.ok(turn, "the lead was never told");
+  assert.match(
+    JSON.parse(turn.content).action.text,
+    /^seated, but not granted: The provider did not answer within the wait — it cannot report until granted$/,
+  );
   host.teardown();
 });

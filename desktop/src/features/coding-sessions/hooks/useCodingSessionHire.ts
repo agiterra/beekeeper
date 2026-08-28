@@ -16,7 +16,10 @@ import {
   publishCodingSessionCommand,
   type CodingSessionCommandTarget,
 } from "../lib/codingSessionCommand";
+import { awaitCodingSessionCreateReceipt } from "../lib/codingSessionCrewReceipt";
 import {
+  codingSessionHireGrantFailureNotice,
+  codingSessionHireGrantFailureText,
   codingSessionHireModelNoticeLine,
   codingSessionHireRefusalNotice,
   planCodingSessionHireAnswer,
@@ -26,7 +29,10 @@ import {
   readCodingSessionHirePolicy,
   type CodingSessionHirePolicy,
 } from "../lib/codingSessionHirePolicy";
-import { selectUnansweredCodingSessionHires } from "../lib/codingSessionHireSeat";
+import {
+  selectUnansweredCodingSessionHires,
+  type CodingSessionHireSeatPlan,
+} from "../lib/codingSessionHireSeat";
 import {
   classifyCodingSessionHireEvent,
   type CodingSessionHireRequest,
@@ -37,7 +43,10 @@ import {
   createCodingSessionLifecycleCommandId,
 } from "../lib/codingSessionLifecycleCommand";
 import { subscribeToObservedCodingSessionEvents } from "../lib/codingSessionObservedEvents";
-import { fetchCodingSessionRosterFold } from "../lib/codingSessionRoster";
+import {
+  fetchCodingSessionRosterFold,
+  publishCodingSessionAuthorityTransition,
+} from "../lib/codingSessionRoster";
 import {
   publishSeatedCodingSessionCreate,
   type SeatedCodingSessionCreateDeps,
@@ -69,6 +78,14 @@ import type { CodingSessionUmbrellaRecord } from "../lib/codingSessionTypes";
  *    umbrella, so the person who set the policy sees it enforced. A refusal
  *    only the refused agent can see is a silent drop as far as the person is
  *    concerned.
+ * 4. **A seated agent is granted, or the failure to grant is said out loud.**
+ *    Seating alone produces a mute seat: the relay refuses an ungranted
+ *    actor's `sessions send` with "only a session founder or a granted
+ *    operator may steer", so the agent does the work and its report bounces.
+ *    That is exactly what happened on 2026-08-28 (item 83), because this hook
+ *    seated and stopped while `codingSessionCrewLaunch` granted. The order is
+ *    the launcher's: the create's receipt first, then `grant-operator` for the
+ *    seat's own actor.
  *
  * Everything it touches outside itself — the event bus, the worktree, custody,
  * the keystore, the relay, the clock — arrives through {@link
@@ -82,10 +99,21 @@ export type CodingSessionHireOutcome = {
   role: string;
   /** What the host did. `error` means the answer itself failed to go out. */
   state: "seated" | "refused" | "ignored" | "error";
-  /** Refusal code, or the failure's own words. Null for a seated hire. */
+  /**
+   * Refusal code, or the failure's own words. Null for a hire that was seated
+   * *and* granted — a seated hire whose grant failed carries the grant's
+   * reason here rather than reading as an unqualified success.
+   */
   detail: string | null;
   /** The create's commandId, which is the hire's receipt key. */
   seatCommandId: string | null;
+  /**
+   * Whether this host published `grant-operator` for the seat's actor.
+   *
+   * False on every non-seated outcome, and on a seated one whose receipt or
+   * grant failed. A false here means the agent cannot report to its lead.
+   */
+  granted: boolean;
 };
 
 /** A managed agent, narrowed to what seating one needs. */
@@ -116,6 +144,25 @@ export type CodingSessionHireDeps = {
   seatDeps: SeatedCodingSessionCreateDeps;
   signer: typeof signRelayEvent;
   publisher: HirePublisher;
+  /**
+   * Wait for the provider's 44224 receipt for the seat this host published.
+   *
+   * The same gate a team launch uses, with the same timeout: the grant below
+   * is not published until the seat is confirmed, because granting authority
+   * to an identity whose create the provider refused would put a live grant
+   * on a seat that does not exist.
+   */
+  awaitSeatReceipt: (input: {
+    channelId: string;
+    commandId: string;
+    providerAuthorityPubkey: string;
+  }) => Promise<CodingSessionCommandTarget>;
+  /** Extend the umbrella's authority chain with `grant-operator` for a seat. */
+  grantOperator: (input: {
+    channelId: string;
+    genesisRef: string;
+    granteePubkey: string;
+  }) => Promise<void>;
   newSeatCommandId: () => string;
   newTurnCommandId: () => string;
   /** This host's clock, Unix seconds. The staleness window is read from it. */
@@ -135,6 +182,13 @@ export const DEFAULT_CODING_SESSION_HIRE_DEPS: CodingSessionHireDeps = {
   },
   signer: signRelayEvent,
   publisher: relayClient,
+  awaitSeatReceipt: (input) => awaitCodingSessionCreateReceipt(input),
+  grantOperator: async (input) => {
+    await publishCodingSessionAuthorityTransition({
+      ...input,
+      type: "grant-operator",
+    });
+  },
   newSeatCommandId: createCodingSessionLifecycleCommandId,
   newTurnCommandId: createCodingSessionCommandId,
   now: () => Math.floor(Date.now() / 1000),
@@ -224,6 +278,7 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
             state: "error",
             detail: error instanceof Error ? error.message : String(error),
             seatCommandId: null,
+            granted: false,
           });
         });
       }
@@ -385,14 +440,112 @@ export function useCodingSessionHire(input: UseCodingSessionHireInput): {
           { publisher: hireDeps.publisher, signer: hireDeps.signer },
         ).catch(() => {});
       }
+      // The grant, last and never optional. A seat with no `grant-operator`
+      // is a mute seat: it will work, and the relay will refuse its report.
+      // The receipt is waited on first for the same reason the launcher waits
+      // — a grant on a create the provider refused is authority over nothing.
+      const grantFailure = await grantSeat(plan, hireDeps);
+      if (grantFailure !== null) {
+        const text = codingSessionHireGrantFailureText(grantFailure);
+        await discloseCodingSessionHire(
+          {
+            channelId: plan.channelId,
+            sessionRef: plan.sessionRef,
+            requesterPubkey: request.requesterPubkey,
+            text,
+            notice: codingSessionHireGrantFailureNotice({
+              role: plan.role,
+              text,
+            }),
+          },
+          current.input,
+          hireDeps,
+        );
+      }
       report({
-        ...outcomeOf(request, "seated", null),
+        ...outcomeOf(request, "seated", grantFailure),
         seatCommandId: plan.commandId,
+        granted: grantFailure === null,
       });
     }
   }, [enabled]);
 
   return { outcomes, policy };
+}
+
+/**
+ * Confirm the seat, then grant its actor operator authority.
+ *
+ * Returns null when both landed, or the reason the seat is ungranted. Never
+ * throws: a failure here does not un-create the seat, and swallowing it would
+ * be the exact silence this exists to end.
+ */
+async function grantSeat(
+  plan: CodingSessionHireSeatPlan,
+  deps: CodingSessionHireDeps,
+): Promise<string | null> {
+  try {
+    await deps.awaitSeatReceipt({
+      channelId: plan.channelId,
+      commandId: plan.commandId,
+      providerAuthorityPubkey: plan.providerAuthorityPubkey,
+    });
+    await deps.grantOperator({
+      channelId: plan.channelId,
+      genesisRef: plan.genesisRef,
+      granteePubkey: plan.actor,
+    });
+    return null;
+  } catch (error) {
+    const said = error instanceof Error ? error.message.trim() : String(error);
+    return said.length > 0 ? said : "the grant did not go out";
+  }
+}
+
+/**
+ * Say one fact twice: privately to the seat that asked, and in the umbrella.
+ *
+ * To the requester so it can act, and to the umbrella so the person sees it.
+ * Neither is allowed to fail the other: a lead that heard nothing would wait
+ * out its whole turn budget on an answer that was published and dropped.
+ */
+async function discloseCodingSessionHire(
+  disclosure: {
+    channelId: string;
+    sessionRef: string;
+    requesterPubkey: string;
+    /** The 44220 text the requesting seat receives. */
+    text: string;
+    /** The umbrella's own line for the same fact. */
+    notice: string;
+  },
+  input: UseCodingSessionHireInput,
+  deps: CodingSessionHireDeps,
+): Promise<void> {
+  const target = input.targetForActor(
+    disclosure.channelId,
+    disclosure.requesterPubkey,
+  );
+  if (target) {
+    await publishCodingSessionCommand(
+      {
+        channelId: disclosure.channelId,
+        commandId: deps.newTurnCommandId(),
+        target,
+        text: disclosure.text,
+        deliver: "boundary",
+      },
+      { publisher: deps.publisher, signer: deps.signer },
+    ).catch(() => {});
+  }
+  await publishCodingSessionLaneMessage(
+    {
+      channelId: disclosure.channelId,
+      sessionRef: disclosure.sessionRef,
+      content: disclosure.notice,
+    },
+    { publisher: deps.publisher, signer: deps.signer },
+  ).catch(() => {});
 }
 
 async function publishRefusal(
@@ -401,37 +554,21 @@ async function publishRefusal(
   input: UseCodingSessionHireInput,
   deps: CodingSessionHireDeps,
 ): Promise<void> {
-  // To the seat that asked, so it can act, and to the umbrella, so the person
-  // who set the policy sees it enforced. Neither is allowed to fail the other:
-  // a lead that heard nothing would wait out its whole turn budget.
-  const target = input.targetForActor(
-    request.channelId,
-    request.requesterPubkey,
-  );
-  if (target) {
-    await publishCodingSessionCommand(
-      {
-        channelId: request.channelId,
-        commandId: deps.newTurnCommandId(),
-        target,
-        text: answer.text,
-        deliver: "boundary",
-      },
-      { publisher: deps.publisher, signer: deps.signer },
-    ).catch(() => {});
-  }
-  await publishCodingSessionLaneMessage(
+  await discloseCodingSessionHire(
     {
       channelId: request.channelId,
       sessionRef: request.action.sessionRef,
-      content: codingSessionHireRefusalNotice({
+      requesterPubkey: request.requesterPubkey,
+      text: answer.text,
+      notice: codingSessionHireRefusalNotice({
         role: request.action.role,
         requesterLabel: "A seat",
         text: answer.text,
       }),
     },
-    { publisher: deps.publisher, signer: deps.signer },
-  ).catch(() => {});
+    input,
+    deps,
+  );
 }
 
 function outcomeOf(
@@ -447,5 +584,6 @@ function outcomeOf(
     state,
     detail,
     seatCommandId: null,
+    granted: false,
   };
 }

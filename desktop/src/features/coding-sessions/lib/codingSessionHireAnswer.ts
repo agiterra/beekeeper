@@ -211,3 +211,29 @@ export function codingSessionHireRefusalNotice(input: {
 }): string {
   return `${input.requesterLabel} asked to hire a ${input.role} — ${input.text}`;
 }
+
+/**
+ * The sentence a seat that was created but never granted is reported with.
+ *
+ * A hired agent that holds no `grant-operator` is not a degraded seat, it is a
+ * mute one: the relay refuses its `sessions send` with "only a session founder
+ * or a granted operator may steer", so it can do the whole job and never
+ * deliver a word of it. That happened on 2026-08-28 — a builder worked for
+ * 1,009 s, committed, and its report bounced (item 83). The lead has to be
+ * told in the same breath as "seated", because "seated" alone reads as a seat
+ * it can expect an answer from.
+ */
+export function codingSessionHireGrantFailureText(reason: string): string {
+  const said = reason.trim();
+  return `seated, but not granted: ${
+    said.length > 0 ? said : "the grant did not go out"
+  } — it cannot report until granted`;
+}
+
+/** The umbrella's line for the same failure, so the person sees it too. */
+export function codingSessionHireGrantFailureNotice(input: {
+  role: string;
+  text: string;
+}): string {
+  return `Hired a ${input.role} — ${input.text}`;
+}
