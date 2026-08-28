@@ -29,7 +29,8 @@ use buzz_core::coding_session_lifecycle_command::{
 };
 use buzz_core::coding_session_payload::ACTOR_ROLE_PAIR;
 use buzz_core::kind::{
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
 };
 use buzz_sdk::builders::{build_coding_session_command, build_coding_session_lifecycle_command};
 use buzz_sdk::kind::{
@@ -38,9 +39,10 @@ use buzz_sdk::kind::{
 };
 
 use super::crew::{
-    build_executions, build_inbox, caller_umbrella, decode_leases, decode_resumes,
-    decode_turn_commands, format_age, newest_turn_stages, plan_readdress, resolve_send_target,
-    turn_load, CrewExecution, ReaddressPlan, TurnCommand, TurnStage,
+    build_executions, build_founder_index, build_inbox, caller_umbrella, decode_leases,
+    decode_resumes, decode_turn_commands, format_age, newest_turn_stages, plan_readdress,
+    resolve_send_target, short_pubkey, turn_load, CrewExecution, FounderIndex, ReaddressPlan,
+    TurnCommand, TurnStage,
 };
 use super::{decode_metadata, decode_receipts, decode_transcripts, fetch_channel_events, rfc3339};
 use crate::client::BuzzClient;
@@ -135,6 +137,11 @@ const CREW_FACT_KINDS: &[u32] = &[
     KIND_CODING_SESSION_METADATA,
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
     KIND_CODING_SESSION_TRANSCRIPT,
+    // 44226 is the only event that names a founder. Without it `founder`
+    // would be structurally unknowable and would print `null` for every
+    // session in the channel — a column that is always null is worse than no
+    // column, because it reads as "nobody founded this".
+    KIND_CODING_SESSION_GENESIS,
 ];
 
 /// Everything one channel's crew state is folded from.
@@ -144,6 +151,7 @@ struct CrewFacts {
     stages: HashMap<String, TurnStage>,
     transcripts: Vec<super::TranscriptRecord>,
     resumes: Vec<super::crew::ResumeRecord>,
+    founders: FounderIndex,
     lease_records: usize,
 }
 
@@ -170,6 +178,7 @@ async fn fetch_crew_facts(client: &BuzzClient, channel_id: &str) -> Result<CrewF
         stages: newest_turn_stages(&receipts),
         transcripts,
         resumes: decode_resumes(&events),
+        founders: build_founder_index(&events, &receipts),
         lease_records: leases.len(),
     })
 }
@@ -524,10 +533,16 @@ pub async fn cmd_status(
             let turn_budget_line = execution
                 .turn_budget
                 .map(|budget| format!("{}/{}", budget.used, budget.limit));
+            // Who asked for this execution, and who founded the umbrella it
+            // belongs to. `null` means this channel does not contain the
+            // record that would say — never the provider's key, which signs
+            // every execution here and would make every founder identical.
+            let founding = facts.founders.of(&execution.target);
             match format {
                 crate::OutputFormat::Compact => json!({
                     "target": execution.target_key,
                     "seat": execution.seat_label(),
+                    "founder": founding.founder.as_deref().map(short_pubkey),
                     "live": execution.liveness.render(),
                     "openTurn": load.open_command_id,
                     "queued": load.queued,
@@ -542,6 +557,8 @@ pub async fn cmd_status(
                     "role": execution.role,
                     "sessionRef": execution.session_ref,
                     "seat": execution.seat_label(),
+                    "founder": founding.founder,
+                    "createSigner": founding.create_signer,
                     "runtime": execution.runtime,
                     "model": execution.model,
                     "status": execution.status,
@@ -570,6 +587,10 @@ pub async fn cmd_status(
         json!({
             "channel": channel_id,
             "executions": rows,
+            // Every distinct founder named by a receipt-joined create in this
+            // channel. Empty means no execution here could be joined back to
+            // a genesis — not that the sessions have no founders.
+            "founders": facts.founders.founders(),
             // Disclosed, not assumed: kind 24223 is ephemeral and is served
             // from the relay's Redis snapshot, so `live` is only ever as fresh
             // as this call and `quiet` means "no lease answered", never "the

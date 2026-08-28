@@ -44,7 +44,8 @@ use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionMetadata, TranscriptEnvelope,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND, KIND_SYSTEM_MESSAGE,
+    KIND_CODING_SESSION_AUTHORITY_TRANSITION, KIND_CODING_SESSION_COMMAND,
+    KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LIFECYCLE_COMMAND, KIND_SYSTEM_MESSAGE,
 };
 use buzz_sdk::kind::{
     KIND_CODING_SESSION_LIFECYCLE_RECEIPT, KIND_CODING_SESSION_METADATA,
@@ -1157,44 +1158,60 @@ async fn cmd_list(
     format: &crate::OutputFormat,
 ) -> Result<(), CliError> {
     validate_uuid(channel_id)?;
+    // 44221 and 44226 are here only for the founder column: a create says who
+    // asked for an execution, and the genesis it names says who founded the
+    // umbrella. Neither is needed to resolve a row, and both widen the fetch —
+    // see `crates/buzz-cli/TESTING.md` for what that costs.
     let events = fetch_channel_events(
         client,
         channel_id,
         &[
             KIND_CODING_SESSION_METADATA,
             KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+            KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+            KIND_CODING_SESSION_GENESIS,
         ],
     )
     .await?;
     let (metadata, _) = decode_metadata(&events);
     let (receipts, _) = decode_receipts(&events);
+    let founders = crew::build_founder_index(&events, &receipts);
     let rows = resolve_sessions(&metadata, &receipts, &[]);
 
     let output: Vec<Value> = rows
         .iter()
-        .map(|row| match format {
-            crate::OutputFormat::Compact => json!({
-                "target": row.target_key,
-                "title": row.title,
-                "status": row.status,
-                "model": row.model,
-                "createdAt": rfc3339(row.created_at),
-            }),
-            crate::OutputFormat::Json => json!({
-                "target": row.target_key,
-                "driver": row.target.driver,
-                "instanceId": row.target.instance_id,
-                "sessionId": row.target.session_id,
-                "generation": row.target.generation,
-                "signer": row.signer,
-                "title": row.title,
-                "status": row.status,
-                "model": row.model,
-                "createdAt": rfc3339(row.created_at),
-                "lastEventAt": rfc3339(row.last_event_at),
-                "confirmed": row.confirmed,
-                "metadataConflicts": row.metadata_conflicts,
-            }),
+        .map(|row| {
+            // `null` means this channel holds no receipt-joined create for the
+            // row — not that nobody founded it, and never the provider that
+            // signed it.
+            let founding = founders.of(&row.target);
+            match format {
+                crate::OutputFormat::Compact => json!({
+                    "target": row.target_key,
+                    "title": row.title,
+                    "status": row.status,
+                    "model": row.model,
+                    "founder": founding.founder.as_deref().map(crew::short_pubkey),
+                    "createdAt": rfc3339(row.created_at),
+                }),
+                crate::OutputFormat::Json => json!({
+                    "target": row.target_key,
+                    "driver": row.target.driver,
+                    "instanceId": row.target.instance_id,
+                    "sessionId": row.target.session_id,
+                    "generation": row.target.generation,
+                    "signer": row.signer,
+                    "founder": founding.founder,
+                    "createSigner": founding.create_signer,
+                    "title": row.title,
+                    "status": row.status,
+                    "model": row.model,
+                    "createdAt": rfc3339(row.created_at),
+                    "lastEventAt": rfc3339(row.last_event_at),
+                    "confirmed": row.confirmed,
+                    "metadataConflicts": row.metadata_conflicts,
+                }),
+            }
         })
         .collect();
 

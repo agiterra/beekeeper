@@ -29,13 +29,15 @@ use buzz_core::coding_session_command::{
     coding_session_target_key, CodingSessionAction, CodingSessionCommandPayload,
     CodingSessionDelivery, CodingSessionTarget,
 };
+use buzz_core::coding_session_genesis::decode_coding_session_genesis;
 use buzz_core::coding_session_lease::{decode_coding_session_lease, CodingSessionLeaseState};
 use buzz_core::coding_session_lifecycle_command::CodingSessionLifecycleAction;
 use buzz_core::coding_session_payload::{
     LifecycleReceipt, ReceiptStatus, SessionStatus, NO_LIVE_EXECUTION, STALE_GENERATION,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_GENESIS, KIND_CODING_SESSION_LEASE,
+    KIND_CODING_SESSION_LIFECYCLE_COMMAND,
 };
 
 use super::{
@@ -483,16 +485,53 @@ pub fn decode_resumes(events: &[Value]) -> Vec<ResumeRecord> {
 
 /// Who stands behind one execution: the human who asked for it, and the
 /// founder of the umbrella that request pointed at.
+///
+/// Both fields are `Option` and both print `null` when unknown. Nothing here
+/// ever falls back to the *provider's* signer: a provider signs every
+/// execution in the channel, so a founder read off it would make every
+/// session look like it belonged to the same person — which is exactly the
+/// mistake that sent a probe aimed at a quiet session into someone else's
+/// (SESSION_STATE item 73).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Founding {
     /// Pubkey that signed the 44221 `session.create` a 44224 receipt joined to
     /// this execution, or `None` when this channel holds no such join.
     pub create_signer: Option<String>,
-    /// Pubkey that signed the 44226 genesis that create named, or `None`.
+    /// Pubkey that signed the 44226 genesis that create named, or `None` when
+    /// the create named none, the genesis is not in this channel, or it founds
+    /// a different umbrella than the create claimed.
     pub founder: Option<String>,
 }
 
+/// A 44226 genesis, reduced to the two facts a founder lookup needs.
+struct GenesisRecord {
+    /// The founder: whoever signed the genesis.
+    signer: String,
+    /// The umbrella it founds.
+    session_ref: String,
+}
+
+/// A 44221 `session.create`, reduced to the facts the join needs.
+struct CreateRecord {
+    event_id: String,
+    signer: String,
+    created_at: i64,
+    command_id: String,
+    session_ref: Option<String>,
+    genesis_ref: Option<String>,
+    /// The provider the create addressed — the only signer whose receipt may
+    /// answer it.
+    provider_authority_pubkey: String,
+}
+
 /// Founding facts for every execution one channel's record can join.
+///
+/// Keyed by the execution *identity* `(driver, instanceId, sessionId)` rather
+/// than by the exact generation. A `session.create` mints generation 1; every
+/// later generation of the same execution comes from a `session.resume`, which
+/// founds nothing. So the founding create's signer is the answer for every
+/// generation of that execution, and a resume signer is never one — see
+/// [`decode_resumes`], whose records this fold deliberately ignores.
 #[derive(Debug, Clone, Default)]
 pub struct FounderIndex {
     by_identity: HashMap<(String, String, String), Founding>,
@@ -500,20 +539,241 @@ pub struct FounderIndex {
 
 impl FounderIndex {
     /// What this channel says about the generation's founding.
-    pub fn of(&self, _target: &CodingSessionTarget) -> Founding {
-        Founding::default()
+    ///
+    /// [`Founding::default`] — both fields `None` — when the channel holds no
+    /// joined create for it. That is a statement about the record in front of
+    /// this caller, not about the session: an execution created in a channel
+    /// whose 44221 has aged out reads as unknown, and unknown prints `null`.
+    pub fn of(&self, target: &CodingSessionTarget) -> Founding {
+        self.by_identity
+            .get(&(
+                target.driver.clone(),
+                target.instance_id.clone(),
+                target.session_id.clone(),
+            ))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Every distinct founder the channel names, sorted.
     pub fn founders(&self) -> Vec<String> {
-        Vec::new()
+        let distinct: BTreeSet<&str> = self
+            .by_identity
+            .values()
+            .filter_map(|founding| founding.founder.as_deref())
+            .collect();
+        distinct.into_iter().map(str::to_owned).collect()
     }
+}
+
+/// Decode every 44226 genesis, keyed by its **event id**.
+///
+/// Canonical identity is the event id, never the `csg-session` tag: NIP-CSG is
+/// explicit that a `#csg-session` lookup is not a founder lookup, because a
+/// consumer that selects by label has already accepted that two rows might
+/// answer and that it may pick one.
+fn decode_geneses(events: &[Value]) -> HashMap<String, GenesisRecord> {
+    let mut geneses = HashMap::new();
+    for event in events {
+        if event.get("kind").and_then(Value::as_u64) != Some(u64::from(KIND_CODING_SESSION_GENESIS))
+        {
+            continue;
+        }
+        let (Some(content), Some(signer), Some(event_id)) = (
+            content_of(event),
+            event_str(event, "pubkey"),
+            event_str(event, "id"),
+        ) else {
+            continue;
+        };
+        let Ok(payload) = decode_coding_session_genesis(content) else {
+            continue;
+        };
+        geneses.insert(
+            event_id,
+            GenesisRecord {
+                signer,
+                session_ref: payload.session_ref,
+            },
+        );
+    }
+    geneses
+}
+
+/// Decode every `session.create` among a channel's 44221 events.
+fn decode_creates(events: &[Value]) -> Vec<CreateRecord> {
+    let mut records = Vec::new();
+    for event in events {
+        if event.get("kind").and_then(Value::as_u64)
+            != Some(u64::from(KIND_CODING_SESSION_LIFECYCLE_COMMAND))
+        {
+            continue;
+        }
+        let (Some(content), Some(signer), Some(created_at), Some(event_id)) = (
+            content_of(event),
+            event_str(event, "pubkey"),
+            event_created_at(event),
+            event_str(event, "id"),
+        ) else {
+            continue;
+        };
+        let Ok(payload) =
+            buzz_core::coding_session_lifecycle_command::decode_coding_session_lifecycle_command(
+                content,
+            )
+        else {
+            continue;
+        };
+        if let CodingSessionLifecycleAction::SessionCreate {
+            session_ref,
+            genesis_ref,
+            provider_authority_pubkey,
+            ..
+        } = payload.action
+        {
+            records.push(CreateRecord {
+                event_id,
+                signer,
+                created_at,
+                command_id: payload.command_id,
+                session_ref,
+                genesis_ref,
+                provider_authority_pubkey,
+            });
+        }
+    }
+    records
+}
+
+/// The one target a create's own provider says it minted, or `None`.
+///
+/// The self-fence: only receipts signed by the very pubkey the create *named*
+/// are read as its answer, so a stranger's receipt never joins even in a
+/// channel that happily stores it. Receipts from that provider naming
+/// different targets for one `commandId` are the provider contradicting
+/// itself, and a disputed claim resolves to nothing rather than to a side.
+fn joined_target<'a>(
+    receipts: &'a [ReceiptRecord],
+    command_id: &str,
+    provider_authority_pubkey: &str,
+) -> Option<&'a CodingSessionTarget> {
+    let mut answer: Option<&CodingSessionTarget> = None;
+    for record in receipts {
+        // A turn receipt names the generation its 44220 addressed but never
+        // creates one, so it can never be a create's answer (NIP-CSL fork
+        // amendment 7).
+        if record.is_turn_status || record.signer != provider_authority_pubkey {
+            continue;
+        }
+        let Some(target) = record.target.as_ref() else {
+            continue;
+        };
+        let Some(content) = content_of(&record.raw) else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_str::<LifecycleReceipt>(content) else {
+            continue;
+        };
+        if receipt.command_id != command_id {
+            continue;
+        }
+        match answer {
+            Some(held) if coding_session_target_key(held) != coding_session_target_key(target) => {
+                return None
+            }
+            _ => answer = Some(target),
+        }
+    }
+    answer
 }
 
 /// Fold a channel's geneses, creates, and lifecycle receipts into founding
 /// facts per execution.
-pub fn build_founder_index(_events: &[Value], _receipts: &[ReceiptRecord]) -> FounderIndex {
-    FounderIndex::default()
+///
+/// Three rules, each of which refuses rather than guesses:
+///
+/// 1. **Only receipt-joined creates are observed.** A create nobody's provider
+///    ever acted on mints no execution, so it is not evidence of founding one
+///    — and requiring the join is what stops a member from backdating a create
+///    bearing someone else's `sessionRef`.
+/// 2. **A disputed `commandId` founds nothing.** Two creates sharing one id
+///    but disagreeing about signer, umbrella, genesis, or addressed provider
+///    are a contradiction; so are two joined creates claiming one execution
+///    for different signers.
+/// 3. **A genesis becomes founder only through an explicit event id**, and
+///    only when it founds the umbrella the create claimed.
+///
+/// The same three rules the desktop applies
+/// (`desktop/src/features/coding-sessions/lib/codingSessionCreateObservations.ts`),
+/// so `bee` and the app never name different founders for one session.
+pub fn build_founder_index(events: &[Value], receipts: &[ReceiptRecord]) -> FounderIndex {
+    let geneses = decode_geneses(events);
+
+    let mut by_command: BTreeMap<String, Vec<CreateRecord>> = BTreeMap::new();
+    for create in decode_creates(events) {
+        by_command
+            .entry(create.command_id.clone())
+            .or_default()
+            .push(create);
+    }
+
+    let mut index = FounderIndex::default();
+    // `None` marks an identity two joined creates disagree about; it stays
+    // absent from the index rather than taking either side.
+    let mut resolved: HashMap<(String, String, String), Option<Founding>> = HashMap::new();
+
+    for (command_id, mut group) in by_command {
+        group.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then(left.event_id.cmp(&right.event_id))
+        });
+        let disputed = group.iter().any(|create| {
+            create.signer != group[0].signer
+                || create.session_ref != group[0].session_ref
+                || create.genesis_ref != group[0].genesis_ref
+                || create.provider_authority_pubkey != group[0].provider_authority_pubkey
+        });
+        if disputed {
+            continue;
+        }
+        let create = &group[0];
+        let Some(target) = joined_target(receipts, &command_id, &create.provider_authority_pubkey)
+        else {
+            continue;
+        };
+        let founder = create
+            .genesis_ref
+            .as_deref()
+            .and_then(|genesis_ref| geneses.get(genesis_ref))
+            .filter(|genesis| Some(genesis.session_ref.as_str()) == create.session_ref.as_deref())
+            .map(|genesis| genesis.signer.clone());
+        let founding = Founding {
+            create_signer: Some(create.signer.clone()),
+            founder,
+        };
+        let identity = (
+            target.driver.clone(),
+            target.instance_id.clone(),
+            target.session_id.clone(),
+        );
+        match resolved.get(&identity) {
+            Some(Some(held)) if *held != founding => {
+                resolved.insert(identity, None);
+            }
+            Some(_) => {}
+            None => {
+                resolved.insert(identity, Some(founding));
+            }
+        }
+    }
+
+    for (identity, founding) in resolved {
+        if let Some(founding) = founding {
+            index.by_identity.insert(identity, founding);
+        }
+    }
+    index
 }
 
 // ── Receipt stages ───────────────────────────────────────────────────────────
