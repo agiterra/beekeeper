@@ -13,6 +13,7 @@ import {
   type CodingSessionName,
 } from "@/features/coding-sessions/lib/codingSessionName";
 import {
+  codingSessionClosureIsClosed,
   codingSessionClosureKey,
   type CodingSessionClosure,
 } from "@/features/coding-sessions/lib/codingSessionClosure";
@@ -43,7 +44,10 @@ export type ProjectCodingSessionShelfEntry = {
   executionCount: number;
   /** Shared human-authored session state, independent of provider lifecycle. */
   closure: CodingSessionClosure | null;
+  /** Settled by a shared closure fact — `closed` or `archived`. */
   isClosed: boolean;
+  /** Filed away by an `archived` closure fact; implies `isClosed`. */
+  isArchived: boolean;
   sessionRef: string | null;
   genesisRef: string | null;
   founderPubkey: string | null;
@@ -226,7 +230,8 @@ export function resolveProjectCodingSessionShelf(
       runtimeLabels: runtimeLabel ? [runtimeLabel] : [],
       executionCount: 1,
       closure: umbrella?.closure ?? null,
-      isClosed: umbrella?.closure?.action === "closed",
+      isClosed: codingSessionClosureIsClosed(umbrella?.closure?.action),
+      isArchived: umbrella?.closure?.action === "archived",
       sessionRef: umbrella?.sessionRef ?? session.sessionRef,
       genesisRef: umbrella?.genesisRef ?? null,
       founderPubkey: umbrella?.founderPubkey ?? null,
@@ -431,6 +436,7 @@ export function compareProjectCodingSessionEntries(
   right: ProjectCodingSessionShelfEntry,
 ): number {
   if (left.isClosed !== right.isClosed) return left.isClosed ? 1 : -1;
+  if (left.isArchived !== right.isArchived) return left.isArchived ? 1 : -1;
   const byActivity = statusPriority(left.status) - statusPriority(right.status);
   if (byActivity !== 0) return byActivity;
   const byTime = right.session.lastEventAt.localeCompare(

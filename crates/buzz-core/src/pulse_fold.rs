@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::coding_session_closure::{decode_coding_session_closure, CodingSessionClosureAction};
+use crate::coding_session_closure::decode_coding_session_closure;
 use crate::coding_session_command::{coding_session_target_key, CodingSessionTarget};
 use crate::coding_session_lease::{decode_coding_session_lease, CodingSessionLeaseState};
 use crate::coding_session_lifecycle_command::{
@@ -1102,8 +1102,7 @@ fn fold_sessions(project: &str, now: i64, events: &[Value]) -> Vec<PulseDigestSe
         let goal = joined(&goals);
         let closure = joined(&closures);
         let closed = closure.as_ref().is_some_and(|(_, content)| {
-            decode_coding_session_closure(content)
-                .is_ok_and(|payload| payload.action == CodingSessionClosureAction::Closed)
+            decode_coding_session_closure(content).is_ok_and(|payload| payload.action.is_closed())
         });
         let coordination_state = if closed {
             "closed"

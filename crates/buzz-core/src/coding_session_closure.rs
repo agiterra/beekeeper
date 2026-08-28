@@ -31,6 +31,17 @@ pub enum CodingSessionClosureAction {
     Closed,
     /// The umbrella is available for continuation again.
     Open,
+    /// The umbrella is finished *and* filed away: archived implies closed,
+    /// and surfaces hide it unless asked. Same owner-only authority as a
+    /// close; reopening it is an ordinary `open`.
+    Archived,
+}
+
+impl CodingSessionClosureAction {
+    /// Whether this revision settles the umbrella (closed or archived).
+    pub fn is_closed(self) -> bool {
+        !matches!(self, Self::Open)
+    }
 }
 
 /// Strict public JSON carried by a coding-session closure revision.
@@ -196,6 +207,22 @@ mod tests {
             2
         ))
         .is_ok());
+        assert!(validate_coding_session_closure_envelope(&event(
+            CodingSessionClosureAction::Archived,
+            3
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn archived_serialises_lowercase_and_counts_as_closed() {
+        assert_eq!(
+            serde_json::to_string(&CodingSessionClosureAction::Archived).unwrap(),
+            "\"archived\""
+        );
+        assert!(CodingSessionClosureAction::Archived.is_closed());
+        assert!(CodingSessionClosureAction::Closed.is_closed());
+        assert!(!CodingSessionClosureAction::Open.is_closed());
     }
 
     #[test]

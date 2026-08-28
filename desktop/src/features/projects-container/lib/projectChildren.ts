@@ -1,8 +1,6 @@
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import type { Channel } from "@/shared/api/types";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
-import type { Workflow } from "@/shared/api/workflowTypes";
-import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { KIND_MANAGED_AGENT, KIND_PERSONA } from "@/shared/constants/kinds";
 
 import { parseMemberRef } from "./projectContainerModel";
@@ -42,37 +40,28 @@ export function projectAgentRows(
   return rows;
 }
 
-/** One row in a project's flat child list; the type picks the icon. */
+/**
+ * One row in a project's sidebar child list; the type picks the icon. The
+ * sidebar lists only channels and interactive work (coding sessions and
+ * terminals) — repositories, workflows, agents and Pulse live on the project
+ * page, not here.
+ */
 export type ProjectChildRow =
   | { type: "coding-session"; entry: ProjectCodingSessionShelfEntry }
-  // A singleton row, not a collection: one Pulse per project, always present
-  // when the caller opts in — its screen renders the confirmed-empty state
-  // rather than the row disappearing when a project is quiet.
-  | { type: "pulse" }
   | { type: "channel"; channel: Channel }
   | { type: "forum"; channel: Channel }
-  | { type: "repo"; repo: CodeRepo }
-  | { type: "workflow"; workflow: Workflow }
-  | { type: "agent"; agent: ProjectAgentRow }
   | { type: "shell"; session: ShellSessionInfo }
   | { type: "remote-shell"; terminal: RemoteTerminal };
 
-/** Fixed display order of the flat list — mirrors the old subsection order,
- * with forums promoted next to channels and live coding sessions on top:
- * a session is the only child that changes while you watch it. */
+/** Fixed display order of the flat list — live coding sessions on top: a
+ * session is the only child that changes while you watch it. */
 export const PROJECT_CHILD_TYPE_RANK: Record<ProjectChildRow["type"], number> =
   {
     "coding-session": 0,
-    // Pulse sits directly below the sessions it describes: it is the
-    // coordination answer for the same live work, not another collection.
-    pulse: 1,
-    channel: 2,
-    forum: 3,
-    repo: 4,
-    workflow: 5,
-    agent: 6,
-    shell: 7,
-    "remote-shell": 8,
+    channel: 1,
+    forum: 2,
+    shell: 3,
+    "remote-shell": 4,
   };
 
 /** Stable, cross-type-unique React key for a child row. */
@@ -80,18 +69,10 @@ export function projectChildKey(row: ProjectChildRow): string {
   switch (row.type) {
     case "coding-session":
       return `session:${row.entry.channelId}:${row.entry.generationId}`;
-    case "pulse":
-      return "pulse";
     case "channel":
       return `channel:${row.channel.id}`;
     case "forum":
       return `forum:${row.channel.id}`;
-    case "repo":
-      return `repo:${row.repo.repoAddress}`;
-    case "workflow":
-      return `workflow:${row.workflow.id}`;
-    case "agent":
-      return `agent:${row.agent.key}`;
     case "shell":
       return `shell:${row.session.sessionId}`;
     case "remote-shell":
@@ -103,21 +84,9 @@ export function projectChildLabel(row: ProjectChildRow): string {
   switch (row.type) {
     case "coding-session":
       return row.entry.label;
-    case "pulse":
-      // "Project Pulse", never bare "Pulse": the pinned top-level social
-      // activity feed is also called Pulse, and with both preview flags on a
-      // user would see the same word meaning two unrelated things in one
-      // sidebar. Matches the preview feature's own display name.
-      return "Project Pulse";
     case "channel":
     case "forum":
       return row.channel.name;
-    case "repo":
-      return row.repo.name;
-    case "workflow":
-      return row.workflow.name;
-    case "agent":
-      return row.agent.label;
     case "shell":
       return row.session.title;
     case "remote-shell":
@@ -155,15 +124,8 @@ export function compareProjectChildren(
  */
 export function buildProjectChildren(input: {
   codingSessions?: ProjectCodingSessionShelfEntry[];
-  /** Emit the singleton Pulse row. Callers pass the `project-pulse` preview
-   * flag AND `!isFallback`: the local General placeholder has no project
-   * coordinate, so its Pulse row would open a screen that can never load. */
-  includePulse?: boolean;
   streamChannels: Channel[];
   forumChannels: Channel[];
-  repos: CodeRepo[];
-  workflows: Workflow[];
-  agents: ProjectAgentRow[];
   shellSessions: ShellSessionInfo[];
   remoteTerminals?: RemoteTerminal[];
 }): ProjectChildRow[] {
@@ -171,18 +133,12 @@ export function buildProjectChildren(input: {
     ...(input.codingSessions ?? []).map(
       (entry): ProjectChildRow => ({ type: "coding-session", entry }),
     ),
-    ...(input.includePulse ? [{ type: "pulse" } as ProjectChildRow] : []),
     ...input.streamChannels.map(
       (channel): ProjectChildRow => ({ type: "channel", channel }),
     ),
     ...input.forumChannels.map(
       (channel): ProjectChildRow => ({ type: "forum", channel }),
     ),
-    ...input.repos.map((repo): ProjectChildRow => ({ type: "repo", repo })),
-    ...input.workflows.map(
-      (workflow): ProjectChildRow => ({ type: "workflow", workflow }),
-    ),
-    ...input.agents.map((agent): ProjectChildRow => ({ type: "agent", agent })),
     ...input.shellSessions.map(
       (session): ProjectChildRow => ({ type: "shell", session }),
     ),

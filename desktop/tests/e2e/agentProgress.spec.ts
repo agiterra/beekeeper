@@ -691,23 +691,37 @@ test("a lease read that failed is a floor, never a quiet fleet", async ({
   );
   // The adjacent project shelf has metadata but no lease projection. It must
   // report that history neutrally instead of contradicting this panel with a
-  // green current-liveness claim in the same window. The status word itself is
-  // bare — "Working", not "Reported working" — so the caveat it no longer
-  // spells out has to be reachable on the row's own hover.
-  await expect(
-    page.getByRole("region", { name: "Open Sessions" }),
-  ).toBeVisible();
-  const shelfStatus = page
-    .getByRole("region", { name: "Open Sessions" })
-    .getByText("Working", { exact: true })
-    .first();
-  await expect(shelfStatus).toBeVisible();
-  await expect(shelfStatus).toHaveAttribute(
+  // green current-liveness claim in the same window. The state is a coloured
+  // dot — green for "last reported working" — so the caveat the colour cannot
+  // carry has to be reachable on the dot's own hover.
+  //
+  // These sessions were founded by the fixture's operator key, not by this
+  // desktop's identity, so the shelf's default "My sessions" filter hides
+  // them — the filter itself is what makes them visible.
+  const shelfFilter = page.getByTestId(/^project-session-filter-/).first();
+  await expect(shelfFilter).toBeVisible();
+  await expect(shelfFilter).toContainText("My sessions");
+  const shelf = page.getByTestId(/^project-sessions-/).first();
+  await expect(shelf.getByTestId("project-coding-session-row")).toHaveCount(0);
+  await shelfFilter.click();
+  await page.getByTestId("project-session-filter-mode-all").click();
+  await expect(shelfFilter).toContainText("All sessions");
+  const running = shelf.locator("[data-session-indicator='running']").first();
+  await expect(running).toBeVisible();
+  await expect(running).toHaveAttribute(
     "title",
-    /last reported[\s\S]*not a live lease/,
+    /^Running — [\s\S]*last reported[\s\S]*not a live lease/,
   );
+  // The dot's colour-blind name is its accessible label.
+  await expect(running).toHaveAttribute("aria-label", "Running");
+  // (The fixture's 44230 carries the legacy `csc-v` tag layout, which the
+  // shelf's strict closure parser rejects, so no row here reads as closed;
+  // the closed/archived dots are covered by projectSessionIndicator's unit
+  // tests.)
+  // Each row wears its founder: the fixture operator has no profile in the
+  // mock relay, so the avatar falls back to initials of a truncated pubkey.
   await expect(
-    page.getByRole("region", { name: "Active Sessions" }),
-  ).toHaveCount(0);
+    shelf.getByTestId("project-coding-session-founder").first(),
+  ).toHaveAttribute("title", /^Started by /);
   await capture(page, "06-partial-read");
 });

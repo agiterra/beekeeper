@@ -4,10 +4,12 @@ import type { ProjectPullRequest } from "@/features/projects/hooks";
 import { cn } from "@/shared/lib/cn";
 import { TabsList, TabsTrigger } from "@/shared/ui/tabs";
 
-const PROJECT_TAB_TRIGGER_CLASS =
+/** Underline-style tab trigger shared by the repo workspace and the project
+ * page's route tabs; the active look keys off `data-state="active"`. */
+export const PROJECT_TAB_TRIGGER_CLASS =
   "relative h-full shrink-0 rounded-none px-2.5 text-sm leading-5 tracking-tight text-muted-foreground shadow-none after:absolute after:inset-x-2.5 after:bottom-0 after:h-0.5 after:bg-current after:opacity-0 after:transition-opacity after:content-[''] hover:bg-transparent hover:text-foreground hover:after:opacity-100 data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:shadow-none data-[state=active]:after:opacity-100";
 
-const PROJECT_TAB_SELECTED_CLASS =
+export const PROJECT_TAB_SELECTED_CLASS =
   "font-semibold text-foreground after:opacity-100";
 const PROJECT_OVERVIEW_TAB_CLASS =
   "h-8 w-8 shrink-0 rounded-md p-2 text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground data-[state=active]:bg-muted/50 data-[state=active]:text-foreground data-[state=active]:shadow-none";

@@ -1,7 +1,10 @@
 import * as React from "react";
 import { toast } from "sonner";
 
-import { publishCodingSessionClosure } from "@/features/coding-sessions/lib/codingSessionClosure";
+import {
+  type CodingSessionClosureAction,
+  publishCodingSessionClosure,
+} from "@/features/coding-sessions/lib/codingSessionClosure";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,14 +17,53 @@ import {
 } from "@/shared/ui/alert-dialog";
 
 export type CodingSessionClosureRequest = {
-  action: "closed" | "open";
+  action: CodingSessionClosureAction;
   channelId: string;
   genesisRef: string;
   label: string;
   sessionRef: string;
 };
 
-/** Shared confirmation for provider-independent close and reopen facts. */
+const COPY: Record<
+  CodingSessionClosureAction,
+  {
+    title: string;
+    confirm: string;
+    failed: string;
+    describe: (label: string) => string;
+  }
+> = {
+  closed: {
+    title: "Close this session?",
+    confirm: "Close session",
+    failed: "Failed to close the session.",
+    describe: (label) =>
+      `"${label}" will move to Closed for every project member. ` +
+      "Its identity and transcript remain available. Closing does not stop " +
+      "provider executions; stop those separately when needed.",
+  },
+  archived: {
+    title: "Archive this session?",
+    confirm: "Archive session",
+    failed: "Failed to archive the session.",
+    describe: (label) =>
+      `"${label}" will be closed and archived for every project member: it ` +
+      "leaves the sidebar unless a filter asks for archived sessions, but its " +
+      "identity and transcript remain available and it can be reopened. " +
+      "Archiving does not stop provider executions; stop those separately " +
+      "when needed.",
+  },
+  open: {
+    title: "Reopen this session?",
+    confirm: "Reopen session",
+    failed: "Failed to reopen the session.",
+    describe: (label) =>
+      `"${label}" will return to open sessions for every project member. ` +
+      "Reopening starts no provider and consumes no execution slot.",
+  },
+};
+
+/** Shared confirmation for provider-independent close, archive and reopen facts. */
 export function useCodingSessionClosureDialog(): {
   requestClosure: (request: CodingSessionClosureRequest | null) => void;
   dialog: React.ReactNode;
@@ -43,11 +85,7 @@ export function useCodingSessionClosureDialog(): {
     void publishCodingSessionClosure(target)
       .catch((error: unknown) => {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : target.action === "closed"
-              ? "Failed to close the session."
-              : "Failed to reopen the session.",
+          error instanceof Error ? error.message : COPY[target.action].failed,
         );
       })
       .finally(() => {
@@ -56,7 +94,7 @@ export function useCodingSessionClosureDialog(): {
       });
   }, [target]);
 
-  const isClosing = target?.action === "closed";
+  const copy = target ? COPY[target.action] : null;
   const dialog = (
     <AlertDialog
       open={target !== null}
@@ -66,18 +104,9 @@ export function useCodingSessionClosureDialog(): {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {isClosing ? "Close this session?" : "Reopen this session?"}
-          </AlertDialogTitle>
+          <AlertDialogTitle>{copy?.title ?? ""}</AlertDialogTitle>
           <AlertDialogDescription>
-            {target
-              ? isClosing
-                ? `"${target.label}" will move to Settled for every project member. ` +
-                  "Its identity and transcript remain available. Closing does not stop " +
-                  "provider executions; stop those separately when needed."
-                : `"${target.label}" will return to Sessions for every project member. ` +
-                  "Reopening starts no provider and consumes no execution slot."
-              : ""}
+            {target && copy ? copy.describe(target.label) : ""}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -90,7 +119,7 @@ export function useCodingSessionClosureDialog(): {
               confirm();
             }}
           >
-            {isClosing ? "Close session" : "Reopen session"}
+            {copy?.confirm ?? ""}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

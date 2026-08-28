@@ -14,9 +14,6 @@ const emptyInput = {
   remoteTerminals: [],
   streamChannels: [],
   forumChannels: [],
-  repos: [],
-  workflows: [],
-  agents: [],
   shellSessions: [],
 };
 
@@ -24,18 +21,6 @@ const makeChannel = (overrides = {}) => ({
   id: "channel-1",
   name: "general",
   channelType: "stream",
-  ...overrides,
-});
-
-const makeRepo = (overrides = {}) => ({
-  repoAddress: "30617:owner:buzz",
-  name: "buzz",
-  ...overrides,
-});
-
-const makeWorkflow = (overrides = {}) => ({
-  id: "wf-1",
-  name: "Nightly deploy",
   ...overrides,
 });
 
@@ -74,6 +59,18 @@ test("buildProjectChildren returns [] for empty input", () => {
   assert.deepEqual(buildProjectChildren(emptyInput), []);
 });
 
+test("the sidebar row model is channels and interactive work only", () => {
+  // Repositories, workflows, agents and Pulse belong to the project page;
+  // the type table is the contract that keeps them out of the sidebar.
+  assert.deepEqual(Object.keys(PROJECT_CHILD_TYPE_RANK).sort(), [
+    "channel",
+    "coding-session",
+    "forum",
+    "remote-shell",
+    "shell",
+  ]);
+});
+
 test("buildProjectChildren groups interleaved types by rank order", () => {
   const rows = buildProjectChildren({
     codingSessions: [makeSessionEntry()],
@@ -81,24 +78,12 @@ test("buildProjectChildren groups interleaved types by rank order", () => {
     forumChannels: [
       makeChannel({ id: "forum-1", name: "ideas", channelType: "forum" }),
     ],
-    repos: [makeRepo()],
-    workflows: [makeWorkflow()],
-    agents: [{ key: "30175:owner:helper", label: "Helper" }],
     shellSessions: [makeShell()],
     remoteTerminals: [makeRemote()],
   });
   assert.deepEqual(
     rows.map((row) => row.type),
-    [
-      "coding-session",
-      "channel",
-      "forum",
-      "repo",
-      "workflow",
-      "agent",
-      "shell",
-      "remote-shell",
-    ],
+    ["coding-session", "channel", "forum", "shell", "remote-shell"],
   );
   const ranks = rows.map((row) => PROJECT_CHILD_TYPE_RANK[row.type]);
   assert.deepEqual(
@@ -110,14 +95,14 @@ test("buildProjectChildren groups interleaved types by rank order", () => {
 test("sorts case-insensitively by label within a type", () => {
   const rows = buildProjectChildren({
     ...emptyInput,
-    repos: [
-      makeRepo({ repoAddress: "30617:owner:zeta", name: "zeta" }),
-      makeRepo({ repoAddress: "30617:owner:alpha", name: "Alpha" }),
-      makeRepo({ repoAddress: "30617:owner:mid", name: "mid" }),
+    streamChannels: [
+      makeChannel({ id: "c-zeta", name: "zeta" }),
+      makeChannel({ id: "c-alpha", name: "Alpha" }),
+      makeChannel({ id: "c-mid", name: "mid" }),
     ],
   });
   assert.deepEqual(
-    rows.map((row) => row.repo.name),
+    rows.map((row) => row.channel.name),
     ["Alpha", "mid", "zeta"],
   );
 });
@@ -125,14 +110,14 @@ test("sorts case-insensitively by label within a type", () => {
 test("identical labels fall back to the key tie-break", () => {
   const rows = buildProjectChildren({
     ...emptyInput,
-    workflows: [
-      makeWorkflow({ id: "wf-b", name: "deploy" }),
-      makeWorkflow({ id: "wf-a", name: "deploy" }),
+    streamChannels: [
+      makeChannel({ id: "c-b", name: "deploy" }),
+      makeChannel({ id: "c-a", name: "deploy" }),
     ],
   });
   assert.deepEqual(
-    rows.map((row) => row.workflow.id),
-    ["wf-a", "wf-b"],
+    rows.map((row) => row.channel.id),
+    ["c-a", "c-b"],
   );
 });
 
@@ -178,7 +163,7 @@ test("projectChildKey is unique across types with colliding ids", () => {
     forumChannels: [
       makeChannel({ id: "same-id", name: "one", channelType: "forum" }),
     ],
-    workflows: [makeWorkflow({ id: "same-id", name: "one" })],
+    shellSessions: [makeShell({ sessionId: "same-id", title: "one" })],
   });
   const keys = rows.map(projectChildKey);
   assert.equal(new Set(keys).size, keys.length);
@@ -191,10 +176,10 @@ test("projectChildLabel reads the per-type display name", () => {
   );
   assert.equal(
     projectChildLabel({
-      type: "agent",
-      agent: { key: "k", label: "Helper" },
+      type: "coding-session",
+      entry: makeSessionEntry({ label: "Fix the build" }),
     }),
-    "Helper",
+    "Fix the build",
   );
   assert.equal(
     projectChildLabel({ type: "shell", session: makeShell() }),
@@ -236,8 +221,8 @@ test("remote terminals key by owner+session and label by title", () => {
 });
 
 test("compareProjectChildren orders by rank before label", () => {
-  const agent = { type: "agent", agent: { key: "k", label: "aaa" } };
+  const shell = { type: "shell", session: makeShell({ title: "aaa" }) };
   const channel = { type: "channel", channel: makeChannel({ name: "zzz" }) };
-  assert.ok(compareProjectChildren(channel, agent) < 0);
-  assert.ok(compareProjectChildren(agent, channel) > 0);
+  assert.ok(compareProjectChildren(channel, shell) < 0);
+  assert.ok(compareProjectChildren(shell, channel) > 0);
 });

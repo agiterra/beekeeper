@@ -20,6 +20,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import { ProjectTerminalsCard } from "@/features/builtin-shell/ui/ProjectTerminalsCard";
 import { ProjectPulseCard } from "@/features/project-pulse/ui/ProjectPulseCard";
+import { ProjectPulseScreen } from "@/features/project-pulse/ui/ProjectPulseScreen";
 import { useChannelsQuery } from "@/features/channels/hooks";
 import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import {
@@ -27,7 +28,7 @@ import {
   usePersonasQuery,
 } from "@/features/agents/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
-import { FeatureGate } from "@/shared/features";
+import { FeatureGate, useFeatureEnabled } from "@/shared/features";
 import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
@@ -66,6 +67,7 @@ import { EditProjectContainerDialog } from "./EditProjectContainerDialog";
 import { LinkProjectRepoDialog } from "./LinkProjectRepoDialog";
 import { MoveToProjectMenu } from "./MoveToProjectMenu";
 import { ProjectMembersCard } from "./ProjectMembersCard";
+import { ProjectPageTabs, type ProjectPageTab } from "./ProjectPageTabs";
 import { SectionCard, EmptyHint } from "./SectionCard";
 import { ProjectSectionRepoAddMenu } from "./ProjectSectionRepoAddMenu";
 import {
@@ -80,7 +82,14 @@ import { useProjectItemMoves } from "./useProjectItemMoves";
  * links to its existing screen; sections offer scoped creation, item rows
  * move between projects, and the owner can edit or delete the project.
  */
-export function ProjectContainerScreen({ projectId }: { projectId: string }) {
+export function ProjectContainerScreen({
+  projectId,
+  tab = "overview",
+}: {
+  projectId: string;
+  /** Which page section the route asked for; the overview is the default. */
+  tab?: ProjectPageTab;
+}) {
   const {
     goAgents,
     goChannel,
@@ -98,6 +107,7 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
   const personas = usePersonasQuery();
   const managedAgents = useManagedAgentsQuery();
   const identity = useIdentityQuery();
+  const pulseEnabled = useFeatureEnabled("project-pulse");
   const self = identity.data?.pubkey?.toLowerCase();
 
   const project: ProjectContainer | null = React.useMemo(() => {
@@ -193,6 +203,22 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
   const [linkRepo, setLinkRepo] = React.useState<CodeRepo | null>(null);
 
   if (!project) {
+    // A Pulse deep link to a project this community cannot read still gets
+    // Pulse's own answer: it distinguishes "still loading" from "not readable"
+    // and says neither is a claim that the project is empty. A bare "not
+    // found" here would state a completed verdict over a read in flight.
+    if (tab === "pulse" && pulseEnabled) {
+      return (
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+          <div
+            className="mx-auto w-full max-w-3xl px-6 py-8"
+            data-testid="project-pulse-tab"
+          >
+            <ProjectPulseScreen embedded projectId={projectId} />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-1 items-center justify-center">
         <EmptyHint>Project not found.</EmptyHint>
@@ -358,232 +384,250 @@ export function ProjectContainerScreen({ projectId }: { projectId: string }) {
           </div>
         </header>
 
-        <div className="flex flex-col gap-4">
-          {/* The local General placeholder has no coordinate to manage a
+        {/* Pulse is a section of the project, not a separate screen. Same two
+            gates as the card below: the preview flag, and a real project head
+            — the local General placeholder has no coordinate to read against,
+            so it gets no tab strip at all. */}
+        <ProjectPageTabs
+          active={tab}
+          projectId={project.id}
+          showPulse={pulseEnabled && !isFallback}
+        />
+
+        {tab === "pulse" && pulseEnabled && !isFallback ? (
+          <div data-testid="project-pulse-tab">
+            <ProjectPulseScreen embedded projectId={project.id} />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {/* The local General placeholder has no coordinate to manage a
               roster against — the card appears once the real head exists. */}
-          {!isFallback ? <ProjectMembersCard project={project} /> : null}
+            {!isFallback ? <ProjectMembersCard project={project} /> : null}
 
-          <SectionCard
-            count={codingSessions.length}
-            icon={<Terminal className="size-4" />}
-            title="Coding sessions"
-            action={actionIconButton(
-              "New coding session",
-              "project-section-create-coding-session",
-              () => void goNewProjectCodingSession(project.id),
-            )}
-          >
-            {codingSessions.length === 0 ? (
-              <EmptyHint>
-                {sessionBuckets.state.kind === "ready"
-                  ? "No coding sessions in this project."
-                  : sessionBuckets.state.message}
-              </EmptyHint>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {codingSessions.map((entry) => (
-                  <li key={`${entry.channelId}:${entry.generationId}`}>
-                    <Button
-                      className="h-8 w-full justify-start gap-2 px-2"
-                      data-testid="project-screen-coding-session-row"
-                      onClick={() =>
-                        void goCodingSession(
-                          entry.channelId,
-                          entry.generationId,
-                        )
-                      }
-                      variant="ghost"
-                    >
-                      <Terminal className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{entry.label}</span>
-                      <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
-                        {[entry.runtimeLabel, entry.status.label]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-
-          {/* Pulse sits between the sessions it describes and the agents that
-              run them. Gated twice: the preview flag, and a real project head —
-              the local General placeholder has no coordinate, so its Pulse
-              could only ever be a screen that never loads. */}
-          {!isFallback ? (
-            <FeatureGate feature="project-pulse">
-              <ProjectPulseCard
-                onOpenPulse={() =>
-                  void navigate({
-                    to: "/projects/$projectId/pulse",
-                    params: { projectId: project.id },
-                  })
-                }
-                project={project}
-              />
-            </FeatureGate>
-          ) : null}
-
-          <SectionCard
-            count={agents.length}
-            icon={<Bot className="size-4" />}
-            title="Agents"
-          >
-            {agents.length === 0 ? (
-              <EmptyHint>No agents in this project.</EmptyHint>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {agents.map((agent) => (
-                  <li key={agent.key}>
-                    <Button
-                      className="h-8 w-full justify-start gap-2 px-2"
-                      onClick={() => void goAgents()}
-                      variant="ghost"
-                    >
-                      <Bot className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{agent.label}</span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-
-          <FeatureGate feature="builtin-shell">
-            <ProjectTerminalsCard
-              projectAddress={
-                project.id === LOCAL_GENERAL_ID ? null : project.address
-              }
-              isFallback={project.id === LOCAL_GENERAL_ID}
-              repos={repos}
-            />
-          </FeatureGate>
-
-          <SectionCard
-            count={streamChannels.length}
-            icon={<Hash className="size-4" />}
-            title="Channels"
-            action={createButton("channel", "New channel")}
-          >
-            {streamChannels.length === 0 ? (
-              <EmptyHint>No channels in this project.</EmptyHint>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {streamChannels.map((channel) =>
-                  channelRow(
-                    channel,
-                    <Hash className="size-4 shrink-0 text-muted-foreground" />,
-                    (target) =>
-                      moves.requestMoveChannel(channel, project.id, target),
-                  ),
-                )}
-              </ul>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            count={repos.length}
-            icon={<FolderGit2 className="size-4" />}
-            title="Code"
-            action={
-              <ProjectSectionRepoAddMenu
-                attachAvailable={attachableRepoCount > 0}
-                onAttachExisting={() => setCreateKind("repo-attach")}
-                onCreateNew={() => setCreateKind("repo")}
-                onImportLocal={() => setCreateKind("repo-import")}
-              />
-            }
-          >
-            {repos.length === 0 ? (
-              <EmptyHint>No repositories in this project.</EmptyHint>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {repos.map((repo) => (
-                  <li
-                    className="group/manage-row flex items-center gap-1"
-                    data-testid="project-screen-item-row"
-                    key={repo.repoAddress}
-                  >
-                    <Button
-                      className="h-8 min-w-0 flex-1 justify-start gap-2 px-2"
-                      onClick={() =>
-                        void goProjectRepo(projectId, repo.repoAddress)
-                      }
-                      variant="ghost"
-                    >
-                      <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{repo.name}</span>
-                    </Button>
-                    <MoveToProjectMenu
-                      currentId={project.id}
-                      projects={displayProjects}
-                      onMove={(target) =>
-                        moves.requestMoveRepo(repo, project.id, target)
-                      }
-                      onLinkLocal={() => setLinkRepo(repo)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-
-          {workflowsEnabled ? (
             <SectionCard
-              count={workflows.length}
-              icon={<Zap className="size-4" />}
-              title="Workflows"
-              action={createButton("workflow", "New workflow")}
+              count={codingSessions.length}
+              icon={<Terminal className="size-4" />}
+              title="Coding sessions"
+              action={actionIconButton(
+                "New coding session",
+                "project-section-create-coding-session",
+                () => void goNewProjectCodingSession(project.id),
+              )}
             >
-              {workflows.length === 0 ? (
-                <EmptyHint>No workflows in this project.</EmptyHint>
+              {codingSessions.length === 0 ? (
+                <EmptyHint>
+                  {sessionBuckets.state.kind === "ready"
+                    ? "No coding sessions in this project."
+                    : sessionBuckets.state.message}
+                </EmptyHint>
               ) : (
                 <ul className="flex flex-col gap-1">
-                  {workflows.map((workflow) => (
-                    <li key={workflow.id}>
+                  {codingSessions.map((entry) => (
+                    <li key={`${entry.channelId}:${entry.generationId}`}>
                       <Button
                         className="h-8 w-full justify-start gap-2 px-2"
-                        onClick={() => void goWorkflow(workflow.id)}
+                        data-testid="project-screen-coding-session-row"
+                        onClick={() =>
+                          void goCodingSession(
+                            entry.channelId,
+                            entry.generationId,
+                          )
+                        }
                         variant="ghost"
                       >
-                        <Zap className="size-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{workflow.name}</span>
+                        <Terminal className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{entry.label}</span>
+                        <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                          {[entry.runtimeLabel, entry.status.label]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
                       </Button>
                     </li>
                   ))}
                 </ul>
               )}
             </SectionCard>
-          ) : null}
 
-          <SectionCard
-            count={forums.length}
-            icon={<FileText className="size-4" />}
-            title="Forums"
-            action={
-              <FeatureGate feature="forum">
-                {createButton("forum", "New forum")}
+            {/* Pulse sits between the sessions it describes and the agents that
+              run them. Gated twice: the preview flag, and a real project head —
+              the local General placeholder has no coordinate, so its Pulse
+              could only ever be a screen that never loads. "Open Pulse"
+              switches to the Pulse tab above. */}
+            {!isFallback ? (
+              <FeatureGate feature="project-pulse">
+                <ProjectPulseCard
+                  onOpenPulse={() =>
+                    void navigate({
+                      to: "/projects/$projectId",
+                      params: { projectId: project.id },
+                      search: { tab: "pulse" },
+                    })
+                  }
+                  project={project}
+                />
               </FeatureGate>
-            }
-          >
-            {forums.length === 0 ? (
-              <EmptyHint>No forums in this project.</EmptyHint>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {forums.map((forum) =>
-                  channelRow(
-                    forum,
-                    <FileText className="size-4 shrink-0 text-muted-foreground" />,
-                    (target) =>
-                      moves.requestMoveForum(forum, project.id, target),
-                  ),
+            ) : null}
+
+            <SectionCard
+              count={agents.length}
+              icon={<Bot className="size-4" />}
+              title="Agents"
+            >
+              {agents.length === 0 ? (
+                <EmptyHint>No agents in this project.</EmptyHint>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {agents.map((agent) => (
+                    <li key={agent.key}>
+                      <Button
+                        className="h-8 w-full justify-start gap-2 px-2"
+                        onClick={() => void goAgents()}
+                        variant="ghost"
+                      >
+                        <Bot className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{agent.label}</span>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SectionCard>
+
+            <FeatureGate feature="builtin-shell">
+              <ProjectTerminalsCard
+                projectAddress={
+                  project.id === LOCAL_GENERAL_ID ? null : project.address
+                }
+                isFallback={project.id === LOCAL_GENERAL_ID}
+                repos={repos}
+              />
+            </FeatureGate>
+
+            <SectionCard
+              count={streamChannels.length}
+              icon={<Hash className="size-4" />}
+              title="Channels"
+              action={createButton("channel", "New channel")}
+            >
+              {streamChannels.length === 0 ? (
+                <EmptyHint>No channels in this project.</EmptyHint>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {streamChannels.map((channel) =>
+                    channelRow(
+                      channel,
+                      <Hash className="size-4 shrink-0 text-muted-foreground" />,
+                      (target) =>
+                        moves.requestMoveChannel(channel, project.id, target),
+                    ),
+                  )}
+                </ul>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              count={repos.length}
+              icon={<FolderGit2 className="size-4" />}
+              title="Code"
+              action={
+                <ProjectSectionRepoAddMenu
+                  attachAvailable={attachableRepoCount > 0}
+                  onAttachExisting={() => setCreateKind("repo-attach")}
+                  onCreateNew={() => setCreateKind("repo")}
+                  onImportLocal={() => setCreateKind("repo-import")}
+                />
+              }
+            >
+              {repos.length === 0 ? (
+                <EmptyHint>No repositories in this project.</EmptyHint>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {repos.map((repo) => (
+                    <li
+                      className="group/manage-row flex items-center gap-1"
+                      data-testid="project-screen-item-row"
+                      key={repo.repoAddress}
+                    >
+                      <Button
+                        className="h-8 min-w-0 flex-1 justify-start gap-2 px-2"
+                        onClick={() =>
+                          void goProjectRepo(projectId, repo.repoAddress)
+                        }
+                        variant="ghost"
+                      >
+                        <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{repo.name}</span>
+                      </Button>
+                      <MoveToProjectMenu
+                        currentId={project.id}
+                        projects={displayProjects}
+                        onMove={(target) =>
+                          moves.requestMoveRepo(repo, project.id, target)
+                        }
+                        onLinkLocal={() => setLinkRepo(repo)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SectionCard>
+
+            {workflowsEnabled ? (
+              <SectionCard
+                count={workflows.length}
+                icon={<Zap className="size-4" />}
+                title="Workflows"
+                action={createButton("workflow", "New workflow")}
+              >
+                {workflows.length === 0 ? (
+                  <EmptyHint>No workflows in this project.</EmptyHint>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {workflows.map((workflow) => (
+                      <li key={workflow.id}>
+                        <Button
+                          className="h-8 w-full justify-start gap-2 px-2"
+                          onClick={() => void goWorkflow(workflow.id)}
+                          variant="ghost"
+                        >
+                          <Zap className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{workflow.name}</span>
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              </ul>
-            )}
-          </SectionCard>
-        </div>
+              </SectionCard>
+            ) : null}
+
+            <SectionCard
+              count={forums.length}
+              icon={<FileText className="size-4" />}
+              title="Forums"
+              action={
+                <FeatureGate feature="forum">
+                  {createButton("forum", "New forum")}
+                </FeatureGate>
+              }
+            >
+              {forums.length === 0 ? (
+                <EmptyHint>No forums in this project.</EmptyHint>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {forums.map((forum) =>
+                    channelRow(
+                      forum,
+                      <FileText className="size-4 shrink-0 text-muted-foreground" />,
+                      (target) =>
+                        moves.requestMoveForum(forum, project.id, target),
+                    ),
+                  )}
+                </ul>
+              )}
+            </SectionCard>
+          </div>
+        )}
       </div>
 
       <EditProjectContainerDialog

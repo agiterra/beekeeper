@@ -1,21 +1,20 @@
 import {
-  Activity,
+  Archive,
   Bot,
   Eye,
-  FolderGit2,
   LoaderCircle,
   RotateCcw,
   Square,
   Terminal,
-  Zap,
 } from "lucide-react";
 
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
 import { ShellSessionRow } from "@/features/builtin-shell/ui/ShellSessionRow";
+import type { UserProfileLookup } from "@/features/profile/lib/identity";
+import { resolveUserLabel } from "@/features/profile/lib/identity";
+import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
 import { ChannelSidebarRow } from "@/features/sidebar/ui/ChannelSidebarRow";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
-import type { Workflow } from "@/shared/api/workflowTypes";
-import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { cn } from "@/shared/lib/cn";
 import {
   ContextMenu,
@@ -29,14 +28,8 @@ import type {
   ExactProjectCodingSessionCoordinates,
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
-import {
-  projectChildLabel,
-  type ProjectChildRow,
-} from "../lib/projectChildren";
-import {
-  projectSessionObservationLabel,
-  projectSessionObservationTitle,
-} from "../lib/projectSessionObservation";
+import type { ProjectChildRow } from "../lib/projectChildren";
+import { projectSessionIndicator } from "../lib/projectSessionIndicator";
 import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 
 /**
@@ -47,14 +40,12 @@ import type { ProjectChannelHandlers } from "./ProjectSidebarGroup";
 export function ProjectChildRowItem({
   row,
   channelHandlers,
-  onOpenAgents,
   onOpenCodingSession,
-  onOpenPulse,
   onRequestCloseCodingSession,
+  onRequestArchiveCodingSession,
   onRequestReopenCodingSession,
   currentPubkey,
-  onOpenRepo,
-  onOpenWorkflow,
+  founderProfiles,
   activeShellSessionId,
   onOpenShell,
   onRequestRenameShell,
@@ -63,20 +54,21 @@ export function ProjectChildRowItem({
 }: {
   row: ProjectChildRow;
   channelHandlers: ProjectChannelHandlers;
-  onOpenAgents: () => void;
-  /** Opens this project's Pulse. Absent while the caller has not wired it —
-   * the row then renders nothing rather than a control that does nothing. */
-  onOpenPulse?: () => void;
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
   onRequestCloseCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  /** Archive = close + file away; one 44230 revision with `archived`. */
+  onRequestArchiveCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
   onRequestReopenCodingSession?: (
     entry: ProjectCodingSessionShelfEntry,
   ) => void;
   currentPubkey?: string;
-  onOpenRepo: (repo: CodeRepo) => void;
-  onOpenWorkflow?: (workflow: Workflow) => void;
+  /** Batched profiles for the founders of the rows being rendered — resolved
+   * once by the group so a row never fires its own profile query. */
+  founderProfiles?: UserProfileLookup;
   activeShellSessionId?: string;
   onOpenShell?: (sessionId: string) => void;
   onRequestRenameShell?: (session: ShellSessionInfo) => void;
@@ -96,12 +88,23 @@ export function ProjectChildRowItem({
       const hasClosureCoordinates = Boolean(
         entry.sessionRef && entry.genesisRef,
       );
+      const isFounder = Boolean(
+        currentPubkey &&
+          entry.founderPubkey?.toLowerCase() === currentPubkey.toLowerCase(),
+      );
       const canClose = Boolean(
         !settled &&
           hasClosureCoordinates &&
-          currentPubkey &&
-          entry.founderPubkey?.toLowerCase() === currentPubkey.toLowerCase() &&
+          isFounder &&
           onRequestCloseCodingSession,
+      );
+      // Archive is a close that also files the session away, so it is
+      // offered wherever the session is not yet archived — open or closed.
+      const canArchive = Boolean(
+        !entry.isArchived &&
+          hasClosureCoordinates &&
+          isFounder &&
+          onRequestArchiveCodingSession,
       );
       const canReopen = Boolean(
         settled &&
@@ -109,9 +112,21 @@ export function ProjectChildRowItem({
           currentPubkey &&
           onRequestReopenCodingSession,
       );
+      const indicator = projectSessionIndicator(entry);
       // A pending row stands for a create the provider has not acknowledged
       // yet — there is no generation to open, so the row is presence-only.
       const pending = entry.pending === true;
+      // The row's icon is the person who started the session. A session with
+      // no resolved genesis has no founder; it keeps the generic glyph and
+      // says so rather than wearing someone else's face.
+      const founderPubkey = entry.founderPubkey?.toLowerCase() ?? null;
+      const founderName = founderPubkey
+        ? resolveUserLabel({
+            currentPubkey,
+            profiles: founderProfiles,
+            pubkey: founderPubkey,
+          })
+        : null;
       const button = (
         <SidebarMenuButton
           aria-label={
@@ -147,13 +162,38 @@ export function ProjectChildRowItem({
           <span
             className={cn(
               "flex shrink-0 items-center justify-center text-sidebar-foreground/65",
-              settled
-                ? "size-4 opacity-55"
-                : "size-6 rounded-full bg-sidebar-accent",
+              settled ? "size-4 opacity-55" : "size-6",
+              !(founderPubkey && !pending) &&
+                !settled &&
+                "rounded-full bg-sidebar-accent",
             )}
+            data-testid={
+              pending
+                ? undefined
+                : founderPubkey
+                  ? "project-coding-session-founder"
+                  : "project-coding-session-founder-unknown"
+            }
+            title={
+              pending
+                ? undefined
+                : founderName
+                  ? `Started by ${founderName}`
+                  : "Initiator unknown"
+            }
           >
             {pending ? (
               <LoaderCircle className="size-3.5 animate-spin" />
+            ) : founderPubkey && founderName ? (
+              <ProfileAvatar
+                avatarUrl={founderProfiles?.[founderPubkey]?.avatarUrl ?? null}
+                className={cn(
+                  "shadow-none",
+                  settled ? "h-4 w-4 text-3xs" : "h-6 w-6 text-2xs",
+                )}
+                iconClassName={settled ? "h-2.5 w-2.5" : "h-3 w-3"}
+                label={founderName}
+              />
             ) : (
               <Bot className="size-3.5" />
             )}
@@ -166,21 +206,20 @@ export function ProjectChildRowItem({
               </span>
             ) : null}
           </span>
+          {/* The state dot: closure facts outrank provider metadata, and the
+              hover names the state plus what the colour does not prove. */}
           <span
-            className="ml-1 flex shrink-0 items-center gap-1 text-2xs text-sidebar-foreground/45"
-            title={
-              pending || settled
-                ? undefined
-                : projectSessionObservationTitle(entry.status)
-            }
-          >
-            {/* A pending row has not produced a provider observation yet. */}
-            {pending
-              ? "Starting…"
-              : settled
-                ? "Closed"
-                : projectSessionObservationLabel(entry.status)}
-          </span>
+            aria-label={indicator.label}
+            className={cn(
+              "ml-1 size-2.5 shrink-0 rounded-full",
+              indicator.colorClass,
+              pending && "animate-pulse",
+            )}
+            data-session-indicator={indicator.state}
+            data-testid="project-coding-session-indicator"
+            role="img"
+            title={indicator.title}
+          />
         </SidebarMenuButton>
       );
       return (
@@ -188,7 +227,7 @@ export function ProjectChildRowItem({
           data-session-closure={settled ? "closed" : "open"}
           data-session-status={entry.status.kind}
         >
-          {canClose || canReopen ? (
+          {canClose || canArchive || canReopen ? (
             <ContextMenu>
               <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
               <ContextMenuContent>
@@ -199,6 +238,15 @@ export function ProjectChildRowItem({
                   >
                     <Square />
                     Close session
+                  </ContextMenuItem>
+                ) : null}
+                {canArchive ? (
+                  <ContextMenuItem
+                    data-testid="project-coding-session-archive"
+                    onSelect={() => onRequestArchiveCodingSession?.(entry)}
+                  >
+                    <Archive />
+                    Archive session
                   </ContextMenuItem>
                 ) : null}
                 {canReopen ? (
@@ -215,26 +263,6 @@ export function ProjectChildRowItem({
           ) : (
             button
           )}
-        </SidebarMenuItem>
-      );
-    }
-    case "pulse": {
-      // Presence is not conditional on content: the row stays whether or not
-      // Pulse data exists, and the screen renders the confirmed-empty state.
-      // A row that vanished when a project went quiet would make "no Pulse"
-      // and "no project" look identical in the sidebar.
-      if (!onOpenPulse) return null;
-      return (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            data-testid="project-pulse-row"
-            onClick={onOpenPulse}
-            title="Explicit updates and observed session state"
-            type="button"
-          >
-            <Activity className="size-4 shrink-0" />
-            <span className="truncate">{projectChildLabel(row)}</span>
-          </SidebarMenuButton>
         </SidebarMenuItem>
       );
     }
@@ -267,45 +295,6 @@ export function ProjectChildRowItem({
         />
       );
     }
-    case "repo":
-      return (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            onClick={() => onOpenRepo(row.repo)}
-            data-testid="project-code-row"
-          >
-            <FolderGit2 className="size-4 shrink-0" />
-            <span className="truncate">{row.repo.name}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      );
-    case "workflow": {
-      if (!onOpenWorkflow) return null;
-      const { workflow } = row;
-      return (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            onClick={() => onOpenWorkflow(workflow)}
-            data-testid="project-workflow-row"
-          >
-            <Zap className="size-4 shrink-0" />
-            <span className="truncate">{workflow.name}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      );
-    }
-    case "agent":
-      return (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            onClick={onOpenAgents}
-            data-testid="project-agent-row"
-          >
-            <Bot className="size-4 shrink-0" />
-            <span className="truncate">{row.agent.label}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      );
     case "shell": {
       if (!onOpenShell || !onRequestRenameShell || !onRequestCloseShell) {
         return null;

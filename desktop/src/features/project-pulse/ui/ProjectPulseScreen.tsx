@@ -123,7 +123,18 @@ export function useProjectPulseProject(projectId: string): {
  * renders as a partial read, never as a quiet project, and a project whose
  * head this community cannot read renders as unavailable rather than empty.
  */
-export function ProjectPulseScreen({ projectId }: { projectId: string }) {
+export function ProjectPulseScreen({
+  projectId,
+  embedded = false,
+}: {
+  projectId: string;
+  /**
+   * True when the project page hosts the screen as a tab: the page already
+   * names the project and owns navigation, so the back affordance and the
+   * project-name header are omitted rather than drawn twice.
+   */
+  embedded?: boolean;
+}) {
   const { project, isLoading: projectLoading } =
     useProjectPulseProject(projectId);
   const { channelIds, unresolved } = useProjectPulseChannelIds(project);
@@ -182,8 +193,10 @@ export function ProjectPulseScreen({ projectId }: { projectId: string }) {
       // Named, not implied by a 300px-away sidebar selection: two projects'
       // Pulse screens are otherwise pixel-identical chrome, and "No Pulse yet"
       // read against the wrong project is a coordination lie.
-      onBack={() => void goProject(project?.id ?? projectId)}
-      projectName={project?.name ?? null}
+      onBack={
+        embedded ? undefined : () => void goProject(project?.id ?? projectId)
+      }
+      projectName={embedded ? null : (project?.name ?? null)}
       state={state}
     />
   );

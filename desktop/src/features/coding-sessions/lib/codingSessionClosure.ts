@@ -17,7 +17,27 @@ export const CODING_SESSION_CLOSURE_TAG_VERSION = "cscl1-1" as const;
 export const CODING_SESSION_CLOSURE_SCHEMA_VERSION = 1 as const;
 export const MAX_CODING_SESSION_CLOSURE_CONTENT_BYTES = 512;
 
-export type CodingSessionClosureAction = "closed" | "open";
+/**
+ * `closed` settles the umbrella; `archived` settles it *and* files it away
+ * (surfaces hide it unless asked). Both are owner acts; `open` undoes either.
+ */
+export type CodingSessionClosureAction = "closed" | "open" | "archived";
+
+export const CODING_SESSION_CLOSURE_ACTIONS: readonly CodingSessionClosureAction[] =
+  ["closed", "open", "archived"];
+
+export function isCodingSessionClosureAction(
+  value: unknown,
+): value is CodingSessionClosureAction {
+  return value === "closed" || value === "open" || value === "archived";
+}
+
+/** Whether a closure revision settles the umbrella (closed or archived). */
+export function codingSessionClosureIsClosed(
+  action: CodingSessionClosureAction | null | undefined,
+): boolean {
+  return action === "closed" || action === "archived";
+}
 
 export type CodingSessionClosure = {
   action: CodingSessionClosureAction;
@@ -77,8 +97,8 @@ export function buildCodingSessionClosureEvent(input: {
   if (!/^[0-9a-f]{64}$/.test(input.genesisRef)) {
     throw new Error("genesisRef must be a canonical lowercase event id");
   }
-  if (input.action !== "closed" && input.action !== "open") {
-    throw new Error("action must be open or closed");
+  if (!isCodingSessionClosureAction(input.action)) {
+    throw new Error("action must be open, closed or archived");
   }
   const content = JSON.stringify({
     action: input.action,
@@ -127,7 +147,7 @@ export function parseCodingSessionClosure(
   if (
     !isPlainRecord(payload) ||
     !hasExactKeys(payload, ["action", "genesisRef", "sessionRef", "v"]) ||
-    (payload.action !== "closed" && payload.action !== "open") ||
+    !isCodingSessionClosureAction(payload.action) ||
     payload.genesisRef !== tags[3] ||
     payload.sessionRef !== tags[1] ||
     payload.v !== CODING_SESSION_CLOSURE_SCHEMA_VERSION
@@ -169,7 +189,11 @@ export function foldAuthorizedCodingSessionClosures(
     // neither action is safe to project: even an otherwise valid `open` could
     // be bound to an unrelated or not-yet-observed session origin.
     if (!founderPubkey) continue;
-    if (closure.action === "closed" && closure.signerPubkey !== founderPubkey) {
+    // Closing and archiving are both owner acts.
+    if (
+      codingSessionClosureIsClosed(closure.action) &&
+      closure.signerPubkey !== founderPubkey
+    ) {
       continue;
     }
     const authorized = { ...closure, founderPubkey };

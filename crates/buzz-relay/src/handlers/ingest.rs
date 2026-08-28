@@ -2722,9 +2722,18 @@ fn coding_session_closure_authority_verdict(
     use buzz_core::coding_session_closure::CodingSessionClosureAction;
 
     match action {
-        CodingSessionClosureAction::Closed if signer == founder => Ok(()),
+        // Archiving is a close that also files the session away: the same
+        // owner act, so the same authority.
+        CodingSessionClosureAction::Closed | CodingSessionClosureAction::Archived
+            if signer == founder =>
+        {
+            Ok(())
+        }
         CodingSessionClosureAction::Closed => {
             Err("restricted: only the session founder may close this session".into())
+        }
+        CodingSessionClosureAction::Archived => {
+            Err("restricted: only the session founder may archive this session".into())
         }
         CodingSessionClosureAction::Open => match transport_gate {
             // Write tier: reopening changes shared session state, so project
@@ -8277,6 +8286,23 @@ mod tests {
             Some(&gate),
         )
         .is_err());
+        // Archiving is a close with a filing cabinet: founder-only too.
+        assert!(coding_session_closure_authority_verdict(
+            CodingSessionClosureAction::Archived,
+            &founder,
+            &founder,
+            Some(&gate),
+        )
+        .is_ok());
+        for refused in [&project_owner, &project_member, &outsider] {
+            assert!(coding_session_closure_authority_verdict(
+                CodingSessionClosureAction::Archived,
+                refused,
+                &founder,
+                Some(&gate),
+            )
+            .is_err());
+        }
 
         for project_actor in [&project_owner, &project_member] {
             assert!(coding_session_closure_authority_verdict(

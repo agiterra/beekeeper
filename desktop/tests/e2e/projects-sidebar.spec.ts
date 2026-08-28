@@ -4,10 +4,11 @@ import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
 
 const SHOTS = "test-results/projects-sidebar";
 
-// Project children stay directly reachable while their labels make the
-// difference between a durable session, a conversation channel, and project
-// tooling explicit.
-test("project groups separate channels from tools", async ({ page }) => {
+// A project group is two flat lists — channels, then sessions — with no
+// sub-headers. Repositories and tooling are the project page's business.
+test("project groups list channels and sessions, not repos", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "buzz-feature-overrides-v1",
@@ -19,41 +20,45 @@ test("project groups separate channels from tools", async ({ page }) => {
 
   const group = page.getByTestId("project-group-general");
   await expect(group).toBeVisible({ timeout: 10_000 });
-  // The seeded mock repo is unclaimed, so it lands in General's project group.
   const children = group.getByTestId("project-children-general");
   await expect(children).toBeVisible();
-  const repoRow = group.getByTestId("project-code-row").first();
-  await expect(repoRow).toBeVisible();
 
-  await expect(
-    group.getByRole("region", { name: "Open Sessions" }),
-  ).toHaveCount(0);
-  await expect(group.getByRole("region", { name: "Channels" })).toBeVisible();
-  await expect(
-    group.getByRole("region", { name: "Repos & Tools" }),
-  ).toBeVisible();
-
-  // Group order keeps channels ahead of repositories without presenting them
-  // as the same kind of child.
+  // The seeded mock repo is unclaimed and lands in General — on the project
+  // page, not in the sidebar. No sub-headers either: the old collapsible
+  // sections are gone, so there is nothing to toggle.
+  await expect(group.getByTestId("project-code-row")).toHaveCount(0);
+  await expect(group.getByTestId("project-pulse-row")).toHaveCount(0);
+  await expect(group.getByRole("region")).toHaveCount(0);
+  await expect(group.getByRole("button", { name: "Channels" })).toHaveCount(0);
+  await expect(children.getByTestId("project-channels-general")).toBeVisible();
   const channelRow = children.getByTestId("channel-general");
   await expect(channelRow).toBeVisible();
-  const channelBox = await channelRow.boundingBox();
-  const repoBox = await repoRow.boundingBox();
-  expect(channelBox && repoBox && channelBox.y < repoBox.y).toBe(true);
-
-  // Shelves collapse independently: hiding channels must not hide project
-  // tools, and the persisted choice survives the project's own collapse.
-  await group.getByRole("button", { name: "Channels" }).click();
-  await expect(children.getByTestId("channel-general")).toHaveCount(0);
-  await expect(repoRow).toBeVisible();
+  // No sessions in the fixture: no session list, and no filter to apply.
+  await expect(children.getByTestId("project-sessions-general")).toHaveCount(0);
+  await expect(group.getByTestId("project-session-filter-general")).toHaveCount(
+    0,
+  );
 
   // Collapsing the project hides the whole child list.
   await group.getByTestId("project-group-toggle-general").click();
   await expect(group.getByTestId("project-children-general")).toHaveCount(0);
-  await expect(group.getByTestId("project-code-row")).toHaveCount(0);
   await group.getByTestId("project-group-toggle-general").click();
   await expect(group.getByTestId("project-children-general")).toBeVisible();
-  await expect(children.getByTestId("channel-general")).toHaveCount(0);
+  await expect(children.getByTestId("channel-general")).toBeVisible();
+
+  // The unclaimed repository (`design-system` in the fixture; `buzz` is its
+  // own project) is still one click away on the project page's Code card.
+  await group.getByTestId("project-open-general").click();
+  await expect(page).toHaveURL(/\/projects\/[^/?]+\/?$/);
+  await expect(
+    page
+      .getByTestId("project-screen-item-row")
+      .filter({ hasText: "design-system" }),
+  ).toBeVisible({ timeout: 10_000 });
+  await page.goBack();
+  await expect(children.getByTestId("channel-general")).toBeVisible({
+    timeout: 10_000,
+  });
 
   await waitForAnimations(page);
   await page.screenshot({
@@ -233,14 +238,14 @@ test("workflows move under projects when the experiment is on", async ({
   await dialog.getByRole("button", { name: "Create" }).click();
   await expect(dialog).not.toBeVisible();
 
-  // The sidebar picks the new workflow up under General; its row navigates
-  // to the workflow detail route. (No page reload — the mock relay state is
-  // per-page-load.)
+  // The project page's Workflows section picks the new workflow up under
+  // General; its row navigates to the workflow detail route. The sidebar
+  // never lists workflows — it is channels and sessions only. (No page
+  // reload — the mock relay state is per-page-load.)
   const group = page.getByTestId("project-group-general");
   await expect(group).toBeVisible({ timeout: 10_000 });
-  const workflowRow = group
-    .getByTestId("project-workflow-row")
-    .filter({ hasText: "Nightly deploy" });
+  await expect(group.getByTestId("project-workflow-row")).toHaveCount(0);
+  const workflowRow = page.getByRole("button", { name: "Nightly deploy" });
   await expect(workflowRow).toBeVisible({ timeout: 10_000 });
   await workflowRow.click();
   await expect(page).toHaveURL(/\/workflows\/[^/]+$/);

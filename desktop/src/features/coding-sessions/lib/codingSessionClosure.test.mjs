@@ -9,6 +9,7 @@ import {
 import {
   buildCodingSessionClosureEvent,
   buildCodingSessionClosureFilter,
+  codingSessionClosureIsClosed,
   codingSessionClosureKey,
   foldAuthorizedCodingSessionClosures,
   parseCodingSessionClosure,
@@ -150,6 +151,60 @@ test("authorized fold permits member reopen but only the founder may close", () 
   assert.equal(folded.get(key)?.action, "open");
   assert.equal(folded.get(key)?.signerPubkey, MEMBER_PUBKEY);
   assert.equal(folded.get(key)?.founderPubkey, FOUNDER_PUBKEY);
+});
+
+test("archiving is an owner act that settles the session; members may reopen it", () => {
+  const founders = new Map([[GENESIS_REF, FOUNDER_PUBKEY]]);
+  const key = codingSessionClosureKey(CHANNEL_ID, SESSION_REF, GENESIS_REF);
+
+  // A member's archive is dropped exactly like a member's close.
+  const memberArchived = closure("archived", 20, MEMBER_KEY);
+  assert.equal(
+    foldAuthorizedCodingSessionClosures([memberArchived], founders).size,
+    0,
+  );
+
+  const founderArchived = closure("archived", 21);
+  const folded = foldAuthorizedCodingSessionClosures(
+    [founderArchived],
+    founders,
+  );
+  assert.equal(folded.get(key)?.action, "archived");
+  assert.equal(codingSessionClosureIsClosed(folded.get(key)?.action), true);
+  assert.equal(codingSessionClosureIsClosed("closed"), true);
+  assert.equal(codingSessionClosureIsClosed("open"), false);
+  assert.equal(codingSessionClosureIsClosed(null), false);
+
+  // Reopening an archived session is the ordinary member act.
+  const memberReopened = closure("open", 22, MEMBER_KEY);
+  assert.equal(
+    foldAuthorizedCodingSessionClosures(
+      [founderArchived, memberReopened],
+      founders,
+    ).get(key)?.action,
+    "open",
+  );
+
+  // The builder accepts the third action and nothing else.
+  assert.equal(
+    JSON.parse(
+      buildCodingSessionClosureEvent({
+        action: "archived",
+        channelId: CHANNEL_ID,
+        genesisRef: GENESIS_REF,
+        sessionRef: SESSION_REF,
+      }).content,
+    ).action,
+    "archived",
+  );
+  assert.throws(() =>
+    buildCodingSessionClosureEvent({
+      action: "shelved",
+      channelId: CHANNEL_ID,
+      genesisRef: GENESIS_REF,
+      sessionRef: SESSION_REF,
+    }),
+  );
 });
 
 test("authorized fold fails closed until the explicit genesis resolves", () => {

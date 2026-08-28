@@ -647,12 +647,15 @@ async function openProjectScreen(page: Page, dtag: string) {
   await expect(page).toHaveURL(/\/projects\/[^/?]+\/?$/);
 }
 
+/** Pulse is a tab of the project page: open the project, then the tab. */
 async function openPulseFromSidebar(page: Page, dtag: string) {
-  const group = page.getByTestId(`project-group-${dtag}`);
-  await expect(group).toBeVisible({ timeout: 10_000 });
-  await group.getByTestId("project-pulse-row").click();
-  await expect(page).toHaveURL(/\/projects\/[^/?]+\/pulse$/);
+  await openProjectScreen(page, dtag);
+  await page.getByTestId("project-tab-pulse").click();
+  await expect(page).toHaveURL(PULSE_TAB_URL);
 }
+
+/** `/projects/<id>?tab=pulse` — the only URL Pulse answers from now. */
+const PULSE_TAB_URL = /\/projects\/[^/?]+\/?\?tab=pulse$/;
 
 function remember(name: string, buffer: Buffer) {
   const digest = createHash("sha256").update(buffer).digest("hex");
@@ -704,19 +707,22 @@ test("the project home card opens a Pulse that keeps every claim honest", async 
   await capture(page, "01-project-home-card");
 
   await page.getByTestId("project-screen-open-pulse").click();
-  await expect(page).toHaveURL(/\/projects\/[^/?]+\/pulse$/);
+  await expect(page).toHaveURL(PULSE_TAB_URL);
   const screen = page.getByTestId("project-pulse-screen");
   await expect(screen).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("pulse-header-subtitle")).toHaveText(
     "Explicit updates and observed session state.",
   );
-  // The screen names the project it describes, dates its own read, and offers
-  // a way back to the project home.
-  await expect(page.getByTestId("pulse-header-title")).toHaveText(
-    "Pulse · Pulse Demo",
-  );
+  // Embedded as a tab, the page header already names the project and the tab
+  // strip is the way back, so the screen draws neither a second title nor a
+  // back button.
+  await expect(page.getByTestId("pulse-header-title")).toHaveText("Pulse");
   await expect(page.getByTestId("pulse-read-age")).toContainText("read");
-  await expect(page.getByTestId("pulse-back")).toBeVisible();
+  await expect(page.getByTestId("pulse-back")).toHaveCount(0);
+  await expect(page.getByTestId("project-tab-pulse")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 
   // The peer's claim is shown as a claim, in plain language, on both rows —
   // and the blocker it names is still in the active set.
@@ -766,21 +772,36 @@ test("the project home card opens a Pulse that keeps every claim honest", async 
   ).toBeVisible();
 });
 
-test("the sidebar row reaches the same Pulse the home card does", async ({
+test("the project page tab reaches the same Pulse the home card does", async ({
   page,
 }) => {
   await boot(page, seededEntries());
   await createProject(page, "Pulse Demo");
-  // The row is present whether or not the project has Pulse content, so it is
-  // asserted against the group rather than against seeded entries.
+  // Pulse left the sidebar: the group lists channels and sessions only.
   const group = page.getByTestId(`project-group-${PROJECT_DTAG}`);
   await expect(group).toBeVisible({ timeout: 10_000 });
-  const row = group.getByTestId("project-pulse-row");
-  await expect(row).toBeVisible({ timeout: 10_000 });
-  // "Project Pulse", not "Pulse": the pinned social feed already owns that word.
-  await expect(row).toHaveText("Project Pulse");
-  await row.click();
-  await expect(page).toHaveURL(/\/projects\/[^/?]+\/pulse$/);
+  await expect(group.getByTestId("project-pulse-row")).toHaveCount(0);
+  await openProjectScreen(page, PROJECT_DTAG);
+  // The tab is present whether or not the project has Pulse content.
+  const tab = page.getByTestId("project-tab-pulse");
+  await expect(tab).toBeVisible({ timeout: 10_000 });
+  await expect(tab).toHaveText("Pulse");
+  await expect(page.getByTestId("project-tab-overview")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await tab.click();
+  await expect(page).toHaveURL(PULSE_TAB_URL);
+  await expect(page.getByTestId("project-pulse-screen")).toBeVisible({
+    timeout: 10_000,
+  });
+  // The old route is a redirect onto the tab, so copied links still land.
+  await page.getByTestId("project-tab-overview").click();
+  await expect(page).toHaveURL(/\/projects\/[^/?]+\/?$/);
+  // Hash routing: `/#/projects/<id>/pulse` is a real client-side navigation.
+  const hash = new URL(page.url()).hash.replace(/\/$/, "");
+  await page.goto(`/${hash}/pulse`, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(PULSE_TAB_URL);
   await expect(page.getByTestId("project-pulse-screen")).toBeVisible({
     timeout: 10_000,
   });
@@ -1327,17 +1348,23 @@ test("entries lead while restarted generations remain disclosed", async ({
     .getByTestId("pulse-session-card")
     .filter({ hasText: "dedupe_test" });
   await expect(restarted).toHaveCount(1);
-  await expect(restarted).toHaveAttribute("data-execution-count", "3");
+  // Three resumed generations of one provider execution: the coordination
+  // fold counts executions by target identity (driver, instance, session),
+  // and a `session.resume` extends that same execution rather than opening a
+  // new one — so one execution, three generations, two of them older.
+  await expect(restarted).toHaveAttribute("data-execution-count", "1");
   const toggle = restarted.getByTestId("pulse-session-executions-toggle");
-  await expect(toggle).toHaveText("3 executions");
+  await expect(toggle).toHaveText("1 execution · 3 generations");
   await captureLocator(page, screen, "17-entries-lead");
   await captureLocator(page, restarted, "18-executions-collapsed");
 
   await toggle.click();
   await expect(restarted.getByTestId("pulse-session-execution")).toHaveCount(2);
+  // The older generations were seeded `stopped`; the row says so rather than
+  // flattening every non-live state to "Ended".
   await expect(
     restarted.getByTestId("pulse-session-execution").first(),
-  ).toContainText("Ended · last observed 2h ago");
+  ).toContainText("Stopped · last observed 2h ago");
   await captureLocator(page, restarted, "19-executions-disclosed");
 
   const notChecked = page

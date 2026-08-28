@@ -19,14 +19,12 @@ import {
 } from "@/shared/ui/dropdown-menu";
 
 import { cn } from "@/shared/lib/cn";
-import { getStorageItem, setStorageItem } from "@/shared/lib/safeStorage";
 import { deferMenuAction } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import type { ActiveChannelTurnSummary } from "@/features/agents/activeAgentTurnsStore";
 import type { RemoteTerminal } from "@/features/builtin-shell/observe/useProjectTerminals";
+import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { ShellSessionInfo } from "@/shared/api/tauriShell";
 import type { Channel } from "@/shared/api/types";
-import type { Workflow } from "@/shared/api/workflowTypes";
-import type { Repository as CodeRepo } from "@/features/projects/hooks";
 import { useFeatureEnabled } from "@/shared/features";
 import {
   SidebarGroup,
@@ -41,20 +39,16 @@ import type {
   ExactProjectCodingSessionCoordinates,
   ProjectCodingSessionShelfEntry,
 } from "../lib/projectCodingSessionShelf";
+import { buildProjectChildren, projectChildKey } from "../lib/projectChildren";
 import {
-  buildProjectChildren,
-  projectChildKey,
-  type ProjectAgentRow,
-} from "../lib/projectChildren";
+  PROJECT_SESSION_PAGE_SIZE,
+  filterProjectSessions,
+  projectSessionFounders,
+  type ProjectSessionFilter,
+} from "../lib/projectSessionFilter";
 import { withoutProjectSessionTransportChannels } from "../lib/projectSessionsChannel";
 import { ProjectChildRowItem } from "./ProjectChildRowItem";
-
-/**
- * How many session rows a project shows inline. Sessions accumulate faster
- * than any other child, and a project with a year of history must not push its
- * channels off the bottom of the sidebar — the rest stay on the project screen.
- */
-export const PROJECT_SIDEBAR_SESSION_LIMIT = 5;
+import { ProjectSessionFilterMenu } from "./ProjectSessionFilterMenu";
 
 /** Channel-row handlers shared by every project group, lifted once from
  * AppSidebar so each group can render real channel rows. */
@@ -81,33 +75,29 @@ export type ProjectChannelHandlers = {
 };
 
 /**
- * One collapsible project group in the sidebar. Sessions and channels are
- * distinct navigation concepts, so each gets a labelled section; repositories
- * and operational children share a quieter final section.
+ * One collapsible project group in the sidebar: the project's channels, then
+ * its sessions (coding sessions and terminals) with a filter beneath them.
+ * Repositories, workflows, agents and Pulse are the project page's business.
  */
 export function ProjectSidebarGroup({
   project,
   isFallback,
-  agents,
   codingSessions,
   streamChannels,
   forumChannels,
-  repos,
   channelHandlers,
   collapsed,
   onToggleCollapsed,
-  onOpenAgents,
-  onOpenPulse,
   onOpenCodingSession,
   onRequestCloseCodingSession,
+  onRequestArchiveCodingSession,
   onRequestReopenCodingSession,
   currentPubkey,
+  sessionFilter,
+  onSessionFilterChange,
   onOpenProject,
-  onOpenRepo,
   onNewCodingSession,
   onRequestCreate,
-  workflows,
-  onOpenWorkflow,
   shellSessions,
   activeShellSessionId,
   onOpenShell,
@@ -121,38 +111,33 @@ export function ProjectSidebarGroup({
   /** True for the locally-synthesized General bucket that exists before the
    * workspace owner has published a real `general` project event. */
   isFallback?: boolean;
-  agents: ProjectAgentRow[];
   /** Trusted sessions this project owns, already in shelf (activity) order. */
   codingSessions?: ProjectCodingSessionShelfEntry[];
   streamChannels: Channel[];
   forumChannels: Channel[];
-  repos: CodeRepo[];
   channelHandlers: ProjectChannelHandlers;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onOpenAgents: () => void;
-  /** Opens this project's Pulse screen. Absent leaves the row unrendered
-   * rather than shipping a control that does nothing. */
-  onOpenPulse?: () => void;
   onOpenCodingSession?: (
     coordinates: ExactProjectCodingSessionCoordinates,
   ) => void;
   onRequestCloseCodingSession?: (entry: ProjectCodingSessionShelfEntry) => void;
+  onRequestArchiveCodingSession?: (
+    entry: ProjectCodingSessionShelfEntry,
+  ) => void;
   onRequestReopenCodingSession?: (
     entry: ProjectCodingSessionShelfEntry,
   ) => void;
   currentPubkey?: string;
+  /** Which sessions to list; owned by the sections parent so it persists. */
+  sessionFilter: ProjectSessionFilter;
+  onSessionFilterChange: (filter: ProjectSessionFilter) => void;
   onOpenProject: () => void;
-  onOpenRepo: (repo: CodeRepo) => void;
   /** Starts the project-scoped create flow from the group's `+` menu. */
   onNewCodingSession?: () => void;
   /** Opens a project-scoped create dialog (hosted by the sections parent so
    * a single dialog instance serves every group). */
   onRequestCreate?: (kind: "channel" | "forum") => void;
-  /** Workflows whose trigger channel belongs to this project (derived — a
-   * kind:30620 def is always channel-scoped via its `h` tag). */
-  workflows?: Workflow[];
-  onOpenWorkflow?: (workflow: Workflow) => void;
   shellSessions: ShellSessionInfo[];
   activeShellSessionId?: string;
   onOpenShell: (sessionId: string) => void;
@@ -167,11 +152,6 @@ export function ProjectSidebarGroup({
 }) {
   const { unreadChannelIds, onMarkChannelRead } = channelHandlers;
   const forumEnabled = useFeatureEnabled("forum");
-  // Same two gates the project home card uses: the preview flag, and a real
-  // project head — the local General placeholder has no coordinate, so its
-  // Pulse row could only open a screen that never loads.
-  const pulseEnabled =
-    useFeatureEnabled("project-pulse") && !isFallback && Boolean(onOpenPulse);
   const visibleStreamChannels = React.useMemo(
     () =>
       withoutProjectSessionTransportChannels({
@@ -196,82 +176,87 @@ export function ProjectSidebarGroup({
     }
   }, [visibleStreamChannels, forumChannels, onMarkChannelRead]);
 
-  const children = React.useMemo(() => {
-    // Partition BEFORE capping: the cap exists to keep the sidebar short,
-    // not to let recently-closed (or phantom) rows starve live work out of
-    // the sessions shelf. Each section is capped independently; "View all"
-    // below keys off the uncapped total.
-    const allSessions = codingSessions ?? [];
-    const activeSessions = allSessions
-      .filter((entry) => entry.status.kind !== "ended")
-      .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
-    const recentSessions = allSessions
-      .filter((entry) => entry.status.kind === "ended")
-      .slice(0, PROJECT_SIDEBAR_SESSION_LIMIT);
-    return buildProjectChildren({
-      codingSessions: [...activeSessions, ...recentSessions],
-      includePulse: pulseEnabled,
-      streamChannels: visibleStreamChannels,
+  // Filter before ordering: the list shows every session that passes, open
+  // work first in shelf (activity) order, then the closed ones dimmed.
+  const allSessions = codingSessions ?? [];
+  const filtered = React.useMemo(
+    () => filterProjectSessions(allSessions, sessionFilter, currentPubkey),
+    [allSessions, sessionFilter, currentPubkey],
+  );
+  const sessionFounders = React.useMemo(
+    () => projectSessionFounders(allSessions),
+    [allSessions],
+  );
+
+  const children = React.useMemo(
+    () =>
+      buildProjectChildren({
+        codingSessions: filtered.shown,
+        streamChannels: visibleStreamChannels,
+        forumChannels,
+        shellSessions,
+        remoteTerminals,
+      }),
+    [
+      filtered.shown,
+      visibleStreamChannels,
       forumChannels,
-      repos,
-      workflows: workflows ?? [],
-      agents,
       shellSessions,
       remoteTerminals,
-    });
-  }, [
-    codingSessions,
-    pulseEnabled,
-    visibleStreamChannels,
-    forumChannels,
-    repos,
-    workflows,
-    agents,
-    shellSessions,
-    remoteTerminals,
-  ]);
+    ],
+  );
 
   const sessionRows = children.filter((row) => row.type === "coding-session");
   // "Settled" is the shared closure fact (kind 44230), never inferred from a
   // provider's execution status. Stopped executions remain open work until
-  // someone with session authority closes the umbrella.
-  const activeSessionRows = sessionRows.filter((row) => !row.entry.isClosed);
-  const recentSessionRows = sessionRows.filter((row) => row.entry.isClosed);
+  // someone with session authority closes the umbrella. Order: open, then
+  // closed, then archived — the shelf comparator already sorts them so.
+  const openSessionRows = sessionRows.filter((row) => !row.entry.isClosed);
+  const settledSessionRows = sessionRows.filter((row) => row.entry.isClosed);
+
+  // Paging: ten session rows at a time, "Show more" adding ten. The page
+  // resets whenever the filter changes so a narrower list starts at the top.
+  const [pageCount, setPageCount] = React.useState(1);
+  const filterKey = JSON.stringify(sessionFilter);
+  const [pagedFilterKey, setPagedFilterKey] = React.useState(filterKey);
+  if (pagedFilterKey !== filterKey) {
+    setPagedFilterKey(filterKey);
+    setPageCount(1);
+  }
+  const visibleSessionLimit = pageCount * PROJECT_SESSION_PAGE_SIZE;
+  const visibleOpenRows = openSessionRows.slice(0, visibleSessionLimit);
+  const visibleSettledRows = settledSessionRows.slice(
+    0,
+    Math.max(0, visibleSessionLimit - visibleOpenRows.length),
+  );
+  const remainingSessions =
+    sessionRows.length - visibleOpenRows.length - visibleSettledRows.length;
   const channelRows = children.filter(
     (row) => row.type === "channel" || row.type === "forum",
   );
-  // Terminals live with sessions: both are interactive work surfaces, unlike
-  // the repos/workflows/agents that stay under "Repos & Tools".
+  // Terminals live with sessions: both are interactive work surfaces.
   const terminalRows = children.filter(
     (row) => row.type === "shell" || row.type === "remote-shell",
   );
-  // Pulse is the live coordination view of the sessions above it, not a tool.
-  // Filed under "Repos & Tools" — a collapsible section next to repos and
-  // workflows — it sits where nobody looks for "what is happening right now",
-  // so it renders ungrouped directly under the project header instead.
-  const pulseRows = children.filter((row) => row.type === "pulse");
-  const toolRows = children.filter(
-    (row) =>
-      row.type !== "coding-session" &&
-      row.type !== "pulse" &&
-      row.type !== "channel" &&
-      row.type !== "forum" &&
-      row.type !== "shell" &&
-      row.type !== "remote-shell",
+
+  // One batched profile read for every founder on screen; rows never query.
+  const founderPubkeys = React.useMemo(
+    () => projectSessionFounders(filtered.shown),
+    [filtered.shown],
   );
+  const founderProfiles = useUsersBatchQuery(founderPubkeys).data?.profiles;
+
   const renderRow = (row: (typeof children)[number]) => (
     <ProjectChildRowItem
       key={projectChildKey(row)}
       row={row}
       channelHandlers={channelHandlers}
-      onOpenAgents={onOpenAgents}
-      onOpenPulse={onOpenPulse}
       onOpenCodingSession={onOpenCodingSession}
       onRequestCloseCodingSession={onRequestCloseCodingSession}
+      onRequestArchiveCodingSession={onRequestArchiveCodingSession}
       onRequestReopenCodingSession={onRequestReopenCodingSession}
       currentPubkey={currentPubkey}
-      onOpenRepo={onOpenRepo}
-      onOpenWorkflow={onOpenWorkflow}
+      founderProfiles={founderProfiles}
       activeShellSessionId={activeShellSessionId}
       onOpenShell={onOpenShell}
       onRequestRenameShell={onRequestRenameShell}
@@ -279,6 +264,11 @@ export function ProjectSidebarGroup({
       onObserveShell={onObserveShell}
     />
   );
+
+  // The filter renders whenever the project has any session at all — even
+  // when the current filter hides every one of them, otherwise a "My
+  // sessions" choice that matches nothing would be impossible to undo.
+  const hasAnySession = allSessions.length > 0 || terminalRows.length > 0;
 
   return (
     <SidebarGroup
@@ -405,125 +395,61 @@ export function ProjectSidebarGroup({
       {collapsed ? null : (
         <SidebarGroupContent className="pl-2">
           <div
-            className="px-2"
+            className="flex flex-col gap-1 px-2 pb-1"
             data-testid={`project-children-${project.dtag}`}
           >
-            {/* Pulse is the one row group rendered outside a section, so it
-                needs its own list wrapper. Without it the SidebarMenuItem is
-                an <li> with no <ul> ancestor, and Tailwind's preflight resets
-                list-style on ol/ul/menu only — never on li — so the orphan
-                keeps the UA `display: list-item` and paints a marker. Its
-                child is a full-width flex block, so the marker lands on its
-                own line above the row: the stray bullet. */}
-            {pulseRows.length > 0 ? (
-              <SidebarMenu>{pulseRows.map(renderRow)}</SidebarMenu>
-            ) : null}
-            {sessionRows.length > 0 || terminalRows.length > 0 ? (
-              <ProjectChildSection
-                label="Open Sessions"
-                storageKey={`buzz-project-sidebar:${project.id}:sessions`}
-              >
-                {activeSessionRows.map(renderRow)}
-                {terminalRows.map(renderRow)}
-                {recentSessionRows.length > 0 ? (
-                  <ProjectChildSection
-                    compact
-                    defaultExpanded={false}
-                    label="Recent Sessions"
-                    storageKey={`buzz-project-sidebar:${project.id}:recent-sessions`}
-                  >
-                    {recentSessionRows.map(renderRow)}
-                  </ProjectChildSection>
-                ) : null}
-                {(codingSessions?.length ?? 0) > sessionRows.length ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      className="text-2xs text-sidebar-foreground/55"
-                      onClick={onOpenProject}
-                      type="button"
-                    >
-                      <span className="pl-6">
-                        View all {codingSessions?.length ?? 0} sessions
-                      </span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ) : null}
-              </ProjectChildSection>
-            ) : null}
             {channelRows.length > 0 ? (
-              <ProjectChildSection
-                label="Channels"
-                storageKey={`buzz-project-sidebar:${project.id}:channels`}
+              <SidebarMenu
+                aria-label={`${project.name} channels`}
+                data-testid={`project-channels-${project.dtag}`}
               >
                 {channelRows.map(renderRow)}
-              </ProjectChildSection>
+              </SidebarMenu>
             ) : null}
-            {toolRows.length > 0 ? (
-              <ProjectChildSection
-                label="Repos & Tools"
-                storageKey={`buzz-project-sidebar:${project.id}:tools`}
-              >
-                {toolRows.map(renderRow)}
-              </ProjectChildSection>
+            {hasAnySession ? (
+              <>
+                <SidebarMenu
+                  aria-label={`${project.name} sessions`}
+                  data-testid={`project-sessions-${project.dtag}`}
+                >
+                  {visibleOpenRows.map(renderRow)}
+                  {terminalRows.map(renderRow)}
+                  {visibleSettledRows.map(renderRow)}
+                  {remainingSessions > 0 ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        className="h-7 text-2xs text-sidebar-foreground/55"
+                        data-testid={`project-sessions-show-more-${project.dtag}`}
+                        onClick={() => setPageCount((count) => count + 1)}
+                        type="button"
+                      >
+                        <span className="pl-6">
+                          Show more (
+                          {Math.min(
+                            remainingSessions,
+                            PROJECT_SESSION_PAGE_SIZE,
+                          )}{" "}
+                          of {remainingSessions})
+                        </span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                </SidebarMenu>
+                <ProjectSessionFilterMenu
+                  currentPubkey={currentPubkey}
+                  filter={sessionFilter}
+                  hiddenByState={filtered.hiddenByState}
+                  hiddenUnattributed={filtered.hiddenUnattributed}
+                  isFallback={isFallback}
+                  onChange={onSessionFilterChange}
+                  project={project}
+                  sessionFounders={sessionFounders}
+                />
+              </>
             ) : null}
           </div>
         </SidebarGroupContent>
       )}
     </SidebarGroup>
-  );
-}
-
-function ProjectChildSection({
-  children,
-  compact = false,
-  defaultExpanded = true,
-  label,
-  storageKey,
-}: {
-  children: React.ReactNode;
-  compact?: boolean;
-  defaultExpanded?: boolean;
-  label: string;
-  storageKey: string;
-}) {
-  const [expanded, setExpanded] = React.useState(() => {
-    const stored = getStorageItem(storageKey);
-    return stored === null ? defaultExpanded : stored === "1";
-  });
-  const toggle = React.useCallback(() => {
-    setExpanded((current) => {
-      const next = !current;
-      setStorageItem(storageKey, next ? "1" : "0");
-      return next;
-    });
-  }, [storageKey]);
-  const headingId = React.useId();
-
-  return (
-    <section
-      className={cn(compact ? "pb-0" : "pb-1")}
-      aria-labelledby={headingId}
-    >
-      <button
-        type="button"
-        id={headingId}
-        aria-expanded={expanded}
-        onClick={toggle}
-        className={cn(
-          "group/section-toggle flex w-full items-center rounded-md px-2 text-2xs font-medium text-sidebar-foreground/45 outline-none transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-          compact ? "pt-1 pb-0.5" : "pt-2 pb-1",
-        )}
-      >
-        <span>{label}</span>
-        <ChevronDown
-          aria-hidden
-          className={cn(
-            "ml-auto size-3 transition-transform",
-            expanded ? "rotate-0" : "-rotate-90",
-          )}
-        />
-      </button>
-      {expanded ? <SidebarMenu>{children}</SidebarMenu> : null}
-    </section>
   );
 }

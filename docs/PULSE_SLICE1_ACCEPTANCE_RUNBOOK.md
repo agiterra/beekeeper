@@ -21,7 +21,7 @@ Tick as you go. "Proof" is the literal output/screen state that settles the item
 | 3 | Non-member sees nothing, and cannot tell the project exists | **C** | `bee pulse list` / `digest` / `projects get` | `[]` + exit 0; digest byte-identical (modulo `asOf`) to a fabricated coordinate; `projects get` → exit 1 `not_found` |
 | 4 | Session shows real branch/commit/dirty + `commitConfirmation` | **A** | `bee pulse sessions`, Desktop Pulse screen | `branch`/`observedCommit`/`dirty` match `git -C … status`; `commitConfirmation` is one of the three fixed strings |
 | 5 | Same-author supersession replaces; cross-author does not | **A**, **B** | digest + Desktop | A's 2nd entry → target `active:false`, `honored:true`; B's → `honored:false,"reason":"cross-author"`, target still `active:true` |
-| 6 | Closing the session removes it from Active work | **A** | Desktop right-click → Close session | digest `closed:true`, `activity:"stale"`; card moves to **Last seen** |
+| 6 | Closing the session removes it from Active work | **A** | Desktop right-click → Close session (or Archive session — a close that also files it away; same digest effect) | digest `closed:true`, `activity:"stale"`; card moves to **Last seen** |
 | 7 | Orphaned execution renders under Last seen | **A** | worktree branch-slug change | `activity:"stale"`; Desktop **Last seen** row `Disconnected · last observed …` — see §5.7 for the 30-min clock |
 | 8 | ACP agent receives the digest and states wait/consult/proceed | **agent** | `buzz-acp` + a mention | agent quotes the `[Project Pulse]` section and names a choice — **partial, see §7-A** |
 | 9 | Relay killed mid-digest → exit 2, `complete:false`, populated `errors[]`; agent says *unavailable* | **A** | `bee pulse digest` with relay down | digest printed with `"complete":false` + 2 `errors[]` rows; exit 2 — agent half **not stageable, §7-B** |
@@ -53,9 +53,11 @@ unset BUZZ_AUTH_TAG                            # a stale NIP-OA tag turns every 
 ```
 
 Desktop: **Settings → Experiments → Project Pulse** → on
-(`preview-features.json` id `project-pulse`). Without it the sidebar row, the
-project-home card and `/projects/$projectId/pulse` do not mount
-(`desktop/src/app/routes/projects.$projectId.pulse.tsx`).
+(`preview-features.json` id `project-pulse`). Without it the project page's
+**Pulse** tab, the project-home card and `/projects/$projectId?tab=pulse` do
+not mount (`desktop/src/features/projects-container/ui/ProjectContainerScreen.tsx`).
+Since 2026-08-28 there is no sidebar row: the sidebar lists channels and
+sessions only, and `/projects/$projectId/pulse` redirects onto the tab.
 
 ---
 
@@ -204,9 +206,11 @@ BUZZ_PRIVATE_KEY="$B_SK" bee pulse digest --project "$COORD" | python3 -m json.t
 
 ### 5.1 Open the screen
 
-Desktop sidebar → project **Pulse live** → child row **Pulse** (rank 1, directly
-under coding sessions), or the project home card **Pulse** → *Open Pulse*
-(`data-testid="project-screen-open-pulse"`). Route `/projects/<id>/pulse`.
+Desktop sidebar → project **Pulse live** (the project row itself) → project
+page tab **Pulse** (`data-testid="project-tab-pulse"`), or the project home
+card **Pulse** → *Open Pulse* (`data-testid="project-screen-open-pulse"`).
+Route `/projects/<id>?tab=pulse`; the older `/projects/<id>/pulse` redirects
+there.
 
 Header must read **"Explicit updates and observed session state."**
 (`PROJECT_PULSE_HEADER`,

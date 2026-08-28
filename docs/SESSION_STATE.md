@@ -56,7 +56,48 @@ disagrees with an older document about *current state*, this one wins.
 > workflow files stay in the tree on purpose: deleting them would conflict
 > against upstream on every future merge.
 
-_Last updated: 2026-08-26 — the mirror inversion landed and is live (banner
+_Last updated: 2026-08-28 — the project sidebar overhaul, built on
+`worktree-project-sidebar-overhaul` and not yet landed. A project group is now
+two flat lists (channels, then coding sessions + terminals) with no
+collapsible sub-headers and no session cap; repositories, workflows, curated
+agents and the Pulse row left the sidebar (all still on the project page —
+Pulse as a route tab, `/projects/<id>?tab=pulse`, the old `/pulse` path
+redirects). Under the session list a filter — **My sessions** (default,
+persisted per project in `buzz.projects.sessionFilter.v1:<pubkey>:<relay>`),
+**All sessions**, or **Custom** with member checkboxes (roster ∪ founders seen
+in the list) — attributes by `founderPubkey`, the kind 44226 genesis signer;
+a session with no resolved genesis cannot be attributed, so `mine`/`custom`
+hide it and the trigger says `+N hidden`. Session rows wear the founder's
+avatar; an unknown founder keeps the `Bot` glyph titled "Initiator unknown".
+**Second pass, same day (Brian's follow-up):** the text status is a coloured
+dot — blue Idle (every non-working provider word; the hover is just "Idle"),
+green Running (last *reported* working; the hover keeps the not-a-live-lease
+caveat), orange Closed, red Archived (`lib/projectSessionIndicator.ts`).
+**`archived` is a new kind 44230 closure action** — core enum
+`CodingSessionClosureAction::Archived`, relay authority founder-only like a
+close, `open` reopens it; Pulse fold and the desktop coordination fold read it
+as closed. **Older desktops reject an `archived` payload and therefore show
+that session as open** (strict parser); acceptable for a single-team fork,
+recorded here because it is a wire change. Row context menu: Close (open
+only), Archive (not yet archived, open or closed), Reopen (settled). The
+filter grew "Show closed" (default on) / "Show archived" (default off;
+archived implies closed so it forces closed on) and a last-activity range —
+Any time (default), Today, Yesterday, This week (Mon), This month, Custom
+`from`/`to` date inputs; the trigger shows `+N hidden` across every axis. The
+list pages ten rows at a time with a "Show more" row; the page resets when
+the filter changes. Stored shape is now `{members, showClosed, showArchived,
+range}`; the first release's bare `{mode}` blob upgrades in place.
+Gate: desktop unit 6480/6480, `tsc` and Biome clean, the three touched smoke
+specs (`projects-sidebar`, `projectPulse`, `agentProgress`) 19/19. One of
+those, "entries lead while restarted generations remain disclosed", was
+already failing on `main` (reproduced in a throwaway checkout of `main`):
+it expected three *executions* for three resumed generations of one target,
+but `sessionCoordinationFold` (`1bd574526`, 2026-08-21) counts an execution
+by target identity and a resume extends it — the card honestly says "1
+execution · 3 generations" and "Stopped" for the seeded older generations;
+the spec now asserts that. **Not yet exercised against hive.**_
+
+_Previously: 2026-08-26 — the mirror inversion landed and is live (banner
 above); `main` is identical on the relay and GitHub, fed by the bridge._
 
 _Previously: 2026-08-25 — a live-driven day. §2 items 45-50 (the picker

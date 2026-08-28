@@ -207,7 +207,9 @@ export function CodingSessionWorkspace({
           ),
         ) ?? null)
       : null;
-  const sessionClosed = closure?.action === "closed";
+  // Archived is a close with a filing cabinet: settled either way.
+  const sessionClosed =
+    closure?.action === "closed" || closure?.action === "archived";
   const canCloseSession =
     isMember &&
     !sessionClosed &&

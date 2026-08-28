@@ -426,7 +426,9 @@ export function hasStrictClosureJson(
     encoder.encode(source).length <= 512 &&
     !hasDuplicateJsonKeys(source) &&
     hasExactFields(content, [["action", "genesisRef", "sessionRef", "v"]]) &&
-    (content.action === "closed" || content.action === "open") &&
+    (content.action === "closed" ||
+      content.action === "open" ||
+      content.action === "archived") &&
     typeof content.genesisRef === "string" &&
     /^[0-9a-f]{64}$/.test(content.genesisRef) &&
     isCanonicalSessionRef(content.sessionRef) &&

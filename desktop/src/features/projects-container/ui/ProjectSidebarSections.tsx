@@ -5,10 +5,6 @@ import { FolderGit2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
-import {
-  useManagedAgentsQuery,
-  usePersonasQuery,
-} from "@/features/agents/hooks";
 import { useCreateShellSession } from "@/features/builtin-shell/hooks/useCreateShellSession";
 import { projectDefaultCwd } from "@/features/builtin-shell/lib/projectShellCwd";
 import {
@@ -36,7 +32,6 @@ import { joinChannel } from "@/shared/api/tauriChannels";
 
 import {
   useProjectCodingSessionBuckets,
-  useProjectWorkflowBuckets,
   type ProjectContainer,
 } from "../hooks";
 import {
@@ -45,9 +40,9 @@ import {
   displayProjectsWithGeneral,
 } from "../lib/projectContainerModel";
 import { useProjectCollapse } from "../lib/projectCollapseStorage";
+import { useProjectSessionFilters } from "../lib/projectSessionFilterStorage";
 import { useCreateProjectContainerMutation } from "../useCreateProjectContainer";
 import { useGeneralProjectMigration } from "../useGeneralProjectMigration";
-import { projectAgentRows } from "../lib/projectChildren";
 import { CreateProjectContainerDialog } from "./CreateProjectContainerDialog";
 import {
   ProjectsScreenCreateDialogs,
@@ -60,27 +55,27 @@ import {
 
 /**
  * The per-project collapsible sidebar groups (Projects experiment). Renders
- * one `ProjectSidebarGroup` per project container; repos and forums that no
- * project claims yet are shown under General — the real General project once
- * the owner has published it, or a local placeholder until then — so nothing
- * disappears when the experiment is enabled.
+ * one `ProjectSidebarGroup` per project container; channels, forums and
+ * sessions that no project claims yet are shown under General — the real
+ * General project once the owner has published it, or a local placeholder
+ * until then — so nothing disappears when the experiment is enabled.
+ *
+ * Repositories still arrive here (`reposByProject`) only to pick a new
+ * terminal's working directory; the sidebar no longer lists them.
  */
 export function ProjectSidebarSections({
   projects,
   reposByProject,
-  unclaimedRepos,
   channelsByProject,
   forumsByProject,
   unclaimedForums,
   globalChannels,
   currentPubkey,
   relayUrl,
-  onOpenAgents,
   ...channelHandlers
 }: ProjectChannelHandlers & {
   projects: ProjectContainer[];
   reposByProject: ReadonlyMap<string, CodeRepo[]>;
-  unclaimedRepos: CodeRepo[];
   channelsByProject: ReadonlyMap<string, Channel[]>;
   forumsByProject: ReadonlyMap<string, Channel[]>;
   unclaimedForums: Channel[];
@@ -89,22 +84,14 @@ export function ProjectSidebarSections({
   globalChannels: Channel[];
   currentPubkey?: string;
   relayUrl?: string;
-  onOpenAgents: () => void;
 }) {
-  const {
-    goCodingSession,
-    goNewProjectCodingSession,
-    goProject,
-    goProjectRepo,
-    goProjects,
-    goWorkflow,
-  } = useAppNavigation();
+  const { goCodingSession, goNewProjectCodingSession, goProject, goProjects } =
+    useAppNavigation();
   const collapse = useProjectCollapse(currentPubkey, relayUrl);
+  const sessionFilters = useProjectSessionFilters(currentPubkey, relayUrl);
   // This component only mounts while the Projects experiment is enabled, so
   // the one-shot General migration is anchored here.
   useGeneralProjectMigration(true, relayUrl);
-  const personas = usePersonasQuery();
-  const managedAgents = useManagedAgentsQuery();
   const createContainerMutation = useCreateProjectContainerMutation();
   // Transports included: the session buckets subscribe to them; display
   // lists filter them back out via withoutProjectSessionTransportChannels.
@@ -156,15 +143,6 @@ export function ProjectSidebarSections({
   const shellDialogs = useShellSessionDialogs();
   const codingSessionClosureDialog = useCodingSessionClosureDialog();
 
-  // Workflows are channel-scoped (kind:30620 `h` tag), so their project is
-  // derived from the channel's project; unclaimed channels' workflows show
-  // under General.
-  const workflowBuckets = useProjectWorkflowBuckets(
-    channelsQuery.data,
-    channelsByProject,
-    forumsByProject,
-  );
-
   // Coding sessions are channel-scoped the same way, except a session may also
   // carry a signed projectRef that overrides its channel's project.
   const sessionBuckets = useProjectCodingSessionBuckets(
@@ -181,27 +159,6 @@ export function ProjectSidebarSections({
     kind: ProjectsScreenCreateKind;
     project: ProjectContainer;
   } | null>(null);
-
-  const personasById = React.useMemo(
-    () =>
-      new Map(
-        (personas.data ?? []).map((persona) => [
-          persona.id,
-          persona.displayName,
-        ]),
-      ),
-    [personas.data],
-  );
-  const managedAgentsByPubkey = React.useMemo(
-    () =>
-      new Map(
-        (managedAgents.data ?? []).map((agent) => [
-          agent.pubkey.toLowerCase(),
-          agent.name,
-        ]),
-      ),
-    [managedAgents.data],
-  );
 
   const displayProjects = React.useMemo(
     () => displayProjectsWithGeneral(projects),
@@ -279,12 +236,8 @@ export function ProjectSidebarSections({
       {displayProjects.map((project) => {
         const isGeneral = project.dtag === GENERAL_PROJECT_DTAG;
         const isFallback = project.id === LOCAL_GENERAL_ID;
-        // Unclaimed repos/forums/shells always land in General — they must
-        // belong to a project, and General is the sweep target.
-        const repos = [
-          ...(reposByProject.get(project.id) ?? []),
-          ...(isGeneral ? unclaimedRepos : []),
-        ];
+        // Unclaimed forums/shells always land in General — they must belong
+        // to a project, and General is the sweep target.
         const forums = forumEnabled
           ? [
               ...(forumsByProject.get(project.id) ?? []),
@@ -307,11 +260,6 @@ export function ProjectSidebarSections({
             key={project.id}
             project={project}
             isFallback={isFallback}
-            agents={projectAgentRows(
-              project,
-              personasById,
-              managedAgentsByPubkey,
-            )}
             codingSessions={[
               ...(sessionBuckets.byProject.get(project.id) ?? []),
               ...(isGeneral ? sessionBuckets.unclaimed : []),
@@ -324,16 +272,28 @@ export function ProjectSidebarSections({
               ...(isGeneral ? globalChannels : []),
             ]}
             forumChannels={forums}
-            repos={repos}
             channelHandlers={groupChannelHandlers}
             collapsed={collapse.isProjectCollapsed(project.id)}
             currentPubkey={currentPubkey}
+            sessionFilter={sessionFilters.getFilter(project.id)}
+            onSessionFilterChange={(filter) =>
+              sessionFilters.setFilter(project.id, filter)
+            }
             onToggleCollapsed={() => collapse.toggleProject(project.id)}
-            onOpenAgents={onOpenAgents}
             onRequestCloseCodingSession={(entry) => {
               if (!entry.sessionRef || !entry.genesisRef) return;
               codingSessionClosureDialog.requestClosure({
                 action: "closed",
+                channelId: entry.channelId,
+                genesisRef: entry.genesisRef,
+                label: entry.label,
+                sessionRef: entry.sessionRef,
+              });
+            }}
+            onRequestArchiveCodingSession={(entry) => {
+              if (!entry.sessionRef || !entry.genesisRef) return;
+              codingSessionClosureDialog.requestClosure({
+                action: "archived",
                 channelId: entry.channelId,
                 genesisRef: entry.genesisRef,
                 label: entry.label,
@@ -353,24 +313,10 @@ export function ProjectSidebarSections({
             onOpenCodingSession={({ channelId, generationId }) =>
               void goCodingSession(channelId, generationId)
             }
-            onOpenPulse={() =>
-              void navigate({
-                to: "/projects/$projectId/pulse",
-                params: { projectId: project.id },
-              })
-            }
             onOpenProject={() => handleOpenProject(project)}
-            onOpenRepo={(repo) =>
-              void goProjectRepo(project.id, repo.repoAddress)
-            }
             onNewCodingSession={() =>
               void goNewProjectCodingSession(project.id)
             }
-            workflows={[
-              ...(workflowBuckets.byProject.get(project.id) ?? []),
-              ...(isGeneral ? workflowBuckets.unclaimed : []),
-            ]}
-            onOpenWorkflow={(workflow) => void goWorkflow(workflow.id)}
             onRequestCreate={(kind) => setCreateRequest({ kind, project })}
             shellSessions={shellSessions}
             activeShellSessionId={activeShellSessionId}

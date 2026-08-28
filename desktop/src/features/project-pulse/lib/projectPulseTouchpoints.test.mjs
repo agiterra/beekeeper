@@ -10,69 +10,19 @@ import {
   resetProjectPulseState,
 } from "@/features/project-pulse/lib/projectPulseCache";
 import { foldProjectPulseDigest } from "@/features/project-pulse/lib/pulseFold";
-import {
-  PROJECT_CHILD_TYPE_RANK,
-  buildProjectChildren,
-  projectChildKey,
-  projectChildLabel,
-} from "@/features/projects-container/lib/projectChildren";
+import { PROJECT_CHILD_TYPE_RANK } from "@/features/projects-container/lib/projectChildren";
+import { parseProjectPageTab } from "@/features/projects-container/ui/ProjectPageTabs";
 
 const PROJECT =
   "30621:1111111111111111111111111111111111111111111111111111111111111111:pulse-demo";
 
-function emptyChildInput(overrides = {}) {
-  return {
-    streamChannels: [],
-    forumChannels: [],
-    repos: [],
-    workflows: [],
-    agents: [],
-    shellSessions: [],
-    ...overrides,
-  };
-}
-
-test("the Pulse row is opt-in and sits directly below coding sessions", () => {
-  assert.equal(buildProjectChildren(emptyChildInput()).length, 0);
-  const rows = buildProjectChildren(emptyChildInput({ includePulse: true }));
-  assert.deepEqual(rows, [{ type: "pulse" }]);
-  assert.equal(
-    PROJECT_CHILD_TYPE_RANK.pulse - PROJECT_CHILD_TYPE_RANK["coding-session"],
-    1,
-  );
-  assert.ok(
-    PROJECT_CHILD_TYPE_RANK.channel > PROJECT_CHILD_TYPE_RANK.pulse,
-    "channels follow Pulse",
-  );
-});
-
 /**
- * `buildProjectChildren` only emits the Pulse row when its caller opts in, so
- * a green unit test above proves nothing about the sidebar actually showing
- * it. These two files cannot be imported here (they pull the Tauri-backed
- * sidebar tree), so the wiring is asserted on their source — enough to catch
- * the row silently disappearing from the sidebar again.
+ * Pulse is a tab of the project page, not a sidebar row. The sidebar row
+ * model is the contract: if a `pulse` type ever returns there, the row has
+ * been re-added somewhere the design put it deliberately out of.
  */
-function sidebarSource(file) {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  return readFileSync(
-    path.join(here, "..", "..", "projects-container", "ui", file),
-    "utf8",
-  );
-}
-
-test("the sidebar group opts into the Pulse row behind the flag and a real project", () => {
-  const group = sidebarSource("ProjectSidebarGroup.tsx");
-  assert.match(group, /useFeatureEnabled\("project-pulse"\)/);
-  assert.match(group, /!isFallback/);
-  assert.match(group, /includePulse: pulseEnabled/);
-  assert.match(group, /onOpenPulse=\{onOpenPulse\}/);
-});
-
-test("the sidebar sections give the Pulse row somewhere to navigate", () => {
-  const sections = sidebarSource("ProjectSidebarSections.tsx");
-  assert.match(sections, /onOpenPulse=\{/);
-  assert.match(sections, /"\/projects\/\$projectId\/pulse"/);
+test("the sidebar row model carries no Pulse row", () => {
+  assert.equal("pulse" in PROJECT_CHILD_TYPE_RANK, false);
 });
 
 test("the child-type rank map stays gapless after the renumber", () => {
@@ -84,31 +34,45 @@ test("the child-type rank map stays gapless after the renumber", () => {
 });
 
 /**
- * Two features called "Pulse" in one sidebar — the social activity feed and
- * this per-project coordination view — is a scan the tooltip cannot fix. The
- * project row carries the feature's own display name.
+ * The tab strip, the flag gate and the redirect live in files that pull the
+ * Tauri-backed screen tree and cannot be imported here, so the wiring is
+ * asserted on their source — enough to catch the tab silently disappearing.
  */
-test("the Pulse row has a stable key and an unambiguous label", () => {
-  assert.equal(projectChildKey({ type: "pulse" }), "pulse");
-  assert.equal(projectChildLabel({ type: "pulse" }), "Project Pulse");
+function desktopSource(...segments) {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return readFileSync(path.join(here, "..", "..", "..", ...segments), "utf8");
+}
+
+test("the project page hosts Pulse as a tab behind the flag and a real project", () => {
+  const screen = desktopSource(
+    "features",
+    "projects-container",
+    "ui",
+    "ProjectContainerScreen.tsx",
+  );
+  assert.match(screen, /useFeatureEnabled\("project-pulse"\)/);
+  assert.match(screen, /showPulse=\{pulseEnabled && !isFallback\}/);
+  assert.match(
+    screen,
+    /<ProjectPulseScreen embedded projectId=\{project\.id\} \/>/,
+  );
+  // The overview card still offers "Open Pulse"; it switches tabs now.
+  assert.match(screen, /search: \{ tab: "pulse" \}/);
 });
 
-/**
- * §5.6 touchpoint 1 puts Pulse with the live work it describes. Bucketed into
- * `toolRows` it rendered under "Repos & Tools", next to repos and workflows —
- * a collapsible drawer nobody opens to ask "what is happening right now".
- */
-test("the sidebar renders Pulse with the live work, not under Repos & Tools", () => {
-  const group = sidebarSource("ProjectSidebarGroup.tsx");
-  assert.match(group, /const pulseRows = children\.filter/);
-  assert.match(group, /row\.type !== "pulse"/);
-  assert.match(group, /\{pulseRows\.map\(renderRow\)\}/);
-  const toolSection = group.slice(group.indexOf("const toolRows"));
-  assert.ok(
-    toolSection.indexOf("{pulseRows.map(renderRow)}") <
-      toolSection.indexOf('label="Repos & Tools"'),
-    "the Pulse row is emitted before the Repos & Tools section",
-  );
+test("the old Pulse route redirects onto the tab so deep links keep working", () => {
+  const route = desktopSource("app", "routes", "projects.$projectId.pulse.tsx");
+  assert.match(route, /redirect\(/);
+  assert.match(route, /to: "\/projects\/\$projectId"/);
+  assert.match(route, /search: \{ tab: "pulse" \}/);
+});
+
+test("the tab search param is parsed strictly", () => {
+  assert.equal(parseProjectPageTab("pulse"), "pulse");
+  assert.equal(parseProjectPageTab("overview"), "overview");
+  assert.equal(parseProjectPageTab("PULSE"), "overview");
+  assert.equal(parseProjectPageTab(undefined), "overview");
+  assert.equal(parseProjectPageTab(42), "overview");
 });
 
 test("switching communities clears every folded digest", () => {

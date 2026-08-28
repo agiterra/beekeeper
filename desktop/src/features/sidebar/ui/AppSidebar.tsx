@@ -622,14 +622,12 @@ export function AppSidebar({
                     <ProjectSidebarSections
                       projects={projectSidebar.projects}
                       reposByProject={projectSidebar.reposByProject}
-                      unclaimedRepos={projectSidebar.unclaimedRepos}
                       channelsByProject={projectSidebar.channelsByProject}
                       forumsByProject={projectSidebar.forumsByProject}
                       unclaimedForums={projectSidebar.unclaimedForums}
                       globalChannels={projectSidebar.globalChannels}
                       currentPubkey={currentPubkey}
                       relayUrl={activeCommunity?.relayUrl}
-                      onOpenAgents={onSelectAgents}
                       isActiveChannel={selectedView === "channel"}
                       activeWorkingByChannelId={activeWorkingByChannelId}
                       selectedChannelId={selectedChannelId}

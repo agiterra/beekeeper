@@ -452,9 +452,10 @@ function foldNewestByDTag(
 function closureIsClosed(event: CoordinationEvent): boolean {
   try {
     const content: unknown = JSON.parse(event.content);
+    // Archived is a close with a filing cabinet: settled either way.
     return (
       hasStrictClosureJson(event.content, content) &&
-      content.action === "closed"
+      (content.action === "closed" || content.action === "archived")
     );
   } catch {
     return false;
