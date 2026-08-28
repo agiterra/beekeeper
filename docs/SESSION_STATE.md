@@ -2477,6 +2477,18 @@ written and `bash -n` clean but **was not executed** — that harness needs
       because only the human genesis signer is the founder; decide whether the
       operator question is "who founded" (session-level line) or "which seat
       holds authority" (the roster), then land one implementation.
+    - *Roles are team artifacts; installs are per host (Brian, 23:1x).* The
+      lane-A label "No role pack on this computer" reads as "roles are local";
+      reword to "Role pack not installed here — install crew roles from the
+      project's personas/roles". Overturn the designer's call to keep
+      `home_role` off kind:30175: publish it as the agent's default role (the
+      seat's 44223 role stays authoritative per execution; the UI discloses a
+      mismatch) so any client sees "Fizz is a lead" without the pack
+      installed. Packs should be fetched by project ref
+      (`<repo>@<commit>:personas/roles/<role>`, the relay hosts git) rather
+      than chosen by folder; the folder picker is this week's form. Agents
+      stay per-owner (owner-attested keys; no shared custody) — same roles,
+      same packs, different signers.
     Hand-edits on Brian's machine that these must replace: Fizz's record
     linked to `personas/roles/lead` by hand; `~/.local/bin/bee` repointed at
     `target/debug/bee`; `Application Support/Bee Keeper` copied to
