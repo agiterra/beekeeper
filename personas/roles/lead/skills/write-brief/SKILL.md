@@ -17,12 +17,15 @@ Ledger: §3 Next, plus items <numbers> — read those and nothing else of SESSIO
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
 Seat: <model + thinking level, and why> — see the choose-model skill.
+      | hire: <role> on <provider>/<model> — when no seat holds this lane yet.
 Tests you must add: <named>. Watch each fail before the fix where a defect is claimed.
 Acceptance: <commands with expected counts / exit codes>.
 Out of scope: <named temptations>.
 Report format: see the write-report skill on the builder pack.
 Dispatch: bee sessions send --channel <channel-uuid> --session-ref <umbrella-uuid> \
   --to <role> --content -
+  | bee sessions hire --channel <channel-uuid> --session-ref <umbrella-uuid> \
+      --role <slug> --brief <this file> — when the Seat line says hire.
 ```
 
 ## Evidence is entry points, not an exploration
@@ -47,6 +50,8 @@ to write — not a licence to hand over the whole file.
 ## The dispatch line is part of the brief
 
 End every brief with the exact command that dispatches it, `--session-ref` included. A role slug is unique only inside one umbrella, so `--to lead` without `--session-ref` is refused by the CLI — a brief that omits it is a brief nobody can send.
+
+If the `Seat:` line says `hire:`, the dispatch is `bee sessions hire --brief <this file>` and the brief *is* the new seat's first turn — do not follow it with a "start" message. See `skills/hire`.
 
 ## Rules for a good brief
 

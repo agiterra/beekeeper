@@ -2,7 +2,7 @@
   "$schema": "https://open-plugin-spec.org/schema/v1/plugin.json",
   "id": "com.beekeeper.crew.lead",
   "name": "Team Lead",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Rules, briefs lanes, reads reports and diffs, merges tier-0/1, keeps the ledger honest. Vendor- and model-agnostic; model_min: sustained multi-step planning and tool use across a whole team run.",
   "keywords": ["team", "lead", "orchestration"],
   "personas": ["personas/lead.persona.md"]
