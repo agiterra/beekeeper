@@ -5,19 +5,48 @@ import type {
 } from "@/shared/api/tauriTeams";
 
 /**
- * Copy and result derivations for the crew-role installer dialog.
+ * Copy and result derivations for the team-role installer dialog.
  *
  * Kept out of the component so every sentence the operator reads is a value a
  * test can assert. The strings are verbatim from the front-door spec — a lane
  * that invents copy invents a comfortable version.
  */
 
-export const INSTALL_CREW_ROLES_TITLE = "Install crew roles";
+export const INSTALL_CREW_ROLES_TITLE = "Install team roles";
 
 export const INSTALL_CREW_ROLES_BODY =
-  "Pick a folder of role packs. Every pack whose persona declares a role becomes one agent on this computer — carrying that role and that pack — and they all join one team you can launch as a crew.";
+  "Pick a folder of role packs. Every pack whose persona declares a role becomes one agent on this computer — carrying that role and that pack — and they all join one team you can launch.";
 
 export const INSTALL_CREW_ROLES_CHOOSE_FOLDER = "Choose folder…";
+
+/** Label of the field that names the lead identity (plan D11). */
+export const INSTALL_CREW_ROLES_LEAD_NAME_LABEL = "Name the lead";
+
+/**
+ * What the lead is called when the operator names nothing.
+ *
+ * The lead pack's own display name, so leaving the field alone installs
+ * exactly what it installed before.
+ */
+export const INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT = "Lead";
+
+/**
+ * Why only the lead gets a name here.
+ *
+ * A lead is an identity a person addresses over and over ("Keystone, have
+ * Levain do N") and is minted once; the other roles are hired per task and are
+ * renamed from the agent dialog like any other agent.
+ */
+export const INSTALL_CREW_ROLES_LEAD_NAME_HINT =
+  "The lead is the identity you address, so it is worth a name of its own. " +
+  "Every other role installs under its role name — rename any of them later " +
+  "from the agent's own dialog.";
+
+/** The lead name to install under: what was typed, or the pack's own name. */
+export function crewRolesLeadName(value: string): string {
+  const name = value.trim();
+  return name.length > 0 ? name : INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT;
+}
 
 /**
  * What the installer will *try* to do, shown before it has done anything.
@@ -27,7 +56,7 @@ export const INSTALL_CREW_ROLES_CHOOSE_FOLDER = "Choose folder…";
  * returns, [`crewRolesSeatedNote`] replaces it with what actually happened.
  */
 export const INSTALL_CREW_ROLES_ROSTER_PLAN =
-  "Seats are filled from this roster, in order: lead, architect, builder, verifier, runner. A role whose pack is not in the folder holds no seat. The poker and designer packs install as agents but are never seated — the poker drives the built app, and the designer works before a crew launches.";
+  "Seats are filled from this roster, in order: lead, architect, builder, runner. A role whose pack is not in the folder holds no seat. The poker, designer and verifier packs install as agents but are not seated: the poker drives the built app, the designer works before a team launches, and every seat of one launch runs on the single provider you select — so a verifier seated here would share its builders’ model vendor, which a launch refuses.";
 
 export const INSTALL_CREW_ROLES_REFRESH_NOTE =
   "already installed from this pack — role and pack link refreshed";
@@ -35,17 +64,17 @@ export const INSTALL_CREW_ROLES_REFRESH_NOTE =
 /**
  * Marks a row that installed but holds no seat.
  *
- * Without it, `poker` and `designer` — installed on purpose and seated on
- * purpose never — read exactly like the roster roles above them.
+ * Without it, `poker`, `designer` and `verifier` — installed on purpose and
+ * seated on purpose never — read exactly like the roster roles above them.
  */
 export const INSTALL_CREW_ROLES_UNSEATED_NOTE =
-  "installed, but not seated in the crew";
+  "installed, but not seated in the team";
 
 export const INSTALL_CREW_ROLES_NOTHING_FOUND =
   "No role packs in that folder. A role pack is a directory holding .plugin/plugin.json whose persona declares “role:” in its frontmatter.";
 
 /** The menu entry that opens this dialog. */
-export const INSTALL_CREW_ROLES_MENU_LABEL = "Install crew roles…";
+export const INSTALL_CREW_ROLES_MENU_LABEL = "Install team roles…";
 
 /** A folder that could not be read, rendered verbatim with its cause. */
 export function crewRolesUnreadableFolder(error: string): string {
@@ -119,7 +148,7 @@ export function crewRolesFailureMessage(cause: unknown): string {
 export function crewRolesSeatedNote(
   result: InstallCrewRolePacksResponse,
 ): string {
-  if (result.seated.length === 0) return "No seats: this team holds no crew.";
+  if (result.seated.length === 0) return "No seats: this team holds none.";
   return `Seated: ${result.seated.join(", ")}.`;
 }
 
@@ -143,7 +172,7 @@ export function crewRolesInstalledToast(
   result: InstallCrewRolePacksResponse,
 ): string {
   const roles = result.installed.map((row) => row.role).join(", ");
-  return `Installed ${result.installed.length} crew roles into “${result.teamName}”: ${roles}.`;
+  return `Installed ${result.installed.length} team roles into “${result.teamName}”: ${roles}.`;
 }
 
 /** One line of the result list. */

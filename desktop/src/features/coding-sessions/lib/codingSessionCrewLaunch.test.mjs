@@ -212,7 +212,7 @@ test("a launch is receipt-gated: no seat is published before the last one's rece
 test("the first turn carries the goal and the roster", async () => {
   const deps = recordingDeps();
   await launchCodingSessionCrew(INPUT, deps);
-  assert.ok(deps.sentText.startsWith("Close ledger item 53.\n\n[Crew]"));
+  assert.ok(deps.sentText.startsWith("Close ledger item 53.\n\n[Team]"));
   assert.match(
     deps.sentText,
     /- lead: Fable \(anthropic · claude-opus-5\) — you/,

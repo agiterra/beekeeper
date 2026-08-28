@@ -131,6 +131,8 @@ export type CodingSessionCrewLaunchInput = {
    */
   provider: {
     allowedModels: readonly string[];
+    /** `providerInstanceRef` every seat is created against. */
+    instanceRef?: string | null;
     /** Runtime name, so a refusal can say which provider it means. */
     label?: string | null;
   };
@@ -160,7 +162,7 @@ export function planCodingSessionCrewLaunch(
   return [
     step(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
-      "Check the crew's model families",
+      "Check the team's model families",
     ),
     step(CODING_SESSION_CREW_LAUNCH_GENESIS_STEP, "Found the session"),
     ...input.seats.map((seat, index) =>
@@ -242,7 +244,7 @@ export async function launchCodingSessionCrew(
   if (input.seats.length === 0 || !primary) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
-      "This crew has no seat to address its first turn to.",
+      "This team has no seat to address its first turn to.",
       null,
       null,
     );
@@ -274,7 +276,7 @@ export async function launchCodingSessionCrew(
   if (!lead) {
     return fail(
       CODING_SESSION_CREW_LAUNCH_FAMILY_STEP,
-      "This crew has no lead seat to hold operator authority.",
+      "This team has no lead seat to hold operator authority.",
       null,
       null,
     );
@@ -375,7 +377,7 @@ export async function launchCodingSessionCrew(
       CODING_SESSION_CREW_LAUNCH_TURN_STEP,
       describe(
         error,
-        "The crew is seated but the goal was not delivered. Send it from the session composer.",
+        "The team is seated but the goal was not delivered. Send it from the session composer.",
       ),
       sessionRef,
       genesisRef,

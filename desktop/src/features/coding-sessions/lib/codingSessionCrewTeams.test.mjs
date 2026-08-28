@@ -216,3 +216,37 @@ test("a resolved seat carries whether this computer holds the agent's role pack"
     [true, false, undefined],
   );
 });
+
+test("a seat's runtime travels with it, so the family rule can read it", () => {
+  // The vendor of a seat on a provider-locked runtime is decided by that
+  // runtime, not by its model alias — but only if the driver survives the
+  // resolution the family check actually reads (SESSION_STATE item 77, F7).
+  const resolved = resolveCodingSessionCrewSeats({
+    crew: {
+      primary: "persona-lead",
+      seats: [
+        { personaId: "persona-lead", role: "lead", driver: "claude-agent-acp" },
+        { personaId: "persona-runner", role: "runner" },
+      ],
+    },
+    agents: [
+      {
+        pubkey: "AA",
+        name: "Keystone",
+        personaId: "persona-lead",
+        model: null,
+      },
+      {
+        pubkey: "BB",
+        name: "Runner",
+        personaId: "persona-runner",
+        model: null,
+      },
+    ],
+    fallbackModel: "sonnet",
+  });
+  assert.equal(resolved.error, null);
+  assert.equal(resolved.seats[0].driver, "claude-agent-acp");
+  // A seat that pins no runtime claims none: absence is not a claim.
+  assert.equal("driver" in resolved.seats[1], false);
+});

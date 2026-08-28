@@ -16,6 +16,7 @@ import {
 } from "@/shared/ui/dialog";
 import {
   crewRoleResultRows,
+  crewRolesLeadName,
   crewRolesDroppedNotes,
   crewRolesFailureMessage,
   crewRolesFoundNothing,
@@ -23,6 +24,9 @@ import {
   crewRolesUnreadableFolder,
   INSTALL_CREW_ROLES_BODY,
   INSTALL_CREW_ROLES_CHOOSE_FOLDER,
+  INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
+  INSTALL_CREW_ROLES_LEAD_NAME_HINT,
+  INSTALL_CREW_ROLES_LEAD_NAME_LABEL,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
   INSTALL_CREW_ROLES_TITLE,
@@ -49,6 +53,9 @@ export function InstallCrewRolesDialog({
   onInstalled,
 }: InstallCrewRolesDialogProps) {
   const [directory, setDirectory] = React.useState("");
+  const [leadName, setLeadName] = React.useState(
+    INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
+  );
   const [isInstalling, setIsInstalling] = React.useState(false);
   const [result, setResult] =
     React.useState<InstallCrewRolePacksResponse | null>(null);
@@ -57,6 +64,7 @@ export function InstallCrewRolesDialog({
   React.useEffect(() => {
     if (open) {
       setDirectory("");
+      setLeadName(INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT);
       setIsInstalling(false);
       setResult(null);
       setError(null);
@@ -86,7 +94,10 @@ export function InstallCrewRolesDialog({
     setIsInstalling(true);
     setError(null);
     try {
-      const installed = await installCrewRolePacks(directory);
+      const installed = await installCrewRolePacks(
+        directory,
+        crewRolesLeadName(leadName),
+      );
       setResult(installed);
       if (!crewRolesFoundNothing(installed)) {
         onInstalled(installed);
@@ -142,6 +153,29 @@ export function InstallCrewRolesDialog({
             >
               {INSTALL_CREW_ROLES_CHOOSE_FOLDER}
             </Button>
+          </div>
+        )}
+
+        {isDone ? null : (
+          <div className="flex flex-col gap-1">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="install-crew-roles-lead-name"
+            >
+              {INSTALL_CREW_ROLES_LEAD_NAME_LABEL}
+            </label>
+            <input
+              className="rounded-md border border-border bg-transparent px-3 py-2 text-sm"
+              data-testid="install-crew-roles-lead-name"
+              disabled={isInstalling}
+              id="install-crew-roles-lead-name"
+              onChange={(event) => setLeadName(event.target.value)}
+              placeholder={INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT}
+              value={leadName}
+            />
+            <p className="text-2xs text-muted-foreground">
+              {INSTALL_CREW_ROLES_LEAD_NAME_HINT}
+            </p>
           </div>
         )}
 

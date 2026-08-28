@@ -115,6 +115,11 @@ export function resolveCodingSessionCrewSeats(input: {
       actorLabel: agent.name,
       model: seat.model ?? agent.model ?? input.fallbackModel ?? null,
       vendor: seat.vendor ?? null,
+      // A runtime that can run only one vendor settles the seat's family
+      // whatever its model alias spells, so the driver has to reach the check
+      // rather than stopping at the crew block. A seat that pins none sets
+      // nothing: absence is not a claim.
+      ...(seat.driver ? { driver: seat.driver } : {}),
     };
     // Set only when the agent actually answered: an absent field and a field
     // set to `undefined` are the same to a reader, but only the first says

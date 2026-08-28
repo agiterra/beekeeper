@@ -43,7 +43,8 @@ pub async fn pick_crew_role_packs_directory(app: AppHandle) -> Result<Option<Str
 /// Install every role pack in `directory` as an agent carrying its home role,
 /// all joined into one team that is a crew.
 ///
-/// Idempotent: an agent already installed from a pack is refreshed, never
+/// `lead_name` names the lead identity (D11); every other role keeps its pack's
+/// name. Idempotent: an agent already installed from a pack is refreshed, never
 /// duplicated, and the team is updated rather than re-created.
 ///
 /// # Errors
@@ -57,6 +58,7 @@ pub async fn install_crew_role_packs(
     app: AppHandle,
     state: State<'_, AppState>,
     directory: String,
+    lead_name: Option<String>,
 ) -> Result<InstallCrewRolePacksResponse, CrewRoleInstallError> {
     let owner_keys = state.signing_keys().map_err(CrewRoleInstallError::keys)?;
     let directory = directory.trim().to_string();
@@ -86,7 +88,15 @@ pub async fn install_crew_role_packs(
 
         let mut mint =
             || crate::commands::agents::mint_agent_identity(&owner_keys).map(|(_, minted)| minted);
-        let result = install_role_packs(&scan, definitions, agents, &teams, &now_iso(), &mut mint)?;
+        let result = install_role_packs(
+            &scan,
+            definitions,
+            agents,
+            &teams,
+            &now_iso(),
+            lead_name.as_deref(),
+            &mut mint,
+        )?;
 
         // Definitions first: `save_personas` preserves the instance half of the
         // unified store, and `save_managed_agents` preserves the definition

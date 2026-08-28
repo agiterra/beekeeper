@@ -32,7 +32,7 @@ test("a home role with no pack on this computer says so, and says what to do", (
   assert.match(markup, /data-testid="agent-no-role-pack"/);
   assert.match(
     markup,
-    /Role pack not installed here — install crew roles from the project&#x27;s personas\/roles/,
+    /Role pack not installed here — install team roles from the project&#x27;s personas\/roles/,
   );
 });
 
@@ -45,7 +45,7 @@ test("a card-sized badge still states the fact, and drops only the remedy", () =
   );
   assert.match(markup, /data-testid="agent-no-role-pack"/);
   assert.match(markup, /Role pack not installed here/);
-  assert.doesNotMatch(markup, /install crew roles/);
+  assert.doesNotMatch(markup, /install team roles/);
 });
 
 test("an agent with no home role claims nothing at all", () => {

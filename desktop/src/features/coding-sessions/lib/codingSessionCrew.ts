@@ -50,7 +50,15 @@ export type CodingSessionModelVendor = string;
  * no-answers: nothing said it, or two things said different things.
  */
 export type CodingSessionSeatVendorResolution =
-  | { vendor: CodingSessionModelVendor; source: "declared" | "derived" }
+  | {
+      vendor: CodingSessionModelVendor;
+      /**
+       * `declared` — the seat said so. `derived` — its model id names the
+       * vendor. `runtime` — its ACP driver can only run one vendor, so the
+       * model alias never had to name it.
+       */
+      source: "declared" | "derived" | "runtime";
+    }
   | { vendor: null; source: "unknown" }
   | {
       vendor: null;
@@ -102,6 +110,45 @@ export const CODING_SESSION_MODEL_VENDOR_PREFIXES: ReadonlyArray<{
   { pattern: /^llama-/, vendor: "meta" },
 ];
 
+/**
+ * Runtimes that can only ever run one model vendor, by ACP driver slug and by
+ * `providerInstanceRef`.
+ *
+ * The Claude Code adapter talks to Anthropic and the Codex adapter to OpenAI,
+ * whatever model alias a seat carries — so on those runtimes `sonnet`, `opus`,
+ * `haiku`, `fable` and even `default` name a vendor even though the *string*
+ * does not. Goose and `buzz-agent` take their provider from configuration and
+ * are deliberately absent: for them the vendor really is unknown.
+ */
+export const CODING_SESSION_RUNTIME_VENDORS: ReadonlyArray<{
+  ids: readonly string[];
+  vendor: CodingSessionModelVendor;
+}> = [
+  {
+    ids: ["claude-agent-acp", "claude-code-acp", "claude-primary"],
+    vendor: "anthropic",
+  },
+  { ids: ["codex-acp", "codex-primary"], vendor: "openai" },
+];
+
+/**
+ * The one vendor a runtime can run, or null when it can run several.
+ *
+ * `id` is an ACP driver slug (`claude-agent-acp`) or a `providerInstanceRef`
+ * (`claude-primary`) — both name the same runtime, and a caller has one or the
+ * other depending on whether it holds a seat or a provider.
+ */
+export function codingSessionRuntimeVendor(
+  id: string | null | undefined,
+): CodingSessionModelVendor | null {
+  const slug = splitCodingSessionModelId((id ?? "").trim().toLowerCase()).model;
+  if (slug.length === 0) return null;
+  return (
+    CODING_SESSION_RUNTIME_VENDORS.find((row) => row.ids.includes(slug))
+      ?.vendor ?? null
+  );
+}
+
 /** Derive a vendor from a model id, or null when the id does not name one. */
 export function deriveCodingSessionModelVendor(
   model: string | null | undefined,
@@ -145,10 +192,37 @@ export function isCodingSessionAdapterDefaultModel(
  * name the pair.
  */
 export function resolveCodingSessionSeatVendor(seat: {
+  driver?: string | null;
   model?: string | null;
   vendor?: string | null;
 }): CodingSessionSeatVendorResolution {
   const declared = (seat.vendor ?? "").trim().toLowerCase();
+  // The runtime outranks both the model id and the declaration, because it is
+  // the only one of the three this build can check: a seat created against the
+  // Claude adapter runs on Anthropic whatever its seat says or its alias
+  // spells. This is also why `default` is an answer here and nowhere else —
+  // the *model* is still the adapter's to pick, but the vendor is not.
+  const runtime = codingSessionRuntimeVendor(seat.driver);
+  if (runtime !== null) {
+    const derived = deriveCodingSessionModelVendor(seat.model);
+    const contradiction =
+      declared.length > 0 && declared !== runtime
+        ? declared
+        : derived !== null && derived !== runtime
+          ? derived
+          : null;
+    if (contradiction !== null) {
+      return {
+        vendor: null,
+        source: "conflict",
+        declared: contradiction,
+        derived: runtime,
+      };
+    }
+    return declared.length > 0
+      ? { vendor: runtime, source: "declared" }
+      : { vendor: runtime, source: "runtime" };
+  }
   // The `default` alias outranks a declaration for the same reason the table
   // does: it is a statement about a model the adapter has not picked yet, so
   // the vendor the seat names is a hope, not something this build checked.
@@ -174,12 +248,12 @@ export function resolveCodingSessionSeatVendor(seat: {
  * How this build says where a crew seat is changed.
  *
  * Every refusal below has to end in an action, and "change the seat's model"
- * is not one this build offers: crew mode never reaches the model picker, and
- * `create_team` writes no crew block, so the crew is only editable where it is
- * stored.
+ * is not one this build offers: team mode never reaches the model picker, and
+ * `create_team` writes no crew block, so the roster is only editable where it
+ * is stored.
  */
 export const CODING_SESSION_CREW_EDIT_HINT =
-  "This build has no crew editor: change the seat in this computer's " +
+  "This build has no team editor: change the seat in this computer's " +
   "teams.json (or on the device that published the team), then reopen this " +
   "dialog.";
 
@@ -195,6 +269,7 @@ export const CODING_SESSION_CREW_EDIT_HINT =
  */
 export function describeCodingSessionSeatVendor(
   seat: {
+    driver?: string | null;
     model?: string | null;
     vendor?: string | null;
   },
@@ -204,6 +279,10 @@ export function describeCodingSessionSeatVendor(
   switch (resolution.source) {
     case "declared":
       return resolution.vendor;
+    case "runtime":
+      return options?.annotateSource
+        ? `${resolution.vendor} (the only vendor ${(seat.driver ?? "").trim()} runs)`
+        : resolution.vendor;
     case "derived":
       return options?.annotateSource
         ? `${resolution.vendor} (from the model id)`
@@ -227,6 +306,12 @@ export type ResolvedCodingSessionCrewSeat = {
   actor: string;
   /** Display name for the seat, used in the roster and in failure copy. */
   actorLabel: string;
+  /**
+   * ACP driver slug the seat runs on, when the team pins one. A runtime that
+   * can only run one vendor settles the seat's family whatever its model alias
+   * says — see [`codingSessionRuntimeVendor`].
+   */
+  driver?: string | null;
   model: string | null;
   vendor: string | null;
   /**
@@ -259,6 +344,7 @@ export type CodingSessionCrewFamilyVerdict =
 export function checkCodingSessionCrewFamilies(
   seats: ReadonlyArray<{
     role: string;
+    driver?: string | null;
     model?: string | null;
     vendor?: string | null;
     actorLabel?: string;
@@ -367,11 +453,20 @@ export function checkCodingSessionCrewFamilies(
 export function checkCodingSessionCrewSeatModels(
   seats: ReadonlyArray<{
     role: string;
+    driver?: string | null;
     model?: string | null;
+    vendor?: string | null;
     actorLabel?: string;
   }>,
   provider: {
     allowedModels: readonly string[];
+    /**
+     * `providerInstanceRef` every seat will be created against. When it names a
+     * runtime that can run only one vendor, a seat declaring another vendor is
+     * refused: the declaration would otherwise be a claim about a runtime the
+     * seat is not going to run on.
+     */
+    instanceRef?: string | null;
     /** Runtime name, for a refusal a person can act on. */
     label?: string | null;
   },
@@ -381,12 +476,44 @@ export function checkCodingSessionCrewSeatModels(
       seat.role === CODING_SESSION_VERIFIER_ROLE ||
       seat.role === CODING_SESSION_BUILDER_ROLE,
   );
-  if (decided.length === 0) return { ok: true };
 
   const runtime = (provider.label ?? "").trim();
   const named = (seat: { role: string; actorLabel?: string }) =>
     `${seat.role}${seat.actorLabel ? ` (${seat.actorLabel})` : ""}`;
   const on = runtime.length > 0 ? `${runtime} ` : "";
+
+  // Every seat, not only the two the vendor rule decides: a lead whose roster
+  // line reads `anthropic` while it is created against a Codex provider is a
+  // screen stating a vendor nothing will run, which is the same lie whatever
+  // the seat's role.
+  const providerVendor = codingSessionRuntimeVendor(provider.instanceRef);
+  if (providerVendor !== null) {
+    const elsewhere = seats.filter((seat) => {
+      const vendor = resolveCodingSessionSeatVendor(seat).vendor;
+      return vendor !== null && vendor !== providerVendor;
+    });
+    if (elsewhere.length > 0) {
+      const said = elsewhere
+        .map(
+          (seat) =>
+            `${named(seat)} — ${resolveCodingSessionSeatVendor(seat).vendor}`,
+        )
+        .join("; ");
+      return {
+        ok: false,
+        reason:
+          `Every seat is created against the ${on}provider selected for this ` +
+          `team, which runs ${providerVendor} and nothing else — but ${said}. ` +
+          "A seat that runs on a vendor other than the one it declares makes " +
+          `the verifier rule a check of something nothing ran. ${CODING_SESSION_CREW_EDIT_HINT}`,
+      };
+    }
+  }
+
+  // The catalog half is only the vendor rule's business: a lead's model that
+  // this runtime replaces with its default costs nobody a check they thought
+  // they had.
+  if (decided.length === 0) return { ok: true };
 
   if (provider.allowedModels.length === 0) {
     return {
@@ -419,7 +546,7 @@ export function checkCodingSessionCrewSeatModels(
   return {
     ok: false,
     reason:
-      `The ${on}provider selected for this crew does not offer ${said}. ` +
+      `The ${on}provider selected for this team does not offer ${said}. ` +
       "Every seat runs on that one provider, and a model it does not have " +
       "is silently replaced by its default — so the seat would run on a " +
       "vendor other than the one its seat declares, and the verifier rule " +
@@ -448,7 +575,7 @@ export function codingSessionCrewRosterText(input: {
     const you = seat.personaId === input.primaryPersonaId ? " — you" : "";
     return `- ${seat.role}: ${seat.actorLabel} (${vendor}${model})${you}`;
   });
-  return ["[Crew]", ...lines].join("\n");
+  return ["[Team]", ...lines].join("\n");
 }
 
 /** The first turn the primary seat receives: the goal, then the roster. */

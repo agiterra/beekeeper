@@ -30,7 +30,7 @@ export const AGENT_NO_ROLE_PACK_LABEL = "Role pack not installed here";
 
 /** What to do about it. Together: `{LABEL} — {REMEDY}`. */
 export const AGENT_NO_ROLE_PACK_REMEDY =
-  "install crew roles from the project's personas/roles";
+  "install team roles from the project's personas/roles";
 
 /**
  * The role this agent *is*, and whether this computer can stage the pack

@@ -276,13 +276,16 @@ export async function pickCrewRolePacksDirectory(): Promise<string | null> {
 /**
  * Install every role pack in `directory` as an agent carrying its home role.
  *
- * Idempotent: a pack already installed refreshes its agent rather than minting
- * a second one.
+ * `leadName` is the name the lead identity is minted under (plan D11); every
+ * other role installs under its pack's own name. Idempotent: a pack already
+ * installed refreshes its agent rather than minting a second one.
  */
 export async function installCrewRolePacks(
   directory: string,
+  leadName?: string | null,
 ): Promise<InstallCrewRolePacksResponse> {
   return invokeTauri<InstallCrewRolePacksResponse>("install_crew_role_packs", {
     directory,
+    leadName: leadName ?? null,
   });
 }

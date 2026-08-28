@@ -14,7 +14,7 @@ type TeamIdentityCardProps = {
   dataTestId: string;
   description?: string | null;
   isSymlink?: boolean;
-  /** Number of crew seats, when this team is a crew. `null` for an ordinary team. */
+  /** Number of seats, when this team carries a roster. `null` for an ordinary team. */
   crewSeatCount?: number | null;
   memberCount: number;
   personas: AgentPersona[];
@@ -67,7 +67,7 @@ export function TeamIdentityCard({
               className="rounded-full border border-border/65 bg-background/90 px-2 py-1 text-2xs font-medium leading-none text-muted-foreground shadow-xs"
               data-testid="team-crew-badge"
             >
-              Crew · {crewSeatCount} seats
+              Team · {crewSeatCount} seats
             </span>
           ) : null}
           {version ? (

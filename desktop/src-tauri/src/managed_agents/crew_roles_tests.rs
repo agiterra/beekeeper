@@ -66,7 +66,8 @@ fn install(
 ) -> CrewRoleInstall {
     let mut minted = 0usize;
     let mut mint = counting_mint(&mut minted);
-    install_role_packs(scan, definitions, agents, teams, NOW, &mut mint).expect("install succeeds")
+    install_role_packs(scan, definitions, agents, teams, NOW, None, &mut mint)
+        .expect("install succeeds")
 }
 
 /// Depth 1 only, and a child that is not a role pack is reported — never
@@ -209,10 +210,7 @@ fn the_installed_team_carries_a_crew_in_launch_order_with_the_lead_primary() {
     let crew = result.team.crew.expect("the team is a crew");
 
     let roles: Vec<&str> = crew.seats.iter().map(|seat| seat.role.as_str()).collect();
-    assert_eq!(
-        roles,
-        vec!["lead", "architect", "builder", "verifier", "runner"]
-    );
+    assert_eq!(roles, vec!["lead", "architect", "builder", "runner"]);
     let lead = result
         .installed
         .iter()
@@ -223,7 +221,7 @@ fn the_installed_team_carries_a_crew_in_launch_order_with_the_lead_primary() {
     for row in &result.installed {
         assert_eq!(
             row.seated,
-            !matches!(row.role.as_str(), "poker" | "designer")
+            !matches!(row.role.as_str(), "poker" | "designer" | "verifier")
         );
     }
 }
@@ -266,14 +264,14 @@ fn an_unreadable_folder_is_an_error_not_an_empty_scan() {
 }
 
 /// The repo's own `personas/roles` — the folder an operator actually points
-/// the installer at — installs seven agents, seats five of them in launch
+/// the installer at — installs seven agents, seats four of them in launch
 /// order, and every minted agent resolves its pack.
 ///
 /// This is the acceptance case run against the real packs rather than a
 /// fixture: a scan that passes on hand-written fixtures and fails on the
 /// shipped packs would be a green test over a broken front door.
 #[test]
-fn the_repo_role_packs_install_seven_agents_and_seat_five() {
+fn the_repo_role_packs_install_seven_agents_and_seat_four() {
     let roles_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -315,15 +313,15 @@ fn the_repo_role_packs_install_seven_agents_and_seat_five() {
     let crew = result.team.crew.clone().expect("the team is a crew");
     assert_eq!(
         crew.seats.len(),
-        5,
-        "five seats, poker and designer unseated"
+        4,
+        "four seats: poker, designer and verifier install unseated"
     );
     assert_eq!(
         crew.seats
             .iter()
             .map(|seat| seat.role.as_str())
             .collect::<Vec<_>>(),
-        vec!["lead", "architect", "builder", "verifier", "runner"]
+        vec!["lead", "architect", "builder", "runner"]
     );
     let lead = result
         .installed
@@ -372,11 +370,7 @@ fn an_install_reports_the_seats_it_wrote_and_the_roster_roles_it_dropped() {
     );
     assert_eq!(
         result.dropped,
-        vec![
-            "architect".to_string(),
-            "verifier".to_string(),
-            "runner".to_string()
-        ],
+        vec!["architect".to_string(), "runner".to_string()],
         "a roster role with no installed pack is reported as dropped"
     );
     let poker = result
@@ -417,7 +411,7 @@ fn a_mint_failure_is_reported_as_a_key_failure_not_a_folder_one() {
     let scan = scan_role_packs(root.path()).expect("scan succeeds");
 
     let mut mint = || Err("the keychain is locked".to_string());
-    let error = install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, &mut mint)
+    let error = install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, None, &mut mint)
         .expect_err("a mint failure aborts the install");
 
     assert_eq!(error.failure, CrewRoleInstallFailure::Keys);
@@ -439,4 +433,140 @@ fn the_failure_stage_serialises_as_a_word() {
     let json = serde_json::to_value(&error).expect("serialises");
     assert_eq!(json["failure"], "store");
     assert_eq!(json["detail"], "disk full");
+}
+
+/// F7 (SESSION_STATE item 77): every seat the installer wrote read "vendor not
+/// declared" in the Team tab, and the D8 family rule refused the launch on it.
+/// The seat now carries the runtime a launch from this computer runs it on, and
+/// the vendor that runtime can only be.
+#[test]
+fn every_seat_declares_the_runtime_and_vendor_it_will_launch_on() {
+    let root = tempfile::tempdir().expect("temp dir");
+    for role in ["lead", "builder", "verifier"] {
+        write_pack(root.path(), role, role, Some(role));
+    }
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let result = install(&scan, Vec::new(), Vec::new(), &[]);
+    let crew = result.team.crew.expect("the team is a crew");
+
+    assert!(!crew.seats.is_empty());
+    for seat in &crew.seats {
+        assert_eq!(
+            seat.driver.as_deref(),
+            Some(DEFAULT_CREW_SEAT_DRIVER),
+            "seat {} names no runtime",
+            seat.role
+        );
+        assert_eq!(
+            seat.vendor.as_deref(),
+            Some("anthropic"),
+            "seat {} declares no vendor, so the family rule cannot read it",
+            seat.role
+        );
+    }
+}
+
+/// D11: a lead is an identity a person names once. The installer used to name
+/// every identity after its role, so the lead was always "Lead".
+#[test]
+fn the_lead_is_minted_under_the_name_the_operator_gave() {
+    let root = tempfile::tempdir().expect("temp dir");
+    for role in ["lead", "builder"] {
+        write_pack(root.path(), role, role, Some(role));
+    }
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let mut mint = counting_mint(&mut minted);
+    let result = install_role_packs(
+        &scan,
+        Vec::new(),
+        Vec::new(),
+        &[],
+        NOW,
+        Some("Keystone"),
+        &mut mint,
+    )
+    .expect("install succeeds");
+
+    let lead = result
+        .installed
+        .iter()
+        .find(|row| row.role == "lead")
+        .expect("lead installed");
+    assert_eq!(lead.agent_name, "Keystone");
+    assert!(
+        result.agents.iter().any(|agent| agent.name == "Keystone"),
+        "the minted record carries the given name"
+    );
+    let builder = result
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed");
+    assert_eq!(
+        builder.agent_name, "builder",
+        "only the lead is renamed; the rest keep their role names"
+    );
+}
+
+/// The default roster seats no verifier.
+///
+/// Every seat of one launch is created against the one `providerInstanceRef`
+/// the dialog selected, so every seat runs on that runtime's vendor — and D8
+/// refuses a verifier sharing a builder's vendor. A seated verifier therefore
+/// made the installed roster unlaunchable by construction (F7). The pack still
+/// installs, unseated, for a roster launched across two providers.
+#[test]
+fn the_default_roster_installs_a_verifier_without_seating_it() {
+    let root = tempfile::tempdir().expect("temp dir");
+    for role in ["lead", "architect", "builder", "verifier", "runner"] {
+        write_pack(root.path(), role, role, Some(role));
+    }
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let result = install(&scan, Vec::new(), Vec::new(), &[]);
+
+    assert_eq!(
+        result.seated,
+        vec![
+            "lead".to_string(),
+            "architect".to_string(),
+            "builder".to_string(),
+            "runner".to_string()
+        ]
+    );
+    assert!(
+        result.dropped.is_empty(),
+        "nothing was dropped for want of a pack"
+    );
+    let verifier = result
+        .installed
+        .iter()
+        .find(|row| row.role == "verifier")
+        .expect("the verifier pack installs");
+    assert!(!verifier.seated);
+}
+
+/// A team minted before the rename is renamed in place, not duplicated.
+#[test]
+fn a_team_installed_under_the_old_name_is_updated_rather_than_duplicated() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let first = install(&scan, Vec::new(), Vec::new(), &[]);
+    let mut legacy = first.team.clone();
+    legacy.name = LEGACY_CREW_ROLES_TEAM_NAME.to_string();
+
+    let second = install(
+        &scan,
+        first.definitions.clone(),
+        first.agents.clone(),
+        std::slice::from_ref(&legacy),
+    );
+
+    assert_eq!(second.team.id, legacy.id, "the same team is updated");
+    assert_eq!(second.team.name, CREW_ROLES_TEAM_NAME);
 }

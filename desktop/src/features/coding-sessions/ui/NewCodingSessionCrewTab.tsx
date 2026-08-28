@@ -26,10 +26,10 @@ import { useCodingSessionCrewLaunch } from "./useCodingSessionCrewLaunch";
 export const codingSessionCrewTeamsQueryKey = ["coding-session-crew-teams"];
 
 /**
- * Launch a crew into one session: pick the crew, the repo, and the goal.
+ * Launch a team into one session: pick the team, the repo, and the goal.
  *
  * The refusals this tab is built around are all *before* anything is signed,
- * and all say what to do: a crew whose seats nobody on this computer fills, a
+ * and all say what to do: a team whose seats nobody on this computer fills, a
  * seat whose model the selected provider cannot actually run, a verifier
  * sharing a model vendor with a builder, and a seat whose vendor cannot be
  * established at all. The launch button stays disabled and the reason is on
@@ -100,8 +100,14 @@ export function NewCodingSessionCrewTab({
 
   const seats = resolution?.seats ?? null;
   const provider = React.useMemo(
-    () => ({ allowedModels: providerAllowedModels, label: providerLabel }),
-    [providerAllowedModels, providerLabel],
+    () => ({
+      allowedModels: providerAllowedModels,
+      // The runtime every seat is created against: a seat declaring a vendor
+      // this runtime cannot run is refused rather than launched into it.
+      instanceRef: providerInstanceRef,
+      label: providerLabel,
+    }),
+    [providerAllowedModels, providerInstanceRef, providerLabel],
   );
   // Same order as the launch: a model this provider cannot run is checked
   // before the vendor rule that would otherwise read it.
@@ -109,13 +115,13 @@ export function NewCodingSessionCrewTab({
     ? checkCodingSessionCrewSeatModels(seats, provider)
     : null;
   const family = seats ? checkCodingSessionCrewFamilies(seats) : null;
-  // Only about the crew that is actually selected: with no crew to launch,
+  // Only about the team that is actually selected: with no team to launch,
   // a missing provider is not yet anybody's problem to read.
   const refusal =
     selectedTeam === null
       ? null
       : ((providerInstanceRef === null || providerAuthorityPubkey === null
-          ? "No coding-session provider is available on this computer, so there is nothing to run the crew on."
+          ? "No coding-session provider is available on this computer, so there is nothing to run the team on."
           : null) ??
         resolution?.error ??
         (runnable && !runnable.ok ? runnable.reason : null) ??
@@ -155,7 +161,7 @@ export function NewCodingSessionCrewTab({
         setLaunchError(
           error instanceof Error
             ? error.message
-            : "The crew could not be launched.",
+            : "The team could not be launched.",
         );
       }
     })();
@@ -177,7 +183,7 @@ export function NewCodingSessionCrewTab({
           className="text-xs font-medium text-muted-foreground"
           htmlFor="coding-session-crew-team"
         >
-          Crew
+          Team
         </label>
         <select
           className="h-9 rounded-md border border-input bg-transparent px-3 text-sm disabled:opacity-50"
@@ -188,7 +194,7 @@ export function NewCodingSessionCrewTab({
           value={selectedTeam?.id ?? ""}
         >
           {crewTeams.length === 0 ? (
-            <option value="">No crews on this computer</option>
+            <option value="">No teams with seats on this computer</option>
           ) : null}
           {crewTeams.map((team) => (
             <option key={team.id} value={team.id}>
@@ -198,7 +204,7 @@ export function NewCodingSessionCrewTab({
         </select>
         <p className="text-2xs text-muted-foreground">
           {crewTeams.length === 0
-            ? "A crew is a team whose seats carry roles. None of this computer's teams do yet."
+            ? "A launchable team is one whose seats carry roles. None of this computer's teams do yet."
             : `Every seat runs on ${providerLabel ?? "this computer's provider"}, ` +
               `in the directory below${
                 model ? `, on ${model} unless its seat names its own` : ""
@@ -237,7 +243,7 @@ export function NewCodingSessionCrewTab({
           disabled={disabled || isLaunching}
           id="coding-session-crew-goal"
           onChange={(event) => setGoal(event.target.value)}
-          placeholder="What is this crew for?"
+          placeholder="What is this team for?"
           value={goal}
         />
         <p className="text-2xs text-muted-foreground">
@@ -289,7 +295,7 @@ export function NewCodingSessionCrewTab({
       ) : null}
 
       <p className="text-2xs text-muted-foreground">
-        A crew launch is not resumable. If it stops partway, the seats already
+        A team launch is not resumable. If it stops partway, the seats already
         created stay — finish the rest from the session itself.
       </p>
 
@@ -305,7 +311,7 @@ export function NewCodingSessionCrewTab({
           ) : (
             <Users />
           )}
-          Launch crew
+          Launch team
         </Button>
       </div>
     </div>
@@ -376,7 +382,7 @@ export function CodingSessionCrewRoster({
 /**
  * What the seats that got no role pack actually carry.
  *
- * A crew tab that lists six roles and then says nothing implies six seats
+ * A team tab that lists six roles and then says nothing implies six seats
  * holding their roles' craft. When this computer has no pack behind a seat's
  * persona, nothing wrote `.agents/skills` into its working directory, and this
  * line is the difference between a seat that lacks craft and a screen that

@@ -163,7 +163,7 @@ test("the roster names every seat, its vendor, and which one is you", () => {
     seats: SEATS,
     primaryPersonaId: "p-lead",
   });
-  assert.match(roster, /^\[Crew\]/);
+  assert.match(roster, /^\[Team\]/);
   assert.match(roster, /- lead: Fable \(anthropic · claude-opus-5\) — you/);
   assert.match(roster, /- builder: Codey \(openai · gpt-5\.6-sol\)$/m);
 });
@@ -174,7 +174,7 @@ test("the first turn carries the goal and then the roster", () => {
     seats: SEATS,
     primaryPersonaId: "p-lead",
   });
-  assert.ok(text.startsWith("Close ledger item 53.\n\n[Crew]"));
+  assert.ok(text.startsWith("Close ledger item 53.\n\n[Team]"));
   assert.match(text, /Codey/);
 });
 
@@ -401,4 +401,134 @@ test("only the seats the vendor rule decides are checked", () => {
     ).ok,
     false,
   );
+});
+
+test("a provider-locked runtime names the seat's vendor whatever the model alias is", () => {
+  // F7 (SESSION_STATE item 77): `sonnet` names no vendor on its own, so every
+  // seat the installer wrote read "vendor not declared · sonnet" and the D8
+  // rule refused the launch. The Claude adapter cannot run anything but
+  // Anthropic, so the seat's runtime settles it — including the `default`
+  // alias, whose *model* is still the adapter's to pick.
+  for (const model of ["sonnet", "opus", "haiku", "fable", "default"]) {
+    assert.deepEqual(
+      resolveCodingSessionSeatVendor({ driver: "claude-agent-acp", model }),
+      { vendor: "anthropic", source: "runtime" },
+      `${model} on claude-agent-acp`,
+    );
+  }
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ driver: "claude-agent-acp[1m]" }),
+    { vendor: "anthropic", source: "runtime" },
+    "a bracketed driver slug is the same driver",
+  );
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ driver: "codex-acp", model: "default" }),
+    { vendor: "openai", source: "runtime" },
+  );
+  // The alias is only unknown when the runtime is.
+  assert.deepEqual(resolveCodingSessionSeatVendor({ model: "sonnet" }), {
+    vendor: null,
+    source: "unknown",
+  });
+  // Goose runs whatever its config points at, so its slug settles nothing.
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({ driver: "goose-acp", model: "sonnet" }),
+    { vendor: null, source: "unknown" },
+  );
+});
+
+test("a seat whose declaration contradicts its runtime is a conflict", () => {
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({
+      driver: "claude-agent-acp",
+      model: "sonnet",
+      vendor: "openai",
+    }),
+    {
+      vendor: null,
+      source: "conflict",
+      declared: "openai",
+      derived: "anthropic",
+    },
+  );
+  // Agreement is not a conflict, and the declaration is what it says it is.
+  assert.deepEqual(
+    resolveCodingSessionSeatVendor({
+      driver: "claude-agent-acp",
+      vendor: "anthropic",
+    }),
+    { vendor: "anthropic", source: "declared" },
+  );
+});
+
+test("the roster the installer writes passes the family check and can launch", () => {
+  // The whole point of F7: what `install_role_packs` writes must launch as
+  // installed. `crew_roles.rs` seats lead, architect, builder and runner, each
+  // on `claude-agent-acp`, with `anthropic` declared — and seats no verifier,
+  // because every seat of one launch runs on the one selected provider.
+  const seats = ["lead", "architect", "builder", "runner"].map((role) => ({
+    role,
+    actorLabel: role,
+    driver: "claude-agent-acp",
+    vendor: "anthropic",
+    model: "sonnet",
+  }));
+  assert.deepEqual(checkCodingSessionCrewFamilies(seats), { ok: true });
+  assert.deepEqual(
+    checkCodingSessionCrewSeatModels(seats, {
+      allowedModels: ["default", "sonnet", "haiku"],
+      instanceRef: "claude-primary",
+      label: "Claude Code",
+    }),
+    { ok: true },
+  );
+});
+
+test("a seat cannot declare a vendor the selected provider cannot run", () => {
+  // The written vendor is only worth anything if it is checked against the
+  // runtime that will actually run the seat: every seat is created against the
+  // one `providerInstanceRef` the dialog selected.
+  const verdict = checkCodingSessionCrewSeatModels(
+    [
+      {
+        role: "builder",
+        actorLabel: "Levain",
+        driver: "claude-agent-acp",
+        vendor: "anthropic",
+        model: "default",
+      },
+    ],
+    {
+      allowedModels: ["default"],
+      instanceRef: "codex-primary",
+      label: "Codex",
+    },
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /anthropic/);
+  assert.match(verdict.reason, /openai/);
+});
+
+test("a lead seat cannot claim a vendor the selected provider will not run", () => {
+  // Not only the verifier/builder pair: the roster prints a vendor for every
+  // seat, and a seat created against a Codex provider does not run Anthropic
+  // because its seat says so.
+  const verdict = checkCodingSessionCrewSeatModels(
+    [
+      {
+        role: "lead",
+        actorLabel: "Keystone",
+        driver: "claude-agent-acp",
+        vendor: "anthropic",
+        model: "default",
+      },
+    ],
+    {
+      allowedModels: ["default"],
+      instanceRef: "codex-primary",
+      label: "Codex",
+    },
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /lead \(Keystone\)/);
 });

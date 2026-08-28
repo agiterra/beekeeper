@@ -502,7 +502,7 @@ export function NewCodingSessionForm({
           One session
         </TabsTrigger>
         <TabsTrigger data-testid="new-coding-session-tab-crew" value="crew">
-          Crew
+          Team
         </TabsTrigger>
       </TabsList>
     </Tabs>

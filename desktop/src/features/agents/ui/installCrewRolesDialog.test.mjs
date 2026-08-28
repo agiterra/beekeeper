@@ -3,12 +3,15 @@ import { describe, it } from "node:test";
 
 import {
   crewRoleResultRows,
+  crewRolesLeadName,
   crewRolesDroppedNotes,
   crewRolesFailureMessage,
   crewRolesFoundNothing,
   crewRolesInstalledToast,
   crewRolesSeatedNote,
   crewRolesUnreadableFolder,
+  INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
+  INSTALL_CREW_ROLES_LEAD_NAME_HINT,
   INSTALL_CREW_ROLES_NOTHING_FOUND,
   INSTALL_CREW_ROLES_REFRESH_NOTE,
   INSTALL_CREW_ROLES_ROSTER_PLAN,
@@ -27,11 +30,11 @@ const row = (role, overrides = {}) => ({
   ...overrides,
 });
 
-describe("install crew roles — result list", () => {
+describe("install team roles — result list", () => {
   it("renders one row per installed role, in the order the backend returned", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("lead"), row("builder")],
@@ -48,7 +51,7 @@ describe("install crew roles — result list", () => {
   it("says so when a row was refreshed rather than minted", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("lead", { refreshed: true }), row("builder")],
@@ -65,7 +68,7 @@ describe("install crew roles — result list", () => {
   it("renders skipped paths after the installed rows, with their reason", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("lead")],
@@ -87,7 +90,7 @@ describe("install crew roles — result list", () => {
   it("marks the unseated roles as unseated, so the roster note is not the only claim", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("lead"), row("poker"), row("designer")],
@@ -100,17 +103,23 @@ describe("install crew roles — result list", () => {
   });
 
   it("the pre-install plan names the roster and says a missing pack holds no seat", () => {
-    for (const role of ["lead", "architect", "builder", "verifier", "runner"]) {
+    for (const role of ["lead", "architect", "builder", "runner"]) {
       assert.match(INSTALL_CREW_ROLES_ROSTER_PLAN, new RegExp(role));
     }
-    assert.match(INSTALL_CREW_ROLES_ROSTER_PLAN, /poker and designer/);
+    assert.match(
+      INSTALL_CREW_ROLES_ROSTER_PLAN,
+      /poker, designer and verifier packs install as agents but are not seated/,
+    );
+    // A verifier is not seated *and the plan says why*: the launch would
+    // refuse it for sharing its builders' vendor (SESSION_STATE item 77, F7).
+    assert.match(INSTALL_CREW_ROLES_ROSTER_PLAN, /model vendor/);
     assert.match(INSTALL_CREW_ROLES_ROSTER_PLAN, /holds no seat/);
   });
 
   it("marks an installed-but-unseated row on the row itself", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("lead"), row("poker")],
@@ -118,13 +127,13 @@ describe("install crew roles — result list", () => {
     });
     assert.equal(rows[0].note, null);
     assert.equal(rows[1].note, INSTALL_CREW_ROLES_UNSEATED_NOTE);
-    assert.equal(rows[1].note, "installed, but not seated in the crew");
+    assert.equal(rows[1].note, "installed, but not seated in the team");
   });
 
   it("a refreshed row that is also unseated says both", () => {
     const rows = crewRoleResultRows({
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [row("designer", { refreshed: true })],
@@ -144,12 +153,12 @@ describe("install crew roles — result list", () => {
 // (SESSION_STATE item 76, poke finding F2). Both sentences below come off the
 // backend's own answer, so neither can outlive the install that produced it.
 
-describe("install crew roles — seats actually written", () => {
-  it("names the seats the crew holds, not the roster", () => {
+describe("install team roles — seats actually written", () => {
+  it("names the seats the team holds, not the roster", () => {
     assert.equal(
       crewRolesSeatedNote({
         teamId: "t",
-        teamName: "Crew roles",
+        teamName: "Team roles",
         seated: ["lead", "architect", "builder", "runner"],
         dropped: ["verifier"],
         installed: [],
@@ -163,7 +172,7 @@ describe("install crew roles — seats actually written", () => {
     assert.deepEqual(
       crewRolesDroppedNotes({
         teamId: "t",
-        teamName: "Crew roles",
+        teamName: "Team roles",
         seated: ["lead"],
         dropped: ["verifier", "runner"],
         installed: [],
@@ -179,7 +188,7 @@ describe("install crew roles — seats actually written", () => {
   it("a full roster drops nothing and says nothing about drops", () => {
     const result = {
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead", "architect", "builder", "verifier", "runner"],
       dropped: [],
       installed: [],
@@ -196,13 +205,13 @@ describe("install crew roles — seats actually written", () => {
     assert.equal(
       crewRolesSeatedNote({
         teamId: "t",
-        teamName: "Crew roles",
+        teamName: "Team roles",
         seated: [],
         dropped: ["lead", "architect", "builder", "verifier", "runner"],
         installed: [],
         skipped: [],
       }),
-      "No seats: this team holds no crew.",
+      "No seats: this team holds none.",
     );
   });
 });
@@ -214,7 +223,7 @@ describe("install crew roles — seats actually written", () => {
 // The backend now names the stage; each stage gets its own sentence, and a
 // failure that names no stage is never blamed on the folder.
 
-describe("install crew roles — failure copy", () => {
+describe("install team roles — failure copy", () => {
   it("blames the folder only for a folder failure", () => {
     assert.equal(
       crewRolesFailureMessage({
@@ -274,11 +283,11 @@ describe("install crew roles — failure copy", () => {
   });
 });
 
-describe("install crew roles — empty and failed folders", () => {
+describe("install team roles — empty and failed folders", () => {
   it("an install that found nothing is reported as nothing found", () => {
     const result = {
       teamId: "t",
-      teamName: "Crew roles",
+      teamName: "Team roles",
       seated: ["lead"],
       dropped: [],
       installed: [],
@@ -296,7 +305,7 @@ describe("install crew roles — empty and failed folders", () => {
     assert.equal(
       crewRolesFoundNothing({
         teamId: "t",
-        teamName: "Crew roles",
+        teamName: "Team roles",
         seated: ["lead"],
         dropped: [],
         installed: [row("lead")],
@@ -320,18 +329,42 @@ describe("install crew roles — empty and failed folders", () => {
   });
 });
 
-describe("install crew roles — success toast", () => {
+describe("install team roles — success toast", () => {
   it("names the count, the team and the roles", () => {
     assert.equal(
       crewRolesInstalledToast({
         teamId: "t",
-        teamName: "Crew roles",
+        teamName: "Team roles",
         seated: ["lead"],
         dropped: [],
         installed: [row("lead"), row("builder")],
         skipped: [],
       }),
-      "Installed 2 crew roles into “Crew roles”: lead, builder.",
+      "Installed 2 team roles into “Team roles”: lead, builder.",
     );
+  });
+});
+
+// ── Naming the lead (plan D11) ───────────────────────────────────────────────
+//
+// A lead is an identity a person names once ("Keystone"), not a role label.
+// The installer named every identity after its role, so every lead on every
+// computer was "Lead".
+
+describe("install team roles — naming the lead", () => {
+  it("defaults to the lead pack's own name and trims what is typed", () => {
+    assert.equal(crewRolesLeadName(""), INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT);
+    assert.equal(
+      crewRolesLeadName("   "),
+      INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT,
+    );
+    assert.equal(crewRolesLeadName("  Keystone "), "Keystone");
+    assert.equal(INSTALL_CREW_ROLES_LEAD_NAME_DEFAULT, "Lead");
+  });
+
+  it("says the field is only about the lead", () => {
+    assert.match(INSTALL_CREW_ROLES_LEAD_NAME_HINT, /lead/i);
+    // The other roles are renamed where every other agent is renamed.
+    assert.match(INSTALL_CREW_ROLES_LEAD_NAME_HINT, /rename/i);
   });
 });

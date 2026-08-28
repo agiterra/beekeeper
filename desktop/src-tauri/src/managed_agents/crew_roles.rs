@@ -34,16 +34,58 @@ use crate::managed_agents::{
 };
 
 /// Name of the one team every installed role pack joins. Also the dedupe key:
-/// a second run updates this team rather than minting `Crew roles (2)`.
-pub const CREW_ROLES_TEAM_NAME: &str = "Crew roles";
+/// a second run updates this team rather than minting `Team roles (2)`.
+pub const CREW_ROLES_TEAM_NAME: &str = "Team roles";
+
+/// What this team was called before "crew" became "team" in every string a
+/// person reads. Matched on install so a computer that already holds one is
+/// renamed in place rather than given a second team beside it.
+pub const LEGACY_CREW_ROLES_TEAM_NAME: &str = "Crew roles";
 
 /// Roles seated by default, in launch order.
 ///
-/// `poker` and `designer` packs are installed as agents but left unseated: a
-/// poker drives the built app (screenshots, e2e), which a seated coding-session
-/// execution cannot do, and a designer works at brief time, before a crew
-/// exists.
-pub const CREW_SEAT_ROSTER: [&str; 5] = ["lead", "architect", "builder", "verifier", "runner"];
+/// `poker`, `designer` and `verifier` packs are installed as agents but left
+/// unseated: a poker drives the built app (screenshots, e2e), which a seated
+/// coding-session execution cannot do; a designer works at brief time, before
+/// a team exists; and a verifier cannot be seated *by this installer* at all —
+/// every seat of one launch is created against the single
+/// `providerInstanceRef` the dialog selected, so every seat runs on that
+/// runtime's vendor, and contract D8 refuses a verifier sharing a builder's
+/// vendor. Seating one here made the installed roster unlaunchable by
+/// construction (SESSION_STATE item 77, F7). The pack is installed so a roster
+/// launched across two providers can seat it.
+pub const CREW_SEAT_ROSTER: [&str; 4] = ["lead", "architect", "builder", "runner"];
+
+/// ACP driver slug a seat installed here declares.
+///
+/// The `claude-primary` coding-session runtime is the one this desktop always
+/// offers (`session_provider::runtimes`), so it is the runtime a launch from
+/// this computer uses unless the operator picks another — and a launch that
+/// *does* pick another is refused by `checkCodingSessionCrewSeatModels`, which
+/// compares the seat's declared vendor against the selected provider. The seat
+/// therefore states a runtime rather than leaving the family rule with nothing
+/// to read.
+pub const DEFAULT_CREW_SEAT_DRIVER: &str = "claude-agent-acp";
+
+/// Model vendor each provider-locked ACP driver necessarily runs on.
+///
+/// Only drivers that can run exactly one vendor belong here: the Claude Code
+/// adapter talks to Anthropic and the Codex adapter to OpenAI, whatever model
+/// alias is chosen. Goose and `buzz-agent` take their provider from
+/// configuration, so no vendor can be stated for them and none is.
+const DRIVER_VENDORS: [(&str, &str); 3] = [
+    ("claude-agent-acp", "anthropic"),
+    ("claude-code-acp", "anthropic"),
+    ("codex-acp", "openai"),
+];
+
+/// The one vendor `driver` can run, or `None` when it can run several.
+pub fn driver_vendor(driver: &str) -> Option<&'static str> {
+    DRIVER_VENDORS
+        .iter()
+        .find(|(slug, _)| *slug == driver)
+        .map(|(_, vendor)| *vendor)
+}
 
 /// Install order for the packs themselves — the roster first, then the two
 /// unseated roles, then any role a pack invents (alphabetically).
@@ -323,10 +365,15 @@ impl std::fmt::Display for DisplayIoError {
 /// Build the crew block from the roles that actually got installed.
 ///
 /// A roster role with no installed pack is **dropped** from the seats — never
-/// seated with a persona id that does not exist, which would make every crew
+/// seated with a persona id that does not exist, which would make every team
 /// launch fail on a seat nobody fills. `primary` is the lead's persona, or the
 /// first remaining seat when no lead was installed. `None` when the roster
-/// produced no seats at all: that is an ordinary team, not a crew with a hole.
+/// produced no seats at all: that is an ordinary team, not a team with a hole.
+///
+/// Every seat states the runtime it will launch on and the vendor that runtime
+/// can only be. Leaving both unset is what made the installed roster
+/// unlaunchable: the family rule had nothing to read, so it refused every seat
+/// as "vendor not declared" (SESSION_STATE item 77, F7).
 pub fn build_crew(installed: &[(String, String)]) -> Option<TeamCrew> {
     let mut seats: Vec<TeamCrewSeat> = Vec::new();
     for role in CREW_SEAT_ROSTER {
@@ -337,9 +384,9 @@ pub fn build_crew(installed: &[(String, String)]) -> Option<TeamCrew> {
         seats.push(TeamCrewSeat {
             persona_id: persona_id.clone(),
             role: role.to_string(),
-            driver: None,
+            driver: Some(DEFAULT_CREW_SEAT_DRIVER.to_string()),
             model: None,
-            vendor: None,
+            vendor: driver_vendor(DEFAULT_CREW_SEAT_DRIVER).map(str::to_string),
         });
     }
     let primary = seats
@@ -419,17 +466,28 @@ fn mint_agent_name(
 /// Propagates whatever `mint` returns as a [`CrewRoleInstallFailure::Keys`]
 /// failure — a keyring or key-generation failure must abort the install rather
 /// than write a keyless agent.
+///
+/// `lead_name` is the name the operator gave the lead identity (D11: a lead is
+/// an identity a person names once, not a role label). `None` — or an empty
+/// string — keeps the lead pack's own display name. Every other role keeps its
+/// pack's name; they are renamed from the agent dialog.
 pub fn install_role_packs(
     scan: &RolePackScan,
     mut definitions: Vec<AgentDefinition>,
     mut agents: Vec<ManagedAgentRecord>,
     teams: &[TeamRecord],
     now: &str,
+    lead_name: Option<&str>,
     mint: &mut dyn FnMut() -> Result<MintedCrewIdentity, String>,
 ) -> Result<CrewRoleInstall, CrewRoleInstallError> {
-    let existing_team = teams
-        .iter()
-        .find(|team| !team.is_builtin && team.name == CREW_ROLES_TEAM_NAME);
+    let lead_name = lead_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+    let existing_team = teams.iter().find(|team| {
+        !team.is_builtin
+            && (team.name == CREW_ROLES_TEAM_NAME || team.name == LEGACY_CREW_ROLES_TEAM_NAME)
+    });
     let team_id = existing_team
         .map(|team| team.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -506,11 +564,17 @@ pub fn install_role_packs(
             }
         };
 
+        // D11: the lead is an identity the operator names; the rest keep the
+        // name their pack declares and are renamed from the agent dialog.
+        let wanted_name = match (pack.role.as_str(), lead_name.as_deref()) {
+            ("lead", Some(name)) => name,
+            _ => pack.display_name.as_str(),
+        };
         let agent_name = match existing.as_ref() {
             // A refresh keeps the handle the operator already knows unless the
             // pack renamed the persona; either way the name stays unique.
-            Some(record) => mint_agent_name(&pack.display_name, &agents, Some(&record.pubkey)),
-            None => mint_agent_name(&pack.display_name, &agents, None),
+            Some(record) => mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
+            None => mint_agent_name(wanted_name, &agents, None),
         };
 
         // Build the instance off the definition projection rather than a second

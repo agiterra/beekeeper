@@ -45,7 +45,7 @@ import { installMockBridge } from "../helpers/bridge";
  * `.../actor_seats.rs`). Everything else is the app's own code path.
  */
 
-const SHOTS = "test-results/fd2-poke";
+const SHOTS = "test-results/swat1-poke";
 
 const PROVIDER_SECRET = generateSecretKey();
 const PROVIDER_PUBKEY = getPublicKey(PROVIDER_SECRET);
@@ -105,11 +105,12 @@ const CREW_ROLES: CrewRoleFixture[] = [
     refreshed: false,
   },
   {
+    // The disclosure case: a home role this computer holds no pack behind.
     role: "architect",
     name: "Architect",
     pubkey: "a2".repeat(32),
     personaId: "persona-architect",
-    hasRolePack: true,
+    hasRolePack: false,
     seated: true,
     refreshed: false,
   },
@@ -123,13 +124,16 @@ const CREW_ROLES: CrewRoleFixture[] = [
     refreshed: false,
   },
   {
-    // The disclosure case: a home role this computer holds no pack behind.
+    // Installed on purpose, seated never: every seat of one launch runs on the
+    // one selected provider, so a seated verifier could only ever share its
+    // builders' vendor and D8 would refuse the roster the installer just
+    // wrote (SESSION_STATE item 77, F7).
     role: "verifier",
     name: "Verifier",
     pubkey: "a4".repeat(32),
     personaId: "persona-verifier",
-    hasRolePack: false,
-    seated: true,
+    hasRolePack: true,
+    seated: false,
     refreshed: false,
   },
   {
@@ -164,12 +168,20 @@ const CREW_ROLES: CrewRoleFixture[] = [
 const CREW_TEAM_ID = "team-crew-roles";
 
 /** The roster, in seat order — `CREW_SEAT_ROSTER` in `crew_roles.rs`. */
-const SEAT_ROSTER = ["lead", "architect", "builder", "verifier", "runner"];
+const SEAT_ROSTER = ["lead", "architect", "builder", "runner"];
+
+/**
+ * What every seat the installer writes declares — `build_crew` in
+ * `crew_roles.rs`. Without these the Team tab read "vendor not declared ·
+ * sonnet" on every row and the D8 family rule refused the launch, so the front
+ * door opened onto a wall (SESSION_STATE item 77, F7).
+ */
+const SEAT_RUNTIME = { driver: "claude-agent-acp", vendor: "anthropic" };
 
 /** `InstallCrewRolePacksResponse`, exactly as `crew_roles.rs` serialises it. */
 const INSTALL_RESPONSE = {
   teamId: CREW_TEAM_ID,
-  teamName: "Crew roles",
+  teamName: "Team roles",
   seated: SEAT_ROSTER,
   dropped: [] as string[],
   installed: CREW_ROLES.map((role) => ({
@@ -196,6 +208,7 @@ function crewInvokeInitScript(input: {
   installResponse: unknown;
   packRoot: string;
   crewTeamId: string;
+  seatRuntime: { driver: string; vendor: string };
 }) {
   return (config: typeof input) => {
     type Invoke = (
@@ -211,6 +224,8 @@ function crewInvokeInitScript(input: {
       installFailure: null as { failure: string; detail: string } | null,
       /** Role whose pack this folder does not hold, for the dropped-seat case. */
       dropRole: null as string | null,
+      /** Arguments of the last `install_crew_role_packs` call, verbatim. */
+      installArgs: null as Record<string, unknown> | null,
     };
     (window as unknown as { __FD1__: typeof state }).__FD1__ = state;
 
@@ -254,7 +269,7 @@ function crewInvokeInitScript(input: {
 
     const crewTeam = {
       id: config.crewTeamId,
-      name: "Crew roles",
+      name: "Team roles",
       description: null,
       persona_ids: config.agents.map((agent) => agent.personaId),
       is_builtin: false,
@@ -268,7 +283,12 @@ function crewInvokeInitScript(input: {
         primary: config.agents[0].personaId,
         seats: config.agents
           .filter((agent) => agent.seated)
-          .map((agent) => ({ personaId: agent.personaId, role: agent.role })),
+          .map((agent) => ({
+            personaId: agent.personaId,
+            role: agent.role,
+            driver: config.seatRuntime.driver,
+            vendor: config.seatRuntime.vendor,
+          })),
       },
     };
 
@@ -284,6 +304,7 @@ function crewInvokeInitScript(input: {
             case "pick_crew_role_packs_directory":
               return config.packRoot;
             case "install_crew_role_packs": {
+              state.installArgs = (args ?? {}) as Record<string, unknown>;
               // The backend rejects with `CrewRoleInstallError`, a serialised
               // struct — not a string. Throwing the struct is what the real
               // bridge does, and it is what the dialog now reads the stage off.
@@ -509,20 +530,14 @@ async function openApp(page: Page) {
       }),
     ],
   });
-  await page.addInitScript(
-    crewInvokeInitScript({
-      agents: CREW_ROLES,
-      installResponse: INSTALL_RESPONSE,
-      packRoot: PACK_ROOT,
-      crewTeamId: CREW_TEAM_ID,
-    }),
-    {
-      agents: CREW_ROLES,
-      installResponse: INSTALL_RESPONSE,
-      packRoot: PACK_ROOT,
-      crewTeamId: CREW_TEAM_ID,
-    },
-  );
+  const crewConfig = {
+    agents: CREW_ROLES,
+    installResponse: INSTALL_RESPONSE,
+    packRoot: PACK_ROOT,
+    crewTeamId: CREW_TEAM_ID,
+    seatRuntime: SEAT_RUNTIME,
+  };
+  await page.addInitScript(crewInvokeInitScript(crewConfig), crewConfig);
   await page.goto("/", { waitUntil: "domcontentloaded" });
 }
 
@@ -566,6 +581,13 @@ test.describe("crew front door", () => {
     );
     await expect(page.getByTestId("install-crew-roles-submit")).toBeEnabled();
 
+    // D11: the lead is an identity a person names, not a role label. The
+    // field defaults to the pack's own name so leaving it alone changes
+    // nothing.
+    const leadNameField = page.getByTestId("install-crew-roles-lead-name");
+    await expect(leadNameField).toHaveValue("Lead");
+    await leadNameField.fill("Keystone");
+
     await page.getByTestId("install-crew-roles-submit").click();
     const result = page.getByTestId("install-crew-roles-result");
     await expect(result).toBeVisible();
@@ -579,6 +601,15 @@ test.describe("crew front door", () => {
     await waitForAnimations(page);
     await dialog.screenshot({ path: `${SHOTS}/03-install-result.png` });
 
+    // …and the name reached the installer, which is what mints the record.
+    const installArgs = await page.evaluate(() => {
+      const w = window as unknown as {
+        __FD1__: { installArgs: Record<string, unknown> | null };
+      };
+      return w.__FD1__.installArgs;
+    });
+    expect(installArgs?.leadName).toBe("Keystone");
+
     await page.getByTestId("install-crew-roles-close").click();
     await expect(dialog).toHaveCount(0);
 
@@ -588,7 +619,7 @@ test.describe("crew front door", () => {
     const teamCard = page.getByTestId(`team-card-${CREW_TEAM_ID}`);
     await teamCard.scrollIntoViewIfNeeded();
     await expect(teamCard.getByTestId("team-crew-badge")).toHaveText(
-      "Crew · 5 seats",
+      "Team · 4 seats",
     );
     await waitForAnimations(page);
     await teamCard.screenshot({ path: `${SHOTS}/14-team-crew-badge.png` });
@@ -606,12 +637,12 @@ test.describe("crew front door", () => {
     await expect(page.getByTestId("agents-library-teams")).toBeVisible({
       timeout: 15_000,
     });
-    await page.evaluate((verifierRole) => {
+    await page.evaluate((droppedRole) => {
       const w = window as unknown as {
         __FD1__: { dropRole: string | null };
       };
-      w.__FD1__.dropRole = verifierRole;
-    }, "verifier");
+      w.__FD1__.dropRole = droppedRole;
+    }, "architect");
 
     await page.getByTestId("new-team-card").click();
     await page.getByTestId("install-crew-roles").click();
@@ -620,27 +651,31 @@ test.describe("crew front door", () => {
 
     const result = page.getByTestId("install-crew-roles-result");
     await expect(result).toBeVisible();
-    // The verifier is genuinely absent from what was installed…
-    await expect(result).not.toContainText("Verifier — Verifier");
+    // The architect is genuinely absent from what was installed…
+    await expect(result).not.toContainText("Architect — Architect");
     const dialog = page.getByTestId("install-crew-roles-dialog");
     // …and the seat report names the four seats that exist, not the five the
     // roster names.
     const seats = page.getByTestId("install-crew-roles-seats");
+    await expect(seats).toContainText("Seated: lead, builder, runner.");
     await expect(seats).toContainText(
-      "Seated: lead, architect, builder, runner.",
-    );
-    await expect(seats).toContainText(
-      "verifier: no pack installed, so it holds no seat.",
+      "architect: no pack installed, so it holds no seat.",
     );
     await expect(dialog).not.toContainText("Seated by default");
     // The two roles installed on purpose and seated on purpose never say so
     // on their own rows, rather than reading like the seated ones.
     await expect(result).toContainText(
-      "Poker — Poker — installed, but not seated in the crew",
+      "Poker — Poker — installed, but not seated in the team",
     );
     await expect(result).toContainText(
-      "Designer — Designer — installed, but not seated in the crew",
+      "Designer — Designer — installed, but not seated in the team",
     );
+    // And the verifier, unseated for a reason the plan gives rather than for
+    // want of a pack: it is installed, and it holds no seat.
+    await expect(result).toContainText(
+      "Verifier — Verifier — installed, but not seated in the team",
+    );
+    await expect(seats).not.toContainText("verifier: no pack installed");
     await waitForAnimations(page);
     await dialog.screenshot({ path: `${SHOTS}/15-install-dropped-role.png` });
   });
@@ -706,21 +741,21 @@ test.describe("crew front door", () => {
     await expect(page.getByTestId("unified-agents-groups")).toBeVisible({
       timeout: 15_000,
     });
-    const verifierCard = page.getByTestId(
-      `managed-agent-${CREW_ROLES[3].pubkey}`,
+    const packlessCard = page.getByTestId(
+      `managed-agent-${CREW_ROLES[1].pubkey}`,
     );
-    await expect(verifierCard).toBeVisible({ timeout: 15_000 });
+    await expect(packlessCard).toBeVisible({ timeout: 15_000 });
     // Seven role-carrying agents, each showing the role it is…
     await expect(page.getByTestId("agent-home-role")).toHaveCount(
       CREW_ROLES.length,
     );
     // …and exactly one of them disclosing that its pack is not installed here.
     await expect(page.getByTestId("agent-no-role-pack")).toHaveCount(1);
-    await expect(verifierCard.getByTestId("agent-home-role")).toHaveText(
-      "Home role: Verifier",
+    await expect(packlessCard.getByTestId("agent-home-role")).toHaveText(
+      "Home role: Architect",
     );
     // The card states the fact; the remedy needs room the card does not have.
-    await expect(verifierCard.getByTestId("agent-no-role-pack")).toHaveText(
+    await expect(packlessCard.getByTestId("agent-no-role-pack")).toHaveText(
       "Role pack not installed here",
     );
     // The plain agent the backend never answered about claims neither.
@@ -734,15 +769,15 @@ test.describe("crew front door", () => {
       .screenshot({ path: `${SHOTS}/04-agents-home-role-badges.png` });
 
     // The card's own detail surface is the other place an operator would look.
-    await verifierCard.click();
+    await packlessCard.click();
     const panel = page.getByTestId("user-profile-summary-scroll-layout");
     await expect(panel).toBeVisible({ timeout: 15_000 });
     await expect(panel.getByTestId("agent-home-role")).toHaveText(
-      "Home role: Verifier",
+      "Home role: Architect",
     );
     // The panel has room for the remedy, so it carries the whole sentence.
     await expect(panel.getByTestId("agent-no-role-pack")).toHaveText(
-      "Role pack not installed here — install crew roles from the project's " +
+      "Role pack not installed here — install team roles from the project's " +
         "personas/roles",
     );
     await waitForAnimations(page);
@@ -752,7 +787,9 @@ test.describe("crew front door", () => {
     });
   });
 
-  test("03 — the Crew tab lists the minted crew's seats", async ({ page }) => {
+  test("03 — the Team tab lists the minted team's seats, and can launch them", async ({
+    page,
+  }) => {
     await openApp(page);
     await openNewCodingSessionDialog(page);
     await page.getByTestId("new-coding-session-tab-crew").click();
@@ -764,9 +801,30 @@ test.describe("crew front door", () => {
     );
     const roster = page.getByTestId("new-coding-session-crew-roster");
     await expect(roster).toBeVisible({ timeout: 15_000 });
-    await expect(roster.locator("li")).toHaveCount(5);
+    await expect(roster.locator("li")).toHaveCount(4);
     await expect(roster).toContainText("lead");
-    await expect(roster).toContainText("verifier");
+    await expect(roster).toContainText("runner");
+
+    // F7: every row read "vendor not declared · sonnet" and the launch was
+    // refused with "change the seat in this computer's teams.json". The seat
+    // names the runtime it will run on, and that runtime runs one vendor.
+    await expect(roster).not.toContainText("vendor not declared");
+    // The seat declares the vendor and its runtime agrees, so the roster
+    // states it plainly rather than annotating where it came from.
+    await expect(roster.locator("li").first()).toContainText(
+      "anthropic · sonnet",
+    );
+    await expect(
+      page.getByTestId("new-coding-session-crew-refusal"),
+    ).toHaveCount(0);
+
+    // …and with a goal typed, the front door actually opens.
+    await page
+      .getByTestId("new-coding-session-crew-goal")
+      .fill("Close ledger item 77.");
+    await expect(
+      page.getByTestId("new-coding-session-crew-launch"),
+    ).toBeEnabled();
     await waitForAnimations(page);
     await crewTab.screenshot({ path: `${SHOTS}/06-crew-tab.png` });
 
@@ -775,7 +833,7 @@ test.describe("crew front door", () => {
     // so on that seat's own line — before the launch, not after staging
     // reports it.
     await expect(
-      roster.getByTestId(`crew-seat-no-role-pack-${CREW_ROLES[3].personaId}`),
+      roster.getByTestId(`crew-seat-no-role-pack-${CREW_ROLES[1].personaId}`),
     ).toContainText(
       "carries no role skills: this computer has no role pack behind it.",
     );
@@ -856,10 +914,10 @@ test.describe("crew front door", () => {
     // No pack: the agent whose home role has no pack on this computer.
     await page.getByTestId("new-coding-session-seat-agent").click();
     await page
-      .getByTestId(`new-coding-session-seat-agent-${CREW_ROLES[3].pubkey}`)
+      .getByTestId(`new-coding-session-seat-agent-${CREW_ROLES[1].pubkey}`)
       .click();
     await expect(page.getByTestId("new-coding-session-seat-pack")).toHaveText(
-      "Verifier has no role pack on this computer, so this seat carries no role skills and runs on its persona prompt alone.",
+      "Architect has no role pack on this computer, so this seat carries no role skills and runs on its persona prompt alone.",
     );
     await waitForAnimations(page);
     await seatField.screenshot({ path: `${SHOTS}/10-seat-no-pack.png` });
