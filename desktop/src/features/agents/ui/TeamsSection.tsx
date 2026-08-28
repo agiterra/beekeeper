@@ -19,6 +19,7 @@ import {
 import { IdentityCardSkeleton } from "@/shared/ui/identity-card-skeleton";
 import { SectionHeader } from "@/shared/ui/PageHeader";
 import { CreateIdentityCard } from "./CreateIdentityCard";
+import { INSTALL_CREW_ROLES_MENU_LABEL } from "./installCrewRolesCopy";
 import { TeamIdentityCard } from "./TeamIdentityCard";
 import { IDENTITY_CARD_GRID_CLASS } from "./UnifiedAgentsSection";
 
@@ -37,6 +38,7 @@ type TeamsSectionProps = {
   onAddToChannel: (team: AgentTeam) => void;
   onShare: (team: AgentTeam) => void;
   onImport: () => void;
+  onInstallCrewRoles: () => void;
 };
 
 export function TeamsSection({
@@ -52,6 +54,7 @@ export function TeamsSection({
   onAddToChannel,
   onShare,
   onImport,
+  onInstallCrewRoles,
 }: TeamsSectionProps) {
   return (
     <section className="relative space-y-4" data-testid="agents-library-teams">
@@ -88,6 +91,7 @@ export function TeamsSection({
             isPending={isPending}
             onCreate={onCreate}
             onImport={onImport}
+            onInstallCrewRoles={onInstallCrewRoles}
           />
           {teams.map((team) => {
             const resolution = resolveTeamPersonas(team, personas);
@@ -152,6 +156,7 @@ export function TeamsSection({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 }
+                crewSeatCount={team.crew ? team.crew.seats.length : null}
                 dataTestId={`team-card-${team.id}`}
                 description={team.description}
                 isSymlink={team.isSymlink}
@@ -192,10 +197,12 @@ function NewTeamCard({
   isPending,
   onCreate,
   onImport,
+  onInstallCrewRoles,
 }: {
   isPending: boolean;
   onCreate: () => void;
   onImport: () => void;
+  onInstallCrewRoles: () => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -208,6 +215,13 @@ function NewTeamCard({
       >
         <DropdownMenuItem disabled={isPending} onClick={onCreate}>
           Create team
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          data-testid="install-crew-roles"
+          disabled={isPending}
+          onClick={onInstallCrewRoles}
+        >
+          {INSTALL_CREW_ROLES_MENU_LABEL}
         </DropdownMenuItem>
         <DropdownMenuItem disabled={isPending} onClick={onImport}>
           Import

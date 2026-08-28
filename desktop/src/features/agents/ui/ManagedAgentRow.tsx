@@ -244,6 +244,7 @@ function AgentSummary({
               <Badge variant="secondary">{personaLabel}</Badge>
             ) : null}
             <AgentOriginBadge agent={agent} />
+            <AgentHomeRoleBadges agent={agent} />
             {agent.personaOrphaned ? (
               <Badge className="gap-1" variant="warning">
                 <AlertTriangle className="h-3 w-3" />
@@ -417,6 +418,39 @@ function RuntimeBlock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The role this agent *is*, and whether this computer can stage the pack
+ * behind it.
+ *
+ * The second badge is the disclosure the whole `hasRolePack` field exists for:
+ * an agent carrying a home role with no pack on this computer must never
+ * render as if it carried the role's craft — a seat on it runs on the persona
+ * prompt alone. An agent with no home role shows neither badge; there is
+ * nothing to claim.
+ */
+function AgentHomeRoleBadges({ agent }: { agent: ManagedAgent }) {
+  if (!agent.homeRole) return null;
+  const label =
+    agent.homeRole.charAt(0).toUpperCase() + agent.homeRole.slice(1);
+  return (
+    <>
+      <Badge data-testid="agent-home-role" variant="secondary">
+        Home role: {label}
+      </Badge>
+      {agent.hasRolePack ? null : (
+        <Badge
+          className="gap-1"
+          data-testid="agent-no-role-pack"
+          variant="warning"
+        >
+          <AlertTriangle className="h-3 w-3" />
+          No role pack on this computer
+        </Badge>
+      )}
+    </>
   );
 }
 

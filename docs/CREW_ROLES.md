@@ -107,13 +107,25 @@ Where that happens today, precisely:
   the adapter is spawned (`crates/buzz-session-provider/src/session.rs`). A
   seat whose persona has no pack on this computer is staged without one, and
   the Crew tab says that seat carries no role skills.
-- **Managed agents** (the channel-agent spawn path, not a crew seat) currently
-  materialize nothing: the record's `persona_team_dir` /
-  `persona_name_in_team` link is `None` on every record built today, and that
-  spawn path runs its child in the *shared* nest, where
-  `materialize_persona_skills` now refuses to write rather than putting one
-  persona's skills where every agent — or the user's own home directory —
-  would receive them.
+- **Managed agents installed from a role pack.** `install_crew_role_packs`
+  (`desktop/src-tauri/src/managed_agents/crew_roles.rs`) writes the record's
+  `persona_team_dir` / `persona_name_in_team` link and its `home_role`, so
+  `resolve_seat_pack` resolves and a seat filled by one of these agents stages
+  *with* its pack. `ManagedAgentSummary.has_role_pack` is exactly
+  `resolve_seat_pack(record, &teams).is_some()`, and the agent row says
+  "No role pack on this computer" when it is false.
+- **Managed agents created any other way** (the channel-agent spawn path, not a
+  crew seat) still materialize nothing: `AgentDefinition::into_agent_record`
+  writes `None` for both link fields, and that spawn path runs its child in the
+  *shared* nest, where `materialize_persona_skills` refuses to write rather than
+  putting one persona's skills where every agent — or the user's own home
+  directory — would receive them.
+- **The team the installer creates** (`Crew roles`) carries the crew block the
+  Crew tab reads, with `lead, architect, builder, verifier, runner` seated in
+  launch order and the lead taking the first turn. Its `source_dir` is
+  deliberately `None`: `delete_team_with_cascade` removes `source_dir`
+  recursively, so a team pointed at `personas/roles` would delete the operator's
+  checkout on "Delete team". The pack link lives on each agent instead.
 
 ## A note on the `role` slug
 

@@ -1,9 +1,22 @@
 import { invokeTauri } from "@/shared/api/tauri";
 import type {
   AgentTeam,
+  AgentTeamCrew,
   CreateTeamInput,
   UpdateTeamInput,
 } from "@/shared/api/types";
+
+/** Wire shape of `TeamCrew` — camelCase inside a snake_case record. */
+type RawTeamCrew = {
+  primary: string;
+  seats: {
+    personaId: string;
+    role: string;
+    driver?: string | null;
+    model?: string | null;
+    vendor?: string | null;
+  }[];
+};
 
 type RawTeam = {
   id: string;
@@ -11,6 +24,8 @@ type RawTeam = {
   description: string | null;
   instructions?: string | null;
   persona_ids: string[];
+  /** Absent on an older backend, and absent for an ordinary team. */
+  crew?: RawTeamCrew | null;
   is_builtin?: boolean;
   source_dir?: string | null;
   is_symlink?: boolean;
@@ -27,6 +42,7 @@ function fromRawTeam(team: RawTeam): AgentTeam {
     description: team.description,
     instructions: team.instructions ?? null,
     personaIds: team.persona_ids,
+    crew: (team.crew as AgentTeamCrew | null | undefined) ?? null,
     isBuiltin: team.is_builtin ?? false,
     sourceDir: team.source_dir ?? null,
     isSymlink: team.is_symlink ?? false,
@@ -198,4 +214,51 @@ export async function confirmTeamSnapshotImport(
     personaIds: raw.personaIds,
     members: raw.members,
   };
+}
+
+// ── Crew role packs ─────────────────────────────────────────────────────────
+
+/** One installed role, as `install_crew_role_packs` reports it. */
+export type InstalledCrewRole = {
+  personaId: string;
+  personaName: string;
+  role: string;
+  agentPubkey: string;
+  agentName: string;
+  packDir: string;
+  /** `true` when an agent already installed from this pack was refreshed. */
+  refreshed: boolean;
+  /** `true` when this role is in the crew's default seat roster. */
+  seated: boolean;
+};
+
+/** One child of the chosen folder that produced no role, and why. */
+export type SkippedCrewRolePack = { path: string; reason: string };
+
+export type InstallCrewRolePacksResponse = {
+  teamId: string;
+  teamName: string;
+  installed: InstalledCrewRole[];
+  skipped: SkippedCrewRolePack[];
+};
+
+/** Open the OS folder picker for a folder of role packs. `null` if cancelled. */
+export async function pickCrewRolePacksDirectory(): Promise<string | null> {
+  return (
+    (await invokeTauri<string | null>("pick_crew_role_packs_directory")) ?? null
+  );
+}
+
+/**
+ * Install every role pack in `directory` as an agent carrying its home role.
+ *
+ * Idempotent: a pack already installed refreshes its agent rather than minting
+ * a second one.
+ */
+export async function installCrewRolePacks(
+  directory: string,
+): Promise<InstallCrewRolePacksResponse> {
+  return invokeTauri<InstallCrewRolePacksResponse>("install_crew_role_packs", {
+    directory,
+  });
 }

@@ -231,6 +231,14 @@ export type ManagedAgent = {
    */
   runtime: string | null;
   teamId?: string | null;
+  /** The role this agent is, from its pack persona. `null` when it has none. */
+  homeRole: string | null;
+  /**
+   * Whether this computer can stage a role pack for it. `false` means a seat
+   * on this agent runs on its persona prompt alone — say so, never imply the
+   * role's craft is there.
+   */
+  hasRolePack: boolean;
   relayUrl: string;
   acpCommand: string;
   /** Resolved/effective harness command (persona-wins, override-honored). */
@@ -706,12 +714,26 @@ export type UpdatePersonaInput = {
 };
 
 // ── Team types ────────────────────────────────────────────────────────────────
+/** One seat in a crew: which persona fills it and what role it plays. */
+export type AgentTeamCrewSeat = {
+  personaId: string;
+  role: string;
+  driver?: string | null;
+  model?: string | null;
+  vendor?: string | null;
+};
+
+/** A team's crew composition: seats in launch order and the one addressed first. */
+export type AgentTeamCrew = { primary: string; seats: AgentTeamCrewSeat[] };
+
 export type AgentTeam = {
   id: string;
   name: string;
   description: string | null;
   instructions: string | null;
   personaIds: string[];
+  /** Crew composition, or `null` for an ordinary team. */
+  crew: AgentTeamCrew | null;
   isBuiltin: boolean;
   /** Absolute path to the team's backing directory (if directory-backed). */
   sourceDir: string | null;

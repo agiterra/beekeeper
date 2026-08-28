@@ -14,6 +14,8 @@ type TeamIdentityCardProps = {
   dataTestId: string;
   description?: string | null;
   isSymlink?: boolean;
+  /** Number of crew seats, when this team is a crew. `null` for an ordinary team. */
+  crewSeatCount?: number | null;
   memberCount: number;
   personas: AgentPersona[];
   sourceDir?: string | null;
@@ -27,6 +29,7 @@ const MAX_VISIBLE_MEMBER_AVATARS = 4;
 export function TeamIdentityCard({
   actions,
   children,
+  crewSeatCount,
   dataTestId,
   description,
   isSymlink = false,
@@ -58,6 +61,14 @@ export function TeamIdentityCard({
                 <p>Linked from {symlinkTarget ?? sourceDir}</p>
               </TooltipContent>
             </Tooltip>
+          ) : null}
+          {crewSeatCount != null ? (
+            <span
+              className="rounded-full border border-border/65 bg-background/90 px-2 py-1 text-2xs font-medium leading-none text-muted-foreground shadow-xs"
+              data-testid="team-crew-badge"
+            >
+              Crew · {crewSeatCount} seats
+            </span>
           ) : null}
           {version ? (
             <span className="rounded-full border border-border/65 bg-background/90 px-2 py-1 text-2xs font-medium leading-none text-muted-foreground shadow-xs">

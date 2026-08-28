@@ -257,6 +257,80 @@ test("fromRawAcpRuntimeCatalogEntry omits maxParallelism when max_parallelism is
   );
 });
 
+// ── fromRawManagedAgent: home role + role pack ───────────────────────────────
+//
+// `homeRole` and `hasRolePack` answer two different questions, and an older
+// backend answers neither. Absent must degrade to "no home role, no pack" —
+// never to a comfortable "it has one".
+
+const { fromRawManagedAgent } = await import("./tauri.ts");
+
+const rawAgent = (extra = {}) => ({
+  pubkey: "ab".repeat(32),
+  name: "Lead",
+  persona_id: "crew-role:lead",
+  relay_url: "ws://localhost:3000",
+  acp_command: "buzz-acp",
+  agent_command: "goose",
+  agent_args: [],
+  mcp_command: "",
+  turn_timeout_seconds: 320,
+  idle_timeout_seconds: null,
+  max_turn_duration_seconds: null,
+  parallelism: 1,
+  system_prompt: null,
+  model: null,
+  provider: null,
+  persona_out_of_date: false,
+  persona_orphaned: false,
+  needs_restart: false,
+  status: "stopped",
+  pid: null,
+  created_at: "2026-08-27T00:00:00Z",
+  updated_at: "2026-08-27T00:00:00Z",
+  last_started_at: null,
+  last_stopped_at: null,
+  last_exit_code: null,
+  last_error: null,
+  last_error_code: null,
+  log_path: "/tmp/lead.log",
+  start_on_app_launch: false,
+  backend: { type: "local" },
+  backend_agent_id: null,
+  ...extra,
+});
+
+test("fromRawManagedAgent maps home_role and has_role_pack", () => {
+  const agent = fromRawManagedAgent(
+    rawAgent({ home_role: "lead", has_role_pack: true }),
+  );
+  assert.equal(agent.homeRole, "lead");
+  assert.equal(agent.hasRolePack, true);
+});
+
+test("fromRawManagedAgent reports a home role with no pack behind it", () => {
+  const agent = fromRawManagedAgent(
+    rawAgent({ home_role: "builder", has_role_pack: false }),
+  );
+  assert.equal(agent.homeRole, "builder");
+  assert.equal(
+    agent.hasRolePack,
+    false,
+    "a role with no pack must stay visibly packless",
+  );
+});
+
+test("fromRawManagedAgent degrades an older backend to no role, no pack", () => {
+  const agent = fromRawManagedAgent(rawAgent());
+  assert.equal(agent.homeRole, null);
+  assert.equal(agent.hasRolePack, false);
+});
+
+test("fromRawManagedAgent maps an explicit null home_role to null", () => {
+  const agent = fromRawManagedAgent(rawAgent({ home_role: null }));
+  assert.equal(agent.homeRole, null);
+});
+
 // ── Teardown ──────────────────────────────────────────────────────────────────
 
 test("teardown — restore Date.now", () => {

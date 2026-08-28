@@ -18,6 +18,7 @@ import { TeamSnapshotImportDialog } from "./TeamSnapshotImportDialog";
 import { TeamShareDialog } from "./TeamShareDialog";
 import { TeamDeleteDialog } from "./TeamDeleteDialog";
 import { TeamDialog } from "./TeamDialog";
+import { InstallCrewRolesDialog } from "./InstallCrewRolesDialog";
 import { TeamsSection } from "./TeamsSection";
 import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
 import { useManagedAgentActions } from "./useManagedAgentActions";
@@ -36,6 +37,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { getInheritedAgentDefaults } from "./bakedEnvHelpers";
+import { crewRolesInstalledToast } from "./installCrewRolesCopy";
 
 export function AgentsView() {
   const { openPersonaProfilePanel, openProfilePanel } = useProfilePanel();
@@ -49,6 +51,8 @@ export function AgentsView() {
   const fullAiDefaultsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const compactActionsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
+  const [isInstallCrewRolesOpen, setIsInstallCrewRolesOpen] =
+    React.useState(false);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -288,12 +292,24 @@ export function AgentsView() {
               onImport={() => {
                 teamImportInputRef.current?.click();
               }}
+              onInstallCrewRoles={() => setIsInstallCrewRolesOpen(true)}
               personas={personas.libraryPersonas}
               teams={teamActions.teams}
             />
           </div>
         </div>
       </div>
+
+      <InstallCrewRolesDialog
+        onInstalled={(result) => {
+          void teamActions.teamsQuery.refetch();
+          void agents.refetchManagedAgents();
+          void personas.personasQuery.refetch();
+          agents.setActionNoticeMessage(crewRolesInstalledToast(result));
+        }}
+        onOpenChange={setIsInstallCrewRolesOpen}
+        open={isInstallCrewRolesOpen}
+      />
 
       <AgentDefaultsDialog
         onOpenChange={setAiDefaultsDialogOpen}

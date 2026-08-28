@@ -118,6 +118,12 @@ export type RawManagedAgent = {
   // Optional: pre-feature fixtures may omit it. The record's harness/runtime id.
   runtime?: string | null;
   team_id?: string | null;
+  /** Absent on an older backend — mapped to `null`, which is "no home role",
+   *  not "no role pack". */
+  home_role?: string | null;
+  /** Absent on an older backend — mapped to `false`, the honest floor: this
+   *  computer has shown no pack for the agent. */
+  has_role_pack?: boolean;
   relay_url: string;
   acp_command: string;
   agent_command: string;
@@ -669,6 +675,8 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     personaId: agent.persona_id,
     runtime: agent.runtime ?? null,
     teamId: agent.team_id ?? null,
+    homeRole: agent.home_role ?? null,
+    hasRolePack: agent.has_role_pack ?? false,
     relayUrl: agent.relay_url,
     acpCommand: agent.acp_command,
     agentCommand: agent.agent_command,
