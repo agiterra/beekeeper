@@ -29,10 +29,17 @@ itself the first crew — run by hand until §4 S5 lets it run itself.
 | seat | who | does | never does |
 | --- | --- | --- | --- |
 | **lead** | Claude Fable, this session | rules, writes briefs, reads reports and diffs, merges tier-0/1, updates §7 | writes feature code; reads a builder's exploration |
+| **designer** | any model that can read the existing screens | writes the `Surfaces` section of every user-visible brief: entry point, fields/states, verbatim failure copy, or "no surface, by decision" | writes feature code; invents a surface the plan does not need |
 | **builder** | Sonnet/Opus 5 or Codex, one per lane, isolated worktree | implements a locked brief; self-verifies; reports raw facts | redesigns; touches files outside its lane; commits to `main` |
 | **refuter** | a *different model family* from the builder | one pass over a tier-2 diff against the brief's named constraints; terminal verdict | re-argues a disposition; reviews tier-0/1 |
 | **runner** | cheapest capable model | `just ci`, e2e, builds; reports exit codes and counts | reasons about the diff |
 | **finalizer** | lead, or a builder it names | rebases lanes onto `main`, `git commit -s`, force-pushes the topic branch | anything else |
+
+**Surfaces are a gate, not a report.** Every user-visible lane's brief carries
+a `Surfaces` section written by the designer seat before dispatch (§1.1), and
+the poker's walk through exactly those named surfaces is what closes the lane —
+a lane whose surfaces were never named, or never walked, is not done however
+green its tests are.
 
 **Lane rules.** Every lane owns a file set written in its brief; two lanes
 never own the same file. Lanes work in worktrees (`git worktree add`), rebase
@@ -67,6 +74,14 @@ Owns (exclusive): <paths>. Must not touch anything else; if you need to, STOP an
 Problem, with evidence: <file:line / reproduced output>.
 Design (LOCKED): <decisions, numbered>. Deviations need a written reason in the report.
 Contract changes: <exact wire/type deltas, with the doc that must change>.
+Surfaces (MANDATORY for anything a person can see; written by the designer seat):
+  desktop: <file path of the entry point> — entry point, fields/states, verbatim failure copy
+           | no surface, by decision — <reason> (needs Brian's sign-off)
+  mobile:  <same shape> | no surface, by decision — <reason> (needs Brian's sign-off)
+  web:     <same shape> | no surface, by decision — <reason> (needs Brian's sign-off)
+  CLI:     <command + flags> | no surface, by decision — <reason> (needs Brian's sign-off)
+  Every line is filled. A blank surface line is an unwritten brief, not an
+  absent surface, and the poker walks exactly these paths to close the lane.
 Tests you must add: <named>. Watch each fail before the fix where a defect is claimed.
 Acceptance: <commands with expected counts / exit codes>.
 Out of scope: <named temptations>.

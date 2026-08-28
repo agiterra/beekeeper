@@ -1,13 +1,13 @@
 # Crew roles
 
-Six persona packs under `personas/roles/<role>/` give a crew seat its role.
+Seven persona packs under `personas/roles/<role>/` give a crew seat its role.
 Each is a valid persona pack (`.plugin/plugin.json` + `personas/<role>.persona.md`
 + `skills/`) — see `crates/buzz-persona/PERSONA_PACK_SPEC.md` for the pack
-format itself. This document explains what the six roles are for and how they
+format itself. This document explains what the seven roles are for and how they
 relate to each other; it does not restate the plan (`docs/CREW_SESSIONS_PLAN.md`
 §1, §3, §4 S5) which remains the source of truth for the crew model.
 
-Any model may fill any role. None of these six packs names a vendor or a
+Any model may fill any role. None of these seven packs names a vendor or a
 model — the seat does, at launch time. Each pack's `plugin.json` `description`
 carries only a `model_min` capability note (the kind of model the role needs,
 not a specific one). The *schema* does allow one: `PersonaConfig.model` is a
@@ -15,9 +15,9 @@ not a specific one). The *schema* does allow one: `PersonaConfig.model` is a
 `llm_provider` + `model` at resolve time. A crew seat's model comes from the
 seat regardless, which is why these packs leave the field unset.
 Verify a pack with `bee pack validate personas/roles/<role>` before relying
-on it — all six pass clean today (`Valid.`, exit 0).
+on it — all seven pass clean today (`Valid.`, exit 0).
 
-## The six roles
+## The seven roles
 
 | role | does | never does |
 | --- | --- | --- |
@@ -27,12 +27,17 @@ on it — all six pass clean today (`Valid.`, exit 0).
 | **verifier** | one pass over a tier-2 diff against the brief's named constraints; a terminal verdict | re-argues a disposition; reviews tier-0/1 |
 | **runner** | runs commands (`just ci`, e2e, builds); reports exit codes and counts | reasons about the diff; opines on whether a failure matters |
 | **poker** | drives the built app through its real UI; reports honesty bugs with screenshots | fixes what it finds; reports from reading code alone |
+| **designer** | names each feature's surfaces before builders start — entry point, fields, states, verbatim failure copy — or writes "no surface, by decision" | writes feature code; invents a surface the plan does not need |
 
-This mirrors the seat table in `docs/CREW_SESSIONS_PLAN.md` §1, with two
+This mirrors the seat table in `docs/CREW_SESSIONS_PLAN.md` §1, with three
 seats the plan's operating model doesn't separately name: **architect**
 (the plan's design-shape check, split out as its own seat rather than folded
-into the lead) and **poker** (the plan's S6 honesty-bug driver, made
-available from S5 on rather than only at the final live proof).
+into the lead), **poker** (the plan's S6 honesty-bug driver, made
+available from S5 on rather than only at the final live proof), and
+**designer** (added 2026-08-27 after six slices shipped wire contracts, CLIs
+and a provider with almost no UI, because the brief template never asked for
+one — it runs at brief time, before the builders, and its `Surfaces` section
+is what the poker later walks).
 
 ## Verdict vocabulary
 
@@ -85,6 +90,7 @@ rather than paid for on every turn:
 | verifier | `refuter-pass` |
 | runner | `run-and-report` |
 | poker | `drive-and-report` |
+| designer | `specify-surfaces` |
 
 ## Materialization
 
@@ -113,7 +119,7 @@ Where that happens today, precisely:
 
 Contract D8-A gives `PersonaConfig` an optional `role` (slug) field so a
 crew seat's role can be read off the persona itself
-(`crates/buzz-persona/src/persona.rs`). All six packs declare it explicitly in
+(`crates/buzz-persona/src/persona.rs`). All seven packs declare it explicitly in
 their `.persona.md` frontmatter, matching each persona's `name:` (`lead`,
-`architect`, `builder`, `verifier`, `runner`, `poker`). The field is optional,
+`architect`, `builder`, `verifier`, `runner`, `poker`, `designer`). The field is optional,
 so a persona without one is an ordinary persona rather than a crew seat.
