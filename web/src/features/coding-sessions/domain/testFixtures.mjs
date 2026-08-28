@@ -167,6 +167,8 @@ export function createEvent(signer, options = {}) {
     model: options.model ?? null,
     title: options.title ?? null,
     initialTurn: null,
+    ...(options.actor === undefined ? {} : { actor: options.actor }),
+    ...(options.role === undefined ? {} : { role: options.role }),
   };
   return sign(signer, {
     kind: 44221,

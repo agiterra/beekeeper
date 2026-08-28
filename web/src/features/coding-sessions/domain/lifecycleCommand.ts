@@ -147,10 +147,25 @@ function decodeCreate(
     "title",
     "initialTurn",
   ] as const;
+  // An agent seat: `actor` and `role` together or not at all, in the exact
+  // forms buzz-core accepts (lowercase 64-hex; `[a-z0-9-]` slug).
+  const hasActor = hasOwnKey(action, "actor");
+  if (hasActor !== hasOwnKey(action, "role")) return null;
+  if (
+    hasActor &&
+    (typeof action.actor !== "string" ||
+      !/^[0-9a-f]{64}$/.test(action.actor) ||
+      typeof action.role !== "string" ||
+      !/^[a-z0-9-]{1,64}$/.test(action.role))
+  ) {
+    return null;
+  }
   if (
     !hasRequiredAndOptionalKeys(action, required, [
       "sessionRef",
       "genesisRef",
+      "actor",
+      "role",
     ]) ||
     !nullableBounded(action.projectRef, MAX_REFERENCE_BYTES) ||
     !nullableBounded(action.repoRef, MAX_REFERENCE_BYTES) ||

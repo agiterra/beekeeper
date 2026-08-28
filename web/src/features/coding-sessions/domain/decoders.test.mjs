@@ -461,3 +461,34 @@ test("a goal is refused past 4096 bytes", () => {
   assert.ok(parseCodingSessionGoal(goalEvent("ship it")));
   assert.equal(parseCodingSessionGoal(goalEvent("x".repeat(4097))), null);
 });
+
+test("a seated 44221 create (actor + role) parses; half a seat or a bad slug is refused", () => {
+  const operator = newSigner();
+  const provider = newSigner();
+  const seated = parseCodingSessionLifecycleCommand(
+    createEvent(operator, {
+      providerAuthorityPubkey: provider.pubkey,
+      actor: "d".repeat(64),
+      role: "lead",
+    }),
+  );
+  assert.ok(seated, "a seated create must parse");
+  assert.equal(seated.action, "create");
+  for (const bad of [
+    { role: "lead" },
+    { actor: "d".repeat(64) },
+    { actor: "D".repeat(64), role: "lead" },
+    { actor: "d".repeat(64), role: "Lead" },
+  ]) {
+    assert.equal(
+      parseCodingSessionLifecycleCommand(
+        createEvent(operator, {
+          providerAuthorityPubkey: provider.pubkey,
+          ...bad,
+        }),
+      ),
+      null,
+      JSON.stringify(bad),
+    );
+  }
+});

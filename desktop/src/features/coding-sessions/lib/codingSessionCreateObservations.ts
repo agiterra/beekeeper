@@ -199,6 +199,12 @@ export function classifyCodingSessionCreateEvent(
   }
   const hasSessionRef = Object.hasOwn(payload.action, "sessionRef");
   const hasGenesisRef = Object.hasOwn(payload.action, "genesisRef");
+  // An agent seat (NIP-CSL): `actor` and `role` travel together or not at
+  // all. A create that carries them is exactly as governed as one that does
+  // not — refusing it here would leave every seated session founderless.
+  const hasActor = Object.hasOwn(payload.action, "actor");
+  const hasRole = Object.hasOwn(payload.action, "role");
+  if (hasActor !== hasRole) return { kind: "malformed" };
   const createKeys = [
     "type",
     "projectRef",
@@ -210,10 +216,18 @@ export function classifyCodingSessionCreateEvent(
     "model",
     "title",
     "initialTurn",
+    ...(hasActor ? ["actor", "role"] : []),
   ];
   if (
     !hasExactKeys(payload.action, createKeys) ||
     (hasGenesisRef && !hasSessionRef)
+  ) {
+    return { kind: "malformed" };
+  }
+  if (
+    hasActor &&
+    (!isSeatActorPubkey(payload.action.actor) ||
+      !isSeatRoleSlug(payload.action.role))
   ) {
     return { kind: "malformed" };
   }
@@ -255,6 +269,16 @@ export function classifyCodingSessionCreateEvent(
     sessionRef: claimed ?? null,
     genesisRef: genesisRef ?? null,
   };
+}
+
+/** The seat's actor exactly as buzz-core accepts it: lowercase 64-hex. */
+function isSeatActorPubkey(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+/** A role slug exactly as buzz-core accepts it: `[a-z0-9-]`, 1..=64 bytes. */
+function isSeatRoleSlug(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9-]{1,64}$/.test(value);
 }
 
 export type CodingSessionGenesisClassification =
