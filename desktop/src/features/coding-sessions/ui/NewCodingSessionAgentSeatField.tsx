@@ -2,9 +2,11 @@ import { Bot, ChevronDown } from "lucide-react";
 
 import {
   CODING_SESSION_ROLE_SUGGESTIONS,
+  codingSessionSeatPackNotice,
+  codingSessionSeatRoleNotice,
   MAX_CODING_SESSION_ROLE_BYTES,
 } from "@/features/coding-sessions/lib/codingSessionActorSeat";
-import type { ManagedAgent } from "@/shared/api/types";
+import type { CodingSessionSeatAgent } from "@/features/coding-sessions/lib/codingSessionSeatAgent";
 import { Input } from "@/shared/ui/input";
 import {
   DropdownMenu,
@@ -29,6 +31,11 @@ const ROLE_SUGGESTION_LIST_ID = "coding-session-role-suggestions";
  * only identities whose keys the provider can resolve host-locally (D6). An
  * agent on someone else's machine cannot be seated here, and pretending
  * otherwise would produce a create the provider refuses.
+ *
+ * `agents` is deliberately structural ({@link CodingSessionSeatAgent}) rather
+ * than the full `ManagedAgent`: the two disclosure lines below read optional
+ * fields, and an `undefined` field must render nothing rather than a comfortable
+ * default.
  */
 export function NewCodingSessionAgentSeatField({
   actor,
@@ -41,7 +48,7 @@ export function NewCodingSessionAgentSeatField({
 }: {
   /** Pubkey of the seated agent, or null for an unseated execution. */
   actor: string | null;
-  agents: readonly ManagedAgent[];
+  agents: readonly CodingSessionSeatAgent[];
   disabled?: boolean;
   /** Validation copy for the seat as a whole. */
   error?: string | null;
@@ -50,6 +57,10 @@ export function NewCodingSessionAgentSeatField({
   role: string;
 }) {
   const selected = agents.find((agent) => agent.pubkey === actor) ?? null;
+  // Both lines are conditional on the backend having answered: a build with no
+  // home-role/pack knowledge renders exactly the field it rendered before.
+  const roleNotice = codingSessionSeatRoleNotice({ agent: selected, role });
+  const packNotice = codingSessionSeatPackNotice(selected);
   const label = selected
     ? selected.name
     : actor
@@ -128,6 +139,26 @@ export function NewCodingSessionAgentSeatField({
               <option key={suggestion} value={suggestion} />
             ))}
           </datalist>
+          {roleNotice ? (
+            <p
+              className={
+                roleNotice.tone === "warn"
+                  ? "text-2xs text-amber-600 dark:text-amber-500"
+                  : "text-2xs text-muted-foreground"
+              }
+              data-testid="new-coding-session-seat-role-notice"
+            >
+              {roleNotice.message}
+            </p>
+          ) : null}
+          {packNotice ? (
+            <p
+              className="text-2xs text-amber-600 dark:text-amber-500"
+              data-testid="new-coding-session-seat-pack"
+            >
+              {packNotice}
+            </p>
+          ) : null}
           <p className="text-2xs text-muted-foreground">
             The seat holds this agent's own identity on the relay and is added
             to the channel, so its work is signed as itself.

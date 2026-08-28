@@ -2,7 +2,7 @@ import { CircleAlert, FolderKanban, LoaderCircle, Send } from "lucide-react";
 import * as React from "react";
 
 import { MAX_CODING_SESSION_LIFECYCLE_INITIAL_TURN_BYTES } from "@/features/coding-sessions/lib/codingSessionLifecycleCommand";
-import { resolveCodingSessionActorSeat } from "@/features/coding-sessions/lib/codingSessionActorSeat";
+import { useCodingSessionSeatDraft } from "@/features/coding-sessions/lib/useCodingSessionSeatDraft";
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
 import { MAX_CODING_SESSION_NAME_BYTES } from "@/features/coding-sessions/lib/codingSessionName";
 import { useChannelsQuery } from "@/features/channels/hooks";
@@ -266,8 +266,6 @@ export function NewCodingSessionForm({
   // One session or a whole crew. Two answers to "what am I starting?", so two
   // tabs rather than a checkbox that silently changes what Create means.
   const [mode, setMode] = React.useState<"session" | "crew">("session");
-  const [seatActor, setSeatActor] = React.useState<string | null>(null);
-  const [seatRole, setSeatRole] = React.useState("");
   const managedAgentsQuery = useManagedAgentsQuery();
   const managedAgents = React.useMemo(
     () => managedAgentsQuery.data ?? [],
@@ -276,12 +274,7 @@ export function NewCodingSessionForm({
   // Both halves or neither, resolved the same way the signed create resolves
   // them — so the field can refuse a half-filled seat before anything is
   // published rather than throwing from the builder.
-  const seatResolution = resolveCodingSessionActorSeat({
-    actor: seatActor,
-    role: seatRole,
-  });
-  const seatLabel =
-    managedAgents.find((agent) => agent.pubkey === seatActor)?.name ?? null;
+  const seatDraft = useCodingSessionSeatDraft(managedAgents);
   const [workdir, setWorkdir] = React.useState("");
   const [useWorktree, setUseWorktree] = React.useState(true);
   const [worktreeName, setWorktreeName] = React.useState("");
@@ -342,7 +335,7 @@ export function NewCodingSessionForm({
     targetChannelId !== null &&
     selectedTarget !== null &&
     isNewCodingSessionTargetReady(selectedTarget) &&
-    seatResolution.error === null &&
+    seatDraft.error === null &&
     !draftOverCap;
 
   const handleSubmit = React.useCallback(() => {
@@ -410,8 +403,8 @@ export function NewCodingSessionForm({
         // Remember the checkout, not the worktree that was just made from it.
         rememberWorkdir: checkout.length > 0 ? checkout : null,
         projectRef: projectContext?.projectRef ?? null,
-        seat: seatResolution.seat,
-        seatLabel,
+        seat: seatDraft.seat,
+        seatLabel: seatDraft.label,
       });
       clearDraft();
     })();
@@ -421,8 +414,8 @@ export function NewCodingSessionForm({
     draftText,
     effectiveModel,
     projectContext,
-    seatLabel,
-    seatResolution.seat,
+    seatDraft.label,
+    seatDraft.seat,
     selectedTarget,
     submit,
     title,
@@ -638,16 +631,13 @@ export function NewCodingSessionForm({
         />
 
         <NewCodingSessionAgentSeatField
-          actor={seatActor}
+          actor={seatDraft.actor}
           agents={managedAgents}
           disabled={transaction !== null}
-          error={seatResolution.error}
-          onActorChange={(next) => {
-            setSeatActor(next);
-            if (next === null) setSeatRole("");
-          }}
-          onRoleChange={setSeatRole}
-          role={seatRole}
+          error={seatDraft.error}
+          onActorChange={seatDraft.onActorChange}
+          onRoleChange={seatDraft.onRoleChange}
+          role={seatDraft.role}
         />
 
         <NewCodingSessionWorkdirField
