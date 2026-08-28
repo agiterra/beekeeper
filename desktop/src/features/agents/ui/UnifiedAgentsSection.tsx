@@ -6,6 +6,7 @@ import {
   resolveAgentCardAvatarUrl,
 } from "@/features/agents/lib/agentCardAvatar";
 import { resolveAgentCardModelLabel } from "@/features/agents/lib/agentCardModelLabel";
+import { resolveAgentCardTitle } from "@/features/agents/lib/agentCardTitle";
 import { friendlyAgentLastError } from "@/features/agents/lib/friendlyAgentLastError";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
 import { pickProfileAgent } from "@/features/agents/lib/pickProfileAgent";
@@ -253,7 +254,10 @@ function AgentPersonaCard({
   onStartAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
 }) {
-  const title = persona.displayName;
+  // The identity's name when there is one behind this card: the card opens
+  // that instance, so a persona-pack title over a differently-named agent
+  // names something the operator cannot find (item 79a).
+  const title = resolveAgentCardTitle({ persona, agent });
   const modelLabel = resolveAgentCardModelLabel({
     agent,
     personaModel: persona.model,

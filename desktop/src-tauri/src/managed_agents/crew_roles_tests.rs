@@ -570,3 +570,95 @@ fn a_team_installed_under_the_old_name_is_updated_rather_than_duplicated() {
     assert_eq!(second.team.id, legacy.id, "the same team is updated");
     assert_eq!(second.team.name, CREW_ROLES_TEAM_NAME);
 }
+
+/// Item 79(a): the Agents grid read `Lead` over the identity the operator
+/// named `Keystone`, because the installer reused Fizz's persona card and left
+/// its display name alone. The card an install writes is the identity's card;
+/// it carries the identity's name or the grid tells the operator about an
+/// agent that does not exist.
+#[test]
+fn the_persona_card_an_install_writes_carries_the_identity_name() {
+    let root = tempfile::tempdir().expect("temp dir");
+    for role in ["lead", "builder"] {
+        write_pack(root.path(), role, role, Some(role));
+    }
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let mut mint = counting_mint(&mut minted);
+    let result = install_role_packs(
+        &scan,
+        Vec::new(),
+        Vec::new(),
+        &[],
+        NOW,
+        Some("Keystone"),
+        &mut mint,
+    )
+    .expect("install succeeds");
+
+    let lead = result
+        .installed
+        .iter()
+        .find(|row| row.role == "lead")
+        .expect("lead installed");
+    let card = result
+        .definitions
+        .iter()
+        .find(|def| def.id == lead.persona_id)
+        .expect("the lead's persona card");
+    assert_eq!(
+        card.display_name, "Keystone",
+        "the card is titled after the identity the install minted"
+    );
+    assert!(
+        !result
+            .definitions
+            .iter()
+            .any(|def| def.display_name == "lead"),
+        "no card is left titled after the role pack the lead came from"
+    );
+    // Every other role keeps its pack's name, and its card agrees with it.
+    let builder = result
+        .installed
+        .iter()
+        .find(|row| row.role == "builder")
+        .expect("builder installed");
+    let builder_card = result
+        .definitions
+        .iter()
+        .find(|def| def.id == builder.persona_id)
+        .expect("the builder's persona card");
+    assert_eq!(builder_card.display_name, builder.agent_name);
+}
+
+/// A second install over an already-named lead renames the card it reuses.
+#[test]
+fn a_refresh_renames_the_card_it_reuses_after_the_identity() {
+    let root = tempfile::tempdir().expect("temp dir");
+    write_pack(root.path(), "lead", "lead", Some("lead"));
+    let scan = scan_role_packs(root.path()).expect("scan succeeds");
+
+    let mut minted = 0usize;
+    let first = {
+        let mut mint = counting_mint(&mut minted);
+        install_role_packs(&scan, Vec::new(), Vec::new(), &[], NOW, None, &mut mint)
+            .expect("install succeeds")
+    };
+    assert_eq!(first.definitions[0].display_name, "lead");
+
+    let mut mint = counting_mint(&mut minted);
+    let second = install_role_packs(
+        &scan,
+        first.definitions.clone(),
+        first.agents.clone(),
+        std::slice::from_ref(&first.team),
+        NOW,
+        Some("Keystone"),
+        &mut mint,
+    )
+    .expect("install succeeds");
+    assert_eq!(second.definitions.len(), 1, "the card is reused, not added");
+    assert_eq!(second.definitions[0].display_name, "Keystone");
+    assert_eq!(second.agents[0].name, "Keystone");
+}

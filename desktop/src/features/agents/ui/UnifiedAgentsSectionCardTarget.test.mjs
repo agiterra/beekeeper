@@ -219,8 +219,11 @@ test("persona card main click records a persona target, never an explicit pubkey
     );
   });
 
+  // The card is titled with the instance it stands for (item 79a), which here
+  // is the archived sibling `pickProfileAgent` selected — the click target is
+  // still the persona, and that is what this test is about.
   fireEvent.click(
-    screen.getByRole("button", { name: "Fizz Prime agent profile" }),
+    screen.getByRole("button", { name: "Archived Sibling agent profile" }),
   );
 
   assert.ok(recordedPersona, "the click must record a persona target");
@@ -254,7 +257,7 @@ test("persona card main click records a persona target even for a stopped errore
   });
 
   fireEvent.click(
-    screen.getByRole("button", { name: "Fizz Prime agent profile" }),
+    screen.getByRole("button", { name: "Errored agent profile" }),
   );
 
   assert.equal(recordedPersona?.id, "persona-1");

@@ -506,9 +506,25 @@ pub fn install_role_packs(
             _ => mint_definition_id(&pack.persona_name, &definitions),
         };
 
+        // D11: the lead is an identity the operator names; the rest keep the
+        // name their pack declares and are renamed from the agent dialog.
+        let wanted_name = match (pack.role.as_str(), lead_name.as_deref()) {
+            ("lead", Some(name)) => name,
+            _ => pack.display_name.as_str(),
+        };
+        let agent_name = match existing.as_ref() {
+            // A refresh keeps the handle the operator already knows unless the
+            // pack renamed the persona; either way the name stays unique.
+            Some(record) => mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
+            None => mint_agent_name(wanted_name, &agents, None),
+        };
+
         let definition = AgentDefinition {
             id: persona_id.clone(),
-            display_name: pack.display_name.clone(),
+            // The card is the identity's card. Titling it after the pack left
+            // the Agents grid reading "Lead" over an agent named Keystone —
+            // a card pointing at an agent that does not exist (item 79a).
+            display_name: agent_name.clone(),
             avatar_url: pack.avatar_url.clone(),
             system_prompt: pack.system_prompt.clone(),
             runtime: pack.runtime.clone(),
@@ -562,19 +578,6 @@ pub fn install_role_packs(
                     now.to_string(),
                 )
             }
-        };
-
-        // D11: the lead is an identity the operator names; the rest keep the
-        // name their pack declares and are renamed from the agent dialog.
-        let wanted_name = match (pack.role.as_str(), lead_name.as_deref()) {
-            ("lead", Some(name)) => name,
-            _ => pack.display_name.as_str(),
-        };
-        let agent_name = match existing.as_ref() {
-            // A refresh keeps the handle the operator already knows unless the
-            // pack renamed the persona; either way the name stays unique.
-            Some(record) => mint_agent_name(wanted_name, &agents, Some(&record.pubkey)),
-            None => mint_agent_name(wanted_name, &agents, None),
         };
 
         // Build the instance off the definition projection rather than a second
