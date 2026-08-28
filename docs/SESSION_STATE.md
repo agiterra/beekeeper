@@ -2258,6 +2258,160 @@ written and `bash -n` clean but **was not executed** — that harness needs
     machine); his host answered `turn_dropped / NO_LIVE_EXECUTION` as
     designed. Founder should be a column.
 
+76. **Crew front door — designer seat, role packs → actors with home roles,
+    crew authoring, add a seat to a running session, seat disclosures, `bee
+    events query` + founder column.** Built by a three-lane crew off
+    `crew/front-door` (design `crew/lane-design`@`ecfcd3d1`, integration
+    `fd-int`@`96aabfc7`).
+    **Lane A — role packs become actors, crews can be authored**
+    (`15db5efb`): `NewTeamCard` gains `Install crew roles…`
+    (`data-testid="install-crew-roles"`) between Create team and Import;
+    `InstallCrewRolesDialog.tsx` walks idle → chosen → installing → done
+    (per-role result rows, skipped-child reasons, roster note) or
+    nothing-found / failed; success toast `Installed {n} crew roles into
+    "{team}": {roles}.`; team card badge `Crew · {n} seats`
+    (`data-testid="team-crew-badge"`); agent row badges `Home role: {Role}`
+    and `No role pack on this computer`
+    (`data-testids agent-home-role` / `agent-no-role-pack`); a team-snapshot
+    import preview discloses when a snapshot's crew could not be matched to
+    its members. No mobile/web/CLI surface (design decision, needs sign-off).
+    **Lane B — seats in the session UI** (`3d9a62e4`): the join dialog
+    (`AddCodingSessionProviderDialog.tsx`) gets an agent-seat dropdown
+    defaulted from the agent's home role, a role-mismatch notice, a no-pack
+    notice, and blocks submit while half-filled; after submit, a
+    `Seated: {Agent} · {Role}` line reports what custody actually staged
+    (`data-testid="add-coding-session-provider-seat"`, addition beyond the
+    brief); the pending screen
+    (`data-testid="pending-coding-session-seat"`) and the session header
+    (`data-testid="coding-session-header-seat"`) both show the seat. No
+    mobile/web/CLI surface (design decision, needs sign-off).
+    **Lane C — `bee events query` + founder column** (`602cccc0`): new
+    subcommand `bee events query --kinds <n>[,<n>…] [--channel <uuid> | --h
+    <v>] [--authors] [--ids] [--since] [--until] [--limit]`, raw signed
+    events JSON newest-first, `--format compact` gives
+    `{id, kind, pubkey, createdAt, h, summary}`; `bee sessions status` and
+    `bee sessions list` gain `founder` + `createSigner` per execution and a
+    channel-level `founders` array (JSON), `founder` in compact. Founder is
+    keyed by execution identity (driver/instanceId/sessionId), not
+    generation, so it survives resumes — deliberate deviation from the
+    brief's literal wording, because keying by generation would print
+    `founder: null` on every resumed session (the common case, and the
+    subject of item 73 above). No desktop/mobile/web surface (design
+    decision, needs sign-off).
+    **Gate (`gatedSha` `9345d893`): GREEN.** `cargo test -p
+    buzz-cli/buzz-session-provider/buzz-persona/buzz-core --lib`:
+    573+441+157+381 = 1552 passed, 0 failed; `cargo clippy --workspace
+    --all-targets -D warnings`: clean; `cargo fmt --all --check`: clean;
+    desktop `pnpm typecheck` + `pnpm test`: tsc clean, 6448 tests 0 fail;
+    `cargo test --manifest-path desktop/src-tauri/Cargo.toml`:
+    2734+0+7+3+0 = 2744 passed, 0 failed, 18 ignored; desktop `pnpm
+    check:px-text`: clean; `just check`: fmt/clippy/file-size/autodeploy/
+    woodpecker all pass; `just web-test`: 166 tests, 0 fail. No failures.
+    **Poke findings (verbatim), most severe first:**
+    - *Blocking* — Agents view / agent profile panel — Home role and No role
+      pack badges: "Nothing. Seven agents each carrying a home_role, one of
+      them with has_role_pack:false, render as plain identity cards with no
+      role and no warning — and the agent's own profile panel shows the
+      same. The badges ManagedAgentRow.tsx:440-450 renders (`Home role:
+      {Role}`, `No role pack on this computer`) appear on no screen."
+      What is true: "ManagedAgentRow is only rendered by AgentGroupRows
+      (desktop/src/features/agents/ui/AgentGroupRows.tsx:37), and nothing in
+      desktop/src imports AgentGroupRows — grep across src/ returns only its
+      own definition. The lane's stated disclosure (\"an agent that carries
+      a home role but no pack must never render as if it carried the role's
+      craft\") is implemented in dead UI." Screenshot:
+      `desktop/test-results/fd1-poke/04-agents-no-home-role-badge.png`.
+    - *Honesty* — Install crew roles dialog, roster note after a partial
+      install: "\"Seated by default: lead, architect, builder, verifier,
+      runner.\" — printed verbatim under a result list that contains no
+      verifier row at all." What is true: "The verifier pack was not
+      installed, so the crew that was written has four seats, not five.
+      InstallCrewRolePacksResponse carries no field for a dropped roster
+      role and installCrewRolesCopy.ts:20 is a constant string... Related:
+      crewRoleResultRows computes a per-row `seated` flag
+      (installCrewRolesCopy.ts:70) that InstallCrewRolesDialog.tsx never
+      renders, so poker and designer — installed but deliberately unseated —
+      read exactly like the five seated roles." Screenshot:
+      `desktop/test-results/fd1-poke/15-install-dropped-role.png`.
+    - *Honesty* — Install crew roles dialog, failure copy: "\"That folder
+      could not be read: Error: the keychain is locked, so a new agent key
+      could not be minted\"" What is true: "The folder was read fine; the
+      install failed after the scan... everything reaching
+      InstallCrewRolesDialog.tsx:84 unprefixed is something else —
+      state.signing_keys() at :58, key minting, the managed-agent store, the
+      team save — and the catch wraps all of it in the folder sentence
+      anyway... An operator whose keychain is locked is sent to look at
+      their folder." Screenshot:
+      `desktop/test-results/fd1-poke/16-install-error-blames-folder.png`.
+    - *Honesty* — Seat field (New session and Add-provider dialogs), no-pack
+      disclosure: "\"Scribe has no role pack on this computer, so this seat
+      carries no role skills and runs on its persona prompt alone.\" — for
+      an ordinary managed agent that carries no role at all and was never
+      asked about a pack." What is true: "codingSessionActorSeat.ts:180-190
+      documents that an `undefined` hasRolePack must render nothing
+      (\"absence is not a claim\")... But fromRawManagedAgent maps a missing
+      has_role_pack to `false` (tauriManagedAgentRecord.ts:63), so
+      `undefined` never reaches the component through the app's own data
+      path: any backend that does not answer the field turns every agent
+      into one whose pack is missing." Screenshot:
+      `desktop/test-results/fd1-poke/11-seat-plain-agent-no-pack.png`.
+    - *Note* — New coding session → Crew tab, seat roster before launch: "The
+      tab itself says \"A crew launch is not resumable. If it stops
+      partway, the seats already created stay\", so the operator learns a
+      seat has no craft only once the seats exist. Every other pre-submit
+      surface in this batch discloses it before signing; the crew roster
+      does not." Screenshot:
+      `desktop/test-results/fd1-poke/07-crew-roster.png`.
+    - *Note* — Pending coding session screen, header status: pre-existing,
+      outside this batch's diff — a green "WORKING" status sits two lines
+      above the new seat line, which is itself correct. Screenshot:
+      `desktop/test-results/fd1-poke/12-pending-seated.png`.
+    (Poke spec: `desktop/tests/e2e/crew-front-door.spec.ts`, 864 lines, 8
+    tests, committed `96aabfc7` on `crew/front-door` in `fd-int`, not
+    pushed; 8/8 passed in 19.1s; 16 screenshots under
+    `desktop/test-results/fd1-poke/`, all SHA-256-distinct.)
+    **No-surface-by-decision (all need Brian's sign-off):** Lane A mobile —
+    installing packs and minting keys is desktop-host-local (custody lives
+    in the desktop keyring); the Flutter app is a read-only observer. Lane A
+    web — same reason; the web client holds no keys. Lane A CLI — `bee`
+    cannot reach the desktop's managed-agent store or keyring, and a second
+    minting path is exactly the divergence that produces an agent the
+    provider cannot resolve. Lane B mobile — the mobile observer is
+    read-only and cannot create sessions at all. Lane B web — same. Lane B
+    CLI — `bee sessions create --actor` is already refused on purpose
+    (crew_cmds.rs:392-416): the CLI holds no host-local custody, so a seated
+    create from `bee` would be answered ACTOR_UNAVAILABLE; lane C surfaces
+    the seat on READ (status/list) instead. Lane C desktop — the desktop
+    already shows founder provenance in the session header popover
+    (founderDetails, CodingSessionUmbrellaWorkspace.tsx:366), and `bee
+    events query` is a debugging verb for agents and the lead, not a
+    screen. Lane C mobile/web — read-only observer, no CLI. Spec-wide — no
+    crew editor this week (the installer writes one roster; editing seats by
+    hand is deferred); no second builder seat in the default roster (the
+    installer mints one agent per pack; cloning needs UI this batch didn't
+    build); `home_role` is not editable in the agent dialog (it comes from
+    the pack, and an editable copy could diverge from the pack actually
+    staged); `home_role` is not published on kind:30175 (the wire already
+    carries the seat's role, and a second differently-sourced role is a
+    second answer to the same question).
+    **Deviations/residuals (representative, see lane reports for the full
+    lists):** desktop now has two agent-key-minting sites, not one — the
+    shared `mint_agent_identity` helper (create + installer) and
+    `confirm_team_snapshot_import`'s own inline mint block, left alone
+    because it has an all-or-none rollback around minted pubkeys; the seated
+    join-submit path could not be asserted through the DOM (no module
+    mocking, submit gated on a Tauri-provisioned target), substituted with a
+    live-mounted form plus a payload-builder unit test; live acceptance was
+    NOT run for any lane — installing/seating/founder-probing against the
+    running dev app was judged too risky from these worktrees (would mint
+    keys and write records into Brian's live keyring/store, or requires a
+    relay key this session was told not to go looking for); Lane A's
+    `has_role_pack` resolution does per-agent disk IO on each 5s
+    `list_managed_agents` poll for every agent that carries a pack link.
+    **Next:** Brian's live look on the dev instance (installer walk, a
+    seated join, `bee events query` / founder column against hive), then
+    land.
+
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
 The display name is now one word everywhere (`d62bcb029` sweep,
@@ -2295,6 +2449,8 @@ material is still worth building, but it must cite those evidence ids rather
 than replace them, and it is not started.
 
 ## 3. Next — one track at a time, in this order
+
+**Crew front door batch (§2 item 76) is gate-green and awaiting Brian's live look on the dev instance before it lands.**
 
 **Direction set 2026-08-25: crew sessions.** Executions become agent seats
 with roles that address each other durably, a lead seat dispatches, and the
