@@ -15,13 +15,18 @@ use buzz_core::coding_session_command::{
 use buzz_core::coding_session_lease::{
     CodingSessionLease, CodingSessionLeaseState, CODING_SESSION_LEASE_TAG_VERSION,
 };
+use buzz_core::coding_session_lifecycle_command::{
+    CodingSessionLifecycleAction, CodingSessionLifecycleCommandPayload,
+    CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA,
+};
 use buzz_core::coding_session_payload::{
     Capabilities, LifecycleReceipt, ReceiptError, ReceiptStatus, SessionMetadata, SessionStatus,
     TranscriptEnvelope, LIFECYCLE_RECEIPT_SCHEMA, METADATA_SCHEMA, NO_LIVE_EXECUTION,
     NO_TURN_IN_FLIGHT, QUEUE_FULL, STALE_GENERATION,
 };
 use buzz_core::kind::{
-    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+    KIND_CODING_SESSION_COMMAND, KIND_CODING_SESSION_LEASE, KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+    KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
 };
 
 use super::crew::*;
@@ -1366,4 +1371,471 @@ fn doctor_does_not_offer_readdress_for_a_command_it_never_read() {
         "an unread command was advertised as re-addressable: {:?}",
         turns[0].findings
     );
+}
+
+// ── Founders ─────────────────────────────────────────────────────────────────
+
+/// The genesis event that founds an umbrella. Its **id** is the canonical
+/// reference; the `csg-session` tag exists for the relay's uniqueness probe
+/// and is never a founder lookup (NIP-CSG).
+fn genesis_event(id: &str, signer: &str, session_ref: &str) -> Value {
+    let payload = buzz_core::coding_session_genesis::CodingSessionGenesisPayload::new(session_ref);
+    json!({
+        "id": id,
+        "pubkey": pk(signer),
+        "kind": buzz_core::kind::KIND_CODING_SESSION_GENESIS,
+        "created_at": 500,
+        "sig": "0".repeat(128),
+        "tags": [["h", CHANNEL], ["csg-v", "csg1-1"], ["csg-session", session_ref]],
+        "content": serde_json::to_string(&payload).expect("serialize"),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_event(
+    id: &str,
+    signer: &str,
+    created_at: i64,
+    command_id: &str,
+    session_ref: Option<&str>,
+    genesis_ref: Option<&str>,
+    provider_authority: &str,
+) -> Value {
+    let payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        action: CodingSessionLifecycleAction::SessionCreate {
+            project_ref: None,
+            repo_ref: None,
+            session_ref: session_ref.map(str::to_owned),
+            genesis_ref: genesis_ref.map(str::to_owned),
+            provider_instance_ref: "instance-1".into(),
+            provider_authority_pubkey: pk(provider_authority),
+            model: Some("claude-opus".into()),
+            title: Some("a session".into()),
+            initial_turn: None,
+            actor: None,
+            role: None,
+        },
+    };
+    json!({
+        "id": id,
+        "pubkey": pk(signer),
+        "kind": KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        "created_at": created_at,
+        "sig": "0".repeat(128),
+        "tags": [["h", CHANNEL], ["csl-v", "csl1-1"]],
+        "content": serde_json::to_string(&payload).expect("serialize"),
+    })
+}
+
+fn resume_event(
+    id: &str,
+    signer: &str,
+    created_at: i64,
+    command_id: &str,
+    previous: &CodingSessionTarget,
+    provider_authority: &str,
+) -> Value {
+    let payload = CodingSessionLifecycleCommandPayload {
+        schema: CODING_SESSION_LIFECYCLE_COMMAND_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        action: CodingSessionLifecycleAction::SessionResume {
+            session: previous.clone(),
+            provider_authority_pubkey: pk(provider_authority),
+        },
+    };
+    json!({
+        "id": id,
+        "pubkey": pk(signer),
+        "kind": KIND_CODING_SESSION_LIFECYCLE_COMMAND,
+        "created_at": created_at,
+        "sig": "0".repeat(128),
+        "tags": [["h", CHANNEL], ["csl-v", "csl1-1"]],
+        "content": serde_json::to_string(&payload).expect("serialize"),
+    })
+}
+
+/// A lifecycle receipt signed by a named provider, so the self-fence — only
+/// the provider the create *named* may answer it — can be exercised.
+fn receipt_event_signed_by(
+    id: &str,
+    signer: &str,
+    created_at: i64,
+    command_id: &str,
+    status: ReceiptStatus,
+    target: Option<&CodingSessionTarget>,
+) -> Value {
+    let receipt = LifecycleReceipt {
+        schema: LIFECYCLE_RECEIPT_SCHEMA.to_owned(),
+        command_id: command_id.to_owned(),
+        status,
+        session: target.cloned(),
+        error: None,
+        turn_id: None,
+    };
+    json!({
+        "id": id,
+        "pubkey": pk(signer),
+        "kind": KIND_CODING_SESSION_LIFECYCLE_RECEIPT,
+        "created_at": created_at,
+        "sig": "0".repeat(128),
+        "tags": [["h", CHANNEL], ["cslr-v", "cslr1-1"]],
+        "content": serde_json::to_string(&receipt).expect("serialize"),
+    })
+}
+
+fn index_of(events: &[Value]) -> FounderIndex {
+    let (receipts, _) = decode_receipts(events);
+    build_founder_index(events, &receipts)
+}
+
+const UMBRELLA_ONE: &str = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+const UMBRELLA_TWO: &str = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
+const GENESIS_ONE: &str = "1a";
+const GENESIS_TWO: &str = "2a";
+
+/// The provider signs every execution, so a founder read off the provider's
+/// key would make every session look like it belonged to the same person.
+/// The founder is the genesis signer, reached through the receipt-joined
+/// create's explicit `genesisRef`.
+#[test]
+fn founder_is_the_genesis_signer_not_the_provider() {
+    let target = target("s-1", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&target),
+        ),
+    ];
+    let founding = index_of(&events).of(&target);
+    assert_eq!(founding.founder.as_deref(), Some(pk(ALICE).as_str()));
+    assert_eq!(founding.create_signer.as_deref(), Some(pk(ALICE).as_str()));
+    assert_ne!(founding.founder.as_deref(), Some(pk(PROVIDER).as_str()));
+}
+
+/// A create's `genesisRef` names an event id. When that event is not in the
+/// channel, the founder is `null` — never the create signer standing in for
+/// it, and never the provider.
+#[test]
+fn founder_is_null_when_the_genesis_event_is_absent_from_the_channel() {
+    let target = target("s-1", 1);
+    let events = vec![
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&target),
+        ),
+    ];
+    let founding = index_of(&events).of(&target);
+    assert_eq!(founding.founder, None);
+    assert_eq!(founding.create_signer.as_deref(), Some(pk(ALICE).as_str()));
+    assert!(index_of(&events).founders().is_empty());
+}
+
+/// A resume mints a new generation but founds nothing. Whoever signed it must
+/// never appear as the founder or the create signer of the execution they
+/// resumed — the founding create's signer carries forward instead.
+#[test]
+fn a_resume_signer_is_never_reported_as_a_founder() {
+    let first = target("s-1", 1);
+    let second = target("s-1", 2);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&first),
+        ),
+        resume_event("c2", BOB, 700, "cmd-2", &first, PROVIDER),
+        receipt_event_signed_by(
+            "r2",
+            PROVIDER,
+            701,
+            "cmd-2",
+            ReceiptStatus::Resumed,
+            Some(&second),
+        ),
+    ];
+    let index = index_of(&events);
+    for generation in [&first, &second] {
+        let founding = index.of(generation);
+        assert_eq!(founding.founder.as_deref(), Some(pk(ALICE).as_str()));
+        assert_eq!(founding.create_signer.as_deref(), Some(pk(ALICE).as_str()));
+        assert_ne!(founding.founder.as_deref(), Some(pk(BOB).as_str()));
+        assert_ne!(founding.create_signer.as_deref(), Some(pk(BOB).as_str()));
+    }
+    assert_eq!(index.founders(), vec![pk(ALICE)]);
+}
+
+/// A create nobody's provider acted on mints no execution, so it is not
+/// evidence of founding one: the join runs through the receipt's `commandId`
+/// and the target that receipt named.
+#[test]
+fn create_signer_joins_through_the_receipt_command_id() {
+    let target = target("s-1", 1);
+    let unjoined = create_event(
+        "c9",
+        BOB,
+        550,
+        "cmd-never-answered",
+        Some(UMBRELLA_TWO),
+        Some(&pk(GENESIS_TWO)),
+        PROVIDER,
+    );
+    let joined = create_event(
+        "c1",
+        ALICE,
+        600,
+        "cmd-1",
+        Some(UMBRELLA_ONE),
+        Some(&pk(GENESIS_ONE)),
+        PROVIDER,
+    );
+    let receipt = receipt_event_signed_by(
+        "r1",
+        PROVIDER,
+        601,
+        "cmd-1",
+        ReceiptStatus::Created,
+        Some(&target),
+    );
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        genesis_event(&pk(GENESIS_TWO), BOB, UMBRELLA_TWO),
+        unjoined,
+        joined,
+        receipt,
+    ];
+    let index = index_of(&events);
+    assert_eq!(
+        index.of(&target).create_signer.as_deref(),
+        Some(pk(ALICE).as_str())
+    );
+    // The unanswered create founds nothing at all — not this execution, and
+    // not the channel's founder list.
+    assert_eq!(index.founders(), vec![pk(ALICE)]);
+}
+
+/// Only the provider the create *named* may answer it. A receipt from any
+/// other signer joins nothing, so a stranger cannot mint a foreign founder.
+#[test]
+fn a_receipt_from_an_unnamed_provider_joins_nothing() {
+    let target = target("s-1", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            BOB,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&target),
+        ),
+    ];
+    let founding = index_of(&events).of(&target);
+    assert_eq!(founding, Founding::default());
+}
+
+/// A genesis founding a different umbrella than the create claims is not this
+/// create's genesis, even when the create points straight at its id.
+#[test]
+fn a_genesis_for_another_umbrella_is_not_this_creates_founder() {
+    let target = target("s-1", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_TWO),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&target),
+        ),
+    ];
+    let founding = index_of(&events).of(&target);
+    assert_eq!(founding.founder, None);
+    assert_eq!(founding.create_signer.as_deref(), Some(pk(ALICE).as_str()));
+}
+
+/// One channel can hold two crews. Each execution reports the founder of the
+/// umbrella its own create named, and the channel-level list holds both.
+#[test]
+fn two_umbrellas_in_one_channel_keep_their_own_founders() {
+    let alice_target = target("s-1", 1);
+    let bob_target = target("s-2", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        genesis_event(&pk(GENESIS_TWO), BOB, UMBRELLA_TWO),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        create_event(
+            "c2",
+            BOB,
+            610,
+            "cmd-2",
+            Some(UMBRELLA_TWO),
+            Some(&pk(GENESIS_TWO)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&alice_target),
+        ),
+        receipt_event_signed_by(
+            "r2",
+            PROVIDER,
+            611,
+            "cmd-2",
+            ReceiptStatus::Created,
+            Some(&bob_target),
+        ),
+    ];
+    let index = index_of(&events);
+    assert_eq!(
+        index.of(&alice_target).founder.as_deref(),
+        Some(pk(ALICE).as_str())
+    );
+    assert_eq!(
+        index.of(&bob_target).founder.as_deref(),
+        Some(pk(BOB).as_str())
+    );
+    let mut founders = index.founders();
+    founders.sort();
+    let mut expected = vec![pk(ALICE), pk(BOB)];
+    expected.sort();
+    assert_eq!(founders, expected);
+}
+
+/// Two creates sharing one `commandId` but disagreeing about who signed them
+/// is a disputed claim; the discipline is to resolve nothing rather than pick
+/// the earliest.
+#[test]
+fn a_disputed_command_id_founds_nothing() {
+    let target = target("s-1", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        create_event(
+            "c2",
+            BOB,
+            601,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            602,
+            "cmd-1",
+            ReceiptStatus::Created,
+            Some(&target),
+        ),
+    ];
+    assert_eq!(index_of(&events).of(&target), Founding::default());
+}
+
+/// A turn receipt names the execution its 44220 addressed, but it never
+/// creates one — so it can never join a create to a target.
+#[test]
+fn a_turn_receipt_never_joins_a_create() {
+    let target = target("s-1", 1);
+    let events = vec![
+        genesis_event(&pk(GENESIS_ONE), ALICE, UMBRELLA_ONE),
+        create_event(
+            "c1",
+            ALICE,
+            600,
+            "cmd-1",
+            Some(UMBRELLA_ONE),
+            Some(&pk(GENESIS_ONE)),
+            PROVIDER,
+        ),
+        receipt_event_signed_by(
+            "r1",
+            PROVIDER,
+            601,
+            "cmd-1",
+            ReceiptStatus::TurnQueued,
+            Some(&target),
+        ),
+    ];
+    assert_eq!(index_of(&events).of(&target), Founding::default());
 }

@@ -479,6 +479,43 @@ pub fn decode_resumes(events: &[Value]) -> Vec<ResumeRecord> {
     records
 }
 
+// ── Founders ─────────────────────────────────────────────────────────────────
+
+/// Who stands behind one execution: the human who asked for it, and the
+/// founder of the umbrella that request pointed at.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Founding {
+    /// Pubkey that signed the 44221 `session.create` a 44224 receipt joined to
+    /// this execution, or `None` when this channel holds no such join.
+    pub create_signer: Option<String>,
+    /// Pubkey that signed the 44226 genesis that create named, or `None`.
+    pub founder: Option<String>,
+}
+
+/// Founding facts for every execution one channel's record can join.
+#[derive(Debug, Clone, Default)]
+pub struct FounderIndex {
+    by_identity: HashMap<(String, String, String), Founding>,
+}
+
+impl FounderIndex {
+    /// What this channel says about the generation's founding.
+    pub fn of(&self, _target: &CodingSessionTarget) -> Founding {
+        Founding::default()
+    }
+
+    /// Every distinct founder the channel names, sorted.
+    pub fn founders(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Fold a channel's geneses, creates, and lifecycle receipts into founding
+/// facts per execution.
+pub fn build_founder_index(_events: &[Value], _receipts: &[ReceiptRecord]) -> FounderIndex {
+    FounderIndex::default()
+}
+
 // ── Receipt stages ───────────────────────────────────────────────────────────
 
 /// The newest stage one 44220 has been answered with.
