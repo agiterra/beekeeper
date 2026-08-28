@@ -2988,7 +2988,80 @@ written and `bash -n` clean but **was not executed** — that harness needs
     (`model: None`) — two places to set one model; the identity's model should
     be the one the roster reads. (e) "Every seat runs on Claude Code…" copy is
     honest about (c) but reads as a product rule; it is a limitation, say so.
-    (f) Team picker auto-selects the only team — expected, not a bug.
+    (f) Team picker auto-selects the only team — expected, not a bug. (g)
+    The Team tab was disabled in a project context because the team launch
+    never minted the sessions channel and canLaunch said nothing — fixed
+    here.
+
+    **Fixed e772dd74:** (1) Team launch from a project now mints the
+    channel: launchCodingSessionCrew settles it before the genesis via the
+    project flow's own ensureChannelId helper (no second implementation) —
+    /Users/brian/Projects/beekeeper/beekeeper.worktrees/fd-int/desktop/src/features/coding-sessions/lib/codingSessionCrewLaunch.ts:173
+    (new CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP) and :333
+    (resolve-then-genesis, id threaded into every dep call); hook wiring at
+    ui/useCodingSessionCrewLaunch.ts:94 (provider membership moved inside
+    publishGenesis, since the channel may not exist until the launch
+    publishes it); dialog passes projectContext.ensureChannelId at
+    ui/NewCodingSessionDialog.tsx:554. RED first:
+    lib/codingSessionCrewLaunch.test.mjs:358/409/432 failed with 'does not
+    provide an export named CODING_SESSION_CREW_LAUNCH_CHANNEL_STEP' before
+    the change, then 19/19 pass — the ordering assertion is a literal
+    deepEqual of
+    ['channel','genesis:chan-minted','publish:lead:chan-minted','receipt:...','grant:...','turn:...'],
+    and a known channelId path throws if ensureChannel is called.
+
+    (2) A disabled launch names its reason: pure
+    codingSessionCrewLaunchBlock in lib/codingSessionCrew.ts:372 covers all
+    six conditions (launch in flight, in-flight create for this scope, no
+    team, no seats, no channel and no way to make one, empty goal); the tab
+    computes it at ui/NewCodingSessionCrewTab.tsx:150 and disables the
+    button on exactly that expression (:159), rendering the sentence at
+    data-testid new-coding-session-crew-blocked (:267) as a sibling of the
+    existing -refusal element. RED first: lib/codingSessionCrew.test.mjs:584
+    failed on the missing export; e2e now drives it at
+    desktop/tests/e2e/crew-front-door.spec.ts:827 ('Write the goal — the
+    lead's first turn carries it.' with Launch disabled) and :841 (gone once
+    the goal is typed).
+
+    (3) Persona card vs identity: the installer titles the card it creates
+    or reuses after the identity it minted (lead name included) —
+    desktop/src-tauri/src/managed_agents/crew_roles.rs:527 (display_name:
+    agent_name.clone(), name computation moved above the definition); the
+    grid card shows the instance's name when one backs it — new
+    lib/agentCardTitle.ts (resolveAgentCardTitle) used at
+    desktop/src/features/agents/ui/UnifiedAgentsSection.tsx:260. RED first:
+    crew_roles_tests.rs:580 and :637 both failed 'left: "lead", right:
+    "Keystone"'; agentCardTitle.test.mjs failed on the missing module. Two
+    pre-existing tests in UnifiedAgentsSectionCardTarget.test.mjs queried
+    the card by the persona name and were updated to the instance name (the
+    click target they assert is unchanged).
+
+    (4) Vendor copy: describeCodingSessionSeatVendor's conflict branch
+    (lib/codingSessionCrew.ts:307) now distinguishes a runtime conflict from
+    a seat's own two statements — the resolution carries `runtime`/`via` —
+    so a Claude-pinned seat with gpt-5.6-sol reads 'runs on Claude Code
+    (anthropic); gpt-5.6-sol is an OpenAI model — a team launch runs every
+    seat on one provider' instead of the false 'declared openai, but
+    gpt-5.6-sol is anthropic'; the family refusal lead-in stopped calling it
+    a declaration-vs-model-id fight. Helper text now reads 'Today a team
+    launch runs every seat on one provider — <runtime> — …  Seats on another
+    provider are added to the session afterwards.'
+    (ui/NewCodingSessionCrewTab.tsx:235), asserted in the e2e. RED first:
+    codingSessionCrew.test.mjs:542 plus the runtime-conflict deepEqual and
+    the new family-refusal test all failed before the change.
+
+    Commits (oldest first): d7525d91 fix(team) channel minting + refusal
+    sentences + honest vendor/limitation copy; 61648432 fix(agents) card
+    titled after the identity; 46cc7784 test(e2e) Team tab assertions;
+    e772dd74 docs(team) hook doc. Working tree clean; nothing pushed; no
+    rebase, no touch of the live checkout.
+
+    Not covered, worth knowing: the project-context team launch is proven at
+    the lib/dep level, not driven end-to-end (the mock-bridge spec opens the
+    plain channel dialog, and a project-context e2e would be a new fixture);
+    item 79(b) the Agents-screen owner/team filter and 79(d) the model set
+    on the card not reaching the agent record are untouched — neither was in
+    this brief.
 
 ### Landed 2026-08-27 — "Bee Keeper" became "Beekeeper", three surfaces deliberately left behind
 
