@@ -100,3 +100,40 @@ test("seats with no role pack are named, and a full crew says nothing", () => {
     "",
   );
 });
+
+// ── The pack disclosure, before anything is signed ───────────────────────────
+//
+// `CodingSessionCrewSkillNotice` only ever had labels after a launch: the
+// launch's own `seatsWithoutRolePack` is filled in by the staging call. So the
+// operator learned a seat carries no craft only once the seats existed — while
+// every other pre-submit surface in the batch discloses it before signing
+// (SESSION_STATE item 76, poke finding F5). The roster knows it up front,
+// because the agents it resolves each carry `hasRolePack`.
+
+test("the roster says which seats carry no role skills before the launch", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewRoster, {
+      primaryPersonaId: "p-lead",
+      seats: [
+        { ...SEATS[0], hasRolePack: true },
+        { ...SEATS[1], hasRolePack: false },
+      ],
+    }),
+  );
+  assert.match(html, /data-testid="crew-seat-no-role-pack-p-verify"/);
+  assert.match(
+    html,
+    /carries no role skills: this computer has no role pack behind it\./,
+  );
+  assert.doesNotMatch(html, /data-testid="crew-seat-no-role-pack-p-lead"/);
+});
+
+test("a roster whose agents were never asked about a pack claims nothing", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CodingSessionCrewRoster, {
+      primaryPersonaId: "p-lead",
+      seats: SEATS,
+    }),
+  );
+  assert.doesNotMatch(html, /carries no role skills/);
+});

@@ -172,3 +172,47 @@ test("with no model anywhere a seat carries none, rather than inventing one", ()
   });
   assert.equal(resolved.seats[0].model, null);
 });
+
+// The roster has to disclose a packless seat *before* the launch, so the seat
+// resolution has to carry the agent's answer through rather than dropping it
+// (SESSION_STATE item 76, poke finding F5).
+test("a resolved seat carries whether this computer holds the agent's role pack", () => {
+  const resolution = resolveCodingSessionCrewSeats({
+    crew: {
+      primary: "p-lead",
+      seats: [
+        { personaId: "p-lead", role: "lead" },
+        { personaId: "p-verify", role: "verifier" },
+        { personaId: "p-quiet", role: "runner" },
+      ],
+    },
+    agents: [
+      {
+        pubkey: "a".repeat(64),
+        name: "Fable",
+        personaId: "p-lead",
+        model: "opus",
+        hasRolePack: true,
+      },
+      {
+        pubkey: "b".repeat(64),
+        name: "Quinn",
+        personaId: "p-verify",
+        model: "qwen",
+        hasRolePack: false,
+      },
+      // Never asked: absence must survive the mapping as absence.
+      {
+        pubkey: "c".repeat(64),
+        name: "Ada",
+        personaId: "p-quiet",
+        model: null,
+      },
+    ],
+  });
+  assert.equal(resolution.error, null);
+  assert.deepEqual(
+    resolution.seats.map((seat) => seat.hasRolePack),
+    [true, false, undefined],
+  );
+});

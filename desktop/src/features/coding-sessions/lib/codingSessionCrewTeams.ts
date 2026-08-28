@@ -55,6 +55,12 @@ export type CodingSessionCrewAgent = {
   name: string;
   personaId: string | null;
   model: string | null;
+  /**
+   * Whether this computer can stage the agent's role pack. Carried onto the
+   * resolved seat so the roster can disclose a packless seat *before* the
+   * launch, rather than after staging has already reported it.
+   */
+  hasRolePack?: boolean;
 };
 
 export type CodingSessionCrewSeatResolution =
@@ -102,14 +108,21 @@ export function resolveCodingSessionCrewSeats(input: {
       };
     }
     taken.add(agent.pubkey);
-    seats.push({
+    const resolved: ResolvedCodingSessionCrewSeat = {
       personaId: seat.personaId,
       role: seat.role,
       actor: agent.pubkey.toLowerCase(),
       actorLabel: agent.name,
       model: seat.model ?? agent.model ?? input.fallbackModel ?? null,
       vendor: seat.vendor ?? null,
-    });
+    };
+    // Set only when the agent actually answered: an absent field and a field
+    // set to `undefined` are the same to a reader, but only the first says
+    // "nobody asked" to anything comparing the seat's shape.
+    if (agent.hasRolePack !== undefined) {
+      resolved.hasRolePack = agent.hasRolePack;
+    }
+    seats.push(resolved);
   }
   return { seats, error: null };
 }

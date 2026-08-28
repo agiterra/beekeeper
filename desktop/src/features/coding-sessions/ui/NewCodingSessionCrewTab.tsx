@@ -90,6 +90,7 @@ export function NewCodingSessionCrewTab({
         name: agent.name,
         personaId: agent.personaId,
         model: agent.model,
+        hasRolePack: agent.hasRolePack,
       })),
       // The same fallback the create would otherwise apply on its own, moved
       // here so the vendor rule is checked against the published model.
@@ -350,6 +351,19 @@ export function CodingSessionCrewRoster({
             {seat.personaId === primaryPersonaId ? (
               <span className="text-2xs text-muted-foreground">
                 · first turn
+              </span>
+            ) : null}
+            {/* Before the launch, not after it. The launch's own
+                `seatsWithoutRolePack` only exists once staging has answered,
+                which is after the seats are signed for; the agent already told
+                us here. `undefined` says nothing — nobody asked. */}
+            {seat.hasRolePack === false ? (
+              <span
+                className="text-2xs text-amber-600 dark:text-amber-400"
+                data-testid={`crew-seat-no-role-pack-${seat.personaId}`}
+              >
+                · carries no role skills: this computer has no role pack behind
+                it.
               </span>
             ) : null}
           </li>

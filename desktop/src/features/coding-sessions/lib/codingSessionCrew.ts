@@ -229,6 +229,13 @@ export type ResolvedCodingSessionCrewSeat = {
   actorLabel: string;
   model: string | null;
   vendor: string | null;
+  /**
+   * Whether this computer holds the role pack behind the agent taking the
+   * seat. `false` means the seat runs on its persona prompt alone;
+   * `undefined` means the backend never answered, and an unanswered field is
+   * not a finding about the seat.
+   */
+  hasRolePack?: boolean;
 };
 
 export type CodingSessionCrewFamilyVerdict =
